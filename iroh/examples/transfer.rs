@@ -1002,7 +1002,7 @@ impl PathStats {
                     remote_addr: info.remote_addr().clone(),
                     rtt: stats.rtt,
                     bytes_sent: stats.udp_tx.bytes,
-                    bytes_recv: stats.udp_tx.bytes,
+                    bytes_recv: stats.udp_rx.bytes,
                 })
             })
             .collect();

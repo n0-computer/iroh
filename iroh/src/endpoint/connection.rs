@@ -1485,17 +1485,23 @@ mod tests {
         info!("close client conn");
         conn_client.close(0u32.into(), b"");
 
-        // Verify that the path watch streams close.
+        // Verify that the path watch streams close after max. two events.
         assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), paths_client.next())
-                .await
-                .unwrap(),
+            tokio::time::timeout(Duration::from_secs(1), async {
+                paths_client.next().await;
+                paths_client.next().await
+            })
+            .await
+            .unwrap(),
             None
         );
         assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), paths_server.next())
-                .await
-                .unwrap(),
+            tokio::time::timeout(Duration::from_secs(1), async {
+                paths_server.next().await;
+                paths_server.next().await
+            })
+            .await
+            .unwrap(),
             None
         );
 

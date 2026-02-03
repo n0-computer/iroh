@@ -1,7 +1,4 @@
-use std::{
-    sync::{Arc, Mutex},
-    task::Poll,
-};
+use std::task::Poll;
 
 use iroh_base::TransportAddr;
 use n0_future::time::Duration;
@@ -67,25 +64,38 @@ impl Iterator for PathInfoListIntoIter {
     }
 }
 
-type PathDataList = SmallVec<[PathData; 4]>;
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PathWatchValue {
+    paths: SmallVec<[PathInfo; 4]>,
+    closed: bool,
+}
 
 /// Watcher for the open paths and selected transmission path in a connection.
 #[derive(Clone, Debug)]
 pub struct PathWatcher {
-    paths: n0_watcher::Direct<PathDataList>,
-    selected_path: n0_watcher::Direct<Option<transports::Addr>>,
-    current: PathInfoList,
+    paths_watcher: n0_watcher::Direct<PathWatchValue>,
+    selected_path_watcher: n0_watcher::Direct<Option<transports::Addr>>,
+    current_paths: PathInfoList,
+    current_selected_paths: Option<transports::Addr>,
 }
 
 impl PathWatcher {
-    fn update_current(&mut self) {
-        let selected_path = self.selected_path.peek();
-        let data = self.paths.peek().clone();
-        let current = data
-            .into_iter()
-            .map(|data| PathInfo::new(data, selected_path.as_ref()))
-            .collect();
-        self.current = PathInfoList(current)
+    fn update_selected(&mut self) {
+        if let Some(path) = self.selected_path_watcher.peek()
+            && Some(path) != self.current_selected_paths.as_ref()
+        {
+            self.current_selected_paths = Some(path.clone());
+        }
+
+        if let Some(selected_path) = self.current_selected_paths.as_ref() {
+            for p in self.current_paths.0.iter_mut() {
+                if selected_path.is_transport_addr(p.remote_addr()) {
+                    p.is_selected = true;
+                } else {
+                    p.is_selected = false;
+                }
+            }
+        }
     }
 }
 
@@ -93,54 +103,57 @@ impl Watcher for PathWatcher {
     type Value = PathInfoList;
 
     fn update(&mut self) -> bool {
-        if self.paths.update() || self.selected_path.update() {
-            self.update_current();
-            true
-        } else {
-            false
+        let mut updated = false;
+
+        if self.paths_watcher.update() {
+            updated = true;
+            self.current_paths = PathInfoList(self.paths_watcher.peek().paths.clone());
         }
+
+        if self.selected_path_watcher.update() {
+            updated = true;
+        }
+
+        if updated {
+            self.update_selected();
+        }
+
+        updated
     }
 
     fn peek(&self) -> &Self::Value {
-        &self.current
+        &self.current_paths
     }
 
     fn is_connected(&self) -> bool {
-        self.paths.is_connected() && self.selected_path.is_connected()
+        self.paths_watcher.is_connected() && self.selected_path_watcher.is_connected()
     }
 
     fn poll_updated(
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<(), n0_watcher::Disconnected>> {
-        let poll_paths = self.paths.poll_updated(cx)?;
-        let poll_selected = self.selected_path.poll_updated(cx)?;
-        if poll_paths.is_ready() || poll_selected.is_ready() {
-            self.update_current();
+        if self.paths_watcher.peek().closed {
+            return Poll::Ready(Err(n0_watcher::Disconnected));
+        }
+
+        let mut is_ready = false;
+
+        if self.paths_watcher.poll_updated(cx)?.is_ready() {
+            self.current_paths = PathInfoList(self.paths_watcher.peek().paths.clone());
+            is_ready = true;
+        }
+
+        if self.selected_path_watcher.poll_updated(cx)?.is_ready() {
+            is_ready = true;
+        }
+
+        if is_ready {
+            self.update_selected();
             Poll::Ready(Ok(()))
         } else {
             Poll::Pending
         }
-    }
-}
-
-#[derive(derive_more::Debug, Clone, Eq, PartialEq)]
-struct PathData {
-    handle: WeakPathHandle,
-    remote_addr: TransportAddr,
-    is_closed: bool,
-    is_abandoned: bool,
-}
-
-impl PathData {
-    fn new(conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) -> Option<Self> {
-        let path = conn.path(id)?;
-        Some(PathData {
-            handle: path.weak_handle(),
-            remote_addr,
-            is_closed: path.status().is_err(),
-            is_abandoned: false,
-        })
     }
 }
 
@@ -149,27 +162,34 @@ impl PathData {
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct PathInfo {
-    data: PathData,
+    #[debug("{}", path.id())]
+    path: WeakPathHandle,
+    remote_addr: TransportAddr,
+    is_closed: bool,
+    is_abandoned: bool,
     is_selected: bool,
 }
 
 impl PathInfo {
-    fn new(data: PathData, selected_path: Option<&transports::Addr>) -> Self {
-        let is_selected = selected_path
-            .as_ref()
-            .map(|addr| addr.is_transport_addr(&data.remote_addr))
-            .unwrap_or(false);
-        PathInfo { data, is_selected }
+    fn new(conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) -> Option<Self> {
+        let path = conn.path(id)?;
+        Some(PathInfo {
+            path: path.weak_handle(),
+            remote_addr,
+            is_closed: path.status().is_err(),
+            is_abandoned: false,
+            is_selected: false,
+        })
     }
 
     /// Returns the [`PathId`] of this path.
     pub fn id(&self) -> PathId {
-        self.data.handle.id()
+        self.path.id()
     }
 
     /// The remote transport address used by this network path.
     pub fn remote_addr(&self) -> &TransportAddr {
-        &self.data.remote_addr
+        &self.remote_addr
     }
 
     /// Returns `true` if this path is currently the main transmission path for this [`Connection`].
@@ -181,7 +201,7 @@ impl PathInfo {
 
     /// Returns `true` if this path is closed.
     pub fn is_closed(&self) -> bool {
-        self.data.is_closed
+        self.is_closed
     }
 
     /// Whether this is an IP transport address.
@@ -198,7 +218,7 @@ impl PathInfo {
     ///
     /// Returns `None` if the underlying connection has been dropped.
     pub fn stats(&self) -> Option<PathStats> {
-        self.data.handle.upgrade().map(|p| p.stats())
+        self.path.upgrade().map(|p| p.stats())
     }
 
     /// Current best estimate of this paths's latency (round-trip-time)
@@ -220,34 +240,32 @@ impl PathInfo {
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(Debug, Clone)]
 pub(crate) struct PathWatchable {
-    /// We keep the actual [`Watchable`] for the list of paths in an option.
-    ///
-    /// Because the [`PathWatchable`] is cloned into the connection struct, we need to manually
-    /// drop the watchable once we drop the connection state so that subscribed watchers receive
-    /// the disconnected event once the connection is closed.
-    paths: Arc<Mutex<Option<Watchable<PathDataList>>>>,
-    /// Watchable for the currently selected path to a remote.
+    paths: Watchable<PathWatchValue>,
     selected_path: Watchable<Option<transports::Addr>>,
 }
 
 impl PathWatchable {
     pub(super) fn new(selected_path: Watchable<Option<transports::Addr>>) -> Self {
+        let value = PathWatchValue {
+            paths: Default::default(),
+            closed: false,
+        };
         Self {
-            paths: Arc::new(Mutex::new(Some(Watchable::new(Default::default())))),
+            paths: Watchable::new(value),
             selected_path,
         }
     }
 
-    /// Disconnects all watchers.
-    ///
-    /// All future calls are no-ops, and [`Self::watch`] returns an immediately-closed watcher afterwards.
+    /// Mark the path watchable as closed.
     pub(super) fn disconnect(&self) {
-        *self.paths.lock().expect("poisoned") = None;
+        let mut value = self.paths.get();
+        value.closed = true;
+        self.paths.set(value).ok();
     }
 
     /// Inserts a new path.
     pub(super) fn insert(&self, conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) {
-        if let Some(data) = PathData::new(conn, id, remote_addr) {
+        if let Some(data) = PathInfo::new(conn, id, remote_addr) {
             self.update(move |list| list.push(data));
         }
     }
@@ -255,7 +273,7 @@ impl PathWatchable {
     /// Marks a path as closed.
     pub(super) fn set_closed(&self, id: PathId) {
         self.update(|list| {
-            if let Some(item) = list.iter_mut().find(|p| p.handle.id() == id) {
+            if let Some(item) = list.iter_mut().find(|p| p.path.id() == id) {
                 item.is_closed = true;
             }
         });
@@ -267,7 +285,7 @@ impl PathWatchable {
     /// If there are watchers, the path will not be removed so that the watcher can still access the path's stats.
     pub(super) fn set_abandoned(&self, id: PathId) {
         self.update(|list| {
-            if let Some(item) = list.iter_mut().find(|p| p.handle.id() == id) {
+            if let Some(item) = list.iter_mut().find(|p| p.path.id() == id) {
                 item.is_closed = true;
                 item.is_abandoned = true;
             }
@@ -278,16 +296,14 @@ impl PathWatchable {
     ///
     /// After the update is performed, and if there are currently no watchers, data for abandoned paths
     /// is removed from the path list.
-    fn update(&self, f: impl FnOnce(&mut SmallVec<[PathData; 4]>)) {
-        if let Some(paths) = self.paths.lock().expect("poisoned").as_ref() {
-            let mut value = paths.get();
-            f(&mut value);
-            if !paths.has_watchers() {
-                value.retain(|p| !p.is_abandoned);
-                value.shrink_to_fit();
-            }
-            paths.set(value).ok();
+    fn update(&self, f: impl FnOnce(&mut SmallVec<[PathInfo; 4]>)) {
+        let mut value = self.paths.get();
+        f(&mut value.paths);
+        if !self.paths.has_watchers() {
+            value.paths.retain(|p| !p.is_abandoned);
+            value.paths.shrink_to_fit();
         }
+        self.paths.set(value).ok();
     }
 
     /// Returns a [`PathWatcher`] for this watchable.
@@ -295,17 +311,14 @@ impl PathWatchable {
     /// If the connection state owning this watchable has closed this watchable (via [`Self::disconnect`]),
     /// then this returns an immediately-closed [`PathWatcher`] with an empty list of paths.
     pub(crate) fn watch(&self) -> PathWatcher {
-        let paths = if let Some(paths) = self.paths.lock().expect("poisoned").as_ref() {
-            paths.watch()
-        } else {
-            Watchable::new(Default::default()).watch()
-        };
+        let paths = self.paths.watch();
         let mut watcher = PathWatcher {
-            paths,
-            selected_path: self.selected_path.watch(),
-            current: Default::default(),
+            current_paths: PathInfoList(paths.peek().paths.clone()),
+            paths_watcher: paths,
+            selected_path_watcher: self.selected_path.watch(),
+            current_selected_paths: None,
         };
-        watcher.update_current();
+        watcher.update_selected();
         watcher
     }
 }
