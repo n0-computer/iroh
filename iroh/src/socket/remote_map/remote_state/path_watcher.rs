@@ -76,24 +76,20 @@ pub struct PathWatcher {
     paths_watcher: n0_watcher::Direct<PathWatchValue>,
     selected_path_watcher: n0_watcher::Direct<Option<transports::Addr>>,
     current_paths: PathInfoList,
-    current_selected_paths: Option<transports::Addr>,
+    current_selected_path: Option<transports::Addr>,
 }
 
 impl PathWatcher {
     fn update_selected(&mut self) {
         if let Some(path) = self.selected_path_watcher.peek()
-            && Some(path) != self.current_selected_paths.as_ref()
+            && Some(path) != self.current_selected_path.as_ref()
         {
-            self.current_selected_paths = Some(path.clone());
+            self.current_selected_path = Some(path.clone());
         }
 
-        if let Some(selected_path) = self.current_selected_paths.as_ref() {
+        if let Some(selected_path) = self.current_selected_path.as_ref() {
             for p in self.current_paths.0.iter_mut() {
-                if selected_path.is_transport_addr(p.remote_addr()) {
-                    p.is_selected = true;
-                } else {
-                    p.is_selected = false;
-                }
+                p.is_selected = selected_path.is_transport_addr(p.remote_addr());
             }
         }
     }
@@ -231,11 +227,11 @@ impl PathInfo {
 
 /// Watchable for the network paths in a connection.
 ///
-/// This contains a watchable over a [`PathDataList`], and a watchable over the selected path for a remote.
+/// This contains a watchable over a [`PathWatchValue`], and a watchable over the selected path for a remote.
 ///
 /// This struct is owned by the [`super::ConnectionState`] and also cloned into the [`Connection`].
 /// Most methods are `pub(super)`. The only method that may be called from [`Connection`] is
-/// [`PathWatchable::watch`].
+/// [`Self::watch`].
 ///
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(Debug, Clone)]
@@ -307,16 +303,13 @@ impl PathWatchable {
     }
 
     /// Returns a [`PathWatcher`] for this watchable.
-    ///
-    /// If the connection state owning this watchable has closed this watchable (via [`Self::disconnect`]),
-    /// then this returns an immediately-closed [`PathWatcher`] with an empty list of paths.
     pub(crate) fn watch(&self) -> PathWatcher {
         let paths = self.paths.watch();
         let mut watcher = PathWatcher {
             current_paths: PathInfoList(paths.peek().paths.clone()),
             paths_watcher: paths,
             selected_path_watcher: self.selected_path.watch(),
-            current_selected_paths: None,
+            current_selected_path: None,
         };
         watcher.update_selected();
         watcher
