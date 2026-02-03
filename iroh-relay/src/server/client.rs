@@ -4,7 +4,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
-use n0_future::{Sink, SinkExt, Stream, StreamExt};
+use n0_future::{SinkExt, StreamExt};
 use rand::Rng;
 use time::{Date, OffsetDateTime};
 use tokio::{

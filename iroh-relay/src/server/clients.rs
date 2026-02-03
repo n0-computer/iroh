@@ -11,7 +11,6 @@ use std::{
 
 use dashmap::DashMap;
 use iroh_base::EndpointId;
-use n0_future::{Sink, Stream};
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
