@@ -22,7 +22,6 @@
 //! ```
 
 use std::{
-    collections::BTreeMap,
     fmt,
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     str::FromStr,
@@ -44,7 +43,7 @@ use iroh::{
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{
-        BindOpts, Connection, ConnectionError, PathInfoList, RecvStream, SendStream, VarInt,
+        BindOpts, Connection, ConnectionError, PathWatcher, RecvStream, SendStream, VarInt,
         WriteError,
     },
 };
@@ -511,8 +510,8 @@ async fn handle_connection(conn: Connection, output: OutputMode) {
     let start = Instant::now();
     let remote_id = conn.remote_id();
     output.emit_with_remote(remote_id, ConnectionAccepted {});
-    let _guard = watch_conn_type(conn.paths(), Some(remote_id), output);
-    let stats_task = watch_path_stats(conn.clone());
+    let watcher = conn.paths();
+    let _guard = watch_conn_type(conn.clone(), Some(remote_id), output);
 
     // Accept incoming streams in a loop until the connection is closed by the remote.
     let close_reason = loop {
@@ -543,8 +542,7 @@ async fn handle_connection(conn: Connection, output: OutputMode) {
             duration: start.elapsed(),
         },
     );
-    let path_stats = stats_task.await.expect("path stats task panicked");
-    output.emit_with_remote(remote_id, path_stats);
+    output.emit_with_remote(remote_id, PathStats::from_watcher(watcher));
 }
 
 #[instrument("handle", skip_all, fields(id=send.id().index()))]
@@ -586,9 +584,9 @@ async fn fetch(
         remote_id,
         duration: start.elapsed(),
     });
+    let watcher = conn.paths();
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(conn.paths(), None, output);
-    let stats_task = watch_path_stats(conn.clone());
+    let _guard = watch_conn_type(conn.clone(), None, output);
 
     output.emit(StartRequest { mode, length });
     // Perform requests depending on the request mode.
@@ -628,8 +626,7 @@ async fn fetch(
     });
 
     close_endpoint_with_timeout(&endpoint, output).await;
-    let path_stats = stats_task.await.expect("path stats task panicked");
-    output.emit(path_stats);
+    output.emit(PathStats::from_watcher(watcher));
 
     res
 }
@@ -781,7 +778,7 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
 }
 
 fn watch_conn_type(
-    paths_watcher: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static,
+    conn: Connection,
     remote_id: Option<EndpointId>,
     output: OutputMode,
 ) -> AbortOnDropHandle<()> {
@@ -794,7 +791,7 @@ fn watch_conn_type(
         }
     };
     let task = tokio::task::spawn(async move {
-        let mut stream = paths_watcher.stream();
+        let mut stream = conn.paths().stream();
         let mut previous = None;
         while let Some(paths) = stream.next().await {
             if let Some(path) = paths.iter().find(|p| p.is_selected()) {
@@ -804,7 +801,7 @@ fn watch_conn_type(
                 }
                 print(SelectedPath::Selected {
                     addr: path.remote_addr().clone(),
-                    rtt: path.rtt(),
+                    rtt: path.rtt().expect("conn is not dropped"),
                 });
                 previous = Some(path.clone());
             } else if !paths.is_empty() {
@@ -815,44 +812,6 @@ fn watch_conn_type(
                 previous = None;
             }
         }
-    });
-    AbortOnDropHandle::new(task)
-}
-
-fn watch_path_stats(conn: iroh::endpoint::Connection) -> AbortOnDropHandle<PathStats> {
-    let task = tokio::spawn(async move {
-        let mut watcher = conn.paths();
-        let mut latest_stats_by_path = BTreeMap::new();
-        while conn.close_reason().is_none() {
-            n0_future::future::race(
-                async {
-                    conn.closed().await;
-                },
-                async {
-                    let _ = watcher.updated().await;
-                },
-            )
-            .await;
-            // Insert what could possibly be new path stats.
-            for path in watcher.get() {
-                let stats = path.stats();
-                latest_stats_by_path.insert(path.remote_addr().clone(), (path, stats));
-            }
-            // Update all stat values, even for paths that are removed by now.
-            for (path, stats) in latest_stats_by_path.values_mut() {
-                *stats = path.stats();
-            }
-        }
-        let list = latest_stats_by_path
-            .into_iter()
-            .map(|(addr, (_info, stats))| PathData {
-                remote_addr: addr,
-                rtt: stats.rtt,
-                bytes_sent: stats.udp_tx.bytes,
-                bytes_recv: stats.udp_tx.bytes,
-            })
-            .collect();
-        PathStats { paths: list }
     });
     AbortOnDropHandle::new(task)
 }
@@ -1030,6 +989,25 @@ struct PathData {
 #[serde(tag = "kind")]
 struct PathStats {
     paths: Vec<PathData>,
+}
+
+impl PathStats {
+    fn from_watcher(mut watcher: PathWatcher) -> Self {
+        let list = watcher
+            .get()
+            .iter()
+            .filter_map(|info| {
+                let stats = info.stats()?;
+                Some(PathData {
+                    remote_addr: info.remote_addr().clone(),
+                    rtt: stats.rtt,
+                    bytes_sent: stats.udp_tx.bytes,
+                    bytes_recv: stats.udp_tx.bytes,
+                })
+            })
+            .collect();
+        PathStats { paths: list }
+    }
 }
 
 impl fmt::Display for PathStats {

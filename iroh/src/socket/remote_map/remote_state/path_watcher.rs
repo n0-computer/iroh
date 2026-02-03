@@ -4,6 +4,7 @@ use iroh_base::TransportAddr;
 use n0_error::stack_error;
 use n0_future::time::Duration;
 use n0_watcher::{Watchable, Watcher};
+use quinn::WeakPathHandle;
 use quinn_proto::PathId;
 use smallvec::SmallVec;
 
@@ -42,11 +43,19 @@ pub struct PathInfoListIntoIter(smallvec::IntoIter<[PathInfo; 4]>);
 
 impl IntoIterator for PathInfoList {
     type Item = PathInfo;
-
     type IntoIter = PathInfoListIntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
         PathInfoListIntoIter(self.0.into_iter())
+    }
+}
+
+impl IntoIterator for PathWatcher {
+    type Item = PathInfo;
+    type IntoIter = PathInfoListIntoIter;
+
+    fn into_iter(mut self) -> Self::IntoIter {
+        self.get().into_iter()
     }
 }
 
@@ -149,7 +158,7 @@ impl PathData {
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(derive_more::Debug, Clone)]
 pub struct PathInfo {
-    handle: quinn::Path,
+    handle: WeakPathHandle,
     remote_addr: TransportAddr,
     is_selected: bool,
     is_closed: bool,
@@ -170,13 +179,12 @@ impl Eq for PathInfo {}
 
 impl PathInfo {
     fn new(data: &PathData, selected_path: Option<&transports::Addr>) -> Option<Self> {
-        let handle = data.handle.upgrade()?;
         let is_selected = selected_path
             .as_ref()
             .map(|addr| addr.is_transport_addr(&data.remote_addr))
             .unwrap_or(false);
         Some(PathInfo {
-            handle,
+            handle: data.handle.clone(),
             remote_addr: data.remote_addr.clone(),
             is_selected,
             is_closed: data.is_closed,
@@ -218,16 +226,16 @@ impl PathInfo {
 
     /// Returns stats for this transmission path.
     ///
-    /// Returns an error if the underlying connection has been dropped.
-    pub fn stats(&self) -> PathStats {
-        self.handle.stats()
+    /// Returns `None` if the underlying connection has been dropped.
+    pub fn stats(&self) -> Option<PathStats> {
+        self.handle.upgrade().map(|p| p.stats())
     }
 
     /// Current best estimate of this paths's latency (round-trip-time)
     ///
-    /// Returns an error if the underlying connection has been dropped.
-    pub fn rtt(&self) -> Duration {
-        self.stats().rtt
+    /// Returns `None` if the underlying connection has been dropped.
+    pub fn rtt(&self) -> Option<Duration> {
+        self.stats().map(|s| s.rtt)
     }
 }
 

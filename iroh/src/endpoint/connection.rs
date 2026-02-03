@@ -30,7 +30,6 @@ use futures_util::{FutureExt, future::Shared};
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
-use n0_watcher::Watcher;
 use pin_project::pin_project;
 use quinn::WeakConnectionHandle;
 use tracing::warn;
@@ -38,17 +37,14 @@ use tracing::warn;
 use crate::{
     Endpoint,
     endpoint::{
-        AfterHandshakeOutcome, PathInfo,
+        AfterHandshakeOutcome, PathWatcher,
         quic::{
             AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
             ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
             SendDatagramError, ServerConfig, Side, VarInt,
         },
     },
-    socket::{
-        RemoteStateActorStoppedError,
-        remote_map::{PathInfoList, PathWatchable},
-    },
+    socket::{RemoteStateActorStoppedError, remote_map::PathWatchable},
 };
 
 /// Future produced by [`Endpoint::accept`].
@@ -1018,7 +1014,7 @@ impl Connection<HandshakeCompleted> {
     ///
     /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
     /// [`PathInfo`]: crate::socket::PathInfo
-    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
+    pub fn paths(&self) -> PathWatcher {
         self.data.paths.watch()
     }
 
@@ -1155,8 +1151,9 @@ impl ConnectionInfo {
     ///
     /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
     /// [`PathInfo`]: crate::socket::PathInfo
-    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        self.data.paths.watch()
+    pub fn paths(&self) -> PathWatcher {
+        todo!()
+        // self.data.paths.watch()
     }
 
     /// Returns connection statistics.
@@ -1179,16 +1176,16 @@ impl ConnectionInfo {
         Some(fut.await)
     }
 
-    /// Returns the currently selected path.
-    ///
-    /// Returns `None` if the connection has been dropped already before this call or if no path is currently selected.
-    pub fn selected_path(&self) -> Option<PathInfo> {
-        if !self.is_alive() {
-            return None;
-        }
-        let paths = self.paths().get();
-        paths.into_iter().find(|paths| paths.is_selected())
-    }
+    // /// Returns the currently selected path.
+    // ///
+    // /// Returns `None` if the connection has been dropped already before this call or if no path is currently selected.
+    // pub fn selected_path(&self) -> Option<PathInfo> {
+    //     if !self.is_alive() {
+    //         return None;
+    //     }
+    //     let paths = self.paths().get();
+    //     paths.iter().find(|paths| paths.is_selected())
+    // }
 }
 
 #[cfg(test)]
@@ -1206,7 +1203,7 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, Incoming, PathInfo, PathInfoList, ZeroRttStatus},
+        endpoint::{ConnectOptions, Incoming, PathInfoList, ZeroRttStatus},
         test_utils::run_relay_server,
     };
 
@@ -1459,8 +1456,8 @@ mod tests {
                 let paths = stream.next().await.expect("paths stream ended");
                 info!(?paths, "paths");
                 if paths.len() >= 2
-                    && paths.iter().any(PathInfo::is_relay)
-                    && paths.iter().any(PathInfo::is_ip)
+                    && paths.iter().any(|p| p.is_relay())
+                    && paths.iter().any(|p| p.is_ip())
                 {
                     info!("break");
                     return;

@@ -111,7 +111,7 @@ impl Monitor {
                 Some(conn) = rx.recv() => {
                     let alpn = String::from_utf8_lossy(conn.alpn()).to_string();
                     let remote = conn.remote_id().fmt_short();
-                    let rtt = conn.paths().peek().iter().map(|p| p.stats().rtt).min();
+                    let rtt = conn.paths().peek().iter().map(|p| p.stats().expect("conn is not dropped").rtt).min();
                     info!(%remote, %alpn, ?rtt, "new connection");
                     tasks.spawn(async move {
                         match conn.closed().await {

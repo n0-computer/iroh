@@ -1684,7 +1684,7 @@ mod tests {
         if matches!(loss, ExpectedLoss::AlmostNone) {
             for info in conn.paths().get().iter() {
                 assert!(
-                    info.stats().lost_packets < 10,
+                    info.stats().unwrap().lost_packets < 10,
                     "[receiver] path {:?} should not loose many packets",
                     info.remote_addr()
                 );
@@ -1736,9 +1736,9 @@ mod tests {
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            for info in conn.paths().get() {
+            for info in conn.paths().get().iter() {
                 assert!(
-                    info.stats().lost_packets < 10,
+                    info.stats().unwrap().lost_packets < 10,
                     "[sender] path {:?} should not loose many packets",
                     info.remote_addr()
                 );
