@@ -44,7 +44,7 @@ use crate::{
             SendDatagramError, ServerConfig, Side, VarInt,
         },
     },
-    socket::{RemoteStateActorStoppedError, remote_map::PathWatchable},
+    socket::{PathInfo, RemoteStateActorStoppedError, remote_map::PathWatchable},
 };
 
 /// Future produced by [`Endpoint::accept`].
@@ -1152,8 +1152,7 @@ impl ConnectionInfo {
     /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
     /// [`PathInfo`]: crate::socket::PathInfo
     pub fn paths(&self) -> PathWatcher {
-        todo!()
-        // self.data.paths.watch()
+        self.data.paths.watch()
     }
 
     /// Returns connection statistics.
@@ -1176,16 +1175,10 @@ impl ConnectionInfo {
         Some(fut.await)
     }
 
-    // /// Returns the currently selected path.
-    // ///
-    // /// Returns `None` if the connection has been dropped already before this call or if no path is currently selected.
-    // pub fn selected_path(&self) -> Option<PathInfo> {
-    //     if !self.is_alive() {
-    //         return None;
-    //     }
-    //     let paths = self.paths().get();
-    //     paths.iter().find(|paths| paths.is_selected())
-    // }
+    /// Returns the currently selected path.
+    pub fn selected_path(&self) -> Option<PathInfo> {
+        self.paths().into_iter().find(|path| path.is_selected())
+    }
 }
 
 #[cfg(test)]
@@ -1204,6 +1197,7 @@ mod tests {
     use crate::{
         RelayMode,
         endpoint::{ConnectOptions, Incoming, PathInfoList, ZeroRttStatus},
+        socket::PathInfo,
         test_utils::run_relay_server,
     };
 
@@ -1456,8 +1450,8 @@ mod tests {
                 let paths = stream.next().await.expect("paths stream ended");
                 info!(?paths, "paths");
                 if paths.len() >= 2
-                    && paths.iter().any(|p| p.is_relay())
-                    && paths.iter().any(|p| p.is_ip())
+                    && paths.iter().any(PathInfo::is_relay)
+                    && paths.iter().any(PathInfo::is_ip)
                 {
                     info!("break");
                     return;

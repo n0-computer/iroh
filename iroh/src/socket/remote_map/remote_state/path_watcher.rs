@@ -1,7 +1,6 @@
 use std::task::Poll;
 
 use iroh_base::TransportAddr;
-use n0_error::stack_error;
 use n0_future::time::Duration;
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakPathHandle;
@@ -17,9 +16,6 @@ use crate::{endpoint::PathStats, socket::transports};
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct PathInfoList(SmallVec<[PathInfo; 4]>);
-
-#[derive(Debug, Clone, Eq, PartialEq, Default)]
-struct PathDataList(SmallVec<[PathData; 4]>);
 
 impl PathInfoList {
     /// Returns an iterator over the path infos.
@@ -38,6 +34,7 @@ impl PathInfoList {
     }
 }
 
+/// Iterator returned from [`PathInfoList::into_iter`].
 #[derive(Debug)]
 pub struct PathInfoListIntoIter(smallvec::IntoIter<[PathInfo; 4]>);
 
@@ -67,6 +64,8 @@ impl Iterator for PathInfoListIntoIter {
     }
 }
 
+type PathDataList = SmallVec<[PathData; 4]>;
+
 /// Watcher for the open paths and selected transmission path in a connection.
 #[derive(Clone, Debug)]
 pub struct PathWatcher {
@@ -78,11 +77,10 @@ pub struct PathWatcher {
 impl PathWatcher {
     fn update_current(&mut self) {
         let selected_path = self.selected_path.peek();
-        let data = self.paths.peek();
+        let data = self.paths.peek().clone();
         let current = data
-            .0
-            .iter()
-            .filter_map(|data| PathInfo::new(data, selected_path.as_ref()))
+            .into_iter()
+            .map(|data| PathInfo::new(data, selected_path.as_ref()))
             .collect();
         self.current = PathInfoList(current)
     }
@@ -123,31 +121,21 @@ impl Watcher for PathWatcher {
     }
 }
 
-#[derive(derive_more::Debug, Clone)]
+#[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 struct PathData {
-    handle: quinn::WeakPathHandle,
+    handle: WeakPathHandle,
     remote_addr: TransportAddr,
     is_closed: bool,
     is_abandoned: bool,
 }
 
-impl PartialEq for PathData {
-    fn eq(&self, other: &Self) -> bool {
-        self.handle.id() == other.handle.id()
-            && self.remote_addr == other.remote_addr
-            && self.is_closed == other.is_closed
-            && self.is_abandoned == other.is_abandoned
-    }
-}
-impl Eq for PathData {}
-
 impl PathData {
     fn new(conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) -> Option<Self> {
-        let handle = conn.path(id)?;
+        let path = conn.path(id)?;
         Some(PathData {
-            handle: handle.weak_handle(),
+            handle: path.weak_handle(),
             remote_addr,
-            is_closed: false,
+            is_closed: path.status().is_err(),
             is_abandoned: false,
         })
     }
@@ -156,50 +144,29 @@ impl PathData {
 /// Information about a network transmission path used by a [`Connection`].
 ///
 /// [`Connection`]: crate::endpoint::Connection
-#[derive(derive_more::Debug, Clone)]
+#[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct PathInfo {
-    handle: WeakPathHandle,
-    remote_addr: TransportAddr,
+    data: PathData,
     is_selected: bool,
-    is_closed: bool,
-    is_abandoned: bool,
 }
-
-impl PartialEq for PathInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.handle.id() == other.handle.id()
-            && self.remote_addr == other.remote_addr
-            && self.is_selected == other.is_selected
-            && self.is_closed == other.is_closed
-            && self.is_abandoned == other.is_abandoned
-    }
-}
-
-impl Eq for PathInfo {}
 
 impl PathInfo {
-    fn new(data: &PathData, selected_path: Option<&transports::Addr>) -> Option<Self> {
+    fn new(data: PathData, selected_path: Option<&transports::Addr>) -> Self {
         let is_selected = selected_path
             .as_ref()
             .map(|addr| addr.is_transport_addr(&data.remote_addr))
             .unwrap_or(false);
-        Some(PathInfo {
-            handle: data.handle.clone(),
-            remote_addr: data.remote_addr.clone(),
-            is_selected,
-            is_closed: data.is_closed,
-            is_abandoned: data.is_abandoned,
-        })
+        PathInfo { data, is_selected }
     }
 
     /// Returns the [`PathId`] of this path.
     pub fn id(&self) -> PathId {
-        self.handle.id()
+        self.data.handle.id()
     }
 
     /// The remote transport address used by this network path.
     pub fn remote_addr(&self) -> &TransportAddr {
-        &self.remote_addr
+        &self.data.remote_addr
     }
 
     /// Returns `true` if this path is currently the main transmission path for this [`Connection`].
@@ -211,7 +178,7 @@ impl PathInfo {
 
     /// Returns `true` if this path is closed.
     pub fn is_closed(&self) -> bool {
-        self.is_closed
+        self.data.is_closed
     }
 
     /// Whether this is an IP transport address.
@@ -228,7 +195,7 @@ impl PathInfo {
     ///
     /// Returns `None` if the underlying connection has been dropped.
     pub fn stats(&self) -> Option<PathStats> {
-        self.handle.upgrade().map(|p| p.stats())
+        self.data.handle.upgrade().map(|p| p.stats())
     }
 
     /// Current best estimate of this paths's latency (round-trip-time)
@@ -239,10 +206,9 @@ impl PathInfo {
     }
 }
 
-#[stack_error(derive, add_meta)]
-#[error("Connection is dropped")]
-pub struct ConnectionDroppedError;
-
+/// Watchable for the network paths in a connection.
+///
+/// This contains a watchable over a [`PathDataList`], and a watchable over the selected path for a remote.
 #[derive(Debug, Clone)]
 pub(crate) struct PathWatchable {
     paths: Watchable<PathDataList>,
@@ -258,8 +224,7 @@ impl PathWatchable {
     }
 
     pub(super) fn insert(&self, conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) {
-        let data = PathData::new(conn, id, remote_addr);
-        if let Some(data) = data {
+        if let Some(data) = PathData::new(conn, id, remote_addr) {
             self.update(move |list| list.push(data));
         }
     }
@@ -272,6 +237,10 @@ impl PathWatchable {
         });
     }
 
+    /// Mark a path as abandoned.
+    ///
+    /// If there are no watchers, the path will be removed from the watchable's value.
+    /// If there are watchers, the path will not be removed so that the watcher can still access the path's stats.
     pub(super) fn set_abandoned(&self, id: PathId) {
         self.update(|list| {
             if let Some(item) = list.iter_mut().find(|p| p.handle.id() == id) {
@@ -281,11 +250,16 @@ impl PathWatchable {
         });
     }
 
+    /// Update the watchable's value through a closure.
+    ///
+    /// After the update is performed, and if there are currently no watchers, data for abandoned paths
+    /// is removed from the path list.
     fn update(&self, f: impl FnOnce(&mut SmallVec<[PathData; 4]>)) {
         let mut value = self.paths.get();
-        f(&mut value.0);
+        f(&mut value);
         if !self.paths.has_watchers() {
-            value.0.retain(|p| !p.is_abandoned);
+            value.retain(|p| !p.is_abandoned);
+            value.shrink_to_fit();
         }
         self.paths.set(value).ok();
     }

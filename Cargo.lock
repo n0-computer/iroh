@@ -2152,8 +2152,8 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn"
-version = "0.16.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fpathstats#2f9dafca52a3f874e17fbccfc72516e7eda4b1d0"
+version = "0.16.1"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fpathstats#e52d84a2fb6c3b521e42034852fea0d27c74d2fb"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2172,8 +2172,8 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn-proto"
-version = "0.15.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fpathstats#2f9dafca52a3f874e17fbccfc72516e7eda4b1d0"
+version = "0.15.1"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fpathstats#e52d84a2fb6c3b521e42034852fea0d27c74d2fb"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2213,7 +2213,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.8.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fpathstats#2f9dafca52a3f874e17fbccfc72516e7eda4b1d0"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fpathstats#e52d84a2fb6c3b521e42034852fea0d27c74d2fb"
 dependencies = [
  "cfg_aliases",
  "libc",
