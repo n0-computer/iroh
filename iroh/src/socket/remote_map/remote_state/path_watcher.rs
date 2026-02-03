@@ -217,7 +217,7 @@ impl PathInfo {
 /// Most methods are `pub(super)`. The only method that may be called from [`Connection`] is
 /// [`PathWatchable::watch`].
 ///
-/// [`Connection`]: crate::Connection
+/// [`Connection`]: crate::endpoint::Connection
 #[derive(Debug, Clone)]
 pub(crate) struct PathWatchable {
     /// We keep the actual [`Watchable`] for the list of paths in an option.

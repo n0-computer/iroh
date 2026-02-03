@@ -77,7 +77,7 @@ pub(crate) mod remote_map;
 pub(crate) mod transports;
 
 use self::mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
-pub use self::{metrics::Metrics, remote_map::PathInfo};
+pub use self::metrics::Metrics;
 
 // TODO: Use this
 // /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
@@ -1051,7 +1051,7 @@ impl Handle {
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
     ///
-    /// Returns a future that resolves to [`PathsWatcher`].
+    /// Returns a future that resolves to [`PathWatchable`].
     ///
     /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
     pub(crate) fn register_connection(

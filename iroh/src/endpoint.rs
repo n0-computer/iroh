@@ -28,9 +28,10 @@ use url::Url;
 
 use self::hooks::EndpointHooksList;
 pub use super::socket::{
-    BindError, DirectAddr, DirectAddrType, PathInfo,
+    BindError, DirectAddr, DirectAddrType,
     remote_map::{
-        PathInfoList, PathWatcher, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage,
+        PathInfo, PathInfoList, PathWatcher, RemoteInfo, Source, TransportAddrInfo,
+        TransportAddrUsage,
     },
 };
 #[cfg(wasm_browser)]

@@ -37,14 +37,17 @@ use tracing::warn;
 use crate::{
     Endpoint,
     endpoint::{
-        AfterHandshakeOutcome, PathWatcher,
+        AfterHandshakeOutcome,
         quic::{
             AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
             ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
             SendDatagramError, ServerConfig, Side, VarInt,
         },
     },
-    socket::{PathInfo, RemoteStateActorStoppedError, remote_map::PathWatchable},
+    socket::{
+        RemoteStateActorStoppedError,
+        remote_map::{PathInfo, PathWatchable, PathWatcher},
+    },
 };
 
 /// Future produced by [`Endpoint::accept`].
@@ -1026,11 +1029,8 @@ impl Connection<HandshakeCompleted> {
     /// wait for [`Connection::closed`] and then call [`Connection::paths`] and directly
     /// iterate over the path stats while the [`Connection`] struct is still in scope.
     ///
-    /// [`PathInfo`]: crate::socket::PathInfo
-    /// [`PathInfoList`]: crate::socket::PathInfoList
-    /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
-    /// [`PathInfo::is_closed`]: crate::socket::PathInfo::is_closed
-    /// [`PathInfo::stats`]: crate::socket::PathInfo::stats
+    /// [`PathInfoList`]: crate::endpoint::PathInfoList
+    /// [`Watcher`]: crate::Watcher
     pub fn paths(&self) -> PathWatcher {
         self.data.paths.watch()
     }
@@ -1155,7 +1155,7 @@ impl ConnectionInfo {
         self.inner.upgrade().is_some()
     }
 
-    /// Returns a [`Watcher`] for the network paths of this connection.
+    /// Returns a watcher for the network paths of this connection.
     ///
     /// See [`Connection::paths`] for details.
     pub fn paths(&self) -> PathWatcher {
@@ -1203,8 +1203,7 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, Incoming, PathInfoList, ZeroRttStatus},
-        socket::PathInfo,
+        endpoint::{ConnectOptions, Incoming, PathInfo, PathInfoList, ZeroRttStatus},
         test_utils::run_relay_server,
     };
 
