@@ -77,7 +77,7 @@
 <a href=#77 id=77 data-nosnippet>77</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>transports;
 <a href=#78 id=78 data-nosnippet>78</a>
 <a href=#79 id=79 data-nosnippet>79</a><span class="kw">use </span><span class="self">self</span>::mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
-<a href=#80 id=80 data-nosnippet>80</a><span class="kw">pub use </span><span class="self">self</span>::{metrics::Metrics, remote_map::PathInfo};
+<a href=#80 id=80 data-nosnippet>80</a><span class="kw">pub use </span><span class="self">self</span>::metrics::Metrics;
 <a href=#81 id=81 data-nosnippet>81</a>
 <a href=#82 id=82 data-nosnippet>82</a><span class="comment">// TODO: Use this
 <a href=#83 id=83 data-nosnippet>83</a>// /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
@@ -1051,7 +1051,7 @@
 <a href=#1051 id=1051 data-nosnippet>1051</a>    /// The actor is responsible for holepunching and opening additional paths to this
 <a href=#1052 id=1052 data-nosnippet>1052</a>    /// connection.
 <a href=#1053 id=1053 data-nosnippet>1053</a>    ///
-<a href=#1054 id=1054 data-nosnippet>1054</a>    /// Returns a future that resolves to [`PathsWatcher`].
+<a href=#1054 id=1054 data-nosnippet>1054</a>    /// Returns a future that resolves to [`PathWatchable`].
 <a href=#1055 id=1055 data-nosnippet>1055</a>    ///
 <a href=#1056 id=1056 data-nosnippet>1056</a>    /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&amp;self`.
 <a href=#1057 id=1057 data-nosnippet>1057</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>register_connection(
@@ -1684,7 +1684,7 @@
 <a href=#1684 id=1684 data-nosnippet>1684</a>        <span class="kw">if </span><span class="macro">matches!</span>(loss, ExpectedLoss::AlmostNone) {
 <a href=#1685 id=1685 data-nosnippet>1685</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().get().iter() {
 <a href=#1686 id=1686 data-nosnippet>1686</a>                <span class="macro">assert!</span>(
-<a href=#1687 id=1687 data-nosnippet>1687</a>                    info.stats().lost_packets &lt; <span class="number">10</span>,
+<a href=#1687 id=1687 data-nosnippet>1687</a>                    info.stats().unwrap().lost_packets &lt; <span class="number">10</span>,
 <a href=#1688 id=1688 data-nosnippet>1688</a>                    <span class="string">"[receiver] path {:?} should not loose many packets"</span>,
 <a href=#1689 id=1689 data-nosnippet>1689</a>                    info.remote_addr()
 <a href=#1690 id=1690 data-nosnippet>1690</a>                );
@@ -1736,9 +1736,9 @@
 <a href=#1736 id=1736 data-nosnippet>1736</a>        <span class="kw">let </span>stats = conn.stats();
 <a href=#1737 id=1737 data-nosnippet>1737</a>        <span class="macro">info!</span>(<span class="string">"stats: {:#?}"</span>, stats);
 <a href=#1738 id=1738 data-nosnippet>1738</a>        <span class="kw">if </span><span class="macro">matches!</span>(loss, ExpectedLoss::AlmostNone) {
-<a href=#1739 id=1739 data-nosnippet>1739</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().get() {
+<a href=#1739 id=1739 data-nosnippet>1739</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().get().iter() {
 <a href=#1740 id=1740 data-nosnippet>1740</a>                <span class="macro">assert!</span>(
-<a href=#1741 id=1741 data-nosnippet>1741</a>                    info.stats().lost_packets &lt; <span class="number">10</span>,
+<a href=#1741 id=1741 data-nosnippet>1741</a>                    info.stats().unwrap().lost_packets &lt; <span class="number">10</span>,
 <a href=#1742 id=1742 data-nosnippet>1742</a>                    <span class="string">"[sender] path {:?} should not loose many packets"</span>,
 <a href=#1743 id=1743 data-nosnippet>1743</a>                    info.remote_addr()
 <a href=#1744 id=1744 data-nosnippet>1744</a>                );
