@@ -1323,6 +1323,12 @@ struct ConnectionState {
     has_been_direct: bool,
 }
 
+impl Drop for ConnectionState {
+    fn drop(&mut self) {
+        self.path_watchable.disconnect();
+    }
+}
+
 impl ConnectionState {
     /// Tracks a path for the connection.
     fn add_path(&mut self, remote: transports::Addr, path_id: PathId) {

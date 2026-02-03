@@ -1,4 +1,7 @@
-use std::task::Poll;
+use std::{
+    sync::{Arc, Mutex},
+    task::Poll,
+};
 
 use iroh_base::TransportAddr;
 use n0_future::time::Duration;
@@ -209,26 +212,47 @@ impl PathInfo {
 /// Watchable for the network paths in a connection.
 ///
 /// This contains a watchable over a [`PathDataList`], and a watchable over the selected path for a remote.
+///
+/// This struct is owned by the [`super::ConnectionState`] and also cloned into the [`Connection`].
+/// Most methods are `pub(super)`. The only method that may be called from [`Connection`] is
+/// [`PathWatchable::watch`].
+///
+/// [`Connection`]: crate::Connection
 #[derive(Debug, Clone)]
 pub(crate) struct PathWatchable {
-    paths: Watchable<PathDataList>,
+    /// We keep the actual [`Watchable`] for the list of paths in an option.
+    ///
+    /// Because the [`PathWatchable`] is cloned into the connection struct, we need to manually
+    /// drop the watchable once we drop the connection state so that subscribed watchers receive
+    /// the disconnected event once the connection is closed.
+    paths: Arc<Mutex<Option<Watchable<PathDataList>>>>,
+    /// Watchable for the currently selected path to a remote.
     selected_path: Watchable<Option<transports::Addr>>,
 }
 
 impl PathWatchable {
     pub(super) fn new(selected_path: Watchable<Option<transports::Addr>>) -> Self {
         Self {
-            paths: Watchable::new(Default::default()),
+            paths: Arc::new(Mutex::new(Some(Watchable::new(Default::default())))),
             selected_path,
         }
     }
 
+    /// Disconnects all watchers.
+    ///
+    /// All future calls are no-ops, and [`Self::watch`] returns an immediately-closed watcher afterwards.
+    pub(super) fn disconnect(&self) {
+        *self.paths.lock().expect("poisoned") = None;
+    }
+
+    /// Inserts a new path.
     pub(super) fn insert(&self, conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) {
         if let Some(data) = PathData::new(conn, id, remote_addr) {
             self.update(move |list| list.push(data));
         }
     }
 
+    /// Marks a path as closed.
     pub(super) fn set_closed(&self, id: PathId) {
         self.update(|list| {
             if let Some(item) = list.iter_mut().find(|p| p.handle.id() == id) {
@@ -237,7 +261,7 @@ impl PathWatchable {
         });
     }
 
-    /// Mark a path as abandoned.
+    /// Marks a path as abandoned.
     ///
     /// If there are no watchers, the path will be removed from the watchable's value.
     /// If there are watchers, the path will not be removed so that the watcher can still access the path's stats.
@@ -250,23 +274,34 @@ impl PathWatchable {
         });
     }
 
-    /// Update the watchable's value through a closure.
+    /// Updates the watchable's value through a closure.
     ///
     /// After the update is performed, and if there are currently no watchers, data for abandoned paths
     /// is removed from the path list.
     fn update(&self, f: impl FnOnce(&mut SmallVec<[PathData; 4]>)) {
-        let mut value = self.paths.get();
-        f(&mut value);
-        if !self.paths.has_watchers() {
-            value.retain(|p| !p.is_abandoned);
-            value.shrink_to_fit();
+        if let Some(paths) = self.paths.lock().expect("poisoned").as_ref() {
+            let mut value = paths.get();
+            f(&mut value);
+            if !paths.has_watchers() {
+                value.retain(|p| !p.is_abandoned);
+                value.shrink_to_fit();
+            }
+            paths.set(value).ok();
         }
-        self.paths.set(value).ok();
     }
 
+    /// Returns a [`PathWatcher`] for this watchable.
+    ///
+    /// If the connection state owning this watchable has closed this watchable (via [`Self::disconnect`]),
+    /// then this returns an immediately-closed [`PathWatcher`] with an empty list of paths.
     pub(crate) fn watch(&self) -> PathWatcher {
+        let paths = if let Some(paths) = self.paths.lock().expect("poisoned").as_ref() {
+            paths.watch()
+        } else {
+            Watchable::new(Default::default()).watch()
+        };
         let mut watcher = PathWatcher {
-            paths: self.paths.watch(),
+            paths,
             selected_path: self.selected_path.watch(),
             current: Default::default(),
         };
