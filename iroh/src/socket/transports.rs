@@ -352,13 +352,18 @@ impl Transports {
 
     #[cfg(not(wasm_browser))]
     pub(crate) fn max_transmit_segments(&self) -> NonZeroUsize {
-        let res = self.ip.iter().map(|t| t.max_transmit_segments()).min();
-        res.unwrap_or(NonZeroUsize::MIN)
+        let ip = self.ip.iter().map(|t| t.max_transmit_segments());
+        let custom = self.custom.iter().map(|t| t.max_transmit_segments());
+        ip.chain(custom).min().unwrap_or(NonZeroUsize::MIN)
     }
 
     #[cfg(wasm_browser)]
     pub(crate) fn max_transmit_segments(&self) -> NonZeroUsize {
-        NonZeroUsize::MIN
+        self.custom
+            .iter()
+            .map(|t| t.max_transmit_segments())
+            .min()
+            .unwrap_or(NonZeroUsize::MIN)
     }
 
     #[cfg(not(wasm_browser))]

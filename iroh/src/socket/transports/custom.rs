@@ -1,5 +1,6 @@
 use std::{
     io,
+    num::NonZeroUsize,
     sync::Arc,
     task::{Context, Poll},
 };
@@ -38,6 +39,15 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
         metas: &mut [quinn_udp::RecvMeta],
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>>;
+
+    /// Maximum number of segments to transmit (GSO).
+    ///
+    /// This controls how many datagrams Quinn will batch into a single transmit.
+    /// The default is 1 (no batching). Custom transports that support batching
+    /// can override this to allow more efficient transmission.
+    fn max_transmit_segments(&self) -> NonZeroUsize {
+        NonZeroUsize::MIN
+    }
 }
 
 /// Custom sender
