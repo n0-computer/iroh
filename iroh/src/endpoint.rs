@@ -28,9 +28,9 @@ use url::Url;
 
 /// Types for defining custom transports
 pub mod transports {
-    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias, TransportType};
     #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
+    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias, TransportType};
 }
 
 use self::hooks::EndpointHooksList;
@@ -42,6 +42,8 @@ pub use super::socket::{
 use crate::address_lookup::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
+#[cfg(feature = "unstable-custom-transports")]
+use crate::endpoint::transports::CustomTransport;
 use crate::{
     NetReport,
     address_lookup::{
@@ -53,8 +55,6 @@ use crate::{
     socket::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
-#[cfg(feature = "unstable-custom-transports")]
-use crate::endpoint::transports::CustomTransport;
 
 #[cfg(not(wasm_browser))]
 mod bind;
