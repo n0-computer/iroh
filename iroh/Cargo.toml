@@ -99,7 +99,7 @@ tokio = { version = "1", features = [
 wasm-bindgen-futures = "0.4"
 # we don't use time directly, but need to enable it because x509_parser uses these in browsers and we need to enable some feature flags for that to work
 time = { version = "0.3", features = ["wasm-bindgen"] }
-getrandom = { version = "0.3.2", features = ["wasm_js"] }
+getrandom = { version = "0.4.1", features = ["wasm_js"] }
 
 # target-common test/dev dependencies
 [dev-dependencies]
