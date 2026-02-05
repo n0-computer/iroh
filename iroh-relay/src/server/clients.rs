@@ -79,23 +79,22 @@ impl Clients {
             .0
             .clients
             .remove_if(&endpoint_id, |_, c| c.connection_id() == connection_id)
+            && let Some((_, sent_to)) = self.0.sent_to.remove(&endpoint_id)
         {
-            if let Some((_, sent_to)) = self.0.sent_to.remove(&endpoint_id) {
-                for key in sent_to {
-                    match client.try_send_peer_gone(key) {
-                        Ok(_) => {}
-                        Err(TrySendError::Full(_)) => {
-                            debug!(
-                                dst = %key.fmt_short(),
-                                "client too busy to receive packet, dropping packet"
-                            );
-                        }
-                        Err(TrySendError::Closed(_)) => {
-                            debug!(
-                                dst = %key.fmt_short(),
-                                "can no longer write to client, dropping packet"
-                            );
-                        }
+            for key in sent_to {
+                match client.try_send_peer_gone(key) {
+                    Ok(_) => {}
+                    Err(TrySendError::Full(_)) => {
+                        debug!(
+                            dst = %key.fmt_short(),
+                            "client too busy to receive packet, dropping packet"
+                        );
+                    }
+                    Err(TrySendError::Closed(_)) => {
+                        debug!(
+                            dst = %key.fmt_short(),
+                            "can no longer write to client, dropping packet"
+                        );
                     }
                 }
             }

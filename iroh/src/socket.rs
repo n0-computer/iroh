@@ -1369,17 +1369,16 @@ impl Actor {
                     }
                 });
 
-                if let Some(port) = port {
-                    if net_report_report
+                if let Some(port) = port
+                    && net_report_report
                         .mapping_varies_by_dest()
                         .unwrap_or_default()
-                    {
-                        let mut addr = global_v4;
-                        addr.set_port(port);
-                        addrs
-                            .entry(addr.into())
-                            .or_insert(DirectAddrType::Qad4LocalPort);
-                    }
+                {
+                    let mut addr = global_v4;
+                    addr.set_port(port);
+                    addrs
+                        .entry(addr.into())
+                        .or_insert(DirectAddrType::Qad4LocalPort);
                 }
             }
             if let Some(global_v6) = net_report_report.global_v6 {
@@ -1469,10 +1468,10 @@ impl Actor {
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
         if let Some(ref mut r) = report {
             self.sock.ipv6_reported.store(r.udp_v6, Ordering::Relaxed);
-            if r.preferred_relay.is_none() {
-                if let Some(my_relay) = self.sock.my_relay() {
-                    r.preferred_relay.replace(my_relay);
-                }
+            if r.preferred_relay.is_none()
+                && let Some(my_relay) = self.sock.my_relay()
+            {
+                r.preferred_relay.replace(my_relay);
             }
 
             // Notify all transports
