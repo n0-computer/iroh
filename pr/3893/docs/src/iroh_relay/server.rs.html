@@ -651,13 +651,13 @@
 <a href=#651 id=651 data-nosnippet>651</a>        !c.is_empty() &amp;&amp; c.len() &lt; <span class="number">64 </span>&amp;&amp; c.as_bytes().iter().all(|c| is_challenge_char(<span class="kw-2">*</span>c <span class="kw">as </span>char))
 <a href=#652 id=652 data-nosnippet>652</a>    };
 <a href=#653 id=653 data-nosnippet>653</a>
-<a href=#654 id=654 data-nosnippet>654</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER) {
-<a href=#655 id=655 data-nosnippet>655</a>        <span class="kw">if </span>check(challenge) {
-<a href=#656 id=656 data-nosnippet>656</a>            response = response.header(
-<a href=#657 id=657 data-nosnippet>657</a>                NO_CONTENT_RESPONSE_HEADER,
-<a href=#658 id=658 data-nosnippet>658</a>                <span class="macro">format!</span>(<span class="string">"response {}"</span>, challenge.to_str()<span class="question-mark">?</span>),
-<a href=#659 id=659 data-nosnippet>659</a>            );
-<a href=#660 id=660 data-nosnippet>660</a>        }
+<a href=#654 id=654 data-nosnippet>654</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER)
+<a href=#655 id=655 data-nosnippet>655</a>        &amp;&amp; check(challenge)
+<a href=#656 id=656 data-nosnippet>656</a>    {
+<a href=#657 id=657 data-nosnippet>657</a>        response = response.header(
+<a href=#658 id=658 data-nosnippet>658</a>            NO_CONTENT_RESPONSE_HEADER,
+<a href=#659 id=659 data-nosnippet>659</a>            <span class="macro">format!</span>(<span class="string">"response {}"</span>, challenge.to_str()<span class="question-mark">?</span>),
+<a href=#660 id=660 data-nosnippet>660</a>        );
 <a href=#661 id=661 data-nosnippet>661</a>    }
 <a href=#662 id=662 data-nosnippet>662</a>
 <a href=#663 id=663 data-nosnippet>663</a>    response
@@ -713,10 +713,10 @@
 <a href=#713 id=713 data-nosnippet>713</a>            biased;
 <a href=#714 id=714 data-nosnippet>714</a>
 <a href=#715 id=715 data-nosnippet>715</a>            <span class="prelude-val">Some</span>(res) = tasks.join_next() =&gt; {
-<a href=#716 id=716 data-nosnippet>716</a>                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
-<a href=#717 id=717 data-nosnippet>717</a>                    <span class="kw">if </span>err.is_panic() {
-<a href=#718 id=718 data-nosnippet>718</a>                        <span class="macro">panic!</span>(<span class="string">"task panicked: {err:#?}"</span>);
-<a href=#719 id=719 data-nosnippet>719</a>                    }
+<a href=#716 id=716 data-nosnippet>716</a>                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res
+<a href=#717 id=717 data-nosnippet>717</a>                    &amp;&amp; err.is_panic()
+<a href=#718 id=718 data-nosnippet>718</a>                {
+<a href=#719 id=719 data-nosnippet>719</a>                    <span class="macro">panic!</span>(<span class="string">"task panicked: {err:#?}"</span>);
 <a href=#720 id=720 data-nosnippet>720</a>                }
 <a href=#721 id=721 data-nosnippet>721</a>            }
 <a href=#722 id=722 data-nosnippet>722</a>

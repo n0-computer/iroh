@@ -251,7 +251,7 @@
 <a href=#251 id=251 data-nosnippet>251</a>
 <a href=#252 id=252 data-nosnippet>252</a>        </span><span class="kw">let </span>counter = <span class="self">self</span>.poll_recv_counter.wrapping_add(<span class="number">1</span>);
 <a href=#253 id=253 data-nosnippet>253</a>
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">if </span>counter % <span class="number">2 </span>== <span class="number">0 </span>{
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">if </span>counter.is_multiple_of(<span class="number">2</span>) {
 <a href=#255 id=255 data-nosnippet>255</a>            <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#256 id=256 data-nosnippet>256</a>            </span><span class="macro">poll_transport!</span>(<span class="kw-2">&amp;mut </span><span class="self">self</span>.ip);
 <a href=#257 id=257 data-nosnippet>257</a>
@@ -565,10 +565,10 @@
 <a href=#565 id=565 data-nosnippet>565</a>                    {
 <a href=#566 id=566 data-nosnippet>566</a>                        <span class="kw">return </span>Pin::new(sender).poll_send(cx, <span class="kw-2">*</span>dst_addr, src, transmit);
 <a href=#567 id=567 data-nosnippet>567</a>                    }
-<a href=#568 id=568 data-nosnippet>568</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(sender) = <span class="self">self</span>.ip.v4_default_mut() {
-<a href=#569 id=569 data-nosnippet>569</a>                        <span class="kw">if </span>sender.is_valid_default_addr(src, dst_addr) {
-<a href=#570 id=570 data-nosnippet>570</a>                            <span class="kw">return </span>Pin::new(sender).poll_send(cx, <span class="kw-2">*</span>dst_addr, src, transmit);
-<a href=#571 id=571 data-nosnippet>571</a>                        }
+<a href=#568 id=568 data-nosnippet>568</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(sender) = <span class="self">self</span>.ip.v4_default_mut()
+<a href=#569 id=569 data-nosnippet>569</a>                        &amp;&amp; sender.is_valid_default_addr(src, dst_addr)
+<a href=#570 id=570 data-nosnippet>570</a>                    {
+<a href=#571 id=571 data-nosnippet>571</a>                        <span class="kw">return </span>Pin::new(sender).poll_send(cx, <span class="kw-2">*</span>dst_addr, src, transmit);
 <a href=#572 id=572 data-nosnippet>572</a>                    }
 <a href=#573 id=573 data-nosnippet>573</a>                }
 <a href=#574 id=574 data-nosnippet>574</a>                SocketAddr::V6(<span class="kw">_</span>) =&gt; {
@@ -579,10 +579,10 @@
 <a href=#579 id=579 data-nosnippet>579</a>                    {
 <a href=#580 id=580 data-nosnippet>580</a>                        <span class="kw">return </span>Pin::new(sender).poll_send(cx, <span class="kw-2">*</span>dst_addr, src, transmit);
 <a href=#581 id=581 data-nosnippet>581</a>                    }
-<a href=#582 id=582 data-nosnippet>582</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(sender) = <span class="self">self</span>.ip.v6_default_mut() {
-<a href=#583 id=583 data-nosnippet>583</a>                        <span class="kw">if </span>sender.is_valid_default_addr(src, dst_addr) {
-<a href=#584 id=584 data-nosnippet>584</a>                            <span class="kw">return </span>Pin::new(sender).poll_send(cx, <span class="kw-2">*</span>dst_addr, src, transmit);
-<a href=#585 id=585 data-nosnippet>585</a>                        }
+<a href=#582 id=582 data-nosnippet>582</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(sender) = <span class="self">self</span>.ip.v6_default_mut()
+<a href=#583 id=583 data-nosnippet>583</a>                        &amp;&amp; sender.is_valid_default_addr(src, dst_addr)
+<a href=#584 id=584 data-nosnippet>584</a>                    {
+<a href=#585 id=585 data-nosnippet>585</a>                        <span class="kw">return </span>Pin::new(sender).poll_send(cx, <span class="kw-2">*</span>dst_addr, src, transmit);
 <a href=#586 id=586 data-nosnippet>586</a>                    }
 <a href=#587 id=587 data-nosnippet>587</a>                }
 <a href=#588 id=588 data-nosnippet>588</a>            },
