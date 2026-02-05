@@ -11,7 +11,7 @@
         dst: &amp;<a class="struct" href="../../../iroh_base/endpoint_addr/struct.CustomAddr.html" title="struct iroh_base::endpoint_addr::CustomAddr">CustomAddr</a>,
         transmit: &amp;<a class="struct" href="struct.Transmit.html" title="struct iroh::endpoint::transports::Transmit">Transmit</a>&lt;'_&gt;,
     ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/task/poll/enum.Poll.html" title="enum core::task::poll::Poll">Poll</a>&lt;<a class="type" href="https://doc.rust-lang.org/nightly/std/io/error/type.Result.html" title="type std::io::error::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;&gt;;
-}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Custom sender</p>
+}</code></pre><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>unstable-custom-transports</code></strong> only.</div></span><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Custom sender</p>
 <p>A sender provides a poll based interface to send packets to custom addresses.
 It can decide whether it wants to send to a given custom address type.</p>
 <p>This is not enforced at type level, but <a href="trait.CustomSender.html#tymethod.poll_send" title="method iroh::endpoint::transports::CustomSender::poll_send">CustomSender::poll_send</a> should

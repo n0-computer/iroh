@@ -5,7 +5,7 @@
     + 'static {
     // Required method
     fn <a href="#tymethod.bind" class="fn">bind</a>(&amp;self) -&gt; <a class="type" href="https://doc.rust-lang.org/nightly/std/io/error/type.Result.html" title="type std::io::error::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="trait.CustomEndpoint.html" title="trait iroh::endpoint::transports::CustomEndpoint">CustomEndpoint</a>&gt;&gt;;
-}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Custom transport.</p>
+}</code></pre><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>unstable-custom-transports</code></strong> only.</div></span><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Custom transport.</p>
 <p>Usually a transport will only deal with a single custom address type, but
 the signature allows for dealing with multiple custom address types.</p>
 <p>A transport is a factory for custom endpoints. Whenever an iroh endpoint is
