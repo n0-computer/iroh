@@ -19,7 +19,7 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
-bytes = "1.7"
+bytes = "1.11"
 derive_more = { version = "2.0.1", features = [
     "debug",
     "display",
