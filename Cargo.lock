@@ -2028,6 +2028,7 @@ dependencies = [
  "curve25519-dalek",
  "data-encoding",
  "derive_more",
+ "digest",
  "ed25519-dalek",
  "n0-error",
  "postcard",
