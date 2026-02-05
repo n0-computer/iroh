@@ -152,6 +152,8 @@ address-lookup-pkarr-dht = ["pkarr/dht"]
 qlog = ["quinn/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["quinn/fast-apple-datapath"]
+# Unstable: Custom transport API (may change without notice)
+unstable-custom-transports = []
 
 [package.metadata.docs.rs]
 all-features = true
@@ -171,7 +173,7 @@ required-features = []
 
 [[example]]
 name = "custom-transport"
-required-features = ["test-utils"]
+required-features = ["test-utils", "unstable-custom-transports"]
 
 [[example]]
 name = "listen-unreliable"

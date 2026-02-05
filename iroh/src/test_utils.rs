@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 pub use self::{dns_and_pkarr_servers::DnsPkarrServer, qlog::QlogFileGroup};
 
 mod qlog;
+#[cfg(feature = "unstable-custom-transports")]
 pub mod test_transport;
 
 /// A drop guard to clean up test infrastructure.

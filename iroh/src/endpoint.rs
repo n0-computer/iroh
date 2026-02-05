@@ -28,10 +28,9 @@ use url::Url;
 
 /// Types for defining custom transports
 pub mod transports {
-    pub use super::socket::transports::{
-        Addr, AddrKind, Transmit, TransportBias, TransportType,
-        custom::{CustomEndpoint, CustomSender, CustomTransport},
-    };
+    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias, TransportType};
+    #[cfg(feature = "unstable-custom-transports")]
+    pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
 }
 
 use self::hooks::EndpointHooksList;
@@ -49,11 +48,13 @@ use crate::{
         ConcurrentAddressLookup, DynIntoAddressLookup, Error as AddressLookupError,
         IntoAddressLookup, UserData,
     },
-    endpoint::{presets::Preset, transports::CustomTransport},
+    endpoint::presets::Preset,
     metrics::EndpointMetrics,
     socket::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
+#[cfg(feature = "unstable-custom-transports")]
+use crate::endpoint::transports::CustomTransport;
 
 #[cfg(not(wasm_browser))]
 mod bind;
@@ -642,6 +643,7 @@ impl Builder {
     }
 
     /// Adds a custom transport
+    #[cfg(feature = "unstable-custom-transports")]
     pub fn add_custom_transport(mut self, factory: Arc<dyn CustomTransport>) -> Self {
         self.transports.push(TransportConfig::Custom(factory));
         self

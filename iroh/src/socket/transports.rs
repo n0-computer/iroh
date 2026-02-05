@@ -94,6 +94,7 @@ pub(crate) enum TransportConfig {
         is_user_defined: bool,
     },
     /// Custom transport factory.
+    #[cfg_attr(not(feature = "unstable-custom-transports"), allow(dead_code))]
     Custom(Arc<dyn CustomTransport>),
 }
 
