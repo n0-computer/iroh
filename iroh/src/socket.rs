@@ -966,8 +966,8 @@ impl Handle {
         }
 
         // Waits for the EndpointDriver and all ConnectionDrivers to shut down
-        debug!("calling runtime shutdown");
-        self.runtime.shutdown().await;
+        // debug!("calling runtime shutdown");
+        // self.runtime.shutdown().await;
 
         self.sock.shutdown.closed.store(true, Ordering::SeqCst);
 
