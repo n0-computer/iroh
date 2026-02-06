@@ -28,9 +28,9 @@ use crate::{
     endpoint_info::{self, EndpointInfo, ParseError},
 };
 
-/// The n0 testing DNS endpoint origin, for production.
+/// The n0 address lookup DNS origin, for production.
 pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link";
-/// The n0 testing DNS endpoint origin, for testing.
+/// The n0 address lookup DNS origin, for testing.
 pub const N0_DNS_ENDPOINT_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 
 /// Percent of total delay to jitter. 20 means +/- 20% of delay.
@@ -58,9 +58,11 @@ pub trait Resolver: fmt::Debug + Send + Sync + 'static {
 }
 
 /// Boxed iterator alias.
+///
+/// Used in return types of [`Resolver`] methods.
 pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
-/// Potential errors related to dns.
+/// Potential errors related to DNS operations.
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
@@ -84,6 +86,7 @@ pub enum DnsError {
     InvalidResponse {},
 }
 
+/// Potential errors related to DNS endpoint address lookups.
 #[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources)]

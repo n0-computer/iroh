@@ -7,9 +7,7 @@
 //! See the [`endpoint_info`](crate::endpoint_info) module documentation for details on how
 //! iroh endpoint records are structured.
 
-pub use iroh_relay::dns::{
-    DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING,
-};
+pub use iroh_relay::dns::*;
 
 #[cfg(test)]
 pub(crate) mod tests {
