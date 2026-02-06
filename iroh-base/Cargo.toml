@@ -19,7 +19,7 @@ curve25519-dalek = { version = "=5.0.0-pre.1", features = ["serde", "rand_core",
 data-encoding = { version = "2.3.3", optional = true }
 # Pin digest to version compatible with curve25519-dalek 5.0.0-pre.1.
 digest = { version = "=0.11.0-rc.10", optional = true }
-# Pin sha2 to fix version incompatability
+# Pin sha2 to fix version incompatibility
 sha2 = { version = "=0.11.0-rc.2", optional = true }
 ed25519-dalek = { version = "=3.0.0-pre.1", features = ["serde", "rand_core", "zeroize"], optional = true }
 derive_more = { version = "2.0.1", features = ["display"], optional = true }
