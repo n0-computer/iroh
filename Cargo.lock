@@ -6734,4 +6734,4 @@ checksum = "02aae0f83f69aafc94776e879363e9771d7ecbffe2c7fbb6c14c5e00dfe88439"
 [[patch.unused]]
 name = "netwatch"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=fix-rebind#34b09674425642e8dead2fa94685ff50b9630e37"
+source = "git+https://github.com/n0-computer/net-tools?branch=fix-rebind#c0883a74a091e73811cbbbc4d23a141885f91a5d"
