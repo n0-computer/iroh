@@ -42,7 +42,7 @@ mod ping_tracker;
 
 mod key_cache;
 mod relay_map;
-pub(crate) use key_cache::KeyCache;
+pub use key_cache::KeyCache;
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
@@ -60,7 +60,11 @@ pub use self::{
 /// function.
 ///
 /// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
-pub(crate) trait ExportKeyingMaterial {
+/// Trait for extracting keying material from a TLS connection.
+///
+/// This is used during the relay handshake to establish a shared secret
+/// between the client and server for authentication purposes.
+pub trait ExportKeyingMaterial {
     /// If this type ends up wrapping a TLS stream, then this tries
     /// to export keying material by calling the underlying [`export_keying_material`]
     /// function.
@@ -73,7 +77,7 @@ pub(crate) trait ExportKeyingMaterial {
     /// [`export_keying_material`] documentation.
     ///
     /// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
-    /// [`MaybeTlsStream`]: crate::client::streams::MaybeTlsStream
+    /// [`MaybeTlsStream`]: crate::server::streams::MaybeTlsStream
     #[cfg_attr(wasm_browser, allow(unused))]
     fn export_keying_material<T: AsMut<[u8]>>(
         &self,
