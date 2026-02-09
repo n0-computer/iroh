@@ -2,7 +2,19 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.96.0](https://github.com/n0-computer/iroh/compare/v0.95.1..0.96.0) - 2026-01-28
+## [0.96.1](https://github.com/n0-computer/iroh/compare/v0.96.0..0.96.1) - 2026-02-06
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Use latest portmapper to avoid duplicate dependencies ([#3903](https://github.com/n0-computer/iroh/issues/3903)) - ([5126857](https://github.com/n0-computer/iroh/commit/5126857f2dedd0fc38ba4a7f24f40fbb9c6d29bb))
+
+### ⚙️ Miscellaneous Tasks
+
+- Pin digest to version compatible with curve25519-dalek 5.0.0-pre.1 ([#3908](https://github.com/n0-computer/iroh/issues/3908)) - ([68243ed](https://github.com/n0-computer/iroh/commit/68243eda3caedd4e64c231a6553f4d5dc6c37aad))
+- Update bytes and time address advisories - ([f2eb1e3](https://github.com/n0-computer/iroh/commit/f2eb1e3c54a625117e53b9224a40c07c0ee52b3c))
+- Specify minimum iroh-quinn and iroh-quinn-proto patch versions ([#3918](https://github.com/n0-computer/iroh/issues/3918)) - ([db429c7](https://github.com/n0-computer/iroh/commit/db429c71497d6da28d310ecdb541c49ce0fce7c4))
+
+## [0.96.0](https://github.com/n0-computer/iroh/compare/v0.95.1..v0.96.0) - 2026-01-28
 
 ### ⛰️  Features
 
@@ -126,6 +138,7 @@ All notable changes to iroh will be documented in this file.
 - Update to latest iroh-quinn ([#3795](https://github.com/n0-computer/iroh/issues/3795)) - ([b68c057](https://github.com/n0-computer/iroh/commit/b68c057344c36e9f42de7bf76cd114f885bae52e))
 - [**breaking**] Rename `Discovery` to `AddressLookup` ([#3853](https://github.com/n0-computer/iroh/issues/3853)) - ([6ad5ac4](https://github.com/n0-computer/iroh/commit/6ad5ac4238a3cc101791922167aab952d4c99c1e))
 - Release prep ([#3889](https://github.com/n0-computer/iroh/issues/3889)) - ([9130711](https://github.com/n0-computer/iroh/commit/91307115997027fd05bcea5bf5ada703c08f4492))
+- Release - ([d5299bf](https://github.com/n0-computer/iroh/commit/d5299bf29f352de5fd903255ba0c515cb03a0b75))
 
 ### Bench
 
