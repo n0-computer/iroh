@@ -370,17 +370,24 @@ pub(crate) async fn clientside(
 ///
 /// You must call [`SuccessfulAuthentication::authorize_if`] to finish the protocol.
 #[cfg(feature = "server")]
+/// Result of a successful authentication handshake.
+///
+/// This struct represents a client that has successfully authenticated itself to the relay
+/// server. The authorization must still be confirmed by calling [`Self::authorize_if`] to
+/// complete the protocol and notify the client of success or failure.
 #[derive(Debug)]
 #[must_use = "the protocol is not finished unless `authorize_if` is called"]
-pub(crate) struct SuccessfulAuthentication {
-    pub(crate) client_key: PublicKey,
-    pub(crate) mechanism: Mechanism,
+pub struct SuccessfulAuthentication {
+    /// The authenticated client's public key.
+    pub client_key: PublicKey,
+    /// The authentication mechanism that was used.
+    pub mechanism: Mechanism,
 }
 
 /// The mechanism that was used for authentication.
 #[cfg(feature = "server")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mechanism {
+pub enum Mechanism {
     /// Authentication was performed by verifying a signature of a challenge we sent
     SignedChallenge,
     /// Authentication was performed by verifying a signature of shared extracted TLS keying material
@@ -402,7 +409,7 @@ pub(crate) enum Mechanism {
 /// [`SuccessfulAuthentication::authorize_if`] to finish the whole authorization protocol
 /// (otherwise the client won't be notified about auth success or failure).
 #[cfg(feature = "server")]
-pub(crate) async fn serverside(
+pub async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     client_auth_header: Option<HeaderValue>,
 ) -> Result<SuccessfulAuthentication, Error> {
@@ -459,6 +466,19 @@ pub(crate) async fn serverside(
 
 #[cfg(feature = "server")]
 impl SuccessfulAuthentication {
+    /// Completes the authorization protocol by notifying the client of success or failure.
+    ///
+    /// After a client has been successfully authenticated via [`serverside`], the server must
+    /// decide whether to authorize the client (allow access) or deny it. This method sends
+    /// the authorization decision to the client and completes the handshake protocol.
+    ///
+    /// # Arguments
+    /// * `is_authorized` - Whether to grant access to the authenticated client
+    /// * `io` - The WebSocket stream to send the authorization response on
+    ///
+    /// # Returns
+    /// * `Ok(PublicKey)` - The client's public key if authorization was granted
+    /// * `Err(Error)` - If authorization was denied or communication failed
     pub async fn authorize_if(
         self,
         is_authorized: bool,
