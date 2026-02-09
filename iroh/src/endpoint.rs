@@ -1531,7 +1531,7 @@ mod tests {
     use n0_watcher::Watcher;
     use rand::SeedableRng;
     use tokio::sync::oneshot;
-    use tracing::{Instrument, debug_span, info, info_span, instrument};
+    use tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
 
     use super::Endpoint;
     use crate::{
@@ -3056,6 +3056,41 @@ mod tests {
         assert!(server_total_relay_tx < transfer_size as u64 / 2);
         assert!(server_total_relay_rx < transfer_size as u64 / 2);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn same_endpoint_id_relay() -> Result {
+        let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
+        let secret_key = SecretKey::generate(&mut rng);
+        let builder1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+            .secret_key(secret_key.clone())
+            .insecure_skip_relay_cert_verify(true);
+        let builder2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+            .secret_key(secret_key.clone())
+            .insecure_skip_relay_cert_verify(true);
+        let t1 = tokio::spawn(
+            async move {
+                let ep = builder1.bind().await.unwrap();
+                ep.online().await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                ep.close().await;
+            }
+            .instrument(error_span!("ep1")),
+        );
+        let t2 = tokio::spawn(
+            async move {
+                let ep = builder2.bind().await.unwrap();
+                ep.online().await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                ep.close().await;
+            }
+            .instrument(error_span!("ep2")),
+        );
+        t1.await.unwrap();
+        t2.await.unwrap();
         Ok(())
     }
 }

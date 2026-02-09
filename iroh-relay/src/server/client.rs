@@ -1,6 +1,10 @@
 //! The server-side representation of an ongoing client relaying connection.
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
@@ -8,16 +12,19 @@ use n0_future::{SinkExt, StreamExt};
 use rand::Rng;
 use time::{Date, OffsetDateTime};
 use tokio::{
-    sync::mpsc::{self, error::TrySendError},
+    sync::{
+        mpsc::{self, error::TrySendError},
+        oneshot,
+    },
     time::MissedTickBehavior,
 };
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument, debug, trace, warn};
 
 use crate::{
     PingTracker,
     protos::{
-        relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg},
+        relay::{ClientToRelayMsg, CloseReason, Datagrams, PING_INTERVAL, RelayToClientMsg},
         streams::BytesStreamSink,
     },
     server::{
@@ -62,7 +69,7 @@ pub struct Client {
     /// Connection identifier.
     connection_id: u64,
     /// Used to close the connection loop.
-    done: CancellationToken,
+    done_s: Mutex<Option<oneshot::Sender<Option<CloseReason>>>>,
     /// Actor handle.
     handle: AbortOnDropHandle<()>,
     /// Queue of packets intended for the client.
@@ -91,10 +98,9 @@ impl Client {
             channel_capacity,
         } = config;
 
-        let done = CancellationToken::new();
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
-
         let (peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
+        let (done_s, done_r) = oneshot::channel();
 
         let actor = Actor {
             stream,
@@ -110,8 +116,7 @@ impl Client {
         };
 
         // start io loop
-        let io_done = done.clone();
-        let handle = tokio::task::spawn(actor.run(io_done).instrument(tracing::info_span!(
+        let handle = tokio::task::spawn(actor.run(done_r).instrument(tracing::info_span!(
             "client-connection-actor",
             remote_endpoint = %endpoint_id.fmt_short(),
             connection_id = connection_id
@@ -121,7 +126,7 @@ impl Client {
             endpoint_id,
             connection_id,
             handle: AbortOnDropHandle::new(handle),
-            done,
+            done_s: Mutex::new(Some(done_s)),
             send_queue: send_queue_s,
             peer_gone: peer_gone_s,
         }
@@ -134,8 +139,8 @@ impl Client {
     /// Shutdown the reader and writer loops and closes the connection.
     ///
     /// Any shutdown errors will be logged as warnings.
-    pub(super) async fn shutdown(self) {
-        self.start_shutdown();
+    pub(super) async fn shutdown(self, reason: CloseReason) {
+        self.start_shutdown(Some(reason));
         if let Err(e) = self.handle.await {
             warn!(
                 remote_endpoint = %self.endpoint_id.fmt_short(),
@@ -145,8 +150,10 @@ impl Client {
     }
 
     /// Starts the process of shutdown.
-    pub(super) fn start_shutdown(&self) {
-        self.done.cancel();
+    pub(super) fn start_shutdown(&self, reason: Option<CloseReason>) {
+        if let Some(sender) = self.done_s.lock().expect("poisoned").take() {
+            sender.send(reason).ok();
+        }
     }
 
     pub(super) fn try_send_packet(
@@ -205,7 +212,7 @@ pub enum RunError {
         source: ForwardPacketError,
     },
     #[error("Flush")]
-    Flush {},
+    CloseFlush {},
     #[error(transparent)]
     HandleFrame {
         #[error(from)]
@@ -217,10 +224,8 @@ pub enum RunError {
     PacketSend { source: WriteFrameError },
     #[error("Server.endpoint_gone dropped")]
     EndpointGoneDrop {},
-    #[error("EndpointGone write frame failed")]
-    EndpointGoneWriteFrame { source: WriteFrameError },
-    #[error("Keep alive write frame failed")]
-    KeepAliveWriteFrame { source: WriteFrameError },
+    #[error("Writing frame failed")]
+    WriteFrame { source: WriteFrameError },
     #[error("Tick flush")]
     TickFlush {},
 }
@@ -268,7 +273,7 @@ impl<S> Actor<S>
 where
     S: BytesStreamSink,
 {
-    async fn run(mut self, done: CancellationToken) {
+    async fn run(mut self, done_r: oneshot::Receiver<Option<CloseReason>>) {
         // Note the accept and disconnects metrics must be in a pair.  Technically the
         // connection is accepted long before this in the HTTP server, but it is clearer to
         // handle the metric here.
@@ -276,7 +281,7 @@ where
         if self.client_counter.update(self.endpoint_id) {
             self.metrics.unique_client_keys.inc();
         }
-        match self.run_inner(done).await {
+        match self.run_inner(done_r).await {
             Err(e) => {
                 warn!("actor errored {e:#}, exiting");
             }
@@ -290,7 +295,10 @@ where
         self.metrics.disconnects.inc();
     }
 
-    async fn run_inner(&mut self, done: CancellationToken) -> Result<(), RunError> {
+    async fn run_inner(
+        &mut self,
+        mut done_r: oneshot::Receiver<Option<CloseReason>>,
+    ) -> Result<(), RunError> {
         // Add some jitter to ping pong interactions, to avoid all pings being sent at the same time
         let next_interval = || {
             let random_secs = rand::rng().random_range(1..=5);
@@ -306,10 +314,12 @@ where
             tokio::select! {
                 biased;
 
-                _ = done.cancelled() => {
-                    trace!("actor loop cancelled, exiting");
-                    // final flush
-                    self.stream.flush().await.map_err(|_| e!(RunError::Flush))?;
+                reason = &mut done_r => {
+                    trace!("actor loop cancelled, exiting (reason: {reason:?})");
+                    if let Ok(Some(reason)) = reason {
+                        self.write_frame(RelayToClientMsg::Close { reason }).await
+                            .map_err(|err| e!(RunError::WriteFrame, err))?;
+                    }
                     break;
                 }
                 maybe_frame = self.stream.next() => {
@@ -332,7 +342,7 @@ where
                     trace!("endpoint_id gone: {:?}", endpoint_id);
                     self.write_frame(RelayToClientMsg::EndpointGone(endpoint_id))
                         .await
-                        .map_err(|err| e!(RunError::EndpointGoneWriteFrame, err))?;
+                        .map_err(|err| e!(RunError::WriteFrame, err))?;
                 }
                 _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
@@ -345,7 +355,7 @@ where
                     let data = self.ping_tracker.new_ping();
                     self.write_frame(RelayToClientMsg::Ping(data))
                         .await
-                        .map_err(|err| e!(RunError::KeepAliveWriteFrame, err))?;
+                        .map_err(|err| e!(RunError::WriteFrame, err))?;
                 }
             }
 
@@ -354,6 +364,11 @@ where
                 .await
                 .map_err(|_| e!(RunError::TickFlush))?;
         }
+        // final flush and close
+        self.stream
+            .close()
+            .await
+            .map_err(|_| e!(RunError::CloseFlush))?;
         Ok(())
     }
 
@@ -538,6 +553,7 @@ mod tests {
 
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
+        let (done_s, done_r) = oneshot::channel();
 
         let endpoint_id = SecretKey::generate(&mut rng).public();
         let (io, io_rw) = tokio::io::duplex(1024);
@@ -559,9 +575,7 @@ mod tests {
             metrics,
         };
 
-        let done = CancellationToken::new();
-        let io_done = done.clone();
-        let handle = tokio::task::spawn(async move { actor.run(io_done).await });
+        let handle = tokio::task::spawn(async move { actor.run(done_r).await });
 
         // Write tests
         println!("-- write");
@@ -621,7 +635,7 @@ mod tests {
             .await
             .std_context("send")?;
 
-        done.cancel();
+        done_s.send(None).ok();
         handle.await.std_context("join")?;
         Ok(())
     }

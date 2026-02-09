@@ -93,6 +93,10 @@ pub enum RelayToClientMsg {
         /// until a problem exists.
         problem: String,
     },
+    #[deprecated(
+        since = "0.97.0",
+        note = "Frame is no longer used but kept in place for wire backwards compatibility"
+    )]
     /// A one-way message from relay to client, advertising that the relay is restarting.
     Restarting {
         /// An advisory duration that the client should wait before attempting to reconnect.
@@ -110,6 +114,37 @@ pub enum RelayToClientMsg {
     /// Reply to a [`ClientToRelayMsg::Ping`] from a client
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
+    ///
+    Close {
+        ///
+        reason: CloseReason,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+///
+pub enum CloseReason {
+    ///
+    Shutdown,
+    ///
+    SameEndpointIdConnected,
+}
+
+impl CloseReason {
+    fn to_u8(&self) -> u8 {
+        match self {
+            CloseReason::Shutdown => 0,
+            CloseReason::SameEndpointIdConnected => 1,
+        }
+    }
+
+    fn try_from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(CloseReason::Shutdown),
+            1 => Some(CloseReason::SameEndpointIdConnected),
+            _ => None,
+        }
+    }
 }
 
 /// Messages that clients send to relays.
@@ -258,7 +293,9 @@ impl RelayToClientMsg {
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
             Self::Health { .. } => FrameType::Health,
+            #[allow(deprecated)]
             Self::Restarting { .. } => FrameType::Restarting,
+            Self::Close { .. } => FrameType::Close,
         }
     }
 
@@ -293,12 +330,16 @@ impl RelayToClientMsg {
             Self::Health { problem } => {
                 dst.put(problem.as_ref());
             }
+            #[allow(deprecated)]
             Self::Restarting {
                 reconnect_in,
                 try_for,
             } => {
                 dst.put_u32(reconnect_in.as_millis() as u32);
                 dst.put_u32(try_for.as_millis() as u32);
+            }
+            Self::Close { reason } => {
+                dst.put_u8(reason.to_u8());
             }
         }
         dst
@@ -314,10 +355,12 @@ impl RelayToClientMsg {
             Self::EndpointGone(_) => 32,
             Self::Ping(_) | Self::Pong(_) => 8,
             Self::Health { problem } => problem.len(),
+            #[allow(deprecated)]
             Self::Restarting { .. } => {
                 4 // u32
                 + 4 // u32
             }
+            Self::Close { .. } => 1,
         };
         self.typ().encoded_len() + payload_len
     }
@@ -383,10 +426,18 @@ impl RelayToClientMsg {
                 );
                 let reconnect_in = Duration::from_millis(reconnect_in as u64);
                 let try_for = Duration::from_millis(try_for as u64);
+                #[allow(deprecated)]
                 Self::Restarting {
                     reconnect_in,
                     try_for,
                 }
+            }
+            FrameType::Close => {
+                ensure!(content.len() == 1, Error::InvalidFrame);
+                let value = content.get_u8();
+                let reason =
+                    CloseReason::try_from_u8(value).ok_or_else(|| e!(Error::InvalidFrame))?;
+                Self::Close { reason }
             }
             _ => {
                 return Err(e!(Error::InvalidFrameType { frame_type }));
@@ -592,6 +643,7 @@ mod tests {
                 48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
             ),
             (
+                #[allow(deprecated)]
                 RelayToClientMsg::Restarting {
                     reconnect_in: Duration::from_millis(10),
                     try_for: Duration::from_millis(20),
@@ -725,6 +777,7 @@ mod proptests {
             })
             .prop_map(|problem| RelayToClientMsg::Health { problem });
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
+            #[allow(deprecated)]
             RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),
                 try_for: Duration::from_millis(try_for.into()),
