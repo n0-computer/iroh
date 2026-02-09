@@ -224,8 +224,8 @@ impl RelayConnectionError {
     fn as_run_error(&self) -> Option<&RunError> {
         match self {
             RelayConnectionError::Dial { .. } => None,
-            RelayConnectionError::Handshake { source, .. } => Some(&source),
-            RelayConnectionError::Established { source, .. } => Some(&source),
+            RelayConnectionError::Handshake { source, .. } => Some(source),
+            RelayConnectionError::Established { source, .. } => Some(source),
         }
     }
 }

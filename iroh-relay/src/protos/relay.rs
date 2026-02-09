@@ -134,6 +134,7 @@ pub enum CloseReason {
 }
 
 impl CloseReason {
+    #[cfg(feature = "server")]
     fn to_u8(&self) -> u8 {
         match self {
             CloseReason::Shutdown => 0,
@@ -296,7 +297,7 @@ impl RelayToClientMsg {
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
             Self::Health { .. } => FrameType::Health,
-            #[allow(deprecated, reason = "kept for wire backwards compatibilty")]
+            #[allow(deprecated, reason = "kept for wire backwards compatibility")]
             Self::Restarting { .. } => FrameType::Restarting,
             Self::Close { .. } => FrameType::Close,
         }
@@ -333,7 +334,7 @@ impl RelayToClientMsg {
             Self::Health { problem } => {
                 dst.put(problem.as_ref());
             }
-            #[allow(deprecated, reason = "kept for wire backwards compatibilty")]
+            #[allow(deprecated, reason = "kept for wire backwards compatibility")]
             Self::Restarting {
                 reconnect_in,
                 try_for,
@@ -358,7 +359,7 @@ impl RelayToClientMsg {
             Self::EndpointGone(_) => 32,
             Self::Ping(_) | Self::Pong(_) => 8,
             Self::Health { problem } => problem.len(),
-            #[allow(deprecated, reason = "kept for wire backwards compatibilty")]
+            #[allow(deprecated, reason = "kept for wire backwards compatibility")]
             Self::Restarting { .. } => {
                 4 // u32
                 + 4 // u32
@@ -429,7 +430,7 @@ impl RelayToClientMsg {
                 );
                 let reconnect_in = Duration::from_millis(reconnect_in as u64);
                 let try_for = Duration::from_millis(try_for as u64);
-                #[allow(deprecated, reason = "kept for wire backwards compatibilty")]
+                #[allow(deprecated, reason = "kept for wire backwards compatibility")]
                 Self::Restarting {
                     reconnect_in,
                     try_for,
