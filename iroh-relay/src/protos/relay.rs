@@ -114,19 +114,22 @@ pub enum RelayToClientMsg {
     /// Reply to a [`ClientToRelayMsg::Ping`] from a client
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
-    ///
+    /// Sent from the server before it closes the connection.
     Close {
-        ///
+        /// Contains the reason why the server chose to close the connection.
         reason: CloseReason,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-///
+/// Reason why a relay server closes a connection to a client.
 pub enum CloseReason {
-    ///
+    /// The relay server is shutting down.
     Shutdown,
+    /// Another endpoint with the same endpoint id connected to the relay server.
     ///
+    /// When a new connection comes in from an endpoint id for which the server already has a connection,
+    /// the previous connection is terminated with this error.
     SameEndpointIdConnected,
 }
 
@@ -293,7 +296,7 @@ impl RelayToClientMsg {
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
             Self::Health { .. } => FrameType::Health,
-            #[allow(deprecated)]
+            #[allow(deprecated, reason = "kept for wire backwards compatibilty")]
             Self::Restarting { .. } => FrameType::Restarting,
             Self::Close { .. } => FrameType::Close,
         }
@@ -330,7 +333,7 @@ impl RelayToClientMsg {
             Self::Health { problem } => {
                 dst.put(problem.as_ref());
             }
-            #[allow(deprecated)]
+            #[allow(deprecated, reason = "kept for wire backwards compatibilty")]
             Self::Restarting {
                 reconnect_in,
                 try_for,
@@ -355,7 +358,7 @@ impl RelayToClientMsg {
             Self::EndpointGone(_) => 32,
             Self::Ping(_) | Self::Pong(_) => 8,
             Self::Health { problem } => problem.len(),
-            #[allow(deprecated)]
+            #[allow(deprecated, reason = "kept for wire backwards compatibilty")]
             Self::Restarting { .. } => {
                 4 // u32
                 + 4 // u32
@@ -426,7 +429,7 @@ impl RelayToClientMsg {
                 );
                 let reconnect_in = Duration::from_millis(reconnect_in as u64);
                 let try_for = Duration::from_millis(try_for as u64);
-                #[allow(deprecated)]
+                #[allow(deprecated, reason = "kept for wire backwards compatibilty")]
                 Self::Restarting {
                     reconnect_in,
                     try_for,
