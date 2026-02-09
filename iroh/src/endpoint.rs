@@ -3059,38 +3059,53 @@ mod tests {
         Ok(())
     }
 
+    /// Tests that correct logs are emitted when connecting two endpoints with same secret keys to a relay.
     #[tokio::test]
     #[traced_test]
     async fn same_endpoint_id_relay() -> Result {
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
         let secret_key = SecretKey::generate(&mut rng);
-        let builder1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+
+        // bind ep1 and wait until connected to relay.
+        let ep1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(secret_key.clone())
-            .insecure_skip_relay_cert_verify(true);
-        let builder2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+            .insecure_skip_relay_cert_verify(true)
+            .bind()
+            .instrument(error_span!("ep1"))
+            .await?;
+        ep1.online().await;
+
+        // now start second endpoint with same secret key
+        let ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
             .secret_key(secret_key.clone())
-            .insecure_skip_relay_cert_verify(true);
-        let t1 = tokio::spawn(
-            async move {
-                let ep = builder1.bind().await.unwrap();
-                ep.online().await;
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                ep.close().await;
+            .insecure_skip_relay_cert_verify(true)
+            .bind()
+            .instrument(error_span!("ep2"))
+            .await?;
+        ep2.online().await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // We assert that we get the error log once for endpoint 1, and not at all for endpoint 2.
+        logs_assert(|logs| {
+            let expected_line = |line: &str| {
+                line.contains("ERROR") && line.contains("Relay connection was closed because another endpoint with the same secret key connected to it")
+            };
+            let count_line_ep1 = logs
+                .iter()
+                .filter(|line| line.contains(":ep1:") && expected_line(line))
+                .count();
+            let count_line_ep2 = logs
+                .iter()
+                .filter(|line| line.contains(":ep2:") && expected_line(line))
+                .count();
+            if count_line_ep1 == 1 && count_line_ep2 == 0 {
+                Ok(())
+            } else {
+                Err("Logs don't match expectations".to_string())
             }
-            .instrument(error_span!("ep1")),
-        );
-        let t2 = tokio::spawn(
-            async move {
-                let ep = builder2.bind().await.unwrap();
-                ep.online().await;
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                ep.close().await;
-            }
-            .instrument(error_span!("ep2")),
-        );
-        t1.await.unwrap();
-        t2.await.unwrap();
+        });
+        tokio::join!(ep1.close(), ep2.close());
         Ok(())
     }
 }
