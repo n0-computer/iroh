@@ -102,7 +102,7 @@ impl PathWatcher {
 
         if let Some(selected_path) = self.current_selected_path.as_ref() {
             for p in self.current_paths.0.iter_mut() {
-                p.is_selected = selected_path.is_transport_addr(p.remote_addr());
+                p.is_selected = selected_path == p.remote_addr();
             }
         }
     }
