@@ -294,8 +294,6 @@ where
         self.clients
             .unregister(self.connection_id, self.endpoint_id);
         self.metrics.disconnects.inc();
-        // Fully close the stream after we unregistered.
-        self.stream.close().await.ok();
     }
 
     async fn run_inner(
@@ -323,6 +321,10 @@ where
                         self.write_frame(RelayToClientMsg::Close { reason }).await
                             .map_err(|err| e!(RunError::WriteFrame, err))?;
                     }
+                    self.stream
+                        .flush()
+                        .await
+                        .map_err(|_| e!(RunError::CloseFlush))?;
                     break;
                 }
                 maybe_frame = self.stream.next() => {
