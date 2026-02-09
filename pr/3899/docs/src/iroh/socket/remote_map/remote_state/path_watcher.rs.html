@@ -102,7 +102,7 @@
 <a href=#102 id=102 data-nosnippet>102</a>
 <a href=#103 id=103 data-nosnippet>103</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(selected_path) = <span class="self">self</span>.current_selected_path.as_ref() {
 <a href=#104 id=104 data-nosnippet>104</a>            <span class="kw">for </span>p <span class="kw">in </span><span class="self">self</span>.current_paths.<span class="number">0</span>.iter_mut() {
-<a href=#105 id=105 data-nosnippet>105</a>                p.is_selected = selected_path.is_transport_addr(p.remote_addr());
+<a href=#105 id=105 data-nosnippet>105</a>                p.is_selected = selected_path == p.remote_addr();
 <a href=#106 id=106 data-nosnippet>106</a>            }
 <a href=#107 id=107 data-nosnippet>107</a>        }
 <a href=#108 id=108 data-nosnippet>108</a>    }

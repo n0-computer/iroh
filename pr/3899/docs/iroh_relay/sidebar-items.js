@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["client","defaults","dns","endpoint_info","http","protos","quic","server"],"struct":["PingTracker","RelayConfig","RelayMap","RelayQuicConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["KeyCache"],"mod":["client","defaults","dns","endpoint_info","http","protos","quic","server"],"struct":["PingTracker","RelayConfig","RelayMap","RelayQuicConfig"],"trait":["ExportKeyingMaterial"]};

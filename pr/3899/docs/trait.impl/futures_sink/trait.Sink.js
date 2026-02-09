@@ -1,9 +1,9 @@
 (function() {
-    var implementors = Object.fromEntries([["iroh_relay",[["impl Sink&lt;<a class=\"enum\" href=\"iroh_relay/protos/relay/enum.ClientToRelayMsg.html\" title=\"enum iroh_relay::protos::relay::ClientToRelayMsg\">ClientToRelayMsg</a>&gt; for <a class=\"struct\" href=\"iroh_relay/client/struct.Client.html\" title=\"struct iroh_relay::client::Client\">Client</a>"],["impl Sink&lt;<a class=\"enum\" href=\"iroh_relay/protos/relay/enum.ClientToRelayMsg.html\" title=\"enum iroh_relay::protos::relay::ClientToRelayMsg\">ClientToRelayMsg</a>&gt; for <a class=\"struct\" href=\"iroh_relay/client/struct.ClientSink.html\" title=\"struct iroh_relay::client::ClientSink\">ClientSink</a>"]]]]);
+    var implementors = Object.fromEntries([["iroh_relay",[["impl Sink&lt;<a class=\"enum\" href=\"iroh_relay/protos/relay/enum.ClientToRelayMsg.html\" title=\"enum iroh_relay::protos::relay::ClientToRelayMsg\">ClientToRelayMsg</a>&gt; for <a class=\"struct\" href=\"iroh_relay/client/struct.Client.html\" title=\"struct iroh_relay::client::Client\">Client</a>"],["impl Sink&lt;<a class=\"enum\" href=\"iroh_relay/protos/relay/enum.ClientToRelayMsg.html\" title=\"enum iroh_relay::protos::relay::ClientToRelayMsg\">ClientToRelayMsg</a>&gt; for <a class=\"struct\" href=\"iroh_relay/client/struct.ClientSink.html\" title=\"struct iroh_relay::client::ClientSink\">ClientSink</a>"],["impl&lt;S&gt; Sink&lt;<a class=\"enum\" href=\"iroh_relay/protos/relay/enum.RelayToClientMsg.html\" title=\"enum iroh_relay::protos::relay::RelayToClientMsg\">RelayToClientMsg</a>&gt; for <a class=\"struct\" href=\"iroh_relay/server/streams/struct.RelayedStream.html\" title=\"struct iroh_relay::server::streams::RelayedStream\">RelayedStream</a>&lt;S&gt;<div class=\"where\">where\n    S: Sink&lt;Bytes, Error = <a class=\"type\" href=\"iroh_relay/protos/streams/type.StreamError.html\" title=\"type iroh_relay::protos::streams::StreamError\">StreamError</a>&gt; + <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/marker/trait.Unpin.html\" title=\"trait core::marker::Unpin\">Unpin</a>,</div>"]]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
         window.pending_implementors = implementors;
     }
 })()
-//{"start":57,"fragment_lengths":[636]}
+//{"start":57,"fragment_lengths":[1350]}
