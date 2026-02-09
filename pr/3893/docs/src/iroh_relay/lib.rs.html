@@ -42,7 +42,7 @@
 <a href=#42 id=42 data-nosnippet>42</a>
 <a href=#43 id=43 data-nosnippet>43</a><span class="kw">mod </span>key_cache;
 <a href=#44 id=44 data-nosnippet>44</a><span class="kw">mod </span>relay_map;
-<a href=#45 id=45 data-nosnippet>45</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>key_cache::KeyCache;
+<a href=#45 id=45 data-nosnippet>45</a><span class="kw">pub use </span>key_cache::KeyCache;
 <a href=#46 id=46 data-nosnippet>46</a>
 <a href=#47 id=47 data-nosnippet>47</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#48 id=48 data-nosnippet>48</a></span><span class="kw">pub mod </span>dns;
@@ -60,25 +60,29 @@
 <a href=#60 id=60 data-nosnippet>60</a>/// function.
 <a href=#61 id=61 data-nosnippet>61</a>///
 <a href=#62 id=62 data-nosnippet>62</a>/// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
-<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>ExportKeyingMaterial {
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// If this type ends up wrapping a TLS stream, then this tries
-<a href=#65 id=65 data-nosnippet>65</a>    /// to export keying material by calling the underlying [`export_keying_material`]
-<a href=#66 id=66 data-nosnippet>66</a>    /// function.
-<a href=#67 id=67 data-nosnippet>67</a>    ///
-<a href=#68 id=68 data-nosnippet>68</a>    /// However unlike that function, this returns `Option`, in case the
-<a href=#69 id=69 data-nosnippet>69</a>    /// underlying stream might not be wrapping TLS, e.g. as in the case of
-<a href=#70 id=70 data-nosnippet>70</a>    /// [`MaybeTlsStream`].
+<a href=#63 id=63 data-nosnippet>63</a>/// Trait for extracting keying material from a TLS connection.
+<a href=#64 id=64 data-nosnippet>64</a>///
+<a href=#65 id=65 data-nosnippet>65</a>/// This is used during the relay handshake to establish a shared secret
+<a href=#66 id=66 data-nosnippet>66</a>/// between the client and server for authentication purposes.
+<a href=#67 id=67 data-nosnippet>67</a></span><span class="kw">pub trait </span>ExportKeyingMaterial {
+<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// If this type ends up wrapping a TLS stream, then this tries
+<a href=#69 id=69 data-nosnippet>69</a>    /// to export keying material by calling the underlying [`export_keying_material`]
+<a href=#70 id=70 data-nosnippet>70</a>    /// function.
 <a href=#71 id=71 data-nosnippet>71</a>    ///
-<a href=#72 id=72 data-nosnippet>72</a>    /// For more information on what this function does, see the
-<a href=#73 id=73 data-nosnippet>73</a>    /// [`export_keying_material`] documentation.
-<a href=#74 id=74 data-nosnippet>74</a>    ///
-<a href=#75 id=75 data-nosnippet>75</a>    /// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
-<a href=#76 id=76 data-nosnippet>76</a>    /// [`MaybeTlsStream`]: crate::client::streams::MaybeTlsStream
-<a href=#77 id=77 data-nosnippet>77</a>    </span><span class="attr">#[cfg_attr(wasm_browser, allow(unused))]
-<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="kw">fn </span>export_keying_material&lt;T: AsMut&lt;[u8]&gt;&gt;(
-<a href=#79 id=79 data-nosnippet>79</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#80 id=80 data-nosnippet>80</a>        output: T,
-<a href=#81 id=81 data-nosnippet>81</a>        label: <span class="kw-2">&amp;</span>[u8],
-<a href=#82 id=82 data-nosnippet>82</a>        context: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[u8]&gt;,
-<a href=#83 id=83 data-nosnippet>83</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt;;
-<a href=#84 id=84 data-nosnippet>84</a>}</code></pre></div></section></main></body></html>
+<a href=#72 id=72 data-nosnippet>72</a>    /// However unlike that function, this returns `Option`, in case the
+<a href=#73 id=73 data-nosnippet>73</a>    /// underlying stream might not be wrapping TLS, e.g. as in the case of
+<a href=#74 id=74 data-nosnippet>74</a>    /// [`MaybeTlsStream`].
+<a href=#75 id=75 data-nosnippet>75</a>    ///
+<a href=#76 id=76 data-nosnippet>76</a>    /// For more information on what this function does, see the
+<a href=#77 id=77 data-nosnippet>77</a>    /// [`export_keying_material`] documentation.
+<a href=#78 id=78 data-nosnippet>78</a>    ///
+<a href=#79 id=79 data-nosnippet>79</a>    /// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
+<a href=#80 id=80 data-nosnippet>80</a>    /// [`MaybeTlsStream`]: crate::server::streams::MaybeTlsStream
+<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="attr">#[cfg_attr(wasm_browser, allow(unused))]
+<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="kw">fn </span>export_keying_material&lt;T: AsMut&lt;[u8]&gt;&gt;(
+<a href=#83 id=83 data-nosnippet>83</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#84 id=84 data-nosnippet>84</a>        output: T,
+<a href=#85 id=85 data-nosnippet>85</a>        label: <span class="kw-2">&amp;</span>[u8],
+<a href=#86 id=86 data-nosnippet>86</a>        context: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[u8]&gt;,
+<a href=#87 id=87 data-nosnippet>87</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt;;
+<a href=#88 id=88 data-nosnippet>88</a>}</code></pre></div></section></main></body></html>
