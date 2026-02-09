@@ -752,9 +752,9 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "crypto-common"
-version = "0.2.0-rc.13"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7722afd27468475c9b6063dc03a57ef2ca833816981619f8ebe64d38d207eef"
+checksum = "211f05e03c7d03754740fd9e585de910a095d6b99f8bcfffdef8319fa02a8331"
 dependencies = [
  "hybrid-array",
 ]
@@ -980,9 +980,9 @@ checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
 
 [[package]]
 name = "digest"
-version = "0.11.0-rc.9"
+version = "0.11.0-rc.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bff8de092798697546237a3a701e4174fe021579faec9b854379af9bf1e31962"
+checksum = "afa94b64bfc6549e6e4b5a3216f22593224174083da7a90db47e951c4fb31725"
 dependencies = [
  "block-buffer",
  "const-oid",
@@ -1670,9 +1670,9 @@ dependencies = [
 
 [[package]]
 name = "hybrid-array"
-version = "0.4.6"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b41fb3dc24fe72c2e3a4685eed55917c2fb228851257f4a8f2d985da9443c3e5"
+checksum = "e1b229d73f5803b562cc26e4da0396c8610a4ee209f4fac8fa4f8d709166dc45"
 dependencies = [
  "typenum",
 ]
@@ -1957,7 +1957,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.96.0"
+version = "0.96.1"
 dependencies = [
  "axum",
  "backon",
@@ -2023,11 +2023,12 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.96.0"
+version = "0.96.1"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
  "derive_more",
+ "digest",
  "ed25519-dalek",
  "n0-error",
  "postcard",
@@ -2038,6 +2039,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
+ "sha2",
  "url",
  "zeroize",
  "zeroize_derive",
@@ -2045,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bench"
-version = "0.96.0"
+version = "0.96.1"
 dependencies = [
  "bytes",
  "clap",
@@ -2065,7 +2067,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.96.0"
+version = "0.96.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2153,7 +2155,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.16.1"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fpathstats#3475d3be1b3cf0b196c9c0becfcaaa5ccd6996ac"
+source = "git+https://github.com/n0-computer/quinn?branch=main#b068cda8edd18e2bf412b0ef3b66b0093093d2e9"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2173,7 +2175,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.15.1"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fpathstats#3475d3be1b3cf0b196c9c0becfcaaa5ccd6996ac"
+source = "git+https://github.com/n0-computer/quinn?branch=main#b068cda8edd18e2bf412b0ef3b66b0093093d2e9"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2200,7 +2202,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.8.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fpathstats#3475d3be1b3cf0b196c9c0becfcaaa5ccd6996ac"
+source = "git+https://github.com/n0-computer/quinn?branch=main#b068cda8edd18e2bf412b0ef3b66b0093093d2e9"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -2211,7 +2213,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.96.0"
+version = "0.96.1"
 dependencies = [
  "ahash",
  "blake3",
@@ -3983,9 +3985,9 @@ checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"
-version = "0.11.0-rc.4"
+version = "0.11.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7535f94fa3339fe9e5e9be6260a909e62af97f6e14b32345ccf79b92b8b81233"
+checksum = "d1e3878ab0f98e35b2df35fe53201d088299b41a6bb63e3e34dada2ac4abd924"
 dependencies = [
  "cfg-if",
  "cpufeatures",
