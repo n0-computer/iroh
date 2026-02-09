@@ -144,3 +144,29 @@ pub(crate) mod timeouts {
     /// Maximum duration to wait for a net_report.
     pub(crate) const NET_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::time::Duration;
+
+    use n0_tracing_test::traced_test;
+
+    use super::staging::NA_EAST_RELAY_HOSTNAME;
+    use crate::dns::DnsResolver;
+
+    const TIMEOUT: Duration = Duration::from_secs(5);
+    const STAGGERING_DELAYS: &[u64] = &[200, 300];
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_dns_lookup_ipv4_ipv6() {
+        let resolver = DnsResolver::new();
+        let res: Vec<_> = resolver
+            .lookup_ipv4_ipv6_staggered(NA_EAST_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
+            .await
+            .unwrap()
+            .collect();
+        assert!(!res.is_empty());
+        dbg!(res);
+    }
+}
