@@ -143,4 +143,30 @@
 <a href=#143 id=143 data-nosnippet>143</a>
 <a href=#144 id=144 data-nosnippet>144</a>    </span><span class="doccomment">/// Maximum duration to wait for a net_report.
 <a href=#145 id=145 data-nosnippet>145</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>NET_REPORT_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
-<a href=#146 id=146 data-nosnippet>146</a>}</code></pre></div></section></main></body></html>
+<a href=#146 id=146 data-nosnippet>146</a>}
+<a href=#147 id=147 data-nosnippet>147</a>
+<a href=#148 id=148 data-nosnippet>148</a><span class="attr">#[cfg(test)]
+<a href=#149 id=149 data-nosnippet>149</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tests {
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">use </span>std::time::Duration;
+<a href=#151 id=151 data-nosnippet>151</a>
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
+<a href=#153 id=153 data-nosnippet>153</a>
+<a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">use </span><span class="kw">super</span>::staging::NA_EAST_RELAY_HOSTNAME;
+<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
+<a href=#156 id=156 data-nosnippet>156</a>
+<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">const </span>TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
+<a href=#158 id=158 data-nosnippet>158</a>    <span class="kw">const </span>STAGGERING_DELAYS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
+<a href=#159 id=159 data-nosnippet>159</a>
+<a href=#160 id=160 data-nosnippet>160</a>    <span class="attr">#[tokio::test]
+<a href=#161 id=161 data-nosnippet>161</a>    #[traced_test]
+<a href=#162 id=162 data-nosnippet>162</a>    </span><span class="kw">async fn </span>test_dns_lookup_ipv4_ipv6() {
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="kw">let </span>resolver = DnsResolver::new();
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span>res: Vec&lt;<span class="kw">_</span>&gt; = resolver
+<a href=#165 id=165 data-nosnippet>165</a>            .lookup_ipv4_ipv6_staggered(NA_EAST_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
+<a href=#166 id=166 data-nosnippet>166</a>            .<span class="kw">await
+<a href=#167 id=167 data-nosnippet>167</a>            </span>.unwrap()
+<a href=#168 id=168 data-nosnippet>168</a>            .collect();
+<a href=#169 id=169 data-nosnippet>169</a>        <span class="macro">assert!</span>(!res.is_empty());
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="macro">dbg!</span>(res);
+<a href=#171 id=171 data-nosnippet>171</a>    }
+<a href=#172 id=172 data-nosnippet>172</a>}</code></pre></div></section></main></body></html>
