@@ -152,6 +152,7 @@ impl Client {
     /// Starts the process of shutdown.
     pub(super) fn start_shutdown(&self, reason: Option<CloseReason>) {
         if let Some(sender) = self.done_s.lock().expect("poisoned").take() {
+            trace!("SEND SHUTDOWN");
             sender.send(reason).ok();
         }
     }
@@ -293,6 +294,8 @@ where
         self.clients
             .unregister(self.connection_id, self.endpoint_id);
         self.metrics.disconnects.inc();
+        // Fully close the stream after we unregistered.
+        self.stream.close().await.ok();
     }
 
     async fn run_inner(
@@ -364,11 +367,6 @@ where
                 .await
                 .map_err(|_| e!(RunError::TickFlush))?;
         }
-        // final flush and close
-        self.stream
-            .close()
-            .await
-            .map_err(|_| e!(RunError::CloseFlush))?;
         Ok(())
     }
 

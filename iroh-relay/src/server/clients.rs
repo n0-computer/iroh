@@ -165,6 +165,7 @@ mod tests {
     use iroh_base::SecretKey;
     use n0_error::{Result, StdResultExt};
     use n0_future::{Stream, StreamExt};
+    use n0_tracing_test::traced_test;
     use rand::SeedableRng;
 
     use super::*;
@@ -213,6 +214,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_clients() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let a_key = SecretKey::generate(&mut rng).public();
