@@ -224,8 +224,8 @@
 <a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">fn </span>as_run_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RunError&gt; {
 <a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#226 id=226 data-nosnippet>226</a>            RelayConnectionError::Dial { .. } =&gt; <span class="prelude-val">None</span>,
-<a href=#227 id=227 data-nosnippet>227</a>            RelayConnectionError::Handshake { source, .. } =&gt; <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>source),
-<a href=#228 id=228 data-nosnippet>228</a>            RelayConnectionError::Established { source, .. } =&gt; <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>source),
+<a href=#227 id=227 data-nosnippet>227</a>            RelayConnectionError::Handshake { source, .. } =&gt; <span class="prelude-val">Some</span>(source),
+<a href=#228 id=228 data-nosnippet>228</a>            RelayConnectionError::Established { source, .. } =&gt; <span class="prelude-val">Some</span>(source),
 <a href=#229 id=229 data-nosnippet>229</a>        }
 <a href=#230 id=230 data-nosnippet>230</a>    }
 <a href=#231 id=231 data-nosnippet>231</a>}
