@@ -25,7 +25,7 @@
 //!
 //!     // Register the Address Lookupwith the endpoint
 //!     let mdns = MdnsAddressLookup::builder().build(endpoint.id()).unwrap();
-//!     endpoint.address_lookup().add(mdns.clone());
+//!     endpoint.address_lookup().unwrap().add(mdns.clone());
 //!
 //!     // Subscribe to the mdns discovery events
 //!     let mut events = mdns.subscribe().await;

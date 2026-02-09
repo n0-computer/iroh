@@ -116,8 +116,8 @@ use iroh_base::{EndpointAddr, EndpointId};
 use n0_error::{AnyError, e, stack_error};
 use n0_future::boxed::BoxStream;
 
-use crate::Endpoint;
 pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData};
+use crate::{Endpoint, endpoint::EndpointError};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
@@ -181,15 +181,15 @@ impl<T: IntoAddressLookup> DynIntoAddressLookup for T {
         self: Box<Self>,
         endpoint: &Endpoint,
     ) -> Result<Box<dyn AddressLookup>, IntoAddressLookupError> {
-        let disco: Box<dyn AddressLookup> =
+        let addr_lookup: Box<dyn AddressLookup> =
             Box::new(IntoAddressLookup::into_address_lookup(*self, endpoint)?);
-        Ok(disco)
+        Ok(addr_lookup)
     }
 }
 
 /// [`IntoAddressLookup`] errors
 #[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum IntoAddressLookupError {
     #[error("Service '{provenance}' error")]
@@ -197,6 +197,8 @@ pub enum IntoAddressLookupError {
         provenance: &'static str,
         source: AnyError,
     },
+    #[error(transparent)]
+    EndpointClosed { source: EndpointError },
 }
 
 impl IntoAddressLookupError {
@@ -590,7 +592,7 @@ mod tests {
                 Some((data, ts)) => {
                     let item = Item::new(
                         EndpointInfo::from_parts(endpoint_id, data),
-                        "test-disco",
+                        "test-addr-lookup",
                         Some(ts),
                     );
                     let delay = self.delay;
@@ -669,16 +671,23 @@ mod tests {
         })
         .await;
         let (ep2, _guard2) = new_endpoint_add(&mut rng, |ep| {
-            let disco1 = EmptyAddressLookup;
-            let disco2 = address_lookup_shared.create_address_lookup(ep.id());
-            ep.address_lookup().add(disco1);
-            ep.address_lookup().add(disco2);
+            let addr_lookup1 = EmptyAddressLookup;
+            let addr_lookup2 = address_lookup_shared.create_address_lookup(ep.id());
+            ep.address_lookup()
+                .expect("endpoint is still open")
+                .add(addr_lookup1);
+            ep.address_lookup()
+                .expect("endpoint is still open")
+                .add(addr_lookup2);
         })
         .await;
 
         let ep1_addr = EndpointAddr::new(ep1.id());
 
-        assert_eq!(ep2.address_lookup().len(), 2);
+        assert_eq!(
+            ep2.address_lookup().expect("endpoint is still open").len(),
+            2
+        );
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
@@ -775,11 +784,13 @@ mod tests {
 
     async fn new_endpoint<R: CryptoRng, D: AddressLookup + 'static, F: FnOnce(&Endpoint) -> D>(
         rng: &mut R,
-        create_disco: F,
+        create_address_lookup: F,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         new_endpoint_add(rng, |ep| {
-            let disco = create_disco(ep);
-            ep.address_lookup().add(disco);
+            let address_lookup = create_address_lookup(ep);
+            ep.address_lookup()
+                .expect("endpoint is still open")
+                .add(address_lookup);
         })
         .await
     }
@@ -924,7 +935,7 @@ mod test_dns_pkarr {
 
     #[tokio::test]
     #[traced_test]
-    async fn pkarr_publish_dns_discover() -> Result<()> {
+    async fn pkarr_publish_dns_address_lookup() -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;

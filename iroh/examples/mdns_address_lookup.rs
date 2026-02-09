@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
     let endpoint_id = ep.id();
 
     let mdns = address_lookup::MdnsAddressLookup::builder().build(endpoint_id)?;
-    ep.address_lookup().add(mdns.clone());
+    ep.address_lookup()?.add(mdns.clone());
 
     println!("Created endpoint {}", endpoint_id.fmt_short());
 
@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
         let ud = user_data.clone();
         set.spawn(async move {
             let ep = Endpoint::bind().await?;
-            ep.address_lookup()
+            ep.address_lookup()?
                 .add(address_lookup::MdnsAddressLookup::builder().build(ep.id())?);
             ep.set_user_data_for_address_lookup(Some(ud));
             tokio::time::sleep(Duration::from_secs(3)).await;

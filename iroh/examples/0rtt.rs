@@ -72,7 +72,7 @@ async fn connect(args: Args) -> Result<()> {
     // ensure we have resolved the remote_id before connecting
     // so we get a more accurate connection timing
     let mut address_lookup_stream = endpoint
-        .address_lookup()
+        .address_lookup()?
         .resolve(remote_id)
         .expect("Address Lookup to be enabled");
     let _ = address_lookup_stream.next().await;
