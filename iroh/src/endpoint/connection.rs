@@ -1487,12 +1487,12 @@ mod tests {
 
         // Verify that the path watch streams close shortly after the connection is closed
         tokio::time::timeout(Duration::from_secs(1), async {
-            while let Some(_) = paths_client.next().await {}
+            while paths_client.next().await.is_some() {}
         })
         .await
         .expect("client paths watcher did not close within 1s of connection close");
         tokio::time::timeout(Duration::from_secs(1), async {
-            while let Some(_) = paths_client.next().await {}
+            while paths_client.next().await.is_some() {}
         })
         .await
         .expect("server paths watcher did not close within 1s of connection close");
