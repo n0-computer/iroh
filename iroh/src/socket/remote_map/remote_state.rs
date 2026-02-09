@@ -27,7 +27,7 @@ use tracing::{Instrument, Level, debug, error, event, info_span, instrument, tra
 use self::path_state::RemotePathState;
 pub(crate) use self::path_watcher::PathWatchable;
 pub use self::{
-    path_watcher::{PathInfo, PathInfoList, PathWatcher},
+    path_watcher::{PathInfo, PathInfoList, PathInfoListIntoIter, PathWatcher},
     remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage},
 };
 use super::Source;

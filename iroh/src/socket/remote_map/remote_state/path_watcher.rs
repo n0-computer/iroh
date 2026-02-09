@@ -66,11 +66,17 @@ impl Iterator for PathInfoListIntoIter {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PathWatchValue {
+    /// The list of network transmission paths.
     paths: SmallVec<[PathInfo; 4]>,
+    /// Set to `true` once the connection is closed.
     closed: bool,
 }
 
 /// Watcher for the open paths and selected transmission path in a connection.
+///
+/// See [`Connection::paths`] for details.
+///
+/// [`Connection::paths`]: crate::endpoint::Connection::paths
 #[derive(Clone, Debug)]
 pub struct PathWatcher {
     paths_watcher: n0_watcher::Direct<PathWatchValue>,
@@ -80,6 +86,13 @@ pub struct PathWatcher {
 }
 
 impl PathWatcher {
+    /// Update the selected path from [`Self::selected_path_watcher`].
+    ///
+    /// This sets [`Self::current_selected_path`] to the current value from
+    /// [`Self::selected_path_watcher`], but only if the latter is non-empty.
+    ///
+    /// It also updates the [`PathInfo::is_selected`] field for all
+    /// current paths.
     fn update_selected(&mut self) {
         if let Some(path) = self.selected_path_watcher.peek()
             && Some(path) != self.current_selected_path.as_ref()
@@ -107,6 +120,7 @@ impl Watcher for PathWatcher {
         }
 
         if self.selected_path_watcher.update() {
+            // `Self::current_selected_path` is set in `Self::update_selected` below.
             updated = true;
         }
 
@@ -129,6 +143,11 @@ impl Watcher for PathWatcher {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<(), n0_watcher::Disconnected>> {
+        // When the `closed` flag is set on the watched value, we return `Disconnected`
+        // to end the watcher update stream. We can't rely on the watchable being dropped,
+        // because the watchable is cloned into the `Connection` and thus will stay alive
+        // until the last clone of a connection is dropped. However, we want the watcher
+        // to end once the connection closes. Therefore we use a manual signal here instead.
         if self.paths_watcher.peek().closed {
             return Poll::Ready(Err(n0_watcher::Disconnected));
         }
@@ -141,6 +160,7 @@ impl Watcher for PathWatcher {
         }
 
         if self.selected_path_watcher.poll_updated(cx)?.is_ready() {
+            // `Self::current_selected_path` is set in `Self::update_selected` below.
             is_ready = true;
         }
 
@@ -200,12 +220,12 @@ impl PathInfo {
         self.is_closed
     }
 
-    /// Whether this is an IP transport address.
+    /// Whether this is an IP transport path.
     pub fn is_ip(&self) -> bool {
         self.remote_addr().is_ip()
     }
 
-    /// Whether this is a transport address via a relay server.
+    /// Whether this is a relay transport path.
     pub fn is_relay(&self) -> bool {
         self.remote_addr().is_relay()
     }
@@ -217,7 +237,7 @@ impl PathInfo {
         self.path.upgrade().map(|p| p.stats())
     }
 
-    /// Current best estimate of this paths's latency (round-trip-time)
+    /// Current best estimate of this paths's latency (round-trip-time).
     ///
     /// Returns `None` if the underlying connection has been dropped.
     pub fn rtt(&self) -> Option<Duration> {
@@ -304,12 +324,14 @@ impl PathWatchable {
 
     /// Returns a [`PathWatcher`] for this watchable.
     pub(crate) fn watch(&self) -> PathWatcher {
-        let paths = self.paths.watch();
+        let paths_watcher = self.paths.watch();
+        let selected_path_watcher = self.selected_path.watch();
         let mut watcher = PathWatcher {
-            current_paths: PathInfoList(paths.peek().paths.clone()),
-            paths_watcher: paths,
-            selected_path_watcher: self.selected_path.watch(),
+            current_paths: PathInfoList(paths_watcher.peek().paths.clone()),
+            // Set via `update_selected` below.
             current_selected_path: None,
+            paths_watcher,
+            selected_path_watcher,
         };
         watcher.update_selected();
         watcher
