@@ -152,7 +152,6 @@ impl Client {
     /// Starts the process of shutdown.
     pub(super) fn start_shutdown(&self, reason: Option<CloseReason>) {
         if let Some(sender) = self.done_s.lock().expect("poisoned").take() {
-            trace!("SEND SHUTDOWN");
             sender.send(reason).ok();
         }
     }

@@ -349,7 +349,7 @@ impl ActiveRelayActor {
                     // If the relay disconnected us because another endpoint with the same secret key connected afterwards,
                     // we don't fight our successor and instead give up.
                     // If we would `break` here, the relay actor would very likely be restarted again right away.
-                    // The home relay actor is restarted regularily if dropped in `RelayActor::reap_active_relays`.
+                    // The home relay actor is restarted regularly if dropped in `RelayActor::reap_active_relays`.
                     // Other relay actors are restarted on-demand.
                     std::future::pending::<()>().await;
                 }
