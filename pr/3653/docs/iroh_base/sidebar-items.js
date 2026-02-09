@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["EndpointId","KeyParsingError","TransportAddr"],"struct":["EndpointAddr","PublicKey","RelayUrl","RelayUrlParseError","SecretKey","Signature","SignatureError"]};

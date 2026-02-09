@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["config","dns","http","metrics","server","state"],"struct":["ZoneStore"]};

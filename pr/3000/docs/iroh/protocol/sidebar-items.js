@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["ProtocolMap","Router","RouterBuilder"],"trait":["IntoArcAny","ProtocolHandler"]};

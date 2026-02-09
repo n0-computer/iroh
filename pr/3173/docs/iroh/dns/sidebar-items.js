@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["node_info"],"struct":["DnsResolver"]};

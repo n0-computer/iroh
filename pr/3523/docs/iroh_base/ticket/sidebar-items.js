@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ParseError"],"struct":["EndpointTicket"],"trait":["Ticket"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["client","defaults","http","protos","quic","server"],"struct":["RelayMap","RelayNode","RelayQuicConfig"]};

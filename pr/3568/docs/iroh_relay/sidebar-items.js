@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["client","defaults","dns","endpoint_info","http","protos","quic","server"],"struct":["PingTracker","RelayConfig","RelayMap","RelayQuicConfig"]};

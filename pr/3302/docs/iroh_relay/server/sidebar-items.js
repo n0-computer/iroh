@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_CERT_RELOAD_INTERVAL"],"enum":["Access","AccessConfig","CertConfig"],"mod":["testing"],"struct":["ClientRateLimit","Limits","Metrics","QuicConfig","RelayConfig","RelayMetrics","ReloadingResolver","Server","ServerConfig","StunConfig","StunMetrics","TlsConfig"]};

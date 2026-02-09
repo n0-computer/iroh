@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Addr"],"struct":["Transmit"],"trait":["UserSender","UserTransport","UserTransportConfig"]};

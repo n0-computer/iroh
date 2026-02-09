@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Error"],"struct":["AccessLimit","Router","RouterBuilder"],"trait":["ProtocolHandler"]};

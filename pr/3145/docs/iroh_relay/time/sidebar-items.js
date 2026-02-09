@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["MissedTickBehavior"],"fn":["interval","interval_at","sleep","sleep_until","timeout"],"struct":["Duration","Elapsed","Instant","Interval","Sleep","Timeout"]};

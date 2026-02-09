@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["MAGIC"],"fn":["looks_like_disco_wrapper"]};

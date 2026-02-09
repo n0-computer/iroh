@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ClientError","ReceivedMessage"],"fn":["make_dangerous_client_config"],"struct":["Client","ClientBuilder"]};

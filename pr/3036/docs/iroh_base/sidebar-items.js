@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["PUBLIC_KEY_LENGTH"],"enum":["KeyParsingError"],"mod":["base32","ticket"],"struct":["NodeAddr","PublicKey","RelayUrl","SecretKey","SharedSecret","Signature"],"type":["NodeId"]};

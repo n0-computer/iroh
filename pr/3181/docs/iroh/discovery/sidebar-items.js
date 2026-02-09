@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["dns","local_swarm_discovery","pkarr","static_provider"],"struct":["ConcurrentDiscovery","DiscoveryItem","Lagged","NodeData","NodeInfo"],"trait":["Discovery"]};

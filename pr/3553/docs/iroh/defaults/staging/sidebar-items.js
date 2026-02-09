@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["EU_RELAY_HOSTNAME","NA_RELAY_HOSTNAME"],"fn":["default_eu_relay","default_na_relay","default_relay_map"]};

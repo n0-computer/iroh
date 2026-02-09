@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["ALPN_QUIC_ADDR_DISC","QUIC_ADDR_DISC_CLOSE_CODE","QUIC_ADDR_DISC_CLOSE_REASON"],"struct":["QuicClient"]};
