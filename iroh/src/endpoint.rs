@@ -13,7 +13,7 @@
 
 #[cfg(not(wasm_browser))]
 use std::net::SocketAddr;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::Arc;
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
@@ -217,7 +217,6 @@ impl Builder {
         let ep = Endpoint {
             sock,
             static_config: Arc::new(static_config),
-            is_closed: Default::default(),
         };
 
         // Add Address Lookup mechanisms
@@ -693,7 +692,6 @@ pub struct Endpoint {
     pub(crate) sock: Handle,
     /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
     static_config: Arc<StaticConfig>,
-    is_closed: Arc<AtomicBool>,
 }
 
 #[allow(missing_docs)]
@@ -1392,13 +1390,11 @@ impl Endpoint {
     /// the the respective [`Endpoint`] are dropped.
     pub async fn close(&self) {
         self.sock.close().await;
-        self.is_closed
-            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Check if this endpoint is still alive, or already closed.
     pub fn is_closed(&self) -> bool {
-        self.is_closed.load(std::sync::atomic::Ordering::SeqCst)
+        self.sock.is_closed()
     }
 
     /// Create a [`ServerConfigBuilder`] for this endpoint that includes the given alpns.
@@ -3165,7 +3161,10 @@ mod tests {
         // endpoint is closed instead:
         if let ConnectError::Connect { source, .. } = ep.connect(ep_id, b"test").await.unwrap_err()
         {
-            matches!(source, ConnectWithOptsError::EndpointClosed { .. });
+            assert!(matches!(
+                source,
+                ConnectWithOptsError::EndpointClosed { .. }
+            ));
         } else {
             panic!("unexpected error for connect");
         }
