@@ -1103,7 +1103,7 @@ impl RemoteStateActor {
     /// avoid the client and server selecting different paths and accidentally closing all
     /// paths.
     fn close_redundant_paths(&mut self, selected_path: &transports::Addr) {
-        debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path),);
+        debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path));
 
         for (conn_id, conn_state) in self.connections.iter() {
             for (path_id, path_remote) in conn_state
@@ -1123,6 +1123,9 @@ impl RemoteStateActor {
                 {
                     trace!(?path_remote, ?conn_id, %path_id, "closing direct path");
                     match path.close() {
+                        Err(quinn_proto::ClosePathError::MultipathNotNegotiated) => {
+                            error!("connection does not have multipath negotiated");
+                        }
                         Err(quinn_proto::ClosePathError::LastOpenPath) => {
                             error!("could not close last open path");
                         }

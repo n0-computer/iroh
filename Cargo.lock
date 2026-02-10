@@ -2154,8 +2154,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "034ed21f34c657a123d39525d948c885aacba59508805e4dd67d71f022e7151b"
+source = "git+https://github.com/n0-computer/quinn?branch=handle-network-changes#4d9a49562cc50b7f94b780c9843bbc75b6c092ad"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2164,7 +2163,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.2",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -2175,8 +2174,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0de99ad8adc878ee0e68509ad256152ce23b8bbe45f5539d04e179630aca40a9"
+source = "git+https://github.com/n0-computer/quinn?branch=handle-network-changes#4d9a49562cc50b7f94b780c9843bbc75b6c092ad"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2203,12 +2201,11 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f981dadd5a072a9e0efcd24bdcc388e570073f7e51b33505ceb1ef4668c80c86"
+source = "git+https://github.com/n0-computer/quinn?branch=handle-network-changes#4d9a49562cc50b7f94b780c9843bbc75b6c092ad"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.2",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
