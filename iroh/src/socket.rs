@@ -38,7 +38,7 @@ use n0_watcher::{self, Watchable, Watcher};
 use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
 use quinn::WeakConnectionHandle;
-use rand::Rng;
+use rand::RngExt;
 use tokio::sync::{
     Mutex as AsyncMutex,
     mpsc::{self},
@@ -1603,7 +1603,7 @@ mod tests {
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use rand::{CryptoRng, Rng, RngCore, SeedableRng};
+    use rand::{CryptoRng, Rng, RngExt, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
 

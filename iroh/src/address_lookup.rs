@@ -510,7 +510,7 @@ mod tests {
     use n0_error::{AnyError, Result, StackResultExt};
     use n0_future::{StreamExt, time};
     use n0_tracing_test::traced_test;
-    use rand::{CryptoRng, Rng, SeedableRng};
+    use rand::{CryptoRng, RngExt, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
