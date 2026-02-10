@@ -20,16 +20,16 @@ impl Runtime {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.tasks.len()
-    }
+    // pub fn len(&self) -> usize {
+    //     self.tasks.len()
+    // }
 
-    pub async fn shutdown(&self) {
-        if self.tasks.close() {
-            tracing::debug!("tasks len {}", self.tasks.len());
-            self.tasks.wait().await
-        }
-    }
+    // pub async fn shutdown(&self) {
+    //     if self.tasks.close() {
+    //         tracing::debug!("tasks len {}", self.tasks.len());
+    //         self.tasks.wait().await
+    //     }
+    // }
 }
 
 impl quinn::Runtime for Runtime {

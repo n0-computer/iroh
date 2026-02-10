@@ -31,7 +31,6 @@ use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use n0_watcher::Watcher;
-use pin_project::pin_project;
 use quinn::WeakConnectionHandle;
 use tracing::warn;
 
@@ -53,27 +52,25 @@ use crate::{
 
 /// Future produced by [`Endpoint::accept`].
 #[derive(derive_more::Debug)]
-#[pin_project]
-pub struct Accept<'a> {
-    #[pin]
-    #[debug("quinn::Accept")]
-    pub(crate) inner: quinn::Accept<'a>,
-    pub(crate) ep: Endpoint,
+pub struct Accept(#[debug("BoxFuture")] BoxFuture<Option<Incoming>>);
+
+impl Accept {
+    pub(crate) fn new(quinn_ep: Option<quinn::Endpoint>, ep: Endpoint) -> Self {
+        Self(Box::pin(async move {
+            let incoming = quinn_ep?.accept().await?;
+            Some(Incoming {
+                inner: incoming,
+                ep,
+            })
+        }))
+    }
 }
 
-impl Future for Accept<'_> {
+impl Future for Accept {
     type Output = Option<Incoming>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this.inner.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(inner)) => Poll::Ready(Some(Incoming {
-                inner,
-                ep: this.ep.clone(),
-            })),
-        }
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        self.0.poll_unpin(cx)
     }
 }
 
