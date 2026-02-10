@@ -777,7 +777,7 @@ impl Endpoint {
             return;
         }
         let server_config = self.static_config.create_server_config(alpns);
-        self.sock.endpoint().set_server_config(Some(server_config));
+        self.sock.set_server_config(Some(server_config));
     }
 
     /// Adds the provided configuration to the [`RelayMap`].
@@ -926,7 +926,6 @@ impl Endpoint {
         let server_name = &tls::name::encode(endpoint_id);
         let connect = self
             .sock
-            .endpoint()
             .connect_with(client_config, dest_addr, server_name)?;
 
         Ok(Connecting::new(connect, self.clone(), endpoint_id))
@@ -940,11 +939,8 @@ impl Endpoint {
     ///
     /// The returned future will yield `None` if the endpoint is closed by calling
     /// [`Endpoint::close`].
-    pub fn accept(&self) -> Accept<'_> {
-        Accept {
-            inner: self.sock.endpoint().accept(),
-            ep: self.clone(),
-        }
+    pub fn accept(&self) -> Accept {
+        self.sock.accept(self.clone())
     }
 
     // # Getter methods for properties of this Endpoint itself.
@@ -1423,13 +1419,6 @@ impl Endpoint {
         }
         Ok(self.sock.clone())
     }
-    #[cfg(test)]
-    pub(crate) fn endpoint(&self) -> Result<&quinn::Endpoint, EndpointError> {
-        if self.is_closed() {
-            return Err(e!(EndpointError::Closed));
-        }
-        Ok(self.sock.endpoint())
-    }
 }
 
 /// Options for the [`Endpoint::connect_with_opts`] function.
@@ -1618,7 +1607,7 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMap, RelayMode,
-        address_lookup::{AddressLookup, memory::MemoryLookup},
+        address_lookup::memory::MemoryLookup,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectError, ConnectOptions,
             ConnectWithOptsError, Connection, ConnectionError, PathInfo,
@@ -3146,7 +3135,7 @@ mod tests {
     async fn test_closed_endpoint() -> Result {
         // create endpoint
         // call endpoint.close
-        // call all methods and see what happens
+        // ensure methods behave in the expected way
         info!("Creating endpoint");
         let ep = Endpoint::builder().bind().await?;
         info!("Closing endpoint");
@@ -3154,11 +3143,10 @@ mod tests {
         ep.close().await;
         info!("Endpoint closed in {:?}", now.elapsed());
 
-        // try to set_alpns
-        info!("Set ALPNS");
+        info!("Set ALPNS fails silently");
         ep.set_alpns(vec![b"test".into()]);
 
-        info!("Insert Relay");
+        info!("Insert Relay returns None");
         let relay_config = crate::defaults::staging::default_na_east_relay();
         assert!(
             ep.insert_relay("localhost:300".parse()?, Arc::new(relay_config))
@@ -3166,12 +3154,8 @@ mod tests {
                 .is_none()
         );
 
-        info!("Remove Relay");
-        let relay = ep
-            .remove_relay(&"localhost:300".parse()?)
-            .await
-            .expect("relay to exist");
-        info!("Relay: {:?}", relay.url);
+        info!("Remove Relay returns None");
+        assert!(ep.remove_relay(&"localhost:300".parse()?).await.is_none());
 
         info!("Connecting");
         let mut rng = ChaCha8Rng::seed_from_u64(41);
@@ -3181,10 +3165,7 @@ mod tests {
         // endpoint is closed instead:
         if let ConnectError::Connect { source, .. } = ep.connect(ep_id, b"test").await.unwrap_err()
         {
-            matches!(
-                source,
-                ConnectWithOptsError::InternalConsistencyError { .. }
-            );
+            matches!(source, ConnectWithOptsError::EndpointClosed { .. });
         } else {
             panic!("unexpected error for connect");
         }
@@ -3192,62 +3173,44 @@ mod tests {
         info!("Accepting!");
         assert!(ep.accept().await.is_none());
 
+        // this should work
         info!("Addr: {:?}", ep.addr());
 
-        // this hangs:
-        // let mut addrs = ep.watch_addr().stream();
-        // while let Some(addr) = addrs.next().await {
-        //     info!("Addrs stream: {addr:?}");
-        // }
+        // this should not hang
+        let mut addrs = ep.watch_addr().stream();
+        while let Some(addr) = addrs.next().await {
+            info!("Addrs stream: {addr:?}");
+        }
 
         // returns None
-        let net_report = ep.net_report().get();
-        info!("Net report {net_report:?}");
+        let net_report = ep.last_net_report();
+        info!("last Net report {net_report:?}");
 
-        // returns Some(None) once and then hangs:
+        // this currently hangs
         // let mut net_reports = ep.net_report().stream();
         // while let Some(net_report) = net_reports.next().await {
         //     info!("Net report stream: {net_report:?}");
         // }
 
-        // seems fine to return the addrs of the most recently bound sockets
+        // this should work
         let sockets = ep.bound_sockets();
         info!("Sockets: {sockets:?}");
 
-        // this seems weird to return after the ep is closed
-        let dns = ep.dns_resolver();
-        info!("DnsResolver: {dns:?}");
+        // these should return errors
+        assert!(ep.dns_resolver().is_err());
+        assert!(ep.address_lookup().is_err());
 
-        // this also seems weird to return after the ep is closed
-        let addr_lookup = ep.address_lookup();
-        // this still attempts to resolve!
-        let res = addr_lookup.expect("endpoint open").resolve(ep_id);
-        match res {
-            None => info!("addr_lookup.resolve returned None"),
-            Some(mut s) => {
-                info!("addr_lookup.resolve returned stream");
-                while let Some(addr) = s.next().await {
-                    info!("resolved addr: {addr:?}");
-                }
-            }
-        }
-
-        // makes sense to return this even after the ep has closed
+        // this should work
         let metrics = ep.metrics();
         info!("Metrics: {metrics:?}");
 
-        // I don't think we want the ep to be the place to
-        // retro-actively look up remote information, if a user
-        // wants that they should use a hook
-        let remote_info = ep.remote_info(ep_id).await;
-        info!("RemoteInfo: {remote_info:?}");
+        // this should return none
+        assert!(ep.remote_info(ep_id).await.is_none());
 
-        // this is weird, but just fails silently when it
-        // can't communicate to the actor
+        // this should fail silently
         ep.network_change().await;
 
-        // this calls publish on the address_lookup, we shouldn't even be doing this for a closed endpoint
-        // maybe should just fail silently after endpoint has closed?
+        // this should fail silently
         ep.set_user_data_for_address_lookup(Some(
             UserData::try_from("TEST".to_string()).expect("valid string"),
         ));

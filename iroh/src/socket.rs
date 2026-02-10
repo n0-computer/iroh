@@ -160,10 +160,10 @@ pub(crate) struct Handle {
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
     /// Channel to send to the internal actor.
     actor_sender: mpsc::Sender<ActorMessage>,
-    // quinn endpoint
-    endpoint: quinn::Endpoint,
-    /// Runtime used by quinn
-    runtime: Arc<Runtime>,
+    // quinn endpoint, set to `None` on close
+    endpoint: Arc<RwLock<Option<quinn::Endpoint>>>,
+    // Runtime used by quinn
+    // runtime: Arc<Runtime>,
 }
 
 #[derive(Debug)]
@@ -894,14 +894,44 @@ impl Handle {
             sock,
             actor_sender,
             actor_task,
-            endpoint,
-            runtime,
+            endpoint: Arc::new(RwLock::new(Some(endpoint))),
+            // runtime,
         })
     }
 
-    /// The underlying [`quinn::Endpoint`]
-    pub fn endpoint(&self) -> &quinn::Endpoint {
-        &self.endpoint
+    /// Returns a clone of the underlying [`quinn::Endpoint`], if the handle hasn't been closed.
+    ///
+    /// We should be very careful about using this method, every clone of `quinn::Endpoint`
+    /// is another case we need to pay attention to to ensure it's dropped in a
+    /// timely manor. It can interfere with closing the `Handle` cleanly (and
+    /// therefore the `iroh::Endpoint`).
+    fn quinn_endpoint(&self) -> Option<quinn::Endpoint> {
+        self.endpoint.read().expect("poisoned").clone()
+    }
+
+    /// Returns a future that yields incoming QUIC connections.
+    pub(crate) fn accept(&self, ep: crate::Endpoint) -> crate::endpoint::Accept {
+        crate::endpoint::Accept::new(self.quinn_endpoint(), ep)
+    }
+
+    /// Sets the server configuration on the underlying QUIC endpoint.
+    pub(crate) fn set_server_config(&self, server_config: Option<quinn_proto::ServerConfig>) {
+        if let Some(ep) = self.quinn_endpoint() {
+            ep.set_server_config(server_config);
+        }
+    }
+
+    /// Initiates a QUIC connection to the given address.
+    pub(crate) fn connect_with(
+        &self,
+        config: quinn::ClientConfig,
+        addr: SocketAddr,
+        server_name: &str,
+    ) -> Result<quinn::Connecting, quinn::ConnectError> {
+        match self.quinn_endpoint() {
+            Some(ep) => ep.connect_with(config, addr, server_name),
+            None => Err(quinn::ConnectError::EndpointStopping),
+        }
     }
 
     /// Closes the connection.
@@ -922,26 +952,30 @@ impl Handle {
         self.sock.shutdown.at_close_start.cancel();
 
         // Initiate closing all connections, and refuse future connections.
-        self.endpoint.close(0u16.into(), b"");
+        if let Some(ep) = self.quinn_endpoint() {
+            ep.close(0u16.into(), b"");
 
-        // In the history of this code, this call had been
-        // - removed: https://github.com/n0-computer/iroh/pull/1753
-        // - then added back in: https://github.com/n0-computer/iroh/pull/2227/files#diff-ba27e40e2986a3919b20f6b412ad4fe63154af648610ea5d9ed0b5d5b0e2d780R573
-        // - then removed again: https://github.com/n0-computer/iroh/pull/3165
-        // and finally added back in together with this comment.
-        // So before removing this call, please consider carefully.
-        // Among other things, this call tries its best to make sure that any queued close frames
-        // (e.g. via the call to `endpoint.close(...)` above), are flushed out to the sockets
-        // *and acknowledged* (or time out with the "probe timeout" of usually 3 seconds).
-        // This allows the other endpoints for these connections to be notified to release
-        // their resources, or - depending on the protocol - that all data was received.
-        // With the current quinn API, this is the only way to ensure protocol code can use
-        // connection close codes, and close the endpoint properly.
-        // If this call is skipped, then connections that protocols close just shortly before the
-        // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
-        debug!("wait_idle start");
-        self.endpoint.wait_idle().await;
-        debug!("wait_idle done");
+            // In the history of this code, this call had been
+            // - removed: https://github.com/n0-computer/iroh/pull/1753
+            // - then added back in: https://github.com/n0-computer/iroh/pull/2227/files#diff-ba27e40e2986a3919b20f6b412ad4fe63154af648610ea5d9ed0b5d5b0e2d780R573
+            // - then removed again: https://github.com/n0-computer/iroh/pull/3165
+            // and finally added back in together with this comment.
+            // So before removing this call, please consider carefully.
+            // Among other things, this call tries its best to make sure that any queued close frames
+            // (e.g. via the call to `endpoint.close(...)` above), are flushed out to the sockets
+            // *and acknowledged* (or time out with the "probe timeout" of usually 3 seconds).
+            // This allows the other endpoints for these connections to be notified to release
+            // their resources, or - depending on the protocol - that all data was received.
+            // With the current quinn API, this is the only way to ensure protocol code can use
+            // connection close codes, and close the endpoint properly.
+            // If this call is skipped, then connections that protocols close just shortly before the
+            // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
+            debug!("wait_idle start");
+            ep.wait_idle().await;
+            debug!("wait_idle done");
+        }
+        // Drop our reference to the quinn endpoint.
+        self.endpoint.write().expect("poisoned").take();
 
         // Start cancellation of all actors
         self.sock.shutdown.at_endpoint_closed.cancel();
@@ -1700,7 +1734,11 @@ mod tests {
 
         conn.closed().await;
         info!("closed");
-        ep.endpoint()?.wait_idle().await;
+        ep.socket()?
+            .quinn_endpoint()
+            .expect("not closed")
+            .wait_idle()
+            .await;
         info!("idle");
 
         Ok(())
@@ -1754,7 +1792,11 @@ mod tests {
 
         conn.close(0u32.into(), b"done");
         info!("closed");
-        ep.endpoint()?.wait_idle().await;
+        ep.socket()?
+            .quinn_endpoint()
+            .expect("not closed")
+            .wait_idle()
+            .await;
         info!("idle");
         Ok(())
     }
@@ -2058,7 +2100,7 @@ mod tests {
     /// Uses [`ALPN`], `endpoint_id`, must match `addr`.
     #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
     async fn socket_connect(
-        ep: &quinn::Endpoint,
+        ep: quinn::Endpoint,
         ep_secret_key: SecretKey,
         addr: EndpointIdMappedAddr,
         endpoint_id: EndpointId,
@@ -2084,7 +2126,7 @@ mod tests {
     /// Uses [`ALPN`], `endpoint_id`, must match `addr`.
     #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
     async fn socket_connect_with_transport_config(
-        ep: &quinn::Endpoint,
+        ep: quinn::Endpoint,
         ep_secret_key: SecretKey,
         mapped_addr: EndpointIdMappedAddr,
         endpoint_id: EndpointId,
@@ -2131,7 +2173,7 @@ mod tests {
         let res = tokio::time::timeout(
             Duration::from_millis(500),
             socket_connect(
-                sock_1.endpoint(),
+                sock_1.quinn_endpoint().expect("endpoint open"),
                 secret_key_1.clone(),
                 bad_addr,
                 endpoint_id_missing_endpoint,
@@ -2158,7 +2200,7 @@ mod tests {
                 info!("accept finished");
                 Ok(())
             }
-            let ep = sock_2.endpoint().clone();
+            let ep = sock_2.quinn_endpoint().expect("endpoint open").clone();
             async move {
                 if let Err(err) = accept(ep).await {
                     error!("{err:#}");
@@ -2181,7 +2223,12 @@ mod tests {
             .unwrap();
         let res = tokio::time::timeout(
             Duration::from_secs(10),
-            socket_connect(sock_1.endpoint(), secret_key_1.clone(), addr, endpoint_id_2),
+            socket_connect(
+                sock_1.quinn_endpoint().expect("endpoint open"),
+                secret_key_1.clone(),
+                addr,
+                endpoint_id_2,
+            ),
         )
         .await
         .expect("timeout while connecting");
@@ -2205,7 +2252,7 @@ mod tests {
 
         let sock_1 = socket_ep(secret_key_1.clone()).await.unwrap();
         let sock_2 = socket_ep(secret_key_2.clone()).await.unwrap();
-        let ep_2 = sock_2.endpoint().clone();
+        let ep_2 = sock_2.quinn_endpoint().expect("endpoint open").clone();
 
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
@@ -2256,7 +2303,7 @@ mod tests {
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.max_idle_timeout(Some(Duration::from_millis(200).try_into().unwrap()));
         let res = socket_connect_with_transport_config(
-            sock_1.endpoint(),
+            sock_1.quinn_endpoint().expect("endpoint open"),
             secret_key_1.clone(),
             addr_2,
             endpoint_id_2,
@@ -2286,7 +2333,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async move {
             info!("establishing new connection");
             let conn = socket_connect(
-                sock_1.endpoint(),
+                sock_1.quinn_endpoint().expect("endpoint open"),
                 secret_key_1.clone(),
                 addr_2,
                 endpoint_id_2,
