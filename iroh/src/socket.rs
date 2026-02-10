@@ -869,7 +869,7 @@ impl Handle {
             network_monitor,
             netmon_watcher,
             direct_addr_update_state,
-            network_change_sender,
+            transports_network_change: network_change_sender,
             direct_addr_done_rx,
         };
         // Initialize addresses
@@ -1118,7 +1118,7 @@ struct Actor {
 
     network_monitor: netmon::Monitor,
     netmon_watcher: n0_watcher::Direct<netmon::State>,
-    network_change_sender: transports::NetworkChangeSender,
+    transports_network_change: transports::NetworkChangeSender,
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
@@ -1269,7 +1269,7 @@ impl Actor {
         debug!(is_major, "link change detected");
 
         if is_major {
-            if let Err(err) = self.network_change_sender.rebind() {
+            if let Err(err) = self.transports_network_change.rebind() {
                 warn!("failed to rebind transports: {err:?}");
             }
 
@@ -1475,7 +1475,7 @@ impl Actor {
             }
 
             // Notify all transports
-            self.network_change_sender.on_network_change(r);
+            self.transports_network_change.on_network_change(r);
         }
 
         #[cfg(not(wasm_browser))]
