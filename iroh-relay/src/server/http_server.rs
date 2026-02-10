@@ -1003,7 +1003,7 @@ mod tests {
     use crate::{
         client::{Client, ClientBuilder, ConnectError, conn::Conn},
         dns::DnsResolver,
-        protos::relay::{ClientToRelayMsg, CloseReason, Datagrams, RelayToClientMsg},
+        protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
     };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
@@ -1323,12 +1323,6 @@ mod tests {
             })
             .await;
         assert!(res.is_err());
-        assert!(matches!(
-            client_b.next().await,
-            Some(Ok(RelayToClientMsg::Close {
-                reason: CloseReason::Shutdown
-            }))
-        ));
         assert!(client_b.next().await.is_none());
 
         drop(client_a);
@@ -1480,12 +1474,6 @@ mod tests {
             })
             .await;
         assert!(res.is_err());
-        assert!(matches!(
-            new_client_b.next().await,
-            Some(Ok(RelayToClientMsg::Close {
-                reason: CloseReason::Shutdown
-            }))
-        ));
         assert!(new_client_b.next().await.is_none());
         Ok(())
     }

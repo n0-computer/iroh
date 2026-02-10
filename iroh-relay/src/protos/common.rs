@@ -53,9 +53,6 @@ pub enum FrameType {
     /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
     /// and how long to try total.
     Restarting = 12,
-    /// Sent from server to client when the server closes the connection.
-    /// Contains the reason for closing.
-    Close = 13,
 }
 
 #[stack_error(derive, add_meta)]

@@ -42,7 +42,7 @@ use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay, PingTracker,
     client::{Client, ConnectError, RecvError, SendError},
-    protos::relay::{ClientToRelayMsg, CloseReason, Datagrams, RelayToClientMsg},
+    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 };
 use n0_error::{e, stack_error};
 use n0_future::{
@@ -220,16 +220,6 @@ enum RelayConnectionError {
     Established { source: RunError },
 }
 
-impl RelayConnectionError {
-    fn as_run_error(&self) -> Option<&RunError> {
-        match self {
-            RelayConnectionError::Dial { .. } => None,
-            RelayConnectionError::Handshake { source, .. } => Some(source),
-            RelayConnectionError::Established { source, .. } => Some(source),
-        }
-    }
-}
-
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 enum RunError {
@@ -253,8 +243,6 @@ enum RunError {
         #[error(std_err)]
         source: SendError,
     },
-    #[error("Relay server closed the connection: {reason:?}")]
-    ServerClosed { reason: CloseReason },
 }
 
 #[allow(missing_docs)]
@@ -329,30 +317,8 @@ impl ActiveRelayActor {
         let mut backoff = Self::build_backoff();
 
         while let Err(err) = self.run_once().await {
-            warn!("{err:#}");
-
+            warn!("{err}");
             match err {
-                _ if matches!(
-                    err.as_run_error(),
-                    Some(RunError::ServerClosed {
-                        reason: CloseReason::SameEndpointIdConnected,
-                        ..
-                    })
-                ) =>
-                {
-                    error!(
-                        url=%self.url,
-                        "Relay connection was closed because another endpoint with the same secret key connected to it. \
-                        Creating multiple endpoints with the same secret key is likely a bug in your usage of iroh. \
-                        This relay connection will remain pending infinitely."
-                    );
-                    // If the relay disconnected us because another endpoint with the same secret key connected afterwards,
-                    // we don't fight our successor and instead give up.
-                    // If we would `break` here, the relay actor would very likely be restarted again right away.
-                    // The home relay actor is restarted regularly if dropped in `RelayActor::reap_active_relays`.
-                    // Other relay actors are restarted on-demand.
-                    std::future::pending::<()>().await;
-                }
                 RelayConnectionError::Dial { .. } | RelayConnectionError::Handshake { .. } => {
                     // If dialing failed, or if the relay connection failed before we received a pong,
                     // we wait an exponentially increasing time until we attempt to reconnect again.
@@ -650,7 +616,7 @@ impl ActiveRelayActor {
                     };
                     match msg {
                         Ok(msg) => {
-                            self.handle_relay_msg(msg, &mut state).map_err(|err| state.map_err(err))?;
+                            self.handle_relay_msg(msg, &mut state);
                             // reset the ping timer, we have just received a message
                             ping_interval.reset();
                         },
@@ -673,11 +639,7 @@ impl ActiveRelayActor {
         res.map_err(|err| state.map_err(err))
     }
 
-    fn handle_relay_msg(
-        &mut self,
-        msg: RelayToClientMsg,
-        state: &mut ConnectedRelayState,
-    ) -> Result<(), RunError> {
+    fn handle_relay_msg(&mut self, msg: RelayToClientMsg, state: &mut ConnectedRelayState) {
         match msg {
             RelayToClientMsg::Datagrams {
                 remote_endpoint_id,
@@ -725,16 +687,10 @@ impl ActiveRelayActor {
             RelayToClientMsg::Health { problem } => {
                 warn!("Relay server reports problem: {problem}");
             }
-            #[allow(deprecated)]
             RelayToClientMsg::Restarting { .. } => {
                 trace!("Ignoring {msg:?}")
             }
-            RelayToClientMsg::Close { reason } => {
-                warn!("Relay server is closing connection: {reason:?}");
-                return Err(e!(RunError::ServerClosed { reason }));
-            }
         }
-        Ok(())
     }
 
     /// Run the actor main loop while sending to the relay server.
@@ -795,7 +751,7 @@ impl ActiveRelayActor {
                         break Err(e!(RunError::StreamClosedServer));
                     };
                     match msg {
-                        Ok(msg) => self.handle_relay_msg(msg, state).map_err(|err| state.map_err(err))?,
+                        Ok(msg) => self.handle_relay_msg(msg, state),
                         Err(err) => break Err(e!(RunError::ClientStreamRead, err)),
                     }
                 }

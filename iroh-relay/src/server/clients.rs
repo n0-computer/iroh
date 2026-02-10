@@ -16,10 +16,7 @@ use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
 use crate::{
-    protos::{
-        relay::{CloseReason, Datagrams},
-        streams::BytesStreamSink,
-    },
+    protos::{relay::Datagrams, streams::BytesStreamSink},
     server::{client::SendError, metrics::Metrics},
 };
 
@@ -53,10 +50,8 @@ impl Clients {
         trace!("shutting down {} clients", keys.len());
         let clients = keys.into_iter().filter_map(|k| self.0.clients.remove(&k));
 
-        n0_future::join_all(
-            clients.map(|(_, client)| async move { client.shutdown(CloseReason::Shutdown).await }),
-        )
-        .await;
+        n0_future::join_all(clients.map(|(_, client)| async move { client.shutdown().await }))
+            .await;
     }
 
     /// Builds the client handler and starts the read & write loops for the connection.
@@ -156,7 +151,7 @@ impl Clients {
                     dst = %dst.fmt_short(),
                     "can no longer write to client, dropping message and pruning connection"
                 );
-                client.start_shutdown(None);
+                client.start_shutdown();
                 Err(ForwardPacketError::new(SendError::Closed))
             }
         }
@@ -246,7 +241,7 @@ mod tests {
         {
             let client = clients.0.clients.get(&a_key).unwrap();
             // shutdown client a, this should trigger the removal from the clients list
-            client.start_shutdown(None);
+            client.start_shutdown();
         }
 
         // need to wait a moment for the removal to be processed
