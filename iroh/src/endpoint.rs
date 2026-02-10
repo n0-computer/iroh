@@ -3075,6 +3075,7 @@ mod tests {
             .instrument(error_span!("ep1"))
             .await?;
         ep1.online().await;
+        println!("\n\nEP1 ONLINE\n\n");
 
         // now start second endpoint with same secret key
         let ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
@@ -3084,6 +3085,7 @@ mod tests {
             .instrument(error_span!("ep2"))
             .await?;
         ep2.online().await;
+        println!("\n\nEP2 ONLINE\n\n");
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         // We assert that we get the error log once for endpoint 1, and not at all for endpoint 2.

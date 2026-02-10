@@ -35,6 +35,7 @@ pub struct Clients(Arc<Inner>);
 struct Inner {
     /// The list of all currently connected clients.
     clients: DashMap<EndpointId, Client>,
+    inactive_clients: DashMap<u64, Client>,
     /// Map of which client has sent where
     sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
     /// Connection ID Counter
@@ -74,8 +75,10 @@ impl Clients {
                 "multiple connections found, pruning old connection",
             );
             old_client
-                .shutdown(CloseReason::SameEndpointIdConnected)
-                .await;
+                .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string()).ok();
+            self.0
+                .inactive_clients
+                .insert(old_client.connection_id(), old_client);
         }
     }
 
@@ -117,6 +120,8 @@ impl Clients {
                     }
                 }
             }
+        } else if let Some(client) = self.0.inactive_clients.remove(&connection_id) {
+            drop(client);
         }
     }
 
