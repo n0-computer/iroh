@@ -1526,7 +1526,9 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
-    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle, time};
+    use n0_future::{
+        BufferedStreamExt, StreamExt, future::now_or_never, stream, task::AbortOnDropHandle, time,
+    };
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use rand::SeedableRng;
@@ -3063,35 +3065,85 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn same_endpoint_id_relay() -> Result {
-        let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
+        let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
         let secret_key = SecretKey::generate(&mut rng);
+
+        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .bind()
+            .instrument(error_span!("ep-client"))
+            .await?;
+
+        info!("client {}", client.id());
 
         // bind ep1 and wait until connected to relay.
         let ep1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(secret_key.clone())
             .insecure_skip_relay_cert_verify(true)
+            .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .instrument(error_span!("ep1"))
             .await?;
+        info!("ep1 bound {:?}", ep1.id());
         ep1.online().await;
-        println!("\n\nEP1 ONLINE\n\n");
+        info!("ep1 online");
+
+        let addr = EndpointAddr::new(secret_key.public()).with_relay_url(relay_url);
+
+        tokio::try_join!(
+            async {
+                let conn = client.connect(addr.clone(), TEST_ALPN).await?;
+                let reason = conn.closed().await;
+                assert!(is_application_closed(&reason, 1));
+                n0_error::Ok(())
+            },
+            async {
+                let conn = ep1.accept().await.unwrap().await?;
+                conn.close(1u32.into(), b"bye");
+                n0_error::Ok(())
+            }
+        )?;
+        info!("client connected to ep1");
 
         // now start second endpoint with same secret key
         let ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
             .secret_key(secret_key.clone())
             .insecure_skip_relay_cert_verify(true)
+            .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .instrument(error_span!("ep2"))
             .await?;
+        info!("ep2 bound {:?}", ep2.id());
         ep2.online().await;
-        println!("\n\nEP2 ONLINE\n\n");
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        println!("ep2 online");
 
-        // We assert that we get the error log once for endpoint 1, and not at all for endpoint 2.
+        // Wait a bit. `online` does not mean that the connection to the home relay was *established*,
+        // only that the home relay was *chosen* based on the net report probes.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        tokio::try_join!(
+            async {
+                let conn = client.connect(addr.clone(), TEST_ALPN).await?;
+                let reason = conn.closed().await;
+                assert!(is_application_closed(&reason, 1));
+                n0_error::Ok(())
+            },
+            async {
+                let conn = ep2.accept().await.unwrap().await?;
+                conn.close(1u32.into(), b"bye");
+                n0_error::Ok(())
+            }
+        )?;
+        println!("client connected to ep2");
+
+        // assert that ep1 did not receive a connection
+        assert!(matches!(now_or_never(ep1.accept()), None));
+
+        // We assert that we get the warn log once for endpoint 1, and not at all for endpoint 2.
         logs_assert(|logs| {
             let expected_line = |line: &str| {
-                line.contains("ERROR") && line.contains("Relay connection was closed because another endpoint with the same secret key connected to it")
+                line.contains("WARN") && line.contains("Another endpoint connected with the same endpoint id. No more messages will be received")
             };
             let count_line_ep1 = logs
                 .iter()
@@ -3107,7 +3159,14 @@ mod tests {
                 Err("Logs don't match expectations".to_string())
             }
         });
-        tokio::join!(ep1.close(), ep2.close());
+        tokio::join!(ep1.close(), ep2.close(), client.close());
         Ok(())
+    }
+
+    fn is_application_closed(close_reason: &ConnectionError, code: u32) -> bool {
+        matches!(
+            close_reason,
+            ConnectionError::ApplicationClosed(f) if f.error_code ==code.into()
+        )
     }
 }
