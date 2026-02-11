@@ -219,16 +219,12 @@ pub enum RunError {
         #[error(from)]
         source: HandleFrameError,
     },
-    #[error("Server.send_queue dropped")]
-    SendQueuePacketDrop {},
     #[error("Failed to send packet")]
     PacketSend { source: WriteFrameError },
-    #[error("Server.endpoint_gone dropped")]
-    EndpointGoneDrop {},
-    #[error("EndpointGone write frame failed")]
-    EndpointGoneWriteFrame { source: WriteFrameError },
-    #[error("Keep alive write frame failed")]
-    KeepAliveWriteFrame { source: WriteFrameError },
+    #[error("Handle was dropped")]
+    HandleDropped {},
+    #[error("Writing a frame failed")]
+    WriteFrame { source: WriteFrameError },
     #[error("Tick flush")]
     TickFlush {},
 }
@@ -329,18 +325,18 @@ where
                 }
                 // Second priority, sending regular packets
                 packet = self.packet_send_queue.recv() => {
-                    let packet = packet.ok_or_else(|| e!(RunError::SendQueuePacketDrop))?;
+                    let packet = packet.ok_or_else(|| e!(RunError::HandleDropped))?;
                     self.send_packet(packet)
                         .await
                         .map_err(|err| e!(RunError::PacketSend, err))?;
                 }
                 // Last priority, sending other message
                 message = self.message_send_queue.recv() => {
-                    let message = message .ok_or_else(|| e!(RunError::EndpointGoneDrop))?;
+                    let message = message .ok_or_else(|| e!(RunError::HandleDropped))?;
                     trace!("send {message:?}");
                     self.write_frame(message)
                         .await
-                        .map_err(|err| e!(RunError::EndpointGoneWriteFrame, err))?;
+                        .map_err(|err| e!(RunError::WriteFrame, err))?;
                 }
                 _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
@@ -353,7 +349,7 @@ where
                     let data = self.ping_tracker.new_ping();
                     self.write_frame(RelayToClientMsg::Ping(data))
                         .await
-                        .map_err(|err| e!(RunError::KeepAliveWriteFrame, err))?;
+                        .map_err(|err| e!(RunError::WriteFrame, err))?;
                 }
             }
 

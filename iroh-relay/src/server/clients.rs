@@ -67,7 +67,7 @@ impl Clients {
         if let Some(old_client) = self.0.clients.insert(endpoint_id, client) {
             debug!(
                 remote_endpoint = %endpoint_id.fmt_short(),
-                "multiple connections found, pruning old connection",
+                "multiple connections found, deactivating old connection",
             );
             old_client
                 .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string()).ok();
