@@ -1,35 +1,64 @@
-use std::pin::Pin;
+use std::{
+    pin::Pin,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use iroh_base::EndpointId;
+use tokio_util::sync::CancellationToken;
 #[cfg(not(wasm_browser))]
 use tokio_util::task::TaskTracker;
 
 #[derive(Debug)]
 pub struct Runtime {
-    ep: EndpointId,
+    id: EndpointId,
     #[cfg(not(wasm_browser))]
     tasks: TaskTracker,
+    cancel: CancellationToken,
+    task_counter: AtomicU64,
 }
 
 impl Runtime {
-    pub fn new(ep: EndpointId) -> Self {
+    /// Create a new [`Runtime`] that manages shutting down tasks properly,
+    /// whether gracefully or un-gracefully.
+    pub fn new(id: EndpointId) -> Self {
         Self {
-            ep,
+            id,
             #[cfg(not(wasm_browser))]
             tasks: TaskTracker::new(),
+            cancel: CancellationToken::new(),
+            task_counter: AtomicU64::new(0),
         }
     }
 
-    // pub fn len(&self) -> usize {
-    //     self.tasks.len()
-    // }
+    /// Shutdown the runtime gracefully.
+    ///
+    /// Closes the task tracker and waits for all spawned tasks to finish naturally.
+    #[cfg(not(wasm_browser))]
+    pub async fn shutdown(&self) {
+        if self.tasks.close() {
+            self.tasks.wait().await
+        }
+    }
 
-    // pub async fn shutdown(&self) {
-    //     if self.tasks.close() {
-    //         tracing::debug!("tasks len {}", self.tasks.len());
-    //         self.tasks.wait().await
-    //     }
-    // }
+    /// Shutdown the runtime ASAP, not waiting for any graceful closing of tasks.
+    #[cfg(not(wasm_browser))]
+    // TODO: remove in next commit
+    #[allow(dead_code)]
+    pub fn abort(&self) {
+        // Drop the running futures.
+        self.cancel.cancel();
+        // Signal that the runtime should be closed.
+        self.tasks.close();
+        // Does not wait for the tasks to return.
+    }
+
+    /// No-op on wasm. There is no task tracker to close or wait on.
+    #[cfg(wasm_browser)]
+    pub fn shutdown(&self) {}
+
+    /// No-op on wasm. There is no task tracker or cancellation to perform.
+    #[cfg(wasm_browser)]
+    pub fn abort(&self) {}
 }
 
 impl quinn::Runtime for Runtime {
@@ -51,16 +80,22 @@ impl quinn::Runtime for Runtime {
 
     #[cfg(not(wasm_browser))]
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        use tracing::{Instrument, Span};
+        // Do not allow spawning more tasks if the runtime should be closed.
+        if self.tasks.is_closed() {
+            tracing::debug!(me = %self.id.fmt_short(), "runtime closed, dropping spawned task");
+            return;
+        }
 
-        let ep = self.ep.fmt_short();
+        use tracing::{Instrument, debug_span};
+
+        let task_id = self.task_counter.fetch_add(1, Ordering::Relaxed);
+        let cancel = self.cancel.clone();
+        let span = debug_span!("runtime", me = %self.id.fmt_short(), task_id);
         self.tasks.spawn(async move {
-            use rand::random_range;
-
-            let id = random_range(0..100);
-            tracing::warn!("{ep}: spawning task! {id}");
-            future.instrument(Span::current()).await;
-            tracing::warn!("{ep}: spawned task {id} is complete!");
+            // wrapping the future in a cancellation token is what allows
+            // us to "abort" tasks in the event the runtime is meant to
+            // close quickly and ungracefully
+            cancel.run_until_cancelled(future.instrument(span)).await;
         });
     }
 

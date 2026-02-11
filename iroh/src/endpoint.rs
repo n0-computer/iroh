@@ -694,6 +694,22 @@ pub struct Endpoint {
     static_config: Arc<StaticConfig>,
 }
 
+// TODO: This Drop impl currently fires for every clone of Endpoint, not just the
+// last one. To fix this, refactor Endpoint to use the `Arc<EndpointInner>` pattern:
+// move the fields into an inner struct and wrap it in a single Arc. Then Drop on
+// EndpointInner is guaranteed to run exactly once, when the last clone is dropped.
+// impl Drop for Endpoint {
+//     fn drop(&mut self) {
+//         if self.is_closed() {
+//             return;
+//         }
+//         tracing::error!(
+//             "Endpoint has been dropped without calling `Endpoint::close`. Aborting the endpoint un-gracefully"
+//         );
+//         self.sock.abort();
+//     }
+// }
+
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
