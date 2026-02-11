@@ -3138,7 +3138,7 @@
 <a href=#3138 id=3138 data-nosnippet>3138</a>        <span class="macro">println!</span>(<span class="string">"client connected to ep2"</span>);
 <a href=#3139 id=3139 data-nosnippet>3139</a>
 <a href=#3140 id=3140 data-nosnippet>3140</a>        <span class="comment">// assert that ep1 did not receive a connection
-<a href=#3141 id=3141 data-nosnippet>3141</a>        </span><span class="macro">assert!</span>(<span class="macro">matches!</span>(now_or_never(ep1.accept()), <span class="prelude-val">None</span>));
+<a href=#3141 id=3141 data-nosnippet>3141</a>        </span><span class="macro">assert!</span>(now_or_never(ep1.accept()).is_none());
 <a href=#3142 id=3142 data-nosnippet>3142</a>
 <a href=#3143 id=3143 data-nosnippet>3143</a>        <span class="comment">// We assert that we get the warn log once for endpoint 1, and not at all for endpoint 2.
 <a href=#3144 id=3144 data-nosnippet>3144</a>        </span>logs_assert(|logs| {
