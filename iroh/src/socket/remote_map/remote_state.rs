@@ -956,7 +956,7 @@ impl RemoteStateActor {
                     self.paths.abandoned_path(&addr);
                 }
             }
-            PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
+            PathEvent::LocallyClosed { id, .. } => {
                 let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
                     debug!("path not in path_id_map");
                     return;
@@ -1128,6 +1128,9 @@ impl RemoteStateActor {
                         }
                         Err(quinn_proto::ClosePathError::ClosedPath) => {
                             // We already closed this.
+                        }
+                        Err(quinn_proto::ClosePathError::MultipathNotNegotiated) => {
+                            error!("Not a valid multipath connection");
                         }
                         Ok(_fut) => {
                             // We will handle the event in Self::handle_path_events.
