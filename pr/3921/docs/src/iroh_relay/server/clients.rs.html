@@ -55,7 +55,7 @@
 <a href=#55 id=55 data-nosnippet>55</a>    }
 <a href=#56 id=56 data-nosnippet>56</a>
 <a href=#57 id=57 data-nosnippet>57</a>    <span class="doccomment">/// Builds the client handler and starts the read &amp; write loops for the connection.
-<a href=#58 id=58 data-nosnippet>58</a>    </span><span class="kw">pub async fn </span>register&lt;S&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, client_config: Config&lt;S&gt;, metrics: Arc&lt;Metrics&gt;)
+<a href=#58 id=58 data-nosnippet>58</a>    </span><span class="kw">pub fn </span>register&lt;S&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, client_config: Config&lt;S&gt;, metrics: Arc&lt;Metrics&gt;)
 <a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">where
 <a href=#60 id=60 data-nosnippet>60</a>        </span>S: BytesStreamSink + Send + <span class="lifetime">'static</span>,
 <a href=#61 id=61 data-nosnippet>61</a>    {
@@ -224,7 +224,7 @@
 <a href=#224 id=224 data-nosnippet>224</a>
 <a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>clients = Clients::default();
 <a href=#226 id=226 data-nosnippet>226</a>        <span class="kw">let </span>metrics = Arc::new(Metrics::default());
-<a href=#227 id=227 data-nosnippet>227</a>        clients.register(builder_a, metrics.clone()).<span class="kw">await</span>;
+<a href=#227 id=227 data-nosnippet>227</a>        clients.register(builder_a, metrics.clone());
 <a href=#228 id=228 data-nosnippet>228</a>
 <a href=#229 id=229 data-nosnippet>229</a>        <span class="comment">// send packet
 <a href=#230 id=230 data-nosnippet>230</a>        </span><span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
