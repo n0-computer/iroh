@@ -3138,7 +3138,7 @@ mod tests {
         println!("client connected to ep2");
 
         // assert that ep1 did not receive a connection
-        assert!(matches!(now_or_never(ep1.accept()), None));
+        assert!(now_or_never(ep1.accept()).is_none());
 
         // We assert that we get the warn log once for endpoint 1, and not at all for endpoint 2.
         logs_assert(|logs| {
