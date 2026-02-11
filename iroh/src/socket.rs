@@ -888,7 +888,7 @@ impl Handle {
             remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
             network_monitor,
-            netmon_watcher,
+            local_interfaces_watcher: netmon_watcher,
             direct_addr_update_state,
             transports_network_change: network_change_sender,
             direct_addr_done_rx,
@@ -1136,9 +1136,12 @@ struct Actor {
     remote_map: RemoteMap,
     /// When set, is an AfterFunc timer that will call Socket::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
-
+    /// An actor watching the local network interfaces.
+    ///
+    /// The monitored changes are emitted via [`Self::local_interfaces_watcher`].
     network_monitor: netmon::Monitor,
-    netmon_watcher: n0_watcher::Direct<netmon::State>,
+    /// Watcher for changes to the local network interfaces, IP addresses and routes.
+    local_interfaces_watcher: n0_watcher::Direct<netmon::State>,
     transports_network_change: transports::NetworkChangeSender,
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
@@ -1153,7 +1156,7 @@ impl Actor {
         mut local_addrs_watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
     ) {
         // Setup network monitoring
-        let mut current_netmon_state = self.netmon_watcher.get();
+        let mut current_netmon_state = self.local_interfaces_watcher.get();
 
         #[cfg(not(wasm_browser))]
         let mut portmap_watcher = self
@@ -1231,7 +1234,7 @@ impl Actor {
                     match reason {
                         Some(()) => {
                             // check if a new run needs to be scheduled
-                            let state = self.netmon_watcher.get();
+                            let state = self.local_interfaces_watcher.get();
                             self.direct_addr_update_state.try_run(state.into());
                         }
                         None => {
@@ -1259,7 +1262,7 @@ impl Actor {
                     #[cfg(wasm_browser)]
                     let _unused_in_browsers = change;
                 },
-                state = self.netmon_watcher.updated() => {
+                state = self.local_interfaces_watcher.updated() => {
                     let Ok(state) = state else {
                         trace!("tick: link change receiver closed");
                         self.sock.metrics.socket.actor_tick_other.inc();
@@ -1309,7 +1312,7 @@ impl Actor {
     }
 
     fn re_stun(&mut self, why: UpdateReason) {
-        let state = self.netmon_watcher.get();
+        let state = self.local_interfaces_watcher.get();
         self.direct_addr_update_state
             .schedule_run(why, state.into());
     }
@@ -1459,7 +1462,7 @@ impl Actor {
             let LocalAddresses {
                 regular: mut ips,
                 loopback,
-            } = self.netmon_watcher.get().local_addresses;
+            } = self.local_interfaces_watcher.get().local_addresses;
             if ips.is_empty() && addrs.is_empty() {
                 // Include loopback addresses only if there are no other interfaces
                 // or public addresses, this allows testing offline.
