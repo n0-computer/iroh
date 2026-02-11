@@ -67,7 +67,7 @@
 <a href=#67 id=67 data-nosnippet>67</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(endpoint_id, client) {
 <a href=#68 id=68 data-nosnippet>68</a>            <span class="macro">debug!</span>(
 <a href=#69 id=69 data-nosnippet>69</a>                remote_endpoint = %endpoint_id.fmt_short(),
-<a href=#70 id=70 data-nosnippet>70</a>                <span class="string">"multiple connections found, pruning old connection"</span>,
+<a href=#70 id=70 data-nosnippet>70</a>                <span class="string">"multiple connections found, deactivating old connection"</span>,
 <a href=#71 id=71 data-nosnippet>71</a>            );
 <a href=#72 id=72 data-nosnippet>72</a>            old_client
 <a href=#73 id=73 data-nosnippet>73</a>                .try_send_health(<span class="string">"Another endpoint connected with the same endpoint id. No more messages will be received"</span>.to_string()).ok();
