@@ -163,10 +163,25 @@ pub(crate) struct Handle {
     endpoint: quinn::Endpoint,
 }
 
+/// This coordinates the shutdown of a [`crate::Endpoint`] and all its tasks.
+///
+/// It also tightly binds to the [`Handle`] and [`Actor`] closing as that is where most of
+/// the logic lives.
 #[derive(Debug)]
 struct ShutdownState {
+    /// Token that is cancelled at the moment the [`crate::Endpoint::close`] is called.
+    ///
+    /// Currently called from [`Handle::close`].
     at_close_start: CancellationToken,
+    /// Token that is cancelled once the [`quinn::Endpoint`] is drained.
+    ///
+    /// Only 100ms after this is cancelled will the [`Actor`] task be cancelled, it should
+    /// have exited already by then as it is considered an error if it was still running.
     at_endpoint_closed: CancellationToken,
+    /// Set if the endpoint is closed and all tasks are stopped.
+    ///
+    /// This is only set once both [`Self::at_close_start`] and [`Self::at_endpoint_closed`]
+    /// are cancelled **and** the [`Actor`] task is no longer running.
     closed: AtomicBool,
 }
 
@@ -181,10 +196,14 @@ impl Default for ShutdownState {
 }
 
 impl ShutdownState {
+    /// Whether the endpoint has started closing, or already closed.
+    ///
+    /// This is true once [`crate::Endpoint::close`] is called, and remains true forever after.
     fn is_closing(&self) -> bool {
         self.at_close_start.is_cancelled()
     }
 
+    /// Whether the endpoint is fully closed, drained, socked closed and all tasks stopped.
     fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
@@ -262,10 +281,12 @@ impl Socket {
         })
     }
 
+    /// Whether the iroh endpoint is closed and all its actors stopped.
     pub(crate) fn is_closed(&self) -> bool {
         self.shutdown.is_closed()
     }
 
+    /// Whether [`crate::Endpoint::close`] has been called.
     fn is_closing(&self) -> bool {
         self.shutdown.is_closing()
     }
@@ -901,7 +922,7 @@ impl Handle {
         &self.endpoint
     }
 
-    /// Closes the connection.
+    /// Closes the iroh endpoint.
     ///
     /// Only the first close does anything. Any later closes return nil.  Polling the socket
     /// ([`quinn::AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`] indefinitely
@@ -956,7 +977,7 @@ impl Handle {
             match shutdown_done {
                 Ok(_) => trace!("tasks finished in time, shutdown complete"),
                 Err(time::Elapsed { .. }) => {
-                    // Dropping the task will abort itt
+                    // Dropping the task will abort it
                     warn!("tasks didn't finish in time, aborting");
                 }
             }
