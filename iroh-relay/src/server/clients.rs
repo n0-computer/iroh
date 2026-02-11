@@ -32,6 +32,9 @@ pub struct Clients(Arc<Inner>);
 struct Inner {
     /// The list of all currently connected clients.
     clients: DashMap<EndpointId, Client>,
+    /// List of clients that are still connected, but not active anymore
+    ///
+    /// Clients are moved here if another endpoint with the same id connects.
     inactive_clients: DashMap<u64, Client>,
     /// Map of which client has sent where
     sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
