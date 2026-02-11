@@ -386,6 +386,7 @@ impl RemoteStateActor {
     }
 
     fn handle_network_change(&mut self, is_major: bool) {
+        // Ping all the paths so loss-detection starts ASAP.
         for conn in self.connections.values() {
             if let Some(quinn_conn) = conn.handle.upgrade() {
                 for (path_id, addr) in &conn.open_paths {

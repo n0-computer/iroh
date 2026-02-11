@@ -37,8 +37,9 @@ use n0_watcher::{self, Watchable, Watcher};
 #[cfg(not(wasm_browser))]
 use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
-use quinn::WeakConnectionHandle;
+use quinn::{NetworkChangeHint, WeakConnectionHandle};
 use rand::Rng;
+use rustc_hash::FxHashSet;
 use tokio::sync::{
     Mutex as AsyncMutex,
     mpsc::{self},
@@ -837,8 +838,6 @@ impl Handle {
             .await
             .map_err(|err| e!(BindError::CreateNetmonMonitor, err))?;
 
-        let qad_endpoint = endpoint.clone();
-
         #[cfg(any(test, feature = "test-utils"))]
         let client_config = if insecure_skip_relay_cert_verify {
             iroh_relay::client::make_dangerous_client_config()
@@ -851,7 +850,7 @@ impl Handle {
         let net_report_config = net_report::Options::default();
         #[cfg(not(wasm_browser))]
         let net_report_config = net_report_config.quic_config(Some(QuicConfig {
-            ep: qad_endpoint,
+            ep: endpoint.clone(),
             client_config,
             ipv4: true,
             ipv6,
@@ -884,6 +883,7 @@ impl Handle {
 
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
+            endpoint: endpoint.clone(),
             sock: sock.clone(),
             remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
@@ -918,7 +918,7 @@ impl Handle {
     }
 
     /// The underlying [`quinn::Endpoint`]
-    pub fn endpoint(&self) -> &quinn::Endpoint {
+    pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
     }
 
@@ -1131,6 +1131,23 @@ enum ActorMessage {
 }
 
 struct Actor {
+    /// A clone of the quinn Endpoint.
+    ///
+    /// The task of this actor is currently owned by the [`crate::Endpoint`] and wrapped in
+    /// an [`AbortOnDropHandle`]. When [`crate::Endpoint::close`] is called various
+    /// subsystems are being stopped. Then, when [`ShutdownState::at_endpoint_closed`] is
+    /// called by [`Handle::close`], this actor itself is stopped via it's
+    /// [`CancellationToken`] and we will drop this clone of the endpoint. The endpoint is
+    /// than finally dropped when the [`Handle`] itself is dropped.
+    ///
+    /// All of this to say: keeping the quinn endpoint alive here does not impact the
+    /// lifetime of it since it's lifetime is shorter than that one that's stored in the
+    /// [`Handle`].
+    endpoint: quinn::Endpoint,
+    /// Shared state between an awful lot of iroh subsystems.
+    ///
+    /// In particular both this actor's [`Handle`] as well as this actor itself have a
+    /// copy. But also other subsystems that consequently have access to way to much state.
     sock: Arc<Socket>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
     remote_map: RemoteMap,
@@ -1289,6 +1306,10 @@ impl Actor {
         }
     }
 
+    /// Handles a change detected in the local network conditions.
+    ///
+    /// This is triggered when netmon detects a change in the local network interfaces, IP
+    /// addresses and routes.
     async fn handle_network_change(&mut self, is_major: bool) {
         debug!(is_major, "link change detected");
 
@@ -1304,6 +1325,40 @@ impl Actor {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
 
+        #[derive(Debug)]
+        struct Hint {
+            local_addrs: FxHashSet<IpAddr>,
+        }
+
+        impl NetworkChangeHint for Hint {
+            fn is_path_recoverable(
+                &self,
+                _path_id: quinn::PathId,
+                network_path: quinn_proto::FourTuple,
+            ) -> bool {
+                if let Some(local_ip) = network_path.local_ip {
+                    if self.local_addrs.contains(&local_ip) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+
+        let hint = Hint {
+            local_addrs: {
+                let interfaces = self.local_interfaces_watcher.get();
+                interfaces
+                    .local_addresses
+                    .regular
+                    .iter()
+                    .chain(interfaces.local_addresses.loopback.iter())
+                    .copied()
+                    .collect()
+            },
+        };
+
+        self.endpoint.handle_network_change(Some(Arc::new(hint)));
         self.remote_map.on_network_change(is_major);
     }
 
