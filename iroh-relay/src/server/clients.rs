@@ -55,7 +55,7 @@ impl Clients {
     }
 
     /// Builds the client handler and starts the read & write loops for the connection.
-    pub async fn register<S>(&self, client_config: Config<S>, metrics: Arc<Metrics>)
+    pub fn register<S>(&self, client_config: Config<S>, metrics: Arc<Metrics>)
     where
         S: BytesStreamSink + Send + 'static,
     {
@@ -224,7 +224,7 @@ mod tests {
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_a, metrics.clone()).await;
+        clients.register(builder_a, metrics.clone());
 
         // send packet
         let data = b"hello world!";
