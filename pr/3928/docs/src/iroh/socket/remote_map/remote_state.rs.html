@@ -1125,7 +1125,7 @@
 <a href=#1125 id=1125 data-nosnippet>1125</a>                    <span class="macro">trace!</span>(<span class="question-mark">?</span>path_remote, <span class="question-mark">?</span>conn_id, %path_id, <span class="string">"closing direct path"</span>);
 <a href=#1126 id=1126 data-nosnippet>1126</a>                    <span class="kw">match </span>path.close() {
 <a href=#1127 id=1127 data-nosnippet>1127</a>                        <span class="prelude-val">Err</span>(quinn_proto::ClosePathError::MultipathNotNegotiated) =&gt; {
-<a href=#1128 id=1128 data-nosnippet>1128</a>                            <span class="macro">error!</span>(<span class="string">"connection does not have multipath negotiated"</span>);
+<a href=#1128 id=1128 data-nosnippet>1128</a>                            <span class="macro">error!</span>(<span class="string">"multipath not negotiated"</span>);
 <a href=#1129 id=1129 data-nosnippet>1129</a>                        }
 <a href=#1130 id=1130 data-nosnippet>1130</a>                        <span class="prelude-val">Err</span>(quinn_proto::ClosePathError::LastOpenPath) =&gt; {
 <a href=#1131 id=1131 data-nosnippet>1131</a>                            <span class="macro">error!</span>(<span class="string">"could not close last open path"</span>);
