@@ -380,65 +380,8 @@ impl RemoteStateActor {
                 tx.send(info).ok();
             }
             RemoteStateMessage::NetworkChange { is_major } => {
-                self.handle_network_change(is_major);
+                self.handle_msg_network_change(is_major);
             }
-        }
-    }
-
-    fn handle_network_change(&mut self, is_major: bool) {
-        // Ping all the paths so loss-detection starts ASAP.
-        for conn in self.connections.values() {
-            if let Some(quinn_conn) = conn.handle.upgrade() {
-                for (path_id, addr) in &conn.open_paths {
-                    if let Some(path) = quinn_conn.path(*path_id) {
-                        // Ping the current path
-                        if let Err(err) = path.ping() {
-                            warn!(%err, %path_id, ?addr, "failed to ping path");
-                        }
-                    }
-                }
-            }
-        }
-
-        if is_major {
-            self.trigger_holepunching();
-        }
-    }
-
-    /// Handles regularly checking if any paths need hole punching currently
-    ///
-    /// Currently we need to have 1 IP path, with a good enough latency.
-    fn check_connections(&mut self) {
-        let mut is_goodenough = true;
-        for conn_state in self.connections.values() {
-            let mut is_conn_goodenough = false;
-            if let Some(conn) = conn_state.handle.upgrade() {
-                let min_ip_rtt = conn_state
-                    .open_paths
-                    .iter()
-                    .filter_map(|(path_id, addr)| {
-                        if addr.is_ip() {
-                            conn.path_stats(*path_id).map(|stats| stats.rtt)
-                        } else {
-                            None
-                        }
-                    })
-                    .min();
-
-                if let Some(min_ip_rtt) = min_ip_rtt {
-                    let is_latency_goodenough = min_ip_rtt <= GOOD_ENOUGH_LATENCY;
-                    is_conn_goodenough = is_latency_goodenough;
-                } else {
-                    // No IP transport found
-                    is_conn_goodenough = false;
-                }
-            }
-            is_goodenough &= is_conn_goodenough;
-        }
-
-        if !is_goodenough {
-            debug!("connections are not good enough, triggering holepunching");
-            self.trigger_holepunching();
         }
     }
 
@@ -601,6 +544,26 @@ impl RemoteStateActor {
         self.paths.resolve_remote(tx);
         // Start Address Lookup if we have no selected path.
         self.trigger_address_lookup();
+    }
+
+    fn handle_msg_network_change(&mut self, is_major: bool) {
+        // Ping all the paths so loss-detection starts ASAP.
+        for conn in self.connections.values() {
+            if let Some(quinn_conn) = conn.handle.upgrade() {
+                for (path_id, addr) in &conn.open_paths {
+                    if let Some(path) = quinn_conn.path(*path_id) {
+                        // Ping the current path
+                        if let Err(err) = path.ping() {
+                            warn!(%err, %path_id, ?addr, "failed to ping path");
+                        }
+                    }
+                }
+            }
+        }
+
+        if is_major {
+            self.trigger_holepunching();
+        }
     }
 
     fn handle_connection_close(&mut self, conn_id: ConnId) {
@@ -1139,6 +1102,43 @@ impl RemoteStateActor {
                     }
                 }
             }
+        }
+    }
+
+    /// Handles regularly checking if any paths need hole punching currently
+    ///
+    /// Currently we need to have 1 IP path, with a good enough latency.
+    fn check_connections(&mut self) {
+        let mut is_goodenough = true;
+        for conn_state in self.connections.values() {
+            let mut is_conn_goodenough = false;
+            if let Some(conn) = conn_state.handle.upgrade() {
+                let min_ip_rtt = conn_state
+                    .open_paths
+                    .iter()
+                    .filter_map(|(path_id, addr)| {
+                        if addr.is_ip() {
+                            conn.path_stats(*path_id).map(|stats| stats.rtt)
+                        } else {
+                            None
+                        }
+                    })
+                    .min();
+
+                if let Some(min_ip_rtt) = min_ip_rtt {
+                    let is_latency_goodenough = min_ip_rtt <= GOOD_ENOUGH_LATENCY;
+                    is_conn_goodenough = is_latency_goodenough;
+                } else {
+                    // No IP transport found
+                    is_conn_goodenough = false;
+                }
+            }
+            is_goodenough &= is_conn_goodenough;
+        }
+
+        if !is_goodenough {
+            debug!("connections are not good enough, triggering holepunching");
+            self.trigger_holepunching();
         }
     }
 }

@@ -1336,10 +1336,10 @@ impl Actor {
                 _path_id: quinn::PathId,
                 network_path: quinn_proto::FourTuple,
             ) -> bool {
-                if let Some(local_ip) = network_path.local_ip {
-                    if self.local_addrs.contains(&local_ip) {
-                        return true;
-                    }
+                if let Some(local_ip) = network_path.local_ip
+                    && self.local_addrs.contains(&local_ip)
+                {
+                    return true;
                 }
                 false
             }
