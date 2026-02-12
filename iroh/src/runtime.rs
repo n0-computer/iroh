@@ -13,7 +13,9 @@ pub struct Runtime {
     id: EndpointId,
     #[cfg(not(wasm_browser))]
     tasks: TaskTracker,
+    #[cfg(not(wasm_browser))]
     cancel: CancellationToken,
+    #[cfg(not(wasm_browser))]
     task_counter: AtomicU64,
 }
 
@@ -33,6 +35,9 @@ impl Runtime {
     /// Shutdown the runtime gracefully.
     ///
     /// Closes the task tracker and waits for all spawned tasks to finish naturally.
+    ///
+    /// If the tasks were already closed, it assumes the tasks have already been
+    /// awaited.
     #[cfg(not(wasm_browser))]
     pub async fn shutdown(&self) {
         if self.tasks.close() {
@@ -42,8 +47,6 @@ impl Runtime {
 
     /// Shutdown the runtime ASAP, not waiting for any graceful closing of tasks.
     #[cfg(not(wasm_browser))]
-    // TODO: remove in next commit
-    #[allow(dead_code)]
     pub fn abort(&self) {
         // Drop the running futures.
         self.cancel.cancel();
