@@ -3058,22 +3058,4 @@
 <a href=#3058 id=3058 data-nosnippet>3058</a>
 <a href=#3059 id=3059 data-nosnippet>3059</a>        <span class="prelude-val">Ok</span>(())
 <a href=#3060 id=3060 data-nosnippet>3060</a>    }
-<a href=#3061 id=3061 data-nosnippet>3061</a>
-<a href=#3062 id=3062 data-nosnippet>3062</a>    <span class="doccomment">/// Test that awaiting `online` for an endpoint is fast without ip transports.
-<a href=#3063 id=3063 data-nosnippet>3063</a>    ///
-<a href=#3064 id=3064 data-nosnippet>3064</a>    /// This is a regression test: We previously were waiting for failing QAD tests to time out.
-<a href=#3065 id=3065 data-nosnippet>3065</a>    </span><span class="attr">#[tokio::test]
-<a href=#3066 id=3066 data-nosnippet>3066</a>    #[traced_test]
-<a href=#3067 id=3067 data-nosnippet>3067</a>    </span><span class="kw">async fn </span>connect_relay_online_without_ip() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#3068 id=3068 data-nosnippet>3068</a>        <span class="kw">let </span>(relay_map, _relay_url, _relay_server_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#3069 id=3069 data-nosnippet>3069</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-<a href=#3070 id=3070 data-nosnippet>3070</a>            .clear_ip_transports()
-<a href=#3071 id=3071 data-nosnippet>3071</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-<a href=#3072 id=3072 data-nosnippet>3072</a>            .bind()
-<a href=#3073 id=3073 data-nosnippet>3073</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#3074 id=3074 data-nosnippet>3074</a>        tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), client.online())
-<a href=#3075 id=3075 data-nosnippet>3075</a>            .<span class="kw">await
-<a href=#3076 id=3076 data-nosnippet>3076</a>            </span>.expect(<span class="string">"timeout"</span>);
-<a href=#3077 id=3077 data-nosnippet>3077</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3078 id=3078 data-nosnippet>3078</a>    }
-<a href=#3079 id=3079 data-nosnippet>3079</a>}</code></pre></div></section></main></body></html>
+<a href=#3061 id=3061 data-nosnippet>3061</a>}</code></pre></div></section></main></body></html>
