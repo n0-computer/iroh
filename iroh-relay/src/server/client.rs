@@ -65,9 +65,9 @@ pub struct Client {
     done: CancellationToken,
     /// Actor handle.
     handle: AbortOnDropHandle<()>,
-    /// Queue of packets intended for the client.
-    send_queue: mpsc::Sender<Packet>,
-    /// Channel to notify the client that a previous sender has disconnected.
+    /// Channel to send packets intended for the client.
+    packet_queue: mpsc::Sender<Packet>,
+    /// Channel to send non-packet messages to the client.
     message_queue: mpsc::Sender<RelayToClientMsg>,
 }
 
@@ -121,7 +121,7 @@ impl Client {
             connection_id,
             handle: AbortOnDropHandle::new(handle),
             done,
-            send_queue: packet_send_queue_s,
+            packet_queue: packet_send_queue_s,
             message_queue: message_send_queue_s,
         }
     }
@@ -153,7 +153,7 @@ impl Client {
         src: EndpointId,
         data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
-        self.send_queue.try_send(Packet { src, data })
+        self.packet_queue.try_send(Packet { src, data })
     }
 
     pub(super) fn try_send_peer_gone(
@@ -252,9 +252,9 @@ struct Actor<S> {
     stream: RelayedStream<S>,
     /// Maximum time we wait to complete a write to the client
     timeout: Duration,
-    /// Packets queued to send to the client
+    /// Receiver for packets to be sent to the client.
     packet_send_queue: mpsc::Receiver<Packet>,
-    /// Notify the client that a previous sender has disconnected
+    /// Receiver for non-packet messages to be sent to the client.
     message_send_queue: mpsc::Receiver<RelayToClientMsg>,
     /// [`EndpointId`] of this client
     endpoint_id: EndpointId,
