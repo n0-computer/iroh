@@ -1336,10 +1336,10 @@
 <a href=#1336 id=1336 data-nosnippet>1336</a>                _path_id: quinn::PathId,
 <a href=#1337 id=1337 data-nosnippet>1337</a>                network_path: quinn_proto::FourTuple,
 <a href=#1338 id=1338 data-nosnippet>1338</a>            ) -&gt; bool {
-<a href=#1339 id=1339 data-nosnippet>1339</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(local_ip) = network_path.local_ip {
-<a href=#1340 id=1340 data-nosnippet>1340</a>                    <span class="kw">if </span><span class="self">self</span>.local_addrs.contains(<span class="kw-2">&amp;</span>local_ip) {
-<a href=#1341 id=1341 data-nosnippet>1341</a>                        <span class="kw">return </span><span class="bool-val">true</span>;
-<a href=#1342 id=1342 data-nosnippet>1342</a>                    }
+<a href=#1339 id=1339 data-nosnippet>1339</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(local_ip) = network_path.local_ip
+<a href=#1340 id=1340 data-nosnippet>1340</a>                    &amp;&amp; <span class="self">self</span>.local_addrs.contains(<span class="kw-2">&amp;</span>local_ip)
+<a href=#1341 id=1341 data-nosnippet>1341</a>                {
+<a href=#1342 id=1342 data-nosnippet>1342</a>                    <span class="kw">return </span><span class="bool-val">true</span>;
 <a href=#1343 id=1343 data-nosnippet>1343</a>                }
 <a href=#1344 id=1344 data-nosnippet>1344</a>                <span class="bool-val">false
 <a href=#1345 id=1345 data-nosnippet>1345</a>            </span>}
