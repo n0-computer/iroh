@@ -1325,7 +1325,7 @@
 <a href=#1325 id=1325 data-nosnippet>1325</a>
 <a href=#1326 id=1326 data-nosnippet>1326</a><span class="kw">impl </span>Drop <span class="kw">for </span>ConnectionState {
 <a href=#1327 id=1327 data-nosnippet>1327</a>    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#1328 id=1328 data-nosnippet>1328</a>        <span class="self">self</span>.path_watchable.disconnect();
+<a href=#1328 id=1328 data-nosnippet>1328</a>        <span class="self">self</span>.path_watchable.close();
 <a href=#1329 id=1329 data-nosnippet>1329</a>    }
 <a href=#1330 id=1330 data-nosnippet>1330</a>}
 <a href=#1331 id=1331 data-nosnippet>1331</a>
