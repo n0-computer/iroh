@@ -753,14 +753,15 @@ impl Handle {
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
         #[cfg(not(wasm_browser))]
-        let ipv6 = transports
+        let has_ipv6_transport = transports
             .ip_bind_addrs()
             .into_iter()
             .any(|addr| addr.is_ipv6());
 
-        let direct_addrs = DiscoveredDirectAddrs::default();
-
+        #[cfg(not(wasm_browser))]
         let has_ip_transports = !transports.ip_bind_addrs().is_empty();
+
+        let direct_addrs = DiscoveredDirectAddrs::default();
 
         let remote_map = {
             RemoteMap::new(
@@ -841,7 +842,7 @@ impl Handle {
                 ep: endpoint.clone(),
                 client_config,
                 ipv4: true,
-                ipv6,
+                ipv6: has_ipv6_transport,
             });
             net_report_config.quic_config(qad_config)
         };
