@@ -831,6 +831,12 @@ impl Handle {
 
         #[cfg(not(wasm_browser))]
         let net_report_config = {
+            // Set a `QuicConfig` for address discovery (QAD), but only if we have IP transports.
+            //
+            // If there are no IP transports configured, then we don't set a QuicConfig.
+            // If we would, the `quinn::Endpoint` passed along will not have IP connectivity,
+            // and the QAD probes that connect to the relay's QUIC endpoints would time out
+            // because all outgoing packets to IP destinations would be dropped.
             let qad_config = has_ip_transports.then(|| QuicConfig {
                 ep: endpoint.clone(),
                 client_config,
