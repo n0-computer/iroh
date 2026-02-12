@@ -45,10 +45,13 @@ pub struct EndpointAddr {
 }
 
 /// Available address types.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    derive_more::Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 #[non_exhaustive]
 pub enum TransportAddr {
     /// Relays
+    #[debug("Relay({_0})")]
     Relay(RelayUrl),
     /// IP based addresses
     Ip(SocketAddr),

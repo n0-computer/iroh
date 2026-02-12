@@ -1562,6 +1562,13 @@ impl PathInfo {
     pub fn rtt(&self) -> Duration {
         self.stats().rtt
     }
+
+    /// Returns the QUIC path id of this path.
+    ///
+    /// This can be used to uniquely identify a transmission path.
+    pub fn id(&self) -> PathId {
+        self.path_id
+    }
 }
 
 /// Poll a future once, like n0_future::future::poll_once but sync.
