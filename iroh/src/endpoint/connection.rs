@@ -267,11 +267,12 @@ fn conn_from_quinn_conn(
 
     // Register this connection with the socket.
     let fut = ep
+        .inner
         .sock
         .register_connection(info.endpoint_id, conn.weak_handle());
 
     // Check hooks
-    let sock = ep.sock.clone();
+    let sock = ep.inner.sock.clone();
     Ok(async move {
         let paths = fut.await?;
         let conn = Connection {

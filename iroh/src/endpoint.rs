@@ -215,8 +215,10 @@ impl Builder {
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
 
         let ep = Endpoint {
-            sock,
-            static_config: Arc::new(static_config),
+            inner: Arc::new(EndpointInner {
+                sock,
+                static_config,
+            }),
         };
 
         // Add Address Lookup mechanisms
@@ -688,27 +690,29 @@ pub enum EndpointError {
 /// [QUIC]: https://quicwg.org
 #[derive(Clone, Debug)]
 pub struct Endpoint {
-    /// Handle to the socket/actor
-    pub(crate) sock: Handle,
-    /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
-    static_config: Arc<StaticConfig>,
+    inner: Arc<EndpointInner>,
 }
 
-// TODO: This Drop impl currently fires for every clone of Endpoint, not just the
-// last one. To fix this, refactor Endpoint to use the `Arc<EndpointInner>` pattern:
-// move the fields into an inner struct and wrap it in a single Arc. Then Drop on
-// EndpointInner is guaranteed to run exactly once, when the last clone is dropped.
-// impl Drop for Endpoint {
-//     fn drop(&mut self) {
-//         if self.is_closed() {
-//             return;
-//         }
-//         tracing::error!(
-//             "Endpoint has been dropped without calling `Endpoint::close`. Aborting the endpoint un-gracefully"
-//         );
-//         self.sock.abort();
-//     }
-// }
+/// Main purpose of this inner struct is to ensure that the `EndpointInner` is
+/// only dropped once, when the final reference to the `Endpoint` is dropped and
+/// the struct inside the `Arc` is freed.
+#[derive(Debug)]
+struct EndpointInner {
+    sock: Handle,
+    static_config: StaticConfig,
+}
+
+impl Drop for EndpointInner {
+    fn drop(&mut self) {
+        if self.sock.is_closed() {
+            return;
+        }
+        tracing::error!(
+            "Endpoint dropped without calling `Endpoint::close`. Aborting ungracefully."
+        );
+        self.sock.abort();
+    }
+}
 
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources)]
@@ -790,8 +794,8 @@ impl Endpoint {
             warn!("Attempting to set ALPNs for a closed endpoint. Ignoring.");
             return;
         }
-        let server_config = self.static_config.create_server_config(alpns);
-        self.sock.set_server_config(Some(server_config));
+        let server_config = self.inner.static_config.create_server_config(alpns);
+        self.inner.sock.set_server_config(Some(server_config));
     }
 
     /// Adds the provided configuration to the [`RelayMap`].
@@ -807,7 +811,7 @@ impl Endpoint {
         if self.is_closed() {
             return None;
         }
-        self.sock.insert_relay(relay, config).await
+        self.inner.sock.insert_relay(relay, config).await
     }
 
     /// Removes the configuration from the [`RelayMap`] for the provided [`RelayUrl`].
@@ -817,7 +821,7 @@ impl Endpoint {
         if self.is_closed() {
             return None;
         }
-        self.sock.remove_relay(relay).await
+        self.inner.sock.remove_relay(relay).await
     }
 
     // # Methods for establishing connectivity.
@@ -895,8 +899,12 @@ impl Endpoint {
             return Err(e!(ConnectWithOptsError::EndpointClosed));
         }
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
-        if let BeforeConnectOutcome::Reject =
-            self.sock.hooks.before_connect(&endpoint_addr, alpn).await
+        if let BeforeConnectOutcome::Reject = self
+            .inner
+            .sock
+            .hooks
+            .before_connect(&endpoint_addr, alpn)
+            .await
         {
             return Err(e!(ConnectWithOptsError::LocallyRejected));
         }
@@ -914,12 +922,12 @@ impl Endpoint {
             "connecting",
         );
 
-        let mapped_addr = self.sock.resolve_remote(endpoint_addr).await??;
+        let mapped_addr = self.inner.sock.resolve_remote(endpoint_addr).await??;
 
         let transport_config = options
             .transport_config
             .map(|cfg| cfg.to_inner_arc())
-            .unwrap_or(self.static_config.transport_config.to_inner_arc());
+            .unwrap_or(self.inner.static_config.transport_config.to_inner_arc());
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
@@ -928,9 +936,10 @@ impl Endpoint {
             let mut alpn_protocols = vec![alpn.to_vec()];
             alpn_protocols.extend(options.additional_alpns);
             let quic_client_config = self
+                .inner
                 .static_config
                 .tls_config
-                .make_client_config(alpn_protocols, self.static_config.keylog);
+                .make_client_config(alpn_protocols, self.inner.static_config.keylog);
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             client_config.transport_config(transport_config.clone());
             client_config
@@ -939,6 +948,7 @@ impl Endpoint {
         let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(endpoint_id);
         let connect = self
+            .inner
             .sock
             .connect_with(client_config, dest_addr, server_name)?;
 
@@ -954,14 +964,14 @@ impl Endpoint {
     /// The returned future will yield `None` if the endpoint is closed by calling
     /// [`Endpoint::close`].
     pub fn accept(&self) -> Accept {
-        self.sock.accept(self.clone())
+        self.inner.sock.accept(self.clone())
     }
 
     // # Getter methods for properties of this Endpoint itself.
 
     /// Returns the secret_key of this endpoint.
     pub fn secret_key(&self) -> &SecretKey {
-        &self.static_config.tls_config.secret_key
+        &self.inner.static_config.tls_config.secret_key
     }
 
     /// Returns the endpoint id of this endpoint.
@@ -969,7 +979,7 @@ impl Endpoint {
     /// This ID is the unique addressing information of this endpoint and other peers must know
     /// it to be able to connect to this endpoint.
     pub fn id(&self) -> EndpointId {
-        self.static_config.tls_config.secret_key.public()
+        self.inner.static_config.tls_config.secret_key.public()
     }
 
     /// Returns the current [`EndpointAddr`].
@@ -1024,8 +1034,8 @@ impl Endpoint {
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
-        let watch_addrs = self.sock.ip_addrs();
-        let watch_relay = self.sock.home_relay();
+        let watch_addrs = self.inner.sock.ip_addrs();
+        let watch_relay = self.inner.sock.home_relay();
         let endpoint_id = self.id();
 
         watch_addrs.or(watch_relay).map(move |(addrs, relays)| {
@@ -1049,7 +1059,7 @@ impl Endpoint {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `EndpointAddr` have *some* way
         // of connecting to us.
-        let watch_relay = self.sock.home_relay();
+        let watch_relay = self.inner.sock.home_relay();
         let endpoint_id = self.id();
         watch_relay.map(move |mut relays| {
             EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
@@ -1102,7 +1112,7 @@ impl Endpoint {
     /// }
     /// ```
     pub async fn online(&self) {
-        self.sock.home_relay().initialized().await;
+        self.inner.sock.home_relay().initialized().await;
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -1135,7 +1145,7 @@ impl Endpoint {
     /// ```
     #[doc(hidden)]
     pub fn net_report(&self) -> impl Watcher<Value = Option<NetReport>> + use<> {
-        self.sock.net_report()
+        self.inner.sock.net_report()
     }
 
     /// Returns the last [`NetReport`] generated by this endpoint.
@@ -1145,7 +1155,7 @@ impl Endpoint {
     /// This method is hidden in the docs because it is not part of the public api
     #[doc(hidden)]
     pub fn last_net_report(&self) -> Option<NetReport> {
-        self.sock.net_report().get()
+        self.inner.sock.net_report().get()
     }
 
     /// Returns the local socket addresses on which the underlying sockets are bound.
@@ -1154,7 +1164,8 @@ impl Endpoint {
     /// address if available.
     #[cfg(not(wasm_browser))]
     pub fn bound_sockets(&self) -> Vec<SocketAddr> {
-        self.sock
+        self.inner
+            .sock
             .local_addr()
             .into_iter()
             .filter_map(|addr| addr.into_socket_addr())
@@ -1177,7 +1188,7 @@ impl Endpoint {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
-        Ok(self.sock.dns_resolver())
+        Ok(self.inner.sock.dns_resolver())
     }
 
     /// Returns the Address Lookup service, if configured.
@@ -1191,7 +1202,7 @@ impl Endpoint {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
-        Ok(self.sock.address_lookup())
+        Ok(self.inner.sock.address_lookup())
     }
 
     /// Returns metrics collected for this endpoint.
@@ -1310,7 +1321,7 @@ impl Endpoint {
     /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
     #[cfg(feature = "metrics")]
     pub fn metrics(&self) -> &EndpointMetrics {
-        &self.sock.metrics
+        &self.inner.sock.metrics
     }
 
     /// Returns addressing information about a recently used remote endpoint.
@@ -1325,7 +1336,7 @@ impl Endpoint {
         if self.is_closed() {
             return None;
         }
-        self.sock.remote_info(endpoint_id).await
+        self.inner.sock.remote_info(endpoint_id).await
     }
 
     // # Methods for less common state updates.
@@ -1347,7 +1358,7 @@ impl Endpoint {
             debug!("Attempting to notify a closed endpoint about a network change. Ignoring.");
             return;
         }
-        self.sock.network_change().await;
+        self.inner.sock.network_change().await;
     }
 
     // # Methods to update internal state.
@@ -1367,7 +1378,7 @@ impl Endpoint {
             warn!("Attempting to set user data for a closed endpoint. Ignoring.");
             return;
         }
-        self.sock.set_user_data_for_address_lookup(user_data);
+        self.inner.sock.set_user_data_for_address_lookup(user_data);
     }
 
     // # Methods for terminating the endpoint.
@@ -1405,12 +1416,12 @@ impl Endpoint {
     /// Be aware however that the underlying UDP sockets are only closed once all clones of
     /// the the respective [`Endpoint`] are dropped.
     pub async fn close(&self) {
-        self.sock.close().await;
+        self.inner.sock.close().await;
     }
 
     /// Check if this endpoint is still alive, or already closed.
     pub fn is_closed(&self) -> bool {
-        self.sock.is_closed()
+        self.inner.sock.is_closed()
     }
 
     /// Create a [`ServerConfigBuilder`] for this endpoint that includes the given alpns.
@@ -1418,8 +1429,8 @@ impl Endpoint {
     /// Use the [`ServerConfigBuilder`] to customize the [`ServerConfig`] connection configuration
     /// for a connection accepted using the [`Incoming::accept_with`] method.
     pub fn create_server_config_builder(&self, alpns: Vec<Vec<u8>>) -> ServerConfigBuilder {
-        let inner = self.static_config.create_server_config(alpns);
-        ServerConfigBuilder::new(inner, self.static_config.transport_config.clone())
+        let inner = self.inner.static_config.create_server_config(alpns);
+        ServerConfigBuilder::new(inner, self.inner.static_config.transport_config.clone())
     }
 
     // # Remaining private methods
@@ -1429,7 +1440,7 @@ impl Endpoint {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
-        Ok(self.sock.clone())
+        Ok(self.inner.sock.clone())
     }
 }
 
@@ -1690,6 +1701,8 @@ mod tests {
                         ConnectionError::LocallyClosed
                     ))
                 );
+                info!("Closing the endpoint");
+                ep.close().await;
                 info!("server test completed");
                 Ok::<_, Error>(())
             }
@@ -1727,6 +1740,8 @@ mod tests {
                 info!("opening new - expect it to fail");
                 let res = conn.open_uni().await;
                 assert_eq!(res.unwrap_err(), expected_err);
+                info!("Closing the client");
+                ep.close().await;
                 info!("client test completed");
                 Ok::<_, Error>(())
             }
@@ -2014,7 +2029,9 @@ mod tests {
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
 
-            Ok(conn.closed().await)
+            let res = conn.closed().await;
+            ep.close().await;
+            Ok(res)
         }
 
         #[instrument(name = "server", skip_all)]
@@ -2050,7 +2067,8 @@ mod tests {
             let msg = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(msg, b"close please");
             info!("received 'close please'");
-            // Dropping the connection closes it just fine.
+            // Closing the endpoint closes all connections.
+            ep.close().await;
             Ok(())
         }
 
@@ -2113,7 +2131,9 @@ mod tests {
             info!("Have relay connection");
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
-            Ok(conn.closed().await)
+            let res = conn.closed().await;
+            ep.close().await;
+            Ok(res)
         }
 
         #[instrument(name = "server", skip_all)]
@@ -2147,7 +2167,8 @@ mod tests {
             let msg = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(msg, b"close please");
             info!("received 'close please'");
-            // Dropping the connection closes it just fine.
+            // Closing the endpoint closes all connections.
+            ep.close().await;
             Ok(())
         }
 
@@ -3202,6 +3223,7 @@ mod tests {
         info!("last Net report {net_report:?}");
 
         // this currently hangs
+        // TODO(ramfox): why?
         // let mut net_reports = ep.net_report().stream();
         // while let Some(net_report) = net_reports.next().await {
         //     info!("Net report stream: {net_report:?}");
@@ -3229,10 +3251,6 @@ mod tests {
         ep.set_user_data_for_address_lookup(Some(
             UserData::try_from("TEST".to_string()).expect("valid string"),
         ));
-
-        // this hangs:
-        // info!("calling `online`");
-        // ep.online().await;
 
         info!("Done!");
         Ok(())
