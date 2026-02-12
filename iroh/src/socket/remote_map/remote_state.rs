@@ -310,7 +310,7 @@ impl RemoteStateActor {
                         trace!("direct address watcher disconnected, shutting down");
                         break;
                     }
-                    self.local_addrs_updated();
+                    self.update_local_direct_addrs();
                     trace!("local addrs updated, triggering holepunching");
                     self.trigger_holepunching();
                 }
@@ -466,7 +466,7 @@ impl RemoteStateActor {
                 .iter()
                 .map(|d| d.addr)
                 .collect::<BTreeSet<_>>();
-            Self::set_local_addrs(&conn, &local_addrs);
+            Self::update_qnt_candidates(&conn, &local_addrs);
 
             // Store the connection
             let conn_state = self
@@ -623,8 +623,11 @@ impl RemoteStateActor {
         }
     }
 
-    /// Sets the current local addresses to QNT's state to all connections
-    fn local_addrs_updated(&mut self) {
+    /// Updates the local [`DirectAddr`]s to all connections.
+    ///
+    /// Each connection needs to have the local direct addresses to use as QNT address
+    /// candidates.
+    fn update_local_direct_addrs(&mut self) {
         let local_addrs = self
             .local_direct_addrs
             .get()
@@ -633,31 +636,34 @@ impl RemoteStateActor {
             .collect::<BTreeSet<_>>();
 
         for conn in self.connections.values().filter_map(|s| s.handle.upgrade()) {
-            Self::set_local_addrs(&conn, &local_addrs);
+            Self::update_qnt_candidates(&conn, &local_addrs);
         }
         // todo: trace
     }
 
-    /// Sets the current local addresses to QNT's state
-    fn set_local_addrs(conn: &quinn::Connection, local_addrs: &BTreeSet<SocketAddr>) {
-        let quinn_local_addrs = match conn.get_local_nat_traversal_addresses() {
+    /// Updates QNT's candidate addresses to be the current set of direct addresses.
+    ///
+    /// `direct_addrs` must be a set of addresses extracted from the endpoint's current
+    /// [`DirectAddr`]s.
+    fn update_qnt_candidates(conn: &quinn::Connection, direct_addrs: &BTreeSet<SocketAddr>) {
+        let quinn_candidates = match conn.get_local_nat_traversal_addresses() {
             Ok(addrs) => BTreeSet::from_iter(addrs),
             Err(err) => {
                 warn!("failed to get local nat candidates: {err:#}");
                 return;
             }
         };
-        for addr in local_addrs.difference(&quinn_local_addrs) {
+        for addr in direct_addrs.difference(&quinn_candidates) {
             if let Err(err) = conn.add_nat_traversal_address(*addr) {
                 warn!("failed adding local addr: {err:#}",);
             }
         }
-        for addr in quinn_local_addrs.difference(local_addrs) {
+        for addr in quinn_candidates.difference(direct_addrs) {
             if let Err(err) = conn.remove_nat_traversal_address(*addr) {
                 warn!("failed removing local addr: {err:#}");
             }
         }
-        trace!(?local_addrs, "updated local QNT addresses");
+        trace!(?direct_addrs, "updated local QNT addresses");
     }
 
     /// Triggers holepunching to the remote endpoint.
