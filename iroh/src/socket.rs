@@ -760,6 +760,8 @@ impl Handle {
 
         let direct_addrs = DiscoveredDirectAddrs::default();
 
+        let has_ip_transports = !transports.ip_bind_addrs().is_empty();
+
         let remote_map = {
             RemoteMap::new(
                 secret_key.public(),
@@ -816,8 +818,6 @@ impl Handle {
             .await
             .map_err(|err| e!(BindError::CreateNetmonMonitor, err))?;
 
-        let qad_endpoint = endpoint.clone();
-
         #[cfg(any(test, feature = "test-utils"))]
         let client_config = if insecure_skip_relay_cert_verify {
             iroh_relay::client::make_dangerous_client_config()
@@ -828,13 +828,17 @@ impl Handle {
         let client_config = default_quic_client_config();
 
         let net_report_config = net_report::Options::default();
+
         #[cfg(not(wasm_browser))]
-        let net_report_config = net_report_config.quic_config(Some(QuicConfig {
-            ep: qad_endpoint,
-            client_config,
-            ipv4: true,
-            ipv6,
-        }));
+        let net_report_config = {
+            let qad_config = has_ip_transports.then(|| QuicConfig {
+                ep: endpoint.clone(),
+                client_config,
+                ipv4: true,
+                ipv6,
+            });
+            net_report_config.quic_config(qad_config)
+        };
 
         #[cfg(any(test, feature = "test-utils"))]
         let net_report_config =
