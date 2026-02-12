@@ -957,7 +957,7 @@
 <a href=#957 id=957 data-nosnippet>957</a>                    <span class="self">self</span>.paths.abandoned_path(<span class="kw-2">&amp;</span>addr);
 <a href=#958 id=958 data-nosnippet>958</a>                }
 <a href=#959 id=959 data-nosnippet>959</a>            }
-<a href=#960 id=960 data-nosnippet>960</a>            PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } =&gt; {
+<a href=#960 id=960 data-nosnippet>960</a>            PathEvent::LocallyClosed { id, .. } =&gt; {
 <a href=#961 id=961 data-nosnippet>961</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(path_remote) = conn_state.paths.get(<span class="kw-2">&amp;</span>id).cloned() <span class="kw">else </span>{
 <a href=#962 id=962 data-nosnippet>962</a>                    <span class="macro">debug!</span>(<span class="string">"path not in path_id_map"</span>);
 <a href=#963 id=963 data-nosnippet>963</a>                    <span class="kw">return</span>;
