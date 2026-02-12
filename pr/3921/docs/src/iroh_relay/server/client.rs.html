@@ -65,9 +65,9 @@
 <a href=#65 id=65 data-nosnippet>65</a>    </span>done: CancellationToken,
 <a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// Actor handle.
 <a href=#67 id=67 data-nosnippet>67</a>    </span>handle: AbortOnDropHandle&lt;()&gt;,
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// Queue of packets intended for the client.
-<a href=#69 id=69 data-nosnippet>69</a>    </span>send_queue: mpsc::Sender&lt;Packet&gt;,
-<a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// Channel to notify the client that a previous sender has disconnected.
+<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// Channel to send packets intended for the client.
+<a href=#69 id=69 data-nosnippet>69</a>    </span>packet_queue: mpsc::Sender&lt;Packet&gt;,
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// Channel to send non-packet messages to the client.
 <a href=#71 id=71 data-nosnippet>71</a>    </span>message_queue: mpsc::Sender&lt;RelayToClientMsg&gt;,
 <a href=#72 id=72 data-nosnippet>72</a>}
 <a href=#73 id=73 data-nosnippet>73</a>
@@ -121,7 +121,7 @@
 <a href=#121 id=121 data-nosnippet>121</a>            connection_id,
 <a href=#122 id=122 data-nosnippet>122</a>            handle: AbortOnDropHandle::new(handle),
 <a href=#123 id=123 data-nosnippet>123</a>            done,
-<a href=#124 id=124 data-nosnippet>124</a>            send_queue: packet_send_queue_s,
+<a href=#124 id=124 data-nosnippet>124</a>            packet_queue: packet_send_queue_s,
 <a href=#125 id=125 data-nosnippet>125</a>            message_queue: message_send_queue_s,
 <a href=#126 id=126 data-nosnippet>126</a>        }
 <a href=#127 id=127 data-nosnippet>127</a>    }
@@ -153,7 +153,7 @@
 <a href=#153 id=153 data-nosnippet>153</a>        src: EndpointId,
 <a href=#154 id=154 data-nosnippet>154</a>        data: Datagrams,
 <a href=#155 id=155 data-nosnippet>155</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TrySendError&lt;Packet&gt;&gt; {
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="self">self</span>.send_queue.try_send(Packet { src, data })
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="self">self</span>.packet_queue.try_send(Packet { src, data })
 <a href=#157 id=157 data-nosnippet>157</a>    }
 <a href=#158 id=158 data-nosnippet>158</a>
 <a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>try_send_peer_gone(
@@ -252,9 +252,9 @@
 <a href=#252 id=252 data-nosnippet>252</a>    </span>stream: RelayedStream&lt;S&gt;,
 <a href=#253 id=253 data-nosnippet>253</a>    <span class="doccomment">/// Maximum time we wait to complete a write to the client
 <a href=#254 id=254 data-nosnippet>254</a>    </span>timeout: Duration,
-<a href=#255 id=255 data-nosnippet>255</a>    <span class="doccomment">/// Packets queued to send to the client
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="doccomment">/// Receiver for packets to be sent to the client.
 <a href=#256 id=256 data-nosnippet>256</a>    </span>packet_send_queue: mpsc::Receiver&lt;Packet&gt;,
-<a href=#257 id=257 data-nosnippet>257</a>    <span class="doccomment">/// Notify the client that a previous sender has disconnected
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="doccomment">/// Receiver for non-packet messages to be sent to the client.
 <a href=#258 id=258 data-nosnippet>258</a>    </span>message_send_queue: mpsc::Receiver&lt;RelayToClientMsg&gt;,
 <a href=#259 id=259 data-nosnippet>259</a>    <span class="doccomment">/// [`EndpointId`] of this client
 <a href=#260 id=260 data-nosnippet>260</a>    </span>endpoint_id: EndpointId,
