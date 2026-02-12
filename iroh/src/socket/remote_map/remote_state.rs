@@ -1325,7 +1325,7 @@ struct ConnectionState {
 
 impl Drop for ConnectionState {
     fn drop(&mut self) {
-        self.path_watchable.disconnect();
+        self.path_watchable.close();
     }
 }
 

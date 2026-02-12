@@ -68,7 +68,9 @@ impl Iterator for PathInfoListIter {
 struct PathWatchValue {
     /// The list of network transmission paths.
     paths: SmallVec<[PathInfo; 4]>,
-    /// Set to `true` once the connection is closed.
+    /// Set to `true` before the `RemoteStateActor` drops the `PathWatchable`.
+    ///
+    /// Afterwards, no further updates will be received.
     closed: bool,
 }
 
@@ -197,6 +199,9 @@ impl PathInfo {
     }
 
     /// Returns the [`PathId`] of this path.
+    ///
+    /// Path ids are unique-per-connection identifiers for a network transmission path. A path id will never
+    /// be reused within a connection.
     pub fn id(&self) -> PathId {
         self.path.id()
     }
@@ -217,9 +222,8 @@ impl PathInfo {
     ///
     /// A path is considered closed as soon as the local endpoint has abandoned this path.
     /// A closed path will remain closed forever, so once this returns `true` it will never
-    /// return `false` afterwards.
-    /// If the transmission path becomes available again in the future, a new path might be opened,
-    /// but a closed path will never be reopened.
+    /// return `false` afterwards. If the transmission path becomes available again in the future,
+    /// a new path might be opened, but a closed path will never be reopened.
     pub fn is_closed(&self) -> bool {
         self.is_abandoned
     }
@@ -277,7 +281,15 @@ impl PathWatchable {
     }
 
     /// Mark the path watchable as closed.
-    pub(super) fn disconnect(&self) {
+    ///
+    /// Once called, watchers will not receive further updates. Must be called once the
+    /// [`super::ConnectionState`] that owns this [`PathWatchable`] is dropped.
+    ///
+    /// We can't rely on dropping the [`Watchable`] to close the watchers, because the
+    /// `Watchable` is cloned into the [`crate::endpoint::Connection`], and thus may stay
+    /// alive even after we dropped the [`super::ConnectionState`], which is the only place
+    /// that can update the [`PathWatchable].
+    pub(super) fn close(&self) {
         let mut value = self.paths.get();
         value.closed = true;
         self.paths.set(value).ok();
