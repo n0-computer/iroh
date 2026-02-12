@@ -973,11 +973,12 @@ impl Handle {
             debug!("wait_idle start");
             ep.wait_idle().await;
             debug!("wait_idle done");
+            // endpoint must be dropped here before we `take` it in the next lines.
         }
         // Drop our reference to the quinn endpoint.
         self.endpoint.write().expect("poisoned").take();
 
-        // Start cancellation of all actors
+        // Start cancellation of all actors.
         self.sock.shutdown.at_endpoint_closed.cancel();
 
         // MutexGuard is not held across await points
@@ -993,7 +994,7 @@ impl Handle {
             match shutdown_done {
                 Ok(_) => trace!("tasks finished in time, shutdown complete"),
                 Err(time::Elapsed { .. }) => {
-                    // Dropping the task will abort itt
+                    // Dropping the task will abort it
                     warn!("tasks didn't finish in time, aborting");
                 }
             }
@@ -1010,10 +1011,10 @@ impl Handle {
     /// Aborts the connection ungracefully:
     ///
     /// - Calls cancellation token that stops running net reports
-    /// - Drops the quinn endpoint
     /// - Calls cancellation token that stops all the Socket actors
-    /// - Drops the actor task
     /// - Aborts the runtime
+    /// - Drops the quinn endpoint
+    /// - Drops the actor task
     /// - Sets the `Socket::is_closed` state to true
     ///
     /// This does not wait for any current connections or tasks to close gracefully.
@@ -1021,8 +1022,6 @@ impl Handle {
     /// This should only be called in the `iroh::Endpoint` `Drop` impl when the
     /// `iroh::Endpoint` is dropped without first calling `Endpoint::close`.
     #[instrument(skip_all)]
-    // TODO: remove in next commit
-    #[allow(dead_code)]
     pub(crate) fn abort(&self) {
         if self.sock.is_closed() || self.sock.is_closing() {
             return;
@@ -1032,20 +1031,20 @@ impl Handle {
         // Cancel at_close_start token, which cancels running netreports.
         self.sock.shutdown.at_close_start.cancel();
 
-        // Drop our reference to the quinn endpoint.
-        self.endpoint.write().expect("poisoned").take();
-
-        // Start cancellation of all actors
+        // Cancel all actors.
         self.sock.shutdown.at_endpoint_closed.cancel();
-
-        // MutexGuard is not held across await points
-        self.actor_task.lock().expect("poisoned").take();
 
         // Waits for the EndpointDriver and all ConnectionDrivers to shut down
         self.runtime.abort();
 
-        self.sock.shutdown.closed.store(true, Ordering::SeqCst);
+        // Drop our hold on the quinn endpoint.
+        self.endpoint.write().expect("poisoned").take();
 
+        // Drop the actor task.
+        self.actor_task.lock().expect("poisoned").take();
+
+        // Set socket to closed.
+        self.sock.shutdown.closed.store(true, Ordering::SeqCst);
         trace!("socket closed");
     }
 
