@@ -27,7 +27,7 @@
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span><span class="self">self</span>::path_state::RemotePathState;
 <a href=#28 id=28 data-nosnippet>28</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::path_watcher::PathWatchable;
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">pub use </span><span class="self">self</span>::{
-<a href=#30 id=30 data-nosnippet>30</a>    path_watcher::{PathInfo, PathInfoList, PathInfoListIntoIter, PathWatcher},
+<a href=#30 id=30 data-nosnippet>30</a>    path_watcher::{PathInfo, PathInfoList, PathInfoListIter, PathWatcher},
 <a href=#31 id=31 data-nosnippet>31</a>    remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage},
 <a href=#32 id=32 data-nosnippet>32</a>};
 <a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span><span class="kw">super</span>::Source;
@@ -1375,7 +1375,7 @@
 <a href=#1375 id=1375 data-nosnippet>1375</a>    <span class="doccomment">/// Removes the path from the open paths.
 <a href=#1376 id=1376 data-nosnippet>1376</a>    </span><span class="kw">fn </span>remove_open_path(<span class="kw-2">&amp;mut </span><span class="self">self</span>, path_id: <span class="kw-2">&amp;</span>PathId) {
 <a href=#1377 id=1377 data-nosnippet>1377</a>        <span class="self">self</span>.open_paths.remove(path_id);
-<a href=#1378 id=1378 data-nosnippet>1378</a>        <span class="self">self</span>.path_watchable.set_closed(<span class="kw-2">*</span>path_id);
+<a href=#1378 id=1378 data-nosnippet>1378</a>        <span class="self">self</span>.path_watchable.set_abandoned(<span class="kw-2">*</span>path_id);
 <a href=#1379 id=1379 data-nosnippet>1379</a>    }
 <a href=#1380 id=1380 data-nosnippet>1380</a>}
 <a href=#1381 id=1381 data-nosnippet>1381</a>
