@@ -980,9 +980,9 @@ checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
 
 [[package]]
 name = "digest"
-version = "0.11.0-rc.10"
+version = "0.11.0-rc.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afa94b64bfc6549e6e4b5a3216f22593224174083da7a90db47e951c4fb31725"
+checksum = "d4b37eb2004a3548553a44cc1e688aac70f0345b896c9d822b4a0e520bc9183b"
 dependencies = [
  "block-buffer",
  "const-oid",
