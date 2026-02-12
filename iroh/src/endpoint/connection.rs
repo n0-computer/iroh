@@ -1004,7 +1004,7 @@ impl Connection<HandshakeCompleted> {
         self.data.info.endpoint_id
     }
 
-    /// Returns a watcher for the network paths of this connection.
+    /// Returns a [`Watcher`] for the network paths of this connection.
     ///
     /// A connection can have several network paths to the remote endpoint, commonly there
     /// will be a path via the relay server and a holepunched path.

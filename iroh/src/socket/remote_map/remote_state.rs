@@ -27,7 +27,7 @@ use tracing::{Instrument, Level, debug, error, event, info_span, instrument, tra
 use self::path_state::RemotePathState;
 pub(crate) use self::path_watcher::PathWatchable;
 pub use self::{
-    path_watcher::{PathInfo, PathInfoList, PathInfoListIntoIter, PathWatcher},
+    path_watcher::{PathInfo, PathInfoList, PathInfoListIter, PathWatcher},
     remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage},
 };
 use super::Source;
@@ -1375,7 +1375,7 @@ impl ConnectionState {
     /// Removes the path from the open paths.
     fn remove_open_path(&mut self, path_id: &PathId) {
         self.open_paths.remove(path_id);
-        self.path_watchable.set_closed(*path_id);
+        self.path_watchable.set_abandoned(*path_id);
     }
 }
 

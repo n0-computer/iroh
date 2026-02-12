@@ -17,7 +17,7 @@ pub(crate) use self::remote_state::PathWatchable;
 use self::remote_state::RemoteStateActor;
 pub(super) use self::remote_state::RemoteStateMessage;
 pub use self::remote_state::{
-    PathInfo, PathInfoList, PathInfoListIntoIter, PathWatcher, RemoteInfo, TransportAddrInfo,
+    PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, TransportAddrInfo,
     TransportAddrUsage,
 };
 use super::{

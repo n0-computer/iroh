@@ -36,27 +36,27 @@ impl PathInfoList {
 
 /// Iterator returned from [`PathInfoList::into_iter`].
 #[derive(Debug)]
-pub struct PathInfoListIntoIter(smallvec::IntoIter<[PathInfo; 4]>);
+pub struct PathInfoListIter(smallvec::IntoIter<[PathInfo; 4]>);
 
 impl IntoIterator for PathInfoList {
     type Item = PathInfo;
-    type IntoIter = PathInfoListIntoIter;
+    type IntoIter = PathInfoListIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        PathInfoListIntoIter(self.0.into_iter())
+        PathInfoListIter(self.0.into_iter())
     }
 }
 
 impl IntoIterator for PathWatcher {
     type Item = PathInfo;
-    type IntoIter = PathInfoListIntoIter;
+    type IntoIter = PathInfoListIter;
 
     fn into_iter(mut self) -> Self::IntoIter {
         self.get().into_iter()
     }
 }
 
-impl Iterator for PathInfoListIntoIter {
+impl Iterator for PathInfoListIter {
     type Item = PathInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -181,7 +181,6 @@ pub struct PathInfo {
     #[debug("{}", path.id())]
     path: WeakPathHandle,
     remote_addr: TransportAddr,
-    is_closed: bool,
     is_abandoned: bool,
     is_selected: bool,
 }
@@ -192,8 +191,7 @@ impl PathInfo {
         Some(PathInfo {
             path: path.weak_handle(),
             remote_addr,
-            is_closed: path.status().is_err(),
-            is_abandoned: false,
+            is_abandoned: path.status().is_err(),
             is_selected: false,
         })
     }
@@ -216,8 +214,14 @@ impl PathInfo {
     }
 
     /// Returns `true` if this path is closed.
+    ///
+    /// A path is considered closed as soon as the local endpoint has abandoned this path.
+    /// A closed path will remain closed forever, so once this returns `true` it will never
+    /// return `false` afterwards.
+    /// If the transmission path becomes available again in the future, a new path might be opened,
+    /// but a closed path will never be reopened.
     pub fn is_closed(&self) -> bool {
-        self.is_closed
+        self.is_abandoned
     }
 
     /// Whether this is an IP transport path.
@@ -286,15 +290,6 @@ impl PathWatchable {
         }
     }
 
-    /// Marks a path as closed.
-    pub(super) fn set_closed(&self, id: PathId) {
-        self.update(|list| {
-            if let Some(item) = list.iter_mut().find(|p| p.path.id() == id) {
-                item.is_closed = true;
-            }
-        });
-    }
-
     /// Marks a path as abandoned.
     ///
     /// If there are no watchers, the path will be removed from the watchable's value.
@@ -302,7 +297,6 @@ impl PathWatchable {
     pub(super) fn set_abandoned(&self, id: PathId) {
         self.update(|list| {
             if let Some(item) = list.iter_mut().find(|p| p.path.id() == id) {
-                item.is_closed = true;
                 item.is_abandoned = true;
             }
         });

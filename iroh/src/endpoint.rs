@@ -30,7 +30,7 @@ use self::hooks::EndpointHooksList;
 pub use super::socket::{
     BindError, DirectAddr, DirectAddrType,
     remote_map::{
-        PathInfo, PathInfoList, PathInfoListIntoIter, PathWatcher, RemoteInfo, Source,
+        PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, Source,
         TransportAddrInfo, TransportAddrUsage,
     },
 };
