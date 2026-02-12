@@ -1125,7 +1125,7 @@ impl RemoteStateActor {
                     trace!(?path_remote, ?conn_id, %path_id, "closing direct path");
                     match path.close() {
                         Err(quinn_proto::ClosePathError::MultipathNotNegotiated) => {
-                            error!("connection does not have multipath negotiated");
+                            error!("multipath not negotiated");
                         }
                         Err(quinn_proto::ClosePathError::LastOpenPath) => {
                             error!("could not close last open path");
