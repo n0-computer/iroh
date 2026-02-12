@@ -106,13 +106,13 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 console_error_panic_hook = "0.1"
 postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-rand_chacha = "0.9"
+rand_chacha = "0.10"
 
 # *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
 axum = { version = "0.8" }
 pretty_assertions = "1.4"
-rand_chacha = "0.9"
+rand_chacha = "0.10"
 tokio = { version = "1", features = [
     "io-util",
     "sync",

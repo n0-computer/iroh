@@ -116,7 +116,7 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
 proptest = "1.2.0"
-rand_chacha = "0.9"
+rand_chacha = "0.10"
 tokio = { version = "1", features = [
     "io-util",
     "sync",
