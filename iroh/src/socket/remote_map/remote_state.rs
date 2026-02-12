@@ -957,7 +957,7 @@ impl RemoteStateActor {
                     self.paths.abandoned_path(&addr);
                 }
             }
-            PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
+            PathEvent::LocallyClosed { id, .. } => {
                 let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
                     debug!("path not in path_id_map");
                     return;
