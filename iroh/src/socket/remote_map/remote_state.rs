@@ -546,6 +546,7 @@ impl RemoteStateActor {
         self.trigger_address_lookup();
     }
 
+    /// Handles [`RemoteStateMessage::NetworkChange`].
     fn handle_msg_network_change(&mut self, is_major: bool) {
         // Ping all the paths so loss-detection starts ASAP.
         for conn in self.connections.values() {
@@ -576,6 +577,26 @@ impl RemoteStateActor {
         }
     }
 
+    /// Triggers Address Lookup for the remote endpoint, if needed.
+    ///
+    /// Does not start Address Lookup if we have a selected path or if Address Lookup is
+    /// currently running.
+    fn trigger_address_lookup(&mut self) {
+        if self.selected_path.get().is_some()
+            || matches!(self.address_lookup_stream, Either::Right(_))
+        {
+            return;
+        }
+        match self.address_lookup.resolve(self.endpoint_id) {
+            Some(stream) => self.address_lookup_stream = Either::Right(SyncStream::new(stream)),
+            None => self.paths.address_lookup_finished(Ok(())),
+        }
+    }
+
+    /// Handles an address lookup result.
+    ///
+    /// All address lookup results end up being sent here. It takes care of updating the
+    /// [`RemotePathState`] with the results.
     fn handle_address_lookup_item(
         &mut self,
         item: Option<Result<AddressLookupItem, AddressLookupError>>,
@@ -605,21 +626,6 @@ impl RemoteStateActor {
                     self.paths.insert_multiple(addrs, source);
                 }
             }
-        }
-    }
-
-    /// Triggers Address Lookup for the remote endpoint, if needed.
-    ///
-    /// Does not start Address Lookup if we have a selected path or if Address Lookup is currently running.
-    fn trigger_address_lookup(&mut self) {
-        if self.selected_path.get().is_some()
-            || matches!(self.address_lookup_stream, Either::Right(_))
-        {
-            return;
-        }
-        match self.address_lookup.resolve(self.endpoint_id) {
-            Some(stream) => self.address_lookup_stream = Either::Right(SyncStream::new(stream)),
-            None => self.paths.address_lookup_finished(Ok(())),
         }
     }
 
@@ -1266,12 +1272,12 @@ pub(crate) enum RemoteStateMessage {
     AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatcher>),
     /// Asks if there is any possible path that could be used.
     ///
-    /// This adds the provided transport addresses to the list of potential paths for this remote
-    /// and starts Address Lookup if needed.
+    /// This adds the provided transport addresses to the list of potential paths for this
+    /// remote and starts Address Lookup if needed.
     ///
-    /// Returns `Ok` immediately if the provided address list is non-empy or we have are other known paths.
-    /// Otherwise returns `Ok` once Address Lookup produces a result, or the Address Lookup error if Address Lookup fails
-    /// or produces no results,
+    /// Sends back `Ok` immediately if the provided address list is non-empy or we have are
+    /// other known paths.  Otherwise sends back `Ok` once Address Lookup produces a result,
+    /// or the Address Lookup error if Address Lookup fails or produces no results,
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         BTreeSet<TransportAddr>,
