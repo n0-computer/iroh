@@ -314,6 +314,10 @@ impl Socket {
         self.shutdown.is_closing()
     }
 
+    pub(crate) fn closed(&self) -> CancellationToken {
+        self.shutdown.at_close_start.child_token()
+    }
+
     /// Get the cached version of addresses.
     pub(crate) fn local_addr(&self) -> Vec<transports::Addr> {
         self.local_addrs_watch.clone().get()
