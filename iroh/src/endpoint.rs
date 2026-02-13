@@ -3089,7 +3089,7 @@ mod tests {
         ep1.online().await;
         info!("ep1 online");
 
-        let addr = EndpointAddr::new(secret_key.public()).with_relay_url(relay_url);
+        let addr = EndpointAddr::new(secret_key.public()).with_relay_url(relay_url.clone());
 
         tokio::try_join!(
             async {
@@ -3118,9 +3118,23 @@ mod tests {
         ep2.online().await;
         println!("ep2 online");
 
-        // Wait a bit. `online` does not mean that the connection to the home relay was *established*,
+        // `online` does not mean that the connection to the home relay was *established*,
         // only that the home relay was *chosen* based on the net report probes.
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // We need to wait for the connection to be established though, to be sure that new packets
+        // will be routed to the new endpoint and not to the old endpoint anymore.
+        // We don't expose being connected to the home relay on the endpoint currently,
+        // so we resort to log assertions.
+        // TODO(Frando): Replace once we add a proper API for this.
+        let expected_log_line = format!(
+            "ep2:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected"
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !logs_contain(&expected_log_line) {
+                tokio::time::sleep(Duration::from_millis(10)).await
+            }
+        })
+        .await
+        .std_context("relay connection did not establish in time")?;
 
         tokio::try_join!(
             async {
