@@ -1346,6 +1346,7 @@ impl Actor {
         }
 
         let hint = Hint {
+            #[cfg(not(wasm_browser))]
             local_addrs: {
                 let interfaces = self.local_interfaces_watcher.get();
                 interfaces
@@ -1356,6 +1357,8 @@ impl Actor {
                     .copied()
                     .collect()
             },
+            #[cfg(wasm_browser)]
+            local_addrs: Default::default(),
         };
 
         self.endpoint.handle_network_change(Some(Arc::new(hint)));
