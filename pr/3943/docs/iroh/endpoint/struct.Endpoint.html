@@ -123,8 +123,8 @@ on the internet.</p>
 <h6 id="closing-behavior"><a class="doc-anchor" href="#closing-behavior">§</a>Closing behavior</h6>
 <p>The returned watcher only becomes disconnected once the last clone of the <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>
 is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
-via <a href="../trait.Watcher.html#method.stream" title="method iroh::Watcher::stream"><code>Watcher::stream</code></a> only terminates once the endpoint stops. If you want to stop a
-task once the endpoint stops combine with <a href="struct.Endpoint.html#method.closed" title="method iroh::endpoint::Endpoint::closed"><code>Self::closed</code></a>.</p>
+via <a href="../trait.Watcher.html#method.stream" title="method iroh::Watcher::stream"><code>Watcher::stream</code></a> only terminates once the endpoint is fully dropped. To stop a task
+that loops over a watcher stream once the endpoint stops, combine with <a href="struct.Endpoint.html#method.closed" title="method iroh::endpoint::Endpoint::closed"><code>Self::closed</code></a>:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>endpoint = Endpoint::bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="comment">// We want to watch address changes in a different task, and stop our task
