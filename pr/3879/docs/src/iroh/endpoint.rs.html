@@ -3118,7 +3118,7 @@
 <a href=#3118 id=3118 data-nosnippet>3118</a>
 <a href=#3119 id=3119 data-nosnippet>3119</a>    <span class="attr">#[tokio::test]
 <a href=#3120 id=3120 data-nosnippet>3120</a>    #[traced_test]
-<a href=#3121 id=3121 data-nosnippet>3121</a>    </span><span class="kw">async fn </span>test_closed_endpoint() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3121 id=3121 data-nosnippet>3121</a>    </span><span class="kw">async fn </span>test_closed_endpoint_behaviour() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#3122 id=3122 data-nosnippet>3122</a>        <span class="comment">// create endpoint
 <a href=#3123 id=3123 data-nosnippet>3123</a>        // call endpoint.close
 <a href=#3124 id=3124 data-nosnippet>3124</a>        // ensure methods behave in the expected way
@@ -3126,94 +3126,138 @@
 <a href=#3126 id=3126 data-nosnippet>3126</a>        <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3127 id=3127 data-nosnippet>3127</a>        <span class="macro">info!</span>(<span class="string">"Closing endpoint"</span>);
 <a href=#3128 id=3128 data-nosnippet>3128</a>        <span class="kw">let </span>now = Instant::now();
-<a href=#3129 id=3129 data-nosnippet>3129</a>        <span class="comment">// TODO: this causes close to hang because are holding onto a clone of
-<a href=#3130 id=3130 data-nosnippet>3130</a>        // the quinn endpoint inside the accept_fut
-<a href=#3131 id=3131 data-nosnippet>3131</a>        // let _accept_fut = ep.accept();
-<a href=#3132 id=3132 data-nosnippet>3132</a>        </span>ep.close().<span class="kw">await</span>;
-<a href=#3133 id=3133 data-nosnippet>3133</a>        <span class="macro">info!</span>(<span class="string">"Endpoint closed in {:?}"</span>, now.elapsed());
+<a href=#3129 id=3129 data-nosnippet>3129</a>        ep.close().<span class="kw">await</span>;
+<a href=#3130 id=3130 data-nosnippet>3130</a>        <span class="macro">info!</span>(<span class="string">"Endpoint closed in {:?}"</span>, now.elapsed());
+<a href=#3131 id=3131 data-nosnippet>3131</a>
+<a href=#3132 id=3132 data-nosnippet>3132</a>        <span class="macro">info!</span>(<span class="string">"Set ALPNS fails silently"</span>);
+<a href=#3133 id=3133 data-nosnippet>3133</a>        ep.set_alpns(<span class="macro">vec!</span>[<span class="string">b"test"</span>.into()]);
 <a href=#3134 id=3134 data-nosnippet>3134</a>
-<a href=#3135 id=3135 data-nosnippet>3135</a>        <span class="comment">// TODO: this is broken
-<a href=#3136 id=3136 data-nosnippet>3136</a>        // info!("Accept future returns None after the endpoint has closed");
-<a href=#3137 id=3137 data-nosnippet>3137</a>        // let incoming = accept_fut.await;
-<a href=#3138 id=3138 data-nosnippet>3138</a>        // assert!(incoming.is_none());
-<a href=#3139 id=3139 data-nosnippet>3139</a>
-<a href=#3140 id=3140 data-nosnippet>3140</a>        </span><span class="macro">info!</span>(<span class="string">"Set ALPNS fails silently"</span>);
-<a href=#3141 id=3141 data-nosnippet>3141</a>        ep.set_alpns(<span class="macro">vec!</span>[<span class="string">b"test"</span>.into()]);
+<a href=#3135 id=3135 data-nosnippet>3135</a>        <span class="macro">info!</span>(<span class="string">"Insert Relay returns None"</span>);
+<a href=#3136 id=3136 data-nosnippet>3136</a>        <span class="kw">let </span>relay_config = <span class="kw">crate</span>::defaults::staging::default_na_east_relay();
+<a href=#3137 id=3137 data-nosnippet>3137</a>        <span class="macro">assert!</span>(
+<a href=#3138 id=3138 data-nosnippet>3138</a>            ep.insert_relay(<span class="string">"localhost:300"</span>.parse()<span class="question-mark">?</span>, Arc::new(relay_config))
+<a href=#3139 id=3139 data-nosnippet>3139</a>                .<span class="kw">await
+<a href=#3140 id=3140 data-nosnippet>3140</a>                </span>.is_none()
+<a href=#3141 id=3141 data-nosnippet>3141</a>        );
 <a href=#3142 id=3142 data-nosnippet>3142</a>
-<a href=#3143 id=3143 data-nosnippet>3143</a>        <span class="macro">info!</span>(<span class="string">"Insert Relay returns None"</span>);
-<a href=#3144 id=3144 data-nosnippet>3144</a>        <span class="kw">let </span>relay_config = <span class="kw">crate</span>::defaults::staging::default_na_east_relay();
-<a href=#3145 id=3145 data-nosnippet>3145</a>        <span class="macro">assert!</span>(
-<a href=#3146 id=3146 data-nosnippet>3146</a>            ep.insert_relay(<span class="string">"localhost:300"</span>.parse()<span class="question-mark">?</span>, Arc::new(relay_config))
-<a href=#3147 id=3147 data-nosnippet>3147</a>                .<span class="kw">await
-<a href=#3148 id=3148 data-nosnippet>3148</a>                </span>.is_none()
-<a href=#3149 id=3149 data-nosnippet>3149</a>        );
-<a href=#3150 id=3150 data-nosnippet>3150</a>
-<a href=#3151 id=3151 data-nosnippet>3151</a>        <span class="macro">info!</span>(<span class="string">"Remove Relay returns None"</span>);
-<a href=#3152 id=3152 data-nosnippet>3152</a>        <span class="macro">assert!</span>(ep.remove_relay(<span class="kw-2">&amp;</span><span class="string">"localhost:300"</span>.parse()<span class="question-mark">?</span>).<span class="kw">await</span>.is_none());
-<a href=#3153 id=3153 data-nosnippet>3153</a>
-<a href=#3154 id=3154 data-nosnippet>3154</a>        <span class="macro">info!</span>(<span class="string">"Connecting"</span>);
-<a href=#3155 id=3155 data-nosnippet>3155</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = ChaCha8Rng::seed_from_u64(<span class="number">41</span>);
-<a href=#3156 id=3156 data-nosnippet>3156</a>        <span class="kw">let </span>ep_id = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#3157 id=3157 data-nosnippet>3157</a>
-<a href=#3158 id=3158 data-nosnippet>3158</a>        <span class="comment">// should likely be an error that states that the
-<a href=#3159 id=3159 data-nosnippet>3159</a>        // endpoint is closed instead:
-<a href=#3160 id=3160 data-nosnippet>3160</a>        </span><span class="kw">if let </span>ConnectError::Connect { source, .. } = ep.connect(ep_id, <span class="string">b"test"</span>).<span class="kw">await</span>.unwrap_err()
-<a href=#3161 id=3161 data-nosnippet>3161</a>        {
-<a href=#3162 id=3162 data-nosnippet>3162</a>            <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#3163 id=3163 data-nosnippet>3163</a>                source,
-<a href=#3164 id=3164 data-nosnippet>3164</a>                ConnectWithOptsError::EndpointClosed { .. }
-<a href=#3165 id=3165 data-nosnippet>3165</a>            ));
-<a href=#3166 id=3166 data-nosnippet>3166</a>        } <span class="kw">else </span>{
-<a href=#3167 id=3167 data-nosnippet>3167</a>            <span class="macro">panic!</span>(<span class="string">"unexpected error for connect"</span>);
-<a href=#3168 id=3168 data-nosnippet>3168</a>        }
-<a href=#3169 id=3169 data-nosnippet>3169</a>
-<a href=#3170 id=3170 data-nosnippet>3170</a>        <span class="macro">info!</span>(<span class="string">"Accepting!"</span>);
-<a href=#3171 id=3171 data-nosnippet>3171</a>        <span class="macro">assert!</span>(ep.accept().<span class="kw">await</span>.is_none());
-<a href=#3172 id=3172 data-nosnippet>3172</a>
-<a href=#3173 id=3173 data-nosnippet>3173</a>        <span class="comment">// this should work
-<a href=#3174 id=3174 data-nosnippet>3174</a>        </span><span class="macro">info!</span>(<span class="string">"Addr: {:?}"</span>, ep.addr());
-<a href=#3175 id=3175 data-nosnippet>3175</a>
-<a href=#3176 id=3176 data-nosnippet>3176</a>        <span class="comment">// this should not hang
-<a href=#3177 id=3177 data-nosnippet>3177</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>addrs = ep.watch_addr().stream();
-<a href=#3178 id=3178 data-nosnippet>3178</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(addr) = addrs.next().<span class="kw">await </span>{
-<a href=#3179 id=3179 data-nosnippet>3179</a>            <span class="macro">info!</span>(<span class="string">"Addrs stream: {addr:?}"</span>);
-<a href=#3180 id=3180 data-nosnippet>3180</a>        }
-<a href=#3181 id=3181 data-nosnippet>3181</a>
-<a href=#3182 id=3182 data-nosnippet>3182</a>        <span class="comment">// returns None
-<a href=#3183 id=3183 data-nosnippet>3183</a>        </span><span class="kw">let </span>net_report = ep.last_net_report();
-<a href=#3184 id=3184 data-nosnippet>3184</a>        <span class="macro">info!</span>(<span class="string">"last Net report {net_report:?}"</span>);
-<a href=#3185 id=3185 data-nosnippet>3185</a>
-<a href=#3186 id=3186 data-nosnippet>3186</a>        <span class="comment">// this currently hangs
-<a href=#3187 id=3187 data-nosnippet>3187</a>        // TODO(ramfox): why?
-<a href=#3188 id=3188 data-nosnippet>3188</a>        // let mut net_reports = ep.net_report().stream();
-<a href=#3189 id=3189 data-nosnippet>3189</a>        // while let Some(net_report) = net_reports.next().await {
-<a href=#3190 id=3190 data-nosnippet>3190</a>        //     info!("Net report stream: {net_report:?}");
-<a href=#3191 id=3191 data-nosnippet>3191</a>        // }
+<a href=#3143 id=3143 data-nosnippet>3143</a>        <span class="macro">info!</span>(<span class="string">"Remove Relay returns None"</span>);
+<a href=#3144 id=3144 data-nosnippet>3144</a>        <span class="macro">assert!</span>(ep.remove_relay(<span class="kw-2">&amp;</span><span class="string">"localhost:300"</span>.parse()<span class="question-mark">?</span>).<span class="kw">await</span>.is_none());
+<a href=#3145 id=3145 data-nosnippet>3145</a>
+<a href=#3146 id=3146 data-nosnippet>3146</a>        <span class="macro">info!</span>(<span class="string">"Connecting"</span>);
+<a href=#3147 id=3147 data-nosnippet>3147</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = ChaCha8Rng::seed_from_u64(<span class="number">41</span>);
+<a href=#3148 id=3148 data-nosnippet>3148</a>        <span class="kw">let </span>ep_id = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#3149 id=3149 data-nosnippet>3149</a>
+<a href=#3150 id=3150 data-nosnippet>3150</a>        <span class="comment">// should likely be an error that states that the
+<a href=#3151 id=3151 data-nosnippet>3151</a>        // endpoint is closed instead:
+<a href=#3152 id=3152 data-nosnippet>3152</a>        </span><span class="kw">if let </span>ConnectError::Connect { source, .. } = ep.connect(ep_id, <span class="string">b"test"</span>).<span class="kw">await</span>.unwrap_err()
+<a href=#3153 id=3153 data-nosnippet>3153</a>        {
+<a href=#3154 id=3154 data-nosnippet>3154</a>            <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#3155 id=3155 data-nosnippet>3155</a>                source,
+<a href=#3156 id=3156 data-nosnippet>3156</a>                ConnectWithOptsError::EndpointClosed { .. }
+<a href=#3157 id=3157 data-nosnippet>3157</a>            ));
+<a href=#3158 id=3158 data-nosnippet>3158</a>        } <span class="kw">else </span>{
+<a href=#3159 id=3159 data-nosnippet>3159</a>            <span class="macro">panic!</span>(<span class="string">"unexpected error for connect"</span>);
+<a href=#3160 id=3160 data-nosnippet>3160</a>        }
+<a href=#3161 id=3161 data-nosnippet>3161</a>
+<a href=#3162 id=3162 data-nosnippet>3162</a>        <span class="macro">info!</span>(<span class="string">"Accepting!"</span>);
+<a href=#3163 id=3163 data-nosnippet>3163</a>        <span class="macro">assert!</span>(ep.accept().<span class="kw">await</span>.is_none());
+<a href=#3164 id=3164 data-nosnippet>3164</a>
+<a href=#3165 id=3165 data-nosnippet>3165</a>        <span class="comment">// this should work
+<a href=#3166 id=3166 data-nosnippet>3166</a>        </span><span class="macro">info!</span>(<span class="string">"Addr: {:?}"</span>, ep.addr());
+<a href=#3167 id=3167 data-nosnippet>3167</a>
+<a href=#3168 id=3168 data-nosnippet>3168</a>        <span class="comment">// this should not hang
+<a href=#3169 id=3169 data-nosnippet>3169</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>addrs = ep.watch_addr().stream();
+<a href=#3170 id=3170 data-nosnippet>3170</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(addr) = addrs.next().<span class="kw">await </span>{
+<a href=#3171 id=3171 data-nosnippet>3171</a>            <span class="macro">info!</span>(<span class="string">"Addrs stream: {addr:?}"</span>);
+<a href=#3172 id=3172 data-nosnippet>3172</a>        }
+<a href=#3173 id=3173 data-nosnippet>3173</a>
+<a href=#3174 id=3174 data-nosnippet>3174</a>        <span class="comment">// returns None
+<a href=#3175 id=3175 data-nosnippet>3175</a>        </span><span class="kw">let </span>net_report = ep.last_net_report();
+<a href=#3176 id=3176 data-nosnippet>3176</a>        <span class="macro">info!</span>(<span class="string">"last Net report {net_report:?}"</span>);
+<a href=#3177 id=3177 data-nosnippet>3177</a>
+<a href=#3178 id=3178 data-nosnippet>3178</a>        <span class="comment">// this currently hangs
+<a href=#3179 id=3179 data-nosnippet>3179</a>        // TODO(ramfox): why?
+<a href=#3180 id=3180 data-nosnippet>3180</a>        // let mut net_reports = ep.net_report().stream();
+<a href=#3181 id=3181 data-nosnippet>3181</a>        // while let Some(net_report) = net_reports.next().await {
+<a href=#3182 id=3182 data-nosnippet>3182</a>        //     info!("Net report stream: {net_report:?}");
+<a href=#3183 id=3183 data-nosnippet>3183</a>        // }
+<a href=#3184 id=3184 data-nosnippet>3184</a>
+<a href=#3185 id=3185 data-nosnippet>3185</a>        // this should work
+<a href=#3186 id=3186 data-nosnippet>3186</a>        </span><span class="kw">let </span>sockets = ep.bound_sockets();
+<a href=#3187 id=3187 data-nosnippet>3187</a>        <span class="macro">info!</span>(<span class="string">"Sockets: {sockets:?}"</span>);
+<a href=#3188 id=3188 data-nosnippet>3188</a>
+<a href=#3189 id=3189 data-nosnippet>3189</a>        <span class="comment">// these should return errors
+<a href=#3190 id=3190 data-nosnippet>3190</a>        </span><span class="macro">assert!</span>(ep.dns_resolver().is_err());
+<a href=#3191 id=3191 data-nosnippet>3191</a>        <span class="macro">assert!</span>(ep.address_lookup().is_err());
 <a href=#3192 id=3192 data-nosnippet>3192</a>
-<a href=#3193 id=3193 data-nosnippet>3193</a>        // this should work
-<a href=#3194 id=3194 data-nosnippet>3194</a>        </span><span class="kw">let </span>sockets = ep.bound_sockets();
-<a href=#3195 id=3195 data-nosnippet>3195</a>        <span class="macro">info!</span>(<span class="string">"Sockets: {sockets:?}"</span>);
+<a href=#3193 id=3193 data-nosnippet>3193</a>        <span class="comment">// this should work
+<a href=#3194 id=3194 data-nosnippet>3194</a>        </span><span class="kw">let </span>metrics = ep.metrics();
+<a href=#3195 id=3195 data-nosnippet>3195</a>        <span class="macro">info!</span>(<span class="string">"Metrics: {metrics:?}"</span>);
 <a href=#3196 id=3196 data-nosnippet>3196</a>
-<a href=#3197 id=3197 data-nosnippet>3197</a>        <span class="comment">// these should return errors
-<a href=#3198 id=3198 data-nosnippet>3198</a>        </span><span class="macro">assert!</span>(ep.dns_resolver().is_err());
-<a href=#3199 id=3199 data-nosnippet>3199</a>        <span class="macro">assert!</span>(ep.address_lookup().is_err());
-<a href=#3200 id=3200 data-nosnippet>3200</a>
-<a href=#3201 id=3201 data-nosnippet>3201</a>        <span class="comment">// this should work
-<a href=#3202 id=3202 data-nosnippet>3202</a>        </span><span class="kw">let </span>metrics = ep.metrics();
-<a href=#3203 id=3203 data-nosnippet>3203</a>        <span class="macro">info!</span>(<span class="string">"Metrics: {metrics:?}"</span>);
-<a href=#3204 id=3204 data-nosnippet>3204</a>
-<a href=#3205 id=3205 data-nosnippet>3205</a>        <span class="comment">// this should return none
-<a href=#3206 id=3206 data-nosnippet>3206</a>        </span><span class="macro">assert!</span>(ep.remote_info(ep_id).<span class="kw">await</span>.is_none());
+<a href=#3197 id=3197 data-nosnippet>3197</a>        <span class="comment">// this should return none
+<a href=#3198 id=3198 data-nosnippet>3198</a>        </span><span class="macro">assert!</span>(ep.remote_info(ep_id).<span class="kw">await</span>.is_none());
+<a href=#3199 id=3199 data-nosnippet>3199</a>
+<a href=#3200 id=3200 data-nosnippet>3200</a>        <span class="comment">// this should fail silently
+<a href=#3201 id=3201 data-nosnippet>3201</a>        </span>ep.network_change().<span class="kw">await</span>;
+<a href=#3202 id=3202 data-nosnippet>3202</a>
+<a href=#3203 id=3203 data-nosnippet>3203</a>        <span class="comment">// this should fail silently
+<a href=#3204 id=3204 data-nosnippet>3204</a>        </span>ep.set_user_data_for_address_lookup(<span class="prelude-val">Some</span>(
+<a href=#3205 id=3205 data-nosnippet>3205</a>            UserData::try_from(<span class="string">"TEST"</span>.to_string()).expect(<span class="string">"valid string"</span>),
+<a href=#3206 id=3206 data-nosnippet>3206</a>        ));
 <a href=#3207 id=3207 data-nosnippet>3207</a>
-<a href=#3208 id=3208 data-nosnippet>3208</a>        <span class="comment">// this should fail silently
-<a href=#3209 id=3209 data-nosnippet>3209</a>        </span>ep.network_change().<span class="kw">await</span>;
-<a href=#3210 id=3210 data-nosnippet>3210</a>
-<a href=#3211 id=3211 data-nosnippet>3211</a>        <span class="comment">// this should fail silently
-<a href=#3212 id=3212 data-nosnippet>3212</a>        </span>ep.set_user_data_for_address_lookup(<span class="prelude-val">Some</span>(
-<a href=#3213 id=3213 data-nosnippet>3213</a>            UserData::try_from(<span class="string">"TEST"</span>.to_string()).expect(<span class="string">"valid string"</span>),
-<a href=#3214 id=3214 data-nosnippet>3214</a>        ));
-<a href=#3215 id=3215 data-nosnippet>3215</a>
-<a href=#3216 id=3216 data-nosnippet>3216</a>        <span class="macro">info!</span>(<span class="string">"Done!"</span>);
-<a href=#3217 id=3217 data-nosnippet>3217</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3218 id=3218 data-nosnippet>3218</a>    }
-<a href=#3219 id=3219 data-nosnippet>3219</a>}</code></pre></div></section></main></body></html>
+<a href=#3208 id=3208 data-nosnippet>3208</a>        <span class="macro">info!</span>(<span class="string">"Done!"</span>);
+<a href=#3209 id=3209 data-nosnippet>3209</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3210 id=3210 data-nosnippet>3210</a>    }
+<a href=#3211 id=3211 data-nosnippet>3211</a>
+<a href=#3212 id=3212 data-nosnippet>3212</a>    <span class="attr">#[tokio::test]
+<a href=#3213 id=3213 data-nosnippet>3213</a>    #[traced_test]
+<a href=#3214 id=3214 data-nosnippet>3214</a>    </span><span class="kw">async fn </span>test_closed_endpoint_unpolled_accept_fut() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3215 id=3215 data-nosnippet>3215</a>        <span class="macro">info!</span>(<span class="string">"Creating endpoint"</span>);
+<a href=#3216 id=3216 data-nosnippet>3216</a>        <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3217 id=3217 data-nosnippet>3217</a>
+<a href=#3218 id=3218 data-nosnippet>3218</a>        <span class="macro">info!</span>(<span class="string">"Get accept future"</span>);
+<a href=#3219 id=3219 data-nosnippet>3219</a>        <span class="kw">let </span>accept_fut = ep.accept();
+<a href=#3220 id=3220 data-nosnippet>3220</a>
+<a href=#3221 id=3221 data-nosnippet>3221</a>        <span class="macro">info!</span>(<span class="string">"Closing endpoint"</span>);
+<a href=#3222 id=3222 data-nosnippet>3222</a>        <span class="kw">let </span>now = Instant::now();
+<a href=#3223 id=3223 data-nosnippet>3223</a>        tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), ep.close())
+<a href=#3224 id=3224 data-nosnippet>3224</a>            .<span class="kw">await
+<a href=#3225 id=3225 data-nosnippet>3225</a>            </span>.expect(<span class="string">"Endpoint closes in a reasonable time"</span>);
+<a href=#3226 id=3226 data-nosnippet>3226</a>        <span class="macro">info!</span>(<span class="string">"Endpoint closed in {:?}"</span>, now.elapsed());
+<a href=#3227 id=3227 data-nosnippet>3227</a>
+<a href=#3228 id=3228 data-nosnippet>3228</a>        <span class="macro">info!</span>(<span class="string">"Accept future returns None after the endpoint has closed"</span>);
+<a href=#3229 id=3229 data-nosnippet>3229</a>        <span class="kw">let </span>incoming = accept_fut.<span class="kw">await</span>;
+<a href=#3230 id=3230 data-nosnippet>3230</a>        <span class="macro">assert!</span>(incoming.is_none());
+<a href=#3231 id=3231 data-nosnippet>3231</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3232 id=3232 data-nosnippet>3232</a>    }
+<a href=#3233 id=3233 data-nosnippet>3233</a>
+<a href=#3234 id=3234 data-nosnippet>3234</a>    <span class="attr">#[tokio::test]
+<a href=#3235 id=3235 data-nosnippet>3235</a>    #[traced_test]
+<a href=#3236 id=3236 data-nosnippet>3236</a>    </span><span class="kw">async fn </span>test_closed_endpoint_polled_accept_fut() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3237 id=3237 data-nosnippet>3237</a>        <span class="macro">info!</span>(<span class="string">"Creating endpoint"</span>);
+<a href=#3238 id=3238 data-nosnippet>3238</a>        <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3239 id=3239 data-nosnippet>3239</a>
+<a href=#3240 id=3240 data-nosnippet>3240</a>        <span class="macro">info!</span>(<span class="string">"Run an accept task"</span>);
+<a href=#3241 id=3241 data-nosnippet>3241</a>        <span class="kw">let </span>ep2 = ep.clone();
+<a href=#3242 id=3242 data-nosnippet>3242</a>        <span class="kw">let </span>accept_task = tokio::spawn(<span class="kw">async move </span>{
+<a href=#3243 id=3243 data-nosnippet>3243</a>            <span class="macro">info!</span>(<span class="string">"Waiting on Accept"</span>);
+<a href=#3244 id=3244 data-nosnippet>3244</a>            <span class="kw">let </span>res = ep2.accept().<span class="kw">await</span>;
+<a href=#3245 id=3245 data-nosnippet>3245</a>            <span class="macro">info!</span>(<span class="string">"Accept await has returned"</span>);
+<a href=#3246 id=3246 data-nosnippet>3246</a>            res
+<a href=#3247 id=3247 data-nosnippet>3247</a>        });
+<a href=#3248 id=3248 data-nosnippet>3248</a>
+<a href=#3249 id=3249 data-nosnippet>3249</a>        <span class="comment">// Try to ensure the accept future is polled at least once.
+<a href=#3250 id=3250 data-nosnippet>3250</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">10</span>)).<span class="kw">await</span>;
+<a href=#3251 id=3251 data-nosnippet>3251</a>
+<a href=#3252 id=3252 data-nosnippet>3252</a>        <span class="macro">info!</span>(<span class="string">"Closing the endpoint"</span>);
+<a href=#3253 id=3253 data-nosnippet>3253</a>        tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), ep.close())
+<a href=#3254 id=3254 data-nosnippet>3254</a>            .<span class="kw">await
+<a href=#3255 id=3255 data-nosnippet>3255</a>            </span>.expect(<span class="string">"Endpoint closes in a reasonable time"</span>);
+<a href=#3256 id=3256 data-nosnippet>3256</a>        <span class="macro">info!</span>(<span class="string">"Endpoint closed"</span>);
+<a href=#3257 id=3257 data-nosnippet>3257</a>
+<a href=#3258 id=3258 data-nosnippet>3258</a>        <span class="macro">info!</span>(<span class="string">"Await the accept task"</span>);
+<a href=#3259 id=3259 data-nosnippet>3259</a>        <span class="kw">let </span>incoming = accept_task.<span class="kw">await</span>.expect(<span class="string">"accept task panicked"</span>);
+<a href=#3260 id=3260 data-nosnippet>3260</a>        <span class="macro">assert!</span>(incoming.is_none());
+<a href=#3261 id=3261 data-nosnippet>3261</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3262 id=3262 data-nosnippet>3262</a>    }
+<a href=#3263 id=3263 data-nosnippet>3263</a>}</code></pre></div></section></main></body></html>

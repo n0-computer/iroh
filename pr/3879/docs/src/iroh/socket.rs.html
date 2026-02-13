@@ -60,7 +60,7 @@
 <a href=#60 id=60 data-nosnippet>60</a><span class="kw">use crate</span>::{
 <a href=#61 id=61 data-nosnippet>61</a>    address_lookup::{<span class="self">self</span>, AddressLookup, EndpointData, Error <span class="kw">as </span>AddressLookupError, UserData},
 <a href=#62 id=62 data-nosnippet>62</a>    defaults::timeouts::NET_REPORT_TIMEOUT,
-<a href=#63 id=63 data-nosnippet>63</a>    endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
+<a href=#63 id=63 data-nosnippet>63</a>    endpoint::{Accept, hooks::EndpointHooksList, quic::QuicTransportConfig},
 <a href=#64 id=64 data-nosnippet>64</a>    metrics::EndpointMetrics,
 <a href=#65 id=65 data-nosnippet>65</a>    net_report::{<span class="self">self</span>, IfStateDetails, Report},
 <a href=#66 id=66 data-nosnippet>66</a>    runtime::Runtime,
@@ -948,13 +948,13 @@
 <a href=#948 id=948 data-nosnippet>948</a>    /// is another case we need to pay attention to to ensure it's dropped in a
 <a href=#949 id=949 data-nosnippet>949</a>    /// timely manor. It can interfere with closing the `EndpointInner` cleanly (and
 <a href=#950 id=950 data-nosnippet>950</a>    /// therefore the `iroh::Endpoint`).
-<a href=#951 id=951 data-nosnippet>951</a>    </span><span class="kw">fn </span>quinn_endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;quinn::Endpoint&gt; {
+<a href=#951 id=951 data-nosnippet>951</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>quinn_endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;quinn::Endpoint&gt; {
 <a href=#952 id=952 data-nosnippet>952</a>        <span class="self">self</span>.endpoint.read().expect(<span class="string">"poisoned"</span>).clone()
 <a href=#953 id=953 data-nosnippet>953</a>    }
 <a href=#954 id=954 data-nosnippet>954</a>
 <a href=#955 id=955 data-nosnippet>955</a>    <span class="doccomment">/// Returns a future that yields incoming QUIC connections.
-<a href=#956 id=956 data-nosnippet>956</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, ep: <span class="kw">crate</span>::Endpoint) -&gt; <span class="kw">crate</span>::endpoint::Accept {
-<a href=#957 id=957 data-nosnippet>957</a>        <span class="kw">crate</span>::endpoint::Accept::new(<span class="self">self</span>.quinn_endpoint(), ep)
+<a href=#956 id=956 data-nosnippet>956</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, ep: <span class="kw">crate</span>::Endpoint) -&gt; Accept {
+<a href=#957 id=957 data-nosnippet>957</a>        Accept::new(ep)
 <a href=#958 id=958 data-nosnippet>958</a>    }
 <a href=#959 id=959 data-nosnippet>959</a>
 <a href=#960 id=960 data-nosnippet>960</a>    <span class="doccomment">/// Sets the server configuration on the underlying QUIC endpoint.
