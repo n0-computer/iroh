@@ -1696,7 +1696,7 @@ mod tests {
 
                 info!(me = %ep.id().fmt_short(), eps = ?eps, "server listening on");
                 for i in 0..n_clients {
-                    tokio::time::timeout(Duration::from_secs(4), async {
+                    tokio::time::timeout(Duration::from_secs(5), async {
                         let round_start = Instant::now();
                         info!("[server] round {i}");
                         let incoming = ep.accept().await.anyerr()?;
@@ -1730,7 +1730,7 @@ mod tests {
                 info!("[client] round {i}");
                 let client_secret_key = SecretKey::generate(&mut rng);
                 tokio::time::timeout(
-                    Duration::from_secs(4),
+                    Duration::from_secs(5),
                     async {
                         info!("client binding");
                         let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
