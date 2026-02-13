@@ -43,7 +43,9 @@ use crate::{
     },
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
-    socket::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
+    socket::{
+        self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
+    },
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
@@ -208,17 +210,15 @@ impl Builder {
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             metrics,
             hooks: self.hooks,
+            static_config,
         };
 
-        let sock = socket::Socket::spawn(sock_opts).await?;
+        let inner = socket::Socket::spawn(sock_opts).await?;
         trace!("created socket");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
 
         let ep = Endpoint {
-            inner: Arc::new(EndpointInner {
-                sock,
-                static_config,
-            }),
+            inner: Arc::new(inner),
         };
 
         // Add Address Lookup mechanisms
@@ -635,26 +635,6 @@ impl Builder {
     }
 }
 
-/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
-#[derive(Debug)]
-struct StaticConfig {
-    tls_config: tls::TlsConfig,
-    transport_config: QuicTransportConfig,
-    keylog: bool,
-}
-
-impl StaticConfig {
-    /// Create a [`ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> quinn_proto::ServerConfig {
-        let quic_server_config = self
-            .tls_config
-            .make_server_config(alpn_protocols, self.keylog);
-        let mut inner = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-        inner.transport_config(self.transport_config.to_inner_arc());
-        inner
-    }
-}
-
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
@@ -691,27 +671,6 @@ pub enum EndpointError {
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     inner: Arc<EndpointInner>,
-}
-
-/// Main purpose of this inner struct is to ensure that the `EndpointInner` is
-/// only dropped once, when the final reference to the `Endpoint` is dropped and
-/// the struct inside the `Arc` is freed.
-#[derive(Debug)]
-struct EndpointInner {
-    sock: Handle,
-    static_config: StaticConfig,
-}
-
-impl Drop for EndpointInner {
-    fn drop(&mut self) {
-        if self.sock.is_closed() {
-            return;
-        }
-        tracing::error!(
-            "Endpoint dropped without calling `Endpoint::close`. Aborting ungracefully."
-        );
-        self.sock.abort();
-    }
 }
 
 #[allow(missing_docs)]
@@ -795,7 +754,7 @@ impl Endpoint {
             return;
         }
         let server_config = self.inner.static_config.create_server_config(alpns);
-        self.inner.sock.set_server_config(Some(server_config));
+        self.inner.set_server_config(Some(server_config));
     }
 
     /// Adds the provided configuration to the [`RelayMap`].
@@ -811,7 +770,7 @@ impl Endpoint {
         if self.is_closed() {
             return None;
         }
-        self.inner.sock.insert_relay(relay, config).await
+        self.inner.insert_relay(relay, config).await
     }
 
     /// Removes the configuration from the [`RelayMap`] for the provided [`RelayUrl`].
@@ -821,7 +780,7 @@ impl Endpoint {
         if self.is_closed() {
             return None;
         }
-        self.inner.sock.remove_relay(relay).await
+        self.inner.remove_relay(relay).await
     }
 
     // # Methods for establishing connectivity.
@@ -899,12 +858,8 @@ impl Endpoint {
             return Err(e!(ConnectWithOptsError::EndpointClosed));
         }
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
-        if let BeforeConnectOutcome::Reject = self
-            .inner
-            .sock
-            .hooks
-            .before_connect(&endpoint_addr, alpn)
-            .await
+        if let BeforeConnectOutcome::Reject =
+            self.inner.hooks.before_connect(&endpoint_addr, alpn).await
         {
             return Err(e!(ConnectWithOptsError::LocallyRejected));
         }
@@ -922,7 +877,7 @@ impl Endpoint {
             "connecting",
         );
 
-        let mapped_addr = self.inner.sock.resolve_remote(endpoint_addr).await??;
+        let mapped_addr = self.inner.resolve_remote(endpoint_addr).await??;
 
         let transport_config = options
             .transport_config
@@ -949,7 +904,6 @@ impl Endpoint {
         let server_name = &tls::name::encode(endpoint_id);
         let connect = self
             .inner
-            .sock
             .connect_with(client_config, dest_addr, server_name)?;
 
         Ok(Connecting::new(connect, self.clone(), endpoint_id))
@@ -964,7 +918,7 @@ impl Endpoint {
     /// The returned future will yield `None` if the endpoint is closed by calling
     /// [`Endpoint::close`].
     pub fn accept(&self) -> Accept {
-        self.inner.sock.accept(self.clone())
+        self.inner.accept(self.clone())
     }
 
     // # Getter methods for properties of this Endpoint itself.
@@ -1034,8 +988,8 @@ impl Endpoint {
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
-        let watch_addrs = self.inner.sock.ip_addrs();
-        let watch_relay = self.inner.sock.home_relay();
+        let watch_addrs = self.inner.ip_addrs();
+        let watch_relay = self.inner.home_relay();
         let endpoint_id = self.id();
 
         watch_addrs.or(watch_relay).map(move |(addrs, relays)| {
@@ -1059,7 +1013,7 @@ impl Endpoint {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `EndpointAddr` have *some* way
         // of connecting to us.
-        let watch_relay = self.inner.sock.home_relay();
+        let watch_relay = self.inner.home_relay();
         let endpoint_id = self.id();
         watch_relay.map(move |mut relays| {
             EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
@@ -1112,7 +1066,7 @@ impl Endpoint {
     /// }
     /// ```
     pub async fn online(&self) {
-        self.inner.sock.home_relay().initialized().await;
+        self.inner.home_relay().initialized().await;
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -1145,7 +1099,7 @@ impl Endpoint {
     /// ```
     #[doc(hidden)]
     pub fn net_report(&self) -> impl Watcher<Value = Option<NetReport>> + use<> {
-        self.inner.sock.net_report()
+        self.inner.net_report()
     }
 
     /// Returns the last [`NetReport`] generated by this endpoint.
@@ -1155,7 +1109,7 @@ impl Endpoint {
     /// This method is hidden in the docs because it is not part of the public api
     #[doc(hidden)]
     pub fn last_net_report(&self) -> Option<NetReport> {
-        self.inner.sock.net_report().get()
+        self.inner.net_report().get()
     }
 
     /// Returns the local socket addresses on which the underlying sockets are bound.
@@ -1165,7 +1119,6 @@ impl Endpoint {
     #[cfg(not(wasm_browser))]
     pub fn bound_sockets(&self) -> Vec<SocketAddr> {
         self.inner
-            .sock
             .local_addr()
             .into_iter()
             .filter_map(|addr| addr.into_socket_addr())
@@ -1188,7 +1141,7 @@ impl Endpoint {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
-        Ok(self.inner.sock.dns_resolver())
+        Ok(self.inner.dns_resolver())
     }
 
     /// Returns the Address Lookup service, if configured.
@@ -1202,7 +1155,7 @@ impl Endpoint {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
-        Ok(self.inner.sock.address_lookup())
+        Ok(self.inner.address_lookup())
     }
 
     /// Returns metrics collected for this endpoint.
@@ -1321,7 +1274,7 @@ impl Endpoint {
     /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
     #[cfg(feature = "metrics")]
     pub fn metrics(&self) -> &EndpointMetrics {
-        &self.inner.sock.metrics
+        &self.inner.metrics
     }
 
     /// Returns addressing information about a recently used remote endpoint.
@@ -1336,7 +1289,7 @@ impl Endpoint {
         if self.is_closed() {
             return None;
         }
-        self.inner.sock.remote_info(endpoint_id).await
+        self.inner.remote_info(endpoint_id).await
     }
 
     // # Methods for less common state updates.
@@ -1358,7 +1311,7 @@ impl Endpoint {
             debug!("Attempting to notify a closed endpoint about a network change. Ignoring.");
             return;
         }
-        self.inner.sock.network_change().await;
+        self.inner.network_change().await;
     }
 
     // # Methods to update internal state.
@@ -1378,7 +1331,7 @@ impl Endpoint {
             warn!("Attempting to set user data for a closed endpoint. Ignoring.");
             return;
         }
-        self.inner.sock.set_user_data_for_address_lookup(user_data);
+        self.inner.set_user_data_for_address_lookup(user_data);
     }
 
     // # Methods for terminating the endpoint.
@@ -1416,12 +1369,12 @@ impl Endpoint {
     /// Be aware however that the underlying UDP sockets are only closed once all clones of
     /// the the respective [`Endpoint`] are dropped.
     pub async fn close(&self) {
-        self.inner.sock.close().await;
+        self.inner.close().await;
     }
 
     /// Check if this endpoint is still alive, or already closed.
     pub fn is_closed(&self) -> bool {
-        self.inner.sock.is_closed()
+        self.inner.is_closed()
     }
 
     /// Create a [`ServerConfigBuilder`] for this endpoint that includes the given alpns.
@@ -1436,11 +1389,11 @@ impl Endpoint {
     // # Remaining private methods
 
     #[cfg(test)]
-    pub(crate) fn socket(&self) -> Result<Handle, EndpointError> {
+    pub(crate) fn inner(&self) -> Result<Arc<EndpointInner>, EndpointError> {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
-        Ok(self.inner.sock.clone())
+        Ok(self.inner.clone())
     }
 }
 
@@ -3173,8 +3126,16 @@ mod tests {
         let ep = Endpoint::builder().bind().await?;
         info!("Closing endpoint");
         let now = Instant::now();
+        // TODO: this causes close to hang because are holding onto a clone of
+        // the quinn endpoint inside the accept_fut
+        // let _accept_fut = ep.accept();
         ep.close().await;
         info!("Endpoint closed in {:?}", now.elapsed());
+
+        // TODO: this is broken
+        // info!("Accept future returns None after the endpoint has closed");
+        // let incoming = accept_fut.await;
+        // assert!(incoming.is_none());
 
         info!("Set ALPNS fails silently");
         ep.set_alpns(vec![b"test".into()]);

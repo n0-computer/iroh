@@ -60,7 +60,7 @@ use crate::net_report::QuicConfig;
 use crate::{
     address_lookup::{self, AddressLookup, EndpointData, Error as AddressLookupError, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    endpoint::hooks::EndpointHooksList,
+    endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
     runtime::Runtime,
@@ -68,6 +68,7 @@ use crate::{
         concurrent_read_map::ReadOnlyMap,
         remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
     },
+    tls,
 };
 
 mod metrics;
@@ -147,23 +148,63 @@ pub(crate) struct Options {
     pub(crate) insecure_skip_relay_cert_verify: bool,
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
+
+    /// Static configuration for the endpoint.
+    pub(crate) static_config: StaticConfig,
 }
 
-/// Handle for [`Socket`].
+/// Inner state for an iroh [`crate::Endpoint`].
 ///
 /// Dereferences to [`Socket`], and handles closing.
-#[derive(Clone, Debug, derive_more::Deref)]
-pub(crate) struct Handle {
+#[derive(Debug, derive_more::Deref)]
+pub(crate) struct EndpointInner {
     #[deref(forward)]
     sock: Arc<Socket>,
     // empty when shutdown
-    actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
+    actor_task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Channel to send to the internal actor.
     actor_sender: mpsc::Sender<ActorMessage>,
     // quinn endpoint, set to `None` on close
-    endpoint: Arc<RwLock<Option<quinn::Endpoint>>>,
+    endpoint: RwLock<Option<quinn::Endpoint>>,
     // Runtime used by quinn
     runtime: Arc<Runtime>,
+    /// Static configuration for the endpoint.
+    pub(crate) static_config: StaticConfig,
+}
+
+impl Drop for EndpointInner {
+    fn drop(&mut self) {
+        if self.sock.is_closed() {
+            return;
+        }
+        tracing::error!(
+            "Endpoint dropped without calling `Endpoint::close`. Aborting ungracefully."
+        );
+        self.abort();
+    }
+}
+
+/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
+#[derive(Debug)]
+pub(crate) struct StaticConfig {
+    pub(crate) tls_config: tls::TlsConfig,
+    pub(crate) transport_config: QuicTransportConfig,
+    pub(crate) keylog: bool,
+}
+
+impl StaticConfig {
+    /// Create a [`quinn_proto::ServerConfig`] with the specified ALPN protocols.
+    pub(crate) fn create_server_config(
+        &self,
+        alpn_protocols: Vec<Vec<u8>>,
+    ) -> quinn_proto::ServerConfig {
+        let quic_server_config = self
+            .tls_config
+            .make_server_config(alpn_protocols, self.keylog);
+        let mut inner = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+        inner.transport_config(self.transport_config.to_inner_arc());
+        inner
+    }
 }
 
 #[derive(Debug)]
@@ -248,8 +289,8 @@ pub(crate) struct Socket {
 
 impl Socket {
     /// Creates a [`Socket`] listening.
-    pub(crate) async fn spawn(opts: Options) -> Result<Handle, BindError> {
-        Handle::new(opts).await
+    pub(crate) async fn spawn(opts: Options) -> Result<EndpointInner, BindError> {
+        EndpointInner::new(opts).await
     }
 
     /// Returns the relay endpoint we are connected to, that has the best latency.
@@ -664,7 +705,7 @@ pub enum BindError {
     },
 }
 
-impl Handle {
+impl EndpointInner {
     /// Creates a [`Socket`].
     async fn new(opts: Options) -> Result<Self, BindError> {
         let Options {
@@ -679,6 +720,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
             metrics,
             hooks,
+            static_config,
         } = opts;
 
         let address_lookup = address_lookup::ConcurrentAddressLookup::default();
@@ -888,14 +930,15 @@ impl Handle {
                 .instrument(info_span!("actor")),
         );
 
-        let actor_task = Arc::new(Mutex::new(Some(AbortOnDropHandle::new(actor_task))));
+        let actor_task = Mutex::new(Some(AbortOnDropHandle::new(actor_task)));
 
-        Ok(Handle {
+        Ok(EndpointInner {
             sock,
             actor_sender,
             actor_task,
-            endpoint: Arc::new(RwLock::new(Some(endpoint))),
+            endpoint: RwLock::new(Some(endpoint)),
             runtime,
+            static_config,
         })
     }
 
@@ -903,7 +946,7 @@ impl Handle {
     ///
     /// We should be very careful about using this method, every clone of `quinn::Endpoint`
     /// is another case we need to pay attention to to ensure it's dropped in a
-    /// timely manor. It can interfere with closing the `Handle` cleanly (and
+    /// timely manor. It can interfere with closing the `EndpointInner` cleanly (and
     /// therefore the `iroh::Endpoint`).
     fn quinn_endpoint(&self) -> Option<quinn::Endpoint> {
         self.endpoint.read().expect("poisoned").clone()
@@ -975,7 +1018,11 @@ impl Handle {
             debug!("wait_idle done");
             // endpoint must be dropped here before we `take` it in the next lines.
         }
-        // Drop our reference to the quinn endpoint.
+        // Drop our reference to the quinn endpoint. If this is not dropped, than
+        // the `Runtime::shutdown` method call down below will hang forever, since
+        // the task that runs the `EndpointDriver` inside `quinn::Endpoint` won't
+        // finish if there are any references to the `quinn::Endpoint` that are
+        // still alive.
         self.endpoint.write().expect("poisoned").take();
 
         // Start cancellation of all actors.
@@ -1001,6 +1048,8 @@ impl Handle {
         }
 
         // Waits for the EndpointDriver and all ConnectionDrivers to shut down
+        // Expects that the `quinn::Endpoint` has been dropped before this call,
+        // otherwise, the runtime will never shutdown.
         self.runtime.shutdown().await;
 
         self.sock.shutdown.closed.store(true, Ordering::SeqCst);
@@ -1008,7 +1057,7 @@ impl Handle {
         trace!("socket closed");
     }
 
-    /// Aborts the connection ungracefully:
+    /// Aborts the endpoint ungracefully:
     ///
     /// - Calls cancellation token that stops running net reports
     /// - Calls cancellation token that stops all the Socket actors
@@ -1034,16 +1083,13 @@ impl Handle {
         // Cancel all actors.
         self.sock.shutdown.at_endpoint_closed.cancel();
 
-        // Waits for the EndpointDriver and all ConnectionDrivers to shut down
+        // Aborts all tasks, not waiting for any to close gracefully.
         self.runtime.abort();
 
-        // Drop our hold on the quinn endpoint.
         self.endpoint.write().expect("poisoned").take();
 
-        // Drop the actor task.
         self.actor_task.lock().expect("poisoned").take();
 
-        // Set socket to closed.
         self.sock.shutdown.closed.store(true, Ordering::SeqCst);
         trace!("socket closed");
     }
@@ -1086,7 +1132,7 @@ impl Handle {
             .ok();
     }
 
-    /// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
+    /// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`EndpointInner::endpoint`].
     ///
     /// This starts a `RemoteStateActor` for the remote if not running already, and then checks
     /// if the actor has any known paths to the remote. If not, it starts address lookup and waits for
@@ -1695,7 +1741,7 @@ mod tests {
         dns::DnsResolver,
         endpoint::QuicTransportConfig,
         socket::{
-            Handle, Socket, TransportConfig,
+            EndpointInner, Socket, StaticConfig, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
         },
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -1705,7 +1751,12 @@ mod tests {
 
     fn default_options<R: CryptoRng + ?Sized>(rng: &mut R) -> Options {
         let secret_key = SecretKey::generate(rng);
-        let server_config = make_default_server_config(&secret_key);
+        let static_config = StaticConfig {
+            tls_config: tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            transport_config: QuicTransportConfig::default(),
+            keylog: false,
+        };
+        let server_config = static_config.create_server_config(vec![]);
         Options {
             transports: vec![
                 TransportConfig::default_ipv4(),
@@ -1721,18 +1772,8 @@ mod tests {
             address_lookup_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
+            static_config,
         }
-    }
-
-    /// Generate a server config with no ALPNS and a default transport configuration
-    fn make_default_server_config(secret_key: &SecretKey) -> quinn::ServerConfig {
-        let quic_server_config =
-            crate::tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
-                .make_server_config(vec![], false);
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-        let transport = QuicTransportConfig::default();
-        server_config.transport_config(transport.to_inner_arc());
-        server_config
     }
 
     #[instrument(skip_all, fields(me = %ep.id().fmt_short()))]
@@ -1774,7 +1815,7 @@ mod tests {
 
         conn.closed().await;
         info!("closed");
-        ep.socket()?
+        ep.inner()?
             .quinn_endpoint()
             .expect("not closed")
             .wait_idle()
@@ -1832,7 +1873,7 @@ mod tests {
 
         conn.close(0u32.into(), b"done");
         info!("closed");
-        ep.socket()?
+        ep.inner()?
             .quinn_endpoint()
             .expect("not closed")
             .wait_idle()
@@ -1967,7 +2008,7 @@ mod tests {
         let (_guard, m1, m2) = endpoint_pair().await;
 
         println!("Net change");
-        m1.socket()?.force_network_change(true).await;
+        m1.inner()?.force_network_change(true).await;
         tokio::time::sleep(Duration::from_secs(1)).await; // wait for socket rebinding
 
         let _handle = AbortOnDropHandle::new(tokio::spawn({
@@ -2013,7 +2054,7 @@ mod tests {
             let task = tokio::spawn(async move {
                 loop {
                     info!("[m1] network change");
-                    m1.socket()
+                    m1.inner()
                         .expect("haven't closed the endpoint yet")
                         .force_network_change(true)
                         .await;
@@ -2044,12 +2085,12 @@ mod tests {
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 info!("-- [m1] network change");
-                m1.socket()
+                m1.inner()
                     .expect("haven't closed the endpoint yet")
                     .force_network_change(true)
                     .await;
                 info!("-- [m2] network change");
-                m2.socket()
+                m2.inner()
                     .expect("haven't closed the endpoint yet")
                     .force_network_change(true)
                     .await;
@@ -2075,13 +2116,13 @@ mod tests {
             let (_guard, m1, m2) = endpoint_pair().await;
 
             info!("closing endpoints");
-            let sock1 = m1.socket()?;
-            let sock2 = m2.socket()?;
+            let sock1 = m1.inner()?;
+            let sock2 = m2.inner()?;
             m1.close().await;
             m2.close().await;
 
-            assert!(sock1.sock.is_closed());
-            assert!(sock2.sock.is_closed());
+            assert!(sock1.is_closed());
+            assert!(sock2.is_closed());
         }
         Ok(())
     }
@@ -2090,7 +2131,7 @@ mod tests {
     #[traced_test]
     async fn test_direct_addresses() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let sock = Handle::new(default_options(&mut rng)).await.unwrap();
+        let sock = EndpointInner::new(default_options(&mut rng)).await.unwrap();
 
         // See if we can get endpoints.
         let eps0 = sock.ip_addrs().get();
@@ -2110,11 +2151,13 @@ mod tests {
     ///
     /// Use [`socket_connect`] to establish connections.
     #[instrument(name = "ep", skip_all, fields(me = %secret_key.public().fmt_short()))]
-    async fn socket_ep(secret_key: SecretKey) -> Result<Handle> {
-        let quic_server_config = tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
-            .make_server_config(vec![ALPN.to_vec()], true);
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+    async fn socket_ep(secret_key: SecretKey) -> Result<EndpointInner> {
+        let static_config = StaticConfig {
+            tls_config: tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            transport_config: QuicTransportConfig::default(),
+            keylog: true,
+        };
+        let server_config = static_config.create_server_config(vec![ALPN.to_vec()]);
 
         let dns_resolver = DnsResolver::new();
         let opts = Options {
@@ -2130,6 +2173,7 @@ mod tests {
             insecure_skip_relay_cert_verify: false,
             metrics: Default::default(),
             hooks: Default::default(),
+            static_config,
         };
         let sock = Socket::spawn(opts).await?;
         Ok(sock)
