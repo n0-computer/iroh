@@ -55,9 +55,13 @@ use crate::{
 pub struct Accept(#[debug("BoxFuture")] BoxFuture<Option<Incoming>>);
 
 impl Accept {
-    pub(crate) fn new(quinn_ep: Option<quinn::Endpoint>, ep: Endpoint) -> Self {
+    pub(crate) fn new(ep: Endpoint) -> Self {
         Self(Box::pin(async move {
-            let incoming = quinn_ep?.accept().await?;
+            // Only clone the quinn::Endpoint once polled, so that an
+            // un-polled Accept future does not keep a clone alive and block
+            // `Runtime::shutdown` during `EndpointInner::close`.
+            let quinn_ep = ep.inner.quinn_endpoint()?;
+            let incoming = quinn_ep.accept().await?;
             Some(Incoming {
                 inner: incoming,
                 ep,
