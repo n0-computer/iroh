@@ -2154,7 +2154,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.16.1"
-source = "git+https://github.com/n0-computer/quinn?branch=main#d5580a52928327a16ca9c0901d88cc9396f1b284"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fstop-driver-on-close#f817aa90724084118a6973293699d7b5010126f5"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2163,7 +2163,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.2",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -2174,7 +2174,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.15.1"
-source = "git+https://github.com/n0-computer/quinn?branch=main#d5580a52928327a16ca9c0901d88cc9396f1b284"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fstop-driver-on-close#f817aa90724084118a6973293699d7b5010126f5"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2201,11 +2201,11 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.8.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#d5580a52928327a16ca9c0901d88cc9396f1b284"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fstop-driver-on-close#f817aa90724084118a6973293699d7b5010126f5"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.2",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
