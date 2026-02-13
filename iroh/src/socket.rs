@@ -60,7 +60,7 @@ use crate::net_report::QuicConfig;
 use crate::{
     address_lookup::{self, AddressLookup, EndpointData, Error as AddressLookupError, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
+    endpoint::{Accept, hooks::EndpointHooksList, quic::QuicTransportConfig},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
     runtime::Runtime,
@@ -948,13 +948,13 @@ impl EndpointInner {
     /// is another case we need to pay attention to to ensure it's dropped in a
     /// timely manor. It can interfere with closing the `EndpointInner` cleanly (and
     /// therefore the `iroh::Endpoint`).
-    fn quinn_endpoint(&self) -> Option<quinn::Endpoint> {
+    pub(crate) fn quinn_endpoint(&self) -> Option<quinn::Endpoint> {
         self.endpoint.read().expect("poisoned").clone()
     }
 
     /// Returns a future that yields incoming QUIC connections.
-    pub(crate) fn accept(&self, ep: crate::Endpoint) -> crate::endpoint::Accept {
-        crate::endpoint::Accept::new(self.quinn_endpoint(), ep)
+    pub(crate) fn accept(&self, ep: crate::Endpoint) -> Accept {
+        Accept::new(ep)
     }
 
     /// Sets the server configuration on the underlying QUIC endpoint.
