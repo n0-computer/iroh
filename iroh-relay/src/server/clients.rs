@@ -32,6 +32,10 @@ pub struct Clients(Arc<Inner>);
 struct Inner {
     /// The list of all currently connected clients.
     clients: DashMap<EndpointId, Client>,
+    /// List of clients that are still connected, but not active anymore
+    ///
+    /// Clients are moved here if another endpoint with the same id connects.
+    inactive_clients: DashMap<u64, Client>,
     /// Map of which client has sent where
     sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
     /// Connection ID Counter
@@ -54,7 +58,7 @@ impl Clients {
     }
 
     /// Builds the client handler and starts the read & write loops for the connection.
-    pub async fn register<S>(&self, client_config: Config<S>, metrics: Arc<Metrics>)
+    pub fn register<S>(&self, client_config: Config<S>, metrics: Arc<Metrics>)
     where
         S: BytesStreamSink + Send + 'static,
     {
@@ -66,9 +70,13 @@ impl Clients {
         if let Some(old_client) = self.0.clients.insert(endpoint_id, client) {
             debug!(
                 remote_endpoint = %endpoint_id.fmt_short(),
-                "multiple connections found, pruning old connection",
+                "multiple connections found, deactivating old connection",
             );
-            old_client.shutdown().await;
+            old_client
+                .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string()).ok();
+            self.0
+                .inactive_clients
+                .insert(old_client.connection_id(), old_client);
         }
     }
 
@@ -110,6 +118,8 @@ impl Clients {
                     }
                 }
             }
+        } else if let Some(client) = self.0.inactive_clients.remove(&connection_id) {
+            drop(client);
         }
     }
 
@@ -158,6 +168,7 @@ mod tests {
     use iroh_base::SecretKey;
     use n0_error::{Result, StdResultExt};
     use n0_future::{Stream, StreamExt};
+    use n0_tracing_test::traced_test;
     use rand::SeedableRng;
 
     use super::*;
@@ -206,6 +217,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_clients() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let a_key = SecretKey::generate(&mut rng).public();
@@ -215,7 +227,7 @@ mod tests {
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_a, metrics.clone()).await;
+        clients.register(builder_a, metrics.clone());
 
         // send packet
         let data = b"hello world!";

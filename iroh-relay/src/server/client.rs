@@ -65,10 +65,10 @@ pub struct Client {
     done: CancellationToken,
     /// Actor handle.
     handle: AbortOnDropHandle<()>,
-    /// Queue of packets intended for the client.
-    send_queue: mpsc::Sender<Packet>,
-    /// Channel to notify the client that a previous sender has disconnected.
-    peer_gone: mpsc::Sender<EndpointId>,
+    /// Channel to send packets intended for the client.
+    packet_queue: mpsc::Sender<Packet>,
+    /// Channel to send non-packet messages to the client.
+    message_queue: mpsc::Sender<RelayToClientMsg>,
 }
 
 impl Client {
@@ -91,16 +91,15 @@ impl Client {
             channel_capacity,
         } = config;
 
+        let (packet_send_queue_s, packet_send_queue_r) = mpsc::channel(channel_capacity);
+        let (message_send_queue_s, message_send_queue_r) = mpsc::channel(channel_capacity);
         let done = CancellationToken::new();
-        let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
-
-        let (peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
 
         let actor = Actor {
             stream,
             timeout: write_timeout,
-            send_queue: send_queue_r,
-            endpoint_gone: peer_gone_r,
+            packet_send_queue: packet_send_queue_r,
+            message_send_queue: message_send_queue_r,
             endpoint_id,
             connection_id,
             clients: clients.clone(),
@@ -122,8 +121,8 @@ impl Client {
             connection_id,
             handle: AbortOnDropHandle::new(handle),
             done,
-            send_queue: send_queue_s,
-            peer_gone: peer_gone_s,
+            packet_queue: packet_send_queue_s,
+            message_queue: message_send_queue_s,
         }
     }
 
@@ -154,14 +153,23 @@ impl Client {
         src: EndpointId,
         data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
-        self.send_queue.try_send(Packet { src, data })
+        self.packet_queue.try_send(Packet { src, data })
     }
 
     pub(super) fn try_send_peer_gone(
         &self,
         key: EndpointId,
-    ) -> Result<(), TrySendError<EndpointId>> {
-        self.peer_gone.try_send(key)
+    ) -> Result<(), TrySendError<RelayToClientMsg>> {
+        self.message_queue
+            .try_send(RelayToClientMsg::EndpointGone(key))
+    }
+
+    pub(super) fn try_send_health(
+        &self,
+        problem: String,
+    ) -> Result<(), TrySendError<RelayToClientMsg>> {
+        self.message_queue
+            .try_send(RelayToClientMsg::Health { problem })
     }
 }
 
@@ -211,16 +219,12 @@ pub enum RunError {
         #[error(from)]
         source: HandleFrameError,
     },
-    #[error("Server.send_queue dropped")]
-    SendQueuePacketDrop {},
     #[error("Failed to send packet")]
     PacketSend { source: WriteFrameError },
-    #[error("Server.endpoint_gone dropped")]
-    EndpointGoneDrop {},
-    #[error("EndpointGone write frame failed")]
-    EndpointGoneWriteFrame { source: WriteFrameError },
-    #[error("Keep alive write frame failed")]
-    KeepAliveWriteFrame { source: WriteFrameError },
+    #[error("Handle was dropped")]
+    HandleDropped {},
+    #[error("Writing a frame failed")]
+    WriteFrame { source: WriteFrameError },
     #[error("Tick flush")]
     TickFlush {},
 }
@@ -248,10 +252,10 @@ struct Actor<S> {
     stream: RelayedStream<S>,
     /// Maximum time we wait to complete a write to the client
     timeout: Duration,
-    /// Packets queued to send to the client
-    send_queue: mpsc::Receiver<Packet>,
-    /// Notify the client that a previous sender has disconnected
-    endpoint_gone: mpsc::Receiver<EndpointId>,
+    /// Receiver for packets to be sent to the client.
+    packet_send_queue: mpsc::Receiver<Packet>,
+    /// Receiver for non-packet messages to be sent to the client.
+    message_send_queue: mpsc::Receiver<RelayToClientMsg>,
     /// [`EndpointId`] of this client
     endpoint_id: EndpointId,
     /// Connection identifier.
@@ -320,19 +324,19 @@ where
                     ping_interval.reset();
                 }
                 // Second priority, sending regular packets
-                packet = self.send_queue.recv() => {
-                    let packet = packet.ok_or_else(|| e!(RunError::SendQueuePacketDrop))?;
+                packet = self.packet_send_queue.recv() => {
+                    let packet = packet.ok_or_else(|| e!(RunError::HandleDropped))?;
                     self.send_packet(packet)
                         .await
                         .map_err(|err| e!(RunError::PacketSend, err))?;
                 }
-                // Last priority, sending left endpoints
-                endpoint_id = self.endpoint_gone.recv() => {
-                    let endpoint_id = endpoint_id.ok_or_else(|| e!(RunError::EndpointGoneDrop))?;
-                    trace!("endpoint_id gone: {:?}", endpoint_id);
-                    self.write_frame(RelayToClientMsg::EndpointGone(endpoint_id))
+                // Last priority, sending other message
+                message = self.message_send_queue.recv() => {
+                    let message = message .ok_or_else(|| e!(RunError::HandleDropped))?;
+                    trace!("send {message:?}");
+                    self.write_frame(message)
                         .await
-                        .map_err(|err| e!(RunError::EndpointGoneWriteFrame, err))?;
+                        .map_err(|err| e!(RunError::WriteFrame, err))?;
                 }
                 _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
@@ -345,7 +349,7 @@ where
                     let data = self.ping_tracker.new_ping();
                     self.write_frame(RelayToClientMsg::Ping(data))
                         .await
-                        .map_err(|err| e!(RunError::KeepAliveWriteFrame, err))?;
+                        .map_err(|err| e!(RunError::WriteFrame, err))?;
                 }
             }
 
@@ -537,7 +541,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
-        let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
+        let (message_s, message_r) = mpsc::channel(10);
 
         let endpoint_id = SecretKey::generate(&mut rng).public();
         let (io, io_rw) = tokio::io::duplex(1024);
@@ -549,8 +553,8 @@ mod tests {
         let actor = Actor {
             stream,
             timeout: Duration::from_secs(1),
-            send_queue: send_queue_r,
-            endpoint_gone: peer_gone_r,
+            packet_send_queue: send_queue_r,
+            message_send_queue: message_r,
             connection_id: 0,
             endpoint_id,
             clients: clients.clone(),
@@ -590,7 +594,10 @@ mod tests {
 
         // send peer_gone
         println!("send peer gone");
-        peer_gone_s.send(endpoint_id).await.std_context("send")?;
+        message_s
+            .send(RelayToClientMsg::EndpointGone(endpoint_id))
+            .await
+            .std_context("send")?;
         let frame = recv_frame(FrameType::EndpointGone, &mut io_rw)
             .await
             .anyerr()?;
