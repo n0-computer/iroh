@@ -42,6 +42,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 unused-async = "warn"
 
 [patch.crates-io]
-iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "Frando/stop-driver-on-close" }
-iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "Frando/stop-driver-on-close" }
-iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "Frando/stop-driver-on-close" }
+iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "main" }
+iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "main" }
+iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "main" }
