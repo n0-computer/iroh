@@ -3118,7 +3118,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_closed_endpoint() -> Result {
+    async fn test_closed_endpoint_behaviour() -> Result {
         // create endpoint
         // call endpoint.close
         // ensure methods behave in the expected way
@@ -3126,16 +3126,8 @@ mod tests {
         let ep = Endpoint::builder().bind().await?;
         info!("Closing endpoint");
         let now = Instant::now();
-        // TODO: this causes close to hang because are holding onto a clone of
-        // the quinn endpoint inside the accept_fut
-        // let _accept_fut = ep.accept();
         ep.close().await;
         info!("Endpoint closed in {:?}", now.elapsed());
-
-        // TODO: this is broken
-        // info!("Accept future returns None after the endpoint has closed");
-        // let incoming = accept_fut.await;
-        // assert!(incoming.is_none());
 
         info!("Set ALPNS fails silently");
         ep.set_alpns(vec![b"test".into()]);
@@ -3214,6 +3206,58 @@ mod tests {
         ));
 
         info!("Done!");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_closed_endpoint_unpolled_accept_fut() -> Result {
+        info!("Creating endpoint");
+        let ep = Endpoint::builder().bind().await?;
+
+        info!("Get accept future");
+        let accept_fut = ep.accept();
+
+        info!("Closing endpoint");
+        let now = Instant::now();
+        tokio::time::timeout(Duration::from_secs(5), ep.close())
+            .await
+            .expect("Endpoint closes in a reasonable time");
+        info!("Endpoint closed in {:?}", now.elapsed());
+
+        info!("Accept future returns None after the endpoint has closed");
+        let incoming = accept_fut.await;
+        assert!(incoming.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_closed_endpoint_polled_accept_fut() -> Result {
+        info!("Creating endpoint");
+        let ep = Endpoint::builder().bind().await?;
+
+        info!("Run an accept task");
+        let ep2 = ep.clone();
+        let accept_task = tokio::spawn(async move {
+            info!("Waiting on Accept");
+            let res = ep2.accept().await;
+            info!("Accept await has returned");
+            res
+        });
+
+        // Try to ensure the accept future is polled at least once.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        info!("Closing the endpoint");
+        tokio::time::timeout(Duration::from_secs(5), ep.close())
+            .await
+            .expect("Endpoint closes in a reasonable time");
+        info!("Endpoint closed");
+
+        info!("Await the accept task");
+        let incoming = accept_task.await.expect("accept task panicked");
+        assert!(incoming.is_none());
         Ok(())
     }
 }
