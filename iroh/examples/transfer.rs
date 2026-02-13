@@ -447,7 +447,7 @@ impl EndpointArgs {
                 use iroh::address_lookup::MdnsAddressLookup;
 
                 endpoint
-                    .address_lookup()
+                    .address_lookup()?
                     .add(MdnsAddressLookup::builder().build(endpoint.id())?);
             }
             #[cfg(not(feature = "address-lookup-mdns"))]
