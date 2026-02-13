@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>//!
 <a href=#26 id=26 data-nosnippet>26</a>//!     // Register the Address Lookupwith the endpoint
 <a href=#27 id=27 data-nosnippet>27</a>//!     let mdns = MdnsAddressLookup::builder().build(endpoint.id()).unwrap();
-<a href=#28 id=28 data-nosnippet>28</a>//!     endpoint.address_lookup().add(mdns.clone());
+<a href=#28 id=28 data-nosnippet>28</a>//!     endpoint.address_lookup().unwrap().add(mdns.clone());
 <a href=#29 id=29 data-nosnippet>29</a>//!
 <a href=#30 id=30 data-nosnippet>30</a>//!     // Subscribe to the mdns discovery events
 <a href=#31 id=31 data-nosnippet>31</a>//!     let mut events = mdns.subscribe().await;

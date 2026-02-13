@@ -22,7 +22,7 @@ See the <a href="https://crates.io/crates/swarm-discovery"><code>swarm-discovery
 
     <span class="comment">// Register the Address Lookupwith the endpoint
     </span><span class="kw">let </span>mdns = MdnsAddressLookup::builder().build(endpoint.id()).unwrap();
-    endpoint.address_lookup().add(mdns.clone());
+    endpoint.address_lookup().unwrap().add(mdns.clone());
 
     <span class="comment">// Subscribe to the mdns discovery events
     </span><span class="kw">let </span><span class="kw-2">mut </span>events = mdns.subscribe().<span class="kw">await</span>;
