@@ -1696,7 +1696,7 @@
 <a href=#1696 id=1696 data-nosnippet>1696</a>
 <a href=#1697 id=1697 data-nosnippet>1697</a>                <span class="macro">info!</span>(me = %ep.id().fmt_short(), eps = <span class="question-mark">?</span>eps, <span class="string">"server listening on"</span>);
 <a href=#1698 id=1698 data-nosnippet>1698</a>                <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n_clients {
-<a href=#1699 id=1699 data-nosnippet>1699</a>                    tokio::time::timeout(Duration::from_secs(<span class="number">4</span>), <span class="kw">async </span>{
+<a href=#1699 id=1699 data-nosnippet>1699</a>                    tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), <span class="kw">async </span>{
 <a href=#1700 id=1700 data-nosnippet>1700</a>                        <span class="kw">let </span>round_start = Instant::now();
 <a href=#1701 id=1701 data-nosnippet>1701</a>                        <span class="macro">info!</span>(<span class="string">"[server] round {i}"</span>);
 <a href=#1702 id=1702 data-nosnippet>1702</a>                        <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
@@ -1730,7 +1730,7 @@
 <a href=#1730 id=1730 data-nosnippet>1730</a>                <span class="macro">info!</span>(<span class="string">"[client] round {i}"</span>);
 <a href=#1731 id=1731 data-nosnippet>1731</a>                <span class="kw">let </span>client_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#1732 id=1732 data-nosnippet>1732</a>                tokio::time::timeout(
-<a href=#1733 id=1733 data-nosnippet>1733</a>                    Duration::from_secs(<span class="number">4</span>),
+<a href=#1733 id=1733 data-nosnippet>1733</a>                    Duration::from_secs(<span class="number">5</span>),
 <a href=#1734 id=1734 data-nosnippet>1734</a>                    <span class="kw">async </span>{
 <a href=#1735 id=1735 data-nosnippet>1735</a>                        <span class="macro">info!</span>(<span class="string">"client binding"</span>);
 <a href=#1736 id=1736 data-nosnippet>1736</a>                        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
