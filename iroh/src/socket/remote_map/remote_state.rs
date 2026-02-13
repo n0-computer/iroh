@@ -52,6 +52,9 @@ mod remote_info;
 /// attempted more frequently than at this interval.
 const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Maximum backoff delay for holepunching attempts.
+const MAX_BACKOFF: Duration = Duration::from_secs(300); // 5 minutes
+
 /// The latency at or under which we don't try to upgrade to a better path.
 const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(10);
 
@@ -161,6 +164,8 @@ pub(super) struct RemoteStateActor {
     paths: RemotePathState,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
+    /// Current backoff delay for holepunching attempts.
+    current_backoff: Duration,
 
     /// The path we currently consider the preferred path to the remote endpoint.
     ///
@@ -209,6 +214,7 @@ impl RemoteStateActor {
             addr_events: Default::default(),
             paths: RemotePathState::new(metrics),
             last_holepunch: None,
+            current_backoff: HOLEPUNCH_ATTEMPTS_INTERVAL,
             selected_path: Default::default(),
             scheduled_holepunch: None,
             scheduled_open_path: None,
@@ -386,6 +392,7 @@ impl RemoteStateActor {
     }
 
     fn handle_network_change(&mut self, is_major: bool) {
+        self.current_backoff = HOLEPUNCH_ATTEMPTS_INTERVAL;
         for conn in self.connections.values() {
             if let Some(quinn_conn) = conn.handle.upgrade() {
                 for (path_id, addr) in &conn.open_paths {
@@ -499,6 +506,7 @@ impl RemoteStateActor {
         handle: WeakConnectionHandle,
         tx: oneshot::Sender<PathsWatcher>,
     ) {
+        self.current_backoff = HOLEPUNCH_ATTEMPTS_INTERVAL;
         let pub_open_paths = Watchable::default();
         if let Some(conn) = handle.upgrade() {
             self.metrics.num_conns_opened.inc();
@@ -754,11 +762,12 @@ impl RemoteStateActor {
             })
             .unwrap_or(true);
         if !new_candidates && let Some(ref last_hp) = self.last_holepunch {
-            let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
+            let next_hp = last_hp.when + self.current_backoff;
             let now = Instant::now();
             if next_hp > now {
                 trace!(scheduled_in = ?(next_hp - now), "not holepunching: no new addresses");
                 self.scheduled_holepunch = Some(next_hp);
+                self.current_backoff = (self.current_backoff * 2).min(MAX_BACKOFF);
                 return;
             }
         }
