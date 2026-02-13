@@ -991,10 +991,35 @@ impl Endpoint {
     /// - the endpoint changes its preferred relay server
     /// - more addresses are discovered for this endpoint
     ///
+    /// ## Closing behavior
+    ///
     /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
     /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
-    /// via [`Watcher::stream`] only terminates once the endpoint stops. If you want to stop a
-    /// task once the endpoint stops combine with [`Self::closed`].
+    /// via [`Watcher::stream`] only terminates once the endpoint is fully dropped. To stop a task
+    /// that loops over a watcher stream once the endpoint stops, combine with [`Self::closed`]:
+    ///
+    /// ```
+    /// # use iroh::{Watcher, Endpoint};
+    /// # use n0_future::StreamExt;
+    /// # use tracing::info;
+    /// # async fn wrapper() -> n0_error::Result<()> {
+    /// let endpoint = Endpoint::bind().await?;
+    /// // We want to watch address changes in a different task, and stop our task
+    /// // once the endpoint stops.
+    /// let mut addr_stream = endpoint.watch_addr().stream();
+    /// let endpoint_closed = endpoint.closed();
+    /// tokio::spawn(endpoint_closed.run_until_cancelled_owned(async move {
+    ///     while let Some(addr) = addr_stream.next().await {
+    ///         info!("our address changed: {addr:?}");
+    ///     }
+    ///     info!("endpoint closed");
+    /// }));
+    /// // Do fancy things, then close the endpoint.
+    /// // Our task above will stop even if there are still clones of `Endpoint` alive somewhere.
+    /// endpoint.close().await;
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
@@ -3295,6 +3320,7 @@ mod tests {
         info!("Await the accept task");
         let incoming = accept_task.await.expect("accept task panicked");
         assert!(incoming.is_none());
+
         Ok(())
     }
 }
