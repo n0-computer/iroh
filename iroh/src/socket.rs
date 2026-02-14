@@ -60,13 +60,15 @@ use crate::net_report::QuicConfig;
 use crate::{
     address_lookup::{self, AddressLookup, EndpointData, Error as AddressLookupError, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    endpoint::hooks::EndpointHooksList,
+    endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
+    runtime::Runtime,
     socket::{
         concurrent_read_map::ReadOnlyMap,
         remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
     },
+    tls,
 };
 
 mod metrics;
@@ -146,21 +148,63 @@ pub(crate) struct Options {
     pub(crate) insecure_skip_relay_cert_verify: bool,
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
+
+    /// Static configuration for the endpoint.
+    pub(crate) static_config: StaticConfig,
 }
 
-/// Handle for [`Socket`].
+/// Inner state for an iroh [`crate::Endpoint`].
 ///
 /// Dereferences to [`Socket`], and handles closing.
-#[derive(Clone, Debug, derive_more::Deref)]
-pub(crate) struct Handle {
+#[derive(Debug, derive_more::Deref)]
+pub(crate) struct EndpointInner {
     #[deref(forward)]
     sock: Arc<Socket>,
     // empty when shutdown
-    actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
+    actor_task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Channel to send to the internal actor.
     actor_sender: mpsc::Sender<ActorMessage>,
-    // quinn endpoint
+    // quinn endpoint, set to `None` on close
     endpoint: quinn::Endpoint,
+    // Runtime used by quinn
+    runtime: Arc<Runtime>,
+    /// Static configuration for the endpoint.
+    pub(crate) static_config: StaticConfig,
+}
+
+impl Drop for EndpointInner {
+    fn drop(&mut self) {
+        if self.sock.is_closed() {
+            return;
+        }
+        tracing::error!(
+            "Endpoint dropped without calling `Endpoint::close`. Aborting ungracefully."
+        );
+        self.abort();
+    }
+}
+
+/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
+#[derive(Debug)]
+pub(crate) struct StaticConfig {
+    pub(crate) tls_config: tls::TlsConfig,
+    pub(crate) transport_config: QuicTransportConfig,
+    pub(crate) keylog: bool,
+}
+
+impl StaticConfig {
+    /// Create a [`quinn_proto::ServerConfig`] with the specified ALPN protocols.
+    pub(crate) fn create_server_config(
+        &self,
+        alpn_protocols: Vec<Vec<u8>>,
+    ) -> quinn_proto::ServerConfig {
+        let quic_server_config = self
+            .tls_config
+            .make_server_config(alpn_protocols, self.keylog);
+        let mut inner = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+        inner.transport_config(self.transport_config.to_inner_arc());
+        inner
+    }
 }
 
 #[derive(Debug)]
@@ -245,8 +289,8 @@ pub(crate) struct Socket {
 
 impl Socket {
     /// Creates a [`Socket`] listening.
-    pub(crate) async fn spawn(opts: Options) -> Result<Handle, BindError> {
-        Handle::new(opts).await
+    pub(crate) async fn spawn(opts: Options) -> Result<EndpointInner, BindError> {
+        EndpointInner::new(opts).await
     }
 
     /// Returns the relay endpoint we are connected to, that has the best latency.
@@ -268,6 +312,10 @@ impl Socket {
 
     fn is_closing(&self) -> bool {
         self.shutdown.is_closing()
+    }
+
+    pub(crate) fn closed(&self) -> CancellationToken {
+        self.shutdown.at_close_start.child_token()
     }
 
     /// Get the cached version of addresses.
@@ -661,7 +709,7 @@ pub enum BindError {
     },
 }
 
-impl Handle {
+impl EndpointInner {
     /// Creates a [`Socket`].
     async fn new(opts: Options) -> Result<Self, BindError> {
         let Options {
@@ -676,6 +724,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
             metrics,
             hooks,
+            static_config,
         } = opts;
 
         let address_lookup = address_lookup::ConcurrentAddressLookup::default();
@@ -801,14 +850,13 @@ impl Handle {
         let local_addrs_watch = transports.local_addrs_watch();
         let network_change_sender = transports.create_network_change_sender();
 
+        let runtime = Arc::new(Runtime::new(secret_key.public()));
+
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
             Box::new(Transport::new(sock.clone(), transports)),
-            #[cfg(not(wasm_browser))]
-            Arc::new(quinn::TokioRuntime),
-            #[cfg(wasm_browser)]
-            Arc::new(crate::web_runtime::WebRuntime),
+            runtime.clone(),
         )
         .map_err(|err| e!(BindError::CreateQuicEndpoint, err))?;
 
@@ -886,18 +934,25 @@ impl Handle {
                 .instrument(info_span!("actor")),
         );
 
-        let actor_task = Arc::new(Mutex::new(Some(AbortOnDropHandle::new(actor_task))));
+        let actor_task = Mutex::new(Some(AbortOnDropHandle::new(actor_task)));
 
-        Ok(Handle {
+        Ok(EndpointInner {
             sock,
             actor_sender,
             actor_task,
             endpoint,
+            runtime,
+            static_config,
         })
     }
 
-    /// The underlying [`quinn::Endpoint`]
-    pub fn endpoint(&self) -> &quinn::Endpoint {
+    /// Returns a clone of the underlying [`quinn::Endpoint`], if the handle hasn't been closed.
+    ///
+    /// We should be very careful about using this method, every clone of `quinn::Endpoint`
+    /// is another case we need to pay attention to to ensure it's dropped in a
+    /// timely manor. It can interfere with closing the `EndpointInner` cleanly (and
+    /// therefore the `iroh::Endpoint`).
+    pub(crate) fn quinn_endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
     }
 
@@ -919,7 +974,7 @@ impl Handle {
         self.sock.shutdown.at_close_start.cancel();
 
         // Initiate closing all connections, and refuse future connections.
-        self.endpoint.close(0u16.into(), b"");
+        self.quinn_endpoint().close(0u16.into(), b"");
 
         // In the history of this code, this call had been
         // - removed: https://github.com/n0-computer/iroh/pull/1753
@@ -936,11 +991,11 @@ impl Handle {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
-        trace!("wait_idle start");
-        self.endpoint.wait_idle().await;
-        trace!("wait_idle done");
+        debug!("wait_idle start");
+        self.quinn_endpoint().wait_idle().await;
+        debug!("wait_idle done");
 
-        // Start cancellation of all actors
+        // Start cancellation of all actors.
         self.sock.shutdown.at_endpoint_closed.cancel();
 
         // MutexGuard is not held across await points
@@ -956,14 +1011,54 @@ impl Handle {
             match shutdown_done {
                 Ok(_) => trace!("tasks finished in time, shutdown complete"),
                 Err(time::Elapsed { .. }) => {
-                    // Dropping the task will abort itt
+                    // Dropping the task will abort it
                     warn!("tasks didn't finish in time, aborting");
                 }
             }
         }
 
+        // Waits for the EndpointDriver and all ConnectionDrivers to shut down
+        // Expects that the `quinn::Endpoint` has been closed before this call,
+        // otherwise, the runtime will never shutdown.
+        self.runtime.shutdown().await;
+
         self.sock.shutdown.closed.store(true, Ordering::SeqCst);
 
+        trace!("socket closed");
+    }
+
+    /// Aborts the endpoint ungracefully:
+    ///
+    /// - Calls cancellation token that stops running net reports
+    /// - Calls cancellation token that stops all the Socket actors
+    /// - Aborts the runtime
+    /// - Drops the quinn endpoint
+    /// - Drops the actor task
+    /// - Sets the `Socket::is_closed` state to true
+    ///
+    /// This does not wait for any current connections or tasks to close gracefully.
+    ///
+    /// This should only be called in the `iroh::Endpoint` `Drop` impl when the
+    /// `iroh::Endpoint` is dropped without first calling `Endpoint::close`.
+    #[instrument(skip_all)]
+    pub(crate) fn abort(&self) {
+        if self.sock.is_closed() || self.sock.is_closing() {
+            return;
+        }
+        trace!(me = ?self.public_key, "aborting socket...");
+
+        // Cancel at_close_start token, which cancels running netreports.
+        self.sock.shutdown.at_close_start.cancel();
+
+        // Cancel all actors.
+        self.sock.shutdown.at_endpoint_closed.cancel();
+
+        // Aborts all tasks, not waiting for any to close gracefully.
+        self.runtime.abort();
+
+        self.actor_task.lock().expect("poisoned").take();
+
+        self.sock.shutdown.closed.store(true, Ordering::SeqCst);
         trace!("socket closed");
     }
 
@@ -1005,7 +1100,7 @@ impl Handle {
             .ok();
     }
 
-    /// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
+    /// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`EndpointInner::endpoint`].
     ///
     /// This starts a `RemoteStateActor` for the remote if not running already, and then checks
     /// if the actor has any known paths to the remote. If not, it starts address lookup and waits for
@@ -1614,7 +1709,7 @@ mod tests {
         dns::DnsResolver,
         endpoint::QuicTransportConfig,
         socket::{
-            Handle, Socket, TransportConfig,
+            EndpointInner, Socket, StaticConfig, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
         },
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -1624,7 +1719,12 @@ mod tests {
 
     fn default_options<R: CryptoRng + ?Sized>(rng: &mut R) -> Options {
         let secret_key = SecretKey::generate(rng);
-        let server_config = make_default_server_config(&secret_key);
+        let static_config = StaticConfig {
+            tls_config: tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            transport_config: QuicTransportConfig::default(),
+            keylog: false,
+        };
+        let server_config = static_config.create_server_config(vec![]);
         Options {
             transports: vec![
                 TransportConfig::default_ipv4(),
@@ -1640,18 +1740,8 @@ mod tests {
             address_lookup_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
+            static_config,
         }
-    }
-
-    /// Generate a server config with no ALPNS and a default transport configuration
-    fn make_default_server_config(secret_key: &SecretKey) -> quinn::ServerConfig {
-        let quic_server_config =
-            crate::tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
-                .make_server_config(vec![], false);
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-        let transport = QuicTransportConfig::default();
-        server_config.transport_config(transport.to_inner_arc());
-        server_config
     }
 
     #[instrument(skip_all, fields(me = %ep.id().fmt_short()))]
@@ -1693,7 +1783,7 @@ mod tests {
 
         conn.closed().await;
         info!("closed");
-        ep.endpoint()?.wait_idle().await;
+        ep.inner()?.quinn_endpoint().wait_idle().await;
         info!("idle");
 
         Ok(())
@@ -1747,7 +1837,7 @@ mod tests {
 
         conn.close(0u32.into(), b"done");
         info!("closed");
-        ep.endpoint()?.wait_idle().await;
+        ep.inner()?.quinn_endpoint().wait_idle().await;
         info!("idle");
         Ok(())
     }
@@ -1878,7 +1968,7 @@ mod tests {
         let (_guard, m1, m2) = endpoint_pair().await;
 
         println!("Net change");
-        m1.socket()?.force_network_change(true).await;
+        m1.inner()?.force_network_change(true).await;
         tokio::time::sleep(Duration::from_secs(1)).await; // wait for socket rebinding
 
         let _handle = AbortOnDropHandle::new(tokio::spawn({
@@ -1924,7 +2014,7 @@ mod tests {
             let task = tokio::spawn(async move {
                 loop {
                     info!("[m1] network change");
-                    m1.socket()
+                    m1.inner()
                         .expect("haven't closed the endpoint yet")
                         .force_network_change(true)
                         .await;
@@ -1955,12 +2045,12 @@ mod tests {
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 info!("-- [m1] network change");
-                m1.socket()
+                m1.inner()
                     .expect("haven't closed the endpoint yet")
                     .force_network_change(true)
                     .await;
                 info!("-- [m2] network change");
-                m2.socket()
+                m2.inner()
                     .expect("haven't closed the endpoint yet")
                     .force_network_change(true)
                     .await;
@@ -1986,13 +2076,13 @@ mod tests {
             let (_guard, m1, m2) = endpoint_pair().await;
 
             info!("closing endpoints");
-            let sock1 = m1.socket()?;
-            let sock2 = m2.socket()?;
+            let sock1 = m1.inner()?;
+            let sock2 = m2.inner()?;
             m1.close().await;
             m2.close().await;
 
-            assert!(sock1.sock.is_closed());
-            assert!(sock2.sock.is_closed());
+            assert!(sock1.is_closed());
+            assert!(sock2.is_closed());
         }
         Ok(())
     }
@@ -2001,7 +2091,7 @@ mod tests {
     #[traced_test]
     async fn test_direct_addresses() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let sock = Handle::new(default_options(&mut rng)).await.unwrap();
+        let sock = EndpointInner::new(default_options(&mut rng)).await.unwrap();
 
         // See if we can get endpoints.
         let eps0 = sock.ip_addrs().get();
@@ -2021,11 +2111,13 @@ mod tests {
     ///
     /// Use [`socket_connect`] to establish connections.
     #[instrument(name = "ep", skip_all, fields(me = %secret_key.public().fmt_short()))]
-    async fn socket_ep(secret_key: SecretKey) -> Result<Handle> {
-        let quic_server_config = tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
-            .make_server_config(vec![ALPN.to_vec()], true);
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+    async fn socket_ep(secret_key: SecretKey) -> Result<EndpointInner> {
+        let static_config = StaticConfig {
+            tls_config: tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            transport_config: QuicTransportConfig::default(),
+            keylog: true,
+        };
+        let server_config = static_config.create_server_config(vec![ALPN.to_vec()]);
 
         let dns_resolver = DnsResolver::new();
         let opts = Options {
@@ -2041,6 +2133,7 @@ mod tests {
             insecure_skip_relay_cert_verify: false,
             metrics: Default::default(),
             hooks: Default::default(),
+            static_config,
         };
         let sock = Socket::spawn(opts).await?;
         Ok(sock)
@@ -2051,7 +2144,7 @@ mod tests {
     /// Uses [`ALPN`], `endpoint_id`, must match `addr`.
     #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
     async fn socket_connect(
-        ep: &quinn::Endpoint,
+        ep: quinn::Endpoint,
         ep_secret_key: SecretKey,
         addr: EndpointIdMappedAddr,
         endpoint_id: EndpointId,
@@ -2077,7 +2170,7 @@ mod tests {
     /// Uses [`ALPN`], `endpoint_id`, must match `addr`.
     #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
     async fn socket_connect_with_transport_config(
-        ep: &quinn::Endpoint,
+        ep: quinn::Endpoint,
         ep_secret_key: SecretKey,
         mapped_addr: EndpointIdMappedAddr,
         endpoint_id: EndpointId,
@@ -2124,7 +2217,7 @@ mod tests {
         let res = tokio::time::timeout(
             Duration::from_millis(500),
             socket_connect(
-                sock_1.endpoint(),
+                sock_1.quinn_endpoint().clone(),
                 secret_key_1.clone(),
                 bad_addr,
                 endpoint_id_missing_endpoint,
@@ -2151,7 +2244,7 @@ mod tests {
                 info!("accept finished");
                 Ok(())
             }
-            let ep = sock_2.endpoint().clone();
+            let ep = sock_2.quinn_endpoint().clone();
             async move {
                 if let Err(err) = accept(ep).await {
                     error!("{err:#}");
@@ -2174,7 +2267,12 @@ mod tests {
             .unwrap();
         let res = tokio::time::timeout(
             Duration::from_secs(10),
-            socket_connect(sock_1.endpoint(), secret_key_1.clone(), addr, endpoint_id_2),
+            socket_connect(
+                sock_1.quinn_endpoint().clone(),
+                secret_key_1.clone(),
+                addr,
+                endpoint_id_2,
+            ),
         )
         .await
         .expect("timeout while connecting");
@@ -2198,7 +2296,7 @@ mod tests {
 
         let sock_1 = socket_ep(secret_key_1.clone()).await.unwrap();
         let sock_2 = socket_ep(secret_key_2.clone()).await.unwrap();
-        let ep_2 = sock_2.endpoint().clone();
+        let ep_2 = sock_2.quinn_endpoint().clone();
 
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
@@ -2249,7 +2347,7 @@ mod tests {
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.max_idle_timeout(Some(Duration::from_millis(200).try_into().unwrap()));
         let res = socket_connect_with_transport_config(
-            sock_1.endpoint(),
+            sock_1.quinn_endpoint().clone(),
             secret_key_1.clone(),
             addr_2,
             endpoint_id_2,
@@ -2279,7 +2377,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async move {
             info!("establishing new connection");
             let conn = socket_connect(
-                sock_1.endpoint(),
+                sock_1.quinn_endpoint().clone(),
                 secret_key_1.clone(),
                 addr_2,
                 endpoint_id_2,
