@@ -23,6 +23,7 @@ use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
 #[cfg(not(wasm_browser))]
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -754,7 +755,9 @@ impl Endpoint {
             return;
         }
         let server_config = self.inner.static_config.create_server_config(alpns);
-        self.inner.set_server_config(Some(server_config));
+        self.inner
+            .quinn_endpoint()
+            .set_server_config(Some(server_config));
     }
 
     /// Adds the provided configuration to the [`RelayMap`].
@@ -902,9 +905,10 @@ impl Endpoint {
 
         let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(endpoint_id);
-        let connect = self
-            .inner
-            .connect_with(client_config, dest_addr, server_name)?;
+        let connect =
+            self.inner
+                .quinn_endpoint()
+                .connect_with(client_config, dest_addr, server_name)?;
 
         Ok(Connecting::new(connect, self.clone(), endpoint_id))
     }
@@ -917,8 +921,11 @@ impl Endpoint {
     ///
     /// The returned future will yield `None` if the endpoint is closed by calling
     /// [`Endpoint::close`].
-    pub fn accept(&self) -> Accept {
-        self.inner.accept(self.clone())
+    pub fn accept(&self) -> Accept<'_> {
+        Accept {
+            inner: self.inner.quinn_endpoint().accept(),
+            ep: self.clone(),
+        }
     }
 
     // # Getter methods for properties of this Endpoint itself.
@@ -978,12 +985,41 @@ impl Endpoint {
     /// If there are no `addrs`in the [`EndpointAddr`], you may not be dialable by other endpoints
     /// on the internet.
     ///
-    ///
     /// The `EndpointAddr` will change as:
     /// - network conditions change
     /// - the endpoint connects to a relay server
     /// - the endpoint changes its preferred relay server
     /// - more addresses are discovered for this endpoint
+    ///
+    /// ## Closing behavior
+    ///
+    /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
+    /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
+    /// via [`Watcher::stream`] only terminates once the endpoint is fully dropped. To stop a task
+    /// that loops over a watcher stream once the endpoint stops, combine with [`Self::closed`]:
+    ///
+    /// ```
+    /// # use iroh::{Watcher, Endpoint};
+    /// # use n0_future::StreamExt;
+    /// # use tracing::info;
+    /// # async fn wrapper() -> n0_error::Result<()> {
+    /// let endpoint = Endpoint::bind().await?;
+    /// // We want to watch address changes in a different task, and stop our task
+    /// // once the endpoint stops.
+    /// let mut addr_stream = endpoint.watch_addr().stream();
+    /// let endpoint_closed = endpoint.closed();
+    /// tokio::spawn(endpoint_closed.run_until_cancelled_owned(async move {
+    ///     while let Some(addr) = addr_stream.next().await {
+    ///         info!("our address changed: {addr:?}");
+    ///     }
+    ///     info!("endpoint closed");
+    /// }));
+    /// // Do fancy things, then close the endpoint.
+    /// // Our task above will stop even if there are still clones of `Endpoint` alive somewhere.
+    /// endpoint.close().await;
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
@@ -1008,6 +1044,11 @@ impl Endpoint {
     /// When compiled to Wasm, this function returns a watcher that initializes
     /// with an [`EndpointAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
+    ///
+    /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
+    /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
+    /// via [`Watcher::stream`] only terminates once the endpoint stops. If you want to stop a
+    /// task once the endpoint stops combine with [`Self::closed`].
     #[cfg(wasm_browser)]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
         // In browsers, there will never be any direct addresses, so we wait
@@ -1084,6 +1125,11 @@ impl Endpoint {
     /// with [`Some`] value yet.  Once the net-report has been successfully
     /// run, the [`Watcher`] will always return [`Some`] report immediately, which
     /// is the most recently run `net-report`.
+    ///
+    /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
+    /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
+    /// via [`Watcher::stream`] only terminates once the endpoint stops. If you want to stop a
+    /// task once the endpoint stops combine with [`Self::closed`].
     ///
     /// # Examples
     ///
@@ -1377,6 +1423,13 @@ impl Endpoint {
         self.inner.is_closed()
     }
 
+    /// Returns a [`CancellationToken`] that is cancelled once the endpoint is shutting down.
+    ///
+    /// Cancelling the [`CancellationToken`] has no effect. Use [`Endpoint::close`] to close the endpoint.
+    pub fn closed(&self) -> CancellationToken {
+        self.inner.closed()
+    }
+
     /// Create a [`ServerConfigBuilder`] for this endpoint that includes the given alpns.
     ///
     /// Use the [`ServerConfigBuilder`] to customize the [`ServerConfig`] connection configuration
@@ -1572,7 +1625,9 @@ mod tests {
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_relay::endpoint_info::UserData;
     use n0_error::{AnyError as Error, Result, StdResultExt};
-    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle, time};
+    use n0_future::{
+        BufferedStreamExt, StreamExt, future::now_or_never, stream, task::AbortOnDropHandle, time,
+    };
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use rand::SeedableRng;
@@ -3124,10 +3179,14 @@ mod tests {
         // ensure methods behave in the expected way
         info!("Creating endpoint");
         let ep = Endpoint::builder().bind().await?;
+        let closed = ep.closed();
         info!("Closing endpoint");
         let now = Instant::now();
         ep.close().await;
         info!("Endpoint closed in {:?}", now.elapsed());
+
+        // Assert that the `closed` cancellation token is now cancelled
+        assert_eq!(now_or_never(closed.cancelled()), Some(()));
 
         info!("Set ALPNS fails silently");
         ep.set_alpns(vec![b"test".into()]);
@@ -3165,22 +3224,13 @@ mod tests {
         // this should work
         info!("Addr: {:?}", ep.addr());
 
-        // this should not hang
+        // create watchers to verify they terminate after the endpoint is dropped.
         let mut addrs = ep.watch_addr().stream();
-        while let Some(addr) = addrs.next().await {
-            info!("Addrs stream: {addr:?}");
-        }
+        let mut net_reports = ep.net_report().stream();
 
         // returns None
         let net_report = ep.last_net_report();
         info!("last Net report {net_report:?}");
-
-        // this currently hangs
-        // TODO(ramfox): why?
-        // let mut net_reports = ep.net_report().stream();
-        // while let Some(net_report) = net_reports.next().await {
-        //     info!("Net report stream: {net_report:?}");
-        // }
 
         // this should work
         let sockets = ep.bound_sockets();
@@ -3204,6 +3254,18 @@ mod tests {
         ep.set_user_data_for_address_lookup(Some(
             UserData::try_from("TEST".to_string()).expect("valid string"),
         ));
+        drop(ep);
+        // now that the endpoint is dropped, all watchers should terminate.
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while let Some(addr) = addrs.next().await {
+                info!("Addrs stream: {addr:?}");
+            }
+            while let Some(net_report) = net_reports.next().await {
+                info!("Net report stream: {net_report:?}");
+            }
+        })
+        .await
+        .expect("watchers not closed");
 
         info!("Done!");
         Ok(())
@@ -3258,6 +3320,7 @@ mod tests {
         info!("Await the accept task");
         let incoming = accept_task.await.expect("accept task panicked");
         assert!(incoming.is_none());
+
         Ok(())
     }
 }
