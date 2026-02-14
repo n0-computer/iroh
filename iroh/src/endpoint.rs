@@ -1872,6 +1872,7 @@ mod tests {
                     })
                     .await
                     .std_context("timeout")??;
+                    ep.close().await;
                 }
                 Ok::<_, Error>(())
             }
