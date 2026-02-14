@@ -26,6 +26,13 @@ use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+/// Types for defining custom transports
+pub mod transports {
+    #[cfg(feature = "unstable-custom-transports")]
+    pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
+    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias, TransportType};
+}
+
 use self::hooks::EndpointHooksList;
 pub use super::socket::{
     BindError, DirectAddr, DirectAddrType, PathInfo,
@@ -35,6 +42,8 @@ pub use super::socket::{
 use crate::address_lookup::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
+#[cfg(feature = "unstable-custom-transports")]
+use crate::endpoint::transports::CustomTransport;
 use crate::{
     NetReport,
     address_lookup::{
@@ -107,6 +116,7 @@ pub struct Builder {
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
+    transport_bias: socket::transports::TransportBiasMap,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -172,6 +182,7 @@ impl Builder {
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
+            transport_bias: Default::default(),
         }
     }
 
@@ -208,6 +219,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             metrics,
             hooks: self.hooks,
+            transport_bias: self.transport_bias,
         };
 
         let sock = socket::Socket::spawn(sock_opts).await?;
@@ -629,6 +641,44 @@ impl Builder {
     /// See [`EndpointHooks`] for details on the possible interception points in the connection lifecycle.
     pub fn hooks(mut self, hooks: impl EndpointHooks + 'static) -> Self {
         self.hooks.push(hooks);
+        self
+    }
+
+    /// Adds a custom transport
+    #[cfg(feature = "unstable-custom-transports")]
+    pub fn add_custom_transport(mut self, factory: Arc<dyn CustomTransport>) -> Self {
+        self.transports.push(TransportConfig::Custom(factory));
+        self
+    }
+
+    /// Sets the transport bias for a specific address kind.
+    ///
+    /// Transport bias controls how different transport types are prioritized during
+    /// path selection. By default:
+    /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
+    /// - Relay is a backup transport (only used when no primary transport is available)
+    ///
+    /// Use this to customize the behavior, for example to add bias for custom transports.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias, TransportType}};
+    ///
+    /// let endpoint = Builder::new(SomePreset)
+    ///     .transport_bias(AddrKind::Custom(42), TransportBias {
+    ///         transport_type: TransportType::Primary,
+    ///         rtt_bias: 0,
+    ///     })
+    ///     .bind()
+    ///     .await?;
+    /// ```
+    pub fn transport_bias(
+        mut self,
+        kind: transports::AddrKind,
+        bias: transports::TransportBias,
+    ) -> Self {
+        self.transport_bias = self.transport_bias.with_bias(kind, bias);
         self
     }
 }
