@@ -217,10 +217,11 @@ mod remote_map {
             if path.is_relay() {
                 self.relay_path = true;
             }
-            let stats = path.stats();
-            debug!("path update addr {:?} {stats:?}", path.remote_addr());
-            self.rtt_min = self.rtt_min.min(stats.rtt);
-            self.rtt_max = self.rtt_max.max(stats.rtt);
+            if let Some(stats) = path.stats() {
+                debug!("path update addr {:?} {stats:?}", path.remote_addr());
+                self.rtt_min = self.rtt_min.min(stats.rtt);
+                self.rtt_max = self.rtt_max.max(stats.rtt);
+            }
         }
     }
 
@@ -237,8 +238,9 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn current_min_rtt(&self) -> Option<Duration> {
             self.connections()
-                .flat_map(|c| c.paths().get())
-                .map(|path| path.stats().rtt)
+                .flat_map(|c| c.paths().get().into_iter())
+                .flat_map(|p| p.stats())
+                .map(|s| s.rtt)
                 .min()
         }
 
