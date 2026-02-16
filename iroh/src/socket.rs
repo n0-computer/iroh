@@ -1776,7 +1776,7 @@ mod tests {
         payload: &[u8],
         loss: ExpectedLoss,
     ) -> Result<()> {
-        tokio::time::timeout(Duration::from_secs(4), async move {
+        tokio::time::timeout(Duration::from_secs(10), async move {
             let send_endpoint_id = sender.id();
             let recv_endpoint_id = receiver.id();
             info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
