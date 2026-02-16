@@ -55,6 +55,7 @@ use crate::{
 /// When the incoming connection is a direct connection, this is a SocketAddr.
 /// When it is a relay connection, we know both the relay URL and the endpoint ID.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum IncomingAddr {
     /// A direct connection from an IP address.
     Ip(SocketAddr),
@@ -189,15 +190,7 @@ impl Incoming {
     /// This means that the sender of the initial packet has proved that they can receive
     /// traffic sent to `self.remote_address()`.
     pub fn remote_address_validated(&self) -> bool {
-        let addr = self.inner.remote_address();
-        match addr.ip() {
-            IpAddr::V6(ip)
-                if crate::socket::mapped_addrs::RelayMappedAddr::try_from(ip).is_ok() =>
-            {
-                true
-            }
-            _ => self.inner.remote_address_validated(),
-        }
+        self.inner.remote_address_validated()
     }
 }
 
