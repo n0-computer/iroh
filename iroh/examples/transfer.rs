@@ -102,7 +102,7 @@ struct Cli {
     #[clap(global = true, long, value_enum, default_value_t)]
     output: OutputMode,
     /// Save trace and qlog logs to ./logs/
-    #[clap(global = true, long, conflicts_with = "logs-path")]
+    #[clap(global = true, long, conflicts_with = "logs_path")]
     logs: bool,
     /// Save trace and qlog logs the specified path
     #[clap(global = true, long, conflicts_with = "logs")]
@@ -358,7 +358,7 @@ async fn main() -> Result<()> {
         let log_file = if let Some(dir) = dir.as_ref() {
             std::fs::create_dir_all(dir)
                 .with_context(|_| format!("failed to create log directory at {}", dir.display()))?;
-            Some(dir.join("logs"))
+            Some(dir.join(format!("logs-{command}")))
         } else {
             None
         };
