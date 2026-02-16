@@ -28,6 +28,8 @@ jobs:
           ref: generated-docs-preview
       - name: Clean docs branch
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           cd pr/
           # keep the last 25 prs
           dirs=$(ls -1d [0-9]* | sort -n)
@@ -37,6 +39,7 @@ jobs:
             echo "$dirs_to_remove" | xargs rm -rf
           fi
           git add .
+          git diff --cached --quiet && echo "Nothing to clean up" && exit 0
           git commit -m "Cleanup old docs"
           git push
 

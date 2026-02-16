@@ -956,7 +956,7 @@ impl RemoteStateActor {
                     self.paths.abandoned_path(&addr);
                 }
             }
-            PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
+            PathEvent::LocallyClosed { id, .. } => {
                 let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
                     debug!("path not in path_id_map");
                     return;
@@ -1123,6 +1123,9 @@ impl RemoteStateActor {
                 {
                     trace!(?path_remote, ?conn_id, %path_id, "closing direct path");
                     match path.close() {
+                        Err(quinn_proto::ClosePathError::MultipathNotNegotiated) => {
+                            error!("multipath not negotiated");
+                        }
                         Err(quinn_proto::ClosePathError::LastOpenPath) => {
                             error!("could not close last open path");
                         }
