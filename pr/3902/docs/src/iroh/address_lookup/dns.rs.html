@@ -101,7 +101,7 @@
 <a href=#101 id=101 data-nosnippet>101</a>        endpoint: <span class="kw-2">&amp;</span>Endpoint,
 <a href=#102 id=102 data-nosnippet>102</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, IntoAddressLookupError&gt; {
 <a href=#103 id=103 data-nosnippet>103</a>        <span class="kw">if </span><span class="self">self</span>.dns_resolver.is_none() {
-<a href=#104 id=104 data-nosnippet>104</a>            <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(endpoint.dns_resolver().clone());
+<a href=#104 id=104 data-nosnippet>104</a>            <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(endpoint.dns_resolver()<span class="question-mark">?</span>.clone());
 <a href=#105 id=105 data-nosnippet>105</a>        }
 <a href=#106 id=106 data-nosnippet>106</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.build())
 <a href=#107 id=107 data-nosnippet>107</a>    }
