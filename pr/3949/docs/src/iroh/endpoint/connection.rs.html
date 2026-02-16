@@ -179,7 +179,7 @@
 <a href=#179 id=179 data-nosnippet>179</a>    }
 <a href=#180 id=180 data-nosnippet>180</a>
 <a href=#181 id=181 data-nosnippet>181</a>    <span class="doccomment">/// Returns the remote address of this incoming connection.
-<a href=#182 id=182 data-nosnippet>182</a>    </span><span class="kw">pub fn </span>remote_address(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; IncomingAddr {
+<a href=#182 id=182 data-nosnippet>182</a>    </span><span class="kw">pub fn </span>remote_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; IncomingAddr {
 <a href=#183 id=183 data-nosnippet>183</a>        <span class="self">self</span>.ep
 <a href=#184 id=184 data-nosnippet>184</a>            .sock
 <a href=#185 id=185 data-nosnippet>185</a>            .to_transport_addr(<span class="self">self</span>.inner.remote_address())
@@ -189,8 +189,8 @@
 <a href=#189 id=189 data-nosnippet>189</a>    <span class="doccomment">/// Whether the socket address that is initiating this connection has been validated.
 <a href=#190 id=190 data-nosnippet>190</a>    ///
 <a href=#191 id=191 data-nosnippet>191</a>    /// This means that the sender of the initial packet has proved that they can receive
-<a href=#192 id=192 data-nosnippet>192</a>    /// traffic sent to `self.remote_address()`.
-<a href=#193 id=193 data-nosnippet>193</a>    </span><span class="kw">pub fn </span>remote_address_validated(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#192 id=192 data-nosnippet>192</a>    /// traffic sent to `self.remote_addr()`.
+<a href=#193 id=193 data-nosnippet>193</a>    </span><span class="kw">pub fn </span>remote_addr_validated(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
 <a href=#194 id=194 data-nosnippet>194</a>        <span class="self">self</span>.inner.remote_address_validated()
 <a href=#195 id=195 data-nosnippet>195</a>    }
 <a href=#196 id=196 data-nosnippet>196</a>}
