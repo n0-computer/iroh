@@ -1123,6 +1123,9 @@ impl RemoteStateActor {
                 {
                     trace!(?path_remote, ?conn_id, %path_id, "closing direct path");
                     match path.close() {
+                        Err(quinn_proto::ClosePathError::MultipathNotNegotiated) => {
+                            error!("multipath not negotiated");
+                        }
                         Err(quinn_proto::ClosePathError::LastOpenPath) => {
                             error!("could not close last open path");
                         }
@@ -1561,6 +1564,13 @@ impl PathInfo {
     /// Current best estimate of this paths's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
         self.stats().rtt
+    }
+
+    /// Returns the QUIC path id of this path.
+    ///
+    /// This can be used to uniquely identify a transmission path.
+    pub fn id(&self) -> PathId {
+        self.path_id
     }
 }
 

@@ -20,6 +20,11 @@ on:
         required: false
         type: boolean
         default: false
+      rust_log:
+        description: "Custom RUST_LOG value (e.g. 'iroh=debug,iroh_quinn=trace'). If empty, defaults to warn."
+        required: false
+        type: string
+        default: ""
 
 env:
   RUST_BACKTRACE: 1
@@ -58,3 +63,4 @@ jobs:
       publish_metrics: false
       build_profile: "optimized-release"
       report_table: ${{inputs.report_table}}
+      rust_log: ${{inputs.rust_log}}
