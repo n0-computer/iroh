@@ -1693,7 +1693,7 @@ mod tests {
 
         conn.closed().await;
         info!("closed");
-        ep.endpoint().wait_idle().await;
+        ep.endpoint()?.wait_idle().await;
         info!("idle");
 
         Ok(())
@@ -1747,7 +1747,7 @@ mod tests {
 
         conn.close(0u32.into(), b"done");
         info!("closed");
-        ep.endpoint().wait_idle().await;
+        ep.endpoint()?.wait_idle().await;
         info!("idle");
         Ok(())
     }
@@ -1878,7 +1878,7 @@ mod tests {
         let (_guard, m1, m2) = endpoint_pair().await;
 
         println!("Net change");
-        m1.socket().force_network_change(true).await;
+        m1.socket()?.force_network_change(true).await;
         tokio::time::sleep(Duration::from_secs(1)).await; // wait for socket rebinding
 
         let _handle = AbortOnDropHandle::new(tokio::spawn({
@@ -1924,7 +1924,10 @@ mod tests {
             let task = tokio::spawn(async move {
                 loop {
                     info!("[m1] network change");
-                    m1.socket().force_network_change(true).await;
+                    m1.socket()
+                        .expect("haven't closed the endpoint yet")
+                        .force_network_change(true)
+                        .await;
                     time::sleep(offset(&mut rng)).await;
                 }
             });
@@ -1952,9 +1955,15 @@ mod tests {
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 info!("-- [m1] network change");
-                m1.socket().force_network_change(true).await;
+                m1.socket()
+                    .expect("haven't closed the endpoint yet")
+                    .force_network_change(true)
+                    .await;
                 info!("-- [m2] network change");
-                m2.socket().force_network_change(true).await;
+                m2.socket()
+                    .expect("haven't closed the endpoint yet")
+                    .force_network_change(true)
+                    .await;
                 time::sleep(offset(&mut rng)).await;
             });
             AbortOnDropHandle::new(task)
@@ -1977,8 +1986,8 @@ mod tests {
             let (_guard, m1, m2) = endpoint_pair().await;
 
             info!("closing endpoints");
-            let sock1 = m1.socket();
-            let sock2 = m2.socket();
+            let sock1 = m1.socket()?;
+            let sock2 = m2.socket()?;
             m1.close().await;
             m2.close().await;
 

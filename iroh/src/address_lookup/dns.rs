@@ -101,7 +101,7 @@ impl IntoAddressLookup for DnsAddressLookupBuilder {
         endpoint: &Endpoint,
     ) -> Result<impl AddressLookup, IntoAddressLookupError> {
         if self.dns_resolver.is_none() {
-            self.dns_resolver = Some(endpoint.dns_resolver().clone());
+            self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
         }
         Ok(self.build())
     }
