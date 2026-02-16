@@ -13,7 +13,7 @@
 
 #[cfg(not(wasm_browser))]
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::{pin::Pin, sync::Arc};
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
@@ -23,7 +23,8 @@ use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
 #[cfg(not(wasm_browser))]
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
-use tokio_util::sync::CancellationToken;
+use pin_project::pin_project;
+use tokio_util::sync::WaitForCancellationFutureOwned;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -1008,7 +1009,7 @@ impl Endpoint {
     /// // once the endpoint stops.
     /// let mut addr_stream = endpoint.watch_addr().stream();
     /// let endpoint_closed = endpoint.closed();
-    /// tokio::spawn(endpoint_closed.run_until_cancelled_owned(async move {
+    /// tokio::spawn(endpoint_closed.run_until(async move {
     ///     while let Some(addr) = addr_stream.next().await {
     ///         info!("our address changed: {addr:?}");
     ///     }
@@ -1423,11 +1424,27 @@ impl Endpoint {
         self.inner.is_closed()
     }
 
-    /// Returns a [`CancellationToken`] that is cancelled once the endpoint is shutting down.
+    /// Returns a future that resolves once the endpoint closes.
     ///
-    /// Cancelling the [`CancellationToken`] has no effect. Use [`Endpoint::close`] to close the endpoint.
-    pub fn closed(&self) -> CancellationToken {
-        self.inner.closed()
+    /// The returned future does not contain a clone or reference to the [`Endpoint`],
+    /// so keeping the returned future alive does not prevent the endpoint from being dropped.
+    ///
+    /// To run a task and stop it once the endpoint closes, you can use
+    /// [`EndpointClosed::run_until`]:
+    /// ```
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> n0_error::Result<()> {
+    /// let endpoint = Endpoint::bind().await?;
+    /// tokio::spawn(endpoint.closed().run_until(async move {
+    ///     // the future will be aborted once the endpoint closes.
+    /// }));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn closed(&self) -> EndpointClosed {
+        EndpointClosed {
+            inner: self.inner.closed(),
+        }
     }
 
     /// Create a [`ServerConfigBuilder`] for this endpoint that includes the given alpns.
@@ -1495,6 +1512,41 @@ impl ConnectOptions {
     pub fn with_additional_alpns(mut self, alpns: Vec<Vec<u8>>) -> Self {
         self.additional_alpns = alpns;
         self
+    }
+}
+
+/// Future returned from [`Endpoint::closed`].
+#[derive(derive_more::Debug)]
+#[pin_project]
+#[debug("EndpointClosed")]
+pub struct EndpointClosed {
+    #[pin]
+    inner: WaitForCancellationFutureOwned,
+}
+
+impl Future for EndpointClosed {
+    type Output = ();
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.project();
+        this.inner.poll(cx)
+    }
+}
+
+impl EndpointClosed {
+    /// Runs a future to completion, or until the [`Endpoint`] is closed.
+    ///
+    /// Returns the output of `fut` if it completes before the endpoint closes,
+    /// or `None` otherwise.
+    pub async fn run_until<F: Future>(self, fut: F) -> Option<F::Output> {
+        n0_future::future::or(async { Some(fut.await) }, async {
+            self.await;
+            None
+        })
+        .await
     }
 }
 
@@ -3186,7 +3238,7 @@ mod tests {
         info!("Endpoint closed in {:?}", now.elapsed());
 
         // Assert that the `closed` cancellation token is now cancelled
-        assert_eq!(now_or_never(closed.cancelled()), Some(()));
+        assert_eq!(now_or_never(closed), Some(()));
 
         info!("Set ALPNS fails silently");
         ep.set_alpns(vec![b"test".into()]);
