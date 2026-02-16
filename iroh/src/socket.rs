@@ -44,7 +44,7 @@ use tokio::sync::{
     mpsc::{self},
     oneshot,
 };
-use tokio_util::sync::CancellationToken;
+use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tracing::{Instrument, Level, debug, event, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, Transport, TransportConfig};
 use url::Url;
@@ -314,8 +314,9 @@ impl Socket {
         self.shutdown.is_closing()
     }
 
-    pub(crate) fn closed(&self) -> CancellationToken {
-        self.shutdown.at_close_start.child_token()
+    /// Returns a future that resolves once endpoint shutdown has started.
+    pub(crate) fn closed(&self) -> WaitForCancellationFutureOwned {
+        self.shutdown.at_close_start.clone().cancelled_owned()
     }
 
     /// Get the cached version of addresses.
