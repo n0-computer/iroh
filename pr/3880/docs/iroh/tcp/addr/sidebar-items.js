@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["from_custom_addr","to_custom_addr"]};

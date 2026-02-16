@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_PACKET_SIZE","PER_CLIENT_SEND_QUEUE_DEPTH"],"enum":["ClientToRelayMsg","Error","RelayToClientMsg"],"struct":["Datagrams"]};
