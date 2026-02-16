@@ -27,7 +27,7 @@ use std::{
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
-use iroh_base::EndpointId;
+use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use pin_project::pin_project;
@@ -49,6 +49,34 @@ use crate::{
         remote_map::{PathInfo, PathWatchable, PathWatcher},
     },
 };
+
+/// The remote address for an incoming connection.
+///
+/// When the incoming connection is a direct connection, this is a SocketAddr.
+/// When it is a relay connection, we know both the relay URL and the endpoint ID.
+#[derive(Debug, Clone)]
+pub enum IncomingAddress {
+    /// A direct connection from an IP address.
+    Ip(SocketAddr),
+    /// A connection via a relay.
+    Relay {
+        /// The URL of the relay.
+        url: RelayUrl,
+        /// The endpoint ID of the remote peer.
+        endpoint_id: EndpointId,
+    },
+}
+
+impl From<crate::socket::transports::Addr> for IncomingAddress {
+    fn from(addr: crate::socket::transports::Addr) -> Self {
+        match addr {
+            crate::socket::transports::Addr::Ip(addr) => Self::Ip(addr),
+            crate::socket::transports::Addr::Relay(url, endpoint_id) => {
+                Self::Relay { url, endpoint_id }
+            }
+        }
+    }
+}
 
 /// Future produced by [`Endpoint::accept`].
 #[derive(derive_more::Debug)]
@@ -148,9 +176,12 @@ impl Incoming {
         self.inner.local_ip()
     }
 
-    /// Returns the peer's UDP address.
-    pub fn remote_address(&self) -> SocketAddr {
-        self.inner.remote_address()
+    /// Returns the remote address of this incoming connection.
+    pub fn remote_address(&self) -> IncomingAddress {
+        self.ep
+            .sock
+            .to_transport_addr(self.inner.remote_address())
+            .into()
     }
 
     /// Whether the socket address that is initiating this connection has been validated.
@@ -571,6 +602,14 @@ impl Accepting {
             inner: quinn_conn,
             data: IncomingZeroRttData { accepted },
         }
+    }
+
+    /// Returns the remote address of this connection.
+    pub fn remote_address(&self) -> IncomingAddress {
+        self.ep
+            .sock
+            .to_transport_addr(self.inner.remote_address())
+            .into()
     }
 
     /// Parameters negotiated during the handshake

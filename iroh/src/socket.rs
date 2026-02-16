@@ -447,6 +447,18 @@ impl Socket {
         &self.dns_resolver
     }
 
+    /// Translates a raw [`SocketAddr`] (which may be a synthetic mapped address) into
+    /// a [`transports::Addr`].
+    ///
+    /// For regular IP addresses this returns `Addr::Ip`. For synthetic relay-mapped
+    /// IPv6 addresses this performs a reverse lookup and returns `Addr::Relay`.
+    pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> transports::Addr {
+        self.mapped_addrs
+            .relay_addrs
+            .to_transport_addr(addr)
+            .unwrap_or(transports::Addr::Ip(addr))
+    }
+
     /// Reference to the internal Address Lookup
     pub(crate) fn address_lookup(&self) -> &address_lookup::ConcurrentAddressLookup {
         &self.address_lookup
