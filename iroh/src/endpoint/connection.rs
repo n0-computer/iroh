@@ -189,7 +189,15 @@ impl Incoming {
     /// This means that the sender of the initial packet has proved that they can receive
     /// traffic sent to `self.remote_address()`.
     pub fn remote_address_validated(&self) -> bool {
-        self.inner.remote_address_validated()
+        let addr = self.inner.remote_address();
+        match addr.ip() {
+            IpAddr::V6(ip)
+                if crate::socket::mapped_addrs::RelayMappedAddr::try_from(ip).is_ok() =>
+            {
+                true
+            }
+            _ => self.inner.remote_address_validated(),
+        }
     }
 }
 
