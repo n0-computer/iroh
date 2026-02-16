@@ -178,7 +178,7 @@ impl Incoming {
     }
 
     /// Returns the remote address of this incoming connection.
-    pub fn remote_address(&self) -> IncomingAddr {
+    pub fn remote_addr(&self) -> IncomingAddr {
         self.ep
             .sock
             .to_transport_addr(self.inner.remote_address())
@@ -188,8 +188,8 @@ impl Incoming {
     /// Whether the socket address that is initiating this connection has been validated.
     ///
     /// This means that the sender of the initial packet has proved that they can receive
-    /// traffic sent to `self.remote_address()`.
-    pub fn remote_address_validated(&self) -> bool {
+    /// traffic sent to `self.remote_addr()`.
+    pub fn remote_addr_validated(&self) -> bool {
         self.inner.remote_address_validated()
     }
 }
