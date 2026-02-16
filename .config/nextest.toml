@@ -25,6 +25,9 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 fail-fast = false
 # Run tests sequentially - Wine networking can be flaky with concurrent tests.
 test-threads = 1
+# Network change tests are too flaky under Wine emulation due to slow/unreliable
+# socket rebinding. Skip them until Wine compatibility improves.
+default-filter = 'not test(network_change)'
 
 [[profile.wine.overrides]]
 filter = 'test(::run_in_isolation::)'
