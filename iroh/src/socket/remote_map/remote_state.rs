@@ -1132,9 +1132,6 @@ impl RemoteStateActor {
                         Err(quinn_proto::ClosePathError::ClosedPath) => {
                             // We already closed this.
                         }
-                        Err(quinn_proto::ClosePathError::MultipathNotNegotiated) => {
-                            error!("Not a valid multipath connection");
-                        }
                         Ok(_fut) => {
                             // We will handle the event in Self::handle_path_events.
                         }
