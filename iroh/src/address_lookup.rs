@@ -451,7 +451,7 @@ impl ConcurrentAddressLookup {
         self.services.write().expect("poisoned").push(service);
     }
 
-    /// Is there any services configured?
+    /// Are there any services configured?
     pub fn is_empty(&self) -> bool {
         self.services.read().expect("poisoned").is_empty()
     }
@@ -459,6 +459,12 @@ impl ConcurrentAddressLookup {
     /// Returns the number of services configured.
     pub fn len(&self) -> usize {
         self.services.read().expect("poisoned").len()
+    }
+
+    /// Removes all configured services.
+    pub fn clear(&self) {
+        let mut services = self.services.write().expect("poisoned");
+        *services = Vec::new();
     }
 }
 

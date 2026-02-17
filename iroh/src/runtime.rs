@@ -89,11 +89,11 @@ impl quinn::Runtime for Runtime {
             return;
         }
 
-        use tracing::{Instrument, debug_span};
+        use tracing::{Instrument, trace_span};
 
         let task_id = self.task_counter.fetch_add(1, Ordering::Relaxed);
         let cancel = self.cancel.clone();
-        let span = debug_span!("runtime", me = %self.id.fmt_short(), task_id);
+        let span = trace_span!("runtime", me = %self.id.fmt_short(), task_id);
         self.tasks.spawn(async move {
             // wrapping the future in a cancellation token is what allows
             // us to "abort" tasks in the event the runtime is meant to

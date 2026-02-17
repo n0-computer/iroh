@@ -164,7 +164,7 @@ pub(crate) struct EndpointInner {
     actor_task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Channel to send to the internal actor.
     actor_sender: mpsc::Sender<ActorMessage>,
-    // quinn endpoint, set to `None` on close
+    // quinn endpoint
     endpoint: quinn::Endpoint,
     // Runtime used by quinn
     runtime: Arc<Runtime>,
@@ -958,12 +958,7 @@ impl EndpointInner {
         })
     }
 
-    /// Returns a clone of the underlying [`quinn::Endpoint`], if the handle hasn't been closed.
-    ///
-    /// We should be very careful about using this method, every clone of `quinn::Endpoint`
-    /// is another case we need to pay attention to to ensure it's dropped in a
-    /// timely manor. It can interfere with closing the `EndpointInner` cleanly (and
-    /// therefore the `iroh::Endpoint`).
+    /// Returns a reference to the underlying [`quinn::Endpoint`].
     pub(crate) fn quinn_endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
     }
@@ -984,6 +979,9 @@ impl EndpointInner {
 
         // Cancel at_close_start token, which cancels running netreports.
         self.sock.shutdown.at_close_start.cancel();
+
+        // Remove address lookup services
+        self.sock.address_lookup().clear();
 
         // Initiate closing all connections, and refuse future connections.
         self.quinn_endpoint().close(0u16.into(), b"");
@@ -1042,9 +1040,9 @@ impl EndpointInner {
     /// Aborts the endpoint ungracefully:
     ///
     /// - Calls cancellation token that stops running net reports
+    /// - Removes all address lookup services
     /// - Calls cancellation token that stops all the Socket actors
     /// - Aborts the runtime
-    /// - Drops the quinn endpoint
     /// - Drops the actor task
     /// - Sets the `Socket::is_closed` state to true
     ///
@@ -1061,6 +1059,8 @@ impl EndpointInner {
 
         // Cancel at_close_start token, which cancels running netreports.
         self.sock.shutdown.at_close_start.cancel();
+
+        self.sock.address_lookup().clear();
 
         // Cancel all actors.
         self.sock.shutdown.at_endpoint_closed.cancel();
