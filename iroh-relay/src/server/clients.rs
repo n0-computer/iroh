@@ -11,6 +11,7 @@ use std::{
 
 use dashmap::DashMap;
 use iroh_base::EndpointId;
+use n0_future::IterExt;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
@@ -31,15 +32,32 @@ pub struct Clients(Arc<Inner>);
 #[derive(Debug, Default)]
 struct Inner {
     /// The list of all currently connected clients.
-    clients: DashMap<EndpointId, Client>,
-    /// List of clients that are still connected, but not active anymore
-    ///
-    /// Clients are moved here if another endpoint with the same id connects.
-    inactive_clients: DashMap<u64, Client>,
+    clients: DashMap<EndpointId, ClientState>,
+    // /// List of clients that are still connected, but not active anymore
+    // ///
+    // /// Clients are moved here if another endpoint with the same id connects.
+    // inactive_clients: DashMap<EndpointId, Vec<Client>>,
     /// Map of which client has sent where
     sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
     /// Connection ID Counter
     next_connection_id: AtomicU64,
+}
+
+#[derive(Debug)]
+struct ClientState {
+    active: Client,
+    inactive: Vec<Client>,
+}
+
+impl ClientState {
+    async fn shutdown_all(mut self) {
+        [self.active]
+            .into_iter()
+            .chain(self.inactive.drain(..))
+            .map(Client::shutdown)
+            .join_all()
+            .await;
+    }
 }
 
 impl Clients {
@@ -52,9 +70,7 @@ impl Clients {
         let keys: Vec<_> = self.0.clients.iter().map(|x| *x.key()).collect();
         trace!("shutting down {} clients", keys.len());
         let clients = keys.into_iter().filter_map(|k| self.0.clients.remove(&k));
-
-        n0_future::join_all(clients.map(|(_, client)| async move { client.shutdown().await }))
-            .await;
+        n0_future::join_all(clients.map(|(_, state)| state.shutdown_all())).await;
     }
 
     /// Builds the client handler and starts the read & write loops for the connection.
@@ -67,16 +83,25 @@ impl Clients {
         trace!(remote_endpoint = %endpoint_id.fmt_short(), "registering client");
 
         let client = Client::new(client_config, connection_id, self, metrics);
-        if let Some(old_client) = self.0.clients.insert(endpoint_id, client) {
-            debug!(
-                remote_endpoint = %endpoint_id.fmt_short(),
-                "multiple connections found, deactivating old connection",
-            );
-            old_client
-                .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string()).ok();
-            self.0
-                .inactive_clients
-                .insert(old_client.connection_id(), old_client);
+        match self.0.clients.entry(endpoint_id) {
+            dashmap::Entry::Occupied(mut entry) => {
+                let state = entry.get_mut();
+                let old_client = std::mem::replace(&mut state.active, client);
+                debug!(
+                    remote_endpoint = %endpoint_id.fmt_short(),
+                    "multiple connections found, deactivating old connection",
+                );
+                old_client
+                    .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string())
+                    .ok();
+                state.inactive.push(old_client);
+            }
+            dashmap::Entry::Vacant(entry) => {
+                entry.insert(ClientState {
+                    active: client,
+                    inactive: Vec::new(),
+                });
+            }
         }
     }
 
@@ -95,32 +120,48 @@ impl Clients {
             connection_id, "unregistering client"
         );
 
-        if let Some((_, client)) = self
-            .0
-            .clients
-            .remove_if(&endpoint_id, |_, c| c.connection_id() == connection_id)
-            && let Some((_, sent_to)) = self.0.sent_to.remove(&endpoint_id)
-        {
-            for key in sent_to {
-                match client.try_send_peer_gone(key) {
-                    Ok(_) => {}
-                    Err(TrySendError::Full(_)) => {
-                        debug!(
-                            dst = %key.fmt_short(),
-                            "client too busy to receive packet, dropping packet"
-                        );
+        self.0.clients.remove_if_mut(&endpoint_id, |_id, state| {
+            if state.active.connection_id() == connection_id {
+                // The unregistering client is the currently active client
+                let client = &state.active;
+                if let Some(last_inactive_client) = state.inactive.pop() {
+                    // There is an inactive client, promote to active again.
+                    state.active = last_inactive_client;
+                    // Don't remove the entry from client map.
+                    false
+                } else {
+                    // No inactive clients: Inform other peers that this peer is now gone.
+                    if let Some((_, sent_to)) = self.0.sent_to.remove(&endpoint_id) {
+                        for key in sent_to {
+                            match client.try_send_peer_gone(key) {
+                                Ok(_) => {}
+                                Err(TrySendError::Full(_)) => {
+                                    debug!(
+                                        dst = %key.fmt_short(),
+                                        "client too busy to receive packet, dropping packet"
+                                    );
+                                }
+                                Err(TrySendError::Closed(_)) => {
+                                    debug!(
+                                        dst = %key.fmt_short(),
+                                        "can no longer write to client, dropping packet"
+                                    );
+                                }
+                            }
+                        }
                     }
-                    Err(TrySendError::Closed(_)) => {
-                        debug!(
-                            dst = %key.fmt_short(),
-                            "can no longer write to client, dropping packet"
-                        );
-                    }
+                    // Remove entry from the client map.
+                    true
                 }
+            } else {
+                // The unregistering client is already inactive. Remove from the list of inactive clients.
+                state
+                    .inactive
+                    .retain(|client| client.connection_id() != connection_id);
+                // Active client is unmodified: keep entry in map.
+                false
             }
-        } else if let Some(client) = self.0.inactive_clients.remove(&connection_id) {
-            drop(client);
-        }
+        });
     }
 
     /// Attempt to send a packet to client with [`EndpointId`] `dst`.
@@ -136,7 +177,7 @@ impl Clients {
             metrics.send_packets_dropped.inc();
             return Ok(());
         };
-        match client.try_send_packet(src, data) {
+        match client.active.try_send_packet(src, data) {
             Ok(_) => {
                 // Record sent_to relationship
                 self.0.sent_to.entry(src).or_default().insert(dst);
@@ -154,7 +195,7 @@ impl Clients {
                     dst = %dst.fmt_short(),
                     "can no longer write to client, dropping message and pruning connection"
                 );
-                client.start_shutdown();
+                client.active.start_shutdown();
                 Err(ForwardPacketError::new(SendError::Closed))
             }
         }
@@ -244,7 +285,7 @@ mod tests {
         {
             let client = clients.0.clients.get(&a_key).unwrap();
             // shutdown client a, this should trigger the removal from the clients list
-            client.start_shutdown();
+            client.active.start_shutdown();
         }
 
         // need to wait a moment for the removal to be processed
