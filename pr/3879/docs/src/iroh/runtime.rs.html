@@ -89,11 +89,11 @@
 <a href=#89 id=89 data-nosnippet>89</a>            <span class="kw">return</span>;
 <a href=#90 id=90 data-nosnippet>90</a>        }
 <a href=#91 id=91 data-nosnippet>91</a>
-<a href=#92 id=92 data-nosnippet>92</a>        <span class="kw">use </span>tracing::{Instrument, debug_span};
+<a href=#92 id=92 data-nosnippet>92</a>        <span class="kw">use </span>tracing::{Instrument, trace_span};
 <a href=#93 id=93 data-nosnippet>93</a>
 <a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">let </span>task_id = <span class="self">self</span>.task_counter.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
 <a href=#95 id=95 data-nosnippet>95</a>        <span class="kw">let </span>cancel = <span class="self">self</span>.cancel.clone();
-<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span>span = <span class="macro">debug_span!</span>(<span class="string">"runtime"</span>, me = %<span class="self">self</span>.id.fmt_short(), task_id);
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span>span = <span class="macro">trace_span!</span>(<span class="string">"runtime"</span>, me = %<span class="self">self</span>.id.fmt_short(), task_id);
 <a href=#97 id=97 data-nosnippet>97</a>        <span class="self">self</span>.tasks.spawn(<span class="kw">async move </span>{
 <a href=#98 id=98 data-nosnippet>98</a>            <span class="comment">// wrapping the future in a cancellation token is what allows
 <a href=#99 id=99 data-nosnippet>99</a>            // us to "abort" tasks in the event the runtime is meant to
