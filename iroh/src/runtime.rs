@@ -67,12 +67,6 @@ impl Runtime {
 }
 
 impl quinn::Runtime for Runtime {
-    fn now(&self) -> std::time::Instant {
-        // Use tokio::time::Instant outside the browser,
-        // allowing quinn to work correctly with tokio::time::pause().
-        n0_future::time::Instant::now().into_std()
-    }
-
     #[cfg(not(wasm_browser))]
     fn new_timer(&self, i: std::time::Instant) -> Pin<Box<dyn quinn::AsyncTimer>> {
         quinn::TokioRuntime.new_timer(i)
