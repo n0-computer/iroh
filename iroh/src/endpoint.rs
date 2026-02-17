@@ -1850,7 +1850,7 @@ mod tests {
 
                 info!(me = %ep.id().fmt_short(), eps = ?eps, "server listening on");
                 for i in 0..n_clients {
-                    tokio::time::timeout(Duration::from_secs(5), async {
+                    let res = tokio::time::timeout(Duration::from_secs(5), async {
                         let round_start = Instant::now();
                         info!("[server] round {i}");
                         let incoming = ep.accept().await.anyerr()?;
@@ -1871,9 +1871,21 @@ mod tests {
                         Ok::<_, Error>(())
                     })
                     .await
-                    .std_context("timeout")??;
-                    ep.close().await;
+                    .std_context("timeout");
+                    match res {
+                        Err(err) | Ok(Err(err)) => {
+                            // ensure we close the endpoint before returning early
+                            // on error
+                            ep.close().await;
+                            return Err(err);
+                        }
+                        _ => {
+                            // if this round went `Ok` don't close the endpoint yet
+                        }
+                    }
                 }
+                // close the endpoint before dropping the server task
+                ep.close().await;
                 Ok::<_, Error>(())
             }
             .instrument(debug_span!("server")),
