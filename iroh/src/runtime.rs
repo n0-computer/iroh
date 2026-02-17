@@ -27,7 +27,9 @@ impl Runtime {
             id,
             #[cfg(not(wasm_browser))]
             tasks: TaskTracker::new(),
+            #[cfg(not(wasm_browser))]
             cancel: CancellationToken::new(),
+            #[cfg(not(wasm_browser))]
             task_counter: AtomicU64::new(0),
         }
     }
@@ -57,7 +59,7 @@ impl Runtime {
 
     /// No-op on wasm. There is no task tracker to close or wait on.
     #[cfg(wasm_browser)]
-    pub fn shutdown(&self) {}
+    pub async fn shutdown(&self) {}
 
     /// No-op on wasm. There is no task tracker or cancellation to perform.
     #[cfg(wasm_browser)]
@@ -66,7 +68,7 @@ impl Runtime {
 
 impl quinn::Runtime for Runtime {
     fn now(&self) -> std::time::Instant {
-        // This will use tokio::time::Instant outside the browser,
+        // Use tokio::time::Instant outside the browser,
         // allowing quinn to work correctly with tokio::time::pause().
         n0_future::time::Instant::now().into_std()
     }
@@ -128,7 +130,7 @@ mod web {
     use n0_future::time;
 
     #[derive(Debug)]
-    pub(crate) struct Timer(time::Sleep);
+    pub(crate) struct Timer(pub(crate) time::Sleep);
 
     impl quinn::AsyncTimer for Timer {
         fn reset(mut self: Pin<&mut Self>, deadline: time::Instant) {
