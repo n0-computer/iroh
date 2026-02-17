@@ -1896,16 +1896,17 @@ mod tests {
                 let round_start = Instant::now();
                 info!("[client] round {i}");
                 let client_secret_key = SecretKey::generate(&mut rng);
-                tokio::time::timeout(
+                let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+                    .alpns(vec![TEST_ALPN.to_vec()])
+                    .insecure_skip_relay_cert_verify(true)
+                    .secret_key(client_secret_key)
+                    .bind()
+                    .await?;
+                let ep_1 = ep.clone();
+                let res = tokio::time::timeout(
                     Duration::from_secs(5),
                     async {
                         info!("client binding");
-                        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-                            .alpns(vec![TEST_ALPN.to_vec()])
-                            .insecure_skip_relay_cert_verify(true)
-                            .secret_key(client_secret_key)
-                            .bind()
-                            .await?;
                         let eps = ep.bound_sockets();
 
                         info!(me = %ep.id().fmt_short(), eps=?eps, "client bound");
@@ -1925,15 +1926,15 @@ mod tests {
                         // we're the last to receive data, so we close
                         conn.close(0u32.into(), b"bye!");
                         info!("client finished");
-                        ep.close().await;
-                        info!("client closed");
-
                         Ok::<_, Error>(())
                     }
                     .instrument(debug_span!("client", %i)),
                 )
                 .await
-                .std_context("timeout")??;
+                .std_context("timeout");
+                ep_1.close().await;
+                info!("client endpoint closed");
+                res??;
                 info!("[client] round {i} done in {:?}", round_start.elapsed());
             }
             Ok::<_, Error>(())
