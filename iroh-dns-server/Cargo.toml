@@ -64,7 +64,7 @@ data-encoding = "2.3.3"
 hickory-resolver = "0.25.0"
 iroh = { path = "../iroh" }
 n0-tracing-test = "0.3"
-rand = "0.9.2"
+rand = "0.10.0"
 rand_chacha = "0.9"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls", "http2"
