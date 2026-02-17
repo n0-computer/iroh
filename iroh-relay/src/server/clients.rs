@@ -33,10 +33,6 @@ pub struct Clients(Arc<Inner>);
 struct Inner {
     /// The list of all currently connected clients.
     clients: DashMap<EndpointId, ClientState>,
-    // /// List of clients that are still connected, but not active anymore
-    // ///
-    // /// Clients are moved here if another endpoint with the same id connects.
-    // inactive_clients: DashMap<EndpointId, Vec<Client>>,
     /// Map of which client has sent where
     sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
     /// Connection ID Counter
@@ -123,7 +119,6 @@ impl Clients {
         self.0.clients.remove_if_mut(&endpoint_id, |_id, state| {
             if state.active.connection_id() == connection_id {
                 // The unregistering client is the currently active client
-                let client = &state.active;
                 if let Some(last_inactive_client) = state.inactive.pop() {
                     // There is an inactive client, promote to active again.
                     state.active = last_inactive_client;
@@ -133,7 +128,7 @@ impl Clients {
                     // No inactive clients: Inform other peers that this peer is now gone.
                     if let Some((_, sent_to)) = self.0.sent_to.remove(&endpoint_id) {
                         for key in sent_to {
-                            match client.try_send_peer_gone(key) {
+                            match state.active.try_send_peer_gone(key) {
                                 Ok(_) => {}
                                 Err(TrySendError::Full(_)) => {
                                     debug!(
