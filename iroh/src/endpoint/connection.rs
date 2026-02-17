@@ -68,6 +68,15 @@ pub enum IncomingAddr {
     },
 }
 
+impl From<IncomingAddr> for iroh_base::TransportAddr {
+    fn from(addr: IncomingAddr) -> Self {
+        match addr {
+            IncomingAddr::Ip(addr) => Self::Ip(addr),
+            IncomingAddr::Relay { url, .. } => Self::Relay(url),
+        }
+    }
+}
+
 impl From<crate::socket::transports::Addr> for IncomingAddr {
     fn from(addr: crate::socket::transports::Addr) -> Self {
         match addr {
