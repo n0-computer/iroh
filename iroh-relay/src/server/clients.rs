@@ -200,6 +200,14 @@ impl Clients {
             }
         }
     }
+
+    #[cfg(test)]
+    fn active_connection_id(&self, endpoint_id: EndpointId) -> Option<u64> {
+        self.0
+            .clients
+            .get(&endpoint_id)
+            .map(|s| s.active.connection_id())
+    }
 }
 
 #[cfg(test)]
@@ -300,6 +308,115 @@ mod tests {
         })
         .await
         .std_context("timeout")?;
+        clients.shutdown().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_clients_same_endpoint_id() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let a_key = SecretKey::generate(&mut rng).public();
+        let b_key = SecretKey::generate(&mut rng).public();
+
+        let (a1_builder, mut a1_rw) = test_client_builder(a_key);
+
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+
+        // register client a
+        clients.register(a1_builder, metrics.clone());
+        let a1_conn_id = clients.active_connection_id(a_key).unwrap();
+
+        // send packet and verify it is send to a1
+        let data = b"hello world!";
+        clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a1_rw).await?;
+        assert_eq!(
+            frame,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: b_key,
+                datagrams: data.to_vec().into(),
+            }
+        );
+
+        // register new client with same endpoint id
+        let (a2_builder, mut a2_rw) = test_client_builder(a_key);
+        clients.register(a2_builder, metrics.clone());
+        let a2_conn_id = clients.active_connection_id(a_key).unwrap();
+        assert!(a2_conn_id != a1_conn_id);
+
+        // a1 is marked inactive and should receive a health frame
+        let _frame = recv_frame(FrameType::Health, &mut a1_rw).await?;
+
+        // send packet and verify it is send to a2
+        clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a2_rw).await?;
+        assert_eq!(
+            frame,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: b_key,
+                datagrams: data.to_vec().into(),
+            }
+        );
+
+        // disconnect a2
+        clients
+            .0
+            .clients
+            .get(&a_key)
+            .unwrap()
+            .active
+            .start_shutdown();
+
+        // need to wait a moment for the removal to be processed
+        tokio::time::timeout(Duration::from_secs(1), {
+            let clients = clients.clone();
+            async move {
+                // wait until the active connection is no longer a2 (which we unregistered)
+                while clients.active_connection_id(a_key) == Some(a2_conn_id) {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        })
+        .await
+        .std_context("timeout")?;
+
+        // a1 should be marked active again now, and receive sent messages
+        assert_eq!(clients.active_connection_id(a_key), Some(a1_conn_id));
+        clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a1_rw).await?;
+        assert_eq!(
+            frame,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: b_key,
+                datagrams: data.to_vec().into(),
+            }
+        );
+
+        // after shutting down the now-active client, there should no longer be an entry for that endpoint id
+        clients
+            .0
+            .clients
+            .get(&a_key)
+            .unwrap()
+            .active
+            .start_shutdown();
+
+        // need to wait a moment for the removal to be processed
+        tokio::time::timeout(Duration::from_secs(1), {
+            let clients = clients.clone();
+            async move {
+                // wait until the active connection is no longer a2 (which we unregistered)
+                while clients.0.clients.contains_key(&a_key) {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        })
+        .await
+        .std_context("timeout")?;
+
         clients.shutdown().await;
 
         Ok(())
