@@ -16,8 +16,9 @@ use tracing::{Instrument, debug, trace, warn};
 
 use crate::{
     PingTracker,
+    http::ProtocolVersion,
     protos::{
-        relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg},
+        relay::{ClientToRelayMsg, Datagrams, HealthStatus, PING_INTERVAL, RelayToClientMsg},
         streams::BytesStreamSink,
     },
     server::{
@@ -49,6 +50,8 @@ pub struct Config<S> {
     pub write_timeout: Duration,
     /// Channel capacity for internal message queues
     pub channel_capacity: usize,
+    /// Protocol version negotiated for this client
+    pub protocol_version: ProtocolVersion,
 }
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
@@ -69,6 +72,8 @@ pub struct Client {
     packet_queue: mpsc::Sender<Packet>,
     /// Channel to send non-packet messages to the client.
     message_queue: mpsc::Sender<RelayToClientMsg>,
+    /// Relay protocol version negatiated for this client.
+    protocol_version: ProtocolVersion,
 }
 
 impl Client {
@@ -89,6 +94,7 @@ impl Client {
             stream,
             write_timeout,
             channel_capacity,
+            protocol_version,
         } = config;
 
         let (packet_send_queue_s, packet_send_queue_r) = mpsc::channel(channel_capacity);
@@ -123,6 +129,7 @@ impl Client {
             done,
             packet_queue: packet_send_queue_s,
             message_queue: message_send_queue_s,
+            protocol_version,
         }
     }
 
@@ -166,10 +173,19 @@ impl Client {
 
     pub(super) fn try_send_health(
         &self,
-        problem: String,
+        status: HealthStatus,
     ) -> Result<(), TrySendError<RelayToClientMsg>> {
-        self.message_queue
-            .try_send(RelayToClientMsg::Health { problem })
+        let message = match self.protocol_version {
+            ProtocolVersion::V2 => {
+                RelayToClientMsg::Health { status }
+            }
+            ProtocolVersion::V1 => {
+                RelayToClientMsg::V1Health { problem:
+                    "Another endpoint connected with the same endpoint id. No more messages will be received".to_string()
+                }
+            }
+        };
+        self.message_queue.try_send(message)
     }
 }
 

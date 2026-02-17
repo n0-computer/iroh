@@ -71,7 +71,8 @@ pub enum Error {
 }
 
 /// The messages that a relay sends to clients or the clients receive from the relay.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::Display)]
+#[non_exhaustive]
 pub enum RelayToClientMsg {
     /// Represents datagrams sent from relays (originally sent to them by another client).
     Datagrams {
@@ -85,13 +86,8 @@ pub enum RelayToClientMsg {
     EndpointGone(EndpointId),
     /// A one-way message from relay to client, declaring the connection health state.
     Health {
-        /// If set, is a description of why the connection is unhealthy.
-        ///
-        /// If `None` means the connection is healthy again.
-        ///
-        /// The default condition is healthy, so the relay doesn't broadcast a [`RelayToClientMsg::Health`]
-        /// until a problem exists.
-        problem: String,
+        /// Health status of this relay connection.
+        status: HealthStatus,
     },
     /// A one-way message from relay to client, advertising that the relay is restarting.
     Restarting {
@@ -110,6 +106,51 @@ pub enum RelayToClientMsg {
     /// Reply to a [`ClientToRelayMsg::Ping`] from a client
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
+
+    // -- Deprecated methods --
+    // We don't use `#[deprecated]` because this would throw warnings for the derived serde impls.
+    /// Deprecated: A one-way message from relay to client, declaring the connection health state.
+    V1Health {
+        /// If set, is a description of why the connection is unhealthy.
+        ///
+        /// If `None` means the connection is healthy again.
+        ///
+        /// The default condition is healthy, so the relay doesn't broadcast a [`RelayToClientMsg::Health`]
+        /// until a problem exists.
+        problem: String,
+    },
+}
+
+/// One-way message from server to client indicating issues with the relay connection.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+pub enum HealthStatus {
+    /// Another endpoint connected with the same endpoint id. No more messages will be received.
+    #[display(
+        "Another endpoint connected with the same endpoint id. No more messages will be received."
+    )]
+    SameEndpointIdConnected,
+}
+
+impl HealthStatus {
+    fn write_to<O: BufMut>(&self, mut dst: O) -> O {
+        match self {
+            HealthStatus::SameEndpointIdConnected => dst.put_u8(0),
+        }
+        dst
+    }
+
+    fn encoded_len(&self) -> usize {
+        1
+    }
+
+    fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
+        ensure!(bytes.len() >= 1, Error::InvalidFrame);
+        let discriminant = bytes.get_u8();
+        match discriminant {
+            0 => Ok(Self::SameEndpointIdConnected),
+            _ => Err(e!(Error::InvalidFrame)),
+        }
+    }
 }
 
 /// Messages that clients send to relays.
@@ -259,6 +300,7 @@ impl RelayToClientMsg {
             Self::Pong { .. } => FrameType::Pong,
             Self::Health { .. } => FrameType::Health,
             Self::Restarting { .. } => FrameType::Restarting,
+            Self::V1Health { .. } => FrameType::V1Health,
         }
     }
 
@@ -290,7 +332,7 @@ impl RelayToClientMsg {
             Self::Pong(data) => {
                 dst.put(&data[..]);
             }
-            Self::Health { problem } => {
+            Self::V1Health { problem } => {
                 dst.put(problem.as_ref());
             }
             Self::Restarting {
@@ -299,6 +341,9 @@ impl RelayToClientMsg {
             } => {
                 dst.put_u32(reconnect_in.as_millis() as u32);
                 dst.put_u32(try_for.as_millis() as u32);
+            }
+            Self::Health { status } => {
+                dst = status.write_to(dst);
             }
         }
         dst
@@ -313,11 +358,12 @@ impl RelayToClientMsg {
             }
             Self::EndpointGone(_) => 32,
             Self::Ping(_) | Self::Pong(_) => 8,
-            Self::Health { problem } => problem.len(),
+            Self::Health { status } => status.encoded_len(),
             Self::Restarting { .. } => {
                 4 // u32
                 + 4 // u32
             }
+            Self::V1Health { problem } => problem.len(),
         };
         self.typ().encoded_len() + payload_len
     }
@@ -365,9 +411,9 @@ impl RelayToClientMsg {
                 data.copy_from_slice(&content[..8]);
                 Self::Pong(data)
             }
-            FrameType::Health => {
+            FrameType::V1Health => {
                 let problem = std::str::from_utf8(&content)?.to_owned();
-                Self::Health { problem }
+                Self::V1Health { problem }
             }
             FrameType::Restarting => {
                 ensure!(content.len() == 4 + 4, Error::InvalidFrame);
@@ -387,6 +433,10 @@ impl RelayToClientMsg {
                     reconnect_in,
                     try_for,
                 }
+            }
+            FrameType::Health => {
+                let status = HealthStatus::from_bytes(content)?;
+                Self::Health { status }
             }
             _ => {
                 return Err(e!(Error::InvalidFrameType { frame_type }));
@@ -526,7 +576,7 @@ mod tests {
 
         check_expected_bytes(vec![
             (
-                RelayToClientMsg::Health {
+                RelayToClientMsg::V1Health {
                     problem: "Hello? Yes this is dog.".into(),
                 }
                 .write_to(Vec::new()),
@@ -598,6 +648,13 @@ mod tests {
                 }
                 .write_to(Vec::new()),
                 "0c 00 00 00 0a 00 00 00 14",
+            ),
+            (
+                RelayToClientMsg::Health {
+                    status: HealthStatus::SameEndpointIdConnected,
+                }
+                .write_to(Vec::new()),
+                "0d 00",
             ),
         ]);
 
@@ -719,18 +776,30 @@ mod proptests {
         let endpoint_gone = key().prop_map(RelayToClientMsg::EndpointGone);
         let ping = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
-        let health = ".{0,65536}"
+        let v1health = ".{0,65536}"
             .prop_filter("exceeds MAX_PACKET_SIZE", |s| {
                 s.len() < MAX_PACKET_SIZE // a single unicode character can match a regex "." but take up multiple bytes
             })
-            .prop_map(|problem| RelayToClientMsg::Health { problem });
+            .prop_map(|problem| RelayToClientMsg::V1Health { problem });
+        // TODO: Add health frame
+        // let health = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
+        let health = Just(HealthStatus::SameEndpointIdConnected)
+            .prop_map(|status| RelayToClientMsg::Health { status });
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),
                 try_for: Duration::from_millis(try_for.into()),
             }
         });
-        prop_oneof![recv_packet, endpoint_gone, ping, pong, health, restarting]
+        prop_oneof![
+            recv_packet,
+            endpoint_gone,
+            ping,
+            pong,
+            v1health,
+            restarting,
+            health
+        ]
     }
 
     fn client_server_frame() -> impl Strategy<Value = ClientToRelayMsg> {

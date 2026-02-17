@@ -214,7 +214,7 @@ impl ClientBuilder {
         use tls::MaybeTlsStreamBuilder;
 
         use crate::{
-            http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION},
+            http::{CLIENT_AUTH_HEADER, ProtocolVersion},
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
         };
 
@@ -260,7 +260,7 @@ impl ClientBuilder {
             })?
             .add_header(
                 SEC_WEBSOCKET_PROTOCOL,
-                http::HeaderValue::from_static(RELAY_PROTOCOL_VERSION),
+                ProtocolVersion::all_as_header_value(),
             )
             .expect("valid header name and value")
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
