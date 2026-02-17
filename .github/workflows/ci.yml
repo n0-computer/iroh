@@ -351,7 +351,7 @@ jobs:
       netsim_branch: "main"
       sim_paths: ${{ github.event_name == 'pull_request' && 'sims/integration' || 'sims/iroh/iroh.json,sims/integration' }}
       pr_number: ${{ github.event.pull_request.number || '' }}
-      skip: ${{ github.event_name == 'pull_request' && 'intg_iroh_full__1_to_3,intg_iroh_full__1_to_1x3,intg_iroh_relay_only__1_to_3' || '' }}
+      filter: ${{ github.event_name == 'pull_request' && 'skip:intg_iroh_full__1_to_3,intg_iroh_full__1_to_1x3,intg_iroh_relay_only__1_to_3' || '' }}
 
   codespell:
     timeout-minutes: 30
