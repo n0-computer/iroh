@@ -39,7 +39,8 @@ on:
         required: false
         type: boolean
         default: false
-      skip:
+      filter:
+        description: "Test filter: 'skip:test1,test2' to exclude or 'only:test1,test2' to run exclusively"
         required: false
         type: string
         default: ""
@@ -81,7 +82,8 @@ on:
         required: false
         type: boolean
         default: false
-      skip:
+      filter:
+        description: "Test filter: 'skip:test1,test2' to exclude or 'only:test1,test2' to run exclusively. No prefix defaults to only."
         required: false
         type: string
         default: ""
@@ -147,14 +149,24 @@ jobs:
       continue-on-error: true
       run: |
         cd ../chuck/netsim
-        # split sim_paths by comma
         IFS=',' read -ra sim_paths <<< "${{ inputs.sim_paths }}"
         rust_log="${{ inputs.rust_log }}"
+        filter="${{ inputs.filter }}"
+        filter_flag=""
+        if [[ -n "${filter}" ]]; then
+          if [[ "${filter}" == skip:* ]]; then
+            filter_flag="--skip=${filter#skip:}"
+          elif [[ "${filter}" == only:* ]]; then
+            filter_flag="--only=${filter#only:}"
+          else
+            filter_flag="--only=${filter}"
+          fi
+        fi
         for sim_path in "${sim_paths[@]}"; do
           if [[ -n "${rust_log}" ]]; then
-            sudo RUST_LOG="${rust_log}" python3 main.py --max-workers=${{ inputs.max_workers }} ${{ inputs.skip && format('--skip={0}', inputs.skip) || ''}} --integration $sim_path
+            sudo RUST_LOG="${rust_log}" python3 main.py ${filter_flag} --max-workers=${{ inputs.max_workers }} --integration $sim_path
           else
-            sudo python3 main.py --max-workers=${{ inputs.max_workers }} ${{ inputs.skip && format('--skip={0}', inputs.skip) || ''}} --integration $sim_path
+            sudo python3 main.py ${filter_flag} --max-workers=${{ inputs.max_workers }} --integration $sim_path
           fi
         done
 
