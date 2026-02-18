@@ -1001,9 +1001,9 @@ impl EndpointInner {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
-        debug!("wait_idle start");
+        trace!("wait_idle start");
         self.quinn_endpoint().wait_idle().await;
-        debug!("wait_idle done");
+        trace!("wait_idle done");
 
         // Start cancellation of all actors.
         self.sock.shutdown.at_endpoint_closed.cancel();

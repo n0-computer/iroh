@@ -464,7 +464,7 @@ impl ConcurrentAddressLookup {
     /// Removes all configured services.
     pub fn clear(&self) {
         let mut services = self.services.write().expect("poisoned");
-        *services = Vec::new();
+        services.clear();
     }
 }
 
