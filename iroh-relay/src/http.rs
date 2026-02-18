@@ -18,7 +18,13 @@ pub const RELAY_PROBE_PATH: &str = "/ping";
 /// The HTTP header name for relay client authentication
 pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay-client-auth-v1");
 
+/// The relay protocol version negotiated between client and server.
 ///
+/// Sent as the websocket sub-protocol header `Sec-Websocket-Protocol` from
+/// the client. The server picks the best supported version and replies with it.
+///
+/// Variants are ordered by preference (highest first), so the [`Ord`] impl
+/// can be used during negotiation to pick the best version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default, VariantArray)]
 pub enum ProtocolVersion {
     /// Added in iroh 0.97.0.
@@ -32,7 +38,7 @@ pub enum ProtocolVersion {
 }
 
 impl ProtocolVersion {
-    /// TODO
+    /// Returns a comma-separated string of all supported protocol version identifiers.
     pub fn all() -> String {
         Self::VARIANTS
             .iter()
@@ -41,12 +47,12 @@ impl ProtocolVersion {
             .join(", ")
     }
 
-    /// TODO
+    /// Returns all supported protocol versions in a comma-seperated string as an HTTP header value.
     pub fn all_as_header_value() -> HeaderValue {
         HeaderValue::from_bytes(Self::all().as_bytes()).expect("valid header name")
     }
 
-    /// TODO
+    /// Returns the protocol version identifier string.
     pub fn to_str(&self) -> &'static str {
         match self {
             ProtocolVersion::V1 => "iroh-relay-v1",
@@ -54,7 +60,7 @@ impl ProtocolVersion {
         }
     }
 
-    /// TODO
+    /// Returns this protocol version as an HTTP header value.
     pub fn to_header_value(&self) -> HeaderValue {
         HeaderValue::from_static(self.to_str())
     }
@@ -72,7 +78,7 @@ impl TryFrom<&str> for ProtocolVersion {
     }
 }
 
-/// TODO
+/// Error returned when the relay protocol version is not recognized.
 #[stack_error(derive)]
 #[error("Relay protocol version is not supported")]
 pub struct UnsupportedRelayProtocolVersion;

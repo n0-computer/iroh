@@ -110,6 +110,8 @@ pub enum RelayToClientMsg {
     // -- Deprecated methods --
     // We don't use `#[deprecated]` because this would throw warnings for the derived serde impls.
     /// Deprecated: A one-way message from relay to client, declaring the connection health state.
+    ///
+    /// Use [`Self::Health`] instead.
     V1Health {
         /// If set, is a description of why the connection is unhealthy.
         ///
@@ -123,18 +125,23 @@ pub enum RelayToClientMsg {
 
 /// One-way message from server to client indicating issues with the relay connection.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[non_exhaustive]
 pub enum HealthStatus {
     /// Another endpoint connected with the same endpoint id. No more messages will be received.
     #[display(
         "Another endpoint connected with the same endpoint id. No more messages will be received."
     )]
     SameEndpointIdConnected,
+    /// Placeholder for backwards-compatibility for future new health status variants.
+    #[display("Unsupported health message ({_0})")]
+    Unknown(u8),
 }
 
 impl HealthStatus {
     fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         match self {
             HealthStatus::SameEndpointIdConnected => dst.put_u8(0),
+            HealthStatus::Unknown(discriminant) => dst.put_u8(*discriminant),
         }
         dst
     }
@@ -148,7 +155,7 @@ impl HealthStatus {
         let discriminant = bytes.get_u8();
         match discriminant {
             0 => Ok(Self::SameEndpointIdConnected),
-            _ => Err(e!(Error::InvalidFrame)),
+            n => Ok(Self::Unknown(n)),
         }
     }
 }
@@ -781,8 +788,6 @@ mod proptests {
                 s.len() < MAX_PACKET_SIZE // a single unicode character can match a regex "." but take up multiple bytes
             })
             .prop_map(|problem| RelayToClientMsg::V1Health { problem });
-        // TODO: Add health frame
-        // let health = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
         let health = Just(HealthStatus::SameEndpointIdConnected)
             .prop_map(|status| RelayToClientMsg::Health { status });
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
