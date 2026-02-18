@@ -639,7 +639,7 @@ pub enum TransportType {
 
 impl TransportType {
     /// Converts to the corresponding QUIC path status.
-    pub fn to_path_status(self) -> PathStatus {
+    pub(super) fn to_path_status(self) -> PathStatus {
         match self {
             Self::Primary => PathStatus::Available,
             Self::Backup => PathStatus::Backup,
@@ -762,10 +762,10 @@ impl TransportBiasMap {
     /// Computes path selection data for a given address and RTT.
     pub fn path_selection_data(&self, addr: &Addr, rtt: Duration) -> PathSelectionData {
         let bias = self.get(addr);
-        let status = bias.transport_type.to_path_status();
+        let tpe = bias.transport_type;
         let biased_rtt = rtt.as_nanos() as i128 + bias.rtt_bias;
         PathSelectionData {
-            status,
+            transport_type: tpe,
             rtt,
             biased_rtt,
         }
@@ -775,8 +775,8 @@ impl TransportBiasMap {
 /// Data used during path selection.
 #[derive(Debug)]
 pub struct PathSelectionData {
-    /// Status of the path if it would be selected.
-    pub status: PathStatus,
+    /// Type of the transport.
+    pub transport_type: TransportType,
     /// Measured RTT for path selection.
     pub rtt: Duration,
     /// Biased RTT for path selection.
@@ -791,7 +791,7 @@ impl PathSelectionData {
     /// First part is the status, 0 for Available, 1 for Backup.
     /// Second part is the biased RTT.
     pub fn sort_key(&self) -> (u8, i128) {
-        (self.status as u8, self.biased_rtt)
+        (self.transport_type as u8, self.biased_rtt)
     }
 }
 

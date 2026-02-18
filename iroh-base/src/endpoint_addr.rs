@@ -281,15 +281,20 @@ impl CustomAddr {
 
     /// Convert to byte representation
     pub fn as_vec(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(8 + self.data.len());
+        let mut out = vec![0u8; 8 + self.data.len()];
         out[..8].copy_from_slice(&self.id().to_le_bytes());
         out[8..].copy_from_slice(self.data());
         out
     }
 
     /// Parse from bytes
-    pub fn from_bytes(_data: &[u8]) -> Result<Self, &'static str> {
-        todo!()
+    pub fn from_bytes(data: &[u8]) -> Result<Self, &'static str> {
+        if data.len() < 8 {
+            return Err("data too short");
+        }
+        let id = u64::from_le_bytes(data[..8].try_into().unwrap());
+        let data = &data[8..];
+        Ok(Self::from_parts(id, data))
     }
 }
 
