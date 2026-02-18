@@ -762,10 +762,10 @@
 <a href=#762 id=762 data-nosnippet>762</a>    <span class="doccomment">/// Computes path selection data for a given address and RTT.
 <a href=#763 id=763 data-nosnippet>763</a>    </span><span class="kw">pub fn </span>path_selection_data(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>Addr, rtt: Duration) -&gt; PathSelectionData {
 <a href=#764 id=764 data-nosnippet>764</a>        <span class="kw">let </span>bias = <span class="self">self</span>.get(addr);
-<a href=#765 id=765 data-nosnippet>765</a>        <span class="kw">let </span>status = bias.transport_type.to_path_status();
+<a href=#765 id=765 data-nosnippet>765</a>        <span class="kw">let </span>tpe = bias.transport_type;
 <a href=#766 id=766 data-nosnippet>766</a>        <span class="kw">let </span>biased_rtt = rtt.as_nanos() <span class="kw">as </span>i128 + bias.rtt_bias;
 <a href=#767 id=767 data-nosnippet>767</a>        PathSelectionData {
-<a href=#768 id=768 data-nosnippet>768</a>            status,
+<a href=#768 id=768 data-nosnippet>768</a>            transport_type: tpe,
 <a href=#769 id=769 data-nosnippet>769</a>            rtt,
 <a href=#770 id=770 data-nosnippet>770</a>            biased_rtt,
 <a href=#771 id=771 data-nosnippet>771</a>        }
@@ -775,8 +775,8 @@
 <a href=#775 id=775 data-nosnippet>775</a><span class="doccomment">/// Data used during path selection.
 <a href=#776 id=776 data-nosnippet>776</a></span><span class="attr">#[derive(Debug)]
 <a href=#777 id=777 data-nosnippet>777</a></span><span class="kw">pub struct </span>PathSelectionData {
-<a href=#778 id=778 data-nosnippet>778</a>    <span class="doccomment">/// Status of the path if it would be selected.
-<a href=#779 id=779 data-nosnippet>779</a>    </span><span class="kw">pub </span>status: PathStatus,
+<a href=#778 id=778 data-nosnippet>778</a>    <span class="doccomment">/// Type of the transport.
+<a href=#779 id=779 data-nosnippet>779</a>    </span><span class="kw">pub </span>transport_type: TransportType,
 <a href=#780 id=780 data-nosnippet>780</a>    <span class="doccomment">/// Measured RTT for path selection.
 <a href=#781 id=781 data-nosnippet>781</a>    </span><span class="kw">pub </span>rtt: Duration,
 <a href=#782 id=782 data-nosnippet>782</a>    <span class="doccomment">/// Biased RTT for path selection.
@@ -791,7 +791,7 @@
 <a href=#791 id=791 data-nosnippet>791</a>    /// First part is the status, 0 for Available, 1 for Backup.
 <a href=#792 id=792 data-nosnippet>792</a>    /// Second part is the biased RTT.
 <a href=#793 id=793 data-nosnippet>793</a>    </span><span class="kw">pub fn </span>sort_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (u8, i128) {
-<a href=#794 id=794 data-nosnippet>794</a>        (<span class="self">self</span>.status <span class="kw">as </span>u8, <span class="self">self</span>.biased_rtt)
+<a href=#794 id=794 data-nosnippet>794</a>        (<span class="self">self</span>.transport_type <span class="kw">as </span>u8, <span class="self">self</span>.biased_rtt)
 <a href=#795 id=795 data-nosnippet>795</a>    }
 <a href=#796 id=796 data-nosnippet>796</a>}
 <a href=#797 id=797 data-nosnippet>797</a>
