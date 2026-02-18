@@ -138,6 +138,7 @@ pub enum HealthStatus {
 }
 
 impl HealthStatus {
+    #[cfg(feature = "server")]
     fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         match self {
             HealthStatus::SameEndpointIdConnected => dst.put_u8(0),
@@ -146,6 +147,7 @@ impl HealthStatus {
         dst
     }
 
+    #[cfg(feature = "server")]
     fn encoded_len(&self) -> usize {
         1
     }

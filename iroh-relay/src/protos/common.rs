@@ -61,7 +61,7 @@ pub enum FrameType {
     ///
     /// Uses a binary-encoded [`HealthStatus`] payload.
     ///
-    /// [`HealthStatus`]: super::HealthStatus
+    /// [`HealthStatus`]: super::relay::HealthStatus
     Health = 13,
 }
 
