@@ -1,6 +1,6 @@
 [package]
 name = "iroh-base"
-version = "0.96.0"
+version = "0.96.1"
 edition = "2024"
 readme = "README.md"
 description = "base type and utilities for Iroh"
@@ -17,10 +17,12 @@ workspace = true
 [dependencies]
 curve25519-dalek = { version = "=5.0.0-pre.1", features = ["serde", "rand_core", "zeroize"], optional = true }
 data-encoding = { version = "2.3.3", optional = true }
-# Pin digest to version compatible with curve25519-dalek 5.0.0-pre.1
-digest = { version = "<0.11.0-rc.11", optional = true }
+# Pin digest to version compatible with curve25519-dalek 5.0.0-pre.1.
+digest = { version = "=0.11.0-rc.10", optional = true }
+# Pin sha2 to fix version incompatibility
+sha2 = { version = "=0.11.0-rc.2", optional = true }
 ed25519-dalek = { version = "=3.0.0-pre.1", features = ["serde", "rand_core", "zeroize"], optional = true }
-derive_more = { version = "2.0.1", features = ["display"], optional = true }
+derive_more = { version = "2.0.1", features = ["debug", "display"], optional = true }
 url = { version = "2.5.3", features = ["serde"], optional = true }
 rand_core = { version = "0.9.3", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
@@ -43,6 +45,7 @@ key = [
   "dep:curve25519-dalek",
   "dep:digest",
   "dep:ed25519-dalek",
+  "dep:sha2",
   "dep:url",
   "dep:derive_more",
   "dep:data-encoding",

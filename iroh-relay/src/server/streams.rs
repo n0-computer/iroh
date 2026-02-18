@@ -25,14 +25,30 @@ use crate::{
 /// This implements
 /// - a [`Stream`] of [`ClientToRelayMsg`]s that are received from the client,
 /// - a [`Sink`] of [`RelayToClientMsg`]s that can be sent to the client.
+///
+/// Generic over the inner stream type to support different WebSocket implementations.
 #[derive(Debug)]
-pub(crate) struct RelayedStream {
-    pub(crate) inner: WsBytesFramed<RateLimited<MaybeTlsStream>>,
+pub struct RelayedStream<S> {
+    pub(crate) inner: S,
     pub(crate) key_cache: KeyCache,
 }
 
+impl<S> RelayedStream<S> {
+    /// Creates a new RelayedStream from an inner stream and key cache.
+    ///
+    /// This is the primary constructor for external integrations using custom
+    /// WebSocket implementations.
+    pub fn new(inner: S, key_cache: KeyCache) -> Self {
+        Self { inner, key_cache }
+    }
+}
+
+/// Type alias for the standard server-side relay stream
+#[allow(dead_code)]
+pub(crate) type ServerRelayedStream = RelayedStream<WsBytesFramed<RateLimited<MaybeTlsStream>>>;
+
 #[cfg(test)]
-impl RelayedStream {
+impl ServerRelayedStream {
     pub(crate) fn test(stream: tokio::io::DuplexStream) -> Self {
         let stream = MaybeTlsStream::Test(stream);
         let stream = RateLimited::unlimited(stream, Arc::new(Metrics::default()));
@@ -78,18 +94,28 @@ impl RelayedStream {
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum SendError {
+    /// Error from the underlying WebSocket stream
     #[error(transparent)]
     StreamError {
         #[error(from, std_err)]
+        /// The underlying stream error
         source: StreamError,
     },
+    /// Packet size exceeds the maximum allowed size
     #[error("Packet exceeds max packet size")]
-    ExceedsMaxPacketSize { size: usize },
+    ExceedsMaxPacketSize {
+        /// The size of the packet that was too large
+        size: usize,
+    },
+    /// Attempted to send an empty packet
     #[error("Attempted to send empty packet")]
     EmptyPacket {},
 }
 
-impl Sink<RelayToClientMsg> for RelayedStream {
+impl<S> Sink<RelayToClientMsg> for RelayedStream<S>
+where
+    S: Sink<bytes::Bytes, Error = StreamError> + Unpin,
+{
     type Error = SendError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -124,16 +150,25 @@ impl Sink<RelayToClientMsg> for RelayedStream {
 #[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum RecvError {
+    /// Error decoding the relay protocol message
     #[error(transparent)]
-    Proto { source: ProtoError },
+    Proto {
+        /// The protocol decoding error
+        source: ProtoError,
+    },
+    /// Error from the underlying WebSocket stream
     #[error(transparent)]
     StreamError {
         #[error(std_err)]
+        /// The underlying stream error
         source: StreamError,
     },
 }
 
-impl Stream for RelayedStream {
+impl<S> Stream for RelayedStream<S>
+where
+    S: Stream<Item = Result<bytes::Bytes, StreamError>> + Unpin,
+{
     type Item = Result<ClientToRelayMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

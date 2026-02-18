@@ -765,10 +765,13 @@ impl Handle {
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
         #[cfg(not(wasm_browser))]
-        let ipv6 = transports
+        let has_ipv6_transport = transports
             .ip_bind_addrs()
             .into_iter()
             .any(|addr| addr.is_ipv6());
+
+        #[cfg(not(wasm_browser))]
+        let has_ip_transports = !transports.ip_bind_addrs().is_empty();
 
         let direct_addrs = DiscoveredDirectAddrs::default();
 
@@ -829,8 +832,6 @@ impl Handle {
             .await
             .map_err(|err| e!(BindError::CreateNetmonMonitor, err))?;
 
-        let qad_endpoint = endpoint.clone();
-
         #[cfg(any(test, feature = "test-utils"))]
         let client_config = if insecure_skip_relay_cert_verify {
             iroh_relay::client::make_dangerous_client_config()
@@ -841,13 +842,23 @@ impl Handle {
         let client_config = default_quic_client_config();
 
         let net_report_config = net_report::Options::default();
+
         #[cfg(not(wasm_browser))]
-        let net_report_config = net_report_config.quic_config(Some(QuicConfig {
-            ep: qad_endpoint,
-            client_config,
-            ipv4: true,
-            ipv6,
-        }));
+        let net_report_config = {
+            // Set a `QuicConfig` for address discovery (QAD), but only if we have IP transports.
+            //
+            // If there are no IP transports configured, then we don't set a QuicConfig.
+            // If we would, the `quinn::Endpoint` passed along will not have IP connectivity,
+            // and the QAD probes that connect to the relay's QUIC endpoints would time out
+            // because all outgoing packets to IP destinations would be dropped.
+            let qad_config = has_ip_transports.then(|| QuicConfig {
+                ep: endpoint.clone(),
+                client_config,
+                ipv4: true,
+                ipv6: has_ipv6_transport,
+            });
+            net_report_config.quic_config(qad_config)
+        };
 
         #[cfg(any(test, feature = "test-utils"))]
         let net_report_config =
@@ -1707,7 +1718,7 @@ mod tests {
 
         conn.closed().await;
         info!("closed");
-        ep.endpoint().wait_idle().await;
+        ep.endpoint()?.wait_idle().await;
         info!("idle");
 
         Ok(())
@@ -1761,7 +1772,7 @@ mod tests {
 
         conn.close(0u32.into(), b"done");
         info!("closed");
-        ep.endpoint().wait_idle().await;
+        ep.endpoint()?.wait_idle().await;
         info!("idle");
         Ok(())
     }
@@ -1892,7 +1903,7 @@ mod tests {
         let (_guard, m1, m2) = endpoint_pair().await;
 
         println!("Net change");
-        m1.socket().force_network_change(true).await;
+        m1.socket()?.force_network_change(true).await;
         tokio::time::sleep(Duration::from_secs(1)).await; // wait for socket rebinding
 
         let _handle = AbortOnDropHandle::new(tokio::spawn({
@@ -1938,7 +1949,10 @@ mod tests {
             let task = tokio::spawn(async move {
                 loop {
                     info!("[m1] network change");
-                    m1.socket().force_network_change(true).await;
+                    m1.socket()
+                        .expect("haven't closed the endpoint yet")
+                        .force_network_change(true)
+                        .await;
                     time::sleep(offset(&mut rng)).await;
                 }
             });
@@ -1966,9 +1980,15 @@ mod tests {
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 info!("-- [m1] network change");
-                m1.socket().force_network_change(true).await;
+                m1.socket()
+                    .expect("haven't closed the endpoint yet")
+                    .force_network_change(true)
+                    .await;
                 info!("-- [m2] network change");
-                m2.socket().force_network_change(true).await;
+                m2.socket()
+                    .expect("haven't closed the endpoint yet")
+                    .force_network_change(true)
+                    .await;
                 time::sleep(offset(&mut rng)).await;
             });
             AbortOnDropHandle::new(task)
@@ -1991,8 +2011,8 @@ mod tests {
             let (_guard, m1, m2) = endpoint_pair().await;
 
             info!("closing endpoints");
-            let sock1 = m1.socket();
-            let sock2 = m2.socket();
+            let sock1 = m1.socket()?;
+            let sock2 = m2.socket()?;
             m1.close().await;
             m2.close().await;
 
