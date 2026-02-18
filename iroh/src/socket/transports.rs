@@ -624,7 +624,7 @@ pub enum AddrKind {
 /// Primary transports compete with each other based on biased RTT measurements.
 /// Backup transports are only used when no primary transport is available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TransportType {
+pub(crate) enum TransportType {
     /// A transport that has the potential to be the primary transport.
     ///
     /// It will compete with other Primary transports such as IP based
@@ -661,8 +661,8 @@ impl TransportType {
 /// // A primary transport with 100ms RTT advantage (will be preferred)
 /// let bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
 ///
-/// // A backup transport (only used when no primary transport is available)
-/// let bias = TransportBias::backup();
+/// // A primary transport with 50ms RTT disadvantage (will be less preferred)
+/// let bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(50));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TransportBias {
@@ -686,7 +686,7 @@ impl TransportBias {
     /// Creates a backup transport bias with no RTT advantage.
     ///
     /// Backup transports are only used when no primary transport is available.
-    pub fn backup() -> Self {
+    pub(crate) fn backup() -> Self {
         Self {
             transport_type: TransportType::Backup,
             rtt_bias: 0,
