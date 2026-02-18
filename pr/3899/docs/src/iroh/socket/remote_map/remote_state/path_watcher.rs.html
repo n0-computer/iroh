@@ -66,7 +66,7 @@
 <a href=#66 id=66 data-nosnippet>66</a>
 <a href=#67 id=67 data-nosnippet>67</a><span class="attr">#[derive(Clone, Debug, Eq, PartialEq)]
 <a href=#68 id=68 data-nosnippet>68</a></span><span class="kw">struct </span>PathWatchValue {
-<a href=#69 id=69 data-nosnippet>69</a>    <span class="doccomment">/// The list of network transmission paths.
+<a href=#69 id=69 data-nosnippet>69</a>    <span class="doccomment">/// The list of network paths.
 <a href=#70 id=70 data-nosnippet>70</a>    </span>paths: SmallVec&lt;[PathInfo; <span class="number">4</span>]&gt;,
 <a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Set to `true` before the `RemoteStateActor` drops the `PathWatchable`.
 <a href=#72 id=72 data-nosnippet>72</a>    ///
@@ -74,7 +74,7 @@
 <a href=#74 id=74 data-nosnippet>74</a>    </span>closed: bool,
 <a href=#75 id=75 data-nosnippet>75</a>}
 <a href=#76 id=76 data-nosnippet>76</a>
-<a href=#77 id=77 data-nosnippet>77</a><span class="doccomment">/// Watcher for the open paths and selected transmission path in a connection.
+<a href=#77 id=77 data-nosnippet>77</a><span class="doccomment">/// Watcher for the open paths and selected network path in a connection.
 <a href=#78 id=78 data-nosnippet>78</a>///
 <a href=#79 id=79 data-nosnippet>79</a>/// See [`Connection::paths`] for details.
 <a href=#80 id=80 data-nosnippet>80</a>///
@@ -175,7 +175,7 @@
 <a href=#175 id=175 data-nosnippet>175</a>    }
 <a href=#176 id=176 data-nosnippet>176</a>}
 <a href=#177 id=177 data-nosnippet>177</a>
-<a href=#178 id=178 data-nosnippet>178</a><span class="doccomment">/// Information about a network transmission path used by a [`Connection`].
+<a href=#178 id=178 data-nosnippet>178</a><span class="doccomment">/// Information about a network path used by a [`Connection`].
 <a href=#179 id=179 data-nosnippet>179</a>///
 <a href=#180 id=180 data-nosnippet>180</a>/// [`Connection`]: crate::endpoint::Connection
 <a href=#181 id=181 data-nosnippet>181</a></span><span class="attr">#[derive(derive_more::Debug, Clone, Eq, PartialEq)]
@@ -200,7 +200,7 @@
 <a href=#200 id=200 data-nosnippet>200</a>
 <a href=#201 id=201 data-nosnippet>201</a>    <span class="doccomment">/// Returns the [`PathId`] of this path.
 <a href=#202 id=202 data-nosnippet>202</a>    ///
-<a href=#203 id=203 data-nosnippet>203</a>    /// Path ids are unique-per-connection identifiers for a network transmission path. A path id will never
+<a href=#203 id=203 data-nosnippet>203</a>    /// Path ids are unique-per-connection identifiers for a network path. A path id will never
 <a href=#204 id=204 data-nosnippet>204</a>    /// be reused within a connection.
 <a href=#205 id=205 data-nosnippet>205</a>    </span><span class="kw">pub fn </span>id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathId {
 <a href=#206 id=206 data-nosnippet>206</a>        <span class="self">self</span>.path.id()
@@ -222,7 +222,7 @@
 <a href=#222 id=222 data-nosnippet>222</a>    ///
 <a href=#223 id=223 data-nosnippet>223</a>    /// A path is considered closed as soon as the local endpoint has abandoned this path.
 <a href=#224 id=224 data-nosnippet>224</a>    /// A closed path will remain closed forever, so once this returns `true` it will never
-<a href=#225 id=225 data-nosnippet>225</a>    /// return `false` afterwards. If the transmission path becomes available again in the future,
+<a href=#225 id=225 data-nosnippet>225</a>    /// return `false` afterwards. If the network path becomes available again in the future,
 <a href=#226 id=226 data-nosnippet>226</a>    /// a new path might be opened, but a closed path will never be reopened.
 <a href=#227 id=227 data-nosnippet>227</a>    </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
 <a href=#228 id=228 data-nosnippet>228</a>        <span class="self">self</span>.is_abandoned
@@ -238,7 +238,7 @@
 <a href=#238 id=238 data-nosnippet>238</a>        <span class="self">self</span>.remote_addr().is_relay()
 <a href=#239 id=239 data-nosnippet>239</a>    }
 <a href=#240 id=240 data-nosnippet>240</a>
-<a href=#241 id=241 data-nosnippet>241</a>    <span class="doccomment">/// Returns stats for this transmission path.
+<a href=#241 id=241 data-nosnippet>241</a>    <span class="doccomment">/// Returns stats for this network path.
 <a href=#242 id=242 data-nosnippet>242</a>    ///
 <a href=#243 id=243 data-nosnippet>243</a>    /// Returns `None` if the underlying connection has been dropped.
 <a href=#244 id=244 data-nosnippet>244</a>    </span><span class="kw">pub fn </span>stats(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;PathStats&gt; {

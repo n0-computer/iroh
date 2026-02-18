@@ -114,7 +114,7 @@ will be a path via the relay server and a holepunched path.</p>
 whenever a path is opened or closed, or when the path selected for transmission changes
 (see <a href="struct.PathInfo.html#method.is_selected" title="method iroh::endpoint::PathInfo::is_selected"><code>PathInfo::is_selected</code></a>).</p>
 <p>The <a href="struct.PathInfoList.html" title="struct iroh::endpoint::PathInfoList"><code>PathInfoList</code></a> returned from the watcher contains a <a href="struct.PathInfo.html" title="struct iroh::endpoint::PathInfo"><code>PathInfo</code></a> for each
-transmission path.</p>
+network path.</p>
 <p>As long as a <a href="struct.PathWatcher.html" title="struct iroh::endpoint::PathWatcher"><code>PathWatcher</code></a> is alive, the list of paths will only grow. If paths
 are closed, they will be marked as closed (see <a href="struct.PathInfo.html#method.is_closed" title="method iroh::endpoint::PathInfo::is_closed"><code>PathInfo::is_closed</code></a>) but will
 not be removed from the list of paths. This allows to reliably retrieve stats for
