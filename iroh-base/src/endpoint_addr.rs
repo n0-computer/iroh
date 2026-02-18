@@ -292,7 +292,7 @@ impl CustomAddr {
         if data.len() < 8 {
             return Err("data too short");
         }
-        let id = u64::from_le_bytes(data[..8].try_into().unwrap());
+        let id = u64::from_le_bytes(data[..8].try_into().expect("data length checked above"));
         let data = &data[8..];
         Ok(Self::from_parts(id, data))
     }

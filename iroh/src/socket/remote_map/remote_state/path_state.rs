@@ -289,7 +289,8 @@ fn prune_non_relay_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
     inactive.sort_by(|a, b| b.1.cmp(&a.1));
 
     // Prune the "oldest" closed paths.
-    let old_inactive = inactive.split_off(inactive.len().saturating_sub(MAX_INACTIVE_NON_RELAY_PATHS));
+    let old_inactive =
+        inactive.split_off(inactive.len().saturating_sub(MAX_INACTIVE_NON_RELAY_PATHS));
 
     // collect all the paths that should be pruned
     let must_prune: HashSet<_> = failed
@@ -338,7 +339,11 @@ mod tests {
         }
 
         prune_non_relay_paths(&mut paths);
-        assert_eq!(20, paths.len(), "should not prune when under MAX_NON_RELAY_PATHS");
+        assert_eq!(
+            20,
+            paths.len(),
+            "should not prune when under MAX_NON_RELAY_PATHS"
+        );
     }
 
     #[test]
@@ -350,7 +355,11 @@ mod tests {
         }
 
         prune_non_relay_paths(&mut paths);
-        assert_eq!(MAX_NON_RELAY_PATHS, paths.len(), "should not prune active paths");
+        assert_eq!(
+            MAX_NON_RELAY_PATHS,
+            paths.len(),
+            "should not prune active paths"
+        );
     }
 
     #[test]

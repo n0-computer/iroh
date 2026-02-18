@@ -1092,7 +1092,13 @@ impl RemoteStateActor {
                 .filter(|(_, addr)| !addr.is_relay())
                 .filter(|(_, addr)| *addr != selected_path)
             {
-                if conn_state.open_paths.values().filter(|a| !a.is_relay()).count() <= 1 {
+                if conn_state
+                    .open_paths
+                    .values()
+                    .filter(|a| !a.is_relay())
+                    .count()
+                    <= 1
+                {
                     continue; // Do not close the last direct path.
                 }
                 if let Some(path) = conn_state
