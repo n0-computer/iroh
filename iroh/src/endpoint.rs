@@ -30,7 +30,7 @@ use url::Url;
 pub mod transports {
     #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
-    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias, TransportType};
+    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias};
 }
 
 use self::hooks::EndpointHooksList;
@@ -663,13 +663,11 @@ impl Builder {
     /// # Example
     ///
     /// ```ignore
-    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias, TransportType}};
+    /// use std::time::Duration;
+    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias}};
     ///
     /// let endpoint = Builder::new(SomePreset)
-    ///     .transport_bias(AddrKind::Custom(42), TransportBias {
-    ///         transport_type: TransportType::Primary,
-    ///         rtt_bias: 0,
-    ///     })
+    ///     .transport_bias(AddrKind::Custom(42), TransportBias::primary().with_rtt_advantage(Duration::from_millis(10)))
     ///     .bind()
     ///     .await?;
     /// ```
