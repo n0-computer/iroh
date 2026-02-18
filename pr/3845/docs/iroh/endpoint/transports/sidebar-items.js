@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Addr","AddrKind","TransportType"],"struct":["Transmit","TransportBias"],"trait":["CustomEndpoint","CustomSender","CustomTransport"]};
