@@ -25,7 +25,7 @@
 //!
 //!     // Register the Address Lookupwith the endpoint
 //!     let mdns = MdnsAddressLookup::builder().build(endpoint.id()).unwrap();
-//!     endpoint.address_lookup().add(mdns.clone());
+//!     endpoint.address_lookup().unwrap().add(mdns.clone());
 //!
 //!     // Subscribe to the mdns discovery events
 //!     let mut events = mdns.subscribe().await;
@@ -175,7 +175,7 @@ impl MdnsAddressLookupBuilder {
     /// `7rutqynuzu65fcdgoerbt4uoh3p62wuto2mp56x3uvhitqzssxga._irohv1._udp.local`
     ///
     /// Any custom service name will take the form, for example:
-    /// `7rutqynuzu65fcdgoerbt4uoh3p62wuto2mp56x3uvhitqzssxga._{service_name}.upd.local`
+    /// `7rutqynuzu65fcdgoerbt4uoh3p62wuto2mp56x3uvhitqzssxga._{service_name}._udp.local`
     pub fn service_name(mut self, service_name: impl Into<String>) -> Self {
         self.service_name = service_name.into();
         self
