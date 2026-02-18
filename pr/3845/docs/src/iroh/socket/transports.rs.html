@@ -639,7 +639,7 @@
 <a href=#639 id=639 data-nosnippet>639</a>
 <a href=#640 id=640 data-nosnippet>640</a><span class="kw">impl </span>TransportType {
 <a href=#641 id=641 data-nosnippet>641</a>    <span class="doccomment">/// Converts to the corresponding QUIC path status.
-<a href=#642 id=642 data-nosnippet>642</a>    </span><span class="kw">pub fn </span>to_path_status(<span class="self">self</span>) -&gt; PathStatus {
+<a href=#642 id=642 data-nosnippet>642</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>to_path_status(<span class="self">self</span>) -&gt; PathStatus {
 <a href=#643 id=643 data-nosnippet>643</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#644 id=644 data-nosnippet>644</a>            <span class="self">Self</span>::Primary =&gt; PathStatus::Available,
 <a href=#645 id=645 data-nosnippet>645</a>            <span class="self">Self</span>::Backup =&gt; PathStatus::Backup,
