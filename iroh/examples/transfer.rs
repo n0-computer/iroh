@@ -582,7 +582,7 @@ async fn handle_connection(conn: Connection, output: Output) {
     let start = Instant::now();
     let remote_id = conn.remote_id();
     let watcher = conn.paths();
-    let _guard = watch_conn_type(conn.clone(), Some(remote_id), output);
+    let _guard = watch_conn_type(&conn, Some(remote_id), output);
 
     // Accept incoming streams in a loop until the connection is closed by the remote.
     let close_reason = loop {
@@ -658,7 +658,7 @@ async fn fetch(
     });
     let watcher = conn.paths();
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(conn.clone(), None, output);
+    let _guard = watch_conn_type(&conn, None, output);
 
     output.emit(StartRequest { mode, length });
     // Perform requests depending on the request mode.
@@ -863,7 +863,7 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
 }
 
 fn watch_conn_type(
-    conn: Connection,
+    conn: &Connection,
     remote_id: Option<EndpointId>,
     output: Output,
 ) -> AbortOnDropHandle<()> {
@@ -875,8 +875,8 @@ fn watch_conn_type(
             output.emit(event)
         }
     };
+    let mut stream = conn.paths().stream();
     let task = tokio::task::spawn(async move {
-        let mut stream = conn.paths().stream();
         let mut previous = None;
         while let Some(paths) = stream.next().await {
             if let Some(path) = paths.iter().find(|p| p.is_selected()) {

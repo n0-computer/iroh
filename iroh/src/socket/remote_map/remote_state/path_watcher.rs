@@ -66,7 +66,7 @@ impl Iterator for PathInfoListIter {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PathWatchValue {
-    /// The list of network transmission paths.
+    /// The list of network paths.
     paths: SmallVec<[PathInfo; 4]>,
     /// Set to `true` before the `RemoteStateActor` drops the `PathWatchable`.
     ///
@@ -74,7 +74,7 @@ struct PathWatchValue {
     closed: bool,
 }
 
-/// Watcher for the open paths and selected transmission path in a connection.
+/// Watcher for the open paths and selected network path in a connection.
 ///
 /// See [`Connection::paths`] for details.
 ///
@@ -175,7 +175,7 @@ impl Watcher for PathWatcher {
     }
 }
 
-/// Information about a network transmission path used by a [`Connection`].
+/// Information about a network path used by a [`Connection`].
 ///
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
@@ -200,7 +200,7 @@ impl PathInfo {
 
     /// Returns the [`PathId`] of this path.
     ///
-    /// Path ids are unique-per-connection identifiers for a network transmission path. A path id will never
+    /// Path ids are unique-per-connection identifiers for a network path. A path id will never
     /// be reused within a connection.
     pub fn id(&self) -> PathId {
         self.path.id()
@@ -222,7 +222,7 @@ impl PathInfo {
     ///
     /// A path is considered closed as soon as the local endpoint has abandoned this path.
     /// A closed path will remain closed forever, so once this returns `true` it will never
-    /// return `false` afterwards. If the transmission path becomes available again in the future,
+    /// return `false` afterwards. If the network path becomes available again in the future,
     /// a new path might be opened, but a closed path will never be reopened.
     pub fn is_closed(&self) -> bool {
         self.is_abandoned
@@ -238,7 +238,7 @@ impl PathInfo {
         self.remote_addr().is_relay()
     }
 
-    /// Returns stats for this transmission path.
+    /// Returns stats for this network path.
     ///
     /// Returns `None` if the underlying connection has been dropped.
     pub fn stats(&self) -> Option<PathStats> {

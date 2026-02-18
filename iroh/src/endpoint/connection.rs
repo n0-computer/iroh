@@ -1014,7 +1014,7 @@ impl Connection<HandshakeCompleted> {
     /// (see [`PathInfo::is_selected`]).
     ///
     /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
-    /// transmission path.
+    /// network path.
     ///
     /// As long as a [`PathWatcher`] is alive, the list of paths will only grow. If paths
     /// are closed, they will be marked as closed (see [`PathInfo::is_closed`]) but will
