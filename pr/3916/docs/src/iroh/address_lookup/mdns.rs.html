@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>//!
 <a href=#26 id=26 data-nosnippet>26</a>//!     // Register the Address Lookupwith the endpoint
 <a href=#27 id=27 data-nosnippet>27</a>//!     let mdns = MdnsAddressLookup::builder().build(endpoint.id()).unwrap();
-<a href=#28 id=28 data-nosnippet>28</a>//!     endpoint.address_lookup().add(mdns.clone());
+<a href=#28 id=28 data-nosnippet>28</a>//!     endpoint.address_lookup().unwrap().add(mdns.clone());
 <a href=#29 id=29 data-nosnippet>29</a>//!
 <a href=#30 id=30 data-nosnippet>30</a>//!     // Subscribe to the mdns discovery events
 <a href=#31 id=31 data-nosnippet>31</a>//!     let mut events = mdns.subscribe().await;
@@ -175,7 +175,7 @@
 <a href=#175 id=175 data-nosnippet>175</a>    /// `7rutqynuzu65fcdgoerbt4uoh3p62wuto2mp56x3uvhitqzssxga._irohv1._udp.local`
 <a href=#176 id=176 data-nosnippet>176</a>    ///
 <a href=#177 id=177 data-nosnippet>177</a>    /// Any custom service name will take the form, for example:
-<a href=#178 id=178 data-nosnippet>178</a>    /// `7rutqynuzu65fcdgoerbt4uoh3p62wuto2mp56x3uvhitqzssxga._{service_name}.upd.local`
+<a href=#178 id=178 data-nosnippet>178</a>    /// `7rutqynuzu65fcdgoerbt4uoh3p62wuto2mp56x3uvhitqzssxga._{service_name}._udp.local`
 <a href=#179 id=179 data-nosnippet>179</a>    </span><span class="kw">pub fn </span>service_name(<span class="kw-2">mut </span><span class="self">self</span>, service_name: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; <span class="self">Self </span>{
 <a href=#180 id=180 data-nosnippet>180</a>        <span class="self">self</span>.service_name = service_name.into();
 <a href=#181 id=181 data-nosnippet>181</a>        <span class="self">self
