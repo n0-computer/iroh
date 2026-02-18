@@ -292,7 +292,7 @@
 <a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">if </span>data.len() &lt; <span class="number">8 </span>{
 <a href=#293 id=293 data-nosnippet>293</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"data too short"</span>);
 <a href=#294 id=294 data-nosnippet>294</a>        }
-<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">let </span>id = u64::from_le_bytes(data[..<span class="number">8</span>].try_into().unwrap());
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">let </span>id = u64::from_le_bytes(data[..<span class="number">8</span>].try_into().expect(<span class="string">"data length checked above"</span>));
 <a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">let </span>data = <span class="kw-2">&amp;</span>data[<span class="number">8</span>..];
 <a href=#297 id=297 data-nosnippet>297</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::from_parts(id, data))
 <a href=#298 id=298 data-nosnippet>298</a>    }

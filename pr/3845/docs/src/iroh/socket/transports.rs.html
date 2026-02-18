@@ -624,7 +624,7 @@
 <a href=#624 id=624 data-nosnippet>624</a>/// Primary transports compete with each other based on biased RTT measurements.
 <a href=#625 id=625 data-nosnippet>625</a>/// Backup transports are only used when no primary transport is available.
 <a href=#626 id=626 data-nosnippet>626</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-<a href=#627 id=627 data-nosnippet>627</a></span><span class="kw">pub enum </span>TransportType {
+<a href=#627 id=627 data-nosnippet>627</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>TransportType {
 <a href=#628 id=628 data-nosnippet>628</a>    <span class="doccomment">/// A transport that has the potential to be the primary transport.
 <a href=#629 id=629 data-nosnippet>629</a>    ///
 <a href=#630 id=630 data-nosnippet>630</a>    /// It will compete with other Primary transports such as IP based
@@ -661,8 +661,8 @@
 <a href=#661 id=661 data-nosnippet>661</a>/// // A primary transport with 100ms RTT advantage (will be preferred)
 <a href=#662 id=662 data-nosnippet>662</a>/// let bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
 <a href=#663 id=663 data-nosnippet>663</a>///
-<a href=#664 id=664 data-nosnippet>664</a>/// // A backup transport (only used when no primary transport is available)
-<a href=#665 id=665 data-nosnippet>665</a>/// let bias = TransportBias::backup();
+<a href=#664 id=664 data-nosnippet>664</a>/// // A primary transport with 50ms RTT disadvantage (will be less preferred)
+<a href=#665 id=665 data-nosnippet>665</a>/// let bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(50));
 <a href=#666 id=666 data-nosnippet>666</a>/// ```
 <a href=#667 id=667 data-nosnippet>667</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 <a href=#668 id=668 data-nosnippet>668</a></span><span class="kw">pub struct </span>TransportBias {
@@ -686,7 +686,7 @@
 <a href=#686 id=686 data-nosnippet>686</a>    <span class="doccomment">/// Creates a backup transport bias with no RTT advantage.
 <a href=#687 id=687 data-nosnippet>687</a>    ///
 <a href=#688 id=688 data-nosnippet>688</a>    /// Backup transports are only used when no primary transport is available.
-<a href=#689 id=689 data-nosnippet>689</a>    </span><span class="kw">pub fn </span>backup() -&gt; <span class="self">Self </span>{
+<a href=#689 id=689 data-nosnippet>689</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>backup() -&gt; <span class="self">Self </span>{
 <a href=#690 id=690 data-nosnippet>690</a>        <span class="self">Self </span>{
 <a href=#691 id=691 data-nosnippet>691</a>            transport_type: TransportType::Backup,
 <a href=#692 id=692 data-nosnippet>692</a>            rtt_bias: <span class="number">0</span>,
