@@ -1,0 +1,140 @@
+{
+    "name": "intg_iroh_relay_nat",
+    "cases": [
+        {
+            "name": "1_to_1_NAT_provide",
+            "description": "",
+            "visualize": true,
+            "nodes": [
+                {
+                    "name": "1_r",
+                    "count": 1,
+                    "cmd": "./bins/iroh-relay --dev --config-path ./data/relay.cfg",
+                    "type": "public",
+                    "wait": 2,
+                    "connect": {
+                        "strategy": "none"
+                    }
+                },
+                {
+                    "name": "i_srv",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json provide --env dev --relay-url=\"http://10.0.0.1:3340\"",
+                    "type": "nat",
+                    "wait": 10,
+                    "connect": {
+                        "strategy": "none"
+                    },
+                    "param_parser": "iroh_endpoint_json"
+                },
+                {
+                    "name": "i_get",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json fetch --duration=20 --env dev --relay-url=\"http://10.0.0.1:3340\" --remote-relay-url=\"http://10.0.0.1:3340\" --remote-direct-address=\"%s\" %s",
+                    "type": "public",
+                    "connect": {
+                        "strategy": "params_with_parsed_addrs",
+                        "node": "i_srv"
+                    },
+                    "process": "short",
+                    "parser": "iroh_json",
+                    "integration": "magic_iroh_client_json",
+                    "integration_require": {
+                        "transfer_success": "true",
+                        "final_conn_direct": "true"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "1_to_1_NAT_get",
+            "description": "",
+            "visualize": true,
+            "nodes": [
+                {
+                    "name": "1_r",
+                    "count": 1,
+                    "cmd": "./bins/iroh-relay --dev --config-path ./data/relay.cfg",
+                    "type": "public",
+                    "wait": 2,
+                    "connect": {
+                        "strategy": "none"
+                    }
+                },
+                {
+                    "name": "i_srv",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json provide --env dev --relay-url=\"http://10.0.0.1:3340\"",
+                    "type": "public",
+                    "wait": 10,
+                    "connect": {
+                        "strategy": "none"
+                    },
+                    "param_parser": "iroh_endpoint_json"
+                },
+                {
+                    "name": "i_get",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json fetch --duration=20 --env dev --relay-url=\"http://10.0.0.1:3340\" --remote-relay-url=\"http://10.0.0.1:3340\" --remote-direct-address=\"%s\" %s",
+                    "type": "nat",
+                    "connect": {
+                        "strategy": "params_with_parsed_addrs",
+                        "node": "i_srv"
+                    },
+                    "process": "short",
+                    "parser": "iroh_json",
+                    "integration": "magic_iroh_client_json",
+                    "integration_require": {
+                        "transfer_success": "true",
+                        "final_conn_direct": "true"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "1_to_1_NAT_both",
+            "description": "",
+            "visualize": true,
+            "nodes": [
+                {
+                    "name": "1_r",
+                    "count": 1,
+                    "cmd": "./bins/iroh-relay --dev --config-path ./data/relay.cfg",
+                    "type": "public",
+                    "wait": 2,
+                    "connect": {
+                        "strategy": "none"
+                    }
+                },
+                {
+                    "name": "i_srv",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json provide --env dev --relay-url=\"http://10.0.0.1:3340\"",
+                    "type": "nat",
+                    "wait": 10,
+                    "connect": {
+                        "strategy": "none"
+                    },
+                    "param_parser": "iroh_endpoint_json"
+                },
+                {
+                    "name": "i_get",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json fetch --duration=20 --env dev --relay-url=\"http://10.0.0.1:3340\" --remote-relay-url=\"http://10.0.0.1:3340\" --remote-direct-address=\"%s\" %s",
+                    "type": "nat",
+                    "connect": {
+                        "strategy": "params_with_parsed_addrs",
+                        "node": "i_srv"
+                    },
+                    "process": "short",
+                    "parser": "iroh_json",
+                    "integration": "magic_iroh_client_json",
+                    "integration_require": {
+                        "transfer_success": "true",
+                        "final_conn_direct": "true"
+                    }
+                }
+            ]
+        }
+    ]
+}
