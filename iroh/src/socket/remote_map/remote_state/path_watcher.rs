@@ -64,10 +64,14 @@ impl Iterator for PathInfoListIter {
     }
 }
 
+/// The value watched by the [`PathWatchable`].
+///
+/// A list of paths, and a `closed` flag to indicate when the connection closed so that
+/// the watcher can be stopped.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PathWatchValue {
+struct CloseablePathList {
     /// The list of network paths.
-    paths: SmallVec<[PathInfo; 4]>,
+    paths: PathInfoList,
     /// Set to `true` before the `RemoteStateActor` drops the `PathWatchable`.
     ///
     /// Afterwards, no further updates will be received.
@@ -81,7 +85,7 @@ struct PathWatchValue {
 /// [`Connection::paths`]: crate::endpoint::Connection::paths
 #[derive(Clone, Debug)]
 pub struct PathWatcher {
-    paths_watcher: n0_watcher::Direct<PathWatchValue>,
+    paths_watcher: n0_watcher::Direct<CloseablePathList>,
     selected_path_watcher: n0_watcher::Direct<Option<transports::Addr>>,
     current_paths: PathInfoList,
     current_selected_path: Option<transports::Addr>,
@@ -118,7 +122,7 @@ impl Watcher for PathWatcher {
 
         if self.paths_watcher.update() {
             updated = true;
-            self.current_paths = PathInfoList(self.paths_watcher.peek().paths.clone());
+            self.current_paths = self.paths_watcher.peek().paths.clone();
         }
 
         if self.selected_path_watcher.update() {
@@ -138,7 +142,9 @@ impl Watcher for PathWatcher {
     }
 
     fn is_connected(&self) -> bool {
-        self.paths_watcher.is_connected() && self.selected_path_watcher.is_connected()
+        self.paths_watcher.is_connected()
+            && self.selected_path_watcher.is_connected()
+            && !self.paths_watcher.peek().closed
     }
 
     fn poll_updated(
@@ -157,7 +163,7 @@ impl Watcher for PathWatcher {
         let mut is_ready = false;
 
         if self.paths_watcher.poll_updated(cx)?.is_ready() {
-            self.current_paths = PathInfoList(self.paths_watcher.peek().paths.clone());
+            self.current_paths = self.paths_watcher.peek().paths.clone();
             is_ready = true;
         }
 
@@ -264,13 +270,13 @@ impl PathInfo {
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(Debug, Clone)]
 pub(crate) struct PathWatchable {
-    paths: Watchable<PathWatchValue>,
+    paths: Watchable<CloseablePathList>,
     selected_path: Watchable<Option<transports::Addr>>,
 }
 
 impl PathWatchable {
     pub(super) fn new(selected_path: Watchable<Option<transports::Addr>>) -> Self {
-        let value = PathWatchValue {
+        let value = CloseablePathList {
             paths: Default::default(),
             closed: false,
         };
@@ -298,7 +304,7 @@ impl PathWatchable {
     /// Inserts a new path.
     pub(super) fn insert(&self, conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) {
         if let Some(data) = PathInfo::new(conn, id, remote_addr) {
-            self.update(move |list| list.push(data));
+            self.update(move |list| list.0.push(data));
         }
     }
 
@@ -308,7 +314,7 @@ impl PathWatchable {
     /// If there are watchers, the path will not be removed so that the watcher can still access the path's stats.
     pub(super) fn set_abandoned(&self, id: PathId) {
         self.update(|list| {
-            if let Some(item) = list.iter_mut().find(|p| p.path.id() == id) {
+            if let Some(item) = list.0.iter_mut().find(|p| p.path.id() == id) {
                 item.is_abandoned = true;
             }
         });
@@ -318,12 +324,13 @@ impl PathWatchable {
     ///
     /// After the update is performed, and if there are currently no watchers, data for abandoned paths
     /// is removed from the path list.
-    fn update(&self, f: impl FnOnce(&mut SmallVec<[PathInfo; 4]>)) {
+    fn update(&self, f: impl FnOnce(&mut PathInfoList)) {
         let mut value = self.paths.get();
         f(&mut value.paths);
+        // Remove abandoned paths from the list if we don't have watchers currently.
         if !self.paths.has_watchers() {
-            value.paths.retain(|p| !p.is_abandoned);
-            value.paths.shrink_to_fit();
+            value.paths.0.retain(|p| !p.is_abandoned);
+            value.paths.0.shrink_to_fit();
         }
         self.paths.set(value).ok();
     }
@@ -333,7 +340,7 @@ impl PathWatchable {
         let paths_watcher = self.paths.watch();
         let selected_path_watcher = self.selected_path.watch();
         let mut watcher = PathWatcher {
-            current_paths: PathInfoList(paths_watcher.peek().paths.clone()),
+            current_paths: paths_watcher.peek().paths.clone(),
             // Set via `update_selected` below.
             current_selected_path: None,
             paths_watcher,
