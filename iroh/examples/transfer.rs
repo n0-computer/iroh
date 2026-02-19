@@ -890,9 +890,6 @@ fn watch_conn_type(
                     rtt: path.rtt().expect("conn is not dropped"),
                 });
                 previous = Some(path.clone());
-            } else if !paths.is_empty() {
-                print(SelectedPath::Mixed { count: paths.len() });
-                previous = None;
             } else {
                 output.emit(SelectedPath::None);
                 previous = None;
@@ -1018,9 +1015,6 @@ struct ConnectionTypeChanged {
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "status")]
 enum SelectedPath {
-    Mixed {
-        count: usize,
-    },
     Selected {
         #[serde(skip)]
         id: PathId,
@@ -1034,9 +1028,6 @@ enum SelectedPath {
 impl fmt::Display for SelectedPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
-            Self::Mixed { count } => {
-                write!(f, "mixed ({count} paths)")
-            }
             Self::Selected { addr, rtt, id } => {
                 write!(f, "{addr:?} [id:{id}] (RTT: {})", fmt_duration(*rtt))
             }
