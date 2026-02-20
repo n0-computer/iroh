@@ -67,7 +67,7 @@ use crate::dns::DnsResolver;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddressLookup, EndpointData, Error as AddressLookupError, IntoAddressLookup,
+        AddrFilter, AddressLookup, EndpointData, Error as AddressLookupError, IntoAddressLookup,
         IntoAddressLookupError, Item as AddressLookupItem,
     },
     endpoint::force_staging_infra,
@@ -154,6 +154,7 @@ pub struct PkarrPublisherBuilder {
     republish_interval: Duration,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
+    filter: Option<AddrFilter>,
 }
 
 impl PkarrPublisherBuilder {
@@ -165,6 +166,7 @@ impl PkarrPublisherBuilder {
             republish_interval: DEFAULT_REPUBLISH_INTERVAL,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
+            filter: None,
         }
     }
 
@@ -202,6 +204,12 @@ impl PkarrPublisherBuilder {
         self
     }
 
+    /// Sets a filter to control which addresses are published by this service
+    pub fn set_addr_filter(mut self, filter: Option<AddrFilter>) -> Self {
+        self.filter = filter;
+        self
+    }
+
     /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
     ///
     /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
@@ -213,7 +221,8 @@ impl PkarrPublisherBuilder {
             self.republish_interval,
             #[cfg(not(wasm_browser))]
             self.dns_resolver,
-        )
+        );
+        todo!("add filter");
     }
 }
 
@@ -228,6 +237,13 @@ impl IntoAddressLookup for PkarrPublisherBuilder {
         }
 
         Ok(self.build(endpoint.secret_key().clone()))
+    }
+
+    fn with_addr_filter(self, filter: AddrFilter) -> Self
+    where
+        Self: Sized,
+    {
+        self.set_addr_filter(Some(filter))
     }
 }
 
@@ -425,6 +441,7 @@ pub struct PkarrResolverBuilder {
     pkarr_relay: Url,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
+    filter: Option<AddrFilter>,
 }
 
 impl PkarrResolverBuilder {
@@ -435,19 +452,26 @@ impl PkarrResolverBuilder {
         self
     }
 
+    /// Sets a filter to control which addresses are published by this service
+    pub fn set_addr_filter(mut self, filter: Option<AddrFilter>) -> Self {
+        self.filter = filter;
+        self
+    }
+
     /// Creates a [`PkarrResolver`] from this builder.
     pub fn build(self) -> PkarrResolver {
-        #[cfg(wasm_browser)]
-        let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
+        // #[cfg(wasm_browser)]
+        // let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
 
-        #[cfg(not(wasm_browser))]
-        let pkarr_client = if let Some(dns_resolver) = self.dns_resolver {
-            PkarrRelayClient::with_dns_resolver(self.pkarr_relay, dns_resolver)
-        } else {
-            PkarrRelayClient::new(self.pkarr_relay)
-        };
+        // #[cfg(not(wasm_browser))]
+        // let pkarr_client = if let Some(dns_resolver) = self.dns_resolver {
+        //     PkarrRelayClient::with_dns_resolver(self.pkarr_relay, dns_resolver)
+        // } else {
+        //     PkarrRelayClient::new(self.pkarr_relay)
+        // };
 
-        PkarrResolver { pkarr_client }
+        // PkarrResolver { pkarr_client };
+        todo!("add filter");
     }
 }
 
@@ -462,6 +486,10 @@ impl IntoAddressLookup for PkarrResolverBuilder {
         }
 
         Ok(self.build())
+    }
+
+    fn with_addr_filter(self, filter: AddrFilter) -> Self {
+        self.set_addr_filter(Some(filter))
     }
 }
 
@@ -491,6 +519,7 @@ impl PkarrResolver {
             pkarr_relay,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
+            filter: None,
         }
     }
 

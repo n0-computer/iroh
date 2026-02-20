@@ -20,7 +20,7 @@ use url::Url;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddressLookup, EndpointData, Error as AddressLookupError, IntoAddressLookup,
+        AddrFilter, AddressLookup, EndpointData, Error as AddressLookupError, IntoAddressLookup,
         IntoAddressLookupError, Item as AddressLookupItem,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
@@ -118,6 +118,7 @@ pub struct Builder {
     include_direct_addresses: bool,
     republish_delay: Duration,
     enable_publish: bool,
+    filter: Option<AddrFilter>,
 }
 
 impl Default for Builder {
@@ -131,6 +132,7 @@ impl Default for Builder {
             include_direct_addresses: false,
             republish_delay: REPUBLISH_DELAY,
             enable_publish: true,
+            filter: None,
         }
     }
 }
@@ -199,6 +201,12 @@ impl Builder {
         self
     }
 
+    /// Sets a filter to control which addresses are published by this service.
+    pub fn set_addr_filter(mut self, filter: Option<AddrFilter>) -> Self {
+        self.filter = filter;
+        self
+    }
+
     /// Builds the address lookup mechanism.
     pub fn build(self) -> Result<DhtAddressLookup, IntoAddressLookupError> {
         if !(self.dht || self.pkarr_relay.is_some()) {
@@ -237,7 +245,8 @@ impl Builder {
             secret_key,
             republish_delay: self.republish_delay,
             task: Default::default(),
-        })))
+        })));
+        todo!("add filter");
     }
 }
 
@@ -247,6 +256,10 @@ impl IntoAddressLookup for Builder {
         endpoint: &Endpoint,
     ) -> Result<impl AddressLookup, IntoAddressLookupError> {
         self.secret_key(endpoint.secret_key().clone()).build()
+    }
+
+    fn with_addr_filter(self, filter: AddrFilter) -> Self {
+        self.set_addr_filter(Some(filter))
     }
 }
 

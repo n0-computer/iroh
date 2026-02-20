@@ -64,7 +64,7 @@ use super::IntoAddressLookup;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddressLookup, EndpointData, EndpointInfo, Error as AddressLookupError,
+        AddrFilter, AddressLookup, EndpointData, EndpointInfo, Error as AddressLookupError,
         IntoAddressLookupError, Item as AddressLookupItem,
     },
 };
@@ -149,6 +149,7 @@ impl Subscribers {
 pub struct MdnsAddressLookupBuilder {
     advertise: bool,
     service_name: String,
+    filter: Option<AddrFilter>,
 }
 
 impl MdnsAddressLookupBuilder {
@@ -157,6 +158,7 @@ impl MdnsAddressLookupBuilder {
         Self {
             advertise: true,
             service_name: N0_SERVICE_NAME.to_string(),
+            filter: None,
         }
     }
 
@@ -181,6 +183,12 @@ impl MdnsAddressLookupBuilder {
         self
     }
 
+    /// Sets a filter to control which addresses are published by this service.
+    pub fn set_addr_filter(mut self, filter: Option<AddrFilter>) -> Self {
+        self.filter = filter;
+        self
+    }
+
     /// Builds an [`MdnsAddressLookup`] instance with the configured settings.
     ///
     /// # Errors
@@ -192,7 +200,8 @@ impl MdnsAddressLookupBuilder {
         self,
         endpoint_id: EndpointId,
     ) -> Result<MdnsAddressLookup, IntoAddressLookupError> {
-        MdnsAddressLookup::new(endpoint_id, self.advertise, self.service_name)
+        MdnsAddressLookup::new(endpoint_id, self.advertise, self.service_name);
+        todo!("add filter");
     }
 }
 
@@ -208,6 +217,10 @@ impl IntoAddressLookup for MdnsAddressLookupBuilder {
         endpoint: &Endpoint,
     ) -> Result<impl AddressLookup, IntoAddressLookupError> {
         self.build(endpoint.id())
+    }
+
+    fn with_addr_filter(self, filter: AddrFilter) -> Self {
+        self.set_addr_filter(Some(filter))
     }
 }
 
