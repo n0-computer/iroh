@@ -72,6 +72,9 @@ struct Inner {
     include_direct_addresses: bool,
     /// Republish delay for the DHT.
     republish_delay: Duration,
+    /// User supplied filter to filter and reorder addresses for publishing
+    // TODO(ramfox): use filter
+    _filter: Option<AddrFilter>,
 }
 
 impl Inner {
@@ -245,8 +248,8 @@ impl Builder {
             secret_key,
             republish_delay: self.republish_delay,
             task: Default::default(),
-        })));
-        todo!("add filter");
+            _filter: self.filter,
+        })))
     }
 }
 

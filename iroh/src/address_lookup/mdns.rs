@@ -95,6 +95,8 @@ pub struct MdnsAddressLookup {
     advertise: bool,
     /// When `local_addrs` changes, we re-publish our info.
     local_addrs: Watchable<Option<EndpointData>>,
+    // TODO(ramfox): use filter
+    _filter: Option<AddrFilter>,
 }
 
 #[derive(Debug)]
@@ -200,8 +202,7 @@ impl MdnsAddressLookupBuilder {
         self,
         endpoint_id: EndpointId,
     ) -> Result<MdnsAddressLookup, IntoAddressLookupError> {
-        MdnsAddressLookup::new(endpoint_id, self.advertise, self.service_name);
-        todo!("add filter");
+        MdnsAddressLookup::new(endpoint_id, self.advertise, self.service_name, self.filter)
     }
 }
 
@@ -262,6 +263,7 @@ impl MdnsAddressLookup {
         endpoint_id: EndpointId,
         advertise: bool,
         service_name: String,
+        filter: Option<AddrFilter>,
     ) -> Result<Self, IntoAddressLookupError> {
         debug!("Creating new Mdns service");
         let (send, mut recv) = mpsc::channel(64);
@@ -437,6 +439,7 @@ impl MdnsAddressLookup {
             sender: send,
             advertise,
             local_addrs,
+            _filter: filter,
         })
     }
 

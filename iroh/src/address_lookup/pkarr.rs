@@ -221,8 +221,8 @@ impl PkarrPublisherBuilder {
             self.republish_interval,
             #[cfg(not(wasm_browser))]
             self.dns_resolver,
-        );
-        todo!("add filter");
+            self.filter,
+        )
     }
 }
 
@@ -295,6 +295,7 @@ impl PkarrPublisher {
         ttl: u32,
         republish_interval: Duration,
         #[cfg(not(wasm_browser))] dns_resolver: Option<DnsResolver>,
+        filter: Option<AddrFilter>,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let endpoint_id = secret_key.public();
@@ -303,11 +304,10 @@ impl PkarrPublisher {
         let pkarr_client = PkarrRelayClient::new(pkarr_relay);
 
         #[cfg(not(wasm_browser))]
-        let pkarr_client = if let Some(dns_resolver) = dns_resolver {
-            PkarrRelayClient::with_dns_resolver(pkarr_relay, dns_resolver)
-        } else {
-            PkarrRelayClient::new(pkarr_relay)
-        };
+        let pkarr_client = PkarrRelayClient::builder(pkarr_relay)
+            .set_dns_resolver(dns_resolver)
+            .set_addr_filter(filter)
+            .build();
 
         let watchable = Watchable::default();
         let service = PublisherService {
@@ -460,18 +460,15 @@ impl PkarrResolverBuilder {
 
     /// Creates a [`PkarrResolver`] from this builder.
     pub fn build(self) -> PkarrResolver {
-        // #[cfg(wasm_browser)]
-        // let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
+        #[cfg(wasm_browser)]
+        let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
 
-        // #[cfg(not(wasm_browser))]
-        // let pkarr_client = if let Some(dns_resolver) = self.dns_resolver {
-        //     PkarrRelayClient::with_dns_resolver(self.pkarr_relay, dns_resolver)
-        // } else {
-        //     PkarrRelayClient::new(self.pkarr_relay)
-        // };
-
-        // PkarrResolver { pkarr_client };
-        todo!("add filter");
+        #[cfg(not(wasm_browser))]
+        let pkarr_client = PkarrRelayClient::builder(self.pkarr_relay)
+            .set_dns_resolver(self.dns_resolver)
+            .set_addr_filter(self.filter)
+            .build();
+        PkarrResolver { pkarr_client }
     }
 }
 
@@ -569,30 +566,79 @@ impl AddressLookup for PkarrResolver {
 pub struct PkarrRelayClient {
     http_client: reqwest::Client,
     pkarr_relay_url: Url,
+    // TODO(ramfox): use filter
+    _filter: Option<AddrFilter>,
+}
+
+/// A builder for the [`PkarrRelayClient`]
+#[derive(Debug, Clone)]
+pub struct PkarrRelayClientBuilder {
+    pkarr_relay_url: Url,
+    filter: Option<AddrFilter>,
+    #[cfg(not(wasm_browser))]
+    dns_relay_resolver: Option<DnsResolver>,
+}
+
+impl PkarrRelayClientBuilder {
+    fn new(pkarr_relay_url: Url) -> Self {
+        Self {
+            pkarr_relay_url,
+            filter: None,
+            dns_relay_resolver: None,
+        }
+    }
+
+    /// Passes an optional DNS resolver for the client to use.
+    #[cfg(not(wasm_browser))]
+    pub fn set_dns_resolver(mut self, dns_resolver: Option<DnsResolver>) -> Self {
+        self.dns_relay_resolver = dns_resolver;
+        self
+    }
+
+    /// Sets a filter to control which addresses are published by this service.
+    pub fn set_addr_filter(mut self, filter: Option<AddrFilter>) -> Self {
+        self.filter = filter;
+        self
+    }
+
+    /// Build a [`PkarrRelayClient`].
+    pub fn build(self) -> PkarrRelayClient {
+        let mut http_client = reqwest_client_builder();
+
+        #[cfg(not(wasm_browser))]
+        if let Some(dns_resolver) = self.dns_relay_resolver {
+            http_client = http_client.dns_resolver(Arc::new(dns_resolver));
+        };
+
+        let http_client = http_client
+            .build()
+            .expect("failed to create request client");
+        PkarrRelayClient {
+            http_client,
+            pkarr_relay_url: self.pkarr_relay_url,
+            _filter: self.filter,
+        }
+    }
 }
 
 impl PkarrRelayClient {
-    /// Creates a new client.
+    /// Create a new [`PkarrRelayClient`] with default settings.
+    ///
+    /// Use the [`PkarrRelayClient::builder`] to get a builder that allows for
+    /// adding custom settings.
     pub fn new(pkarr_relay_url: Url) -> Self {
         Self {
             http_client: reqwest_client_builder()
                 .build()
-                .expect("failed to create reqwest client"),
+                .expect("failed to create request client"),
             pkarr_relay_url,
+            _filter: None,
         }
     }
 
-    /// Creates a new client while passing a DNS resolver to use.
-    #[cfg(not(wasm_browser))]
-    pub fn with_dns_resolver(pkarr_relay_url: Url, dns_resolver: crate::dns::DnsResolver) -> Self {
-        let http_client = reqwest_client_builder()
-            .dns_resolver(Arc::new(dns_resolver))
-            .build()
-            .expect("failed to create request client");
-        Self {
-            http_client,
-            pkarr_relay_url,
-        }
+    /// Create a [`PkarrRelayClientBuilder`].
+    pub fn builder(pkarr_relay_url: Url) -> PkarrRelayClientBuilder {
+        PkarrRelayClientBuilder::new(pkarr_relay_url)
     }
 
     /// Resolves a [`SignedPacket`] for the given [`EndpointId`].

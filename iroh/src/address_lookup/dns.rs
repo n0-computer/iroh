@@ -41,6 +41,8 @@ pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 pub struct DnsAddressLookup {
     origin_domain: String,
     dns_resolver: DnsResolver,
+    // TODO(ramfox): use filter
+    _filter: Option<AddrFilter>,
 }
 
 /// Builder for [`DnsAddressLookup`].
@@ -71,8 +73,8 @@ impl DnsAddressLookupBuilder {
         DnsAddressLookup {
             dns_resolver: self.dns_resolver.unwrap_or_default(),
             origin_domain: self.origin_domain,
-        };
-        todo!("add filter");
+            _filter: self.filter,
+        }
     }
 }
 
