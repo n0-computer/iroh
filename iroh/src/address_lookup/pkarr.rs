@@ -576,6 +576,7 @@ impl PkarrRelayClientBuilder {
     fn new(pkarr_relay_url: Url) -> Self {
         Self {
             pkarr_relay_url,
+            #[cfg(not(wasm_browser))]
             dns_relay_resolver: None,
         }
     }
