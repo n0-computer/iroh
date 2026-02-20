@@ -1687,7 +1687,7 @@
 <a href=#1687 id=1687 data-nosnippet>1687</a>    <span class="kw">use </span>rand::SeedableRng;
 <a href=#1688 id=1688 data-nosnippet>1688</a>    <span class="kw">use </span>rand_chacha::ChaCha8Rng;
 <a href=#1689 id=1689 data-nosnippet>1689</a>    <span class="kw">use </span>tokio::sync::oneshot;
-<a href=#1690 id=1690 data-nosnippet>1690</a>    <span class="kw">use </span>tracing::{Instrument, debug_span, info, info_span, instrument};
+<a href=#1690 id=1690 data-nosnippet>1690</a>    <span class="kw">use </span>tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
 <a href=#1691 id=1691 data-nosnippet>1691</a>
 <a href=#1692 id=1692 data-nosnippet>1692</a>    <span class="kw">use </span><span class="kw">super</span>::Endpoint;
 <a href=#1693 id=1693 data-nosnippet>1693</a>    <span class="kw">use crate</span>::{
@@ -3241,156 +3241,279 @@
 <a href=#3241 id=3241 data-nosnippet>3241</a>        <span class="prelude-val">Ok</span>(())
 <a href=#3242 id=3242 data-nosnippet>3242</a>    }
 <a href=#3243 id=3243 data-nosnippet>3243</a>
-<a href=#3244 id=3244 data-nosnippet>3244</a>    <span class="attr">#[tokio::test]
-<a href=#3245 id=3245 data-nosnippet>3245</a>    #[traced_test]
-<a href=#3246 id=3246 data-nosnippet>3246</a>    </span><span class="kw">async fn </span>test_closed_endpoint_behaviour() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#3247 id=3247 data-nosnippet>3247</a>        <span class="comment">// create endpoint
-<a href=#3248 id=3248 data-nosnippet>3248</a>        // call endpoint.close
-<a href=#3249 id=3249 data-nosnippet>3249</a>        // ensure methods behave in the expected way
-<a href=#3250 id=3250 data-nosnippet>3250</a>        </span><span class="macro">info!</span>(<span class="string">"Creating endpoint"</span>);
-<a href=#3251 id=3251 data-nosnippet>3251</a>        <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#3252 id=3252 data-nosnippet>3252</a>        <span class="kw">let </span>closed = ep.closed();
-<a href=#3253 id=3253 data-nosnippet>3253</a>        <span class="macro">info!</span>(<span class="string">"Closing endpoint"</span>);
-<a href=#3254 id=3254 data-nosnippet>3254</a>        <span class="kw">let </span>now = Instant::now();
-<a href=#3255 id=3255 data-nosnippet>3255</a>        ep.close().<span class="kw">await</span>;
-<a href=#3256 id=3256 data-nosnippet>3256</a>        <span class="macro">info!</span>(<span class="string">"Endpoint closed in {:?}"</span>, now.elapsed());
+<a href=#3244 id=3244 data-nosnippet>3244</a>    <span class="doccomment">/// Tests that correct logs are emitted when connecting two endpoints with same secret keys to a relay.
+<a href=#3245 id=3245 data-nosnippet>3245</a>    </span><span class="attr">#[tokio::test]
+<a href=#3246 id=3246 data-nosnippet>3246</a>    #[traced_test]
+<a href=#3247 id=3247 data-nosnippet>3247</a>    </span><span class="kw">async fn </span>same_endpoint_id_relay() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3248 id=3248 data-nosnippet>3248</a>        <span class="kw">let </span>(relay_map, relay_url, _relay_server_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3249 id=3249 data-nosnippet>3249</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">1u64</span>);
+<a href=#3250 id=3250 data-nosnippet>3250</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#3251 id=3251 data-nosnippet>3251</a>
+<a href=#3252 id=3252 data-nosnippet>3252</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+<a href=#3253 id=3253 data-nosnippet>3253</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
+<a href=#3254 id=3254 data-nosnippet>3254</a>            .bind()
+<a href=#3255 id=3255 data-nosnippet>3255</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"ep-client"</span>))
+<a href=#3256 id=3256 data-nosnippet>3256</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3257 id=3257 data-nosnippet>3257</a>
-<a href=#3258 id=3258 data-nosnippet>3258</a>        <span class="comment">// Assert that the `closed` cancellation token is now cancelled
-<a href=#3259 id=3259 data-nosnippet>3259</a>        </span><span class="macro">assert_eq!</span>(now_or_never(closed), <span class="prelude-val">Some</span>(()));
-<a href=#3260 id=3260 data-nosnippet>3260</a>
-<a href=#3261 id=3261 data-nosnippet>3261</a>        <span class="macro">info!</span>(<span class="string">"Set ALPNS fails silently"</span>);
-<a href=#3262 id=3262 data-nosnippet>3262</a>        ep.set_alpns(<span class="macro">vec!</span>[<span class="string">b"test"</span>.into()]);
-<a href=#3263 id=3263 data-nosnippet>3263</a>
-<a href=#3264 id=3264 data-nosnippet>3264</a>        <span class="macro">info!</span>(<span class="string">"Insert Relay returns None"</span>);
-<a href=#3265 id=3265 data-nosnippet>3265</a>        <span class="kw">let </span>relay_config = <span class="kw">crate</span>::defaults::staging::default_na_east_relay();
-<a href=#3266 id=3266 data-nosnippet>3266</a>        <span class="macro">assert!</span>(
-<a href=#3267 id=3267 data-nosnippet>3267</a>            ep.insert_relay(<span class="string">"localhost:300"</span>.parse()<span class="question-mark">?</span>, Arc::new(relay_config))
-<a href=#3268 id=3268 data-nosnippet>3268</a>                .<span class="kw">await
-<a href=#3269 id=3269 data-nosnippet>3269</a>                </span>.is_none()
-<a href=#3270 id=3270 data-nosnippet>3270</a>        );
+<a href=#3258 id=3258 data-nosnippet>3258</a>        <span class="macro">info!</span>(<span class="string">"client {}"</span>, client.id());
+<a href=#3259 id=3259 data-nosnippet>3259</a>
+<a href=#3260 id=3260 data-nosnippet>3260</a>        <span class="comment">// bind ep1 and wait until connected to relay.
+<a href=#3261 id=3261 data-nosnippet>3261</a>        </span><span class="kw">let </span>ep1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+<a href=#3262 id=3262 data-nosnippet>3262</a>            .secret_key(secret_key.clone())
+<a href=#3263 id=3263 data-nosnippet>3263</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
+<a href=#3264 id=3264 data-nosnippet>3264</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+<a href=#3265 id=3265 data-nosnippet>3265</a>            .bind()
+<a href=#3266 id=3266 data-nosnippet>3266</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"ep1"</span>))
+<a href=#3267 id=3267 data-nosnippet>3267</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3268 id=3268 data-nosnippet>3268</a>        <span class="macro">info!</span>(<span class="string">"ep1 bound {:?}"</span>, ep1.id());
+<a href=#3269 id=3269 data-nosnippet>3269</a>        ep1.online().<span class="kw">await</span>;
+<a href=#3270 id=3270 data-nosnippet>3270</a>        <span class="macro">info!</span>(<span class="string">"ep1 online"</span>);
 <a href=#3271 id=3271 data-nosnippet>3271</a>
-<a href=#3272 id=3272 data-nosnippet>3272</a>        <span class="macro">info!</span>(<span class="string">"Remove Relay returns None"</span>);
-<a href=#3273 id=3273 data-nosnippet>3273</a>        <span class="macro">assert!</span>(ep.remove_relay(<span class="kw-2">&amp;</span><span class="string">"localhost:300"</span>.parse()<span class="question-mark">?</span>).<span class="kw">await</span>.is_none());
-<a href=#3274 id=3274 data-nosnippet>3274</a>
-<a href=#3275 id=3275 data-nosnippet>3275</a>        <span class="macro">info!</span>(<span class="string">"Connecting"</span>);
-<a href=#3276 id=3276 data-nosnippet>3276</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = ChaCha8Rng::seed_from_u64(<span class="number">41</span>);
-<a href=#3277 id=3277 data-nosnippet>3277</a>        <span class="kw">let </span>ep_id = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#3278 id=3278 data-nosnippet>3278</a>
-<a href=#3279 id=3279 data-nosnippet>3279</a>        <span class="comment">// should likely be an error that states that the
-<a href=#3280 id=3280 data-nosnippet>3280</a>        // endpoint is closed instead:
-<a href=#3281 id=3281 data-nosnippet>3281</a>        </span><span class="kw">if let </span>ConnectError::Connect { source, .. } = ep.connect(ep_id, <span class="string">b"test"</span>).<span class="kw">await</span>.unwrap_err()
-<a href=#3282 id=3282 data-nosnippet>3282</a>        {
-<a href=#3283 id=3283 data-nosnippet>3283</a>            <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#3284 id=3284 data-nosnippet>3284</a>                source,
-<a href=#3285 id=3285 data-nosnippet>3285</a>                ConnectWithOptsError::EndpointClosed { .. }
-<a href=#3286 id=3286 data-nosnippet>3286</a>            ));
-<a href=#3287 id=3287 data-nosnippet>3287</a>        } <span class="kw">else </span>{
-<a href=#3288 id=3288 data-nosnippet>3288</a>            <span class="macro">panic!</span>(<span class="string">"unexpected error for connect"</span>);
-<a href=#3289 id=3289 data-nosnippet>3289</a>        }
-<a href=#3290 id=3290 data-nosnippet>3290</a>
-<a href=#3291 id=3291 data-nosnippet>3291</a>        <span class="macro">info!</span>(<span class="string">"Accepting!"</span>);
-<a href=#3292 id=3292 data-nosnippet>3292</a>        <span class="macro">assert!</span>(ep.accept().<span class="kw">await</span>.is_none());
-<a href=#3293 id=3293 data-nosnippet>3293</a>
-<a href=#3294 id=3294 data-nosnippet>3294</a>        <span class="comment">// this should work
-<a href=#3295 id=3295 data-nosnippet>3295</a>        </span><span class="macro">info!</span>(<span class="string">"Addr: {:?}"</span>, ep.addr());
-<a href=#3296 id=3296 data-nosnippet>3296</a>
-<a href=#3297 id=3297 data-nosnippet>3297</a>        <span class="comment">// create watchers to verify they terminate after the endpoint is dropped.
-<a href=#3298 id=3298 data-nosnippet>3298</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>addrs = ep.watch_addr().stream();
-<a href=#3299 id=3299 data-nosnippet>3299</a>        <span class="kw">let </span><span class="kw-2">mut </span>net_reports = ep.net_report().stream();
+<a href=#3272 id=3272 data-nosnippet>3272</a>        <span class="kw">let </span>addr = EndpointAddr::new(secret_key.public()).with_relay_url(relay_url.clone());
+<a href=#3273 id=3273 data-nosnippet>3273</a>
+<a href=#3274 id=3274 data-nosnippet>3274</a>        <span class="macro">tokio::try_join!</span>(
+<a href=#3275 id=3275 data-nosnippet>3275</a>            <span class="kw">async </span>{
+<a href=#3276 id=3276 data-nosnippet>3276</a>                <span class="kw">let </span>conn = client.connect(addr.clone(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3277 id=3277 data-nosnippet>3277</a>                <span class="kw">let </span>reason = conn.closed().<span class="kw">await</span>;
+<a href=#3278 id=3278 data-nosnippet>3278</a>                <span class="macro">assert!</span>(is_application_closed(<span class="kw-2">&amp;</span>reason, <span class="number">1</span>));
+<a href=#3279 id=3279 data-nosnippet>3279</a>                n0_error::Ok(())
+<a href=#3280 id=3280 data-nosnippet>3280</a>            },
+<a href=#3281 id=3281 data-nosnippet>3281</a>            <span class="kw">async </span>{
+<a href=#3282 id=3282 data-nosnippet>3282</a>                <span class="kw">let </span>conn = ep1.accept().<span class="kw">await</span>.unwrap().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3283 id=3283 data-nosnippet>3283</a>                conn.close(<span class="number">1u32</span>.into(), <span class="string">b"bye"</span>);
+<a href=#3284 id=3284 data-nosnippet>3284</a>                n0_error::Ok(())
+<a href=#3285 id=3285 data-nosnippet>3285</a>            }
+<a href=#3286 id=3286 data-nosnippet>3286</a>        )<span class="question-mark">?</span>;
+<a href=#3287 id=3287 data-nosnippet>3287</a>        <span class="macro">info!</span>(<span class="string">"client connected to ep1"</span>);
+<a href=#3288 id=3288 data-nosnippet>3288</a>
+<a href=#3289 id=3289 data-nosnippet>3289</a>        <span class="comment">// now start second endpoint with same secret key
+<a href=#3290 id=3290 data-nosnippet>3290</a>        </span><span class="kw">let </span>ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+<a href=#3291 id=3291 data-nosnippet>3291</a>            .secret_key(secret_key.clone())
+<a href=#3292 id=3292 data-nosnippet>3292</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
+<a href=#3293 id=3293 data-nosnippet>3293</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+<a href=#3294 id=3294 data-nosnippet>3294</a>            .bind()
+<a href=#3295 id=3295 data-nosnippet>3295</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"ep2"</span>))
+<a href=#3296 id=3296 data-nosnippet>3296</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3297 id=3297 data-nosnippet>3297</a>        <span class="macro">info!</span>(<span class="string">"ep2 bound {:?}"</span>, ep2.id());
+<a href=#3298 id=3298 data-nosnippet>3298</a>        ep2.online().<span class="kw">await</span>;
+<a href=#3299 id=3299 data-nosnippet>3299</a>        <span class="macro">println!</span>(<span class="string">"ep2 online"</span>);
 <a href=#3300 id=3300 data-nosnippet>3300</a>
-<a href=#3301 id=3301 data-nosnippet>3301</a>        <span class="comment">// returns None
-<a href=#3302 id=3302 data-nosnippet>3302</a>        </span><span class="kw">let </span>net_report = ep.last_net_report();
-<a href=#3303 id=3303 data-nosnippet>3303</a>        <span class="macro">info!</span>(<span class="string">"last Net report {net_report:?}"</span>);
-<a href=#3304 id=3304 data-nosnippet>3304</a>
-<a href=#3305 id=3305 data-nosnippet>3305</a>        <span class="comment">// this should work
-<a href=#3306 id=3306 data-nosnippet>3306</a>        </span><span class="kw">let </span>sockets = ep.bound_sockets();
-<a href=#3307 id=3307 data-nosnippet>3307</a>        <span class="macro">info!</span>(<span class="string">"Sockets: {sockets:?}"</span>);
-<a href=#3308 id=3308 data-nosnippet>3308</a>
-<a href=#3309 id=3309 data-nosnippet>3309</a>        <span class="comment">// these should return errors
-<a href=#3310 id=3310 data-nosnippet>3310</a>        </span><span class="macro">assert!</span>(ep.dns_resolver().is_err());
-<a href=#3311 id=3311 data-nosnippet>3311</a>        <span class="macro">assert!</span>(ep.address_lookup().is_err());
-<a href=#3312 id=3312 data-nosnippet>3312</a>
-<a href=#3313 id=3313 data-nosnippet>3313</a>        <span class="comment">// this should work
-<a href=#3314 id=3314 data-nosnippet>3314</a>        </span><span class="kw">let </span>metrics = ep.metrics();
-<a href=#3315 id=3315 data-nosnippet>3315</a>        <span class="macro">info!</span>(<span class="string">"Metrics: {metrics:?}"</span>);
-<a href=#3316 id=3316 data-nosnippet>3316</a>
-<a href=#3317 id=3317 data-nosnippet>3317</a>        <span class="comment">// this should return none
-<a href=#3318 id=3318 data-nosnippet>3318</a>        </span><span class="macro">assert!</span>(ep.remote_info(ep_id).<span class="kw">await</span>.is_none());
-<a href=#3319 id=3319 data-nosnippet>3319</a>
-<a href=#3320 id=3320 data-nosnippet>3320</a>        <span class="comment">// this should fail silently
-<a href=#3321 id=3321 data-nosnippet>3321</a>        </span>ep.network_change().<span class="kw">await</span>;
-<a href=#3322 id=3322 data-nosnippet>3322</a>
-<a href=#3323 id=3323 data-nosnippet>3323</a>        <span class="comment">// this should fail silently
-<a href=#3324 id=3324 data-nosnippet>3324</a>        </span>ep.set_user_data_for_address_lookup(<span class="prelude-val">Some</span>(
-<a href=#3325 id=3325 data-nosnippet>3325</a>            UserData::try_from(<span class="string">"TEST"</span>.to_string()).expect(<span class="string">"valid string"</span>),
-<a href=#3326 id=3326 data-nosnippet>3326</a>        ));
-<a href=#3327 id=3327 data-nosnippet>3327</a>        drop(ep);
-<a href=#3328 id=3328 data-nosnippet>3328</a>        <span class="comment">// now that the endpoint is dropped, all watchers should terminate.
-<a href=#3329 id=3329 data-nosnippet>3329</a>        </span>tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), <span class="kw">async </span>{
-<a href=#3330 id=3330 data-nosnippet>3330</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(addr) = addrs.next().<span class="kw">await </span>{
-<a href=#3331 id=3331 data-nosnippet>3331</a>                <span class="macro">info!</span>(<span class="string">"Addrs stream: {addr:?}"</span>);
-<a href=#3332 id=3332 data-nosnippet>3332</a>            }
-<a href=#3333 id=3333 data-nosnippet>3333</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(net_report) = net_reports.next().<span class="kw">await </span>{
-<a href=#3334 id=3334 data-nosnippet>3334</a>                <span class="macro">info!</span>(<span class="string">"Net report stream: {net_report:?}"</span>);
-<a href=#3335 id=3335 data-nosnippet>3335</a>            }
-<a href=#3336 id=3336 data-nosnippet>3336</a>        })
-<a href=#3337 id=3337 data-nosnippet>3337</a>        .<span class="kw">await
-<a href=#3338 id=3338 data-nosnippet>3338</a>        </span>.expect(<span class="string">"watchers not closed"</span>);
-<a href=#3339 id=3339 data-nosnippet>3339</a>
-<a href=#3340 id=3340 data-nosnippet>3340</a>        <span class="macro">info!</span>(<span class="string">"Done!"</span>);
-<a href=#3341 id=3341 data-nosnippet>3341</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3342 id=3342 data-nosnippet>3342</a>    }
-<a href=#3343 id=3343 data-nosnippet>3343</a>
-<a href=#3344 id=3344 data-nosnippet>3344</a>    <span class="attr">#[tokio::test]
-<a href=#3345 id=3345 data-nosnippet>3345</a>    #[traced_test]
-<a href=#3346 id=3346 data-nosnippet>3346</a>    </span><span class="kw">async fn </span>test_closed_endpoint_unpolled_accept_fut() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#3347 id=3347 data-nosnippet>3347</a>        <span class="macro">info!</span>(<span class="string">"Creating endpoint"</span>);
-<a href=#3348 id=3348 data-nosnippet>3348</a>        <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#3349 id=3349 data-nosnippet>3349</a>
-<a href=#3350 id=3350 data-nosnippet>3350</a>        <span class="macro">info!</span>(<span class="string">"Get accept future"</span>);
-<a href=#3351 id=3351 data-nosnippet>3351</a>        <span class="kw">let </span>accept_fut = ep.accept();
-<a href=#3352 id=3352 data-nosnippet>3352</a>
-<a href=#3353 id=3353 data-nosnippet>3353</a>        <span class="macro">info!</span>(<span class="string">"Closing endpoint"</span>);
-<a href=#3354 id=3354 data-nosnippet>3354</a>        <span class="kw">let </span>now = Instant::now();
-<a href=#3355 id=3355 data-nosnippet>3355</a>        tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), ep.close())
-<a href=#3356 id=3356 data-nosnippet>3356</a>            .<span class="kw">await
-<a href=#3357 id=3357 data-nosnippet>3357</a>            </span>.expect(<span class="string">"Endpoint closes in a reasonable time"</span>);
-<a href=#3358 id=3358 data-nosnippet>3358</a>        <span class="macro">info!</span>(<span class="string">"Endpoint closed in {:?}"</span>, now.elapsed());
+<a href=#3301 id=3301 data-nosnippet>3301</a>        <span class="comment">// `online` does not mean that the connection to the home relay was *established*,
+<a href=#3302 id=3302 data-nosnippet>3302</a>        // only that the home relay was *chosen* based on the net report probes.
+<a href=#3303 id=3303 data-nosnippet>3303</a>        // We need to wait for the connection to be established though, to be sure that new packets
+<a href=#3304 id=3304 data-nosnippet>3304</a>        // will be routed to the new endpoint and not to the old endpoint anymore.
+<a href=#3305 id=3305 data-nosnippet>3305</a>        // We don't expose being connected to the home relay on the endpoint currently,
+<a href=#3306 id=3306 data-nosnippet>3306</a>        // so we resort to log assertions.
+<a href=#3307 id=3307 data-nosnippet>3307</a>        // TODO(Frando): Replace once we add a proper API for this.
+<a href=#3308 id=3308 data-nosnippet>3308</a>        </span><span class="kw">let </span>expected_log_line = <span class="macro">format!</span>(
+<a href=#3309 id=3309 data-nosnippet>3309</a>            <span class="string">"ep2:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected"
+<a href=#3310 id=3310 data-nosnippet>3310</a>        </span>);
+<a href=#3311 id=3311 data-nosnippet>3311</a>        tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), <span class="kw">async </span>{
+<a href=#3312 id=3312 data-nosnippet>3312</a>            <span class="kw">while </span>!logs_contain(<span class="kw-2">&amp;</span>expected_log_line) {
+<a href=#3313 id=3313 data-nosnippet>3313</a>                tokio::time::sleep(Duration::from_millis(<span class="number">10</span>)).<span class="kw">await
+<a href=#3314 id=3314 data-nosnippet>3314</a>            </span>}
+<a href=#3315 id=3315 data-nosnippet>3315</a>        })
+<a href=#3316 id=3316 data-nosnippet>3316</a>        .<span class="kw">await
+<a href=#3317 id=3317 data-nosnippet>3317</a>        </span>.std_context(<span class="string">"relay connection did not establish in time"</span>)<span class="question-mark">?</span>;
+<a href=#3318 id=3318 data-nosnippet>3318</a>
+<a href=#3319 id=3319 data-nosnippet>3319</a>        <span class="macro">tokio::try_join!</span>(
+<a href=#3320 id=3320 data-nosnippet>3320</a>            <span class="kw">async </span>{
+<a href=#3321 id=3321 data-nosnippet>3321</a>                <span class="kw">let </span>conn = client.connect(addr.clone(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3322 id=3322 data-nosnippet>3322</a>                <span class="kw">let </span>reason = conn.closed().<span class="kw">await</span>;
+<a href=#3323 id=3323 data-nosnippet>3323</a>                <span class="macro">assert!</span>(is_application_closed(<span class="kw-2">&amp;</span>reason, <span class="number">1</span>));
+<a href=#3324 id=3324 data-nosnippet>3324</a>                n0_error::Ok(())
+<a href=#3325 id=3325 data-nosnippet>3325</a>            },
+<a href=#3326 id=3326 data-nosnippet>3326</a>            <span class="kw">async </span>{
+<a href=#3327 id=3327 data-nosnippet>3327</a>                <span class="kw">let </span>conn = ep2.accept().<span class="kw">await</span>.unwrap().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3328 id=3328 data-nosnippet>3328</a>                conn.close(<span class="number">1u32</span>.into(), <span class="string">b"bye"</span>);
+<a href=#3329 id=3329 data-nosnippet>3329</a>                n0_error::Ok(())
+<a href=#3330 id=3330 data-nosnippet>3330</a>            }
+<a href=#3331 id=3331 data-nosnippet>3331</a>        )<span class="question-mark">?</span>;
+<a href=#3332 id=3332 data-nosnippet>3332</a>        <span class="macro">println!</span>(<span class="string">"client connected to ep2"</span>);
+<a href=#3333 id=3333 data-nosnippet>3333</a>
+<a href=#3334 id=3334 data-nosnippet>3334</a>        <span class="comment">// assert that ep1 did not receive a connection
+<a href=#3335 id=3335 data-nosnippet>3335</a>        </span><span class="macro">assert!</span>(now_or_never(ep1.accept()).is_none());
+<a href=#3336 id=3336 data-nosnippet>3336</a>
+<a href=#3337 id=3337 data-nosnippet>3337</a>        <span class="comment">// We assert that we get the warn log once for endpoint 1, and not at all for endpoint 2.
+<a href=#3338 id=3338 data-nosnippet>3338</a>        </span>logs_assert(|logs| {
+<a href=#3339 id=3339 data-nosnippet>3339</a>            <span class="kw">let </span>expected_line = |line: <span class="kw-2">&amp;</span>str| {
+<a href=#3340 id=3340 data-nosnippet>3340</a>                line.contains(<span class="string">"WARN"</span>) &amp;&amp; line.contains(<span class="string">"Another endpoint connected with the same endpoint id. No more messages will be received"</span>)
+<a href=#3341 id=3341 data-nosnippet>3341</a>            };
+<a href=#3342 id=3342 data-nosnippet>3342</a>            <span class="kw">let </span>count_line_ep1 = logs
+<a href=#3343 id=3343 data-nosnippet>3343</a>                .iter()
+<a href=#3344 id=3344 data-nosnippet>3344</a>                .filter(|line| line.contains(<span class="string">":ep1:"</span>) &amp;&amp; expected_line(line))
+<a href=#3345 id=3345 data-nosnippet>3345</a>                .count();
+<a href=#3346 id=3346 data-nosnippet>3346</a>            <span class="kw">let </span>count_line_ep2 = logs
+<a href=#3347 id=3347 data-nosnippet>3347</a>                .iter()
+<a href=#3348 id=3348 data-nosnippet>3348</a>                .filter(|line| line.contains(<span class="string">":ep2:"</span>) &amp;&amp; expected_line(line))
+<a href=#3349 id=3349 data-nosnippet>3349</a>                .count();
+<a href=#3350 id=3350 data-nosnippet>3350</a>            <span class="kw">if </span>count_line_ep1 == <span class="number">1 </span>&amp;&amp; count_line_ep2 == <span class="number">0 </span>{
+<a href=#3351 id=3351 data-nosnippet>3351</a>                <span class="prelude-val">Ok</span>(())
+<a href=#3352 id=3352 data-nosnippet>3352</a>            } <span class="kw">else </span>{
+<a href=#3353 id=3353 data-nosnippet>3353</a>                <span class="prelude-val">Err</span>(<span class="string">"Logs don't match expectations"</span>.to_string())
+<a href=#3354 id=3354 data-nosnippet>3354</a>            }
+<a href=#3355 id=3355 data-nosnippet>3355</a>        });
+<a href=#3356 id=3356 data-nosnippet>3356</a>        <span class="macro">tokio::join!</span>(ep1.close(), ep2.close(), client.close());
+<a href=#3357 id=3357 data-nosnippet>3357</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3358 id=3358 data-nosnippet>3358</a>    }
 <a href=#3359 id=3359 data-nosnippet>3359</a>
-<a href=#3360 id=3360 data-nosnippet>3360</a>        <span class="macro">info!</span>(<span class="string">"Accept future returns None after the endpoint has closed"</span>);
-<a href=#3361 id=3361 data-nosnippet>3361</a>        <span class="kw">let </span>incoming = accept_fut.<span class="kw">await</span>;
-<a href=#3362 id=3362 data-nosnippet>3362</a>        <span class="macro">assert!</span>(incoming.is_none());
-<a href=#3363 id=3363 data-nosnippet>3363</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3364 id=3364 data-nosnippet>3364</a>    }
-<a href=#3365 id=3365 data-nosnippet>3365</a>
-<a href=#3366 id=3366 data-nosnippet>3366</a>    <span class="attr">#[tokio::test]
-<a href=#3367 id=3367 data-nosnippet>3367</a>    #[traced_test]
-<a href=#3368 id=3368 data-nosnippet>3368</a>    </span><span class="kw">async fn </span>test_closed_endpoint_polled_accept_fut() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#3369 id=3369 data-nosnippet>3369</a>        <span class="macro">info!</span>(<span class="string">"Creating endpoint"</span>);
-<a href=#3370 id=3370 data-nosnippet>3370</a>        <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#3371 id=3371 data-nosnippet>3371</a>
-<a href=#3372 id=3372 data-nosnippet>3372</a>        <span class="macro">info!</span>(<span class="string">"Run an accept task"</span>);
-<a href=#3373 id=3373 data-nosnippet>3373</a>        <span class="kw">let </span>ep2 = ep.clone();
-<a href=#3374 id=3374 data-nosnippet>3374</a>        <span class="kw">let </span>accept_task = tokio::spawn(<span class="kw">async move </span>{
-<a href=#3375 id=3375 data-nosnippet>3375</a>            <span class="macro">info!</span>(<span class="string">"Waiting on Accept"</span>);
-<a href=#3376 id=3376 data-nosnippet>3376</a>            <span class="kw">let </span>res = ep2.accept().<span class="kw">await</span>;
-<a href=#3377 id=3377 data-nosnippet>3377</a>            <span class="macro">info!</span>(<span class="string">"Accept await has returned"</span>);
-<a href=#3378 id=3378 data-nosnippet>3378</a>            res
-<a href=#3379 id=3379 data-nosnippet>3379</a>        });
+<a href=#3360 id=3360 data-nosnippet>3360</a>    <span class="kw">fn </span>is_application_closed(close_reason: <span class="kw-2">&amp;</span>ConnectionError, code: u32) -&gt; bool {
+<a href=#3361 id=3361 data-nosnippet>3361</a>        <span class="macro">matches!</span>(
+<a href=#3362 id=3362 data-nosnippet>3362</a>            close_reason,
+<a href=#3363 id=3363 data-nosnippet>3363</a>            ConnectionError::ApplicationClosed(f) <span class="kw">if </span>f.error_code ==code.into()
+<a href=#3364 id=3364 data-nosnippet>3364</a>        )
+<a href=#3365 id=3365 data-nosnippet>3365</a>    }
+<a href=#3366 id=3366 data-nosnippet>3366</a>
+<a href=#3367 id=3367 data-nosnippet>3367</a>    <span class="attr">#[tokio::test]
+<a href=#3368 id=3368 data-nosnippet>3368</a>    #[traced_test]
+<a href=#3369 id=3369 data-nosnippet>3369</a>    </span><span class="kw">async fn </span>test_closed_endpoint_behaviour() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3370 id=3370 data-nosnippet>3370</a>        <span class="comment">// create endpoint
+<a href=#3371 id=3371 data-nosnippet>3371</a>        // call endpoint.close
+<a href=#3372 id=3372 data-nosnippet>3372</a>        // ensure methods behave in the expected way
+<a href=#3373 id=3373 data-nosnippet>3373</a>        </span><span class="macro">info!</span>(<span class="string">"Creating endpoint"</span>);
+<a href=#3374 id=3374 data-nosnippet>3374</a>        <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3375 id=3375 data-nosnippet>3375</a>        <span class="kw">let </span>closed = ep.closed();
+<a href=#3376 id=3376 data-nosnippet>3376</a>        <span class="macro">info!</span>(<span class="string">"Closing endpoint"</span>);
+<a href=#3377 id=3377 data-nosnippet>3377</a>        <span class="kw">let </span>now = Instant::now();
+<a href=#3378 id=3378 data-nosnippet>3378</a>        ep.close().<span class="kw">await</span>;
+<a href=#3379 id=3379 data-nosnippet>3379</a>        <span class="macro">info!</span>(<span class="string">"Endpoint closed in {:?}"</span>, now.elapsed());
 <a href=#3380 id=3380 data-nosnippet>3380</a>
-<a href=#3381 id=3381 data-nosnippet>3381</a>        <span class="comment">// Try to ensure the accept future is polled at least once.
-<a href=#3382 id=3382 data-nosnippet>3382</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">10</span>)).<span class="kw">await</span>;
+<a href=#3381 id=3381 data-nosnippet>3381</a>        <span class="comment">// Assert that the `closed` cancellation token is now cancelled
+<a href=#3382 id=3382 data-nosnippet>3382</a>        </span><span class="macro">assert_eq!</span>(now_or_never(closed), <span class="prelude-val">Some</span>(()));
 <a href=#3383 id=3383 data-nosnippet>3383</a>
-<a href=#3384 id=3384 data-nosnippet>3384</a>        <span class="macro">info!</span>(<span class="string">"Closing the endpoint"</span>);
-<a href=#3385 id=3385 data-nosnippet>3385</a>        tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), ep.close())
-<a href=#3386 id=3386 data-nosnippet>3386</a>            .<span class="kw">await
-<a href=#3387 id=3387 data-nosnippet>3387</a>            </span>.expect(<span class="string">"Endpoint closes in a reasonable time"</span>);
-<a href=#3388 id=3388 data-nosnippet>3388</a>        <span class="macro">info!</span>(<span class="string">"Endpoint closed"</span>);
-<a href=#3389 id=3389 data-nosnippet>3389</a>
-<a href=#3390 id=3390 data-nosnippet>3390</a>        <span class="macro">info!</span>(<span class="string">"Await the accept task"</span>);
-<a href=#3391 id=3391 data-nosnippet>3391</a>        <span class="kw">let </span>incoming = accept_task.<span class="kw">await</span>.expect(<span class="string">"accept task panicked"</span>);
-<a href=#3392 id=3392 data-nosnippet>3392</a>        <span class="macro">assert!</span>(incoming.is_none());
-<a href=#3393 id=3393 data-nosnippet>3393</a>
-<a href=#3394 id=3394 data-nosnippet>3394</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3395 id=3395 data-nosnippet>3395</a>    }
-<a href=#3396 id=3396 data-nosnippet>3396</a>}</code></pre></div></section></main></body></html>
+<a href=#3384 id=3384 data-nosnippet>3384</a>        <span class="macro">info!</span>(<span class="string">"Set ALPNS fails silently"</span>);
+<a href=#3385 id=3385 data-nosnippet>3385</a>        ep.set_alpns(<span class="macro">vec!</span>[<span class="string">b"test"</span>.into()]);
+<a href=#3386 id=3386 data-nosnippet>3386</a>
+<a href=#3387 id=3387 data-nosnippet>3387</a>        <span class="macro">info!</span>(<span class="string">"Insert Relay returns None"</span>);
+<a href=#3388 id=3388 data-nosnippet>3388</a>        <span class="kw">let </span>relay_config = <span class="kw">crate</span>::defaults::staging::default_na_east_relay();
+<a href=#3389 id=3389 data-nosnippet>3389</a>        <span class="macro">assert!</span>(
+<a href=#3390 id=3390 data-nosnippet>3390</a>            ep.insert_relay(<span class="string">"localhost:300"</span>.parse()<span class="question-mark">?</span>, Arc::new(relay_config))
+<a href=#3391 id=3391 data-nosnippet>3391</a>                .<span class="kw">await
+<a href=#3392 id=3392 data-nosnippet>3392</a>                </span>.is_none()
+<a href=#3393 id=3393 data-nosnippet>3393</a>        );
+<a href=#3394 id=3394 data-nosnippet>3394</a>
+<a href=#3395 id=3395 data-nosnippet>3395</a>        <span class="macro">info!</span>(<span class="string">"Remove Relay returns None"</span>);
+<a href=#3396 id=3396 data-nosnippet>3396</a>        <span class="macro">assert!</span>(ep.remove_relay(<span class="kw-2">&amp;</span><span class="string">"localhost:300"</span>.parse()<span class="question-mark">?</span>).<span class="kw">await</span>.is_none());
+<a href=#3397 id=3397 data-nosnippet>3397</a>
+<a href=#3398 id=3398 data-nosnippet>3398</a>        <span class="macro">info!</span>(<span class="string">"Connecting"</span>);
+<a href=#3399 id=3399 data-nosnippet>3399</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = ChaCha8Rng::seed_from_u64(<span class="number">41</span>);
+<a href=#3400 id=3400 data-nosnippet>3400</a>        <span class="kw">let </span>ep_id = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#3401 id=3401 data-nosnippet>3401</a>
+<a href=#3402 id=3402 data-nosnippet>3402</a>        <span class="comment">// should likely be an error that states that the
+<a href=#3403 id=3403 data-nosnippet>3403</a>        // endpoint is closed instead:
+<a href=#3404 id=3404 data-nosnippet>3404</a>        </span><span class="kw">if let </span>ConnectError::Connect { source, .. } = ep.connect(ep_id, <span class="string">b"test"</span>).<span class="kw">await</span>.unwrap_err()
+<a href=#3405 id=3405 data-nosnippet>3405</a>        {
+<a href=#3406 id=3406 data-nosnippet>3406</a>            <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#3407 id=3407 data-nosnippet>3407</a>                source,
+<a href=#3408 id=3408 data-nosnippet>3408</a>                ConnectWithOptsError::EndpointClosed { .. }
+<a href=#3409 id=3409 data-nosnippet>3409</a>            ));
+<a href=#3410 id=3410 data-nosnippet>3410</a>        } <span class="kw">else </span>{
+<a href=#3411 id=3411 data-nosnippet>3411</a>            <span class="macro">panic!</span>(<span class="string">"unexpected error for connect"</span>);
+<a href=#3412 id=3412 data-nosnippet>3412</a>        }
+<a href=#3413 id=3413 data-nosnippet>3413</a>
+<a href=#3414 id=3414 data-nosnippet>3414</a>        <span class="macro">info!</span>(<span class="string">"Accepting!"</span>);
+<a href=#3415 id=3415 data-nosnippet>3415</a>        <span class="macro">assert!</span>(ep.accept().<span class="kw">await</span>.is_none());
+<a href=#3416 id=3416 data-nosnippet>3416</a>
+<a href=#3417 id=3417 data-nosnippet>3417</a>        <span class="comment">// this should work
+<a href=#3418 id=3418 data-nosnippet>3418</a>        </span><span class="macro">info!</span>(<span class="string">"Addr: {:?}"</span>, ep.addr());
+<a href=#3419 id=3419 data-nosnippet>3419</a>
+<a href=#3420 id=3420 data-nosnippet>3420</a>        <span class="comment">// create watchers to verify they terminate after the endpoint is dropped.
+<a href=#3421 id=3421 data-nosnippet>3421</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>addrs = ep.watch_addr().stream();
+<a href=#3422 id=3422 data-nosnippet>3422</a>        <span class="kw">let </span><span class="kw-2">mut </span>net_reports = ep.net_report().stream();
+<a href=#3423 id=3423 data-nosnippet>3423</a>
+<a href=#3424 id=3424 data-nosnippet>3424</a>        <span class="comment">// returns None
+<a href=#3425 id=3425 data-nosnippet>3425</a>        </span><span class="kw">let </span>net_report = ep.last_net_report();
+<a href=#3426 id=3426 data-nosnippet>3426</a>        <span class="macro">info!</span>(<span class="string">"last Net report {net_report:?}"</span>);
+<a href=#3427 id=3427 data-nosnippet>3427</a>
+<a href=#3428 id=3428 data-nosnippet>3428</a>        <span class="comment">// this should work
+<a href=#3429 id=3429 data-nosnippet>3429</a>        </span><span class="kw">let </span>sockets = ep.bound_sockets();
+<a href=#3430 id=3430 data-nosnippet>3430</a>        <span class="macro">info!</span>(<span class="string">"Sockets: {sockets:?}"</span>);
+<a href=#3431 id=3431 data-nosnippet>3431</a>
+<a href=#3432 id=3432 data-nosnippet>3432</a>        <span class="comment">// these should return errors
+<a href=#3433 id=3433 data-nosnippet>3433</a>        </span><span class="macro">assert!</span>(ep.dns_resolver().is_err());
+<a href=#3434 id=3434 data-nosnippet>3434</a>        <span class="macro">assert!</span>(ep.address_lookup().is_err());
+<a href=#3435 id=3435 data-nosnippet>3435</a>
+<a href=#3436 id=3436 data-nosnippet>3436</a>        <span class="comment">// this should work
+<a href=#3437 id=3437 data-nosnippet>3437</a>        </span><span class="kw">let </span>metrics = ep.metrics();
+<a href=#3438 id=3438 data-nosnippet>3438</a>        <span class="macro">info!</span>(<span class="string">"Metrics: {metrics:?}"</span>);
+<a href=#3439 id=3439 data-nosnippet>3439</a>
+<a href=#3440 id=3440 data-nosnippet>3440</a>        <span class="comment">// this should return none
+<a href=#3441 id=3441 data-nosnippet>3441</a>        </span><span class="macro">assert!</span>(ep.remote_info(ep_id).<span class="kw">await</span>.is_none());
+<a href=#3442 id=3442 data-nosnippet>3442</a>
+<a href=#3443 id=3443 data-nosnippet>3443</a>        <span class="comment">// this should fail silently
+<a href=#3444 id=3444 data-nosnippet>3444</a>        </span>ep.network_change().<span class="kw">await</span>;
+<a href=#3445 id=3445 data-nosnippet>3445</a>
+<a href=#3446 id=3446 data-nosnippet>3446</a>        <span class="comment">// this should fail silently
+<a href=#3447 id=3447 data-nosnippet>3447</a>        </span>ep.set_user_data_for_address_lookup(<span class="prelude-val">Some</span>(
+<a href=#3448 id=3448 data-nosnippet>3448</a>            UserData::try_from(<span class="string">"TEST"</span>.to_string()).expect(<span class="string">"valid string"</span>),
+<a href=#3449 id=3449 data-nosnippet>3449</a>        ));
+<a href=#3450 id=3450 data-nosnippet>3450</a>        drop(ep);
+<a href=#3451 id=3451 data-nosnippet>3451</a>        <span class="comment">// now that the endpoint is dropped, all watchers should terminate.
+<a href=#3452 id=3452 data-nosnippet>3452</a>        </span>tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), <span class="kw">async </span>{
+<a href=#3453 id=3453 data-nosnippet>3453</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(addr) = addrs.next().<span class="kw">await </span>{
+<a href=#3454 id=3454 data-nosnippet>3454</a>                <span class="macro">info!</span>(<span class="string">"Addrs stream: {addr:?}"</span>);
+<a href=#3455 id=3455 data-nosnippet>3455</a>            }
+<a href=#3456 id=3456 data-nosnippet>3456</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(net_report) = net_reports.next().<span class="kw">await </span>{
+<a href=#3457 id=3457 data-nosnippet>3457</a>                <span class="macro">info!</span>(<span class="string">"Net report stream: {net_report:?}"</span>);
+<a href=#3458 id=3458 data-nosnippet>3458</a>            }
+<a href=#3459 id=3459 data-nosnippet>3459</a>        })
+<a href=#3460 id=3460 data-nosnippet>3460</a>        .<span class="kw">await
+<a href=#3461 id=3461 data-nosnippet>3461</a>        </span>.expect(<span class="string">"watchers not closed"</span>);
+<a href=#3462 id=3462 data-nosnippet>3462</a>
+<a href=#3463 id=3463 data-nosnippet>3463</a>        <span class="macro">info!</span>(<span class="string">"Done!"</span>);
+<a href=#3464 id=3464 data-nosnippet>3464</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3465 id=3465 data-nosnippet>3465</a>    }
+<a href=#3466 id=3466 data-nosnippet>3466</a>
+<a href=#3467 id=3467 data-nosnippet>3467</a>    <span class="attr">#[tokio::test]
+<a href=#3468 id=3468 data-nosnippet>3468</a>    #[traced_test]
+<a href=#3469 id=3469 data-nosnippet>3469</a>    </span><span class="kw">async fn </span>test_closed_endpoint_unpolled_accept_fut() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3470 id=3470 data-nosnippet>3470</a>        <span class="macro">info!</span>(<span class="string">"Creating endpoint"</span>);
+<a href=#3471 id=3471 data-nosnippet>3471</a>        <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3472 id=3472 data-nosnippet>3472</a>
+<a href=#3473 id=3473 data-nosnippet>3473</a>        <span class="macro">info!</span>(<span class="string">"Get accept future"</span>);
+<a href=#3474 id=3474 data-nosnippet>3474</a>        <span class="kw">let </span>accept_fut = ep.accept();
+<a href=#3475 id=3475 data-nosnippet>3475</a>
+<a href=#3476 id=3476 data-nosnippet>3476</a>        <span class="macro">info!</span>(<span class="string">"Closing endpoint"</span>);
+<a href=#3477 id=3477 data-nosnippet>3477</a>        <span class="kw">let </span>now = Instant::now();
+<a href=#3478 id=3478 data-nosnippet>3478</a>        tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), ep.close())
+<a href=#3479 id=3479 data-nosnippet>3479</a>            .<span class="kw">await
+<a href=#3480 id=3480 data-nosnippet>3480</a>            </span>.expect(<span class="string">"Endpoint closes in a reasonable time"</span>);
+<a href=#3481 id=3481 data-nosnippet>3481</a>        <span class="macro">info!</span>(<span class="string">"Endpoint closed in {:?}"</span>, now.elapsed());
+<a href=#3482 id=3482 data-nosnippet>3482</a>
+<a href=#3483 id=3483 data-nosnippet>3483</a>        <span class="macro">info!</span>(<span class="string">"Accept future returns None after the endpoint has closed"</span>);
+<a href=#3484 id=3484 data-nosnippet>3484</a>        <span class="kw">let </span>incoming = accept_fut.<span class="kw">await</span>;
+<a href=#3485 id=3485 data-nosnippet>3485</a>        <span class="macro">assert!</span>(incoming.is_none());
+<a href=#3486 id=3486 data-nosnippet>3486</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3487 id=3487 data-nosnippet>3487</a>    }
+<a href=#3488 id=3488 data-nosnippet>3488</a>
+<a href=#3489 id=3489 data-nosnippet>3489</a>    <span class="attr">#[tokio::test]
+<a href=#3490 id=3490 data-nosnippet>3490</a>    #[traced_test]
+<a href=#3491 id=3491 data-nosnippet>3491</a>    </span><span class="kw">async fn </span>test_closed_endpoint_polled_accept_fut() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3492 id=3492 data-nosnippet>3492</a>        <span class="macro">info!</span>(<span class="string">"Creating endpoint"</span>);
+<a href=#3493 id=3493 data-nosnippet>3493</a>        <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3494 id=3494 data-nosnippet>3494</a>
+<a href=#3495 id=3495 data-nosnippet>3495</a>        <span class="macro">info!</span>(<span class="string">"Run an accept task"</span>);
+<a href=#3496 id=3496 data-nosnippet>3496</a>        <span class="kw">let </span>ep2 = ep.clone();
+<a href=#3497 id=3497 data-nosnippet>3497</a>        <span class="kw">let </span>accept_task = tokio::spawn(<span class="kw">async move </span>{
+<a href=#3498 id=3498 data-nosnippet>3498</a>            <span class="macro">info!</span>(<span class="string">"Waiting on Accept"</span>);
+<a href=#3499 id=3499 data-nosnippet>3499</a>            <span class="kw">let </span>res = ep2.accept().<span class="kw">await</span>;
+<a href=#3500 id=3500 data-nosnippet>3500</a>            <span class="macro">info!</span>(<span class="string">"Accept await has returned"</span>);
+<a href=#3501 id=3501 data-nosnippet>3501</a>            res
+<a href=#3502 id=3502 data-nosnippet>3502</a>        });
+<a href=#3503 id=3503 data-nosnippet>3503</a>
+<a href=#3504 id=3504 data-nosnippet>3504</a>        <span class="comment">// Try to ensure the accept future is polled at least once.
+<a href=#3505 id=3505 data-nosnippet>3505</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">10</span>)).<span class="kw">await</span>;
+<a href=#3506 id=3506 data-nosnippet>3506</a>
+<a href=#3507 id=3507 data-nosnippet>3507</a>        <span class="macro">info!</span>(<span class="string">"Closing the endpoint"</span>);
+<a href=#3508 id=3508 data-nosnippet>3508</a>        tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), ep.close())
+<a href=#3509 id=3509 data-nosnippet>3509</a>            .<span class="kw">await
+<a href=#3510 id=3510 data-nosnippet>3510</a>            </span>.expect(<span class="string">"Endpoint closes in a reasonable time"</span>);
+<a href=#3511 id=3511 data-nosnippet>3511</a>        <span class="macro">info!</span>(<span class="string">"Endpoint closed"</span>);
+<a href=#3512 id=3512 data-nosnippet>3512</a>
+<a href=#3513 id=3513 data-nosnippet>3513</a>        <span class="macro">info!</span>(<span class="string">"Await the accept task"</span>);
+<a href=#3514 id=3514 data-nosnippet>3514</a>        <span class="kw">let </span>incoming = accept_task.<span class="kw">await</span>.expect(<span class="string">"accept task panicked"</span>);
+<a href=#3515 id=3515 data-nosnippet>3515</a>        <span class="macro">assert!</span>(incoming.is_none());
+<a href=#3516 id=3516 data-nosnippet>3516</a>
+<a href=#3517 id=3517 data-nosnippet>3517</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3518 id=3518 data-nosnippet>3518</a>    }
+<a href=#3519 id=3519 data-nosnippet>3519</a>}</code></pre></div></section></main></body></html>
