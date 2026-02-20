@@ -68,13 +68,10 @@ struct Inner {
     relay_url: Option<Url>,
     /// Time-to-live value for the DNS packets.
     ttl: u32,
-    /// True to include the direct addresses in the DNS packet.
-    include_direct_addresses: bool,
     /// Republish delay for the DHT.
     republish_delay: Duration,
     /// User supplied filter to filter and reorder addresses for publishing
-    // TODO(ramfox): use filter
-    _filter: Option<AddrFilter>,
+    filter: Option<AddrFilter>,
 }
 
 impl Inner {
@@ -118,7 +115,6 @@ pub struct Builder {
     ttl: Option<u32>,
     pkarr_relay: Option<Url>,
     dht: bool,
-    include_direct_addresses: bool,
     republish_delay: Duration,
     enable_publish: bool,
     filter: Option<AddrFilter>,
@@ -132,7 +128,6 @@ impl Default for Builder {
             ttl: None,
             pkarr_relay: None,
             dht: true,
-            include_direct_addresses: false,
             republish_delay: REPUBLISH_DELAY,
             enable_publish: true,
             filter: None,
@@ -186,12 +181,6 @@ impl Builder {
         self
     }
 
-    /// Sets whether to include the direct addresses in the DNS packet.
-    pub fn include_direct_addresses(mut self, include_direct_addresses: bool) -> Self {
-        self.include_direct_addresses = include_direct_addresses;
-        self
-    }
-
     /// Sets the republish delay for the DHT.
     pub fn republish_delay(mut self, republish_delay: Duration) -> Self {
         self.republish_delay = republish_delay;
@@ -237,18 +226,16 @@ impl Builder {
             }
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
-        let include_direct_addresses = self.include_direct_addresses;
         let secret_key = self.secret_key.filter(|_| self.enable_publish);
 
         Ok(DhtAddressLookup(Arc::new(Inner {
             pkarr,
             ttl,
             relay_url: self.pkarr_relay,
-            include_direct_addresses,
             secret_key,
             republish_delay: self.republish_delay,
             task: Default::default(),
-            _filter: self.filter,
+            filter: self.filter,
         })))
     }
 }
@@ -312,15 +299,21 @@ impl AddressLookup for DhtAddressLookup {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
-        if !data.has_addrs() {
+
+        // apply user-supplied filter
+        let addrs = match self.0.filter {
+            None => data.addrs().cloned().collect(),
+            Some(ref filter) => data.filtered_addrs(filter.clone()),
+        };
+
+        if !addrs.is_empty() {
             tracing::debug!("no relay url or direct addresses in endpoint data, not publishing");
             return;
         }
+
         tracing::debug!("publishing {data:?}");
-        let mut info = EndpointInfo::from_parts(keypair.public(), data.clone());
-        if !self.0.include_direct_addresses {
-            info.clear_ip_addrs();
-        }
+        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
+        let info = EndpointInfo::from_parts(keypair.public(), data.clone());
         let Ok(signed_packet) = info.to_pkarr_signed_packet(keypair, self.0.ttl) else {
             tracing::warn!("failed to create signed packet");
             return;

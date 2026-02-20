@@ -266,6 +266,7 @@ impl IntoAddressLookup for PkarrPublisherBuilder {
 pub struct PkarrPublisher {
     endpoint_id: EndpointId,
     watchable: Watchable<Option<EndpointInfo>>,
+    filter: Option<AddrFilter>,
     _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
 
@@ -306,7 +307,6 @@ impl PkarrPublisher {
         #[cfg(not(wasm_browser))]
         let pkarr_client = PkarrRelayClient::builder(pkarr_relay)
             .set_dns_resolver(dns_resolver)
-            .set_addr_filter(filter)
             .build();
 
         let watchable = Watchable::default();
@@ -325,6 +325,7 @@ impl PkarrPublisher {
         Self {
             watchable,
             endpoint_id,
+            filter,
             _drop_guard: Arc::new(AbortOnDropHandle::new(join_handle)),
         }
     }
@@ -347,11 +348,14 @@ impl PkarrPublisher {
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_endpoint_data(&self, data: &EndpointData) {
-        let mut data = data.clone();
-        if data.relay_urls().next().is_some() {
-            // If relay url is set: only publish relay url, and no  addrs.
-            data.clear_ip_addrs();
-        }
+        let data = match self.filter {
+            None => data.clone(),
+            Some(ref filter) => {
+                let addrs = data.filtered_addrs(filter.clone());
+                debug!(addrs = ?addrs, "Applied address filter to endpoint data");
+                EndpointData::new(addrs).with_user_data(data.user_data().cloned())
+            }
+        };
         let info = EndpointInfo::from_parts(self.endpoint_id, data);
         self.watchable.set(Some(info)).ok();
     }
@@ -441,7 +445,6 @@ pub struct PkarrResolverBuilder {
     pkarr_relay: Url,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
-    filter: Option<AddrFilter>,
 }
 
 impl PkarrResolverBuilder {
@@ -449,12 +452,6 @@ impl PkarrResolverBuilder {
     #[cfg(not(wasm_browser))]
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
         self.dns_resolver = Some(dns_resolver);
-        self
-    }
-
-    /// Sets a filter to control which addresses are published by this service
-    pub fn set_addr_filter(mut self, filter: Option<AddrFilter>) -> Self {
-        self.filter = filter;
         self
     }
 
@@ -466,7 +463,6 @@ impl PkarrResolverBuilder {
         #[cfg(not(wasm_browser))]
         let pkarr_client = PkarrRelayClient::builder(self.pkarr_relay)
             .set_dns_resolver(self.dns_resolver)
-            .set_addr_filter(self.filter)
             .build();
         PkarrResolver { pkarr_client }
     }
@@ -485,8 +481,9 @@ impl IntoAddressLookup for PkarrResolverBuilder {
         Ok(self.build())
     }
 
-    fn with_addr_filter(self, filter: AddrFilter) -> Self {
-        self.set_addr_filter(Some(filter))
+    /// no-op: resolver does not publish
+    fn with_addr_filter(self, _filter: AddrFilter) -> Self {
+        self
     }
 }
 
@@ -516,7 +513,6 @@ impl PkarrResolver {
             pkarr_relay,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
-            filter: None,
         }
     }
 
@@ -566,15 +562,12 @@ impl AddressLookup for PkarrResolver {
 pub struct PkarrRelayClient {
     http_client: reqwest::Client,
     pkarr_relay_url: Url,
-    // TODO(ramfox): use filter
-    _filter: Option<AddrFilter>,
 }
 
 /// A builder for the [`PkarrRelayClient`]
 #[derive(Debug, Clone)]
 pub struct PkarrRelayClientBuilder {
     pkarr_relay_url: Url,
-    filter: Option<AddrFilter>,
     #[cfg(not(wasm_browser))]
     dns_relay_resolver: Option<DnsResolver>,
 }
@@ -583,7 +576,6 @@ impl PkarrRelayClientBuilder {
     fn new(pkarr_relay_url: Url) -> Self {
         Self {
             pkarr_relay_url,
-            filter: None,
             dns_relay_resolver: None,
         }
     }
@@ -592,12 +584,6 @@ impl PkarrRelayClientBuilder {
     #[cfg(not(wasm_browser))]
     pub fn set_dns_resolver(mut self, dns_resolver: Option<DnsResolver>) -> Self {
         self.dns_relay_resolver = dns_resolver;
-        self
-    }
-
-    /// Sets a filter to control which addresses are published by this service.
-    pub fn set_addr_filter(mut self, filter: Option<AddrFilter>) -> Self {
-        self.filter = filter;
         self
     }
 
@@ -616,7 +602,6 @@ impl PkarrRelayClientBuilder {
         PkarrRelayClient {
             http_client,
             pkarr_relay_url: self.pkarr_relay_url,
-            _filter: self.filter,
         }
     }
 }
@@ -632,7 +617,6 @@ impl PkarrRelayClient {
                 .build()
                 .expect("failed to create request client"),
             pkarr_relay_url,
-            _filter: None,
         }
     }
 

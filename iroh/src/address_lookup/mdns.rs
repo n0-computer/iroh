@@ -95,8 +95,6 @@ pub struct MdnsAddressLookup {
     advertise: bool,
     /// When `local_addrs` changes, we re-publish our info.
     local_addrs: Watchable<Option<EndpointData>>,
-    // TODO(ramfox): use filter
-    _filter: Option<AddrFilter>,
 }
 
 #[derive(Debug)]
@@ -298,6 +296,17 @@ impl MdnsAddressLookup {
                     Ok(Some(data)) = addrs_change.updated() => {
                         tracing::trace!(?data, "Mdns address changed");
                         address_lookup.remove_all();
+
+                        // apply user-supplied filter
+                        let data = match filter {
+                            None => data,
+                            Some(ref filter) => {
+                                let addrs = data.filtered_addrs(filter.clone());
+                                debug!(addrs = ?addrs, "Applied address filter");
+                                EndpointData::new(addrs).with_user_data(data.user_data().cloned())
+                            },
+                        };
+
                         let addrs =
                             MdnsAddressLookup::socketaddrs_to_addrs(data.ip_addrs());
                         for addr in addrs {
@@ -439,7 +448,6 @@ impl MdnsAddressLookup {
             sender: send,
             advertise,
             local_addrs,
-            _filter: filter,
         })
     }
 

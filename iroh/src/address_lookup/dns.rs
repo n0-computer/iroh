@@ -41,8 +41,6 @@ pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 pub struct DnsAddressLookup {
     origin_domain: String,
     dns_resolver: DnsResolver,
-    // TODO(ramfox): use filter
-    _filter: Option<AddrFilter>,
 }
 
 /// Builder for [`DnsAddressLookup`].
@@ -52,7 +50,6 @@ pub struct DnsAddressLookup {
 pub struct DnsAddressLookupBuilder {
     origin_domain: String,
     dns_resolver: Option<DnsResolver>,
-    filter: Option<AddrFilter>,
 }
 
 impl DnsAddressLookupBuilder {
@@ -62,18 +59,11 @@ impl DnsAddressLookupBuilder {
         self
     }
 
-    /// Sets a filter to control which addresses are published by this service.
-    pub fn set_addr_filter(mut self, filter: Option<AddrFilter>) -> Self {
-        self.filter = filter;
-        self
-    }
-
     /// Builds a [`DnsAddressLookup`] with the passed [`DnsResolver`].
     pub fn build(self) -> DnsAddressLookup {
         DnsAddressLookup {
             dns_resolver: self.dns_resolver.unwrap_or_default(),
             origin_domain: self.origin_domain,
-            _filter: self.filter,
         }
     }
 }
@@ -84,7 +74,6 @@ impl DnsAddressLookup {
         DnsAddressLookupBuilder {
             origin_domain,
             dns_resolver: None,
-            filter: None,
         }
     }
 
@@ -117,8 +106,11 @@ impl IntoAddressLookup for DnsAddressLookupBuilder {
         Ok(self.build())
     }
 
-    fn with_addr_filter(self, filter: AddrFilter) -> Self {
-        self.set_addr_filter(Some(filter))
+    fn with_addr_filter(self, _filter: AddrFilter) -> Self
+    where
+        Self: Sized,
+    {
+        self
     }
 }
 

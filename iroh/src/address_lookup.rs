@@ -110,12 +110,10 @@
 //! [`address_lookup::MdnsAddressLookup`]: crate::address_lookup::MdnsAddressLookup
 //! [`MemoryLookup`]: memory::MemoryLookup
 
-use std::{
-    collections::BTreeSet,
-    sync::{Arc, RwLock},
-};
+use std::sync::{Arc, RwLock};
 
-use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
+use iroh_base::{EndpointAddr, EndpointId};
+pub use iroh_relay::endpoint_info::AddrFilter;
 use n0_error::{AnyError, e, stack_error};
 use n0_future::boxed::BoxStream;
 
@@ -333,40 +331,6 @@ impl<T: AddressLookup> AddressLookup for Arc<T> {
 
     fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
         self.as_ref().resolve(endpoint_id)
-    }
-}
-
-/// A filter and/or reordering function applied to transport addresses before publishing.
-///
-/// Takes the full set of transport addresses and returns them as an ordered `Vec`,
-/// allowing both filtering (by omitting addresses) and reordering (by controlling
-/// the output order). A `BTreeSet` cannot preserve a custom order, so the return
-/// type is `Vec` to make reordering possible.
-///
-/// See the documentation for each address lookup implementation for details on
-/// what additional filtering the implementation may perform on top.
-#[derive(Clone)]
-pub struct AddrFilter(
-    Arc<dyn Fn(BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static>,
-);
-
-impl std::fmt::Debug for AddrFilter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AddrFilter").finish_non_exhaustive()
-    }
-}
-
-impl AddrFilter {
-    /// Create a new [`AddrFilter`]
-    pub fn new(
-        f: impl Fn(BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static,
-    ) -> Self {
-        Self(Arc::new(f))
-    }
-
-    /// Apply the address filter function to a set of addresses.
-    pub fn apply(&self, addrs: BTreeSet<TransportAddr>) -> Vec<TransportAddr> {
-        (self.0)(addrs)
     }
 }
 

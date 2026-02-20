@@ -38,6 +38,7 @@ use std::{
     hash::Hash,
     net::SocketAddr,
     str::{FromStr, Utf8Error},
+    sync::Arc,
 };
 
 use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey, TransportAddr};
@@ -209,6 +210,48 @@ impl EndpointData {
     /// Does this have any addresses?
     pub fn has_addrs(&self) -> bool {
         !self.addrs.is_empty()
+    }
+
+    /// Apply the given filter to the current addresses.
+    ///
+    /// Returns a vec to preserve re-ordering of addresses.
+    pub fn filtered_addrs(&self, filter: AddrFilter) -> Vec<TransportAddr> {
+        filter.apply(self.addrs.clone())
+    }
+}
+
+/// A filter and/or reordering function applied to transport addresses,
+/// typically used by AddressLookup services in iroh before publishing.
+///
+/// Takes the full set of transport addresses and returns them as an ordered `Vec`,
+/// allowing both filtering (by omitting addresses) and reordering (by controlling
+/// the output order). A `BTreeSet` cannot preserve a custom order, so the return
+/// type is `Vec` to make reordering possible.
+///
+/// See the documentation for each address lookup implementation for details on
+/// what additional filtering the implementation may perform on top.
+#[derive(Clone)]
+pub struct AddrFilter(
+    Arc<dyn Fn(BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static>,
+);
+
+impl std::fmt::Debug for AddrFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddrFilter").finish_non_exhaustive()
+    }
+}
+
+impl AddrFilter {
+    /// Create a new [`AddrFilter`]
+    pub fn new(
+        f: impl Fn(BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(f))
+    }
+
+    /// Apply the address filter function to a set of addresses.
+    pub fn apply(&self, addrs: BTreeSet<TransportAddr>) -> Vec<TransportAddr> {
+        (self.0)(addrs)
     }
 }
 
