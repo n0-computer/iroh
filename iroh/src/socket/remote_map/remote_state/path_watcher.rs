@@ -261,7 +261,7 @@ impl PathInfo {
 
 /// Watchable for the network paths in a connection.
 ///
-/// This contains a watchable over a [`PathWatchValue`], and a watchable over the selected path for a remote.
+/// This contains a watchable over a [`CloseablePathList`], and a watchable over the selected path for a remote.
 ///
 /// This struct is owned by the [`super::ConnectionState`] and also cloned into the [`Connection`].
 /// Most methods are `pub(super)`. The only method that may be called from [`Connection`] is
