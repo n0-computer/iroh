@@ -1481,25 +1481,27 @@
 <a href=#1481 id=1481 data-nosnippet>1481</a>            }
 <a href=#1482 id=1482 data-nosnippet>1482</a>        );
 <a href=#1483 id=1483 data-nosnippet>1483</a>
-<a href=#1484 id=1484 data-nosnippet>1484</a>        <span class="comment">// Close the client connection.
-<a href=#1485 id=1485 data-nosnippet>1485</a>        </span><span class="macro">info!</span>(<span class="string">"close client conn"</span>);
-<a href=#1486 id=1486 data-nosnippet>1486</a>        conn_client.close(<span class="number">0u32</span>.into(), <span class="string">b""</span>);
-<a href=#1487 id=1487 data-nosnippet>1487</a>
-<a href=#1488 id=1488 data-nosnippet>1488</a>        <span class="comment">// Verify that the path watch streams close shortly after the connection is closed
-<a href=#1489 id=1489 data-nosnippet>1489</a>        </span>tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), <span class="kw">async </span>{
-<a href=#1490 id=1490 data-nosnippet>1490</a>            <span class="kw">while </span>paths_client.next().<span class="kw">await</span>.is_some() {}
-<a href=#1491 id=1491 data-nosnippet>1491</a>        })
-<a href=#1492 id=1492 data-nosnippet>1492</a>        .<span class="kw">await
-<a href=#1493 id=1493 data-nosnippet>1493</a>        </span>.expect(<span class="string">"client paths watcher did not close within 1s of connection close"</span>);
-<a href=#1494 id=1494 data-nosnippet>1494</a>        tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), <span class="kw">async </span>{
-<a href=#1495 id=1495 data-nosnippet>1495</a>            <span class="kw">while </span>paths_client.next().<span class="kw">await</span>.is_some() {}
-<a href=#1496 id=1496 data-nosnippet>1496</a>        })
-<a href=#1497 id=1497 data-nosnippet>1497</a>        .<span class="kw">await
-<a href=#1498 id=1498 data-nosnippet>1498</a>        </span>.expect(<span class="string">"server paths watcher did not close within 1s of connection close"</span>);
-<a href=#1499 id=1499 data-nosnippet>1499</a>
-<a href=#1500 id=1500 data-nosnippet>1500</a>        server.close().<span class="kw">await</span>;
-<a href=#1501 id=1501 data-nosnippet>1501</a>        client.close().<span class="kw">await</span>;
-<a href=#1502 id=1502 data-nosnippet>1502</a>
-<a href=#1503 id=1503 data-nosnippet>1503</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1504 id=1504 data-nosnippet>1504</a>    }
-<a href=#1505 id=1505 data-nosnippet>1505</a>}</code></pre></div></section></main></body></html>
+<a href=#1484 id=1484 data-nosnippet>1484</a>        tokio::time::pause();
+<a href=#1485 id=1485 data-nosnippet>1485</a>
+<a href=#1486 id=1486 data-nosnippet>1486</a>        <span class="comment">// Close the client connection.
+<a href=#1487 id=1487 data-nosnippet>1487</a>        </span><span class="macro">info!</span>(<span class="string">"close client conn"</span>);
+<a href=#1488 id=1488 data-nosnippet>1488</a>        conn_client.close(<span class="number">0u32</span>.into(), <span class="string">b""</span>);
+<a href=#1489 id=1489 data-nosnippet>1489</a>
+<a href=#1490 id=1490 data-nosnippet>1490</a>        <span class="comment">// Verify that the path watch streams close shortly after the connection is closed
+<a href=#1491 id=1491 data-nosnippet>1491</a>        </span>tokio::time::timeout(Duration::from_nanos(<span class="number">1</span>), <span class="kw">async </span>{
+<a href=#1492 id=1492 data-nosnippet>1492</a>            <span class="kw">while </span>paths_client.next().<span class="kw">await</span>.is_some() {}
+<a href=#1493 id=1493 data-nosnippet>1493</a>        })
+<a href=#1494 id=1494 data-nosnippet>1494</a>        .<span class="kw">await
+<a href=#1495 id=1495 data-nosnippet>1495</a>        </span>.expect(<span class="string">"client paths watcher did not close within 1s of connection close"</span>);
+<a href=#1496 id=1496 data-nosnippet>1496</a>        tokio::time::timeout(Duration::from_nanos(<span class="number">1</span>), <span class="kw">async </span>{
+<a href=#1497 id=1497 data-nosnippet>1497</a>            <span class="kw">while </span>paths_client.next().<span class="kw">await</span>.is_some() {}
+<a href=#1498 id=1498 data-nosnippet>1498</a>        })
+<a href=#1499 id=1499 data-nosnippet>1499</a>        .<span class="kw">await
+<a href=#1500 id=1500 data-nosnippet>1500</a>        </span>.expect(<span class="string">"server paths watcher did not close within 1s of connection close"</span>);
+<a href=#1501 id=1501 data-nosnippet>1501</a>
+<a href=#1502 id=1502 data-nosnippet>1502</a>        server.close().<span class="kw">await</span>;
+<a href=#1503 id=1503 data-nosnippet>1503</a>        client.close().<span class="kw">await</span>;
+<a href=#1504 id=1504 data-nosnippet>1504</a>
+<a href=#1505 id=1505 data-nosnippet>1505</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1506 id=1506 data-nosnippet>1506</a>    }
+<a href=#1507 id=1507 data-nosnippet>1507</a>}</code></pre></div></section></main></body></html>
