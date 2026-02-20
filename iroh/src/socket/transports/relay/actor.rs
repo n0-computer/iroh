@@ -317,7 +317,7 @@ impl ActiveRelayActor {
         let mut backoff = Self::build_backoff();
 
         while let Err(err) = self.run_once().await {
-            warn!("{err}");
+            warn!("{err:#}");
             match err {
                 RelayConnectionError::Dial { .. } | RelayConnectionError::Handshake { .. } => {
                     // If dialing failed, or if the relay connection failed before we received a pong,
