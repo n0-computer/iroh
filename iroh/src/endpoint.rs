@@ -30,8 +30,11 @@ use url::Url;
 
 use self::hooks::EndpointHooksList;
 pub use super::socket::{
-    BindError, DirectAddr, DirectAddrType, PathInfo,
-    remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
+    BindError, DirectAddr, DirectAddrType,
+    remote_map::{
+        PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, Source,
+        TransportAddrInfo, TransportAddrUsage,
+    },
 };
 #[cfg(wasm_browser)]
 use crate::address_lookup::PkarrResolver;
@@ -1677,15 +1680,14 @@ mod tests {
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_relay::endpoint_info::UserData;
     use n0_error::{AnyError as Error, Result, StdResultExt};
-    use n0_future::{
-        BufferedStreamExt, StreamExt, future::now_or_never, stream, task::AbortOnDropHandle, time,
-    };
+    use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
+    use quinn::PathStats;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use tokio::sync::oneshot;
-    use tracing::{Instrument, debug_span, info, info_span, instrument};
+    use tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
 
     use super::Endpoint;
     use crate::{
@@ -1693,7 +1695,7 @@ mod tests {
         address_lookup::memory::MemoryLookup,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectError, ConnectOptions,
-            ConnectWithOptsError, Connection, ConnectionError, PathInfo,
+            ConnectWithOptsError, Connection, ConnectionError, PathWatcher,
         },
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
@@ -2193,7 +2195,7 @@ mod tests {
             info!("Waiting for connection");
             'outer: while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
-                for info in infos {
+                for info in infos.iter() {
                     if info.is_ip() {
                         panic!("should not happen: {:?}", info);
                     }
@@ -3152,15 +3154,17 @@ mod tests {
         ));
         let transfer_size = 1_000_000;
 
-        async fn collect_path_infos(conn: Connection) -> BTreeMap<TransportAddr, PathInfo> {
-            let mut path_infos = BTreeMap::new();
-            let mut paths = conn.paths().stream();
-            while let Some(path_list) = paths.next().await {
-                for path in path_list {
-                    path_infos.insert(path.remote_addr().clone(), path);
-                }
-            }
-            path_infos
+        fn collect_stats(mut watcher: PathWatcher) -> BTreeMap<TransportAddr, PathStats> {
+            watcher
+                .get()
+                .iter()
+                .map(|info| {
+                    (
+                        info.remote_addr().clone(),
+                        info.stats().expect("conn is not yet dropped"),
+                    )
+                })
+                .collect()
         }
 
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
@@ -3178,49 +3182,49 @@ mod tests {
         let server_task = tokio::spawn(async move {
             let incoming = server.accept().await.anyerr()?;
             let conn = incoming.await.anyerr()?;
-            let stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
+            let watcher = conn.paths();
             let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
             let msg = recv.read_to_end(transfer_size).await.anyerr()?;
             send.write_all(&msg).await.anyerr()?;
             send.finish().anyerr()?;
             conn.closed().await;
-            let stats = stats_task.await.std_context("server stats task failed")?;
+            let stats = collect_stats(watcher);
             Ok::<_, Error>(stats)
         });
 
         let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
+        let watcher = conn.paths();
         let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
         send.write_all(&vec![42u8; transfer_size]).await.anyerr()?;
         send.finish().anyerr()?;
         recv.read_to_end(transfer_size).await.anyerr()?;
         conn.close(0u32.into(), b"thanks, bye!");
         client.close().await;
-        let client_stats = stats_task.await.std_context("client stats task failed")?;
+        let client_stats = collect_stats(watcher);
         let server_stats = server_task.await.anyerr()??;
 
         info!("client stats: {client_stats:#?}");
         info!("server stats: {server_stats:#?}");
 
         let client_total_relay_tx = client_stats
-            .values()
-            .filter(|p| p.is_relay())
-            .map(|p| p.stats().udp_tx.bytes)
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_tx.bytes)
             .sum::<u64>();
         let client_total_relay_rx = client_stats
-            .values()
-            .filter(|p| p.is_relay())
-            .map(|p| p.stats().udp_rx.bytes)
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_rx.bytes)
             .sum::<u64>();
         let server_total_relay_tx = server_stats
-            .values()
-            .filter(|p| p.is_relay())
-            .map(|p| p.stats().udp_tx.bytes)
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_tx.bytes)
             .sum::<u64>();
         let server_total_relay_rx = server_stats
-            .values()
-            .filter(|p| p.is_relay())
-            .map(|p| p.stats().udp_rx.bytes)
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_rx.bytes)
             .sum::<u64>();
 
         info!(?client_total_relay_tx, "total");
@@ -3235,6 +3239,129 @@ mod tests {
         assert!(server_total_relay_rx < transfer_size as u64 / 2);
 
         Ok(())
+    }
+
+    /// Tests that correct logs are emitted when connecting two endpoints with same secret keys to a relay.
+    #[tokio::test]
+    #[traced_test]
+    async fn same_endpoint_id_relay() -> Result {
+        let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
+        let secret_key = SecretKey::generate(&mut rng);
+
+        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .bind()
+            .instrument(error_span!("ep-client"))
+            .await?;
+
+        info!("client {}", client.id());
+
+        // bind ep1 and wait until connected to relay.
+        let ep1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+            .secret_key(secret_key.clone())
+            .insecure_skip_relay_cert_verify(true)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .instrument(error_span!("ep1"))
+            .await?;
+        info!("ep1 bound {:?}", ep1.id());
+        ep1.online().await;
+        info!("ep1 online");
+
+        let addr = EndpointAddr::new(secret_key.public()).with_relay_url(relay_url.clone());
+
+        tokio::try_join!(
+            async {
+                let conn = client.connect(addr.clone(), TEST_ALPN).await?;
+                let reason = conn.closed().await;
+                assert!(is_application_closed(&reason, 1));
+                n0_error::Ok(())
+            },
+            async {
+                let conn = ep1.accept().await.unwrap().await?;
+                conn.close(1u32.into(), b"bye");
+                n0_error::Ok(())
+            }
+        )?;
+        info!("client connected to ep1");
+
+        // now start second endpoint with same secret key
+        let ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+            .secret_key(secret_key.clone())
+            .insecure_skip_relay_cert_verify(true)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .instrument(error_span!("ep2"))
+            .await?;
+        info!("ep2 bound {:?}", ep2.id());
+        ep2.online().await;
+        println!("ep2 online");
+
+        // `online` does not mean that the connection to the home relay was *established*,
+        // only that the home relay was *chosen* based on the net report probes.
+        // We need to wait for the connection to be established though, to be sure that new packets
+        // will be routed to the new endpoint and not to the old endpoint anymore.
+        // We don't expose being connected to the home relay on the endpoint currently,
+        // so we resort to log assertions.
+        // TODO(Frando): Replace once we add a proper API for this.
+        let expected_log_line = format!(
+            "ep2:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected"
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !logs_contain(&expected_log_line) {
+                tokio::time::sleep(Duration::from_millis(10)).await
+            }
+        })
+        .await
+        .std_context("relay connection did not establish in time")?;
+
+        tokio::try_join!(
+            async {
+                let conn = client.connect(addr.clone(), TEST_ALPN).await?;
+                let reason = conn.closed().await;
+                assert!(is_application_closed(&reason, 1));
+                n0_error::Ok(())
+            },
+            async {
+                let conn = ep2.accept().await.unwrap().await?;
+                conn.close(1u32.into(), b"bye");
+                n0_error::Ok(())
+            }
+        )?;
+        println!("client connected to ep2");
+
+        // assert that ep1 did not receive a connection
+        assert!(now_or_never(ep1.accept()).is_none());
+
+        // We assert that we get the warn log once for endpoint 1, and not at all for endpoint 2.
+        logs_assert(|logs| {
+            let expected_line = |line: &str| {
+                line.contains("WARN") && line.contains("Another endpoint connected with the same endpoint id. No more messages will be received")
+            };
+            let count_line_ep1 = logs
+                .iter()
+                .filter(|line| line.contains(":ep1:") && expected_line(line))
+                .count();
+            let count_line_ep2 = logs
+                .iter()
+                .filter(|line| line.contains(":ep2:") && expected_line(line))
+                .count();
+            if count_line_ep1 == 1 && count_line_ep2 == 0 {
+                Ok(())
+            } else {
+                Err("Logs don't match expectations".to_string())
+            }
+        });
+        tokio::join!(ep1.close(), ep2.close(), client.close());
+        Ok(())
+    }
+
+    fn is_application_closed(close_reason: &ConnectionError, code: u32) -> bool {
+        matches!(
+            close_reason,
+            ConnectionError::ApplicationClosed(f) if f.error_code ==code.into()
+        )
     }
 
     #[tokio::test]
