@@ -16,8 +16,9 @@ use tracing::{Instrument, debug, trace, warn};
 
 use crate::{
     PingTracker,
+    http::ProtocolVersion,
     protos::{
-        relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg},
+        relay::{ClientToRelayMsg, Datagrams, HealthStatus, PING_INTERVAL, RelayToClientMsg},
         streams::BytesStreamSink,
     },
     server::{
@@ -49,6 +50,8 @@ pub struct Config<S> {
     pub write_timeout: Duration,
     /// Channel capacity for internal message queues
     pub channel_capacity: usize,
+    /// Protocol version negotiated for this client
+    pub protocol_version: ProtocolVersion,
 }
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
@@ -69,6 +72,8 @@ pub struct Client {
     packet_queue: mpsc::Sender<Packet>,
     /// Channel to send non-packet messages to the client.
     message_queue: mpsc::Sender<RelayToClientMsg>,
+    /// Relay protocol version negotiated for this client.
+    protocol_version: ProtocolVersion,
 }
 
 impl Client {
@@ -89,6 +94,7 @@ impl Client {
             stream,
             write_timeout,
             channel_capacity,
+            protocol_version,
         } = config;
 
         let (packet_send_queue_s, packet_send_queue_r) = mpsc::channel(channel_capacity);
@@ -123,6 +129,7 @@ impl Client {
             done,
             packet_queue: packet_send_queue_s,
             message_queue: message_send_queue_s,
+            protocol_version,
         }
     }
 
@@ -166,10 +173,19 @@ impl Client {
 
     pub(super) fn try_send_health(
         &self,
-        problem: String,
+        status: HealthStatus,
     ) -> Result<(), TrySendError<RelayToClientMsg>> {
-        self.message_queue
-            .try_send(RelayToClientMsg::Health { problem })
+        let message = match self.protocol_version {
+            ProtocolVersion::V2 => {
+                RelayToClientMsg::Health { status }
+            }
+            ProtocolVersion::V1 => {
+                RelayToClientMsg::V1Health { problem:
+                    "Another endpoint connected with the same endpoint id. No more messages will be received".to_string()
+                }
+            }
+        };
+        self.message_queue.try_send(message)
     }
 }
 
@@ -510,7 +526,12 @@ mod tests {
     use tracing::info;
 
     use super::*;
-    use crate::{client::conn::Conn, protos::common::FrameType};
+    use crate::{
+        client::conn::Conn,
+        http::ProtocolVersion,
+        protos::{common::FrameType, relay::HealthStatus, streams::WsBytesFramed},
+        server::streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
+    };
 
     async fn recv_frame<
         E: std::error::Error + Sync + Send + 'static,
@@ -630,6 +651,139 @@ mod tests {
 
         done.cancel();
         handle.await.std_context("join")?;
+        Ok(())
+    }
+
+    fn test_client_builder(
+        key: EndpointId,
+        protocol_version: ProtocolVersion,
+    ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
+        let (server, client) = tokio::io::duplex(1024);
+        (
+            Config {
+                endpoint_id: key,
+                stream: ServerRelayedStream::test(server),
+                write_timeout: Duration::from_secs(1),
+                channel_capacity: 10,
+                protocol_version,
+            },
+            Conn::test(client),
+        )
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_client_v1_protocol() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
+        let a_key = SecretKey::generate(&mut rng).public();
+        let b_key = SecretKey::generate(&mut rng).public();
+
+        let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V1);
+
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+        clients.register(builder_a, metrics.clone());
+
+        // Verify basic packet delivery works with V1.
+        let data = b"hello world v1!";
+        clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a_rw).await?;
+        assert_eq!(
+            frame,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: b_key,
+                datagrams: data.to_vec().into(),
+            }
+        );
+
+        clients.shutdown().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_client_v2_protocol() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
+        let a_key = SecretKey::generate(&mut rng).public();
+        let b_key = SecretKey::generate(&mut rng).public();
+
+        let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V2);
+
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+        clients.register(builder_a, metrics.clone());
+
+        // Verify basic packet delivery works with V2.
+        let data = b"hello world v2!";
+        clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a_rw).await?;
+        assert_eq!(
+            frame,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: b_key,
+                datagrams: data.to_vec().into(),
+            }
+        );
+
+        clients.shutdown().await;
+        Ok(())
+    }
+
+    /// Test for versioned protocol: v1 client should receive V1Health frame.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_duplicate_endpoint_v1_receives_v1health() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
+        let key = SecretKey::generate(&mut rng).public();
+
+        let (builder_first, mut first_rw) = test_client_builder(key, ProtocolVersion::V1);
+
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+        clients.register(builder_first, metrics.clone());
+
+        // Register a second client with the same endpoint ID.
+        // The first client should receive a V1Health message.
+        let (builder_second, _second_rw) = test_client_builder(key, ProtocolVersion::V1);
+        clients.register(builder_second, metrics.clone());
+
+        let frame = recv_frame(FrameType::V1Health, &mut first_rw).await?;
+        assert!(
+            matches!(frame, RelayToClientMsg::V1Health { .. }),
+            "expected V1Health frame for V1 client, got {frame:?}"
+        );
+
+        clients.shutdown().await;
+        Ok(())
+    }
+
+    /// Test for versioned protocol: v2 client should receive V2Health frame.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_duplicate_endpoint_v2_receives_health() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
+        let key = SecretKey::generate(&mut rng).public();
+
+        let (builder_first, mut first_rw) = test_client_builder(key, ProtocolVersion::V2);
+
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+        clients.register(builder_first, metrics.clone());
+
+        // Register a second client with the same endpoint ID.
+        // The first client should receive a Health message (V2 frame).
+        let (builder_second, _second_rw) = test_client_builder(key, ProtocolVersion::V2);
+        clients.register(builder_second, metrics.clone());
+
+        let frame = recv_frame(FrameType::Health, &mut first_rw).await?;
+        assert_eq!(
+            frame,
+            RelayToClientMsg::Health {
+                status: HealthStatus::SameEndpointIdConnected,
+            }
+        );
+
+        clients.shutdown().await;
         Ok(())
     }
 

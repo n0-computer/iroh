@@ -684,11 +684,17 @@ impl ActiveRelayActor {
                 state.ping_tracker.pong_received(data);
                 state.established = true;
             }
-            RelayToClientMsg::Health { problem } => {
+            RelayToClientMsg::V1Health { problem } => {
                 warn!("Relay server reports problem: {problem}");
+            }
+            RelayToClientMsg::Health { status } => {
+                warn!("Relay server reports problem: {status}");
             }
             RelayToClientMsg::Restarting { .. } => {
                 trace!("Ignoring {msg:?}")
+            }
+            frame @ _ => {
+                trace!("Ignoring {frame}")
             }
         }
     }

@@ -35,7 +35,7 @@ use crate::{
     KeyCache,
     defaults::{DEFAULT_KEY_CACHE_CAPACITY, timeouts::SERVER_WRITE_TIMEOUT},
     http::{
-        CLIENT_AUTH_HEADER, RELAY_PATH, RELAY_PROTOCOL_VERSION, SUPPORTED_WEBSOCKET_VERSION,
+        CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION,
         WEBSOCKET_UPGRADE_PROTOCOL,
     },
     protos::{
@@ -514,7 +514,7 @@ enum RelayUpgradeReqError {
         "invalid header value for {SEC_WEBSOCKET_PROTOCOL}: unsupported relay version: we support {we_support} but you only provide {you_support}"
     )]
     UnsupportedRelayVersion {
-        we_support: &'static str,
+        we_support: String,
         you_support: String,
     },
 }
@@ -568,16 +568,17 @@ impl RelayService {
                     details: "header value is not ascii".to_string()
                 })
             })?;
-        let supports_our_version = subprotocols
-            .split_whitespace()
-            .any(|p| p == RELAY_PROTOCOL_VERSION);
-        ensure!(
-            supports_our_version,
-            RelayUpgradeReqError::UnsupportedRelayVersion {
-                we_support: RELAY_PROTOCOL_VERSION,
-                you_support: subprotocols.to_string()
-            }
-        );
+        let protocol_version = subprotocols
+            .split(",")
+            .map(|s| s.trim())
+            .flat_map(|s| ProtocolVersion::try_from(s).ok())
+            .max()
+            .ok_or_else(|| {
+                e!(RelayUpgradeReqError::UnsupportedRelayVersion {
+                    we_support: ProtocolVersion::all(),
+                    you_support: subprotocols.to_string()
+                })
+            })?;
 
         let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
 
@@ -595,7 +596,11 @@ impl RelayService {
                     Ok(upgraded) => {
                         if let Err(err) = this
                             .0
-                            .relay_connection_handler(upgraded, client_auth_header)
+                            .relay_connection_handler(
+                                upgraded,
+                                client_auth_header,
+                                protocol_version,
+                            )
                             .await
                         {
                             warn!("error accepting upgraded connection: {err:#}",);
@@ -619,10 +624,7 @@ impl RelayService {
                 HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
             )
             .header(SEC_WEBSOCKET_ACCEPT, derive_accept_key(&key))
-            .header(
-                SEC_WEBSOCKET_PROTOCOL,
-                HeaderValue::from_static(RELAY_PROTOCOL_VERSION),
-            )
+            .header(SEC_WEBSOCKET_PROTOCOL, protocol_version.to_header_value())
             .header(CONNECTION, "upgrade")
             .body(body_full("switching to websocket protocol"))
             .expect("valid body"))
@@ -701,6 +703,7 @@ impl Inner {
         &self,
         upgraded: Upgraded,
         client_auth_header: Option<HeaderValue>,
+        protocol_version: ProtocolVersion,
     ) -> Result<(), ConnectionHandlerError> {
         debug!("relay_connection upgraded");
         let (io, read_buf) = downcast_upgrade(upgraded)?;
@@ -708,7 +711,8 @@ impl Inner {
             return Err(e!(ConnectionHandlerError::BufferNotEmpty { buf: read_buf }));
         }
 
-        self.accept(io, client_auth_header).await?;
+        self.accept(io, client_auth_header, protocol_version)
+            .await?;
         Ok(())
     }
 
@@ -726,6 +730,7 @@ impl Inner {
         &self,
         io: MaybeTlsStream,
         client_auth_header: Option<HeaderValue>,
+        protocol_version: ProtocolVersion,
     ) -> Result<(), AcceptError> {
         trace!("accept: start");
 
@@ -760,6 +765,7 @@ impl Inner {
             stream: io,
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+            protocol_version,
         };
         trace!("accept: create client");
         let endpoint_id = client_conn_builder.endpoint_id;
@@ -1253,8 +1259,10 @@ mod tests {
         let public_key_a = key_a.public();
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
-        let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a), None).await });
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(MaybeTlsStream::Test(rw_a), None, Default::default())
+                .await
+        });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.std_context("join")??;
 
@@ -1263,8 +1271,10 @@ mod tests {
         let public_key_b = key_b.public();
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
-        let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b), None).await });
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(MaybeTlsStream::Test(rw_b), None, Default::default())
+                .await
+        });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
 
@@ -1353,8 +1363,10 @@ mod tests {
         let public_key_a = key_a.public();
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
-        let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a), None).await });
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(MaybeTlsStream::Test(rw_a), None, Default::default())
+                .await
+        });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.std_context("join")??;
 
@@ -1363,8 +1375,10 @@ mod tests {
         let public_key_b = key_b.public();
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
-        let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b), None).await });
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(MaybeTlsStream::Test(rw_b), None, Default::default())
+                .await
+        });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
 
@@ -1413,8 +1427,10 @@ mod tests {
         info!("Create client B and connect it to the server");
         let (new_client_b, new_rw_b) = tokio::io::duplex(10);
         let s = service.clone();
-        let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(new_rw_b), None).await });
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(MaybeTlsStream::Test(new_rw_b), None, Default::default())
+                .await
+        });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
 

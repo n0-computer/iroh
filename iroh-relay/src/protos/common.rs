@@ -45,14 +45,24 @@ pub enum FrameType {
     Ping = 9,
     /// 8 byte payload, the contents of ping being replied to
     Pong = 10,
+    /// DEPRECATED - use [`Self::Health`] instead.
     /// Sent from server to client to tell the client if their connection is unhealthy somehow.
     /// Contains only UTF-8 bytes.
-    Health = 11,
+    V1Health = 11,
 
     /// Sent from server to client for the server to declare that it's restarting.
     /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
     /// and how long to try total.
     Restarting = 12,
+
+    /// Sent from server to client to declare the connection health state.
+    ///
+    /// Added in `iroh-relay-v2` protocol. May not be sent to `iroh-relay-v1` clients.
+    ///
+    /// Uses a binary-encoded [`HealthStatus`] payload.
+    ///
+    /// [`HealthStatus`]: super::relay::HealthStatus
+    Health = 13,
 }
 
 #[stack_error(derive, add_meta)]

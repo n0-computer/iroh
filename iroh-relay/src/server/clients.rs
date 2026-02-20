@@ -17,7 +17,10 @@ use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
 use crate::{
-    protos::{relay::Datagrams, streams::BytesStreamSink},
+    protos::{
+        relay::{Datagrams, HealthStatus},
+        streams::BytesStreamSink,
+    },
     server::{client::SendError, metrics::Metrics},
 };
 
@@ -88,7 +91,7 @@ impl Clients {
                     "multiple connections found, deactivating old connection",
                 );
                 old_client
-                    .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string())
+                    .try_send_health(HealthStatus::SameEndpointIdConnected)
                     .ok();
                 state.inactive.push(old_client);
             }
@@ -255,6 +258,7 @@ mod tests {
                 stream: ServerRelayedStream::test(server),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
+                protocol_version: Default::default(),
             },
             Conn::test(client),
         )
