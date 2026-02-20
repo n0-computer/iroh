@@ -30,8 +30,11 @@ use url::Url;
 
 use self::hooks::EndpointHooksList;
 pub use super::socket::{
-    BindError, DirectAddr, DirectAddrType, PathInfo,
-    remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
+    BindError, DirectAddr, DirectAddrType,
+    remote_map::{
+        PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, Source,
+        TransportAddrInfo, TransportAddrUsage,
+    },
 };
 #[cfg(wasm_browser)]
 use crate::address_lookup::PkarrResolver;
@@ -1677,11 +1680,10 @@ mod tests {
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_relay::endpoint_info::UserData;
     use n0_error::{AnyError as Error, Result, StdResultExt};
-    use n0_future::{
-        BufferedStreamExt, StreamExt, future::now_or_never, stream, task::AbortOnDropHandle, time,
-    };
+    use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
+    use quinn::PathStats;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use tokio::sync::oneshot;
@@ -1693,7 +1695,7 @@ mod tests {
         address_lookup::memory::MemoryLookup,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectError, ConnectOptions,
-            ConnectWithOptsError, Connection, ConnectionError, PathInfo,
+            ConnectWithOptsError, Connection, ConnectionError, PathWatcher,
         },
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
@@ -2193,7 +2195,7 @@ mod tests {
             info!("Waiting for connection");
             'outer: while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
-                for info in infos {
+                for info in infos.iter() {
                     if info.is_ip() {
                         panic!("should not happen: {:?}", info);
                     }
@@ -3152,15 +3154,17 @@ mod tests {
         ));
         let transfer_size = 1_000_000;
 
-        async fn collect_path_infos(conn: Connection) -> BTreeMap<TransportAddr, PathInfo> {
-            let mut path_infos = BTreeMap::new();
-            let mut paths = conn.paths().stream();
-            while let Some(path_list) = paths.next().await {
-                for path in path_list {
-                    path_infos.insert(path.remote_addr().clone(), path);
-                }
-            }
-            path_infos
+        fn collect_stats(mut watcher: PathWatcher) -> BTreeMap<TransportAddr, PathStats> {
+            watcher
+                .get()
+                .iter()
+                .map(|info| {
+                    (
+                        info.remote_addr().clone(),
+                        info.stats().expect("conn is not yet dropped"),
+                    )
+                })
+                .collect()
         }
 
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
@@ -3178,49 +3182,49 @@ mod tests {
         let server_task = tokio::spawn(async move {
             let incoming = server.accept().await.anyerr()?;
             let conn = incoming.await.anyerr()?;
-            let stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
+            let watcher = conn.paths();
             let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
             let msg = recv.read_to_end(transfer_size).await.anyerr()?;
             send.write_all(&msg).await.anyerr()?;
             send.finish().anyerr()?;
             conn.closed().await;
-            let stats = stats_task.await.std_context("server stats task failed")?;
+            let stats = collect_stats(watcher);
             Ok::<_, Error>(stats)
         });
 
         let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
+        let watcher = conn.paths();
         let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
         send.write_all(&vec![42u8; transfer_size]).await.anyerr()?;
         send.finish().anyerr()?;
         recv.read_to_end(transfer_size).await.anyerr()?;
         conn.close(0u32.into(), b"thanks, bye!");
         client.close().await;
-        let client_stats = stats_task.await.std_context("client stats task failed")?;
+        let client_stats = collect_stats(watcher);
         let server_stats = server_task.await.anyerr()??;
 
         info!("client stats: {client_stats:#?}");
         info!("server stats: {server_stats:#?}");
 
         let client_total_relay_tx = client_stats
-            .values()
-            .filter(|p| p.is_relay())
-            .map(|p| p.stats().udp_tx.bytes)
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_tx.bytes)
             .sum::<u64>();
         let client_total_relay_rx = client_stats
-            .values()
-            .filter(|p| p.is_relay())
-            .map(|p| p.stats().udp_rx.bytes)
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_rx.bytes)
             .sum::<u64>();
         let server_total_relay_tx = server_stats
-            .values()
-            .filter(|p| p.is_relay())
-            .map(|p| p.stats().udp_tx.bytes)
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_tx.bytes)
             .sum::<u64>();
         let server_total_relay_rx = server_stats
-            .values()
-            .filter(|p| p.is_relay())
-            .map(|p| p.stats().udp_rx.bytes)
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_rx.bytes)
             .sum::<u64>();
 
         info!(?client_total_relay_tx, "total");
