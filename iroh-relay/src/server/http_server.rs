@@ -768,8 +768,7 @@ impl Inner {
         // build and register client, starting up read & write loops for the client
         // connection
         self.clients
-            .register(client_conn_builder, self.metrics.clone())
-            .await;
+            .register(client_conn_builder, self.metrics.clone());
         Ok(())
     }
 }
