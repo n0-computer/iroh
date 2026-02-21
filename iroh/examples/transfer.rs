@@ -977,7 +977,7 @@ impl Output {
     fn emit(&self, event: impl Serialize + fmt::Display) {
         match self.mode {
             OutputMode::Text => println!("{event} {}", self.time()),
-            OutputMode::Json => println!("{}", serde_json::to_string(&event).unwrap()),
+            OutputMode::Json => println!("{}", serde_json::to_string(&Timestamped::now(event)).unwrap()),
         }
     }
 
@@ -992,14 +992,14 @@ impl Output {
             ),
             OutputMode::Json => println!(
                 "{}",
-                serde_json::to_string(&RemoteEvent::new(remote, event)).unwrap()
+                serde_json::to_string(&Timestamped::now(RemoteEvent::new(remote, event))).unwrap()
             ),
         }
     }
 
     fn emit_if_json(&self, event: &impl Serialize) {
         if matches!(self.mode, OutputMode::Json) {
-            println!("{}", serde_json::to_string(&event).unwrap())
+            println!("{}", serde_json::to_string(&Timestamped::now(event)).unwrap())
         }
     }
 }
@@ -1259,6 +1259,19 @@ struct RemoteEvent<T: Serialize + fmt::Display> {
 impl<T: Serialize + fmt::Display> RemoteEvent<T> {
     fn new(remote_id: EndpointId, inner: T) -> Self {
         Self { remote_id, inner }
+    }
+}
+
+#[derive(Serialize)]
+struct Timestamped<T: Serialize> {
+    timestamp: String,
+    #[serde(flatten)]
+    inner: T,
+}
+
+impl<T: Serialize> Timestamped<T> {
+    fn now(inner: T) -> Self {
+        Self { timestamp: chrono::Utc::now().to_rfc3339(), inner }
     }
 }
 
