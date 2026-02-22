@@ -710,6 +710,109 @@ pub enum BindError {
     },
 }
 
+const NETMON_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+fn supports_netmon_polling_fallback(err: &netmon::Error) -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // Linux uses EOPNOTSUPP/ENOTSUP=95 and ENOPROTOOPT=92 for unsupported
+        // netlink multicast group subscriptions in restricted runtimes.
+        const EOPNOTSUPP_OR_ENOTSUP: i32 = 95;
+        const ENOPROTOOPT: i32 = 92;
+
+        let mut current: Option<&(dyn std::error::Error + 'static)> = Some(err);
+        while let Some(source) = current {
+            if let Some(io_err) = source.downcast_ref::<io::Error>()
+                && let Some(code) = io_err.raw_os_error()
+                && (code == EOPNOTSUPP_OR_ENOTSUP || code == ENOPROTOOPT)
+            {
+                return true;
+            }
+            current = source.source();
+        }
+    }
+
+    false
+}
+
+enum NetworkMonitor {
+    Native(netmon::Monitor),
+    PollingFallback {
+        trigger_tx: mpsc::Sender<()>,
+        state: Watchable<netmon::State>,
+        _task: AbortOnDropHandle<()>,
+    },
+}
+
+impl NetworkMonitor {
+    async fn new(shutdown_token: CancellationToken) -> Result<Self, BindError> {
+        match netmon::Monitor::new().await {
+            Ok(monitor) => Ok(Self::Native(monitor)),
+            Err(err) if supports_netmon_polling_fallback(&err) => {
+                warn!(
+                    "netmon monitor creation failed with unsupported socket option; \
+                     falling back to periodic interface polling: {err:#}"
+                );
+                Ok(Self::polling_fallback(shutdown_token).await)
+            }
+            Err(err) => Err(e!(BindError::CreateNetmonMonitor, err)),
+        }
+    }
+
+    async fn polling_fallback(shutdown_token: CancellationToken) -> Self {
+        let state = Watchable::new(netmon::State::new().await);
+        let (trigger_tx, mut trigger_rx) = mpsc::channel(8);
+        let state_updater = state.clone();
+
+        let task = task::spawn(async move {
+            let mut poll_interval = time::interval(NETMON_FALLBACK_POLL_INTERVAL);
+
+            while !shutdown_token.is_cancelled() {
+                tokio::select! {
+                    _ = shutdown_token.cancelled() => {
+                        break;
+                    }
+                    _ = poll_interval.tick() => {}
+                    maybe_trigger = trigger_rx.recv() => {
+                        if maybe_trigger.is_none() {
+                            break;
+                        }
+                    }
+                }
+
+                let new_state = netmon::State::new().await;
+                if new_state != state_updater.get() {
+                    state_updater.set(new_state).ok();
+                }
+            }
+        });
+
+        Self::PollingFallback {
+            trigger_tx,
+            state,
+            _task: AbortOnDropHandle::new(task),
+        }
+    }
+
+    fn interface_state(&self) -> n0_watcher::Direct<netmon::State> {
+        match self {
+            Self::Native(monitor) => monitor.interface_state(),
+            Self::PollingFallback { state, .. } => state.watch(),
+        }
+    }
+
+    async fn network_change(&self) {
+        match self {
+            Self::Native(monitor) => {
+                monitor.network_change().await.ok();
+            }
+            Self::PollingFallback { trigger_tx, .. } => {
+                trigger_tx.send(()).await.ok();
+            }
+        }
+    }
+}
+
 impl EndpointInner {
     /// Creates a [`Socket`].
     async fn new(opts: Options) -> Result<Self, BindError> {
@@ -864,9 +967,7 @@ impl EndpointInner {
         )
         .map_err(|err| e!(BindError::CreateQuicEndpoint, err))?;
 
-        let network_monitor = netmon::Monitor::new()
-            .await
-            .map_err(|err| e!(BindError::CreateNetmonMonitor, err))?;
+        let network_monitor = NetworkMonitor::new(shutdown_token.child_token()).await?;
 
         #[cfg(any(test, feature = "test-utils"))]
         let client_config = if insecure_skip_relay_cert_verify {
@@ -1223,7 +1324,7 @@ struct Actor {
     /// When set, is an AfterFunc timer that will call Socket::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
 
-    network_monitor: netmon::Monitor,
+    network_monitor: NetworkMonitor,
     netmon_watcher: n0_watcher::Direct<netmon::State>,
     network_change_sender: transports::NetworkChangeSender,
     /// Indicates the direct addr update state.
@@ -1406,7 +1507,7 @@ impl Actor {
     async fn handle_actor_message(&mut self, msg: ActorMessage) {
         match msg {
             ActorMessage::NetworkChange => {
-                self.network_monitor.network_change().await.ok();
+                self.network_monitor.network_change().await;
             }
             ActorMessage::RelayMapChange => {
                 self.handle_relay_map_change();
