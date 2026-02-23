@@ -16,7 +16,7 @@ use n0_future::{
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
-use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
+use quinn_proto::{PathError, PathEvent, PathId, PathStatus, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
@@ -100,8 +100,12 @@ type PathEvents = MergeUnbounded<
 type AddrEvents = MergeUnbounded<
     Pin<
         Box<
-            dyn Stream<Item = (ConnId, Result<iroh_hp::Event, BroadcastStreamRecvError>)>
-                + Send
+            dyn Stream<
+                    Item = (
+                        ConnId,
+                        Result<n0_nat_traversal::Event, BroadcastStreamRecvError>,
+                    ),
+                > + Send
                 + Sync,
         >,
     >,
@@ -771,7 +775,7 @@ impl RemoteStateActor {
             }
             Err(err) => {
                 debug!("failed to initiate NAT traversal: {err:#}");
-                use quinn_proto::iroh_hp::Error;
+                use quinn_proto::n0_nat_traversal::Error;
                 match err {
                     Error::Closed
                     | Error::TooManyAddresses
@@ -922,14 +926,14 @@ impl RemoteStateActor {
 
                 self.select_path();
             }
-            PathEvent::Abandoned { id, path_stats } => {
-                trace!(?path_stats, "path abandoned");
+            PathEvent::Discarded { id, path_stats } => {
+                trace!(?path_stats, "path discarded");
                 // This is the last event for this path.
                 if let Some(addr) = conn_state.remove_path(&id) {
                     self.paths.abandoned_path(&addr);
                 }
             }
-            PathEvent::LocallyClosed { id, .. } => {
+            PathEvent::Abandoned { id, reason } => {
                 let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
                     debug!("path not in path_id_map");
                     return;
@@ -938,9 +942,10 @@ impl RemoteStateActor {
                     target: "iroh::_events::path::closed",
                     Level::DEBUG,
                     remote = %self.endpoint_id.fmt_short(),
+                    ?reason,
                     ?path_remote,
                     ?conn_id,
-                    path_id = ?id,
+                    path_id = %id,
                 );
                 conn_state.remove_open_path(&id);
 
