@@ -977,7 +977,10 @@ impl Output {
     fn emit(&self, event: impl Serialize + fmt::Display) {
         match self.mode {
             OutputMode::Text => println!("{event} {}", self.time()),
-            OutputMode::Json => println!("{}", serde_json::to_string(&Timestamped::now(event)).unwrap()),
+            OutputMode::Json => println!(
+                "{}",
+                serde_json::to_string(&Timestamped::now(event)).unwrap()
+            ),
         }
     }
 
@@ -999,7 +1002,10 @@ impl Output {
 
     fn emit_if_json(&self, event: &impl Serialize) {
         if matches!(self.mode, OutputMode::Json) {
-            println!("{}", serde_json::to_string(&Timestamped::now(event)).unwrap())
+            println!(
+                "{}",
+                serde_json::to_string(&Timestamped::now(event)).unwrap()
+            )
         }
     }
 }
@@ -1271,7 +1277,10 @@ struct Timestamped<T: Serialize> {
 
 impl<T: Serialize> Timestamped<T> {
     fn now(inner: T) -> Self {
-        Self { timestamp: chrono::Utc::now().to_rfc3339(), inner }
+        Self {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            inner,
+        }
     }
 }
 
