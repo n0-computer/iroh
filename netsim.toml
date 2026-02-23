@@ -1,0 +1,2 @@
+repo = "https://github.com/n0-computer/iroh.git"
+simulations = "netsim/sims/**"

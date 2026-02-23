@@ -1,0 +1,26 @@
+[[router]]
+name = "dc"
+
+[[router]]
+name     = "lan-provider"
+nat      = "destination-independent"
+
+[[router]]
+name     = "lan-fetcher"
+nat      = "destination-independent"
+
+[[router]]
+name     = "lan-fetcher2"
+nat      = "destination-independent"
+
+[device.relay.eth0]
+gateway = "dc"
+
+[device.provider.eth0]
+gateway = "lan-provider"
+
+[device.fetcher.eth0]
+gateway = "lan-fetcher"
+
+[device.fetcher.eth1]
+gateway = "lan-fetcher2"

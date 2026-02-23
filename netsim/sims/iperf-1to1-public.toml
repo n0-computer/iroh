@@ -1,0 +1,28 @@
+[sim]
+name     = "iperf-1to1-public-baseline"
+topology = "1to1-public"
+
+[[step]]
+action      = "spawn"
+id          = "iperf-server"
+device      = "provider"
+cmd         = ["iperf3", "-s", "-1"]
+ready_after = "1s"
+
+[[step]]
+action = "run"
+id     = "iperf-baseline"
+device = "fetcher"
+parser = "json"
+cmd    = ["iperf3", "-c", "$NETSIM_IP_provider", "-t", "10", "-J"]
+[step.captures.bytes]
+pick = ".end.sum_received.bytes"
+[step.captures.duration_s]
+pick = ".end.sum_received.seconds"
+[step.results]
+duration   = "iperf-baseline.duration_s"
+down_bytes = "iperf-baseline.bytes"
+
+[[step]]
+action = "wait-for"
+id     = "iperf-server"

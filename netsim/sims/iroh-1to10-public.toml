@@ -1,0 +1,132 @@
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[sim]
+name     = "iroh-1to10-public"
+topology = "1to10-public"
+
+[[step]]
+use      = "transfer-provider"
+id       = "provider"
+device   = "provider"
+args     = []
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-0"
+device = "fetcher-0"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-1"
+device = "fetcher-1"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-2"
+device = "fetcher-2"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-3"
+device = "fetcher-3"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-4"
+device = "fetcher-4"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-5"
+device = "fetcher-5"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-6"
+device = "fetcher-6"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-7"
+device = "fetcher-7"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-8"
+device = "fetcher-8"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-9"
+device = "fetcher-9"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-0"
+timeout = "60s"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-1"
+timeout = "60s"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-2"
+timeout = "60s"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-3"
+timeout = "60s"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-4"
+timeout = "60s"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-5"
+timeout = "60s"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-6"
+timeout = "60s"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-7"
+timeout = "60s"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-8"
+timeout = "60s"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-9"
+timeout = "60s"

@@ -1,0 +1,54 @@
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[sim]
+name     = "iroh-1to1-nat-switch"
+topology = "1to1-nat-switch"
+
+[[step]]
+use  = "relay-setup"
+vars = { device = "relay" }
+
+[[step]]
+action    = "link-down"
+device    = "fetcher"
+interface = "eth1"
+
+[[step]]
+use      = "transfer-provider"
+id       = "provider"
+device   = "provider"
+requires = ["relay.ready"]
+args     = ["--relay-url", "https://$NETSIM_IP_relay:3340"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--relay-url",        "https://$NETSIM_IP_relay:3340",
+          "--remote-relay-url", "https://$NETSIM_IP_relay:3340"]
+
+[[step]]
+action   = "wait"
+duration = "5s"
+
+[[step]]
+action    = "link-up"
+device    = "fetcher"
+interface = "eth1"
+
+[[step]]
+action = "set-default-route"
+device = "fetcher"
+to     = "eth1"
+
+[[step]]
+action    = "link-down"
+device    = "fetcher"
+interface = "eth0"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "45s"

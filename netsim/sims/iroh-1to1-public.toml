@@ -1,0 +1,30 @@
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[sim]
+name     = "iroh-1to1-public"
+topology = "1to1-public"
+
+[[step]]
+use      = "transfer-provider"
+id       = "provider"
+device   = "provider"
+args     = []
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "60s"
+
+[[step]]
+action = "assert"
+checks = [
+  "fetcher.size matches [0-9]+",
+]

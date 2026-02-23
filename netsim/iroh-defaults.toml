@@ -1,0 +1,90 @@
+[[prepare]]
+mode         = "build"
+all-features = true
+examples     = ["transfer"]
+bins         = ["iroh-relay"]
+
+[[binary]]
+name    = "transfer"
+mode    = "target"
+example = "transfer"
+
+[[binary]]
+name     = "relay"
+mode     = "target"
+bin      = "iroh-relay"
+
+# ── Relay setup ───────────────────────────────────────────────────────────────
+# Step-group that expands to: gen-certs, gen-file (relay config), spawn relay.
+# Caller supplies: vars.device
+
+[[step-group]]
+name = "relay-setup"
+
+[[step-group.step]]
+kind   = "gen-certs"
+id     = "${group.device}-cert"
+device = "${group.device}"
+
+[[step-group.step]]
+kind    = "gen-file"
+id      = "${group.device}-cfg"
+content = """
+enable_relay               = true
+enable_metrics             = true
+enable_quic_addr_discovery = true
+[tls]
+https_bind_addr  = "0.0.0.0:3340"
+cert_mode        = "Manual"
+manual_cert_path = "${${group.device}-cert.cert_pem_path}"
+manual_key_path  = "${${group.device}-cert.key_pem_path}"
+"""
+
+[[step-group.step]]
+kind        = "spawn"
+id          = "${group.device}"
+device      = "${group.device}"
+cmd         = ["${binary.relay}", "--config-path", "${${group.device}-cfg.path}"]
+env         = { RUST_LOG = "iroh_relay=info" }
+ready_after = "2s"
+[step-group.step.captures.ready]
+pipe  = "stderr"
+regex = "relay: serving on"
+
+# ── Transfer templates ────────────────────────────────────────────────────────
+
+[[step-template]]
+name   = "transfer-provider"
+kind   = "spawn"
+parser = "ndjson"
+cmd    = ["${binary.transfer}", "--output", "json", "provide", "--env", "dev"]
+env    = { RUST_LOG = "iroh=info,iroh::_events=debug" }
+[step-template.captures.endpoint_id]
+match = { kind = "EndpointBound" }
+pick  = ".endpoint_id"
+[step-template.captures.direct_addr]
+match = { kind = "EndpointBound" }
+pick  = ".direct_addresses.0"
+
+[[step-template]]
+name   = "transfer-fetcher"
+kind   = "spawn"
+parser = "ndjson"
+cmd    = ["${binary.transfer}", "--output", "json", "fetch", "--env", "dev"]
+env    = { RUST_LOG = "iroh=info,iroh::_events=debug" }
+# caller appends via args: <endpoint_id> --relay-url <url> etc.
+[step-template.captures.size]
+match = { kind = "DownloadComplete" }
+pick  = ".size"
+[step-template.captures.duration]
+match = { kind = "DownloadComplete" }
+pick  = ".duration"
+[step-template.captures.remote-addr]
+match  = { kind = "ConnectionTypeChanged", status = "Selected" }
+pick   = ".addr"
+[step-template.captures.conn_type]
+match  = { kind = "ConnectionTypeChanged", status = "Selected" }
+pick   = ".conn_type"
+[step-template.results]
+duration   = ".duration"
+down_bytes = ".size"
