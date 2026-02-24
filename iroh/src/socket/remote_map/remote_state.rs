@@ -393,7 +393,7 @@ impl RemoteStateActor {
     fn handle_network_change(&mut self, is_major: bool) {
         for conn in self.connections.values() {
             if let Some(quinn_conn) = conn.handle.upgrade() {
-                for (path_id, addr) in &conn.open_paths {
+                for (path_id, addr) in &conn.paths_by_id {
                     if let Some(path) = quinn_conn.path(*path_id) {
                         // Ping the current path
                         if let Err(err) = path.ping() {
@@ -418,7 +418,7 @@ impl RemoteStateActor {
             let mut is_conn_goodenough = false;
             if let Some(conn) = conn_state.handle.upgrade() {
                 let min_ip_rtt = conn_state
-                    .open_paths
+                    .paths_by_id
                     .iter()
                     .filter_map(|(path_id, addr)| {
                         if addr.is_ip() {
@@ -536,9 +536,8 @@ impl RemoteStateActor {
                 .insert_entry(ConnectionState {
                     handle: handle.clone(),
                     path_watchable: path_watchable.clone(),
-                    paths: Default::default(),
-                    open_paths: Default::default(),
-                    path_ids: Default::default(),
+                    paths_by_id: Default::default(),
+                    paths_by_addr: Default::default(),
                     has_been_direct: false,
                 })
                 .into_mut();
@@ -841,7 +840,7 @@ impl RemoteStateActor {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-            if let Some(&path_id) = conn_state.path_ids.get(open_addr)
+            if let Some(&path_id) = conn_state.paths_by_addr.get(open_addr)
                 && let Some(path) = conn.path(path_id)
             {
                 // We still need to ensure that the path status is set correctly,
@@ -868,7 +867,6 @@ impl RemoteStateActor {
             match fut.path_id() {
                 Some(path_id) => {
                     trace!(?conn_id, %path_id, ?path_status, "opening new path");
-                    conn_state.add_path(open_addr.clone(), path_id);
                     // Just like in the PATH_STATUS comment above, we need to make sure that the
                     // path status is set correctly, even if the path already existed.
                     if let Some(path) = conn.path(path_id) {
@@ -973,7 +971,7 @@ impl RemoteStateActor {
 
                 // If one connection closes this path, close it on all connections.
                 for (conn_id, conn_state) in self.connections.iter_mut() {
-                    let Some(path_id) = conn_state.path_ids.get(&path_remote) else {
+                    let Some(path_id) = conn_state.paths_by_addr.get(&path_remote) else {
                         continue;
                     };
                     let Some(conn) = conn_state.handle.upgrade() else {
@@ -1043,7 +1041,7 @@ impl RemoteStateActor {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-            for (path_id, addr) in conn_state.open_paths.iter() {
+            for (path_id, addr) in conn_state.paths_by_id.iter() {
                 if let Some(stats) = conn.path_stats(*path_id) {
                     all_path_rtts
                         .entry(addr.clone())
@@ -1095,12 +1093,18 @@ impl RemoteStateActor {
 
         for (conn_id, conn_state) in self.connections.iter() {
             for (path_id, path_remote) in conn_state
-                .open_paths
+                .paths_by_id
                 .iter()
                 .filter(|(_, addr)| addr.is_ip())
                 .filter(|(_, addr)| *addr != selected_path)
             {
-                if conn_state.open_paths.values().filter(|a| a.is_ip()).count() <= 1 {
+                if conn_state
+                    .paths_by_id
+                    .values()
+                    .filter(|a| a.is_ip())
+                    .count()
+                    <= 1
+                {
                     continue; // Do not close the last direct path.
                 }
                 if let Some(path) = conn_state
@@ -1275,16 +1279,10 @@ struct ConnectionState {
     handle: WeakConnectionHandle,
     /// The information we publish to users about the paths used in this connection.
     path_watchable: PathWatchable,
-    /// The paths that exist on this connection.
-    ///
-    /// This could be in any state, e.g. while still validating the path or already closed
-    /// but not yet fully removed from the connection.  This exists as long as Quinn knows
-    /// about the [`PathId`].
-    paths: FxHashMap<PathId, transports::Addr>,
-    /// The open paths on this connection, a subset of [`Self::paths`].
-    open_paths: FxHashMap<PathId, transports::Addr>,
-    /// Reverse map of [`Self::paths].
-    path_ids: FxHashMap<transports::Addr, PathId>,
+    /// The open paths that exist on this connection.
+    paths_by_id: FxHashMap<PathId, transports::Addr>,
+    /// Reverse map of [`Self::paths_by_id].
+    paths_by_addr: FxHashMap<transports::Addr, PathId>,
     /// Whether this connection has ever had a direct path.
     ///
     /// Used for recording metrics.
@@ -1298,12 +1296,6 @@ impl Drop for ConnectionState {
 }
 
 impl ConnectionState {
-    /// Tracks a path for the connection.
-    fn add_path(&mut self, remote: transports::Addr, path_id: PathId) {
-        self.paths.insert(path_id, remote.clone());
-        self.path_ids.insert(remote, path_id);
-    }
-
     /// Tracks an open path for the connection.
     fn add_open_path(
         &mut self,
@@ -1319,10 +1311,9 @@ impl ConnectionState {
             self.has_been_direct = true;
             metrics.num_conns_direct.inc();
         }
-        self.paths.insert(path_id, remote.clone());
-        self.open_paths.insert(path_id, remote.clone());
-        self.path_ids.insert(remote.clone(), path_id);
 
+        self.paths_by_id.insert(path_id, remote.clone());
+        self.paths_by_addr.insert(remote.clone(), path_id);
         if let Some(conn) = self.handle.upgrade() {
             self.path_watchable.insert(&conn, path_id, remote.into());
         }
@@ -1330,13 +1321,11 @@ impl ConnectionState {
 
     /// Removes a path from this connection.
     fn remove_path(&mut self, path_id: &PathId) -> Option<transports::Addr> {
-        let addr = self.paths.remove(path_id);
+        let addr = self.paths_by_id.remove(path_id);
         if let Some(ref addr) = addr {
-            self.path_ids.remove(addr);
+            self.paths_by_addr.remove(addr);
         }
-        self.open_paths.remove(path_id);
         self.path_watchable.set_abandoned(*path_id);
-
         addr
     }
 }
