@@ -393,7 +393,7 @@ impl RemoteStateActor {
     fn handle_network_change(&mut self, is_major: bool) {
         for conn in self.connections.values() {
             if let Some(quinn_conn) = conn.handle.upgrade() {
-                for (path_id, addr) in &conn.paths_by_id {
+                for (path_id, addr) in &conn.paths {
                     if let Some(path) = quinn_conn.path(*path_id) {
                         // Ping the current path
                         if let Err(err) = path.ping() {
@@ -418,7 +418,7 @@ impl RemoteStateActor {
             let mut is_conn_goodenough = false;
             if let Some(conn) = conn_state.handle.upgrade() {
                 let min_ip_rtt = conn_state
-                    .paths_by_id
+                    .paths
                     .iter()
                     .filter_map(|(path_id, addr)| {
                         if addr.is_ip() {
@@ -536,7 +536,7 @@ impl RemoteStateActor {
                 .insert_entry(ConnectionState {
                     handle: handle.clone(),
                     path_watchable: path_watchable.clone(),
-                    paths_by_id: Default::default(),
+                    paths: Default::default(),
                     paths_by_addr: Default::default(),
                     has_been_direct: false,
                 })
@@ -1041,7 +1041,7 @@ impl RemoteStateActor {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-            for (path_id, addr) in conn_state.paths_by_id.iter() {
+            for (path_id, addr) in conn_state.paths.iter() {
                 if let Some(stats) = conn.path_stats(*path_id) {
                     all_path_rtts
                         .entry(addr.clone())
@@ -1093,18 +1093,12 @@ impl RemoteStateActor {
 
         for (conn_id, conn_state) in self.connections.iter() {
             for (path_id, path_remote) in conn_state
-                .paths_by_id
+                .paths
                 .iter()
                 .filter(|(_, addr)| addr.is_ip())
                 .filter(|(_, addr)| *addr != selected_path)
             {
-                if conn_state
-                    .paths_by_id
-                    .values()
-                    .filter(|a| a.is_ip())
-                    .count()
-                    <= 1
-                {
+                if conn_state.paths.values().filter(|a| a.is_ip()).count() <= 1 {
                     continue; // Do not close the last direct path.
                 }
                 if let Some(path) = conn_state
@@ -1280,7 +1274,7 @@ struct ConnectionState {
     /// The information we publish to users about the paths used in this connection.
     path_watchable: PathWatchable,
     /// The open paths that exist on this connection.
-    paths_by_id: FxHashMap<PathId, transports::Addr>,
+    paths: FxHashMap<PathId, transports::Addr>,
     /// Reverse map of [`Self::paths_by_id].
     paths_by_addr: FxHashMap<transports::Addr, PathId>,
     /// Whether this connection has ever had a direct path.
@@ -1312,7 +1306,7 @@ impl ConnectionState {
             metrics.num_conns_direct.inc();
         }
 
-        self.paths_by_id.insert(path_id, remote.clone());
+        self.paths.insert(path_id, remote.clone());
         self.paths_by_addr.insert(remote.clone(), path_id);
         if let Some(conn) = self.handle.upgrade() {
             self.path_watchable.insert(&conn, path_id, remote.into());
@@ -1321,7 +1315,7 @@ impl ConnectionState {
 
     /// Removes a path from this connection.
     fn remove_path(&mut self, path_id: &PathId) -> Option<transports::Addr> {
-        let addr = self.paths_by_id.remove(path_id);
+        let addr = self.paths.remove(path_id);
         if let Some(ref addr) = addr {
             self.paths_by_addr.remove(addr);
         }
