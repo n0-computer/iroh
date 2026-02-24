@@ -966,7 +966,7 @@ impl RemoteStateActor {
                     path_id = ?id,
                 );
 
-                // If one connection abandones a path, close it on all connections.
+                // If one connection abandons a path, close it on all connections.
                 for (conn_id, conn_state) in self.connections.iter_mut() {
                     let Some(path_id) = conn_state.paths_by_addr.get(&path_remote) else {
                         continue;
