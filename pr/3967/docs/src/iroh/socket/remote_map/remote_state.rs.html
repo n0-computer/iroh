@@ -948,50 +948,50 @@
 <a href=#948 id=948 data-nosnippet>948</a>
 <a href=#949 id=949 data-nosnippet>949</a>                <span class="self">self</span>.select_path();
 <a href=#950 id=950 data-nosnippet>950</a>            }
-<a href=#951 id=951 data-nosnippet>951</a>            PathEvent::Discarded { id, path_stats } =&gt; {
-<a href=#952 id=952 data-nosnippet>952</a>                <span class="macro">trace!</span>(%id, <span class="question-mark">?</span>path_stats, <span class="string">"path discarded"</span>);
-<a href=#953 id=953 data-nosnippet>953</a>            }
-<a href=#954 id=954 data-nosnippet>954</a>            PathEvent::Abandoned { id, .. } =&gt; {
-<a href=#955 id=955 data-nosnippet>955</a>                <span class="comment">// This is the last event for this path: remove from conn_state.
-<a href=#956 id=956 data-nosnippet>956</a>                </span><span class="kw">let </span><span class="prelude-val">Some</span>(path_remote) = conn_state.remove_path(<span class="kw-2">&amp;</span>id) <span class="kw">else </span>{
-<a href=#957 id=957 data-nosnippet>957</a>                    <span class="macro">debug!</span>(%id, <span class="string">"path not in path_id_map"</span>);
-<a href=#958 id=958 data-nosnippet>958</a>                    <span class="kw">return</span>;
-<a href=#959 id=959 data-nosnippet>959</a>                };
-<a href=#960 id=960 data-nosnippet>960</a>                <span class="comment">// Also remove the path from the remote-global path tracking.
-<a href=#961 id=961 data-nosnippet>961</a>                </span><span class="self">self</span>.paths.abandoned_path(<span class="kw-2">&amp;</span>path_remote);
-<a href=#962 id=962 data-nosnippet>962</a>
-<a href=#963 id=963 data-nosnippet>963</a>                <span class="macro">event!</span>(
-<a href=#964 id=964 data-nosnippet>964</a>                    target: <span class="string">"iroh::_events::path::closed"</span>,
-<a href=#965 id=965 data-nosnippet>965</a>                    Level::DEBUG,
-<a href=#966 id=966 data-nosnippet>966</a>                    remote = %<span class="self">self</span>.endpoint_id.fmt_short(),
-<a href=#967 id=967 data-nosnippet>967</a>                    <span class="question-mark">?</span>path_remote,
-<a href=#968 id=968 data-nosnippet>968</a>                    <span class="question-mark">?</span>conn_id,
-<a href=#969 id=969 data-nosnippet>969</a>                    path_id = <span class="question-mark">?</span>id,
-<a href=#970 id=970 data-nosnippet>970</a>                );
-<a href=#971 id=971 data-nosnippet>971</a>
-<a href=#972 id=972 data-nosnippet>972</a>                <span class="comment">// If one connection closes this path, close it on all connections.
-<a href=#973 id=973 data-nosnippet>973</a>                </span><span class="kw">for </span>(conn_id, conn_state) <span class="kw">in </span><span class="self">self</span>.connections.iter_mut() {
-<a href=#974 id=974 data-nosnippet>974</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>(path_id) = conn_state.paths_by_addr.get(<span class="kw-2">&amp;</span>path_remote) <span class="kw">else </span>{
+<a href=#951 id=951 data-nosnippet>951</a>            PathEvent::Abandoned { id, .. } =&gt; {
+<a href=#952 id=952 data-nosnippet>952</a>                <span class="comment">// Remove abandoned path from the conn state.
+<a href=#953 id=953 data-nosnippet>953</a>                </span><span class="kw">let </span><span class="prelude-val">Some</span>(path_remote) = conn_state.remove_path(<span class="kw-2">&amp;</span>id) <span class="kw">else </span>{
+<a href=#954 id=954 data-nosnippet>954</a>                    <span class="macro">debug!</span>(%id, <span class="string">"path not in path_id_map"</span>);
+<a href=#955 id=955 data-nosnippet>955</a>                    <span class="kw">return</span>;
+<a href=#956 id=956 data-nosnippet>956</a>                };
+<a href=#957 id=957 data-nosnippet>957</a>                <span class="comment">// Also remove the path from the remote-global path tracking.
+<a href=#958 id=958 data-nosnippet>958</a>                </span><span class="self">self</span>.paths.abandoned_path(<span class="kw-2">&amp;</span>path_remote);
+<a href=#959 id=959 data-nosnippet>959</a>
+<a href=#960 id=960 data-nosnippet>960</a>                <span class="macro">event!</span>(
+<a href=#961 id=961 data-nosnippet>961</a>                    target: <span class="string">"iroh::_events::path::abandoned"</span>,
+<a href=#962 id=962 data-nosnippet>962</a>                    Level::DEBUG,
+<a href=#963 id=963 data-nosnippet>963</a>                    remote = %<span class="self">self</span>.endpoint_id.fmt_short(),
+<a href=#964 id=964 data-nosnippet>964</a>                    <span class="question-mark">?</span>path_remote,
+<a href=#965 id=965 data-nosnippet>965</a>                    <span class="question-mark">?</span>conn_id,
+<a href=#966 id=966 data-nosnippet>966</a>                    path_id = <span class="question-mark">?</span>id,
+<a href=#967 id=967 data-nosnippet>967</a>                );
+<a href=#968 id=968 data-nosnippet>968</a>
+<a href=#969 id=969 data-nosnippet>969</a>                <span class="comment">// If one connection abandones a path, close it on all connections.
+<a href=#970 id=970 data-nosnippet>970</a>                </span><span class="kw">for </span>(conn_id, conn_state) <span class="kw">in </span><span class="self">self</span>.connections.iter_mut() {
+<a href=#971 id=971 data-nosnippet>971</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>(path_id) = conn_state.paths_by_addr.get(<span class="kw-2">&amp;</span>path_remote) <span class="kw">else </span>{
+<a href=#972 id=972 data-nosnippet>972</a>                        <span class="kw">continue</span>;
+<a href=#973 id=973 data-nosnippet>973</a>                    };
+<a href=#974 id=974 data-nosnippet>974</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>(conn) = conn_state.handle.upgrade() <span class="kw">else </span>{
 <a href=#975 id=975 data-nosnippet>975</a>                        <span class="kw">continue</span>;
 <a href=#976 id=976 data-nosnippet>976</a>                    };
-<a href=#977 id=977 data-nosnippet>977</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>(conn) = conn_state.handle.upgrade() <span class="kw">else </span>{
-<a href=#978 id=978 data-nosnippet>978</a>                        <span class="kw">continue</span>;
-<a href=#979 id=979 data-nosnippet>979</a>                    };
-<a href=#980 id=980 data-nosnippet>980</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = conn.path(<span class="kw-2">*</span>path_id) {
-<a href=#981 id=981 data-nosnippet>981</a>                        <span class="macro">trace!</span>(<span class="question-mark">?</span>path_remote, <span class="question-mark">?</span>conn_id, %path_id, <span class="string">"closing path"</span>);
-<a href=#982 id=982 data-nosnippet>982</a>                        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = path.close() {
-<a href=#983 id=983 data-nosnippet>983</a>                            <span class="macro">trace!</span>(
-<a href=#984 id=984 data-nosnippet>984</a>                                <span class="question-mark">?</span>path_remote,
-<a href=#985 id=985 data-nosnippet>985</a>                                <span class="question-mark">?</span>conn_id,
-<a href=#986 id=986 data-nosnippet>986</a>                                %path_id,
-<a href=#987 id=987 data-nosnippet>987</a>                                <span class="string">"path close failed: {err:#}"
-<a href=#988 id=988 data-nosnippet>988</a>                            </span>);
-<a href=#989 id=989 data-nosnippet>989</a>                        }
-<a href=#990 id=990 data-nosnippet>990</a>                    }
-<a href=#991 id=991 data-nosnippet>991</a>                }
-<a href=#992 id=992 data-nosnippet>992</a>
-<a href=#993 id=993 data-nosnippet>993</a>                <span class="comment">// If the remote closed our selected path, select a new one.
-<a href=#994 id=994 data-nosnippet>994</a>                </span><span class="self">self</span>.select_path();
+<a href=#977 id=977 data-nosnippet>977</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = conn.path(<span class="kw-2">*</span>path_id) {
+<a href=#978 id=978 data-nosnippet>978</a>                        <span class="macro">trace!</span>(<span class="question-mark">?</span>path_remote, <span class="question-mark">?</span>conn_id, %path_id, <span class="string">"closing path"</span>);
+<a href=#979 id=979 data-nosnippet>979</a>                        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = path.close() {
+<a href=#980 id=980 data-nosnippet>980</a>                            <span class="macro">trace!</span>(
+<a href=#981 id=981 data-nosnippet>981</a>                                <span class="question-mark">?</span>path_remote,
+<a href=#982 id=982 data-nosnippet>982</a>                                <span class="question-mark">?</span>conn_id,
+<a href=#983 id=983 data-nosnippet>983</a>                                %path_id,
+<a href=#984 id=984 data-nosnippet>984</a>                                <span class="string">"path close failed: {err:#}"
+<a href=#985 id=985 data-nosnippet>985</a>                            </span>);
+<a href=#986 id=986 data-nosnippet>986</a>                        }
+<a href=#987 id=987 data-nosnippet>987</a>                    }
+<a href=#988 id=988 data-nosnippet>988</a>                }
+<a href=#989 id=989 data-nosnippet>989</a>
+<a href=#990 id=990 data-nosnippet>990</a>                <span class="comment">// If the remote closed our selected path, select a new one.
+<a href=#991 id=991 data-nosnippet>991</a>                </span><span class="self">self</span>.select_path();
+<a href=#992 id=992 data-nosnippet>992</a>            }
+<a href=#993 id=993 data-nosnippet>993</a>            PathEvent::Discarded { id, path_stats } =&gt; {
+<a href=#994 id=994 data-nosnippet>994</a>                <span class="macro">trace!</span>(%id, <span class="question-mark">?</span>path_stats, <span class="string">"path discarded"</span>);
 <a href=#995 id=995 data-nosnippet>995</a>            }
 <a href=#996 id=996 data-nosnippet>996</a>            PathEvent::RemoteStatus { .. } | PathEvent::ObservedAddr { .. } =&gt; {
 <a href=#997 id=997 data-nosnippet>997</a>                <span class="comment">// Nothing to do for these events.
