@@ -1,0 +1,46 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="`quinn_proto` types that are used in the public iroh API. Responsible for limiting clients’ ability to reuse validation tokens"><title>TokenLog in iroh::endpoint - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0-nightly (b6f0945e4 2025-10-08)" data-channel="nightly" data-search-js="search-8d3311b9.js" data-stringdex-js="stringdex-828709d0.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">TokenLog</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../iroh/index.html">iroh</a><span class="version">0.96.1</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Token<wbr>Log</a></h2><h3><a href="#required-methods">Required Methods</a></h3><ul class="block"><li><a href="#tymethod.check_and_insert" title="check_and_insert">check_and_insert</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><div id="rustdoc-modnav"><h2><a href="index.html">In iroh::<wbr>endpoint</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">iroh</a>::<wbr><a href="index.html">endpoint</a></div><h1>Trait <span class="trait">Token<wbr>Log</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"></span></div><pre class="rust item-decl"><code>pub trait TokenLog: <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a> {
+    // Required method
+    fn <a href="#tymethod.check_and_insert" class="fn">check_and_insert</a>(
+        &amp;self,
+        nonce: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u128.html">u128</a>,
+        issued: <a class="struct" href="https://doc.rust-lang.org/nightly/std/time/struct.SystemTime.html" title="struct std::time::SystemTime">SystemTime</a>,
+        lifetime: <a class="struct" href="https://doc.rust-lang.org/nightly/core/time/struct.Duration.html" title="struct core::time::Duration">Duration</a>,
+    ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="struct.TokenReuseError.html" title="struct iroh::endpoint::TokenReuseError">TokenReuseError</a>&gt;;
+}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p><code>quinn_proto</code> types that are used in the public iroh API.
+Responsible for limiting clients’ ability to reuse validation tokens</p>
+<p><a href="https://www.rfc-editor.org/rfc/rfc9000.html#section-8.1.4"><em>RFC 9000 § 8.1.4:</em></a></p>
+<blockquote>
+<p>Attackers could replay tokens to use servers as amplifiers in DDoS attacks. To protect
+against such attacks, servers MUST ensure that replay of tokens is prevented or limited.
+Servers SHOULD ensure that tokens sent in Retry packets are only accepted for a short time,
+as they are returned immediately by clients. Tokens that are provided in NEW_TOKEN frames
+(Section 19.7) need to be valid for longer but SHOULD NOT be accepted multiple times.
+Servers are encouraged to allow tokens to be used only once, if possible; tokens MAY include
+additional information about clients to further narrow applicability or reuse.</p>
+</blockquote>
+<p><code>TokenLog</code> pertains only to tokens provided in NEW_TOKEN frames.</p>
+</div></details><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="tymethod.check_and_insert" class="method"><h4 class="code-header">fn <a href="#tymethod.check_and_insert" class="fn">check_and_insert</a>(
+    &amp;self,
+    nonce: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u128.html">u128</a>,
+    issued: <a class="struct" href="https://doc.rust-lang.org/nightly/std/time/struct.SystemTime.html" title="struct std::time::SystemTime">SystemTime</a>,
+    lifetime: <a class="struct" href="https://doc.rust-lang.org/nightly/core/time/struct.Duration.html" title="struct core::time::Duration">Duration</a>,
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="struct.TokenReuseError.html" title="struct iroh::endpoint::TokenReuseError">TokenReuseError</a>&gt;</h4></section></summary><div class="docblock"><p>Record that the token was used and, ideally, return a token reuse error if the token may
+have been already used previously</p>
+<p>False negatives and false positives are both permissible. Called when a client uses an
+address validation token.</p>
+<p>Parameters:</p>
+<ul>
+<li><code>nonce</code>: A server-generated random unique value for the token.</li>
+<li><code>issued</code>: The time the server issued the token.</li>
+<li><code>lifetime</code>: The expiration time of address validation tokens sent via NEW_TOKEN frames,
+as configured by <a href="struct.ValidationTokenConfig.html#method.lifetime" title="method iroh::endpoint::ValidationTokenConfig::lifetime"><code>ServerValidationTokenConfig::lifetime</code></a>.</li>
+</ul>
+<h6 id="security--performance"><a class="doc-anchor" href="#security--performance">§</a>Security &amp; Performance</h6>
+<p>To the extent that it is possible to repeatedly trigger false negatives (returning <code>Ok</code> for
+a token which has been reused), an attacker could use the server to perform <a href="https://en.wikipedia.org/wiki/Denial-of-service_attack#Amplification">amplification
+attacks</a>. The QUIC specification requires that this be limited, if not prevented fully.</p>
+<p>A false positive (returning <code>Err</code> for a token which has never been used) is not a security
+vulnerability; it is permissible for a <code>TokenLog</code> to always return <code>Err</code>. A false positive
+causes the token to be ignored, which may cause the transmission of some 0.5-RTT data to be
+delayed until the handshake completes, if a sufficient amount of 0.5-RTT data it sent.</p>
+</div></details></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-TokenLog-for-BloomTokenLog" class="impl"><a href="#impl-TokenLog-for-BloomTokenLog" class="anchor">§</a><h3 class="code-header">impl <a class="trait" href="trait.TokenLog.html" title="trait iroh::endpoint::TokenLog">TokenLog</a> for BloomTokenLog</h3></section><section id="impl-TokenLog-for-NoneTokenLog" class="impl"><a href="#impl-TokenLog-for-NoneTokenLog" class="anchor">§</a><h3 class="code-header">impl <a class="trait" href="trait.TokenLog.html" title="trait iroh::endpoint::TokenLog">TokenLog</a> for NoneTokenLog</h3></section></div><script src="../../trait.impl/iroh_quinn_proto/token/trait.TokenLog.js" data-ignore-extern-crates="iroh_quinn_proto" async></script></section></div></main></body></html>
