@@ -256,9 +256,8 @@
 mod socket;
 mod tls;
 
+pub(crate) mod runtime;
 pub(crate) mod util;
-#[cfg(wasm_browser)]
-pub(crate) mod web_runtime;
 
 pub mod address_lookup;
 pub mod defaults;
