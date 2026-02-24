@@ -1275,7 +1275,7 @@ struct ConnectionState {
     path_watchable: PathWatchable,
     /// The open paths that exist on this connection.
     paths: FxHashMap<PathId, transports::Addr>,
-    /// Reverse map of [`Self::paths_by_id].
+    /// Reverse map of [`Self::paths].
     paths_by_addr: FxHashMap<transports::Addr, PathId>,
     /// Whether this connection has ever had a direct path.
     ///
