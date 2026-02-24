@@ -966,7 +966,7 @@
 <a href=#966 id=966 data-nosnippet>966</a>                    path_id = <span class="question-mark">?</span>id,
 <a href=#967 id=967 data-nosnippet>967</a>                );
 <a href=#968 id=968 data-nosnippet>968</a>
-<a href=#969 id=969 data-nosnippet>969</a>                <span class="comment">// If one connection abandones a path, close it on all connections.
+<a href=#969 id=969 data-nosnippet>969</a>                <span class="comment">// If one connection abandons a path, close it on all connections.
 <a href=#970 id=970 data-nosnippet>970</a>                </span><span class="kw">for </span>(conn_id, conn_state) <span class="kw">in </span><span class="self">self</span>.connections.iter_mut() {
 <a href=#971 id=971 data-nosnippet>971</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>(path_id) = conn_state.paths_by_addr.get(<span class="kw-2">&amp;</span>path_remote) <span class="kw">else </span>{
 <a href=#972 id=972 data-nosnippet>972</a>                        <span class="kw">continue</span>;
