@@ -42,6 +42,14 @@ const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 /// be used as both a publisher and resolver.  Calling [`DhtAddressLookup::publish`] will start
 /// a background task that periodically publishes the endpoint address.
 ///
+/// By default, [`DhtAddressLookup`] will publish all addresses it receives:
+/// direct IP addresses and relay URLs. No internal address limits or truncation
+/// are applied.
+///
+/// You can supply an [`AddrFilter`] via [`Builder::set_addr_filter`] to
+/// control which addresses are published.
+///
+/// [`AddrFilter`]: crate::address_lookup::AddrFilter
 /// [pkarr module]: super
 #[derive(Debug, Clone)]
 pub struct DhtAddressLookup(Arc<Inner>);
@@ -306,7 +314,7 @@ impl AddressLookup for DhtAddressLookup {
             Some(ref filter) => data.filtered_addrs(filter.clone()),
         };
 
-        if !addrs.is_empty() {
+        if addrs.is_empty() {
             tracing::debug!("no relay url or direct addresses in endpoint data, not publishing");
             return;
         }

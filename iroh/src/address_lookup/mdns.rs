@@ -45,14 +45,21 @@
 //! }
 //! ```
 //!
-//! ## RelayUrl
-//! You can enable publishing a single [`RelayUrl`] as well as your ip addresses.
+//! ## Filtering
 //!
-//! If there are multiple [`RelayUrl`]s available, the first in the list will be selected.
+//! By default, [`MdnsAddressLookup`] will attempt to publish all addresses it receives:
+//! direct IP addresses and up to one [`RelayUrl`]. The following constraints apply regardless
+//! of any user-supplied filter:
 //!
-//! If the [`RelayUrl`] is longer than 249 bytes, the relay will not be added to the
-//! mDNS TXT record.
+//! - Only the first [`RelayUrl`] in the address set is published.
+//! - A [`RelayUrl`] longer than 249 bytes is silently dropped.
 //!
+//! You can supply an [`AddrFilter`] via [`MdnsAddressLookupBuilder::with_addr_filter`] to
+//! control which addresses are published and in what order. The filter is applied before the
+//! constraints above, so for example you can use it to exclude relay URLs entirely or to
+//! prioritize certain addresses.
+//!
+//! [`AddrFilter`]: crate::address_lookup::AddrFilter
 //! [`RelayUrl`]: iroh_base::RelayUrl
 use std::{
     collections::{BTreeSet, HashMap},

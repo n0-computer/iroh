@@ -20,6 +20,16 @@
 //! The [`Builder::address_lookup`] method is used to add an address lookup mechanism to an
 //! [`Endpoint`].
 //!
+//! Each address lookup service receives the full set of transport addresses when publishing,
+//! but may only publish a subset of them based on its own constraints.
+//!
+//! To control which addresses are published to a particular service, you can supply an
+//! [`AddrFilter`] when configuring it via [`IntoAddressLookup::with_addr_filter`].  The filter
+//! receives the full set of addresses and returns an ordered [`Vec`], allowing you to both
+//! remove addresses you don't want published and prioritize the ones you do Each service
+//! may apply additional filtering on top based on its own constraints, but will not publish
+//! addresses outside of what the filter returns.  See each service's documentation for details.
+//!
 //! Some generally useful Address Lookup implementations are provided:
 //!
 //! - [`MemoryLookup`] which allows application to add and remove out-of-band addressing

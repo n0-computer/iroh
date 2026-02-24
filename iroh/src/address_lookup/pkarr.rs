@@ -19,6 +19,12 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
+//! [`PkarrPublisher`] publishes all addresses it receives by default, with no internal limiting.
+//! You can supply an [`AddrFilter`] via [`PkarrPublisherBuilder::set_addr_filter`] to limit the kinds
+//! and number of addresses that get published.
+//!
+//! Note that [`PkarrResolver`] and [`address_lookup::DnsAddressLookup`] only resolve and do not publish, so filtering does not apply to them.
+//!
 //! For address lookup in iroh the pkarr Resource Records contain the addressing information,
 //! providing endpoints which retrieve the pkarr Resource Record with enough detail
 //! to contact the iroh endpoint.
