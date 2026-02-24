@@ -16,7 +16,7 @@ use n0_future::{
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
-use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
+use quinn_proto::{PathError, PathEvent, PathId, PathStatus, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
@@ -100,8 +100,12 @@ type PathEvents = MergeUnbounded<
 type AddrEvents = MergeUnbounded<
     Pin<
         Box<
-            dyn Stream<Item = (ConnId, Result<iroh_hp::Event, BroadcastStreamRecvError>)>
-                + Send
+            dyn Stream<
+                    Item = (
+                        ConnId,
+                        Result<n0_nat_traversal::Event, BroadcastStreamRecvError>,
+                    ),
+                > + Send
                 + Sync,
         >,
     >,
@@ -795,7 +799,7 @@ impl RemoteStateActor {
             }
             Err(err) => {
                 debug!("failed to initiate NAT traversal: {err:#}");
-                use quinn_proto::iroh_hp::Error;
+                use quinn_proto::n0_nat_traversal::Error;
                 match err {
                     Error::Closed
                     | Error::TooManyAddresses
@@ -946,18 +950,18 @@ impl RemoteStateActor {
 
                 self.select_path();
             }
-            PathEvent::Abandoned { id, path_stats } => {
-                trace!(?path_stats, "path abandoned");
-                // This is the last event for this path.
-                if let Some(addr) = conn_state.remove_path(&id) {
-                    self.paths.abandoned_path(&addr);
-                }
+            PathEvent::Discarded { id, path_stats } => {
+                trace!(%id, ?path_stats, "path discarded");
             }
-            PathEvent::LocallyClosed { id, .. } => {
-                let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
-                    debug!("path not in path_id_map");
+            PathEvent::Abandoned { id, .. } => {
+                // This is the last event for this path: remove from conn_state.
+                let Some(path_remote) = conn_state.remove_path(&id) else {
+                    debug!(%id, "path not in path_id_map");
                     return;
                 };
+                // Also remove the path from the remote-global path tracking.
+                self.paths.abandoned_path(&path_remote);
+
                 event!(
                     target: "iroh::_events::path::closed",
                     Level::DEBUG,
@@ -966,7 +970,6 @@ impl RemoteStateActor {
                     ?conn_id,
                     path_id = ?id,
                 );
-                conn_state.remove_open_path(&id);
 
                 // If one connection closes this path, close it on all connections.
                 for (conn_id, conn_state) in self.connections.iter_mut() {
@@ -1325,7 +1328,7 @@ impl ConnectionState {
         }
     }
 
-    /// Completely removes a path from this connection.
+    /// Removes a path from this connection.
     fn remove_path(&mut self, path_id: &PathId) -> Option<transports::Addr> {
         let addr = self.paths.remove(path_id);
         if let Some(ref addr) = addr {
@@ -1335,12 +1338,6 @@ impl ConnectionState {
         self.path_watchable.set_abandoned(*path_id);
 
         addr
-    }
-
-    /// Removes the path from the open paths.
-    fn remove_open_path(&mut self, path_id: &PathId) {
-        self.open_paths.remove(path_id);
-        self.path_watchable.set_abandoned(*path_id);
     }
 }
 
