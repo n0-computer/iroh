@@ -100,14 +100,61 @@ struct Cli {
     /// Output format.
     #[clap(global = true, long, value_enum, default_value_t)]
     output: OutputMode,
+    #[clap(flatten)]
+    log: LogArgs,
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Parser, Debug)]
+struct LogArgs {
     /// Save trace and qlog logs to ./logs/
     #[clap(global = true, long, conflicts_with = "logs_path")]
     logs: bool,
     /// Save trace and qlog logs the specified path
     #[clap(global = true, long, conflicts_with = "logs")]
     logs_path: Option<PathBuf>,
-    #[command(subcommand)]
-    command: Commands,
+    /// Generate qlog logs. Needs --logs or --logs_path.
+    ///
+    /// Alternatively, set the QLOGDIR environment variable.
+    ///
+    /// Has no effect if the `qlog` feature is not enabled.
+    #[clap(global = true, long)]
+    qlog: bool,
+}
+
+impl LogArgs {
+    fn init(self, command: &Commands, id: EndpointId) -> Result<Option<LogSettings>> {
+        let dir = match (self.logs_path, self.logs) {
+            (Some(path), _) => Some(path),
+            (_, true) => Some(PathBuf::from(format!(
+                "./logs/transfer-{command}-{}-{}",
+                Local::now().format("%y%m%d.%H%M%S"),
+                id.fmt_short()
+            ))),
+            _ => None,
+        };
+        if let Some(dir) = dir {
+            std::fs::create_dir_all(&dir)
+                .with_context(|_| format!("failed to create log directory at {}", dir.display()))?;
+            let tracing_file = dir.join(format!("logs-{command}"));
+            init_tracing(Some(&tracing_file));
+            Ok(Some(LogSettings {
+                dir,
+                #[cfg(feature = "qlog")]
+                qlog: self.qlog,
+            }))
+        } else {
+            init_tracing(None);
+            Ok(None)
+        }
+    }
+}
+
+struct LogSettings {
+    dir: PathBuf,
+    #[cfg(feature = "qlog")]
+    qlog: bool,
 }
 
 #[derive(Clone, Copy, Default, Debug, Eq, PartialEq, clap::ValueEnum, Serialize)]
@@ -324,8 +371,7 @@ async fn main() -> Result<()> {
     let Cli {
         command,
         output,
-        logs,
-        logs_path,
+        log,
     } = Cli::parse();
 
     let output = Output::new(output);
@@ -344,32 +390,13 @@ async fn main() -> Result<()> {
     };
 
     // Determine file logging path and init tracing subscriber.
-    let log_dir = {
-        let dir = match (logs_path, logs) {
-            (Some(path), _) => Some(path),
-            (_, true) => Some(PathBuf::from(format!(
-                "./logs/transfer-{command}-{}-{}",
-                Local::now().format("%y%m%d.%H%M%S"),
-                secret_key.public().fmt_short()
-            ))),
-            _ => None,
-        };
-        let log_file = if let Some(dir) = dir.as_ref() {
-            std::fs::create_dir_all(dir)
-                .with_context(|_| format!("failed to create log directory at {}", dir.display()))?;
-            Some(dir.join(format!("logs-{command}")))
-        } else {
-            None
-        };
-        init_tracing(log_file.as_ref());
-        dir
-    };
+    let log = log.init(&command, secret_key.public())?;
 
     match command {
         Commands::Provide { endpoint_args } => {
             output.emit_if_json(&endpoint_args);
             let endpoint = endpoint_args
-                .bind_endpoint(secret_key, output, log_dir.as_ref())
+                .bind_endpoint(secret_key, output, log.as_ref())
                 .await?;
             provide(endpoint, output).await?
         }
@@ -390,7 +417,7 @@ async fn main() -> Result<()> {
                 (Some(_), Some(_)) => unreachable!("--size and --duration args are conflicting"),
             };
             let endpoint = endpoint_args
-                .bind_endpoint(secret_key, output, log_dir.as_ref())
+                .bind_endpoint(secret_key, output, log.as_ref())
                 .await?;
             let addrs = remote_relay_url
                 .into_iter()
@@ -401,8 +428,10 @@ async fn main() -> Result<()> {
         }
     }
 
-    if let Some(path) = log_dir {
-        output.emit(LogsSaved { path });
+    if let Some(log) = log {
+        output.emit(LogsSaved {
+            path: log.dir.clone(),
+        });
     }
 
     Ok(())
@@ -413,7 +442,7 @@ impl EndpointArgs {
         self,
         secret_key: SecretKey,
         output: Output,
-        log_dir: Option<&PathBuf>,
+        log: Option<&LogSettings>,
     ) -> Result<Endpoint> {
         let relay_mode = if self.no_relay {
             RelayMode::Disabled
@@ -491,18 +520,19 @@ impl EndpointArgs {
         }
         #[cfg(feature = "qlog")]
         {
-            let cfg = match log_dir {
-                None => QuicTransportConfig::builder()
-                    .qlog_from_env("transfer")
+            let cfg = match (std::env::var("QLOGDIR").ok(), log) {
+                (Some(dir), _) => QuicTransportConfig::builder()
+                    .qlog_from_path(dir, "transfer")
                     .build(),
-                Some(path) => QuicTransportConfig::builder()
-                    .qlog_from_path(path, "")
+                (_, Some(log)) if log.qlog => QuicTransportConfig::builder()
+                    .qlog_from_path(&log.dir, "")
                     .build(),
+                _ => Default::default(),
             };
             builder = builder.transport_config(cfg)
         }
         #[cfg(not(feature = "qlog"))]
-        let _ = log_dir;
+        let _ = log;
 
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
@@ -947,7 +977,10 @@ impl Output {
     fn emit(&self, event: impl Serialize + fmt::Display) {
         match self.mode {
             OutputMode::Text => println!("{event} {}", self.time()),
-            OutputMode::Json => println!("{}", serde_json::to_string(&event).unwrap()),
+            OutputMode::Json => println!(
+                "{}",
+                serde_json::to_string(&Timestamped::now(event)).unwrap()
+            ),
         }
     }
 
@@ -962,14 +995,17 @@ impl Output {
             ),
             OutputMode::Json => println!(
                 "{}",
-                serde_json::to_string(&RemoteEvent::new(remote, event)).unwrap()
+                serde_json::to_string(&Timestamped::now(RemoteEvent::new(remote, event))).unwrap()
             ),
         }
     }
 
     fn emit_if_json(&self, event: &impl Serialize) {
         if matches!(self.mode, OutputMode::Json) {
-            println!("{}", serde_json::to_string(&event).unwrap())
+            println!(
+                "{}",
+                serde_json::to_string(&Timestamped::now(event)).unwrap()
+            )
         }
     }
 }
@@ -1232,6 +1268,22 @@ impl<T: Serialize + fmt::Display> RemoteEvent<T> {
     }
 }
 
+#[derive(Serialize)]
+struct Timestamped<T: Serialize> {
+    timestamp: String,
+    #[serde(flatten)]
+    inner: T,
+}
+
+impl<T: Serialize> Timestamped<T> {
+    fn now(inner: T) -> Self {
+        Self {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            inner,
+        }
+    }
+}
+
 fn duration_micros_opt<S: Serializer>(
     value: &Option<Duration>,
     serializer: S,
@@ -1257,7 +1309,7 @@ mod duration_micros {
     }
 }
 
-pub fn init_tracing(path: Option<impl AsRef<Path>>) {
+pub fn init_tracing(path: Option<&Path>) {
     use tracing_subscriber::{fmt, registry};
     if let Some(path) = path {
         let file = File::create(path).expect("failed to create trace log file");
