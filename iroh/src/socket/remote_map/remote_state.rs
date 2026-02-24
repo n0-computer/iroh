@@ -948,11 +948,8 @@ impl RemoteStateActor {
 
                 self.select_path();
             }
-            PathEvent::Discarded { id, path_stats } => {
-                trace!(%id, ?path_stats, "path discarded");
-            }
             PathEvent::Abandoned { id, .. } => {
-                // This is the last event for this path: remove from conn_state.
+                // Remove abandoned path from the conn state.
                 let Some(path_remote) = conn_state.remove_path(&id) else {
                     debug!(%id, "path not in path_id_map");
                     return;
@@ -961,7 +958,7 @@ impl RemoteStateActor {
                 self.paths.abandoned_path(&path_remote);
 
                 event!(
-                    target: "iroh::_events::path::closed",
+                    target: "iroh::_events::path::abandoned",
                     Level::DEBUG,
                     remote = %self.endpoint_id.fmt_short(),
                     ?path_remote,
@@ -969,7 +966,7 @@ impl RemoteStateActor {
                     path_id = ?id,
                 );
 
-                // If one connection closes this path, close it on all connections.
+                // If one connection abandones a path, close it on all connections.
                 for (conn_id, conn_state) in self.connections.iter_mut() {
                     let Some(path_id) = conn_state.paths_by_addr.get(&path_remote) else {
                         continue;
@@ -992,6 +989,9 @@ impl RemoteStateActor {
 
                 // If the remote closed our selected path, select a new one.
                 self.select_path();
+            }
+            PathEvent::Discarded { id, path_stats } => {
+                trace!(%id, ?path_stats, "path discarded");
             }
             PathEvent::RemoteStatus { .. } | PathEvent::ObservedAddr { .. } => {
                 // Nothing to do for these events.
