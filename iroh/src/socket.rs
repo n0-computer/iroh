@@ -31,6 +31,7 @@ use iroh_relay::{RelayConfig, RelayMap};
 use mapped_addrs::MultipathMappedAddr;
 use n0_error::{bail, e, stack_error};
 use n0_future::{
+    MaybeFuture,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -955,6 +956,7 @@ impl EndpointInner {
             direct_addr_update_state,
             transports_network_change: network_change_sender,
             direct_addr_done_rx,
+            call_notify_quic_network_change: None,
         };
         // Initialize addresses
         #[cfg(not(wasm_browser))]
@@ -1273,6 +1275,8 @@ struct Actor {
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
+    /// When to call [`Actor::notify_quic_network_change`].
+    call_notify_quic_network_change: Option<(Instant, bool)>,
 }
 
 impl Actor {
@@ -1306,6 +1310,12 @@ impl Actor {
             let portmap_watcher_changed = portmap_watcher.changed();
             #[cfg(wasm_browser)]
             let portmap_watcher_changed = n0_future::future::pending();
+
+            let notify_quic_network_change = match &self.call_notify_quic_network_change {
+                Some((when, _)) => MaybeFuture::Some(tokio::time::sleep_until(*when)),
+                None => MaybeFuture::None,
+            };
+            n0_future::pin!(notify_quic_network_change);
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
@@ -1409,6 +1419,11 @@ impl Actor {
                 eid = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
                     trace!(%eid, "cleaned up RemoteStateActor");
                 }
+                _ = &mut notify_quic_network_change => {
+                    if let Some((_, is_major)) = self.call_notify_quic_network_change.take() {
+                        self.notify_quic_network_change(is_major);
+                    }
+                }
                 else => {
                     trace!("tick: else");
                 }
@@ -1435,6 +1450,29 @@ impl Actor {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
 
+        let interfaces = self.local_interfaces_watcher.get();
+        if interfaces.default_route_interface.is_some() {
+            // This is considered a usable network change, propagate it to the QUIC stack
+            // right away.
+            self.call_notify_quic_network_change = None;
+            self.notify_quic_network_change(is_major);
+        } else {
+            // This is probably not a very usable state of our interfaces. Hopefully this
+            // will improve soon with a new interfaces change, but if not set a timer that
+            // will handle this change after some time. This should allow us to debounce a
+            // quick succession of network changes.
+            let scheduled_call = self
+                .call_notify_quic_network_change
+                .get_or_insert((Instant::now() + Duration::from_secs(2), is_major));
+            scheduled_call.1 = is_major;
+        }
+    }
+
+    /// Notifies the QUIC stack of the network change we observed.
+    ///
+    /// This is decoupled from receiving the network change, because we try to debounce
+    /// network changes as they often arrive in groups.
+    fn notify_quic_network_change(&mut self, is_major: bool) {
         #[derive(Debug)]
         struct Hint {
             local_addrs: FxHashSet<IpAddr>,
