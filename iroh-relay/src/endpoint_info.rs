@@ -214,7 +214,7 @@ impl EndpointData {
 
     /// Apply the given filter to the current addresses.
     ///
-    /// Returns a vec to preserve re-ordering of addresses.
+    /// Returns a vec to allow re-ordering of addresses.
     pub fn filtered_addrs(&self, filter: &AddrFilter) -> Vec<TransportAddr> {
         filter.apply(&self.addrs)
     }
