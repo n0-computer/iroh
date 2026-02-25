@@ -885,10 +885,10 @@
 <a href=#885 id=885 data-nosnippet>885</a>                ipv4: <span class="bool-val">true</span>,
 <a href=#886 id=886 data-nosnippet>886</a>                ipv6: has_ipv6_transport,
 <a href=#887 id=887 data-nosnippet>887</a>            });
-<a href=#888 id=888 data-nosnippet>888</a>            net_report_config.quic_config(qad_config)
-<a href=#889 id=889 data-nosnippet>889</a>        };
-<a href=#890 id=890 data-nosnippet>890</a>
-<a href=#891 id=891 data-nosnippet>891</a>        <span class="kw">let </span>net_report_config = net_report_config.tls_config(tls_config.clone());
+<a href=#888 id=888 data-nosnippet>888</a>            net_report_config
+<a href=#889 id=889 data-nosnippet>889</a>                .quic_config(qad_config)
+<a href=#890 id=890 data-nosnippet>890</a>                .tls_config(tls_config.clone())
+<a href=#891 id=891 data-nosnippet>891</a>        };
 <a href=#892 id=892 data-nosnippet>892</a>
 <a href=#893 id=893 data-nosnippet>893</a>        <span class="kw">let </span>net_reporter = net_report::Client::new(
 <a href=#894 id=894 data-nosnippet>894</a>            <span class="attr">#[cfg(not(wasm_browser))]
