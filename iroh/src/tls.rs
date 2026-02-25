@@ -17,6 +17,8 @@ pub(crate) mod name;
 mod resolver;
 mod verifier;
 
+pub use iroh_relay::tls::{WebTlsConfig, WebTlsVerifier, default_provider};
+
 /// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
 /// establishment.
 ///
@@ -69,14 +71,12 @@ impl TlsConfig {
         alpn_protocols: Vec<Vec<u8>>,
         keylog: bool,
     ) -> QuicClientConfig {
-        let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-        .expect("version supported by ring")
-        .dangerous()
-        .with_custom_certificate_verifier(self.server_verifier.clone())
-        .with_client_cert_resolver(self.cert_resolver.clone());
+        let mut crypto = rustls::ClientConfig::builder_with_provider(default_provider())
+            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+            .expect("version supported by ring")
+            .dangerous()
+            .with_custom_certificate_verifier(self.server_verifier.clone())
+            .with_client_cert_resolver(self.cert_resolver.clone());
         crypto.alpn_protocols = alpn_protocols;
 
         // TODO: enable/disable 0-RTT/storing tickets

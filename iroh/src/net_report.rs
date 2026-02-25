@@ -30,6 +30,7 @@ use iroh_relay::quic::QuicClient;
 use iroh_relay::{
     RelayMap,
     quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON},
+    tls::WebTlsConfig,
 };
 use n0_error::e;
 #[cfg(not(wasm_browser))]
@@ -117,9 +118,7 @@ pub(crate) struct Client {
     relay_map: RelayMap,
     #[cfg(not(wasm_browser))]
     qad_conns: QadConns,
-    #[cfg(any(test, feature = "test-utils"))]
-    insecure_skip_relay_cert_verify: bool,
-
+    tls_config: WebTlsConfig,
     /// A collection of previously generated reports.
     ///
     /// Sometimes it is useful to look at past reports to decide what to do.
@@ -236,8 +235,6 @@ impl Client {
         metrics: Arc<Metrics>,
     ) -> Self {
         let probes = opts.as_protocols();
-        #[cfg(any(test, feature = "test-utils"))]
-        let insecure_skip_relay_cert_verify = opts.insecure_skip_relay_cert_verify;
 
         #[cfg(not(wasm_browser))]
         let quic_client = opts
@@ -259,8 +256,7 @@ impl Client {
             relay_map,
             #[cfg(not(wasm_browser))]
             qad_conns: QadConns::default(),
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
+            tls_config: opts.tls_config,
         }
     }
 
@@ -320,8 +316,7 @@ impl Client {
             shutdown_token.child_token(),
             #[cfg(not(wasm_browser))]
             self.socket_state.clone(),
-            #[cfg(any(test, feature = "test-utils"))]
-            self.insecure_skip_relay_cert_verify,
+            self.tls_config.clone(),
         );
 
         #[cfg(not(wasm_browser))]
@@ -1011,7 +1006,7 @@ mod tests {
         let resolver = DnsResolver::new();
         let opts = Options::default()
             .quic_config(Some(quic_addr_disc.clone()))
-            .insecure_skip_relay_cert_verify(true);
+            .tls_config(WebTlsConfig::insecure_skip_verify());
         let mut client = Client::new(
             resolver.clone(),
             relay_map.clone(),

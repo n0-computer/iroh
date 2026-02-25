@@ -91,6 +91,7 @@ tracing-subscriber = { version = "0.3", features = [
 ], optional = true }
 blake3 = "1.8.2"
 serde_bytes = "0.11.17"
+rustls-platform-verifier = "0.6.2"
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]

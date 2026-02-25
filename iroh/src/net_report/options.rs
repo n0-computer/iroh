@@ -6,6 +6,8 @@ pub(crate) use imp::Options;
 mod imp {
     use std::collections::BTreeSet;
 
+    use iroh_relay::tls::WebTlsConfig;
+
     use crate::net_report::{QuicConfig, probes::Probe};
 
     /// Options for running probes
@@ -24,8 +26,7 @@ mod imp {
         /// On by default
         pub(crate) https: bool,
 
-        #[cfg(any(test, feature = "test-utils"))]
-        pub(crate) insecure_skip_relay_cert_verify: bool,
+        pub(crate) tls_config: WebTlsConfig,
     }
 
     impl Default for Options {
@@ -33,8 +34,7 @@ mod imp {
             Self {
                 quic_config: None,
                 https: true,
-                #[cfg(any(test, feature = "test-utils"))]
-                insecure_skip_relay_cert_verify: false,
+                tls_config: WebTlsConfig::default(),
             }
         }
     }
@@ -46,10 +46,9 @@ mod imp {
             self
         }
 
-        /// Skip cert verification
-        #[cfg(any(test, feature = "test-utils"))]
-        pub(crate) fn insecure_skip_relay_cert_verify(mut self, skip: bool) -> Self {
-            self.insecure_skip_relay_cert_verify = skip;
+        /// Set TLS config
+        pub(crate) fn tls_config(mut self, tls_config: WebTlsConfig) -> Self {
+            self.tls_config = tls_config;
             self
         }
 

@@ -344,7 +344,10 @@ mod tests {
         };
 
         let http_url = server.http_url().expect("http is bound");
-        let pkarr = PkarrRelayClient::new(format!("{http_url}pkarr").parse().anyerr()?);
+        let pkarr = PkarrRelayClient::new(
+            format!("{http_url}pkarr").parse().anyerr()?,
+            Default::default(),
+        );
         pkarr.publish(&signed_packet).await?;
 
         // Create a reqwest client that does not verify certificates.

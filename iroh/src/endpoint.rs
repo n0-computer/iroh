@@ -51,7 +51,7 @@ use crate::{
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
     },
-    tls::{self, DEFAULT_MAX_TLS_TICKETS},
+    tls::{self, DEFAULT_MAX_TLS_TICKETS, WebTlsConfig},
 };
 
 #[cfg(not(wasm_browser))]
@@ -107,10 +107,9 @@ pub struct Builder {
     address_lookup: Vec<Box<dyn DynIntoAddressLookup>>,
     address_lookup_user_data: Option<UserData>,
     proxy_url: Option<Url>,
+    tls_config: Option<WebTlsConfig>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
-    #[cfg(any(test, feature = "test-utils"))]
-    insecure_skip_relay_cert_verify: bool,
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
@@ -172,10 +171,9 @@ impl Builder {
             address_lookup: Default::default(),
             address_lookup_user_data: Default::default(),
             proxy_url: None,
+            tls_config: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: false,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
@@ -211,8 +209,7 @@ impl Builder {
             #[cfg(not(wasm_browser))]
             dns_resolver,
             server_config,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+            tls_config: self.tls_config.unwrap_or_default(),
             metrics,
             hooks: self.hooks,
             static_config,
@@ -592,6 +589,14 @@ impl Builder {
         self
     }
 
+    /// Sets the TLS config for non-iroh TLS connections.
+    ///
+    /// This is used for HTTPS connections to iroh relay and pkarr addrss lookups servers.
+    pub fn tls_config(mut self, tls_config: WebTlsConfig) -> Self {
+        self.tls_config = Some(tls_config);
+        self
+    }
+
     /// Enables saving the TLS pre-master key for connections.
     ///
     /// This key should normally remain secret but can be useful to debug networking issues
@@ -607,10 +612,14 @@ impl Builder {
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
+    // TODO: Remove?
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
-        self.insecure_skip_relay_cert_verify = skip_verify;
-        self
+    pub fn insecure_skip_relay_cert_verify(self, skip_verify: bool) -> Self {
+        if skip_verify {
+            self.tls_config(WebTlsConfig::insecure_skip_verify())
+        } else {
+            self
+        }
     }
 
     /// Set the maximum number of TLS tickets to cache.
@@ -1192,6 +1201,11 @@ impl Endpoint {
             return Err(e!(EndpointError::Closed));
         }
         Ok(self.inner.dns_resolver())
+    }
+
+    /// Returns the TLS config used for connecting to iroh relays and other non-iroh TLS services.
+    pub fn tls_config(&self) -> &WebTlsConfig {
+        &self.inner.tls_config
     }
 
     /// Returns the Address Lookup service, if configured.

@@ -19,7 +19,7 @@ use super::{
     streams::{MaybeTlsStream, ProxyStream},
     *,
 };
-use crate::defaults::timeouts::*;
+use crate::{defaults::timeouts::*, tls::WebTlsConfig};
 
 #[derive(Debug, Clone)]
 pub struct MaybeTlsStreamBuilder {
@@ -27,19 +27,17 @@ pub struct MaybeTlsStreamBuilder {
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
     prefer_ipv6: bool,
-    #[cfg(any(test, feature = "test-utils"))]
-    insecure_skip_cert_verify: bool,
+    tls_config: WebTlsConfig,
 }
 
 impl MaybeTlsStreamBuilder {
-    pub fn new(url: Url, dns_resolver: DnsResolver) -> Self {
+    pub fn new(url: Url, dns_resolver: DnsResolver, tls_config: WebTlsConfig) -> Self {
         Self {
             url,
             dns_resolver,
             proxy_url: None,
             prefer_ipv6: false,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_cert_verify: false,
+            tls_config,
         }
     }
 
@@ -53,30 +51,8 @@ impl MaybeTlsStreamBuilder {
         self
     }
 
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn insecure_skip_cert_verify(mut self, skip: bool) -> Self {
-        self.insecure_skip_cert_verify = skip;
-        self
-    }
-
     pub async fn connect(self) -> Result<MaybeTlsStream<ProxyStream>, ConnectError> {
-        let roots = rustls::RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-        };
-        let mut config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect("protocols supported by ring")
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-        #[cfg(any(test, feature = "test-utils"))]
-        if self.insecure_skip_cert_verify {
-            warn!("Insecure config: SSL certificates from relay servers not verified");
-            config
-                .dangerous()
-                .set_certificate_verifier(Arc::new(NoCertVerifier));
-        }
+        let mut config = self.tls_config.inner().clone();
         config.resumption = Resumption::default();
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 

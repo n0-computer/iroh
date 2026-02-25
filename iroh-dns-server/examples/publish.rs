@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
     println!();
     println!("publish to {pkarr_relay_url} ...");
 
-    let pkarr = PkarrRelayClient::new(pkarr_relay_url);
+    let pkarr = PkarrRelayClient::new(pkarr_relay_url, Default::default());
     let endpoint_info = EndpointInfo::new(endpoint_id)
         .with_relay_url(relay_url.map(Into::into))
         .with_ip_addrs(args.addr.into_iter().collect())

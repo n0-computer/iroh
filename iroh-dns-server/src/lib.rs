@@ -174,7 +174,7 @@ mod tests {
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
-        let pkarr = PkarrRelayClient::new(pkarr_relay);
+        let pkarr = PkarrRelayClient::new(pkarr_relay, Default::default());
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;

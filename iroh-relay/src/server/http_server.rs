@@ -1003,6 +1003,7 @@ mod tests {
         client::{Client, ClientBuilder, ConnectError, conn::Conn},
         dns::DnsResolver,
         protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+        tls::WebTlsConfigBuilder,
     };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
@@ -1107,8 +1108,11 @@ mod tests {
         server_url: Url,
     ) -> Result<(PublicKey, Client), ConnectError> {
         let public_key = key.public();
-        let client =
-            ClientBuilder::new(server_url, key, DnsResolver::new()).insecure_skip_cert_verify(true);
+        let client = ClientBuilder::new(server_url, key, DnsResolver::new()).tls_config(
+            WebTlsConfigBuilder::with_verifier(crate::tls::WebTlsVerifier::InsecureSkipVerify)
+                .build()
+                .unwrap(),
+        );
         let client = client.connect().await?;
 
         Ok((public_key, client))
