@@ -124,7 +124,7 @@ pub enum WebTlsVerifier {
 
 impl Default for WebTlsVerifier {
     fn default() -> Self {
-        WebTlsVerifier::System {
+        WebTlsVerifier::EmbeddedWebPki {
             extra_roots: vec![],
         }
     }
