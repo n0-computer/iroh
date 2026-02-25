@@ -67,6 +67,7 @@ use crate::{
     runtime::Runtime,
     socket::{
         concurrent_read_map::ReadOnlyMap,
+        mapped_addrs::MultipathMappedAddr,
         remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
     },
     tls,
@@ -1445,12 +1446,26 @@ impl Actor {
                 _path_id: quinn::PathId,
                 network_path: quinn_proto::FourTuple,
             ) -> bool {
-                if let Some(local_ip) = network_path.local_ip
-                    && self.local_addrs.contains(&local_ip)
-                {
-                    return true;
+                match MultipathMappedAddr::from(network_path.remote) {
+                    // The connection is still establishing, no paths are pinned to interfaces.
+                    // This should always be a "recoverable" address, even if it shouldn't matter
+                    // with the current code.
+                    MultipathMappedAddr::Mixed(_) => true,
+                    // Our mapped addresses don't change per-relay, so they're recoverable.
+                    MultipathMappedAddr::Relay(_) => true,
+                    // For plain IP addressing this depends.
+                    MultipathMappedAddr::Ip(_) => {
+                        if let Some(local_ip) = network_path.local_ip {
+                            // If the path is pinned to an interface, then we need to make sure that
+                            // the interface is around after interface changes.
+                            self.local_addrs.contains(&local_ip)
+                        } else {
+                            // If we don't associate a local_ip to a path,
+                            // then it will use the next default interface that's set up.
+                            true
+                        }
+                    }
                 }
-                false
             }
         }
 
