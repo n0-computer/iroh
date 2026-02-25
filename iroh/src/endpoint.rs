@@ -591,7 +591,7 @@ impl Builder {
 
     /// Sets the TLS config for non-iroh TLS connections.
     ///
-    /// This is used for HTTPS connections to iroh relay and pkarr addrss lookups servers.
+    /// This is used for HTTPS connections to iroh relay and pkarr address lookups servers.
     pub fn tls_config(mut self, tls_config: WebTlsConfig) -> Self {
         self.tls_config = Some(tls_config);
         self

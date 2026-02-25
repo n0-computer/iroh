@@ -125,7 +125,7 @@ impl Client {
         if_state: IfStateDetails,
         shutdown_token: CancellationToken,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
-        tls_config: WebTlsConfig,
+        #[cfg(not(wasm_browser))] tls_config: WebTlsConfig,
     ) -> (Self, mpsc::Receiver<ProbeFinished>) {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let actor = Actor {
@@ -135,6 +135,7 @@ impl Client {
             protocols,
             #[cfg(not(wasm_browser))]
             socket_state,
+            #[cfg(not(wasm_browser))]
             tls_config,
             if_state,
         };
@@ -173,6 +174,7 @@ struct Actor {
     /// Any socket-related state that doesn't exist/work in browsers
     #[cfg(not(wasm_browser))]
     socket_state: SocketState,
+    #[cfg(not(wasm_browser))]
     tls_config: WebTlsConfig,
     if_state: IfStateDetails,
 }
@@ -288,6 +290,7 @@ impl Actor {
             let dns_resolver = self.socket_state.dns_resolver.clone();
             let dm = self.relay_map.clone();
             let token = token.clone();
+            #[cfg(not(wasm_browser))]
             let tls_config = self.tls_config.clone();
             tasks.spawn(
                 async move {
@@ -385,6 +388,7 @@ impl Actor {
                         relay.clone(),
                         #[cfg(not(wasm_browser))]
                         self.socket_state.clone(),
+                        #[cfg(not(wasm_browser))]
                         self.tls_config.clone(),
                     ),
                 ));
@@ -500,7 +504,7 @@ impl Probe {
         delay: Duration,
         relay: Arc<RelayConfig>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
-        tls_config: WebTlsConfig,
+        #[cfg(not(wasm_browser))] tls_config: WebTlsConfig,
     ) -> Result<ProbeReport, ProbeError> {
         if !delay.is_zero() {
             trace!("delaying probe");
@@ -514,6 +518,7 @@ impl Probe {
                     #[cfg(not(wasm_browser))]
                     &socket_state.dns_resolver,
                     relay.url.clone(),
+                    #[cfg(not(wasm_browser))]
                     tls_config,
                 )
                 .await
@@ -806,7 +811,7 @@ pub(super) enum MeasureHttpsLatencyError {
 async fn run_https_probe(
     #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
     relay: RelayUrl,
-    tls_config: WebTlsConfig,
+    #[cfg(not(wasm_browser))] tls_config: WebTlsConfig,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
     let url = relay.join(RELAY_PROBE_PATH)?;
@@ -814,7 +819,10 @@ async fn run_https_probe(
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
+    #[cfg(not(wasm_browser))]
     let mut builder = reqwest_client_builder(Some(tls_config));
+    #[cfg(wasm_browser)]
+    let mut builder = reqwest_client_builder(None);
 
     #[cfg(not(wasm_browser))]
     {

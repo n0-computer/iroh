@@ -118,6 +118,7 @@ pub(crate) struct Client {
     relay_map: RelayMap,
     #[cfg(not(wasm_browser))]
     qad_conns: QadConns,
+    #[cfg(not(wasm_browser))]
     tls_config: WebTlsConfig,
     /// A collection of previously generated reports.
     ///
@@ -256,6 +257,7 @@ impl Client {
             relay_map,
             #[cfg(not(wasm_browser))]
             qad_conns: QadConns::default(),
+            #[cfg(not(wasm_browser))]
             tls_config: opts.tls_config,
         }
     }

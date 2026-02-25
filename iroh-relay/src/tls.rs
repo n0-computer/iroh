@@ -8,10 +8,9 @@ use rustls::{
 };
 use webpki_types::CertificateDer;
 
-///
+/// Configuration for verifying TLS certificates for HTTPS and other non-iroh TLS connections.
 #[derive(Debug, Clone)]
 pub struct WebTlsConfig {
-    // #[cfg(not(wasm_browser))]
     inner: ClientConfig,
 }
 
@@ -41,20 +40,19 @@ impl WebTlsConfig {
         WebTlsConfigBuilder::with_verifier(verifier)
     }
 
-    ///
-    // #[cfg(not(wasm_browser))]
+    /// Returns a reference to the [`rustls::ClientConfig`].
     pub fn inner(&self) -> &ClientConfig {
         &self.inner
     }
 }
 
-/// TLS configuration.
-/// TODO: Rename..ß
+/// TLS configuration builder.
+/// TODO: more docs
 #[derive(Debug, Clone)]
 pub struct WebTlsConfigBuilder {
     /// Configuration for verifying TLS certificates.
     ///
-    /// Note that this is *not* used for iroh connections, but for all othre TLS connections.
+    /// Note that this is *not* used for iroh connections, but for all other TLS connections.
     pub verifier: Arc<WebTlsVerifier>,
     /// The crypto provider to use.
     pub crypto_provider: Arc<CryptoProvider>,
@@ -144,7 +142,7 @@ impl WebTlsVerifier {
                     extra_roots.clone(),
                     crypto_provider,
                 )
-                .map_err(|err| io::Error::other(err))?,
+                .map_err(io::Error::other)?,
             ),
             WebTlsVerifier::EmbeddedWebPki { extra_roots } => {
                 let mut root_store = rustls::RootCertStore {

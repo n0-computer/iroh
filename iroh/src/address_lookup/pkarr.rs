@@ -300,7 +300,7 @@ impl PkarrPublisher {
         let endpoint_id = secret_key.public();
 
         #[cfg(wasm_browser)]
-        let pkarr_client = PkarrRelayClient::new(pkarr_relay);
+        let pkarr_client = PkarrRelayClient::new(pkarr_relay, tls_config);
 
         #[cfg(not(wasm_browser))]
         let pkarr_client = if let Some(dns_resolver) = dns_resolver {
