@@ -28,6 +28,7 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
+use mapped_addrs::MultipathMappedAddr;
 use n0_error::{bail, e, stack_error};
 use n0_future::{
     task::{self, AbortOnDropHandle},
@@ -1445,12 +1446,27 @@ impl Actor {
                 _path_id: quinn::PathId,
                 network_path: quinn_proto::FourTuple,
             ) -> bool {
-                if let Some(local_ip) = network_path.local_ip
-                    && self.local_addrs.contains(&local_ip)
-                {
-                    return true;
+                match MultipathMappedAddr::from(network_path.remote) {
+                    MultipathMappedAddr::Mixed(_) => {
+                        // This address is only ever used to send an Initial packet to, it
+                        // should never appear as an established path.
+                        unreachable!();
+                    }
+                    MultipathMappedAddr::Relay(_) => {
+                        // We pretend the relay path is never affected by link changes. The
+                        // relay actor transparently reconnects and the addreses never
+                        // change.
+                        true
+                    }
+                    MultipathMappedAddr::Ip(_) => {
+                        // If we no longer have a valid interface to send from for a local
+                        // IP then it can not be recovered.
+                        match network_path.local_ip {
+                            Some(local_ip) => self.local_addrs.contains(&local_ip),
+                            None => true,
+                        }
+                    }
                 }
-                false
             }
         }
 
