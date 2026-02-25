@@ -108,6 +108,7 @@ pub enum WebTlsVerifier {
     /// See [`rustls_platform_verifier`] for details how roots are retrieved on different platforms.
     System {
         /// Additional root certificates to trust.
+        #[cfg(not(target_os = "android"))]
         extra_roots: Vec<CertificateDer<'static>>,
     },
     /// Only trust explicitly set root certificates.
@@ -137,12 +138,18 @@ impl WebTlsVerifier {
         crypto_provider: Arc<CryptoProvider>,
     ) -> io::Result<Arc<dyn ServerCertVerifier>> {
         Ok(match self {
+            #[cfg(not(target_os = "android"))]
             WebTlsVerifier::System { extra_roots } => Arc::new(
                 rustls_platform_verifier::Verifier::new_with_extra_roots(
                     extra_roots.clone(),
                     crypto_provider,
                 )
                 .map_err(io::Error::other)?,
+            ),
+            #[cfg(target_os = "android")]
+            WebTlsVerifier::System {} => Arc::new(
+                rustls_platform_verifier::Verifier::new(crypto_provider)
+                    .map_err(io::Error::other)?,
             ),
             WebTlsVerifier::EmbeddedWebPki { extra_roots } => {
                 let mut root_store = rustls::RootCertStore {
