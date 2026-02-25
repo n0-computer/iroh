@@ -169,7 +169,7 @@ a <a href="../dns/struct.DnsResolver.html" title="struct iroh::dns::DnsResolver"
 <li><code>https_proxy</code></li>
 </ul>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.tls_config" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#595-598">Source</a><h4 class="code-header">pub fn <a href="#method.tls_config" class="fn">tls_config</a>(self, tls_config: <a class="struct" href="../tls/struct.WebTlsConfig.html" title="struct iroh::tls::WebTlsConfig">WebTlsConfig</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Sets the TLS config for non-iroh TLS connections.</p>
-<p>This is used for HTTPS connections to iroh relay and pkarr addrss lookups servers.</p>
+<p>This is used for HTTPS connections to iroh relay and pkarr address lookups servers.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.keylog" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#607-610">Source</a><h4 class="code-header">pub fn <a href="#method.keylog" class="fn">keylog</a>(self, keylog: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Enables saving the TLS pre-master key for connections.</p>
 <p>This key should normally remain secret but can be useful to debug networking issues
 by decrypting captured traffic.</p>

@@ -300,7 +300,7 @@
 <a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#301 id=301 data-nosnippet>301</a>
 <a href=#302 id=302 data-nosnippet>302</a>        <span class="attr">#[cfg(wasm_browser)]
-<a href=#303 id=303 data-nosnippet>303</a>        </span><span class="kw">let </span>pkarr_client = PkarrRelayClient::new(pkarr_relay);
+<a href=#303 id=303 data-nosnippet>303</a>        </span><span class="kw">let </span>pkarr_client = PkarrRelayClient::new(pkarr_relay, tls_config);
 <a href=#304 id=304 data-nosnippet>304</a>
 <a href=#305 id=305 data-nosnippet>305</a>        <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#306 id=306 data-nosnippet>306</a>        </span><span class="kw">let </span>pkarr_client = <span class="kw">if let </span><span class="prelude-val">Some</span>(dns_resolver) = dns_resolver {
