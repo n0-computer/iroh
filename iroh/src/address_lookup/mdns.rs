@@ -325,7 +325,7 @@ impl MdnsAddressLookup {
                         let data = match filter {
                             None => data,
                             Some(ref filter) => {
-                                let addrs = data.filtered_addrs(filter.clone());
+                                let addrs = data.filtered_addrs(filter);
                                 debug!(addrs = ?addrs, "Applied address filter");
                                 EndpointData::new(addrs).with_user_data(data.user_data().cloned())
                             },

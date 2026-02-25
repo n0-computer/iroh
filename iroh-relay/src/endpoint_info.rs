@@ -215,10 +215,13 @@ impl EndpointData {
     /// Apply the given filter to the current addresses.
     ///
     /// Returns a vec to preserve re-ordering of addresses.
-    pub fn filtered_addrs(&self, filter: AddrFilter) -> Vec<TransportAddr> {
-        filter.apply(self.addrs.clone())
+    pub fn filtered_addrs(&self, filter: &AddrFilter) -> Vec<TransportAddr> {
+        filter.apply(&self.addrs)
     }
 }
+
+/// The function type inside [`AddrFilter`].
+type AddrFilterFn = dyn Fn(&BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static;
 
 /// A filter and/or reordering function applied to transport addresses,
 /// typically used by AddressLookup services in iroh before publishing.
@@ -231,9 +234,7 @@ impl EndpointData {
 /// See the documentation for each address lookup implementation for details on
 /// what additional filtering the implementation may perform on top.
 #[derive(Clone)]
-pub struct AddrFilter(
-    Arc<dyn Fn(BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static>,
-);
+pub struct AddrFilter(Arc<AddrFilterFn>);
 
 impl std::fmt::Debug for AddrFilter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -244,13 +245,23 @@ impl std::fmt::Debug for AddrFilter {
 impl AddrFilter {
     /// Create a new [`AddrFilter`]
     pub fn new(
-        f: impl Fn(BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static,
+        f: impl Fn(&BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static,
     ) -> Self {
         Self(Arc::new(f))
     }
 
+    /// Only keep relay addresses.
+    pub fn relay_only() -> Self {
+        Self::new(|addrs| addrs.iter().filter(|a| a.is_relay()).cloned().collect())
+    }
+
+    /// Only keep direct IP addresses.
+    pub fn ip_only() -> Self {
+        Self::new(|addrs| addrs.iter().filter(|a| !a.is_relay()).cloned().collect())
+    }
+
     /// Apply the address filter function to a set of addresses.
-    pub fn apply(&self, addrs: BTreeSet<TransportAddr>) -> Vec<TransportAddr> {
+    pub fn apply(&self, addrs: &BTreeSet<TransportAddr>) -> Vec<TransportAddr> {
         (self.0)(addrs)
     }
 }
