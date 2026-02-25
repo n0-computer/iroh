@@ -233,12 +233,16 @@ type AddrFilterFn = dyn Fn(&BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Sen
 ///
 /// See the documentation for each address lookup implementation for details on
 /// what additional filtering the implementation may perform on top.
-#[derive(Clone)]
-pub struct AddrFilter(Arc<AddrFilterFn>);
+#[derive(Clone, Default)]
+pub struct AddrFilter(Option<Arc<AddrFilterFn>>);
 
 impl std::fmt::Debug for AddrFilter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AddrFilter").finish_non_exhaustive()
+        if self.0.is_some() {
+            f.debug_struct("AddrFilter").finish_non_exhaustive()
+        } else {
+            write!(f, "identity")
+        }
     }
 }
 
@@ -247,7 +251,7 @@ impl AddrFilter {
     pub fn new(
         f: impl Fn(&BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static,
     ) -> Self {
-        Self(Arc::new(f))
+        Self(Some(Arc::new(f)))
     }
 
     /// Only keep relay addresses.
@@ -262,7 +266,10 @@ impl AddrFilter {
 
     /// Apply the address filter function to a set of addresses.
     pub fn apply(&self, addrs: &BTreeSet<TransportAddr>) -> Vec<TransportAddr> {
-        (self.0)(addrs)
+        match &self.0 {
+            Some(f) => f(addrs),
+            None => addrs.iter().cloned().collect(),
+        }
     }
 }
 
