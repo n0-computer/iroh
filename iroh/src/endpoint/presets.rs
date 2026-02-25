@@ -54,13 +54,7 @@ pub struct N0;
 
 impl Preset for N0 {
     fn apply(self, mut builder: Builder) -> Builder {
-        let filter = AddrFilter::new(|addrs| {
-            addrs
-                .iter()
-                .filter(|addr| matches!(addr, iroh_base::TransportAddr::Relay(_)))
-                .cloned()
-                .collect()
-        });
+        let filter = AddrFilter::relay_only();
         builder = builder.address_lookup(PkarrPublisher::n0_dns().with_addr_filter(filter.clone()));
 
         // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
@@ -113,13 +107,7 @@ pub struct N0DisableRelay;
 
 impl Preset for N0DisableRelay {
     fn apply(self, mut builder: Builder) -> Builder {
-        let filter = AddrFilter::new(|addrs| {
-            addrs
-                .iter()
-                .filter(|addr| matches!(addr, iroh_base::TransportAddr::Ip(_)))
-                .cloned()
-                .collect()
-        });
+        let filter = AddrFilter::ip_only();
         builder = builder.address_lookup(PkarrPublisher::n0_dns().with_addr_filter(filter.clone()));
         // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
         #[cfg(wasm_browser)]
