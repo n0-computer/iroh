@@ -35,7 +35,7 @@ n0-watcher = "0.6"
 netwatch = { version = "0.14" }
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
-pkarr = { version = "5", default-features = false, features = ["relays"] }
+pkarr = { package = "pkarr-client", version = "4", default-features = false, features = ["relays"] }
 quinn = { package = "iroh-quinn", version = "0.16.1", default-features = false, features = ["rustls-ring"] }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.15.1" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.8" }
