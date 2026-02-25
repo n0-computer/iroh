@@ -56,8 +56,9 @@ impl Preset for N0 {
     fn apply(self, mut builder: Builder) -> Builder {
         let filter = AddrFilter::new(|addrs| {
             addrs
-                .into_iter()
+                .iter()
                 .filter(|addr| matches!(addr, iroh_base::TransportAddr::Relay(_)))
+                .cloned()
                 .collect()
         });
         builder = builder.address_lookup(PkarrPublisher::n0_dns().with_addr_filter(filter.clone()));
@@ -114,8 +115,9 @@ impl Preset for N0DisableRelay {
     fn apply(self, mut builder: Builder) -> Builder {
         let filter = AddrFilter::new(|addrs| {
             addrs
-                .into_iter()
+                .iter()
                 .filter(|addr| matches!(addr, iroh_base::TransportAddr::Ip(_)))
+                .cloned()
                 .collect()
         });
         builder = builder.address_lookup(PkarrPublisher::n0_dns().with_addr_filter(filter.clone()));

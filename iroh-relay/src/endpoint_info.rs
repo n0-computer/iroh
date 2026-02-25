@@ -215,8 +215,8 @@ impl EndpointData {
     /// Apply the given filter to the current addresses.
     ///
     /// Returns a vec to preserve re-ordering of addresses.
-    pub fn filtered_addrs(&self, filter: AddrFilter) -> Vec<TransportAddr> {
-        filter.apply(self.addrs.clone())
+    pub fn filtered_addrs(&self, filter: &AddrFilter) -> Vec<TransportAddr> {
+        filter.apply(&self.addrs)
     }
 }
 
@@ -232,7 +232,7 @@ impl EndpointData {
 /// what additional filtering the implementation may perform on top.
 #[derive(Clone)]
 pub struct AddrFilter(
-    Arc<dyn Fn(BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static>,
+    Arc<dyn Fn(&BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static>,
 );
 
 impl std::fmt::Debug for AddrFilter {
@@ -244,13 +244,13 @@ impl std::fmt::Debug for AddrFilter {
 impl AddrFilter {
     /// Create a new [`AddrFilter`]
     pub fn new(
-        f: impl Fn(BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static,
+        f: impl Fn(&BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static,
     ) -> Self {
         Self(Arc::new(f))
     }
 
     /// Apply the address filter function to a set of addresses.
-    pub fn apply(&self, addrs: BTreeSet<TransportAddr>) -> Vec<TransportAddr> {
+    pub fn apply(&self, addrs: &BTreeSet<TransportAddr>) -> Vec<TransportAddr> {
         (self.0)(addrs)
     }
 }

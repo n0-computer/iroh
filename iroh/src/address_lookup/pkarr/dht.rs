@@ -311,7 +311,7 @@ impl AddressLookup for DhtAddressLookup {
         // apply user-supplied filter
         let addrs = match self.0.filter {
             None => data.addrs().cloned().collect(),
-            Some(ref filter) => data.filtered_addrs(filter.clone()),
+            Some(ref filter) => data.filtered_addrs(filter),
         };
 
         if addrs.is_empty() {
