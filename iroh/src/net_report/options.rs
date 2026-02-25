@@ -107,10 +107,6 @@ mod imp {
             self
         }
 
-        pub(crate) fn tls_config(mut self, _tls_config: WebTlsConfig) -> Self {
-            self
-        }
-
         /// Turn the options into set of valid protocols
         pub(crate) fn as_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();

@@ -318,6 +318,7 @@ impl Client {
             shutdown_token.child_token(),
             #[cfg(not(wasm_browser))]
             self.socket_state.clone(),
+            #[cfg(not(wasm_browser))]
             self.tls_config.clone(),
         );
 

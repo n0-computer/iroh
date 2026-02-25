@@ -885,10 +885,10 @@ impl EndpointInner {
                 ipv4: true,
                 ipv6: has_ipv6_transport,
             });
-            net_report_config.quic_config(qad_config)
+            net_report_config
+                .quic_config(qad_config)
+                .tls_config(tls_config.clone())
         };
-
-        let net_report_config = net_report_config.tls_config(tls_config.clone());
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
