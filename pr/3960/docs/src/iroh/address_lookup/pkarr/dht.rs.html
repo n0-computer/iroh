@@ -311,7 +311,7 @@
 <a href=#311 id=311 data-nosnippet>311</a>        <span class="comment">// apply user-supplied filter
 <a href=#312 id=312 data-nosnippet>312</a>        </span><span class="kw">let </span>addrs = <span class="kw">match </span><span class="self">self</span>.<span class="number">0</span>.filter {
 <a href=#313 id=313 data-nosnippet>313</a>            <span class="prelude-val">None </span>=&gt; data.addrs().cloned().collect(),
-<a href=#314 id=314 data-nosnippet>314</a>            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>filter) =&gt; data.filtered_addrs(filter.clone()),
+<a href=#314 id=314 data-nosnippet>314</a>            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>filter) =&gt; data.filtered_addrs(filter),
 <a href=#315 id=315 data-nosnippet>315</a>        };
 <a href=#316 id=316 data-nosnippet>316</a>
 <a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">if </span>addrs.is_empty() {

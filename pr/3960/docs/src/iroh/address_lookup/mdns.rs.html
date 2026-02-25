@@ -325,7 +325,7 @@
 <a href=#325 id=325 data-nosnippet>325</a>                        </span><span class="kw">let </span>data = <span class="kw">match </span>filter {
 <a href=#326 id=326 data-nosnippet>326</a>                            <span class="prelude-val">None </span>=&gt; data,
 <a href=#327 id=327 data-nosnippet>327</a>                            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>filter) =&gt; {
-<a href=#328 id=328 data-nosnippet>328</a>                                <span class="kw">let </span>addrs = data.filtered_addrs(filter.clone());
+<a href=#328 id=328 data-nosnippet>328</a>                                <span class="kw">let </span>addrs = data.filtered_addrs(filter);
 <a href=#329 id=329 data-nosnippet>329</a>                                <span class="macro">debug!</span>(addrs = <span class="question-mark">?</span>addrs, <span class="string">"Applied address filter"</span>);
 <a href=#330 id=330 data-nosnippet>330</a>                                EndpointData::new(addrs).with_user_data(data.user_data().cloned())
 <a href=#331 id=331 data-nosnippet>331</a>                            },
