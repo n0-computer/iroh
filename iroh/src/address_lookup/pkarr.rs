@@ -160,7 +160,7 @@ pub struct PkarrPublisherBuilder {
     republish_interval: Duration,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
-    filter: Option<AddrFilter>,
+    filter: AddrFilter,
 }
 
 impl PkarrPublisherBuilder {
@@ -172,7 +172,7 @@ impl PkarrPublisherBuilder {
             republish_interval: DEFAULT_REPUBLISH_INTERVAL,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
-            filter: None,
+            filter: AddrFilter::default(),
         }
     }
 
@@ -211,7 +211,7 @@ impl PkarrPublisherBuilder {
     }
 
     /// Sets a filter to control which addresses are published by this service
-    pub fn set_addr_filter(mut self, filter: Option<AddrFilter>) -> Self {
+    pub fn set_addr_filter(mut self, filter: AddrFilter) -> Self {
         self.filter = filter;
         self
     }
@@ -249,7 +249,7 @@ impl IntoAddressLookup for PkarrPublisherBuilder {
     where
         Self: Sized,
     {
-        self.set_addr_filter(Some(filter))
+        self.set_addr_filter(filter)
     }
 }
 
@@ -272,7 +272,7 @@ impl IntoAddressLookup for PkarrPublisherBuilder {
 pub struct PkarrPublisher {
     endpoint_id: EndpointId,
     watchable: Watchable<Option<EndpointInfo>>,
-    filter: Option<AddrFilter>,
+    filter: AddrFilter,
     _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
 
@@ -302,7 +302,7 @@ impl PkarrPublisher {
         ttl: u32,
         republish_interval: Duration,
         #[cfg(not(wasm_browser))] dns_resolver: Option<DnsResolver>,
-        filter: Option<AddrFilter>,
+        filter: AddrFilter,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let endpoint_id = secret_key.public();
@@ -354,14 +354,9 @@ impl PkarrPublisher {
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_endpoint_data(&self, data: &EndpointData) {
-        let data = match self.filter {
-            None => data.clone(),
-            Some(ref filter) => {
-                let addrs = data.filtered_addrs(filter);
-                debug!(addrs = ?addrs, "Applied address filter to endpoint data");
-                EndpointData::new(addrs).with_user_data(data.user_data().cloned())
-            }
-        };
+        let addrs = data.filtered_addrs(&self.filter);
+        debug!(addrs = ?addrs, "Applied address filter to endpoint data");
+        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
         let info = EndpointInfo::from_parts(self.endpoint_id, data);
         self.watchable.set(Some(info)).ok();
     }

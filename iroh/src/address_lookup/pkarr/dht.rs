@@ -79,7 +79,7 @@ struct Inner {
     /// Republish delay for the DHT.
     republish_delay: Duration,
     /// User supplied filter to filter and reorder addresses for publishing
-    filter: Option<AddrFilter>,
+    filter: AddrFilter,
 }
 
 impl Inner {
@@ -125,7 +125,7 @@ pub struct Builder {
     dht: bool,
     republish_delay: Duration,
     enable_publish: bool,
-    filter: Option<AddrFilter>,
+    filter: AddrFilter,
 }
 
 impl Default for Builder {
@@ -138,7 +138,7 @@ impl Default for Builder {
             dht: true,
             republish_delay: REPUBLISH_DELAY,
             enable_publish: true,
-            filter: None,
+            filter: AddrFilter::default(),
         }
     }
 }
@@ -202,7 +202,7 @@ impl Builder {
     }
 
     /// Sets a filter to control which addresses are published by this service.
-    pub fn set_addr_filter(mut self, filter: Option<AddrFilter>) -> Self {
+    pub fn set_addr_filter(mut self, filter: AddrFilter) -> Self {
         self.filter = filter;
         self
     }
@@ -257,7 +257,7 @@ impl IntoAddressLookup for Builder {
     }
 
     fn with_addr_filter(self, filter: AddrFilter) -> Self {
-        self.set_addr_filter(Some(filter))
+        self.set_addr_filter(filter)
     }
 }
 
@@ -309,10 +309,7 @@ impl AddressLookup for DhtAddressLookup {
         };
 
         // apply user-supplied filter
-        let addrs = match self.0.filter {
-            None => data.addrs().cloned().collect(),
-            Some(ref filter) => data.filtered_addrs(filter),
-        };
+        let addrs = data.filtered_addrs(&self.0.filter);
 
         if addrs.is_empty() {
             tracing::debug!("no relay url or direct addresses in endpoint data, not publishing");
