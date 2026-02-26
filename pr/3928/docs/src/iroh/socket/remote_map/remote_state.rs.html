@@ -315,7 +315,7 @@
 <a href=#315 id=315 data-nosnippet>315</a>                        <span class="macro">trace!</span>(<span class="string">"direct address watcher disconnected, shutting down"</span>);
 <a href=#316 id=316 data-nosnippet>316</a>                        <span class="kw">break</span>;
 <a href=#317 id=317 data-nosnippet>317</a>                    }
-<a href=#318 id=318 data-nosnippet>318</a>                    <span class="self">self</span>.update_local_direct_addrs();
+<a href=#318 id=318 data-nosnippet>318</a>                    <span class="self">self</span>.update_local_direct_address();
 <a href=#319 id=319 data-nosnippet>319</a>                    <span class="macro">trace!</span>(<span class="string">"local addrs updated, triggering holepunching"</span>);
 <a href=#320 id=320 data-nosnippet>320</a>                    <span class="self">self</span>.trigger_holepunching();
 <a href=#321 id=321 data-nosnippet>321</a>                }
@@ -633,7 +633,7 @@
 <a href=#633 id=633 data-nosnippet>633</a>    ///
 <a href=#634 id=634 data-nosnippet>634</a>    /// Each connection needs to have the local direct addresses to use as QNT address
 <a href=#635 id=635 data-nosnippet>635</a>    /// candidates.
-<a href=#636 id=636 data-nosnippet>636</a>    </span><span class="kw">fn </span>update_local_direct_addrs(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#636 id=636 data-nosnippet>636</a>    </span><span class="kw">fn </span>update_local_direct_address(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
 <a href=#637 id=637 data-nosnippet>637</a>        <span class="kw">let </span>local_addrs = <span class="self">self
 <a href=#638 id=638 data-nosnippet>638</a>            </span>.local_direct_addrs
 <a href=#639 id=639 data-nosnippet>639</a>            .get()

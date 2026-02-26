@@ -144,10 +144,10 @@
 <a href=#144 id=144 data-nosnippet>144</a>        <span class="self">self</span>.prune_paths();
 <a href=#145 id=145 data-nosnippet>145</a>    }
 <a href=#146 id=146 data-nosnippet>146</a>
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="doccomment">/// Sends back on `tx` once an possible path to the remote is known.
+<a href=#147 id=147 data-nosnippet>147</a>    <span class="doccomment">/// Sends back on `tx` once a possible path to the remote is known.
 <a href=#148 id=148 data-nosnippet>148</a>    ///
-<a href=#149 id=149 data-nosnippet>149</a>    /// If there already is a known path, `Ok(())` is returned immediately. Otherwise a an
-<a href=#150 id=150 data-nosnippet>150</a>    /// address lookup is performed and the result sent back once that
+<a href=#149 id=149 data-nosnippet>149</a>    /// If there already is a known path, `Ok(())` is returned immediately. Otherwise an
+<a href=#150 id=150 data-nosnippet>150</a>    /// address lookup is performed and the result is sent back once that
 <a href=#151 id=151 data-nosnippet>151</a>    /// completes. [`AddressLookupError`] is sent if there are no known paths.
 <a href=#152 id=152 data-nosnippet>152</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>resolve_remote(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), AddressLookupError&gt;&gt;) {
 <a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">if </span>!<span class="self">self</span>.paths.is_empty() {
