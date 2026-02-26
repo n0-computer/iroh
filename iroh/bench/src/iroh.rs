@@ -33,7 +33,9 @@ pub fn server_endpoint(
         let mut builder = Endpoint::builder();
         #[cfg(feature = "local-relay")]
         {
-            builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
+            if relay_url.is_some() {
+                builder = builder.ca_root_config(iroh::tls::CaRootConfig::InsecureSkipVerify);
+            }
             if opt.only_relay {
                 builder = builder.clear_ip_transports();
             }
@@ -92,7 +94,9 @@ pub async fn connect_client(
     let mut builder = Endpoint::builder();
     #[cfg(feature = "local-relay")]
     {
-        builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
+        if relay_url.is_some() {
+            builder = builder.ca_root_config(iroh::tls::CaRootConfig::InsecureSkipVerify);
+        }
         if opt.only_relay {
             builder = builder.clear_ip_transports();
         }
