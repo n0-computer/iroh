@@ -1254,7 +1254,7 @@ struct Actor {
     ///
     /// The monitored changes are emitted via [`Self::local_interfaces_watcher`].
     network_monitor: netmon::Monitor,
-    /// Watcher fro changes to the local network interfaces, IP addresses and routes.
+    /// Watcher for changes to the local network interfaces, IP addresses and routes.
     local_interfaces_watcher: n0_watcher::Direct<netmon::State>,
     transports_network_change: transports::NetworkChangeSender,
     /// Indicates the direct addr update state.

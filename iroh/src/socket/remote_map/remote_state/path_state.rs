@@ -144,7 +144,7 @@ impl RemotePathState {
         self.prune_paths();
     }
 
-    /// Sends back on `tx` once a possible paqth to the remote is known.
+    /// Sends back on `tx` once a possible path to the remote is known.
     ///
     /// If there already is a known path, `Ok(())` is returned immediately. Otherwise an
     /// address lookup is performed and the result is sent back once that
