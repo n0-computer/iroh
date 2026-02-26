@@ -17,7 +17,7 @@ pub(crate) mod name;
 mod resolver;
 mod verifier;
 
-pub use iroh_relay::tls::{WebTlsConfig, WebTlsVerifier, default_provider};
+pub use iroh_relay::tls::{CaRootConfig, WebTlsConfig, default_provider};
 
 /// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
 /// establishment.

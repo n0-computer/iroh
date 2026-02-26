@@ -16,7 +16,10 @@ use std::net::SocketAddr;
 use std::{pin::Pin, sync::Arc};
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-use iroh_relay::{RelayConfig, RelayMap};
+use iroh_relay::{
+    RelayConfig, RelayMap,
+    tls::{CaRootConfig, WebTlsConfigBuilder, default_provider},
+};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
 use n0_error::{e, ensure, stack_error};
@@ -107,7 +110,7 @@ pub struct Builder {
     address_lookup: Vec<Box<dyn DynIntoAddressLookup>>,
     address_lookup_user_data: Option<UserData>,
     proxy_url: Option<Url>,
-    tls_config: Option<WebTlsConfig>,
+    ca_root_config: Option<CaRootConfig>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     transports: Vec<TransportConfig>,
@@ -171,7 +174,7 @@ impl Builder {
             address_lookup: Default::default(),
             address_lookup_user_data: Default::default(),
             proxy_url: None,
-            tls_config: None,
+            ca_root_config: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
@@ -201,6 +204,13 @@ impl Builder {
 
         let metrics = EndpointMetrics::default();
 
+        let tls_config = WebTlsConfigBuilder {
+            crypto_provider: default_provider(),
+            verifier: Arc::new(self.ca_root_config.unwrap_or_default()),
+        }
+        .build()
+        .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
+
         let sock_opts = socket::Options {
             transports: self.transports,
             secret_key,
@@ -209,7 +219,7 @@ impl Builder {
             #[cfg(not(wasm_browser))]
             dns_resolver,
             server_config,
-            tls_config: self.tls_config.unwrap_or_default(),
+            tls_config,
             metrics,
             hooks: self.hooks,
             static_config,
@@ -592,8 +602,8 @@ impl Builder {
     /// Sets the TLS config for non-iroh TLS connections.
     ///
     /// This is used for HTTPS connections to iroh relay and pkarr address lookups servers.
-    pub fn tls_config(mut self, tls_config: WebTlsConfig) -> Self {
-        self.tls_config = Some(tls_config);
+    pub fn ca_root_config(mut self, ca_root_config: CaRootConfig) -> Self {
+        self.ca_root_config = Some(ca_root_config);
         self
     }
 
@@ -616,7 +626,7 @@ impl Builder {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insecure_skip_relay_cert_verify(self, skip_verify: bool) -> Self {
         if skip_verify {
-            self.tls_config(WebTlsConfig::insecure_skip_verify())
+            self.ca_root_config(CaRootConfig::InsecureSkipVerify)
         } else {
             self
         }

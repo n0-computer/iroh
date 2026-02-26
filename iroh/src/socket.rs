@@ -703,8 +703,8 @@ pub enum BindError {
     CreateNetmonMonitor { source: netmon::Error },
     #[error("Invalid transport configuration")]
     InvalidTransportConfig,
-    #[error("Invalid TLS configuration")]
-    InvalidTlsConfig { source: io::Error },
+    #[error("Invalid CA root configuration")]
+    InvalidCaRootConfig { source: io::Error },
     #[error("Failed to create an address lookup service")]
     AddressLookup {
         #[error(from)]

@@ -30,13 +30,13 @@ impl WebTlsConfig {
     /// INSECURE: Creates a TLS config that does not verify server certificates at all.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insecure_skip_verify() -> Self {
-        WebTlsConfigBuilder::with_verifier(WebTlsVerifier::InsecureSkipVerify)
+        WebTlsConfigBuilder::with_verifier(CaRootConfig::InsecureSkipVerify)
             .build()
             .expect("infallible")
     }
 
     /// Returns a builder to build a TLS config.
-    pub fn builder(verifier: WebTlsVerifier) -> WebTlsConfigBuilder {
+    pub fn builder(verifier: CaRootConfig) -> WebTlsConfigBuilder {
         WebTlsConfigBuilder::with_verifier(verifier)
     }
 
@@ -53,7 +53,7 @@ pub struct WebTlsConfigBuilder {
     /// Configuration for verifying TLS certificates.
     ///
     /// Note that this is *not* used for iroh connections, but for all other TLS connections.
-    pub verifier: Arc<WebTlsVerifier>,
+    pub verifier: Arc<CaRootConfig>,
     /// The crypto provider to use.
     pub crypto_provider: Arc<CryptoProvider>,
 }
@@ -61,7 +61,7 @@ pub struct WebTlsConfigBuilder {
 impl Default for WebTlsConfigBuilder {
     fn default() -> Self {
         Self {
-            verifier: Arc::new(WebTlsVerifier::default()),
+            verifier: Arc::new(CaRootConfig::default()),
             crypto_provider: default_provider(),
         }
     }
@@ -69,7 +69,7 @@ impl Default for WebTlsConfigBuilder {
 
 impl WebTlsConfigBuilder {
     /// Creates a new [`WebTlsConfig`] with a verifier and the default crypto provider.
-    pub fn with_verifier(verifier: WebTlsVerifier) -> Self {
+    pub fn with_verifier(verifier: CaRootConfig) -> Self {
         Self {
             verifier: Arc::new(verifier),
             crypto_provider: default_provider(),
@@ -95,7 +95,7 @@ impl WebTlsConfigBuilder {
 ///
 /// This includes the connection to iroh relays, to pkarr servers, and DNS resolution over HTTPS.
 #[derive(Debug, Clone)]
-pub enum WebTlsVerifier {
+pub enum CaRootConfig {
     /// Use a compiled-in copy of the root certificates trusted by Mozilla.
     ///
     /// See [`webpki_roots`].
@@ -123,15 +123,15 @@ pub enum WebTlsVerifier {
     InsecureSkipVerify,
 }
 
-impl Default for WebTlsVerifier {
+impl Default for CaRootConfig {
     fn default() -> Self {
-        WebTlsVerifier::EmbeddedWebPki {
+        CaRootConfig::EmbeddedWebPki {
             extra_roots: vec![],
         }
     }
 }
 
-impl WebTlsVerifier {
+impl CaRootConfig {
     /// Builds a a [`ServerCertVerifier`] from this config.
     pub fn build(
         &self,
@@ -139,7 +139,7 @@ impl WebTlsVerifier {
     ) -> io::Result<Arc<dyn ServerCertVerifier>> {
         Ok(match self {
             #[cfg(not(target_os = "android"))]
-            WebTlsVerifier::System { extra_roots } => Arc::new(
+            CaRootConfig::System { extra_roots } => Arc::new(
                 rustls_platform_verifier::Verifier::new_with_extra_roots(
                     extra_roots.clone(),
                     crypto_provider,
@@ -147,11 +147,11 @@ impl WebTlsVerifier {
                 .map_err(io::Error::other)?,
             ),
             #[cfg(target_os = "android")]
-            WebTlsVerifier::System {} => Arc::new(
+            CaRootConfig::System {} => Arc::new(
                 rustls_platform_verifier::Verifier::new(crypto_provider)
                     .map_err(io::Error::other)?,
             ),
-            WebTlsVerifier::EmbeddedWebPki { extra_roots } => {
+            CaRootConfig::EmbeddedWebPki { extra_roots } => {
                 let mut root_store = rustls::RootCertStore {
                     roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
                 };
@@ -160,7 +160,7 @@ impl WebTlsVerifier {
                     .build()
                     .map_err(io::Error::other)?
             }
-            WebTlsVerifier::Custom { roots } => {
+            CaRootConfig::Custom { roots } => {
                 let mut root_store = rustls::RootCertStore { roots: vec![] };
                 root_store.add_parsable_certificates(roots.clone());
                 WebPkiServerVerifier::builder(Arc::new(root_store))
@@ -168,7 +168,7 @@ impl WebTlsVerifier {
                     .map_err(io::Error::other)?
             }
             #[cfg(any(test, feature = "test-utils"))]
-            WebTlsVerifier::InsecureSkipVerify => Arc::new(self::no_cert_verifier::NoCertVerifier),
+            CaRootConfig::InsecureSkipVerify => Arc::new(self::no_cert_verifier::NoCertVerifier),
         })
     }
 }

@@ -1109,7 +1109,7 @@ mod tests {
     ) -> Result<(PublicKey, Client), ConnectError> {
         let public_key = key.public();
         let client = ClientBuilder::new(server_url, key, DnsResolver::new()).tls_config(
-            WebTlsConfigBuilder::with_verifier(crate::tls::WebTlsVerifier::InsecureSkipVerify)
+            WebTlsConfigBuilder::with_verifier(crate::tls::CaRootConfig::InsecureSkipVerify)
                 .build()
                 .unwrap(),
         );
