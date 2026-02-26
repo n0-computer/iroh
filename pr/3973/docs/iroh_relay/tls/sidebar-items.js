@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["WebTlsVerifier"],"fn":["default_provider"],"struct":["WebTlsConfig","WebTlsConfigBuilder"]};
+window.SIDEBAR_ITEMS = {"enum":["CaRootConfig"],"fn":["default_provider"]};

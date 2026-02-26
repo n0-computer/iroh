@@ -19,7 +19,7 @@
 <a href=#19 id=19 data-nosnippet>19</a>    streams::{MaybeTlsStream, ProxyStream},
 <a href=#20 id=20 data-nosnippet>20</a>    <span class="kw-2">*</span>,
 <a href=#21 id=21 data-nosnippet>21</a>};
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use crate</span>::{defaults::timeouts::<span class="kw-2">*</span>, tls::WebTlsConfig};
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::<span class="kw-2">*</span>;
 <a href=#23 id=23 data-nosnippet>23</a>
 <a href=#24 id=24 data-nosnippet>24</a><span class="attr">#[derive(Debug, Clone)]
 <a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">pub struct </span>MaybeTlsStreamBuilder {
@@ -27,11 +27,11 @@
 <a href=#27 id=27 data-nosnippet>27</a>    dns_resolver: DnsResolver,
 <a href=#28 id=28 data-nosnippet>28</a>    proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
 <a href=#29 id=29 data-nosnippet>29</a>    prefer_ipv6: bool,
-<a href=#30 id=30 data-nosnippet>30</a>    tls_config: WebTlsConfig,
+<a href=#30 id=30 data-nosnippet>30</a>    tls_config: rustls::ClientConfig,
 <a href=#31 id=31 data-nosnippet>31</a>}
 <a href=#32 id=32 data-nosnippet>32</a>
 <a href=#33 id=33 data-nosnippet>33</a><span class="kw">impl </span>MaybeTlsStreamBuilder {
-<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">pub fn </span>new(url: Url, dns_resolver: DnsResolver, tls_config: WebTlsConfig) -&gt; <span class="self">Self </span>{
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">pub fn </span>new(url: Url, dns_resolver: DnsResolver, tls_config: rustls::ClientConfig) -&gt; <span class="self">Self </span>{
 <a href=#35 id=35 data-nosnippet>35</a>        <span class="self">Self </span>{
 <a href=#36 id=36 data-nosnippet>36</a>            url,
 <a href=#37 id=37 data-nosnippet>37</a>            dns_resolver,
@@ -52,7 +52,7 @@
 <a href=#52 id=52 data-nosnippet>52</a>    </span>}
 <a href=#53 id=53 data-nosnippet>53</a>
 <a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">pub async fn </span>connect(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;MaybeTlsStream&lt;ProxyStream&gt;, ConnectError&gt; {
-<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span><span class="kw-2">mut </span>config = <span class="self">self</span>.tls_config.inner().clone();
+<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span><span class="kw-2">mut </span>config = <span class="self">self</span>.tls_config.clone();
 <a href=#56 id=56 data-nosnippet>56</a>        config.resumption = Resumption::default();
 <a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span>tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 <a href=#58 id=58 data-nosnippet>58</a>
