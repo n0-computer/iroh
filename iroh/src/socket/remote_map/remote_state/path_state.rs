@@ -146,7 +146,7 @@ impl RemotePathState {
 
     /// Sends back on `tx` once a possible paqth to the remote is known.
     ///
-    /// If tehre already is a known path, `Ok(())` is returned immediately. Otherwise an
+    /// If there already is a known path, `Ok(())` is returned immediately. Otherwise an
     /// address lookup is performed and the result is sent back once that
     /// completes. [`AddressLookupError`] is sent if there are no known paths.
     pub(super) fn resolve_remote(&mut self, tx: oneshot::Sender<Result<(), AddressLookupError>>) {
