@@ -210,15 +210,15 @@ impl StaticConfig {
     }
 }
 
-/// This coordinates the shutdown of a [`crate::Endpoint`] and all its tasks.
+/// This coordinates the shutdown of the [`Socket`] and all its tasks.
 ///
-/// It also tightly binds to the [`Handle`] and [`Actor`] closing as that is where most of
-/// the logic lives.
+/// It also tightly binds to the [`EndpointInner`] and [`Actor`] closing as that is where
+/// most of the logic lives.
 #[derive(Debug)]
 struct ShutdownState {
-    /// Token that is cancelled at the moment the [`crate::Endpoint::close`] is called.
+    /// Token that is cancelled at the moment [`crate::Endpoint::close`] is called.
     ///
-    /// Currently called from [`Handle::close`].
+    /// Currently cancelled from [`EndpointInner::close`].
     at_close_start: CancellationToken,
     /// Token that is cancelled once the [`quinn::Endpoint`] is drained.
     ///
@@ -243,14 +243,17 @@ impl Default for ShutdownState {
 }
 
 impl ShutdownState {
-    /// Whether the endpoint has started closing, or already closed.
+    /// Whether the endpoint has started closing, or is already closed.
     ///
-    /// This is true once [`crate::Endpoint::close`] is called, and remains true forever after.
+    /// This is true once [`crate::Endpoint::close`] is called, and remains true forever
+    /// after. Tasks might still be shutting down.
     fn is_closing(&self) -> bool {
         self.at_close_start.is_cancelled()
     }
 
-    /// Whether the endpoint is fully closed, drained, socked closed and all tasks stopped.
+    /// Whether the endpoint is fully closed and all tasks stopped.
+    ///
+    /// The endpoint will be drained, all transports and sockets will be closed.
     fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
@@ -876,7 +879,7 @@ impl EndpointInner {
         endpoint_config.grease_quic_bit(false);
 
         let local_addrs_watch = transports.local_addrs_watch();
-        let network_change_sender = transports.create_network_change_sender();
+        let transports_network_change = transports.create_network_change_sender();
 
         let runtime = Arc::new(Runtime::new(secret_key.public()));
 
@@ -943,7 +946,7 @@ impl EndpointInner {
             sock.shutdown.at_close_start.child_token(),
         );
 
-        let netmon_watcher = network_monitor.interface_state();
+        let local_interfaces_watcher = network_monitor.interface_state();
 
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
@@ -952,9 +955,9 @@ impl EndpointInner {
             remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
             network_monitor,
-            local_interfaces_watcher: netmon_watcher,
+            local_interfaces_watcher,
             direct_addr_update_state,
-            transports_network_change: network_change_sender,
+            transports_network_change,
             direct_addr_done_rx,
             call_notify_quic_network_change: None,
         };
@@ -1258,7 +1261,7 @@ struct Actor {
     endpoint: quinn::Endpoint,
     /// Shared state between an awful lot of iroh subsystems.
     ///
-    /// In particular both this actor's [`Handle`] as well as this actor itself have a
+    /// In particular both the [`EndpointInner`] as well as this actor itself have a
     /// copy. But also other subsystems that consequently have access to way to much state.
     sock: Arc<Socket>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
@@ -1433,8 +1436,8 @@ impl Actor {
 
     /// Handles a change detected in the local network conditions.
     ///
-    /// This is triggered when netmon detects a change in the local network interfaces, IP
-    /// addresses and routes.
+    /// This is triggered when the netmon actor detects a change in the local network
+    /// interfaces, assigned IP addresses and routes.
     async fn handle_network_change(&mut self, is_major: bool) {
         debug!(is_major, "link change detected");
 

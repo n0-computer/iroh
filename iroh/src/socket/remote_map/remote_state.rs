@@ -315,7 +315,7 @@ impl RemoteStateActor {
                         trace!("direct address watcher disconnected, shutting down");
                         break;
                     }
-                    self.update_local_direct_addrs();
+                    self.update_local_direct_address();
                     trace!("local addrs updated, triggering holepunching");
                     self.trigger_holepunching();
                 }
@@ -633,7 +633,7 @@ impl RemoteStateActor {
     ///
     /// Each connection needs to have the local direct addresses to use as QNT address
     /// candidates.
-    fn update_local_direct_addrs(&mut self) {
+    fn update_local_direct_address(&mut self) {
         let local_addrs = self
             .local_direct_addrs
             .get()
