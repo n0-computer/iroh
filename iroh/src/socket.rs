@@ -869,8 +869,6 @@ impl EndpointInner {
             .await
             .map_err(|err| e!(BindError::CreateNetmonMonitor, err))?;
 
-        let net_report_config = net_report::Options::new(tls_config.clone());
-
         #[cfg(not(wasm_browser))]
         let net_report_config = {
             // Set a `QuicConfig` for address discovery (QAD), but only if we have IP transports.
@@ -885,8 +883,11 @@ impl EndpointInner {
                 ipv4: true,
                 ipv6: has_ipv6_transport,
             });
-            net_report_config.quic_config(qad_config)
+            net_report::Options::new(tls_config.clone()).quic_config(qad_config)
         };
+
+        #[cfg(wasm_browser)]
+        let net_report_config = net_report::Options::default();
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
