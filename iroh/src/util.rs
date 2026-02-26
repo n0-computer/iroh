@@ -6,7 +6,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use iroh_relay::tls::WebTlsConfig;
 use pin_project::pin_project;
 
 /// A future which may not be present.
@@ -73,13 +72,13 @@ impl<T: Future> Future for MaybeFuture<T> {
 /// Creates a reqwest client builder that always uses the rustls backend, unless we
 /// are in a browser context, where that is not supported.
 pub(crate) fn reqwest_client_builder(
-    tls_client_config: Option<WebTlsConfig>,
+    tls_client_config: Option<rustls::ClientConfig>,
 ) -> reqwest::ClientBuilder {
     let mut builder = reqwest::Client::builder();
     #[cfg(not(wasm_browser))]
     {
         builder = if let Some(config) = tls_client_config {
-            builder.use_preconfigured_tls(config.inner().clone())
+            builder.use_preconfigured_tls(config)
         } else {
             builder.use_rustls_tls()
         };

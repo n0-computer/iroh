@@ -32,7 +32,6 @@ use crate::{
         handshake,
         relay::{ClientToRelayMsg, RelayToClientMsg},
     },
-    tls::WebTlsConfig,
 };
 
 pub(crate) mod conn;
@@ -138,7 +137,7 @@ pub struct ClientBuilder {
     /// Server url.
     url: RelayUrl,
     /// TLS verification config.
-    tls_config: Option<WebTlsConfig>,
+    tls_config: Option<rustls::ClientConfig>,
     /// HTTP Proxy
     proxy_url: Option<Url>,
     /// The secret key of this client.
@@ -170,7 +169,7 @@ impl ClientBuilder {
     }
 
     /// Sets a custom TLS config.
-    pub fn tls_config(mut self, tls_config: WebTlsConfig) -> Self {
+    pub fn tls_client_config(mut self, tls_config: rustls::ClientConfig) -> Self {
         self.tls_config = Some(tls_config);
         self
     }
@@ -210,7 +209,7 @@ impl ClientBuilder {
         use crate::{
             http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION},
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
-            tls::WebTlsConfigBuilder,
+            tls::{CaRootConfig, default_provider},
         };
 
         let mut dial_url = (*self.url).clone();
@@ -233,7 +232,7 @@ impl ClientBuilder {
 
         let tls_config = match self.tls_config.clone() {
             Some(config) => config,
-            None => WebTlsConfigBuilder::default().build()?,
+            None => CaRootConfig::default().build_client_config(default_provider())?,
         };
 
         #[allow(unused_mut)]

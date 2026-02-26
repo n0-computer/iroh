@@ -22,8 +22,11 @@ mod tests {
     };
 
     use iroh::{
-        RelayUrl, SecretKey, address_lookup::PkarrRelayClient, dns::DnsResolver,
+        RelayUrl, SecretKey,
+        address_lookup::PkarrRelayClient,
+        dns::DnsResolver,
         endpoint_info::EndpointInfo,
+        tls::{CaRootConfig, default_provider},
     };
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
@@ -174,7 +177,10 @@ mod tests {
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
-        let pkarr = PkarrRelayClient::new(pkarr_relay, Default::default());
+        let tls_config = CaRootConfig::default()
+            .build_client_config(default_provider())
+            .expect("infallible");
+        let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;

@@ -30,7 +30,6 @@ use iroh_relay::quic::QuicClient;
 use iroh_relay::{
     RelayMap,
     quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON},
-    tls::WebTlsConfig,
 };
 use n0_error::e;
 #[cfg(not(wasm_browser))]
@@ -119,7 +118,7 @@ pub(crate) struct Client {
     #[cfg(not(wasm_browser))]
     qad_conns: QadConns,
     #[cfg(not(wasm_browser))]
-    tls_config: WebTlsConfig,
+    tls_config: rustls::ClientConfig,
     /// A collection of previously generated reports.
     ///
     /// Sometimes it is useful to look at past reports to decide what to do.
@@ -983,7 +982,10 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use iroh_base::RelayUrl;
-    use iroh_relay::dns::DnsResolver;
+    use iroh_relay::{
+        dns::DnsResolver,
+        tls::{CaRootConfig, default_provider},
+    };
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
     use tokio_util::sync::CancellationToken;
@@ -1007,9 +1009,10 @@ mod tests {
         let relay_map = RelayMap::from(relay);
 
         let resolver = DnsResolver::new();
-        let opts = Options::default()
-            .quic_config(Some(quic_addr_disc.clone()))
-            .tls_config(WebTlsConfig::insecure_skip_verify());
+        let tls_config = CaRootConfig::InsecureSkipVerify
+            .build_client_config(default_provider())
+            .expect("infallible");
+        let opts = Options::new(tls_config).quic_config(Some(quic_addr_disc.clone()));
         let mut client = Client::new(
             resolver.clone(),
             relay_map.clone(),
@@ -1210,10 +1213,13 @@ mod tests {
             },
         ];
         let resolver = DnsResolver::new();
+        let tls_config = CaRootConfig::InsecureSkipVerify
+            .build_client_config(default_provider())
+            .expect("infallible");
         for mut tt in tests {
             println!("test: {}", tt.name);
             let relay_map = RelayMap::empty();
-            let opts = Options::default();
+            let opts = Options::new(tls_config.clone());
             let mut client = Client::new(resolver.clone(), relay_map, opts, Default::default());
             for s in &mut tt.steps {
                 // trigger the timer

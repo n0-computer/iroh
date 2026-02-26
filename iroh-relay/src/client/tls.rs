@@ -19,7 +19,7 @@ use super::{
     streams::{MaybeTlsStream, ProxyStream},
     *,
 };
-use crate::{defaults::timeouts::*, tls::WebTlsConfig};
+use crate::defaults::timeouts::*;
 
 #[derive(Debug, Clone)]
 pub struct MaybeTlsStreamBuilder {
@@ -27,11 +27,11 @@ pub struct MaybeTlsStreamBuilder {
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
     prefer_ipv6: bool,
-    tls_config: WebTlsConfig,
+    tls_config: rustls::ClientConfig,
 }
 
 impl MaybeTlsStreamBuilder {
-    pub fn new(url: Url, dns_resolver: DnsResolver, tls_config: WebTlsConfig) -> Self {
+    pub fn new(url: Url, dns_resolver: DnsResolver, tls_config: rustls::ClientConfig) -> Self {
         Self {
             url,
             dns_resolver,
@@ -52,7 +52,7 @@ impl MaybeTlsStreamBuilder {
     }
 
     pub async fn connect(self) -> Result<MaybeTlsStream<ProxyStream>, ConnectError> {
-        let mut config = self.tls_config.inner().clone();
+        let mut config = self.tls_config.clone();
         config.resumption = Resumption::default();
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 

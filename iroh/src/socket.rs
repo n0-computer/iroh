@@ -27,7 +27,7 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
-use iroh_relay::{RelayConfig, RelayMap, tls::WebTlsConfig};
+use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{bail, e, stack_error};
 use n0_future::{
     task::{self, AbortOnDropHandle},
@@ -139,7 +139,7 @@ pub(crate) struct Options {
     pub(crate) proxy_url: Option<Url>,
 
     /// TLS configuration for HTTPS and non-iroh-QUIC connections.
-    pub(crate) tls_config: WebTlsConfig,
+    pub(crate) tls_config: rustls::ClientConfig,
 
     /// ServerConfig for the internal QUIC endpoint
     pub(crate) server_config: quinn_proto::ServerConfig,
@@ -280,7 +280,7 @@ pub(crate) struct Socket {
     /// Optional user-defined discover data.
     address_lookup_user_data: RwLock<Option<UserData>>,
 
-    pub(crate) tls_config: WebTlsConfig,
+    pub(crate) tls_config: rustls::ClientConfig,
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
@@ -869,7 +869,7 @@ impl EndpointInner {
             .await
             .map_err(|err| e!(BindError::CreateNetmonMonitor, err))?;
 
-        let net_report_config = net_report::Options::default();
+        let net_report_config = net_report::Options::new(tls_config.clone());
 
         #[cfg(not(wasm_browser))]
         let net_report_config = {
@@ -881,13 +881,11 @@ impl EndpointInner {
             // because all outgoing packets to IP destinations would be dropped.
             let qad_config = has_ip_transports.then(|| QuicConfig {
                 ep: endpoint.clone(),
-                client_config: tls_config.inner().clone(),
+                client_config: tls_config.clone(),
                 ipv4: true,
                 ipv6: has_ipv6_transport,
             });
-            net_report_config
-                .quic_config(qad_config)
-                .tls_config(tls_config.clone())
+            net_report_config.quic_config(qad_config)
         };
 
         let net_reporter = net_report::Client::new(
@@ -1683,7 +1681,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
-    use iroh_relay::tls::WebTlsConfig;
+    use iroh_relay::tls::{CaRootConfig, default_provider};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_tracing_test::traced_test;
@@ -1724,7 +1722,9 @@ mod tests {
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
             server_config,
-            tls_config: WebTlsConfig::default(),
+            tls_config: CaRootConfig::default()
+                .build_client_config(default_provider())
+                .unwrap(),
             #[cfg(any(test, feature = "test-utils"))]
             address_lookup_user_data: None,
             metrics: Default::default(),
@@ -2119,7 +2119,9 @@ mod tests {
             dns_resolver,
             proxy_url: None,
             server_config,
-            tls_config: WebTlsConfig::default(),
+            tls_config: CaRootConfig::default()
+                .build_client_config(default_provider())
+                .unwrap(),
             metrics: Default::default(),
             hooks: Default::default(),
             static_config,

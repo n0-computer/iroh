@@ -27,7 +27,6 @@ use http::StatusCode;
 use iroh_base::RelayUrl;
 use iroh_relay::{
     RelayConfig, RelayMap, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH,
-    tls::WebTlsConfig,
 };
 #[cfg(not(wasm_browser))]
 use iroh_relay::{
@@ -125,7 +124,7 @@ impl Client {
         if_state: IfStateDetails,
         shutdown_token: CancellationToken,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
-        #[cfg(not(wasm_browser))] tls_config: WebTlsConfig,
+        #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
     ) -> (Self, mpsc::Receiver<ProbeFinished>) {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let actor = Actor {
@@ -175,7 +174,7 @@ struct Actor {
     #[cfg(not(wasm_browser))]
     socket_state: SocketState,
     #[cfg(not(wasm_browser))]
-    tls_config: WebTlsConfig,
+    tls_config: rustls::ClientConfig,
     if_state: IfStateDetails,
 }
 
@@ -504,7 +503,7 @@ impl Probe {
         delay: Duration,
         relay: Arc<RelayConfig>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
-        #[cfg(not(wasm_browser))] tls_config: WebTlsConfig,
+        #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
     ) -> Result<ProbeReport, ProbeError> {
         if !delay.is_zero() {
             trace!("delaying probe");
@@ -564,7 +563,7 @@ async fn check_captive_portal(
     dns_resolver: &DnsResolver,
     dm: &RelayMap,
     preferred_relay: Option<RelayUrl>,
-    tls_config: WebTlsConfig,
+    tls_config: rustls::ClientConfig,
 ) -> Result<bool, CaptivePortalError> {
     // If we have a preferred relay and we can use it for non-QAD requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
@@ -811,7 +810,7 @@ pub(super) enum MeasureHttpsLatencyError {
 async fn run_https_probe(
     #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
     relay: RelayUrl,
-    #[cfg(not(wasm_browser))] tls_config: WebTlsConfig,
+    #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
     let url = relay.join(RELAY_PROBE_PATH)?;
@@ -883,7 +882,10 @@ async fn run_https_probe(
 mod tests {
     use std::net::Ipv4Addr;
 
-    use iroh_relay::dns::DnsResolver;
+    use iroh_relay::{
+        dns::DnsResolver,
+        tls::{CaRootConfig, default_provider},
+    };
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
 
@@ -897,7 +899,9 @@ mod tests {
         let report = run_https_probe(
             &dns_resolver,
             relay.url,
-            WebTlsConfig::insecure_skip_verify(),
+            CaRootConfig::InsecureSkipVerify
+                .build_client_config(default_provider())
+                .expect("infallible"),
         )
         .await?;
 

@@ -8,87 +8,6 @@ use rustls::{
 };
 use webpki_types::CertificateDer;
 
-/// Configuration for verifying TLS certificates for HTTPS and other non-iroh TLS connections.
-#[derive(Debug, Clone)]
-pub struct WebTlsConfig {
-    inner: ClientConfig,
-}
-
-impl Default for WebTlsConfig {
-    fn default() -> Self {
-        // TODO: Building the default config is fallible if we use system certs.
-        // What should we do?
-        // - Use WebPki roots by default, then the expect is infallible
-        // - Do not provide a default method, have a fallible new()
-        WebTlsConfigBuilder::default()
-            .build()
-            .expect("Failed to build default TLS config")
-    }
-}
-
-impl WebTlsConfig {
-    /// INSECURE: Creates a TLS config that does not verify server certificates at all.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn insecure_skip_verify() -> Self {
-        WebTlsConfigBuilder::with_verifier(CaRootConfig::InsecureSkipVerify)
-            .build()
-            .expect("infallible")
-    }
-
-    /// Returns a builder to build a TLS config.
-    pub fn builder(verifier: CaRootConfig) -> WebTlsConfigBuilder {
-        WebTlsConfigBuilder::with_verifier(verifier)
-    }
-
-    /// Returns a reference to the [`rustls::ClientConfig`].
-    pub fn inner(&self) -> &ClientConfig {
-        &self.inner
-    }
-}
-
-/// TLS configuration builder.
-/// TODO: more docs
-#[derive(Debug, Clone)]
-pub struct WebTlsConfigBuilder {
-    /// Configuration for verifying TLS certificates.
-    ///
-    /// Note that this is *not* used for iroh connections, but for all other TLS connections.
-    pub verifier: Arc<CaRootConfig>,
-    /// The crypto provider to use.
-    pub crypto_provider: Arc<CryptoProvider>,
-}
-
-impl Default for WebTlsConfigBuilder {
-    fn default() -> Self {
-        Self {
-            verifier: Arc::new(CaRootConfig::default()),
-            crypto_provider: default_provider(),
-        }
-    }
-}
-
-impl WebTlsConfigBuilder {
-    /// Creates a new [`WebTlsConfig`] with a verifier and the default crypto provider.
-    pub fn with_verifier(verifier: CaRootConfig) -> Self {
-        Self {
-            verifier: Arc::new(verifier),
-            crypto_provider: default_provider(),
-        }
-    }
-
-    /// Builds a [`ClientConfig`].
-    pub fn build(&self) -> io::Result<WebTlsConfig> {
-        let verifier = self.verifier.build(self.crypto_provider.clone())?;
-        let config = ClientConfig::builder_with_provider(self.crypto_provider.clone())
-            .with_safe_default_protocol_versions()
-            .expect("protocols supported by ring")
-            .dangerous()
-            .with_custom_certificate_verifier(verifier)
-            .with_no_client_auth();
-        Ok(WebTlsConfig { inner: config })
-    }
-}
-
 /// Configures the trust roots for verifying the validity of TLS certificates.
 ///
 /// This is used throughout iroh whenever TLS connections are established that are not iroh connections.
@@ -132,8 +51,23 @@ impl Default for CaRootConfig {
 }
 
 impl CaRootConfig {
-    /// Builds a a [`ServerCertVerifier`] from this config.
-    pub fn build(
+    /// Build a [`ClientConfig`] from this config.
+    pub fn build_client_config(
+        &self,
+        crypto_provider: Arc<CryptoProvider>,
+    ) -> io::Result<ClientConfig> {
+        let verifier = self.build_server_cert_verifier(crypto_provider.clone())?;
+        let config = ClientConfig::builder_with_provider(crypto_provider)
+            .with_safe_default_protocol_versions()
+            .expect("protocols supported by ring")
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
+            .with_no_client_auth();
+        Ok(config)
+    }
+
+    /// Builds a [`ServerCertVerifier`] from this config.
+    pub fn build_server_cert_verifier(
         &self,
         crypto_provider: Arc<CryptoProvider>,
     ) -> io::Result<Arc<dyn ServerCertVerifier>> {

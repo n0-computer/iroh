@@ -18,7 +18,7 @@ use std::{pin::Pin, sync::Arc};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{
     RelayConfig, RelayMap,
-    tls::{CaRootConfig, WebTlsConfigBuilder, default_provider},
+    tls::{CaRootConfig, default_provider},
 };
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
@@ -54,7 +54,7 @@ use crate::{
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
     },
-    tls::{self, DEFAULT_MAX_TLS_TICKETS, WebTlsConfig},
+    tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
 #[cfg(not(wasm_browser))]
@@ -204,12 +204,11 @@ impl Builder {
 
         let metrics = EndpointMetrics::default();
 
-        let tls_config = WebTlsConfigBuilder {
-            crypto_provider: default_provider(),
-            verifier: Arc::new(self.ca_root_config.unwrap_or_default()),
-        }
-        .build()
-        .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
+        let tls_config = self
+            .ca_root_config
+            .unwrap_or_default()
+            .build_client_config(default_provider())
+            .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
 
         let sock_opts = socket::Options {
             transports: self.transports,
@@ -1214,7 +1213,7 @@ impl Endpoint {
     }
 
     /// Returns the TLS config used for connecting to iroh relays and other non-iroh TLS services.
-    pub fn tls_config(&self) -> &WebTlsConfig {
+    pub fn tls_config(&self) -> &rustls::ClientConfig {
         &self.inner.tls_config
     }
 

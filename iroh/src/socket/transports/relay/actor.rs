@@ -43,7 +43,6 @@ use iroh_relay::{
     self as relay, PingTracker,
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
-    tls::WebTlsConfig,
 };
 use n0_error::{e, stack_error};
 use n0_future::{
@@ -205,7 +204,7 @@ struct RelayConnectionOptions {
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
     prefer_ipv6: Arc<AtomicBool>,
-    tls_config: WebTlsConfig,
+    tls_config: rustls::ClientConfig,
 }
 
 /// Possible reasons for a failed relay connection.
@@ -300,7 +299,7 @@ impl ActiveRelayActor {
             #[cfg(not(wasm_browser))]
             dns_resolver,
         )
-        .tls_config(tls_config)
+        .tls_client_config(tls_config)
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
@@ -837,7 +836,7 @@ pub struct Config {
     pub proxy_url: Option<Url>,
     /// If the last net_report report, reports IPv6 to be available.
     pub ipv6_reported: Arc<AtomicBool>,
-    pub tls_config: WebTlsConfig,
+    pub tls_config: rustls::ClientConfig,
     pub metrics: Arc<SocketMetrics>,
 }
 
@@ -1211,7 +1210,11 @@ mod tests {
     };
 
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
-    use iroh_relay::{PingTracker, protos::relay::Datagrams, tls::WebTlsConfig};
+    use iroh_relay::{
+        PingTracker,
+        protos::relay::Datagrams,
+        tls::{CaRootConfig, default_provider},
+    };
     use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use n0_tracing_test::traced_test;
     use tokio::sync::{mpsc, oneshot};
@@ -1248,7 +1251,9 @@ mod tests {
                 dns_resolver: DnsResolver::new(),
                 proxy_url: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
-                tls_config: WebTlsConfig::insecure_skip_verify(),
+                tls_config: CaRootConfig::InsecureSkipVerify
+                    .build_client_config(default_provider())
+                    .expect("infallible"),
             },
             stop_token,
             metrics: Default::default(),

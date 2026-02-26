@@ -849,7 +849,11 @@ mod tests {
 #[cfg(test)]
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-    use iroh_relay::{RelayMap, endpoint_info::UserData};
+    use iroh_relay::{
+        RelayMap,
+        endpoint_info::UserData,
+        tls::{CaRootConfig, default_provider},
+    };
     use n0_error::{AnyError, Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
@@ -913,9 +917,12 @@ mod test_dns_pkarr {
             "https://relay.example".parse().unwrap(),
         ));
 
+        let tls_config = CaRootConfig::InsecureSkipVerify
+            .build_client_config(default_provider())
+            .expect("infallible");
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
-        let publisher =
-            PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone()).build(secret_key);
+        let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
+            .build(secret_key, tls_config);
         let user_data: UserData = "foobar".parse().unwrap();
         let data = EndpointData::new(relay_url.clone()).with_user_data(Some(user_data.clone()));
         // does not block, update happens in background task
@@ -973,8 +980,7 @@ mod test_dns_pkarr {
             .insecure_skip_relay_cert_verify(true)
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
-            .dns_resolver(dns_pkarr_server.dns_resolver())
-            .address_lookup(dns_pkarr_server.address_lookup(secret_key))
+            .preset(dns_pkarr_server.preset())
             .bind()
             .await?;
 

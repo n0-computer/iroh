@@ -6,8 +6,6 @@ pub(crate) use imp::Options;
 mod imp {
     use std::collections::BTreeSet;
 
-    use iroh_relay::tls::WebTlsConfig;
-
     use crate::net_report::{QuicConfig, probes::Probe};
 
     /// Options for running probes
@@ -21,34 +19,20 @@ mod imp {
         ///
         /// If not provided, will not run QUIC address discovery.
         pub(crate) quic_config: Option<QuicConfig>,
-        /// Enable https probes
-        ///
-        /// On by default
-        pub(crate) https: bool,
-
-        pub(crate) tls_config: WebTlsConfig,
-    }
-
-    impl Default for Options {
-        fn default() -> Self {
-            Self {
-                quic_config: None,
-                https: true,
-                tls_config: WebTlsConfig::default(),
-            }
-        }
+        /// TLS config for HTTPS probes.
+        pub(crate) tls_config: rustls::ClientConfig,
     }
 
     impl Options {
+        pub(crate) fn new(tls_config: rustls::ClientConfig) -> Self {
+            Self {
+                quic_config: None,
+                tls_config,
+            }
+        }
         /// Enable quic probes
         pub(crate) fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
             self.quic_config = quic_config;
-            self
-        }
-
-        /// Set TLS config
-        pub(crate) fn tls_config(mut self, tls_config: WebTlsConfig) -> Self {
-            self.tls_config = tls_config;
             self
         }
 
@@ -63,9 +47,7 @@ mod imp {
                     protocols.insert(Probe::QadIpv6);
                 }
             }
-            if self.https {
-                protocols.insert(Probe::Https);
-            }
+            protocols.insert(Probe::Https);
             protocols
         }
     }
