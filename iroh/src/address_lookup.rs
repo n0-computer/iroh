@@ -852,7 +852,7 @@ mod test_dns_pkarr {
     use iroh_relay::{
         RelayMap,
         endpoint_info::UserData,
-        tls::{CaRootConfig, default_provider},
+        tls::{CaRootsConfig, default_provider},
     };
     use n0_error::{AnyError, Result, StackResultExt};
     use n0_future::time::Duration;
@@ -917,7 +917,7 @@ mod test_dns_pkarr {
             "https://relay.example".parse().unwrap(),
         ));
 
-        let tls_config = CaRootConfig::insecure_skip_verify()
+        let tls_config = CaRootsConfig::insecure_skip_verify()
             .client_config(default_provider())
             .expect("infallible");
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
@@ -977,7 +977,7 @@ mod test_dns_pkarr {
     ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
         let secret_key = SecretKey::generate(rng);
         let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .preset(dns_pkarr_server.preset())

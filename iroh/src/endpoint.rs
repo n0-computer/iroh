@@ -18,7 +18,7 @@ use std::{pin::Pin, sync::Arc};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{
     RelayConfig, RelayMap,
-    tls::{CaRootConfig, default_provider},
+    tls::{CaRootsConfig, default_provider},
 };
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
@@ -110,7 +110,7 @@ pub struct Builder {
     address_lookup: Vec<Box<dyn DynIntoAddressLookup>>,
     address_lookup_user_data: Option<UserData>,
     proxy_url: Option<Url>,
-    ca_root_config: Option<CaRootConfig>,
+    ca_root_config: Option<CaRootsConfig>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     transports: Vec<TransportConfig>,
@@ -601,7 +601,7 @@ impl Builder {
     /// Sets the TLS config for non-iroh TLS connections.
     ///
     /// This is used for HTTPS connections to iroh relay and pkarr address lookups servers.
-    pub fn ca_root_config(mut self, ca_root_config: CaRootConfig) -> Self {
+    pub fn ca_root_config(mut self, ca_root_config: CaRootsConfig) -> Self {
         self.ca_root_config = Some(ca_root_config);
         self
     }
@@ -1688,7 +1688,7 @@ mod tests {
     };
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-    use iroh_relay::{endpoint_info::UserData, tls::CaRootConfig};
+    use iroh_relay::{endpoint_info::UserData, tls::CaRootsConfig};
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
@@ -1745,7 +1745,7 @@ mod tests {
             .secret_key(server_secret_key)
             .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
         // Wait for the endpoint to be reachable via relay
@@ -1785,7 +1785,7 @@ mod tests {
             async move {
                 let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .ca_root_config(CaRootConfig::insecure_skip_verify())
+                    .ca_root_config(CaRootsConfig::insecure_skip_verify())
                     .transport_config(qlog.create("client")?)
                     .bind()
                     .await?;
@@ -1845,7 +1845,7 @@ mod tests {
 
         // Make sure the server is bound before having clients connect to it:
         let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(server_secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -1910,7 +1910,7 @@ mod tests {
                 let client_secret_key = SecretKey::generate(&mut rng);
                 let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .ca_root_config(CaRootConfig::insecure_skip_verify())
+                    .ca_root_config(CaRootsConfig::insecure_skip_verify())
                     .secret_key(client_secret_key)
                     .bind()
                     .await?;
@@ -1962,11 +1962,11 @@ mod tests {
     async fn endpoint_send_relay() -> Result {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
         let server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2087,7 +2087,7 @@ mod tests {
             let ep = Endpoint::builder()
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_root_config(CaRootConfig::insecure_skip_verify())
+                .ca_root_config(CaRootsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .transport_config(qlog.create("client")?)
                 .bind()
@@ -2131,7 +2131,7 @@ mod tests {
             let ep = Endpoint::builder()
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_root_config(CaRootConfig::insecure_skip_verify())
+                .ca_root_config(CaRootsConfig::insecure_skip_verify())
                 .transport_config(qlog.create("server")?)
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
@@ -2189,7 +2189,7 @@ mod tests {
             let ep = Endpoint::builder()
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_root_config(CaRootConfig::insecure_skip_verify())
+                .ca_root_config(CaRootsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .clear_ip_transports() // disable direct
                 .bind()
@@ -2232,7 +2232,7 @@ mod tests {
             let ep = Endpoint::builder()
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_root_config(CaRootConfig::insecure_skip_verify())
+                .ca_root_config(CaRootsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .clear_ip_transports()
                 .bind()
@@ -2288,7 +2288,7 @@ mod tests {
             let ep = Endpoint::builder()
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_root_config(CaRootConfig::insecure_skip_verify())
+                .ca_root_config(CaRootsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
@@ -2337,7 +2337,7 @@ mod tests {
             let ep = Endpoint::builder()
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_root_config(CaRootConfig::insecure_skip_verify())
+                .ca_root_config(CaRootsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
@@ -2391,11 +2391,11 @@ mod tests {
     async fn endpoint_relay_map_change() -> Result {
         let (relay_map, relay_url, _guard1) = run_relay_server().await?;
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
         let server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2600,7 +2600,7 @@ mod tests {
 
         let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
             .alpns(vec![TEST_ALPN.to_vec()])
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
 
@@ -3178,12 +3178,12 @@ mod tests {
         }
 
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .transport_config(qlog.create("client")?)
             .bind()
             .await?;
         let server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -3260,7 +3260,7 @@ mod tests {
         let secret_key = SecretKey::generate(&mut rng);
 
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .instrument(error_span!("ep-client"))
             .await?;
@@ -3270,7 +3270,7 @@ mod tests {
         // bind ep1 and wait until connected to relay.
         let ep1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(secret_key.clone())
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .instrument(error_span!("ep1"))
@@ -3299,7 +3299,7 @@ mod tests {
         // now start second endpoint with same secret key
         let ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
             .secret_key(secret_key.clone())
-            .ca_root_config(CaRootConfig::insecure_skip_verify())
+            .ca_root_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .instrument(error_span!("ep2"))

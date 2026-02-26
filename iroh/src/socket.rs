@@ -1682,7 +1682,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
-    use iroh_relay::tls::{CaRootConfig, default_provider};
+    use iroh_relay::tls::{CaRootsConfig, default_provider};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_tracing_test::traced_test;
@@ -1723,7 +1723,7 @@ mod tests {
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
             server_config,
-            tls_config: CaRootConfig::default()
+            tls_config: CaRootsConfig::default()
                 .client_config(default_provider())
                 .unwrap(),
             #[cfg(any(test, feature = "test-utils"))]
@@ -2120,7 +2120,7 @@ mod tests {
             dns_resolver,
             proxy_url: None,
             server_config,
-            tls_config: CaRootConfig::default()
+            tls_config: CaRootsConfig::default()
                 .client_config(default_provider())
                 .unwrap(),
             metrics: Default::default(),

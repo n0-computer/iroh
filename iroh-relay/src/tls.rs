@@ -14,7 +14,7 @@ use webpki_types::CertificateDer;
 ///
 /// This includes the connection to iroh relays, to pkarr servers, and DNS resolution over HTTPS.
 #[derive(Debug, Clone)]
-pub struct CaRootConfig {
+pub struct CaRootsConfig {
     mode: Mode,
     extra_roots: Vec<CertificateDer<'static>>,
 }
@@ -38,7 +38,7 @@ enum Mode {
     InsecureSkipVerify,
 }
 
-impl Default for CaRootConfig {
+impl Default for CaRootsConfig {
     fn default() -> Self {
         Self {
             mode: Mode::EmbeddedWebPki,
@@ -47,7 +47,7 @@ impl Default for CaRootConfig {
     }
 }
 
-impl CaRootConfig {
+impl CaRootsConfig {
     /// Use the operating system’s certificate facilities for verifying the validity of TLS certificates.
     ///
     /// See [`rustls_platform_verifier`] for details how roots are retrieved on different platforms.

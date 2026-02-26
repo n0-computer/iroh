@@ -884,7 +884,7 @@ mod tests {
 
     use iroh_relay::{
         dns::DnsResolver,
-        tls::{CaRootConfig, default_provider},
+        tls::{CaRootsConfig, default_provider},
     };
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
@@ -899,7 +899,7 @@ mod tests {
         let report = run_https_probe(
             &dns_resolver,
             relay.url,
-            CaRootConfig::insecure_skip_verify()
+            CaRootsConfig::insecure_skip_verify()
                 .client_config(default_provider())
                 .expect("infallible"),
         )

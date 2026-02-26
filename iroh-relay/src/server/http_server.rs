@@ -1003,7 +1003,7 @@ mod tests {
         client::{Client, ClientBuilder, ConnectError, conn::Conn},
         dns::DnsResolver,
         protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
-        tls::{CaRootConfig, default_provider},
+        tls::{CaRootsConfig, default_provider},
     };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
@@ -1109,7 +1109,7 @@ mod tests {
     ) -> Result<(PublicKey, Client), ConnectError> {
         let public_key = key.public();
         let client = ClientBuilder::new(server_url, key, DnsResolver::new()).tls_client_config(
-            CaRootConfig::insecure_skip_verify()
+            CaRootsConfig::insecure_skip_verify()
                 .client_config(default_provider())
                 .expect("infallible"),
         );

@@ -26,7 +26,7 @@ mod tests {
         address_lookup::PkarrRelayClient,
         dns::DnsResolver,
         endpoint_info::EndpointInfo,
-        tls::{CaRootConfig, default_provider},
+        tls::{CaRootsConfig, default_provider},
     };
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
@@ -177,7 +177,7 @@ mod tests {
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
-        let tls_config = CaRootConfig::default()
+        let tls_config = CaRootsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
         let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);

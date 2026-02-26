@@ -209,7 +209,7 @@ impl ClientBuilder {
         use crate::{
             http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION},
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
-            tls::{CaRootConfig, default_provider},
+            tls::{CaRootsConfig, default_provider},
         };
 
         let mut dial_url = (*self.url).clone();
@@ -232,7 +232,7 @@ impl ClientBuilder {
 
         let tls_config = match self.tls_config.clone() {
             Some(config) => config,
-            None => CaRootConfig::default().client_config(default_provider())?,
+            None => CaRootsConfig::default().client_config(default_provider())?,
         };
 
         #[allow(unused_mut)]

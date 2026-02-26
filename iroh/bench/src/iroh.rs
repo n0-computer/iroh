@@ -34,7 +34,7 @@ pub fn server_endpoint(
         #[cfg(feature = "local-relay")]
         {
             if relay_url.is_some() {
-                builder = builder.ca_root_config(iroh::tls::CaRootConfig::insecure_skip_verify());
+                builder = builder.ca_root_config(iroh::tls::CaRootsConfig::insecure_skip_verify());
             }
             if opt.only_relay {
                 builder = builder.clear_ip_transports();
@@ -95,7 +95,7 @@ pub async fn connect_client(
     #[cfg(feature = "local-relay")]
     {
         if relay_url.is_some() {
-            builder = builder.ca_root_config(iroh::tls::CaRootConfig::insecure_skip_verify());
+            builder = builder.ca_root_config(iroh::tls::CaRootsConfig::insecure_skip_verify());
         }
         if opt.only_relay {
             builder = builder.clear_ip_transports();

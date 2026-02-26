@@ -5,7 +5,7 @@ use iroh::{
     SecretKey,
     address_lookup::pkarr::PkarrRelayClient,
     endpoint_info::EndpointInfo,
-    tls::{CaRootConfig, default_provider},
+    tls::{CaRootsConfig, default_provider},
 };
 use iroh_dns_server::{ZoneStore, config::Config, metrics::Metrics, server::Server};
 use n0_error::Result;
@@ -40,7 +40,7 @@ fn benchmark_dns_server(c: &mut Criterion) {
                     let secret_key = SecretKey::generate(&mut rng);
                     let endpoint_id = secret_key.public();
 
-                    let tls_config = CaRootConfig::default()
+                    let tls_config = CaRootsConfig::default()
                         .client_config(default_provider())
                         .expect("infallible");
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
