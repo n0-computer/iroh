@@ -969,6 +969,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "dht"
+version = "6.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "487f44ddea90c749900048a2753a929fb88c391848ce12387f4a76e6ec911f72"
+dependencies = [
+ "crc",
+ "document-features",
+ "dyn-clone",
+ "ed25519-dalek",
+ "flume",
+ "futures-lite",
+ "getrandom 0.3.4",
+ "lru 0.13.0",
+ "serde",
+ "serde_bencode",
+ "serde_bytes",
+ "sha1_smol",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "diatomic-waker"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1992,7 +2014,7 @@ dependencies = [
  "papaya",
  "parse-size",
  "pin-project",
- "pkarr",
+ "pkarr-client",
  "pkcs8",
  "portmapper",
  "postcard",
@@ -2089,11 +2111,11 @@ dependencies = [
  "humantime-serde",
  "iroh",
  "iroh-metrics",
- "lru",
+ "lru 0.16.3",
  "n0-error",
  "n0-future",
  "n0-tracing-test",
- "pkarr",
+ "pkarr-client",
  "rand",
  "rand_chacha",
  "rcgen",
@@ -2235,13 +2257,13 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
- "lru",
+ "lru 0.16.3",
  "n0-error",
  "n0-future",
  "n0-tracing-test",
  "num_enum",
  "pin-project",
- "pkarr",
+ "pkarr-client",
  "postcard",
  "proptest",
  "rand",
@@ -2410,6 +2432,12 @@ dependencies = [
 
 [[package]]
 name = "lru"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "227748d55f2f0ab4735d87fd623798cb6b664512fe979705f829c9f81c934465"
+
+[[package]]
+name = "lru"
 version = "0.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1dc47f592c06f33f8e3aea9591776ec7c9f9e4124778ff8a3c3b87159f7e593"
@@ -2428,28 +2456,6 @@ name = "mac-addr"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3d25b0e0b648a86960ac23b7ad4abb9717601dec6f66c165f5b037f3f03065f"
-
-[[package]]
-name = "mainline"
-version = "6.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ff27d378ca495eaf3be8616d5d7319c1c18e93fd60e13698fcdc7e19448f1a4"
-dependencies = [
- "crc",
- "document-features",
- "dyn-clone",
- "ed25519-dalek",
- "flume",
- "futures-lite",
- "getrandom 0.3.4",
- "lru",
- "serde",
- "serde_bencode",
- "serde_bytes",
- "sha1_smol",
- "thiserror 2.0.18",
- "tracing",
-]
 
 [[package]]
 name = "matchers"
@@ -3048,15 +3054,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
-name = "pkarr"
-version = "5.0.2"
+name = "pkarr-client"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1d346b545765a0ef58b6a7e160e17ddaa7427f439b7b9a287df6c88c9e04bf2"
+checksum = "279a87e5145170fb4f92925d086a528d64edf75a908a2f806893b12157add194"
 dependencies = [
  "async-compat",
  "base32",
  "bytes",
  "cfg_aliases",
+ "dht",
  "document-features",
  "dyn-clone",
  "ed25519-dalek",
@@ -3064,8 +3071,7 @@ dependencies = [
  "futures-lite",
  "getrandom 0.3.4",
  "log",
- "lru",
- "mainline",
+ "lru 0.13.0",
  "ntimestamp",
  "reqwest",
  "self_cell",
