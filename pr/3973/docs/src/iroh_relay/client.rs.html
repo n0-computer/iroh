@@ -209,7 +209,7 @@
 <a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">use crate</span>::{
 <a href=#210 id=210 data-nosnippet>210</a>            http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION},
 <a href=#211 id=211 data-nosnippet>211</a>            protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
-<a href=#212 id=212 data-nosnippet>212</a>            tls::{CaRootConfig, default_provider},
+<a href=#212 id=212 data-nosnippet>212</a>            tls::{CaRootsConfig, default_provider},
 <a href=#213 id=213 data-nosnippet>213</a>        };
 <a href=#214 id=214 data-nosnippet>214</a>
 <a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">let </span><span class="kw-2">mut </span>dial_url = (<span class="kw-2">*</span><span class="self">self</span>.url).clone();
@@ -232,7 +232,7 @@
 <a href=#232 id=232 data-nosnippet>232</a>
 <a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span>tls_config = <span class="kw">match </span><span class="self">self</span>.tls_config.clone() {
 <a href=#234 id=234 data-nosnippet>234</a>            <span class="prelude-val">Some</span>(config) =&gt; config,
-<a href=#235 id=235 data-nosnippet>235</a>            <span class="prelude-val">None </span>=&gt; CaRootConfig::default().build_client_config(default_provider())<span class="question-mark">?</span>,
+<a href=#235 id=235 data-nosnippet>235</a>            <span class="prelude-val">None </span>=&gt; CaRootsConfig::default().client_config(default_provider())<span class="question-mark">?</span>,
 <a href=#236 id=236 data-nosnippet>236</a>        };
 <a href=#237 id=237 data-nosnippet>237</a>
 <a href=#238 id=238 data-nosnippet>238</a>        <span class="attr">#[allow(unused_mut)]

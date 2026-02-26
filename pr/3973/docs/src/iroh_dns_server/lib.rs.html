@@ -26,7 +26,7 @@
 <a href=#26 id=26 data-nosnippet>26</a>        address_lookup::PkarrRelayClient,
 <a href=#27 id=27 data-nosnippet>27</a>        dns::DnsResolver,
 <a href=#28 id=28 data-nosnippet>28</a>        endpoint_info::EndpointInfo,
-<a href=#29 id=29 data-nosnippet>29</a>        tls::{CaRootConfig, default_provider},
+<a href=#29 id=29 data-nosnippet>29</a>        tls::{CaRootsConfig, default_provider},
 <a href=#30 id=30 data-nosnippet>30</a>    };
 <a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -177,8 +177,8 @@
 <a href=#177 id=177 data-nosnippet>177</a>
 <a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
-<a href=#180 id=180 data-nosnippet>180</a>        <span class="kw">let </span>tls_config = CaRootConfig::default()
-<a href=#181 id=181 data-nosnippet>181</a>            .build_client_config(default_provider())
+<a href=#180 id=180 data-nosnippet>180</a>        <span class="kw">let </span>tls_config = CaRootsConfig::default()
+<a href=#181 id=181 data-nosnippet>181</a>            .client_config(default_provider())
 <a href=#182 id=182 data-nosnippet>182</a>            .expect(<span class="string">"infallible"</span>);
 <a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">let </span>pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
 <a href=#184 id=184 data-nosnippet>184</a>        <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;

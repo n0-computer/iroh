@@ -1213,7 +1213,7 @@
 <a href=#1213 id=1213 data-nosnippet>1213</a>    <span class="kw">use </span>iroh_relay::{
 <a href=#1214 id=1214 data-nosnippet>1214</a>        PingTracker,
 <a href=#1215 id=1215 data-nosnippet>1215</a>        protos::relay::Datagrams,
-<a href=#1216 id=1216 data-nosnippet>1216</a>        tls::{CaRootConfig, default_provider},
+<a href=#1216 id=1216 data-nosnippet>1216</a>        tls::{CaRootsConfig, default_provider},
 <a href=#1217 id=1217 data-nosnippet>1217</a>    };
 <a href=#1218 id=1218 data-nosnippet>1218</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#1219 id=1219 data-nosnippet>1219</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -1251,8 +1251,8 @@
 <a href=#1251 id=1251 data-nosnippet>1251</a>                dns_resolver: DnsResolver::new(),
 <a href=#1252 id=1252 data-nosnippet>1252</a>                proxy_url: <span class="prelude-val">None</span>,
 <a href=#1253 id=1253 data-nosnippet>1253</a>                prefer_ipv6: Arc::new(AtomicBool::new(<span class="bool-val">true</span>)),
-<a href=#1254 id=1254 data-nosnippet>1254</a>                tls_config: CaRootConfig::InsecureSkipVerify
-<a href=#1255 id=1255 data-nosnippet>1255</a>                    .build_client_config(default_provider())
+<a href=#1254 id=1254 data-nosnippet>1254</a>                tls_config: CaRootsConfig::insecure_skip_verify()
+<a href=#1255 id=1255 data-nosnippet>1255</a>                    .client_config(default_provider())
 <a href=#1256 id=1256 data-nosnippet>1256</a>                    .expect(<span class="string">"infallible"</span>),
 <a href=#1257 id=1257 data-nosnippet>1257</a>            },
 <a href=#1258 id=1258 data-nosnippet>1258</a>            stop_token,

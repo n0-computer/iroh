@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>iroh_relay::{
 <a href=#20 id=20 data-nosnippet>20</a>    RelayConfig, RelayMap,
-<a href=#21 id=21 data-nosnippet>21</a>    tls::{CaRootConfig, default_provider},
+<a href=#21 id=21 data-nosnippet>21</a>    tls::{CaRootsConfig, default_provider},
 <a href=#22 id=22 data-nosnippet>22</a>};
 <a href=#23 id=23 data-nosnippet>23</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#24 id=24 data-nosnippet>24</a></span><span class="kw">use </span>n0_error::bail;
@@ -110,7 +110,7 @@
 <a href=#110 id=110 data-nosnippet>110</a>    address_lookup: Vec&lt;Box&lt;<span class="kw">dyn </span>DynIntoAddressLookup&gt;&gt;,
 <a href=#111 id=111 data-nosnippet>111</a>    address_lookup_user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
 <a href=#112 id=112 data-nosnippet>112</a>    proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
-<a href=#113 id=113 data-nosnippet>113</a>    ca_root_config: <span class="prelude-ty">Option</span>&lt;CaRootConfig&gt;,
+<a href=#113 id=113 data-nosnippet>113</a>    ca_root_config: <span class="prelude-ty">Option</span>&lt;CaRootsConfig&gt;,
 <a href=#114 id=114 data-nosnippet>114</a>    <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#115 id=115 data-nosnippet>115</a>    </span>dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
 <a href=#116 id=116 data-nosnippet>116</a>    transports: Vec&lt;TransportConfig&gt;,
@@ -207,7 +207,7 @@
 <a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">let </span>tls_config = <span class="self">self
 <a href=#208 id=208 data-nosnippet>208</a>            </span>.ca_root_config
 <a href=#209 id=209 data-nosnippet>209</a>            .unwrap_or_default()
-<a href=#210 id=210 data-nosnippet>210</a>            .build_client_config(default_provider())
+<a href=#210 id=210 data-nosnippet>210</a>            .client_config(default_provider())
 <a href=#211 id=211 data-nosnippet>211</a>            .map_err(|err| <span class="macro">e!</span>(BindError::InvalidCaRootConfig, err))<span class="question-mark">?</span>;
 <a href=#212 id=212 data-nosnippet>212</a>
 <a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>sock_opts = socket::Options {
@@ -601,7 +601,7 @@
 <a href=#601 id=601 data-nosnippet>601</a>    <span class="doccomment">/// Sets the TLS config for non-iroh TLS connections.
 <a href=#602 id=602 data-nosnippet>602</a>    ///
 <a href=#603 id=603 data-nosnippet>603</a>    /// This is used for HTTPS connections to iroh relay and pkarr address lookups servers.
-<a href=#604 id=604 data-nosnippet>604</a>    </span><span class="kw">pub fn </span>ca_root_config(<span class="kw-2">mut </span><span class="self">self</span>, ca_root_config: CaRootConfig) -&gt; <span class="self">Self </span>{
+<a href=#604 id=604 data-nosnippet>604</a>    </span><span class="kw">pub fn </span>ca_root_config(<span class="kw-2">mut </span><span class="self">self</span>, ca_root_config: CaRootsConfig) -&gt; <span class="self">Self </span>{
 <a href=#605 id=605 data-nosnippet>605</a>        <span class="self">self</span>.ca_root_config = <span class="prelude-val">Some</span>(ca_root_config);
 <a href=#606 id=606 data-nosnippet>606</a>        <span class="self">self
 <a href=#607 id=607 data-nosnippet>607</a>    </span>}
@@ -1688,7 +1688,7 @@
 <a href=#1688 id=1688 data-nosnippet>1688</a>    };
 <a href=#1689 id=1689 data-nosnippet>1689</a>
 <a href=#1690 id=1690 data-nosnippet>1690</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-<a href=#1691 id=1691 data-nosnippet>1691</a>    <span class="kw">use </span>iroh_relay::{endpoint_info::UserData, tls::CaRootConfig};
+<a href=#1691 id=1691 data-nosnippet>1691</a>    <span class="kw">use </span>iroh_relay::{endpoint_info::UserData, tls::CaRootsConfig};
 <a href=#1692 id=1692 data-nosnippet>1692</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#1693 id=1693 data-nosnippet>1693</a>    <span class="kw">use </span>n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
 <a href=#1694 id=1694 data-nosnippet>1694</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -1745,7 +1745,7 @@
 <a href=#1745 id=1745 data-nosnippet>1745</a>            .secret_key(server_secret_key)
 <a href=#1746 id=1746 data-nosnippet>1746</a>            .transport_config(qlog.create(<span class="string">"server"</span>)<span class="question-mark">?</span>)
 <a href=#1747 id=1747 data-nosnippet>1747</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#1748 id=1748 data-nosnippet>1748</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#1748 id=1748 data-nosnippet>1748</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#1749 id=1749 data-nosnippet>1749</a>            .bind()
 <a href=#1750 id=1750 data-nosnippet>1750</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1751 id=1751 data-nosnippet>1751</a>        <span class="comment">// Wait for the endpoint to be reachable via relay
@@ -1785,7 +1785,7 @@
 <a href=#1785 id=1785 data-nosnippet>1785</a>            <span class="kw">async move </span>{
 <a href=#1786 id=1786 data-nosnippet>1786</a>                <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
 <a href=#1787 id=1787 data-nosnippet>1787</a>                    .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#1788 id=1788 data-nosnippet>1788</a>                    .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#1788 id=1788 data-nosnippet>1788</a>                    .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#1789 id=1789 data-nosnippet>1789</a>                    .transport_config(qlog.create(<span class="string">"client"</span>)<span class="question-mark">?</span>)
 <a href=#1790 id=1790 data-nosnippet>1790</a>                    .bind()
 <a href=#1791 id=1791 data-nosnippet>1791</a>                    .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1845,7 +1845,7 @@
 <a href=#1845 id=1845 data-nosnippet>1845</a>
 <a href=#1846 id=1846 data-nosnippet>1846</a>        <span class="comment">// Make sure the server is bound before having clients connect to it:
 <a href=#1847 id=1847 data-nosnippet>1847</a>        </span><span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-<a href=#1848 id=1848 data-nosnippet>1848</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#1848 id=1848 data-nosnippet>1848</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#1849 id=1849 data-nosnippet>1849</a>            .secret_key(server_secret_key)
 <a href=#1850 id=1850 data-nosnippet>1850</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#1851 id=1851 data-nosnippet>1851</a>            .bind()
@@ -1910,7 +1910,7 @@
 <a href=#1910 id=1910 data-nosnippet>1910</a>                <span class="kw">let </span>client_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#1911 id=1911 data-nosnippet>1911</a>                <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
 <a href=#1912 id=1912 data-nosnippet>1912</a>                    .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#1913 id=1913 data-nosnippet>1913</a>                    .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#1913 id=1913 data-nosnippet>1913</a>                    .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#1914 id=1914 data-nosnippet>1914</a>                    .secret_key(client_secret_key)
 <a href=#1915 id=1915 data-nosnippet>1915</a>                    .bind()
 <a href=#1916 id=1916 data-nosnippet>1916</a>                    .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1962,11 +1962,11 @@
 <a href=#1962 id=1962 data-nosnippet>1962</a>    </span><span class="kw">async fn </span>endpoint_send_relay() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#1963 id=1963 data-nosnippet>1963</a>        <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1964 id=1964 data-nosnippet>1964</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-<a href=#1965 id=1965 data-nosnippet>1965</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#1965 id=1965 data-nosnippet>1965</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#1966 id=1966 data-nosnippet>1966</a>            .bind()
 <a href=#1967 id=1967 data-nosnippet>1967</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1968 id=1968 data-nosnippet>1968</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-<a href=#1969 id=1969 data-nosnippet>1969</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#1969 id=1969 data-nosnippet>1969</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#1970 id=1970 data-nosnippet>1970</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#1971 id=1971 data-nosnippet>1971</a>            .bind()
 <a href=#1972 id=1972 data-nosnippet>1972</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2087,7 +2087,7 @@
 <a href=#2087 id=2087 data-nosnippet>2087</a>            <span class="kw">let </span>ep = Endpoint::builder()
 <a href=#2088 id=2088 data-nosnippet>2088</a>                .secret_key(secret)
 <a href=#2089 id=2089 data-nosnippet>2089</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2090 id=2090 data-nosnippet>2090</a>                .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#2090 id=2090 data-nosnippet>2090</a>                .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#2091 id=2091 data-nosnippet>2091</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2092 id=2092 data-nosnippet>2092</a>                .transport_config(qlog.create(<span class="string">"client"</span>)<span class="question-mark">?</span>)
 <a href=#2093 id=2093 data-nosnippet>2093</a>                .bind()
@@ -2131,7 +2131,7 @@
 <a href=#2131 id=2131 data-nosnippet>2131</a>            <span class="kw">let </span>ep = Endpoint::builder()
 <a href=#2132 id=2132 data-nosnippet>2132</a>                .secret_key(secret)
 <a href=#2133 id=2133 data-nosnippet>2133</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2134 id=2134 data-nosnippet>2134</a>                .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#2134 id=2134 data-nosnippet>2134</a>                .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#2135 id=2135 data-nosnippet>2135</a>                .transport_config(qlog.create(<span class="string">"server"</span>)<span class="question-mark">?</span>)
 <a href=#2136 id=2136 data-nosnippet>2136</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2137 id=2137 data-nosnippet>2137</a>                .bind()
@@ -2189,7 +2189,7 @@
 <a href=#2189 id=2189 data-nosnippet>2189</a>            <span class="kw">let </span>ep = Endpoint::builder()
 <a href=#2190 id=2190 data-nosnippet>2190</a>                .secret_key(secret)
 <a href=#2191 id=2191 data-nosnippet>2191</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2192 id=2192 data-nosnippet>2192</a>                .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#2192 id=2192 data-nosnippet>2192</a>                .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#2193 id=2193 data-nosnippet>2193</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2194 id=2194 data-nosnippet>2194</a>                .clear_ip_transports() <span class="comment">// disable direct
 <a href=#2195 id=2195 data-nosnippet>2195</a>                </span>.bind()
@@ -2232,7 +2232,7 @@
 <a href=#2232 id=2232 data-nosnippet>2232</a>            <span class="kw">let </span>ep = Endpoint::builder()
 <a href=#2233 id=2233 data-nosnippet>2233</a>                .secret_key(secret)
 <a href=#2234 id=2234 data-nosnippet>2234</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2235 id=2235 data-nosnippet>2235</a>                .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#2235 id=2235 data-nosnippet>2235</a>                .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#2236 id=2236 data-nosnippet>2236</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2237 id=2237 data-nosnippet>2237</a>                .clear_ip_transports()
 <a href=#2238 id=2238 data-nosnippet>2238</a>                .bind()
@@ -2288,7 +2288,7 @@
 <a href=#2288 id=2288 data-nosnippet>2288</a>            <span class="kw">let </span>ep = Endpoint::builder()
 <a href=#2289 id=2289 data-nosnippet>2289</a>                .secret_key(secret)
 <a href=#2290 id=2290 data-nosnippet>2290</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2291 id=2291 data-nosnippet>2291</a>                .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#2291 id=2291 data-nosnippet>2291</a>                .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#2292 id=2292 data-nosnippet>2292</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2293 id=2293 data-nosnippet>2293</a>                .bind()
 <a href=#2294 id=2294 data-nosnippet>2294</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2337,7 +2337,7 @@
 <a href=#2337 id=2337 data-nosnippet>2337</a>            <span class="kw">let </span>ep = Endpoint::builder()
 <a href=#2338 id=2338 data-nosnippet>2338</a>                .secret_key(secret)
 <a href=#2339 id=2339 data-nosnippet>2339</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2340 id=2340 data-nosnippet>2340</a>                .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#2340 id=2340 data-nosnippet>2340</a>                .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#2341 id=2341 data-nosnippet>2341</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2342 id=2342 data-nosnippet>2342</a>                .bind()
 <a href=#2343 id=2343 data-nosnippet>2343</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2391,11 +2391,11 @@
 <a href=#2391 id=2391 data-nosnippet>2391</a>    </span><span class="kw">async fn </span>endpoint_relay_map_change() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2392 id=2392 data-nosnippet>2392</a>        <span class="kw">let </span>(relay_map, relay_url, _guard1) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2393 id=2393 data-nosnippet>2393</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-<a href=#2394 id=2394 data-nosnippet>2394</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#2394 id=2394 data-nosnippet>2394</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#2395 id=2395 data-nosnippet>2395</a>            .bind()
 <a href=#2396 id=2396 data-nosnippet>2396</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2397 id=2397 data-nosnippet>2397</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-<a href=#2398 id=2398 data-nosnippet>2398</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#2398 id=2398 data-nosnippet>2398</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#2399 id=2399 data-nosnippet>2399</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2400 id=2400 data-nosnippet>2400</a>            .bind()
 <a href=#2401 id=2401 data-nosnippet>2401</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2600,7 +2600,7 @@
 <a href=#2600 id=2600 data-nosnippet>2600</a>
 <a href=#2601 id=2601 data-nosnippet>2601</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
 <a href=#2602 id=2602 data-nosnippet>2602</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2603 id=2603 data-nosnippet>2603</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#2603 id=2603 data-nosnippet>2603</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#2604 id=2604 data-nosnippet>2604</a>            .bind()
 <a href=#2605 id=2605 data-nosnippet>2605</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2606 id=2606 data-nosnippet>2606</a>
@@ -3178,12 +3178,12 @@
 <a href=#3178 id=3178 data-nosnippet>3178</a>        }
 <a href=#3179 id=3179 data-nosnippet>3179</a>
 <a href=#3180 id=3180 data-nosnippet>3180</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-<a href=#3181 id=3181 data-nosnippet>3181</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#3181 id=3181 data-nosnippet>3181</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#3182 id=3182 data-nosnippet>3182</a>            .transport_config(qlog.create(<span class="string">"client"</span>)<span class="question-mark">?</span>)
 <a href=#3183 id=3183 data-nosnippet>3183</a>            .bind()
 <a href=#3184 id=3184 data-nosnippet>3184</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3185 id=3185 data-nosnippet>3185</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-<a href=#3186 id=3186 data-nosnippet>3186</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#3186 id=3186 data-nosnippet>3186</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#3187 id=3187 data-nosnippet>3187</a>            .transport_config(qlog.create(<span class="string">"server"</span>)<span class="question-mark">?</span>)
 <a href=#3188 id=3188 data-nosnippet>3188</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#3189 id=3189 data-nosnippet>3189</a>            .bind()
@@ -3260,7 +3260,7 @@
 <a href=#3260 id=3260 data-nosnippet>3260</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#3261 id=3261 data-nosnippet>3261</a>
 <a href=#3262 id=3262 data-nosnippet>3262</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-<a href=#3263 id=3263 data-nosnippet>3263</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#3263 id=3263 data-nosnippet>3263</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#3264 id=3264 data-nosnippet>3264</a>            .bind()
 <a href=#3265 id=3265 data-nosnippet>3265</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"ep-client"</span>))
 <a href=#3266 id=3266 data-nosnippet>3266</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -3270,7 +3270,7 @@
 <a href=#3270 id=3270 data-nosnippet>3270</a>        <span class="comment">// bind ep1 and wait until connected to relay.
 <a href=#3271 id=3271 data-nosnippet>3271</a>        </span><span class="kw">let </span>ep1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
 <a href=#3272 id=3272 data-nosnippet>3272</a>            .secret_key(secret_key.clone())
-<a href=#3273 id=3273 data-nosnippet>3273</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#3273 id=3273 data-nosnippet>3273</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#3274 id=3274 data-nosnippet>3274</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#3275 id=3275 data-nosnippet>3275</a>            .bind()
 <a href=#3276 id=3276 data-nosnippet>3276</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"ep1"</span>))
@@ -3299,7 +3299,7 @@
 <a href=#3299 id=3299 data-nosnippet>3299</a>        <span class="comment">// now start second endpoint with same secret key
 <a href=#3300 id=3300 data-nosnippet>3300</a>        </span><span class="kw">let </span>ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
 <a href=#3301 id=3301 data-nosnippet>3301</a>            .secret_key(secret_key.clone())
-<a href=#3302 id=3302 data-nosnippet>3302</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#3302 id=3302 data-nosnippet>3302</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#3303 id=3303 data-nosnippet>3303</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#3304 id=3304 data-nosnippet>3304</a>            .bind()
 <a href=#3305 id=3305 data-nosnippet>3305</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"ep2"</span>))

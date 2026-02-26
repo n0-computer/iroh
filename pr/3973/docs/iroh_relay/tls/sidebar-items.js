@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["CaRootConfig"],"fn":["default_provider"]};
+window.SIDEBAR_ITEMS = {"fn":["default_provider"],"struct":["CaRootsConfig"]};

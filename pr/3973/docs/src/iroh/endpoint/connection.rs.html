@@ -1193,7 +1193,7 @@
 <a href=#1193 id=1193 data-nosnippet>1193</a>    <span class="kw">use </span>std::time::Duration;
 <a href=#1194 id=1194 data-nosnippet>1194</a>
 <a href=#1195 id=1195 data-nosnippet>1195</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey};
-<a href=#1196 id=1196 data-nosnippet>1196</a>    <span class="kw">use </span>iroh_relay::tls::CaRootConfig;
+<a href=#1196 id=1196 data-nosnippet>1196</a>    <span class="kw">use </span>iroh_relay::tls::CaRootsConfig;
 <a href=#1197 id=1197 data-nosnippet>1197</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#1198 id=1198 data-nosnippet>1198</a>    <span class="kw">use </span>n0_future::StreamExt;
 <a href=#1199 id=1199 data-nosnippet>1199</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -1424,14 +1424,14 @@
 <a href=#1424 id=1424 data-nosnippet>1424</a>        <span class="kw">let </span>(relay_map, _relay_map, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1425 id=1425 data-nosnippet>1425</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
 <a href=#1426 id=1426 data-nosnippet>1426</a>            .secret_key(SecretKey::generate(<span class="kw-2">&amp;mut </span>rng))
-<a href=#1427 id=1427 data-nosnippet>1427</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#1427 id=1427 data-nosnippet>1427</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#1428 id=1428 data-nosnippet>1428</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
 <a href=#1429 id=1429 data-nosnippet>1429</a>            .bind()
 <a href=#1430 id=1430 data-nosnippet>1430</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1431 id=1431 data-nosnippet>1431</a>
 <a href=#1432 id=1432 data-nosnippet>1432</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
 <a href=#1433 id=1433 data-nosnippet>1433</a>            .secret_key(SecretKey::generate(<span class="kw-2">&amp;mut </span>rng))
-<a href=#1434 id=1434 data-nosnippet>1434</a>            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+<a href=#1434 id=1434 data-nosnippet>1434</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
 <a href=#1435 id=1435 data-nosnippet>1435</a>            .bind()
 <a href=#1436 id=1436 data-nosnippet>1436</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1437 id=1437 data-nosnippet>1437</a>

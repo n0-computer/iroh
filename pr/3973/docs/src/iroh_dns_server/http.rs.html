@@ -306,7 +306,7 @@
 <a href=#306 id=306 data-nosnippet>306</a>        RelayUrl, SecretKey,
 <a href=#307 id=307 data-nosnippet>307</a>        address_lookup::{EndpointInfo, PkarrRelayClient},
 <a href=#308 id=308 data-nosnippet>308</a>        endpoint_info::EndpointIdExt,
-<a href=#309 id=309 data-nosnippet>309</a>        tls::{CaRootConfig, default_provider},
+<a href=#309 id=309 data-nosnippet>309</a>        tls::{CaRootsConfig, default_provider},
 <a href=#310 id=310 data-nosnippet>310</a>    };
 <a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">use </span>n0_error::StdResultExt;
 <a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -345,8 +345,8 @@
 <a href=#345 id=345 data-nosnippet>345</a>        };
 <a href=#346 id=346 data-nosnippet>346</a>
 <a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">let </span>http_url = server.http_url().expect(<span class="string">"http is bound"</span>);
-<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">let </span>tls_config = CaRootConfig::default()
-<a href=#349 id=349 data-nosnippet>349</a>            .build_client_config(default_provider())
+<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">let </span>tls_config = CaRootsConfig::default()
+<a href=#349 id=349 data-nosnippet>349</a>            .client_config(default_provider())
 <a href=#350 id=350 data-nosnippet>350</a>            .expect(<span class="string">"infallible"</span>);
 <a href=#351 id=351 data-nosnippet>351</a>        <span class="kw">let </span>pkarr = PkarrRelayClient::new(<span class="macro">format!</span>(<span class="string">"{http_url}pkarr"</span>).parse().anyerr()<span class="question-mark">?</span>, tls_config);
 <a href=#352 id=352 data-nosnippet>352</a>        pkarr.publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await</span><span class="question-mark">?</span>;

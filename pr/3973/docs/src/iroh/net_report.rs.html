@@ -984,7 +984,7 @@
 <a href=#984 id=984 data-nosnippet>984</a>    <span class="kw">use </span>iroh_base::RelayUrl;
 <a href=#985 id=985 data-nosnippet>985</a>    <span class="kw">use </span>iroh_relay::{
 <a href=#986 id=986 data-nosnippet>986</a>        dns::DnsResolver,
-<a href=#987 id=987 data-nosnippet>987</a>        tls::{CaRootConfig, default_provider},
+<a href=#987 id=987 data-nosnippet>987</a>        tls::{CaRootsConfig, default_provider},
 <a href=#988 id=988 data-nosnippet>988</a>    };
 <a href=#989 id=989 data-nosnippet>989</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#990 id=990 data-nosnippet>990</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -1009,8 +1009,8 @@
 <a href=#1009 id=1009 data-nosnippet>1009</a>        <span class="kw">let </span>relay_map = RelayMap::from(relay);
 <a href=#1010 id=1010 data-nosnippet>1010</a>
 <a href=#1011 id=1011 data-nosnippet>1011</a>        <span class="kw">let </span>resolver = DnsResolver::new();
-<a href=#1012 id=1012 data-nosnippet>1012</a>        <span class="kw">let </span>tls_config = CaRootConfig::InsecureSkipVerify
-<a href=#1013 id=1013 data-nosnippet>1013</a>            .build_client_config(default_provider())
+<a href=#1012 id=1012 data-nosnippet>1012</a>        <span class="kw">let </span>tls_config = CaRootsConfig::insecure_skip_verify()
+<a href=#1013 id=1013 data-nosnippet>1013</a>            .client_config(default_provider())
 <a href=#1014 id=1014 data-nosnippet>1014</a>            .expect(<span class="string">"infallible"</span>);
 <a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="kw">let </span>opts = Options::new(tls_config).quic_config(<span class="prelude-val">Some</span>(quic_addr_disc.clone()));
 <a href=#1016 id=1016 data-nosnippet>1016</a>        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(
@@ -1213,8 +1213,8 @@
 <a href=#1213 id=1213 data-nosnippet>1213</a>            </span>},
 <a href=#1214 id=1214 data-nosnippet>1214</a>        ];
 <a href=#1215 id=1215 data-nosnippet>1215</a>        <span class="kw">let </span>resolver = DnsResolver::new();
-<a href=#1216 id=1216 data-nosnippet>1216</a>        <span class="kw">let </span>tls_config = CaRootConfig::InsecureSkipVerify
-<a href=#1217 id=1217 data-nosnippet>1217</a>            .build_client_config(default_provider())
+<a href=#1216 id=1216 data-nosnippet>1216</a>        <span class="kw">let </span>tls_config = CaRootsConfig::insecure_skip_verify()
+<a href=#1217 id=1217 data-nosnippet>1217</a>            .client_config(default_provider())
 <a href=#1218 id=1218 data-nosnippet>1218</a>            .expect(<span class="string">"infallible"</span>);
 <a href=#1219 id=1219 data-nosnippet>1219</a>        <span class="kw">for </span><span class="kw-2">mut </span>tt <span class="kw">in </span>tests {
 <a href=#1220 id=1220 data-nosnippet>1220</a>            <span class="macro">println!</span>(<span class="string">"test: {}"</span>, tt.name);

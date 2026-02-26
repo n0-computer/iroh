@@ -1682,7 +1682,7 @@
 <a href=#1682 id=1682 data-nosnippet>1682</a>
 <a href=#1683 id=1683 data-nosnippet>1683</a>    <span class="kw">use </span>data_encoding::HEXLOWER;
 <a href=#1684 id=1684 data-nosnippet>1684</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, TransportAddr};
-<a href=#1685 id=1685 data-nosnippet>1685</a>    <span class="kw">use </span>iroh_relay::tls::{CaRootConfig, default_provider};
+<a href=#1685 id=1685 data-nosnippet>1685</a>    <span class="kw">use </span>iroh_relay::tls::{CaRootsConfig, default_provider};
 <a href=#1686 id=1686 data-nosnippet>1686</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#1687 id=1687 data-nosnippet>1687</a>    <span class="kw">use </span>n0_future::{MergeBounded, StreamExt, time};
 <a href=#1688 id=1688 data-nosnippet>1688</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -1723,8 +1723,8 @@
 <a href=#1723 id=1723 data-nosnippet>1723</a>            proxy_url: <span class="prelude-val">None</span>,
 <a href=#1724 id=1724 data-nosnippet>1724</a>            dns_resolver: DnsResolver::new(),
 <a href=#1725 id=1725 data-nosnippet>1725</a>            server_config,
-<a href=#1726 id=1726 data-nosnippet>1726</a>            tls_config: CaRootConfig::default()
-<a href=#1727 id=1727 data-nosnippet>1727</a>                .build_client_config(default_provider())
+<a href=#1726 id=1726 data-nosnippet>1726</a>            tls_config: CaRootsConfig::default()
+<a href=#1727 id=1727 data-nosnippet>1727</a>                .client_config(default_provider())
 <a href=#1728 id=1728 data-nosnippet>1728</a>                .unwrap(),
 <a href=#1729 id=1729 data-nosnippet>1729</a>            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 <a href=#1730 id=1730 data-nosnippet>1730</a>            </span>address_lookup_user_data: <span class="prelude-val">None</span>,
@@ -2120,8 +2120,8 @@
 <a href=#2120 id=2120 data-nosnippet>2120</a>            dns_resolver,
 <a href=#2121 id=2121 data-nosnippet>2121</a>            proxy_url: <span class="prelude-val">None</span>,
 <a href=#2122 id=2122 data-nosnippet>2122</a>            server_config,
-<a href=#2123 id=2123 data-nosnippet>2123</a>            tls_config: CaRootConfig::default()
-<a href=#2124 id=2124 data-nosnippet>2124</a>                .build_client_config(default_provider())
+<a href=#2123 id=2123 data-nosnippet>2123</a>            tls_config: CaRootsConfig::default()
+<a href=#2124 id=2124 data-nosnippet>2124</a>                .client_config(default_provider())
 <a href=#2125 id=2125 data-nosnippet>2125</a>                .unwrap(),
 <a href=#2126 id=2126 data-nosnippet>2126</a>            metrics: Default::default(),
 <a href=#2127 id=2127 data-nosnippet>2127</a>            hooks: Default::default(),
