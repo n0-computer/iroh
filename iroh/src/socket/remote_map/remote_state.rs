@@ -315,7 +315,7 @@ impl RemoteStateActor {
                         trace!("direct address watcher disconnected, shutting down");
                         break;
                     }
-                    self.local_addrs_updated();
+                    self.update_local_direct_addres();
                     trace!("local addrs updated, triggering holepunching");
                     self.trigger_holepunching();
                 }
@@ -385,64 +385,8 @@ impl RemoteStateActor {
                 tx.send(info).ok();
             }
             RemoteStateMessage::NetworkChange { is_major } => {
-                self.handle_network_change(is_major);
+                self.handle_msg_network_change(is_major);
             }
-        }
-    }
-
-    fn handle_network_change(&mut self, is_major: bool) {
-        for conn in self.connections.values() {
-            if let Some(quinn_conn) = conn.handle.upgrade() {
-                for (path_id, addr) in &conn.paths {
-                    if let Some(path) = quinn_conn.path(*path_id) {
-                        // Ping the current path
-                        if let Err(err) = path.ping() {
-                            warn!(%err, %path_id, ?addr, "failed to ping path");
-                        }
-                    }
-                }
-            }
-        }
-
-        if is_major {
-            self.trigger_holepunching();
-        }
-    }
-
-    /// Handles regularly checking if any paths need hole punching currently
-    ///
-    /// Currently we need to have 1 IP path, with a good enough latency.
-    fn check_connections(&mut self) {
-        let mut is_goodenough = true;
-        for conn_state in self.connections.values() {
-            let mut is_conn_goodenough = false;
-            if let Some(conn) = conn_state.handle.upgrade() {
-                let min_ip_rtt = conn_state
-                    .paths
-                    .iter()
-                    .filter_map(|(path_id, addr)| {
-                        if addr.is_ip() {
-                            conn.path_stats(*path_id).map(|stats| stats.rtt)
-                        } else {
-                            None
-                        }
-                    })
-                    .min();
-
-                if let Some(min_ip_rtt) = min_ip_rtt {
-                    let is_latency_goodenough = min_ip_rtt <= GOOD_ENOUGH_LATENCY;
-                    is_conn_goodenough = is_latency_goodenough;
-                } else {
-                    // No IP transport found
-                    is_conn_goodenough = false;
-                }
-            }
-            is_goodenough &= is_conn_goodenough;
-        }
-
-        if !is_goodenough {
-            debug!("connections are not good enough, triggering holepunching");
-            self.trigger_holepunching();
         }
     }
 
@@ -527,7 +471,7 @@ impl RemoteStateActor {
                 .iter()
                 .map(|d| d.addr)
                 .collect::<BTreeSet<_>>();
-            Self::set_local_addrs(&conn, &local_addrs);
+            Self::update_qnt_candidates(&conn, &local_addrs);
 
             // Store the connection
             let conn_state = self
@@ -602,6 +546,25 @@ impl RemoteStateActor {
         self.trigger_address_lookup();
     }
 
+    /// Handles [`RemoteStateMessage::NetworkChange`].
+    fn handle_msg_network_change(&mut self, is_major: bool) {
+        for conn in self.connections.values() {
+            if let Some(quinn_conn) = conn.handle.upgrade() {
+                for (path_id, addr) in &conn.paths {
+                    if let Some(path) = quinn_conn.path(*path_id) {
+                        // Ping the current path
+                        if let Err(err) = path.ping() {
+                            warn!(%err, %path_id, ?addr, "failed to ping path");
+                        }
+                    }
+                }
+            }
+        }
+
+        if is_major {
+            self.trigger_holepunching();
+        }
+    }
     fn handle_connection_close(&mut self, conn_id: ConnId) {
         if self.connections.remove(&conn_id).is_some() {
             self.metrics.num_conns_closed.inc();
@@ -612,6 +575,26 @@ impl RemoteStateActor {
         }
     }
 
+    /// Triggers Address Lookup for the remote endpoint, if needed.
+    ///
+    /// Does not start Address Lookup if we have a selected path or if Address Lookup is
+    /// currently running.
+    fn trigger_address_lookup(&mut self) {
+        if self.selected_path.get().is_some()
+            || matches!(self.address_lookup_stream, Either::Right(_))
+        {
+            return;
+        }
+        match self.address_lookup.resolve(self.endpoint_id) {
+            Some(stream) => self.address_lookup_stream = Either::Right(SyncStream::new(stream)),
+            None => self.paths.address_lookup_finished(Ok(())),
+        }
+    }
+
+    /// Handles an address lookup result.
+    ///
+    /// All address lookup results and up being sent here. It takes care of updating the
+    /// [`RemotePathState`] with the results.
     fn handle_address_lookup_item(
         &mut self,
         item: Option<Result<AddressLookupItem, AddressLookupError>>,
@@ -644,23 +627,11 @@ impl RemoteStateActor {
         }
     }
 
-    /// Triggers Address Lookup for the remote endpoint, if needed.
+    /// Updates the local [`DirectAddr`]s to all connections.
     ///
-    /// Does not start Address Lookup if we have a selected path or if Address Lookup is currently running.
-    fn trigger_address_lookup(&mut self) {
-        if self.selected_path.get().is_some()
-            || matches!(self.address_lookup_stream, Either::Right(_))
-        {
-            return;
-        }
-        match self.address_lookup.resolve(self.endpoint_id) {
-            Some(stream) => self.address_lookup_stream = Either::Right(SyncStream::new(stream)),
-            None => self.paths.address_lookup_finished(Ok(())),
-        }
-    }
-
-    /// Sets the current local addresses to QNT's state to all connections
-    fn local_addrs_updated(&mut self) {
+    /// Each connection needs to have the local direct addresses to use as QNT address
+    /// candidates.
+    fn update_local_direct_addres(&mut self) {
         let local_addrs = self
             .local_direct_addrs
             .get()
@@ -669,31 +640,34 @@ impl RemoteStateActor {
             .collect::<BTreeSet<_>>();
 
         for conn in self.connections.values().filter_map(|s| s.handle.upgrade()) {
-            Self::set_local_addrs(&conn, &local_addrs);
+            Self::update_qnt_candidates(&conn, &local_addrs);
         }
         // todo: trace
     }
 
-    /// Sets the current local addresses to QNT's state
-    fn set_local_addrs(conn: &quinn::Connection, local_addrs: &BTreeSet<SocketAddr>) {
-        let quinn_local_addrs = match conn.get_local_nat_traversal_addresses() {
+    /// Updates QNT's candidate addresses to be the current set of direct addresses.
+    ///
+    /// `direct addrs` must be a set of addresses extracted from the endpoint's current
+    /// [`DirectAddr`]s.
+    fn update_qnt_candidates(conn: &quinn::Connection, direct_addrs: &BTreeSet<SocketAddr>) {
+        let quinn_candidates = match conn.get_local_nat_traversal_addresses() {
             Ok(addrs) => BTreeSet::from_iter(addrs),
             Err(err) => {
                 warn!("failed to get local nat candidates: {err:#}");
                 return;
             }
         };
-        for addr in local_addrs.difference(&quinn_local_addrs) {
+        for addr in direct_addrs.difference(&quinn_candidates) {
             if let Err(err) = conn.add_nat_traversal_address(*addr) {
                 warn!("failed adding local addr: {err:#}",);
             }
         }
-        for addr in quinn_local_addrs.difference(local_addrs) {
+        for addr in quinn_candidates.difference(direct_addrs) {
             if let Err(err) = conn.remove_nat_traversal_address(*addr) {
                 warn!("failed removing local addr: {err:#}");
             }
         }
-        trace!(?local_addrs, "updated local QNT addresses");
+        trace!(?direct_addrs, "updated local QNT addresses");
     }
 
     /// Triggers holepunching to the remote endpoint.
@@ -1089,7 +1063,7 @@ impl RemoteStateActor {
     /// avoid the client and server selecting different paths and accidentally closing all
     /// paths.
     fn close_redundant_paths(&mut self, selected_path: &transports::Addr) {
-        debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path),);
+        debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path));
 
         for (conn_id, conn_state) in self.connections.iter() {
             for (path_id, path_remote) in conn_state
@@ -1124,6 +1098,43 @@ impl RemoteStateActor {
                     }
                 }
             }
+        }
+    }
+
+    /// Handles regularly checking if any paths need hole punching currently
+    ///
+    /// Currently we need to have 1 IP path, with a good enough latency.
+    fn check_connections(&mut self) {
+        let mut is_goodenough = true;
+        for conn_state in self.connections.values() {
+            let mut is_conn_goodenough = false;
+            if let Some(conn) = conn_state.handle.upgrade() {
+                let min_ip_rtt = conn_state
+                    .paths
+                    .iter()
+                    .filter_map(|(path_id, addr)| {
+                        if addr.is_ip() {
+                            conn.path_stats(*path_id).map(|stats| stats.rtt)
+                        } else {
+                            None
+                        }
+                    })
+                    .min();
+
+                if let Some(min_ip_rtt) = min_ip_rtt {
+                    let is_latency_goodenough = min_ip_rtt <= GOOD_ENOUGH_LATENCY;
+                    is_conn_goodenough = is_latency_goodenough;
+                } else {
+                    // No IP transport found
+                    is_conn_goodenough = false;
+                }
+            }
+            is_goodenough &= is_conn_goodenough;
+        }
+
+        if !is_goodenough {
+            debug!("connections are not good enough, triggering holepunching");
+            self.trigger_holepunching();
         }
     }
 }
