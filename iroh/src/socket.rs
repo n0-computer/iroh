@@ -220,7 +220,7 @@ struct ShutdownState {
     /// Token that is cancelled once the [`quinn::Endpoint`] is drained.
     ///
     /// Only 100ms after this is cancelled will the [`Actor`] task be cancelled, it should
-    /// have exited already by then as it is considerd an error if it was still running.
+    /// have exited already by then as it is considered an error if it was still running.
     at_endpoint_closed: CancellationToken,
     /// Set if the endpoint is closed and all tasks are stopped.
     ///
