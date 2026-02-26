@@ -25,19 +25,18 @@ use std::{
     task::Poll,
 };
 
-use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use pin_project::pin_project;
 use quinn::WeakConnectionHandle;
-use tracing::warn;
 
 use crate::{
     Endpoint,
     endpoint::{
         AfterHandshakeOutcome,
+        id::IdFromQuinnConn,
         quic::{
             AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
             ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
@@ -254,7 +253,7 @@ fn conn_from_quinn_conn(
     impl Future<Output = Result<Connection, ConnectingError>> + Send + 'static,
     ConnectingError,
 > {
-    let info = match static_info_from_conn(&conn) {
+    let info = match static_info_from_conn(ep, &conn) {
         Ok(val) => val,
         Err(auth_err) => {
             // If the authentication error raced with a connection error, the connection
@@ -292,52 +291,13 @@ fn conn_from_quinn_conn(
     })
 }
 
-fn static_info_from_conn(conn: &quinn::Connection) -> Result<StaticInfo, AuthenticationError> {
-    let endpoint_id = remote_id_from_quinn_conn(conn)?;
+fn static_info_from_conn(
+    ep: &Endpoint,
+    conn: &quinn::Connection,
+) -> Result<StaticInfo, AuthenticationError> {
+    let endpoint_id = ep.remote_id_strategy().remote_id_from_quinn_conn(conn)?;
     let alpn = alpn_from_quinn_conn(conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
     Ok(StaticInfo { endpoint_id, alpn })
-}
-
-/// Returns the [`EndpointId`] from the peer's TLS certificate.
-///
-/// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
-/// included in the TLS certificate presented during the handshake when connecting.
-/// This function allows you to get the [`EndpointId`] of the remote endpoint of this
-/// connection.
-///
-/// [`PublicKey`]: iroh_base::PublicKey
-fn remote_id_from_quinn_conn(
-    conn: &quinn::Connection,
-) -> Result<EndpointId, RemoteEndpointIdError> {
-    let data = conn.peer_identity();
-    match data {
-        None => {
-            warn!("no peer certificate found");
-            Err(RemoteEndpointIdError::new())
-        }
-        Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
-            Ok(certs) => {
-                if certs.len() != 1 {
-                    warn!(
-                        "expected a single peer certificate, but {} found",
-                        certs.len()
-                    );
-                    return Err(RemoteEndpointIdError::new());
-                }
-
-                let peer_id = EndpointId::from_verifying_key(
-                    VerifyingKey::from_public_key_der(&certs[0])
-                        .map_err(|_| RemoteEndpointIdError::new())?,
-                );
-
-                Ok(peer_id)
-            }
-            Err(err) => {
-                warn!("invalid peer certificate: {:?}", err);
-                Err(RemoteEndpointIdError::new())
-            }
-        },
-    }
 }
 
 /// An outgoing connection in progress.
@@ -1084,7 +1044,7 @@ impl Connection<IncomingZeroRtt> {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
+        crate::endpoint::id::RawEd25519Id.remote_id_from_quinn_conn(&self.inner)
     }
 }
 
@@ -1126,7 +1086,7 @@ impl Connection<OutgoingZeroRtt> {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
+        crate::endpoint::id::RawEd25519Id.remote_id_from_quinn_conn(&self.inner)
     }
 }
 

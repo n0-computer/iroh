@@ -41,23 +41,25 @@ use crate::address_lookup::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    NetReport,
+    IdFromQuinnConn, NetReport,
     address_lookup::{
         ConcurrentAddressLookup, DynIntoAddressLookup, Error as AddressLookupError,
         IntoAddressLookup, UserData,
     },
-    endpoint::presets::Preset,
+    endpoint::{id::RawEd25519Id, presets::Preset},
     metrics::EndpointMetrics,
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
     },
-    tls::{self, DEFAULT_MAX_TLS_TICKETS},
+    tls::{self, DEFAULT_MAX_TLS_TICKETS, EndpointTlsConfigParams},
 };
 
 #[cfg(not(wasm_browser))]
 mod bind;
 mod connection;
 pub(crate) mod hooks;
+/// Endpoint identity extraction from QUIC connections.
+pub mod id;
 pub mod presets;
 pub(crate) mod quic;
 
@@ -112,6 +114,8 @@ pub struct Builder {
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     transports: Vec<TransportConfig>,
+    tls_config_params: Option<EndpointTlsConfigParams>,
+    remote_id_strategy: Box<dyn IdFromQuinnConn>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
 }
@@ -176,6 +180,8 @@ impl Builder {
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
+            tls_config_params: None,
+            remote_id_strategy: Box::new(RawEd25519Id),
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
@@ -191,9 +197,15 @@ impl Builder {
             .secret_key
             .unwrap_or_else(move || SecretKey::generate(&mut rng));
 
+        let tls_config: tls::TlsConfig = match self.tls_config_params {
+            Some(cfg) => tls::TlsConfig::new(secret_key.clone(), cfg),
+            None => tls::TlsConfig::new_default(secret_key.clone(), self.max_tls_tickets),
+        };
+
         let static_config = StaticConfig {
             transport_config: self.transport_config.clone(),
-            tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
+            remote_id_strategy: self.remote_id_strategy,
+            tls_config,
             keylog: self.keylog,
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
@@ -610,6 +622,29 @@ impl Builder {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
+        self
+    }
+
+    /// Set the endpoint TLS config parameters.
+    ///
+    /// Set this to customize endpoint TLS configuration if you need advanced
+    /// control over authentication and authorization.
+    ///
+    /// Default is designed to interoperate with Iroh's pubkey ID. Do NOT
+    /// modify this unless you understand the risks associated with customizing
+    /// authentication and authorization logic at the TLS layer.
+    pub fn tls_config_params(mut self, cfg: EndpointTlsConfigParams) -> Self {
+        self.tls_config_params = Some(cfg);
+        self
+    }
+
+    /// Set the strategy used to identify a remote endpoint using a quic connection.
+    ///
+    /// By default, this will extract an Ed25519 key from the remote peer's
+    /// certificate. Use this configuration option in conjunction with the
+    /// tls_config_params option to customize the quic handshake.
+    pub fn remote_id_strategy(mut self, strategy: Box<dyn IdFromQuinnConn>) -> Self {
+        self.remote_id_strategy = strategy;
         self
     }
 
@@ -1467,6 +1502,10 @@ impl Endpoint {
             return Err(e!(EndpointError::Closed));
         }
         Ok(self.inner.clone())
+    }
+
+    pub(crate) fn remote_id_strategy(&self) -> &dyn IdFromQuinnConn {
+        &*self.inner.static_config.remote_id_strategy
     }
 }
 
