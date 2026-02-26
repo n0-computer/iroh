@@ -207,10 +207,25 @@ impl StaticConfig {
     }
 }
 
+/// This coordinates the shutdown of the [`Socket`] and all its tasks.
+///
+/// It also tightly binds to the [`EndpointInner`] and [`Actor`] closing as that is where
+/// most of the logic lives.
 #[derive(Debug)]
 struct ShutdownState {
+    /// Token that is cancelled at the moment [`crate::Endpoint::close`] is called.
+    ///
+    /// Currently cancelled from [`EndpointInner::close`].
     at_close_start: CancellationToken,
+    /// Token that is cancelled once the [`quinn::Endpoint`] is drained.
+    ///
+    /// Only 100ms after this is cancelled will the [`Actor`] task be cancelled, it should
+    /// have exited already by then as it is considered an error if it was still running.
     at_endpoint_closed: CancellationToken,
+    /// Set if the endpoint is closed and all tasks are stopped.
+    ///
+    /// This is only set once both [`Self::at_close_start`] and [`Self::at_endpoint_closed`]
+    /// are cancelled **and** the [`Actor`] task is no longer running.
     closed: AtomicBool,
 }
 
@@ -225,10 +240,17 @@ impl Default for ShutdownState {
 }
 
 impl ShutdownState {
+    /// Whether the endpoint has started closing, or is already closed.
+    ///
+    /// This is true once [`crate::Endpoint::close`] is called, and remains true forever
+    /// after. Tasks might still be shutting down.
     fn is_closing(&self) -> bool {
         self.at_close_start.is_cancelled()
     }
 
+    /// Whether the endpoint is fully closed and all tasks stopped.
+    ///
+    /// The endpoint will be drained, all transports and sockets will be closed.
     fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
@@ -306,10 +328,12 @@ impl Socket {
         })
     }
 
+    /// Whether the iroh endpoint is closed and all its actors stopped.
     pub(crate) fn is_closed(&self) -> bool {
         self.shutdown.is_closed()
     }
 
+    /// Whether [`crate::Endpoint::close`] has been called.
     fn is_closing(&self) -> bool {
         self.shutdown.is_closing()
     }
@@ -852,7 +876,7 @@ impl EndpointInner {
         endpoint_config.grease_quic_bit(false);
 
         let local_addrs_watch = transports.local_addrs_watch();
-        let network_change_sender = transports.create_network_change_sender();
+        let transports_network_change = transports.create_network_change_sender();
 
         let runtime = Arc::new(Runtime::new(secret_key.public()));
 
@@ -919,7 +943,7 @@ impl EndpointInner {
             sock.shutdown.at_close_start.child_token(),
         );
 
-        let netmon_watcher = network_monitor.interface_state();
+        let local_interfaces_watcher = network_monitor.interface_state();
 
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
@@ -927,9 +951,9 @@ impl EndpointInner {
             remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
             network_monitor,
-            netmon_watcher,
+            local_interfaces_watcher,
             direct_addr_update_state,
-            network_change_sender,
+            transports_network_change,
             direct_addr_done_rx,
         };
         // Initialize addresses
@@ -963,7 +987,7 @@ impl EndpointInner {
         &self.endpoint
     }
 
-    /// Closes the connection.
+    /// Closes the iroh endpoint.
     ///
     /// Only the first close does anything. Any later closes return nil.  Polling the socket
     /// ([`quinn::AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`] indefinitely
@@ -1217,15 +1241,22 @@ enum ActorMessage {
 }
 
 struct Actor {
+    /// Shared state between an awful lot of iroh subsystems.
+    ///
+    /// In particular both the [`EndpointInner`] as well as this actor itself have a
+    /// copy. But also other subsystems that consequently have access to way to much state.
     sock: Arc<Socket>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
     remote_map: RemoteMap,
     /// When set, is an AfterFunc timer that will call Socket::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
-
+    /// An actor watching the local network interfaces.
+    ///
+    /// The monitored changes are emitted via [`Self::local_interfaces_watcher`].
     network_monitor: netmon::Monitor,
-    netmon_watcher: n0_watcher::Direct<netmon::State>,
-    network_change_sender: transports::NetworkChangeSender,
+    /// Watcher for changes to the local network interfaces, IP addresses and routes.
+    local_interfaces_watcher: n0_watcher::Direct<netmon::State>,
+    transports_network_change: transports::NetworkChangeSender,
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
@@ -1239,7 +1270,7 @@ impl Actor {
         mut local_addrs_watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
     ) {
         // Setup network monitoring
-        let mut current_netmon_state = self.netmon_watcher.get();
+        let mut current_netmon_state = self.local_interfaces_watcher.get();
 
         #[cfg(not(wasm_browser))]
         let mut portmap_watcher = self
@@ -1317,7 +1348,7 @@ impl Actor {
                     match reason {
                         Some(()) => {
                             // check if a new run needs to be scheduled
-                            let state = self.netmon_watcher.get();
+                            let state = self.local_interfaces_watcher.get();
                             self.direct_addr_update_state.try_run(state.into());
                         }
                         None => {
@@ -1345,7 +1376,7 @@ impl Actor {
                     #[cfg(wasm_browser)]
                     let _unused_in_browsers = change;
                 },
-                state = self.netmon_watcher.updated() => {
+                state = self.local_interfaces_watcher.updated() => {
                     let Ok(state) = state else {
                         trace!("tick: link change receiver closed");
                         self.sock.metrics.socket.actor_tick_other.inc();
@@ -1372,11 +1403,15 @@ impl Actor {
         }
     }
 
+    /// Handles a change detected in the local network conditions.
+    ///
+    /// This is triggered when the netmon actor detects a change in the local network
+    /// interfaces, assigned IP addresses and routes.
     async fn handle_network_change(&mut self, is_major: bool) {
         debug!(is_major, "link change detected");
 
         if is_major {
-            if let Err(err) = self.network_change_sender.rebind() {
+            if let Err(err) = self.transports_network_change.rebind() {
                 warn!("failed to rebind transports: {err:?}");
             }
 
@@ -1395,7 +1430,7 @@ impl Actor {
     }
 
     fn re_stun(&mut self, why: UpdateReason) {
-        let state = self.netmon_watcher.get();
+        let state = self.local_interfaces_watcher.get();
         self.direct_addr_update_state
             .schedule_run(why, state.into());
     }
@@ -1545,7 +1580,7 @@ impl Actor {
             let LocalAddresses {
                 regular: mut ips,
                 loopback,
-            } = self.netmon_watcher.get().local_addresses;
+            } = self.local_interfaces_watcher.get().local_addresses;
             if ips.is_empty() && addrs.is_empty() {
                 // Include loopback addresses only if there are no other interfaces
                 // or public addresses, this allows testing offline.
@@ -1582,7 +1617,7 @@ impl Actor {
             }
 
             // Notify all transports
-            self.network_change_sender.on_network_change(r);
+            self.transports_network_change.on_network_change(r);
         }
 
         #[cfg(not(wasm_browser))]
