@@ -41,7 +41,7 @@ fn benchmark_dns_server(c: &mut Criterion) {
                     let endpoint_id = secret_key.public();
 
                     let tls_config = CaRootConfig::default()
-                        .build_client_config(default_provider())
+                        .client_config(default_provider())
                         .expect("infallible");
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
                     let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);

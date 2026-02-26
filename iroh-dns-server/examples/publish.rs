@@ -104,7 +104,7 @@ async fn main() -> Result<()> {
     println!("publish to {pkarr_relay_url} ...");
 
     let tls_config = CaRootConfig::default()
-        .build_client_config(default_provider())
+        .client_config(default_provider())
         .expect("infallible");
     let pkarr = PkarrRelayClient::new(pkarr_relay_url, tls_config);
     let endpoint_info = EndpointInfo::new(endpoint_id)

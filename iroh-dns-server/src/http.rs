@@ -346,7 +346,7 @@ mod tests {
 
         let http_url = server.http_url().expect("http is bound");
         let tls_config = CaRootConfig::default()
-            .build_client_config(default_provider())
+            .client_config(default_provider())
             .expect("infallible");
         let pkarr = PkarrRelayClient::new(format!("{http_url}pkarr").parse().anyerr()?, tls_config);
         pkarr.publish(&signed_packet).await?;

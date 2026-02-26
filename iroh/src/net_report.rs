@@ -1009,8 +1009,8 @@ mod tests {
         let relay_map = RelayMap::from(relay);
 
         let resolver = DnsResolver::new();
-        let tls_config = CaRootConfig::InsecureSkipVerify
-            .build_client_config(default_provider())
+        let tls_config = CaRootConfig::insecure_skip_verify()
+            .client_config(default_provider())
             .expect("infallible");
         let opts = Options::new(tls_config).quic_config(Some(quic_addr_disc.clone()));
         let mut client = Client::new(
@@ -1213,8 +1213,8 @@ mod tests {
             },
         ];
         let resolver = DnsResolver::new();
-        let tls_config = CaRootConfig::InsecureSkipVerify
-            .build_client_config(default_provider())
+        let tls_config = CaRootConfig::insecure_skip_verify()
+            .client_config(default_provider())
             .expect("infallible");
         for mut tt in tests {
             println!("test: {}", tt.name);

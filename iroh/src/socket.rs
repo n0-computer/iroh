@@ -1724,7 +1724,7 @@ mod tests {
             dns_resolver: DnsResolver::new(),
             server_config,
             tls_config: CaRootConfig::default()
-                .build_client_config(default_provider())
+                .client_config(default_provider())
                 .unwrap(),
             #[cfg(any(test, feature = "test-utils"))]
             address_lookup_user_data: None,
@@ -2121,7 +2121,7 @@ mod tests {
             proxy_url: None,
             server_config,
             tls_config: CaRootConfig::default()
-                .build_client_config(default_provider())
+                .client_config(default_provider())
                 .unwrap(),
             metrics: Default::default(),
             hooks: Default::default(),

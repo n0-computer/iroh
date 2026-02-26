@@ -899,8 +899,8 @@ mod tests {
         let report = run_https_probe(
             &dns_resolver,
             relay.url,
-            CaRootConfig::InsecureSkipVerify
-                .build_client_config(default_provider())
+            CaRootConfig::insecure_skip_verify()
+                .client_config(default_provider())
                 .expect("infallible"),
         )
         .await?;

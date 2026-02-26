@@ -1109,8 +1109,8 @@ mod tests {
     ) -> Result<(PublicKey, Client), ConnectError> {
         let public_key = key.public();
         let client = ClientBuilder::new(server_url, key, DnsResolver::new()).tls_client_config(
-            CaRootConfig::InsecureSkipVerify
-                .build_client_config(default_provider())
+            CaRootConfig::insecure_skip_verify()
+                .client_config(default_provider())
                 .expect("infallible"),
         );
         let client = client.connect().await?;

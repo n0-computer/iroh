@@ -74,7 +74,7 @@ iroh = { version = "0.95", features = ["test-utils"] }
 ```
 - Spawn a relay server by calling [`iroh::test_utils::run_relay_server().await`](https://docs.rs/iroh/latest/iroh/test_utils/fn.run_relay_server.html)
 This will start a relay server with a self-signed TLS certificate, listening on a localhost port, and return the server's URL.
-- For the iroh endpoints to successfully connect to the relay, disable TLS certificate verification by calling [`Endpoint::ca_root_config`](https://docs.rs/iroh/latest/iroh/endpoint/struct.Builder.html#method.ca_root_config) with  `CaRootConfig::InsecureSkipVerify`.
+- For the iroh endpoints to successfully connect to the relay, disable TLS certificate verification by calling [`Endpoint::ca_root_config`](https://docs.rs/iroh/latest/iroh/endpoint/struct.Builder.html#method.ca_root_config) with  `CaRootConfig::insecure_skip_verify()`.
 
 # License
 

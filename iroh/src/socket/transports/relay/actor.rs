@@ -1251,8 +1251,8 @@ mod tests {
                 dns_resolver: DnsResolver::new(),
                 proxy_url: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
-                tls_config: CaRootConfig::InsecureSkipVerify
-                    .build_client_config(default_provider())
+                tls_config: CaRootConfig::insecure_skip_verify()
+                    .client_config(default_provider())
                     .expect("infallible"),
             },
             stop_token,

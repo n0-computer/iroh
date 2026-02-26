@@ -232,7 +232,7 @@ impl ClientBuilder {
 
         let tls_config = match self.tls_config.clone() {
             Some(config) => config,
-            None => CaRootConfig::default().build_client_config(default_provider())?,
+            None => CaRootConfig::default().client_config(default_provider())?,
         };
 
         #[allow(unused_mut)]

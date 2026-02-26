@@ -917,8 +917,8 @@ mod test_dns_pkarr {
             "https://relay.example".parse().unwrap(),
         ));
 
-        let tls_config = CaRootConfig::InsecureSkipVerify
-            .build_client_config(default_provider())
+        let tls_config = CaRootConfig::insecure_skip_verify()
+            .client_config(default_provider())
             .expect("infallible");
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
@@ -977,7 +977,7 @@ mod test_dns_pkarr {
     ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
         let secret_key = SecretKey::generate(rng);
         let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .ca_root_config(CaRootConfig::InsecureSkipVerify)
+            .ca_root_config(CaRootConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .preset(dns_pkarr_server.preset())

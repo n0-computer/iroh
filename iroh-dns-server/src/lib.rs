@@ -178,7 +178,7 @@ mod tests {
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
         let tls_config = CaRootConfig::default()
-            .build_client_config(default_provider())
+            .client_config(default_provider())
             .expect("infallible");
         let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
