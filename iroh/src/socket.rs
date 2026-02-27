@@ -138,14 +138,12 @@ pub(crate) struct Options {
     /// Proxy configuration.
     pub(crate) proxy_url: Option<Url>,
 
+    /// TLS configuration for HTTPS and non-iroh-QUIC connections.
+    pub(crate) tls_config: rustls::ClientConfig,
+
     /// ServerConfig for the internal QUIC endpoint
     pub(crate) server_config: quinn_proto::ServerConfig,
 
-    /// Skip verification of SSL certificates from relay servers
-    ///
-    /// May only be used in tests.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) insecure_skip_relay_cert_verify: bool,
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
 
@@ -207,10 +205,25 @@ impl StaticConfig {
     }
 }
 
+/// This coordinates the shutdown of the [`Socket`] and all its tasks.
+///
+/// It also tightly binds to the [`EndpointInner`] and [`Actor`] closing as that is where
+/// most of the logic lives.
 #[derive(Debug)]
 struct ShutdownState {
+    /// Token that is cancelled at the moment [`crate::Endpoint::close`] is called.
+    ///
+    /// Currently cancelled from [`EndpointInner::close`].
     at_close_start: CancellationToken,
+    /// Token that is cancelled once the [`quinn::Endpoint`] is drained.
+    ///
+    /// Only 100ms after this is cancelled will the [`Actor`] task be cancelled, it should
+    /// have exited already by then as it is considered an error if it was still running.
     at_endpoint_closed: CancellationToken,
+    /// Set if the endpoint is closed and all tasks are stopped.
+    ///
+    /// This is only set once both [`Self::at_close_start`] and [`Self::at_endpoint_closed`]
+    /// are cancelled **and** the [`Actor`] task is no longer running.
     closed: AtomicBool,
 }
 
@@ -225,10 +238,17 @@ impl Default for ShutdownState {
 }
 
 impl ShutdownState {
+    /// Whether the endpoint has started closing, or is already closed.
+    ///
+    /// This is true once [`crate::Endpoint::close`] is called, and remains true forever
+    /// after. Tasks might still be shutting down.
     fn is_closing(&self) -> bool {
         self.at_close_start.is_cancelled()
     }
 
+    /// Whether the endpoint is fully closed and all tasks stopped.
+    ///
+    /// The endpoint will be drained, all transports and sockets will be closed.
     fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
@@ -282,6 +302,8 @@ pub(crate) struct Socket {
     /// Optional user-defined discover data.
     address_lookup_user_data: RwLock<Option<UserData>>,
 
+    pub(crate) tls_config: rustls::ClientConfig,
+
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
@@ -306,10 +328,12 @@ impl Socket {
         })
     }
 
+    /// Whether the iroh endpoint is closed and all its actors stopped.
     pub(crate) fn is_closed(&self) -> bool {
         self.shutdown.is_closed()
     }
 
+    /// Whether [`crate::Endpoint::close`] has been called.
     fn is_closing(&self) -> bool {
         self.shutdown.is_closing()
     }
@@ -421,6 +445,24 @@ impl Socket {
     #[cfg(not(wasm_browser))]
     pub(crate) fn dns_resolver(&self) -> &DnsResolver {
         &self.dns_resolver
+    }
+
+    /// Translates a raw [`SocketAddr`] (which may be a synthetic mapped address) into
+    /// a [`transports::Addr`].
+    ///
+    /// For regular IP addresses this returns `Addr::Ip`. For synthetic relay-mapped
+    /// IPv6 addresses this performs a reverse lookup and returns `Addr::Relay`.
+    ///
+    /// This lookup only makes sense for a remote address of the
+    /// underlying QUIC connection.
+    ///
+    /// If you call this with a mapped address for which no mapping exists,
+    /// it will return the address as an `Addr::Ip`.
+    pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> transports::Addr {
+        self.mapped_addrs
+            .relay_addrs
+            .to_transport_addr(addr)
+            .unwrap_or(transports::Addr::Ip(addr))
     }
 
     /// Reference to the internal Address Lookup
@@ -703,6 +745,8 @@ pub enum BindError {
     CreateNetmonMonitor { source: netmon::Error },
     #[error("Invalid transport configuration")]
     InvalidTransportConfig,
+    #[error("Invalid CA root configuration")]
+    InvalidCaRootConfig { source: io::Error },
     #[error("Failed to create an address lookup service")]
     AddressLookup {
         #[error(from)]
@@ -721,8 +765,7 @@ impl EndpointInner {
             dns_resolver,
             proxy_url,
             server_config,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
+            tls_config,
             metrics,
             hooks,
             static_config,
@@ -765,8 +808,7 @@ impl EndpointInner {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
+            tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
         };
 
@@ -840,6 +882,7 @@ impl EndpointInner {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            tls_config: tls_config.clone(),
             hooks,
         });
 
@@ -852,7 +895,7 @@ impl EndpointInner {
         endpoint_config.grease_quic_bit(false);
 
         let local_addrs_watch = transports.local_addrs_watch();
-        let network_change_sender = transports.create_network_change_sender();
+        let transports_network_change = transports.create_network_change_sender();
 
         let runtime = Arc::new(Runtime::new(secret_key.public()));
 
@@ -868,17 +911,6 @@ impl EndpointInner {
             .await
             .map_err(|err| e!(BindError::CreateNetmonMonitor, err))?;
 
-        #[cfg(any(test, feature = "test-utils"))]
-        let client_config = if insecure_skip_relay_cert_verify {
-            iroh_relay::client::make_dangerous_client_config()
-        } else {
-            default_quic_client_config()
-        };
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let client_config = default_quic_client_config();
-
-        let net_report_config = net_report::Options::default();
-
         #[cfg(not(wasm_browser))]
         let net_report_config = {
             // Set a `QuicConfig` for address discovery (QAD), but only if we have IP transports.
@@ -889,16 +921,15 @@ impl EndpointInner {
             // because all outgoing packets to IP destinations would be dropped.
             let qad_config = has_ip_transports.then(|| QuicConfig {
                 ep: endpoint.clone(),
-                client_config,
+                client_config: tls_config.clone(),
                 ipv4: true,
                 ipv6: has_ipv6_transport,
             });
-            net_report_config.quic_config(qad_config)
+            net_report::Options::new(tls_config.clone()).quic_config(qad_config)
         };
 
-        #[cfg(any(test, feature = "test-utils"))]
-        let net_report_config =
-            net_report_config.insecure_skip_relay_cert_verify(insecure_skip_relay_cert_verify);
+        #[cfg(wasm_browser)]
+        let net_report_config = net_report::Options::default();
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
@@ -919,7 +950,7 @@ impl EndpointInner {
             sock.shutdown.at_close_start.child_token(),
         );
 
-        let netmon_watcher = network_monitor.interface_state();
+        let local_interfaces_watcher = network_monitor.interface_state();
 
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
@@ -927,9 +958,9 @@ impl EndpointInner {
             remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
             network_monitor,
-            netmon_watcher,
+            local_interfaces_watcher,
             direct_addr_update_state,
-            network_change_sender,
+            transports_network_change,
             direct_addr_done_rx,
         };
         // Initialize addresses
@@ -963,7 +994,7 @@ impl EndpointInner {
         &self.endpoint
     }
 
-    /// Closes the connection.
+    /// Closes the iroh endpoint.
     ///
     /// Only the first close does anything. Any later closes return nil.  Polling the socket
     /// ([`quinn::AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`] indefinitely
@@ -1179,19 +1210,6 @@ impl EndpointInner {
     }
 }
 
-fn default_quic_client_config() -> rustls::ClientConfig {
-    // create a client config for the endpoint to use for QUIC address discovery
-    let root_store =
-        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    rustls::client::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .expect("ring supports these")
-    .with_root_certificates(root_store)
-    .with_no_client_auth()
-}
-
 #[derive(derive_more::Debug)]
 #[allow(clippy::enum_variant_names)]
 enum ActorMessage {
@@ -1217,15 +1235,22 @@ enum ActorMessage {
 }
 
 struct Actor {
+    /// Shared state between an awful lot of iroh subsystems.
+    ///
+    /// In particular both the [`EndpointInner`] as well as this actor itself have a
+    /// copy. But also other subsystems that consequently have access to way to much state.
     sock: Arc<Socket>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
     remote_map: RemoteMap,
     /// When set, is an AfterFunc timer that will call Socket::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
-
+    /// An actor watching the local network interfaces.
+    ///
+    /// The monitored changes are emitted via [`Self::local_interfaces_watcher`].
     network_monitor: netmon::Monitor,
-    netmon_watcher: n0_watcher::Direct<netmon::State>,
-    network_change_sender: transports::NetworkChangeSender,
+    /// Watcher for changes to the local network interfaces, IP addresses and routes.
+    local_interfaces_watcher: n0_watcher::Direct<netmon::State>,
+    transports_network_change: transports::NetworkChangeSender,
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
@@ -1239,7 +1264,7 @@ impl Actor {
         mut local_addrs_watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
     ) {
         // Setup network monitoring
-        let mut current_netmon_state = self.netmon_watcher.get();
+        let mut current_netmon_state = self.local_interfaces_watcher.get();
 
         #[cfg(not(wasm_browser))]
         let mut portmap_watcher = self
@@ -1317,7 +1342,7 @@ impl Actor {
                     match reason {
                         Some(()) => {
                             // check if a new run needs to be scheduled
-                            let state = self.netmon_watcher.get();
+                            let state = self.local_interfaces_watcher.get();
                             self.direct_addr_update_state.try_run(state.into());
                         }
                         None => {
@@ -1345,7 +1370,7 @@ impl Actor {
                     #[cfg(wasm_browser)]
                     let _unused_in_browsers = change;
                 },
-                state = self.netmon_watcher.updated() => {
+                state = self.local_interfaces_watcher.updated() => {
                     let Ok(state) = state else {
                         trace!("tick: link change receiver closed");
                         self.sock.metrics.socket.actor_tick_other.inc();
@@ -1372,11 +1397,15 @@ impl Actor {
         }
     }
 
+    /// Handles a change detected in the local network conditions.
+    ///
+    /// This is triggered when the netmon actor detects a change in the local network
+    /// interfaces, assigned IP addresses and routes.
     async fn handle_network_change(&mut self, is_major: bool) {
         debug!(is_major, "link change detected");
 
         if is_major {
-            if let Err(err) = self.network_change_sender.rebind() {
+            if let Err(err) = self.transports_network_change.rebind() {
                 warn!("failed to rebind transports: {err:?}");
             }
 
@@ -1395,7 +1424,7 @@ impl Actor {
     }
 
     fn re_stun(&mut self, why: UpdateReason) {
-        let state = self.netmon_watcher.get();
+        let state = self.local_interfaces_watcher.get();
         self.direct_addr_update_state
             .schedule_run(why, state.into());
     }
@@ -1545,7 +1574,7 @@ impl Actor {
             let LocalAddresses {
                 regular: mut ips,
                 loopback,
-            } = self.netmon_watcher.get().local_addresses;
+            } = self.local_interfaces_watcher.get().local_addresses;
             if ips.is_empty() && addrs.is_empty() {
                 // Include loopback addresses only if there are no other interfaces
                 // or public addresses, this allows testing offline.
@@ -1582,7 +1611,7 @@ impl Actor {
             }
 
             // Notify all transports
-            self.network_change_sender.on_network_change(r);
+            self.transports_network_change.on_network_change(r);
         }
 
         #[cfg(not(wasm_browser))]
@@ -1706,6 +1735,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
+    use iroh_relay::tls::{CaRootsConfig, default_provider};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_tracing_test::traced_test;
@@ -1746,8 +1776,9 @@ mod tests {
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
             server_config,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: false,
+            tls_config: CaRootsConfig::default()
+                .client_config(default_provider())
+                .unwrap(),
             #[cfg(any(test, feature = "test-utils"))]
             address_lookup_user_data: None,
             metrics: Default::default(),
@@ -2142,7 +2173,9 @@ mod tests {
             dns_resolver,
             proxy_url: None,
             server_config,
-            insecure_skip_relay_cert_verify: false,
+            tls_config: CaRootsConfig::default()
+                .client_config(default_provider())
+                .unwrap(),
             metrics: Default::default(),
             hooks: Default::default(),
             static_config,

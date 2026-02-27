@@ -219,7 +219,7 @@ impl PkarrPublisherBuilder {
     /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
     ///
     /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
-    pub fn build(self, secret_key: SecretKey) -> PkarrPublisher {
+    pub fn build(self, secret_key: SecretKey, tls_config: rustls::ClientConfig) -> PkarrPublisher {
         PkarrPublisher::new(
             secret_key,
             self.pkarr_relay,
@@ -227,6 +227,7 @@ impl PkarrPublisherBuilder {
             self.republish_interval,
             #[cfg(not(wasm_browser))]
             self.dns_resolver,
+            tls_config,
             self.filter,
         )
     }
@@ -241,8 +242,8 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
         }
-
-        Ok(self.build(endpoint.secret_key().clone()))
+        let tls_config = endpoint.tls_config().clone();
+        Ok(self.build(endpoint.secret_key().clone(), tls_config))
     }
 
     fn with_addr_filter(self, filter: AddrFilter) -> Self
@@ -302,16 +303,17 @@ impl PkarrPublisher {
         ttl: u32,
         republish_interval: Duration,
         #[cfg(not(wasm_browser))] dns_resolver: Option<DnsResolver>,
+        tls_config: rustls::ClientConfig,
         filter: AddrFilter,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let endpoint_id = secret_key.public();
 
         #[cfg(wasm_browser)]
-        let pkarr_client = PkarrRelayClient::new(pkarr_relay);
+        let pkarr_client = PkarrRelayClient::new(pkarr_relay, tls_config);
 
         #[cfg(not(wasm_browser))]
-        let pkarr_client = PkarrRelayClient::builder(pkarr_relay)
+        let pkarr_client = PkarrRelayClient::builder(pkarr_relay, tls_config)
             .set_dns_resolver(dns_resolver)
             .build();
 
@@ -457,14 +459,15 @@ impl PkarrResolverBuilder {
     }
 
     /// Creates a [`PkarrResolver`] from this builder.
-    pub fn build(self) -> PkarrResolver {
+    pub fn build(self, tls_config: rustls::ClientConfig) -> PkarrResolver {
         #[cfg(wasm_browser)]
-        let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
+        let pkarr_client = PkarrRelayClient::new(self.pkarr_relay, tls_config);
 
         #[cfg(not(wasm_browser))]
-        let pkarr_client = PkarrRelayClient::builder(self.pkarr_relay)
+        let pkarr_client = PkarrRelayClient::builder(self.pkarr_relay, tls_config)
             .set_dns_resolver(self.dns_resolver)
             .build();
+
         PkarrResolver { pkarr_client }
     }
 }
@@ -478,8 +481,8 @@ impl AddressLookupBuilder for PkarrResolverBuilder {
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
         }
-
-        Ok(self.build())
+        let tls_config = endpoint.tls_config().clone();
+        Ok(self.build(tls_config))
     }
 
     /// no-op: resolver does not publish
@@ -571,14 +574,16 @@ pub struct PkarrRelayClientBuilder {
     pkarr_relay_url: Url,
     #[cfg(not(wasm_browser))]
     dns_relay_resolver: Option<DnsResolver>,
+    tls_config: rustls::ClientConfig,
 }
 
 impl PkarrRelayClientBuilder {
-    fn new(pkarr_relay_url: Url) -> Self {
+    fn new(pkarr_relay_url: Url, tls_config: rustls::ClientConfig) -> Self {
         Self {
             pkarr_relay_url,
             #[cfg(not(wasm_browser))]
             dns_relay_resolver: None,
+            tls_config,
         }
     }
 
@@ -591,7 +596,7 @@ impl PkarrRelayClientBuilder {
 
     /// Build a [`PkarrRelayClient`].
     pub fn build(self) -> PkarrRelayClient {
-        let mut http_client = reqwest_client_builder();
+        let mut http_client = reqwest_client_builder(Some(self.tls_config));
 
         #[cfg(not(wasm_browser))]
         if let Some(dns_resolver) = self.dns_relay_resolver {
@@ -613,9 +618,9 @@ impl PkarrRelayClient {
     ///
     /// Use the [`PkarrRelayClient::builder`] to get a builder that allows for
     /// adding custom settings.
-    pub fn new(pkarr_relay_url: Url) -> Self {
+    pub fn new(pkarr_relay_url: Url, tls_config: rustls::ClientConfig) -> Self {
         Self {
-            http_client: reqwest_client_builder()
+            http_client: reqwest_client_builder(Some(tls_config))
                 .build()
                 .expect("failed to create request client"),
             pkarr_relay_url,
@@ -623,8 +628,11 @@ impl PkarrRelayClient {
     }
 
     /// Create a [`PkarrRelayClientBuilder`].
-    pub fn builder(pkarr_relay_url: Url) -> PkarrRelayClientBuilder {
-        PkarrRelayClientBuilder::new(pkarr_relay_url)
+    pub fn builder(
+        pkarr_relay_url: Url,
+        tls_config: rustls::ClientConfig,
+    ) -> PkarrRelayClientBuilder {
+        PkarrRelayClientBuilder::new(pkarr_relay_url, tls_config)
     }
 
     /// Resolves a [`SignedPacket`] for the given [`EndpointId`].

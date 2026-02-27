@@ -9,6 +9,7 @@ use iroh::{
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrRelayClient},
     },
     endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME},
+    tls::{CaRootsConfig, default_provider},
 };
 use n0_error::{Result, StackResultExt};
 use url::Url;
@@ -102,7 +103,10 @@ async fn main() -> Result<()> {
     println!();
     println!("publish to {pkarr_relay_url} ...");
 
-    let pkarr = PkarrRelayClient::new(pkarr_relay_url);
+    let tls_config = CaRootsConfig::default()
+        .client_config(default_provider())
+        .expect("infallible");
+    let pkarr = PkarrRelayClient::new(pkarr_relay_url, tls_config);
     let endpoint_info = EndpointInfo::new(endpoint_id)
         .with_relay_url(relay_url.map(Into::into))
         .with_ip_addrs(args.addr.into_iter().collect())
