@@ -189,7 +189,6 @@ impl Incoming {
     /// Returns the remote address of this incoming connection.
     pub fn remote_addr(&self) -> IncomingAddr {
         self.ep
-            .inner
             .to_transport_addr(self.inner.remote_address())
             .into()
     }
@@ -617,7 +616,6 @@ impl Accepting {
     /// Returns the remote address of this connection.
     pub fn remote_addr(&self) -> IncomingAddr {
         self.ep
-            .inner
             .to_transport_addr(self.inner.remote_address())
             .into()
     }
