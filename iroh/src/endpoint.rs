@@ -11,9 +11,7 @@
 //!
 //! [module docs]: crate
 
-#[cfg(not(wasm_browser))]
-use std::net::SocketAddr;
-use std::{pin::Pin, sync::Arc};
+use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{
@@ -73,8 +71,8 @@ pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
     connection::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-        ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt,
-        IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
+        ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingAddr,
+        IncomingZeroRtt, IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
         RemoteEndpointIdError, RetryError, ZeroRttStatus,
     },
     quic::{
@@ -1483,6 +1481,12 @@ impl Endpoint {
     }
 
     // # Remaining private methods
+
+    /// Translates a raw [`SocketAddr`] (which may be a synthetic mapped address) into
+    /// a transport address.
+    pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> crate::socket::transports::Addr {
+        self.inner.to_transport_addr(addr)
+    }
 
     #[cfg(test)]
     pub(crate) fn inner(&self) -> Result<Arc<EndpointInner>, EndpointError> {
