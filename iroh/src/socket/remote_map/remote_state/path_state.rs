@@ -148,13 +148,11 @@ impl RemotePathState {
         self.prune_paths();
     }
 
-    /// Triggers `tx` immediately if there are any known paths, or store in the list of pending requests.
+    /// Sends back on `tx` once a possible path to the remote is known.
     ///
-    /// The pending requests will be resolved once a path becomes known, or once Address Lookup
-    /// concludes without results, whichever comes first.
-    ///
-    /// Sends `Ok(())` over `tx` if there are any known paths, and an [`AddressLookupError`] if there are
-    /// no known paths by the time a Address Lookup run finished with an error or without results.
+    /// If there already is a known path, `Ok(())` is returned immediately. Otherwise an
+    /// address lookup is performed and the result is sent back once that
+    /// completes. [`AddressLookupError`] is sent if there are no known paths.
     pub(super) fn resolve_remote(&mut self, tx: oneshot::Sender<Result<(), AddressLookupError>>) {
         if !self.paths.is_empty() {
             tx.send(Ok(())).ok();

@@ -139,7 +139,7 @@ console = { version = "0.16" }
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
 wasm-tracing = "2.1.0"
-wasm-bindgen-test = "0.3"
+wasm-bindgen-test = "0.3.62"
 
 [build-dependencies]
 cfg_aliases = { version = "0.2.1" }
@@ -150,6 +150,8 @@ metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 address-lookup-mdns = ["dep:swarm-discovery"]
 address-lookup-pkarr-dht = ["pkarr/dht"]
+# Enables fetching TLS trust anchors from the operating system
+platform-verifier = ["iroh-relay/platform-verifier"]
 qlog = ["quinn/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["quinn/fast-apple-datapath"]

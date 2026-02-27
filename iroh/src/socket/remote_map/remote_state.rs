@@ -16,9 +16,8 @@ use n0_future::{
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
-use quinn_proto::{PathError, PathEvent, PathId, iroh_hp};
+use quinn_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
@@ -26,14 +25,18 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
 use self::path_state::RemotePathState;
-pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
+pub(crate) use self::path_watcher::PathWatchable;
+pub use self::{
+    path_watcher::{PathInfo, PathInfoList, PathInfoListIter, PathWatcher},
+    remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage},
+};
 use super::Source;
 use crate::{
     address_lookup::{
         AddressLookup, ConcurrentAddressLookup, Error as AddressLookupError,
         Item as AddressLookupItem,
     },
-    endpoint::{DirectAddr, quic::PathStats},
+    endpoint::DirectAddr,
     socket::{
         Metrics as SocketMetrics,
         mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
@@ -44,6 +47,7 @@ use crate::{
 };
 
 mod path_state;
+mod path_watcher;
 mod remote_info;
 
 /// How often to attempt holepunching.
@@ -93,8 +97,12 @@ type PathEvents = MergeUnbounded<
 type AddrEvents = MergeUnbounded<
     Pin<
         Box<
-            dyn Stream<Item = (ConnId, Result<iroh_hp::Event, BroadcastStreamRecvError>)>
-                + Send
+            dyn Stream<
+                    Item = (
+                        ConnId,
+                        Result<n0_nat_traversal::Event, BroadcastStreamRecvError>,
+                    ),
+                > + Send
                 + Sync,
         >,
     >,
@@ -111,9 +119,6 @@ type AddressLookupStream = Either<
     n0_future::stream::Pending<Result<AddressLookupItem, AddressLookupError>>,
     SyncStream<BoxStream<Result<AddressLookupItem, AddressLookupError>>>,
 >;
-
-/// List of addrs and path ids for open paths in a connection.
-pub(crate) type PathAddrList = SmallVec<[(TransportAddr, PathId); 4]>;
 
 /// The state we need to know about a single remote endpoint.
 ///
@@ -316,7 +321,7 @@ impl RemoteStateActor {
                         trace!("direct address watcher disconnected, shutting down");
                         break;
                     }
-                    self.local_addrs_updated();
+                    self.update_local_direct_address();
                     trace!("local addrs updated, triggering holepunching");
                     self.trigger_holepunching();
                 }
@@ -386,64 +391,8 @@ impl RemoteStateActor {
                 tx.send(info).ok();
             }
             RemoteStateMessage::NetworkChange { is_major } => {
-                self.handle_network_change(is_major);
+                self.handle_msg_network_change(is_major);
             }
-        }
-    }
-
-    fn handle_network_change(&mut self, is_major: bool) {
-        for conn in self.connections.values() {
-            if let Some(quinn_conn) = conn.handle.upgrade() {
-                for (path_id, addr) in &conn.open_paths {
-                    if let Some(path) = quinn_conn.path(*path_id) {
-                        // Ping the current path
-                        if let Err(err) = path.ping() {
-                            warn!(%err, %path_id, ?addr, "failed to ping path");
-                        }
-                    }
-                }
-            }
-        }
-
-        if is_major {
-            self.trigger_holepunching();
-        }
-    }
-
-    /// Handles regularly checking if any paths need hole punching currently
-    ///
-    /// Currently we need to have 1 IP path, with a good enough latency.
-    fn check_connections(&mut self) {
-        let mut is_goodenough = true;
-        for conn_state in self.connections.values() {
-            let mut is_conn_goodenough = false;
-            if let Some(conn) = conn_state.handle.upgrade() {
-                let min_ip_rtt = conn_state
-                    .open_paths
-                    .iter()
-                    .filter_map(|(path_id, addr)| {
-                        if addr.is_ip() {
-                            conn.path_stats(*path_id).map(|stats| stats.rtt)
-                        } else {
-                            None
-                        }
-                    })
-                    .min();
-
-                if let Some(min_ip_rtt) = min_ip_rtt {
-                    let is_latency_goodenough = min_ip_rtt <= GOOD_ENOUGH_LATENCY;
-                    is_conn_goodenough = is_latency_goodenough;
-                } else {
-                    // No IP transport found
-                    is_conn_goodenough = false;
-                }
-            }
-            is_goodenough &= is_conn_goodenough;
-        }
-
-        if !is_goodenough {
-            debug!("connections are not good enough, triggering holepunching");
-            self.trigger_holepunching();
         }
     }
 
@@ -503,9 +452,9 @@ impl RemoteStateActor {
     fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
-        tx: oneshot::Sender<PathsWatcher>,
+        tx: oneshot::Sender<PathWatchable>,
     ) {
-        let pub_open_paths = Watchable::default();
+        let path_watchable = PathWatchable::new(self.selected_path.clone());
         if let Some(conn) = handle.upgrade() {
             self.metrics.num_conns_opened.inc();
             // Remove any conflicting stable_ids from the local state.
@@ -528,7 +477,7 @@ impl RemoteStateActor {
                 .iter()
                 .map(|d| d.addr)
                 .collect::<BTreeSet<_>>();
-            Self::set_local_addrs(&conn, &local_addrs);
+            Self::update_qnt_candidates(&conn, &local_addrs);
 
             // Store the connection
             let conn_state = self
@@ -536,10 +485,9 @@ impl RemoteStateActor {
                 .entry(conn_id)
                 .insert_entry(ConnectionState {
                     handle: handle.clone(),
-                    pub_open_paths: pub_open_paths.clone(),
+                    path_watchable: path_watchable.clone(),
                     paths: Default::default(),
-                    open_paths: Default::default(),
-                    path_ids: Default::default(),
+                    paths_by_addr: Default::default(),
                     has_been_direct: false,
                 })
                 .into_mut();
@@ -589,12 +537,8 @@ impl RemoteStateActor {
             }
             self.trigger_holepunching();
         }
-        tx.send(PathsWatcher::new(
-            pub_open_paths.watch(),
-            self.selected_path.watch(),
-            handle,
-        ))
-        .ok();
+
+        tx.send(path_watchable).ok();
     }
 
     /// Handles [`RemoteStateMessage::ResolveRemote`].
@@ -610,6 +554,25 @@ impl RemoteStateActor {
         self.trigger_address_lookup();
     }
 
+    /// Handles [`RemoteStateMessage::NetworkChange`].
+    fn handle_msg_network_change(&mut self, is_major: bool) {
+        for conn in self.connections.values() {
+            if let Some(quinn_conn) = conn.handle.upgrade() {
+                for (path_id, addr) in &conn.paths {
+                    if let Some(path) = quinn_conn.path(*path_id) {
+                        // Ping the current path
+                        if let Err(err) = path.ping() {
+                            warn!(%err, %path_id, ?addr, "failed to ping path");
+                        }
+                    }
+                }
+            }
+        }
+
+        if is_major {
+            self.trigger_holepunching();
+        }
+    }
     fn handle_connection_close(&mut self, conn_id: ConnId) {
         if self.connections.remove(&conn_id).is_some() {
             self.metrics.num_conns_closed.inc();
@@ -620,6 +583,26 @@ impl RemoteStateActor {
         }
     }
 
+    /// Triggers Address Lookup for the remote endpoint, if needed.
+    ///
+    /// Does not start Address Lookup if we have a selected path or if Address Lookup is
+    /// currently running.
+    fn trigger_address_lookup(&mut self) {
+        if self.selected_path.get().is_some()
+            || matches!(self.address_lookup_stream, Either::Right(_))
+        {
+            return;
+        }
+        match self.address_lookup.resolve(self.endpoint_id) {
+            Some(stream) => self.address_lookup_stream = Either::Right(SyncStream::new(stream)),
+            None => self.paths.address_lookup_finished(Ok(())),
+        }
+    }
+
+    /// Handles an address lookup result.
+    ///
+    /// All address lookup results and up being sent here. It takes care of updating the
+    /// [`RemotePathState`] with the results.
     fn handle_address_lookup_item(
         &mut self,
         item: Option<Result<AddressLookupItem, AddressLookupError>>,
@@ -652,23 +635,11 @@ impl RemoteStateActor {
         }
     }
 
-    /// Triggers Address Lookup for the remote endpoint, if needed.
+    /// Updates the local [`DirectAddr`]s to all connections.
     ///
-    /// Does not start Address Lookup if we have a selected path or if Address Lookup is currently running.
-    fn trigger_address_lookup(&mut self) {
-        if self.selected_path.get().is_some()
-            || matches!(self.address_lookup_stream, Either::Right(_))
-        {
-            return;
-        }
-        match self.address_lookup.resolve(self.endpoint_id) {
-            Some(stream) => self.address_lookup_stream = Either::Right(SyncStream::new(stream)),
-            None => self.paths.address_lookup_finished(Ok(())),
-        }
-    }
-
-    /// Sets the current local addresses to QNT's state to all connections
-    fn local_addrs_updated(&mut self) {
+    /// Each connection needs to have the local direct addresses to use as QNT address
+    /// candidates.
+    fn update_local_direct_address(&mut self) {
         let local_addrs = self
             .local_direct_addrs
             .get()
@@ -677,31 +648,34 @@ impl RemoteStateActor {
             .collect::<BTreeSet<_>>();
 
         for conn in self.connections.values().filter_map(|s| s.handle.upgrade()) {
-            Self::set_local_addrs(&conn, &local_addrs);
+            Self::update_qnt_candidates(&conn, &local_addrs);
         }
         // todo: trace
     }
 
-    /// Sets the current local addresses to QNT's state
-    fn set_local_addrs(conn: &quinn::Connection, local_addrs: &BTreeSet<SocketAddr>) {
-        let quinn_local_addrs = match conn.get_local_nat_traversal_addresses() {
+    /// Updates QNT's candidate addresses to be the current set of direct addresses.
+    ///
+    /// `direct addrs` must be a set of addresses extracted from the endpoint's current
+    /// [`DirectAddr`]s.
+    fn update_qnt_candidates(conn: &quinn::Connection, direct_addrs: &BTreeSet<SocketAddr>) {
+        let quinn_candidates = match conn.get_local_nat_traversal_addresses() {
             Ok(addrs) => BTreeSet::from_iter(addrs),
             Err(err) => {
                 warn!("failed to get local nat candidates: {err:#}");
                 return;
             }
         };
-        for addr in local_addrs.difference(&quinn_local_addrs) {
+        for addr in direct_addrs.difference(&quinn_candidates) {
             if let Err(err) = conn.add_nat_traversal_address(*addr) {
                 warn!("failed adding local addr: {err:#}",);
             }
         }
-        for addr in quinn_local_addrs.difference(local_addrs) {
+        for addr in quinn_candidates.difference(direct_addrs) {
             if let Err(err) = conn.remove_nat_traversal_address(*addr) {
                 warn!("failed removing local addr: {err:#}");
             }
         }
-        trace!(?local_addrs, "updated local QNT addresses");
+        trace!(?direct_addrs, "updated local QNT addresses");
     }
 
     /// Triggers holepunching to the remote endpoint.
@@ -806,7 +780,7 @@ impl RemoteStateActor {
             }
             Err(err) => {
                 debug!("failed to initiate NAT traversal: {err:#}");
-                use quinn_proto::iroh_hp::Error;
+                use quinn_proto::n0_nat_traversal::Error;
                 match err {
                     Error::Closed
                     | Error::TooManyAddresses
@@ -849,7 +823,7 @@ impl RemoteStateActor {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-            if let Some(&path_id) = conn_state.path_ids.get(open_addr)
+            if let Some(&path_id) = conn_state.paths_by_addr.get(open_addr)
                 && let Some(path) = conn.path(path_id)
             {
                 // We still need to ensure that the path status is set correctly,
@@ -876,7 +850,6 @@ impl RemoteStateActor {
             match fut.path_id() {
                 Some(path_id) => {
                     trace!(?conn_id, %path_id, ?path_status, "opening new path");
-                    conn_state.add_path(open_addr.clone(), path_id);
                     // Just like in the PATH_STATUS comment above, we need to make sure that the
                     // path status is set correctly, even if the path already existed.
                     if let Some(path) = conn.path(path_id) {
@@ -962,31 +935,27 @@ impl RemoteStateActor {
 
                 self.select_path();
             }
-            PathEvent::Abandoned { id, path_stats } => {
-                trace!(?path_stats, "path abandoned");
-                // This is the last event for this path.
-                if let Some(addr) = conn_state.remove_path(&id) {
-                    self.paths.abandoned_path(&addr);
-                }
-            }
-            PathEvent::LocallyClosed { id, .. } => {
-                let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
-                    debug!("path not in path_id_map");
+            PathEvent::Abandoned { id, .. } => {
+                // Remove abandoned path from the conn state.
+                let Some(path_remote) = conn_state.remove_path(&id) else {
+                    debug!(%id, "path not in path_id_map");
                     return;
                 };
+                // Also remove the path from the remote-global path tracking.
+                self.paths.abandoned_path(&path_remote);
+
                 event!(
-                    target: "iroh::_events::path::closed",
+                    target: "iroh::_events::path::abandoned",
                     Level::DEBUG,
                     remote = %self.endpoint_id.fmt_short(),
                     ?path_remote,
                     ?conn_id,
                     path_id = ?id,
                 );
-                conn_state.remove_open_path(&id);
 
-                // If one connection closes this path, close it on all connections.
+                // If one connection abandons a path, close it on all connections.
                 for (conn_id, conn_state) in self.connections.iter_mut() {
-                    let Some(path_id) = conn_state.path_ids.get(&path_remote) else {
+                    let Some(path_id) = conn_state.paths_by_addr.get(&path_remote) else {
                         continue;
                     };
                     let Some(conn) = conn_state.handle.upgrade() else {
@@ -1007,6 +976,9 @@ impl RemoteStateActor {
 
                 // If the remote closed our selected path, select a new one.
                 self.select_path();
+            }
+            PathEvent::Discarded { id, path_stats } => {
+                trace!(%id, ?path_stats, "path discarded");
             }
             PathEvent::RemoteStatus { .. } | PathEvent::ObservedAddr { .. } => {
                 // Nothing to do for these events.
@@ -1030,7 +1002,7 @@ impl RemoteStateActor {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-            for (path_id, addr) in conn_state.open_paths.iter() {
+            for (path_id, addr) in conn_state.paths.iter() {
                 if let Some(stats) = conn.path_stats(*path_id) {
                     all_path_rtts
                         .entry(addr.clone())
@@ -1083,22 +1055,16 @@ impl RemoteStateActor {
     /// avoid the client and server selecting different paths and accidentally closing all
     /// paths.
     fn close_redundant_paths(&mut self, selected_path: &transports::Addr) {
-        debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path),);
+        debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path));
 
         for (conn_id, conn_state) in self.connections.iter() {
             for (path_id, path_remote) in conn_state
-                .open_paths
+                .paths
                 .iter()
                 .filter(|(_, addr)| !addr.is_relay())
                 .filter(|(_, addr)| *addr != selected_path)
             {
-                if conn_state
-                    .open_paths
-                    .values()
-                    .filter(|a| !a.is_relay())
-                    .count()
-                    <= 1
-                {
+                if conn_state.paths.values().filter(|a| a.is_ip()).count() <= 1 {
                     continue; // Do not close the last direct path.
                 }
                 if let Some(path) = conn_state
@@ -1124,6 +1090,43 @@ impl RemoteStateActor {
                     }
                 }
             }
+        }
+    }
+
+    /// Handles regularly checking if any paths need hole punching currently
+    ///
+    /// Currently we need to have 1 IP path, with a good enough latency.
+    fn check_connections(&mut self) {
+        let mut is_goodenough = true;
+        for conn_state in self.connections.values() {
+            let mut is_conn_goodenough = false;
+            if let Some(conn) = conn_state.handle.upgrade() {
+                let min_ip_rtt = conn_state
+                    .paths
+                    .iter()
+                    .filter_map(|(path_id, addr)| {
+                        if addr.is_ip() {
+                            conn.path_stats(*path_id).map(|stats| stats.rtt)
+                        } else {
+                            None
+                        }
+                    })
+                    .min();
+
+                if let Some(min_ip_rtt) = min_ip_rtt {
+                    let is_latency_goodenough = min_ip_rtt <= GOOD_ENOUGH_LATENCY;
+                    is_conn_goodenough = is_latency_goodenough;
+                } else {
+                    // No IP transport found
+                    is_conn_goodenough = false;
+                }
+            }
+            is_goodenough &= is_conn_goodenough;
+        }
+
+        if !is_goodenough {
+            debug!("connections are not good enough, triggering holepunching");
+            self.trigger_holepunching();
         }
     }
 }
@@ -1195,7 +1198,7 @@ pub(crate) enum RemoteStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatcher>),
+    AddConnection(WeakConnectionHandle, oneshot::Sender<PathWatchable>),
     /// Asks if there is any possible path that could be used.
     ///
     /// This adds the provided transport addresses to the list of potential paths for this remote
@@ -1251,30 +1254,24 @@ struct ConnectionState {
     /// Weak handle to the connection.
     handle: WeakConnectionHandle,
     /// The information we publish to users about the paths used in this connection.
-    pub_open_paths: Watchable<PathAddrList>,
-    /// The paths that exist on this connection.
-    ///
-    /// This could be in any state, e.g. while still validating the path or already closed
-    /// but not yet fully removed from the connection.  This exists as long as Quinn knows
-    /// about the [`PathId`].
+    path_watchable: PathWatchable,
+    /// The open paths that exist on this connection.
     paths: FxHashMap<PathId, transports::Addr>,
-    /// The open paths on this connection, a subset of [`Self::paths`].
-    open_paths: FxHashMap<PathId, transports::Addr>,
     /// Reverse map of [`Self::paths].
-    path_ids: FxHashMap<transports::Addr, PathId>,
+    paths_by_addr: FxHashMap<transports::Addr, PathId>,
     /// Whether this connection has ever had a direct path.
     ///
     /// Used for recording metrics.
     has_been_direct: bool,
 }
 
-impl ConnectionState {
-    /// Tracks a path for the connection.
-    fn add_path(&mut self, remote: transports::Addr, path_id: PathId) {
-        self.paths.insert(path_id, remote.clone());
-        self.path_ids.insert(remote, path_id);
+impl Drop for ConnectionState {
+    fn drop(&mut self) {
+        self.path_watchable.close();
     }
+}
 
+impl ConnectionState {
     /// Tracks an open path for the connection.
     fn add_open_path(
         &mut self,
@@ -1291,228 +1288,22 @@ impl ConnectionState {
             self.has_been_direct = true;
             metrics.num_conns_direct.inc();
         }
+
         self.paths.insert(path_id, remote.clone());
-        self.open_paths.insert(path_id, remote.clone());
-        self.path_ids.insert(remote, path_id);
-        self.update_pub_path_info();
+        self.paths_by_addr.insert(remote.clone(), path_id);
+        if let Some(conn) = self.handle.upgrade() {
+            self.path_watchable.insert(&conn, path_id, remote.into());
+        }
     }
 
-    /// Completely removes a path from this connection.
+    /// Removes a path from this connection.
     fn remove_path(&mut self, path_id: &PathId) -> Option<transports::Addr> {
         let addr = self.paths.remove(path_id);
         if let Some(ref addr) = addr {
-            self.path_ids.remove(addr);
+            self.paths_by_addr.remove(addr);
         }
-        self.open_paths.remove(path_id);
+        self.path_watchable.set_abandoned(*path_id);
         addr
-    }
-
-    /// Removes the path from the open paths.
-    fn remove_open_path(&mut self, path_id: &PathId) {
-        self.open_paths.remove(path_id);
-
-        self.update_pub_path_info();
-    }
-
-    /// Sets the new [`PathInfo`] structs for the public [`Connection`].
-    ///
-    /// [`Connection`]: crate::endpoint::Connection
-    fn update_pub_path_info(&self) {
-        let new = self
-            .open_paths
-            .iter()
-            .map(|(path_id, remote)| {
-                let remote = TransportAddr::from(remote.clone());
-                (remote, *path_id)
-            })
-            .collect::<PathAddrList>();
-
-        self.pub_open_paths.set(new).ok();
-    }
-}
-
-/// Watcher for the open paths and selected transmission path in a connection.
-///
-/// This is stored in the [`Connection`], and the watchables are set from within the endpoint state actor.
-///
-/// Internally, this contains a boxed-mapped-joined watcher over the open paths in the connection and the
-/// selected path to the remote endpoint. The watcher is boxed because the mapped-joined watcher with
-/// `SmallVec<PathInfoList>` has a size of over 800 bytes, which we don't want to put upon the [`Connection`].
-///
-/// [`Connection`]: crate::endpoint::Connection
-#[derive(Clone, derive_more::Debug)]
-#[debug("PathsWatcher")]
-#[allow(clippy::type_complexity)]
-pub(crate) struct PathsWatcher(
-    Box<
-        n0_watcher::Map<
-            n0_watcher::Tuple<
-                n0_watcher::Direct<PathAddrList>,
-                n0_watcher::Direct<Option<transports::Addr>>,
-            >,
-            PathInfoList,
-        >,
-    >,
-);
-
-impl n0_watcher::Watcher for PathsWatcher {
-    type Value = PathInfoList;
-
-    fn update(&mut self) -> bool {
-        self.0.update()
-    }
-
-    fn peek(&self) -> &Self::Value {
-        self.0.peek()
-    }
-
-    fn is_connected(&self) -> bool {
-        self.0.is_connected()
-    }
-
-    fn poll_updated(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), n0_watcher::Disconnected>> {
-        self.0.poll_updated(cx)
-    }
-}
-
-impl PathsWatcher {
-    fn new(
-        open_paths: n0_watcher::Direct<PathAddrList>,
-        selected_path: n0_watcher::Direct<Option<transports::Addr>>,
-        conn_handle: WeakConnectionHandle,
-    ) -> Self {
-        Self(Box::new(open_paths.or(selected_path).map(
-            move |(open_paths, selected_path)| {
-                let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
-                let Some(conn) = conn_handle.upgrade() else {
-                    return PathInfoList(Default::default());
-                };
-                let list = open_paths
-                    .into_iter()
-                    .flat_map(move |(remote, path_id)| {
-                        PathInfo::new(path_id, &conn, remote, selected_path.as_ref())
-                    })
-                    .collect();
-                PathInfoList(list)
-            },
-        )))
-    }
-}
-
-/// List of [`PathInfo`] for the network paths of a [`Connection`].
-///
-/// This struct implements [`IntoIterator`].
-///
-/// [`Connection`]: crate::endpoint::Connection
-#[derive(derive_more::Debug, derive_more::IntoIterator, Eq, PartialEq, Clone)]
-#[debug("{_0:?}")]
-pub struct PathInfoList(SmallVec<[PathInfo; 4]>);
-
-impl PathInfoList {
-    /// Returns an iterator over the path infos.
-    pub fn iter(&self) -> impl Iterator<Item = &PathInfo> {
-        self.0.iter()
-    }
-
-    /// Returns `true` if the list is empty.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Returns the number of paths.
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-}
-
-/// Information about a network path used by a [`Connection`].
-///
-/// [`Connection`]: crate::endpoint::Connection
-#[derive(derive_more::Debug, Clone)]
-pub struct PathInfo {
-    path_id: PathId,
-    #[debug(skip)]
-    handle: WeakConnectionHandle,
-    stats: PathStats,
-    remote: TransportAddr,
-    is_selected: bool,
-}
-
-impl PartialEq for PathInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.path_id == other.path_id
-            && self.remote == other.remote
-            && self.is_selected == other.is_selected
-    }
-}
-
-impl Eq for PathInfo {}
-
-impl PathInfo {
-    fn new(
-        path_id: PathId,
-        conn: &quinn::Connection,
-        remote: TransportAddr,
-        selected_path: Option<&TransportAddr>,
-    ) -> Option<Self> {
-        let stats = conn.path_stats(path_id)?;
-        Some(Self {
-            path_id,
-            handle: conn.weak_handle(),
-            is_selected: Some(&remote) == selected_path,
-            remote,
-            stats,
-        })
-    }
-
-    /// The remote transport address used by this network path.
-    pub fn remote_addr(&self) -> &TransportAddr {
-        &self.remote
-    }
-
-    /// Returns `true` if this path is currently the main transmission path for this [`Connection`].
-    ///
-    /// [`Connection`]: crate::endpoint::Connection
-    pub fn is_selected(&self) -> bool {
-        self.is_selected
-    }
-
-    /// Whether this is an IP transport address.
-    pub fn is_ip(&self) -> bool {
-        self.remote.is_ip()
-    }
-
-    /// Whether this is a transport address via a relay server.
-    pub fn is_relay(&self) -> bool {
-        self.remote.is_relay()
-    }
-
-    /// Whether this is a custom transport address.
-    pub fn is_custom(&self) -> bool {
-        self.remote.is_custom()
-    }
-
-    /// Returns stats for this transmission path.
-    pub fn stats(&self) -> PathStats {
-        self.handle
-            .upgrade()
-            .and_then(|conn| conn.path_stats(self.path_id))
-            .unwrap_or(self.stats)
-    }
-
-    /// Current best estimate of this paths's latency (round-trip-time)
-    pub fn rtt(&self) -> Duration {
-        self.stats().rtt
-    }
-
-    /// Returns the QUIC path id of this path.
-    ///
-    /// This can be used to uniquely identify a transmission path.
-    pub fn id(&self) -> PathId {
-        self.path_id
     }
 }
 

@@ -27,10 +27,9 @@ use std::{
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
-use iroh_base::EndpointId;
+use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
-use n0_watcher::Watcher;
 use pin_project::pin_project;
 use quinn::WeakConnectionHandle;
 use tracing::warn;
@@ -38,7 +37,7 @@ use tracing::warn;
 use crate::{
     Endpoint,
     endpoint::{
-        AfterHandshakeOutcome, PathInfo,
+        AfterHandshakeOutcome,
         quic::{
             AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
             ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
@@ -47,9 +46,51 @@ use crate::{
     },
     socket::{
         RemoteStateActorStoppedError,
-        remote_map::{PathInfoList, PathsWatcher},
+        remote_map::{PathInfo, PathWatchable, PathWatcher},
     },
 };
+
+/// The remote address for an incoming connection.
+///
+/// When the incoming connection is a direct connection, this is a SocketAddr.
+/// When it is a relay connection, we know both the relay URL and the endpoint ID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IncomingAddr {
+    /// A direct connection from an IP address.
+    Ip(SocketAddr),
+    /// A connection via a relay.
+    Relay {
+        /// The URL of the relay.
+        url: RelayUrl,
+        /// The endpoint ID of the remote peer.
+        endpoint_id: EndpointId,
+    },
+    /// A connection via a custom transport.
+    Custom(iroh_base::CustomAddr),
+}
+
+impl From<IncomingAddr> for iroh_base::TransportAddr {
+    fn from(addr: IncomingAddr) -> Self {
+        match addr {
+            IncomingAddr::Ip(addr) => Self::Ip(addr),
+            IncomingAddr::Relay { url, .. } => Self::Relay(url),
+            IncomingAddr::Custom(addr) => Self::Custom(addr),
+        }
+    }
+}
+
+impl From<crate::socket::transports::Addr> for IncomingAddr {
+    fn from(addr: crate::socket::transports::Addr) -> Self {
+        match addr {
+            crate::socket::transports::Addr::Ip(addr) => Self::Ip(addr),
+            crate::socket::transports::Addr::Relay(url, endpoint_id) => {
+                Self::Relay { url, endpoint_id }
+            }
+            crate::socket::transports::Addr::Custom(addr) => Self::Custom(addr),
+        }
+    }
+}
 
 /// Future produced by [`Endpoint::accept`].
 #[derive(derive_more::Debug)]
@@ -149,16 +190,18 @@ impl Incoming {
         self.inner.local_ip()
     }
 
-    /// Returns the peer's UDP address.
-    pub fn remote_address(&self) -> SocketAddr {
-        self.inner.remote_address()
+    /// Returns the remote address of this incoming connection.
+    pub fn remote_addr(&self) -> IncomingAddr {
+        self.ep
+            .to_transport_addr(self.inner.remote_address())
+            .into()
     }
 
     /// Whether the socket address that is initiating this connection has been validated.
     ///
     /// This means that the sender of the initial packet has proved that they can receive
-    /// traffic sent to `self.remote_address()`.
-    pub fn remote_address_validated(&self) -> bool {
+    /// traffic sent to `self.remote_addr()`.
+    pub fn remote_addr_validated(&self) -> bool {
         self.inner.remote_address_validated()
     }
 }
@@ -270,11 +313,11 @@ fn conn_from_quinn_conn(
 
     // Register this connection with the socket.
     let fut = ep
-        .sock
+        .inner
         .register_connection(info.endpoint_id, conn.weak_handle());
 
     // Check hooks
-    let sock = ep.sock.clone();
+    let inner = ep.inner.clone();
     Ok(async move {
         let paths = fut.await?;
         let conn = Connection {
@@ -283,7 +326,7 @@ fn conn_from_quinn_conn(
         };
 
         if let AfterHandshakeOutcome::Reject { error_code, reason } =
-            sock.hooks.after_handshake(&conn.to_info()).await
+            inner.hooks.after_handshake(&conn.to_info()).await
         {
             conn.close(error_code, &reason);
             return Err(e!(ConnectingError::LocallyRejected));
@@ -574,6 +617,13 @@ impl Accepting {
         }
     }
 
+    /// Returns the remote address of this connection.
+    pub fn remote_addr(&self) -> IncomingAddr {
+        self.ep
+            .to_transport_addr(self.inner.remote_address())
+            .into()
+    }
+
     /// Parameters negotiated during the handshake
     pub async fn handshake_data(&mut self) -> Result<Box<dyn Any>, ConnectionError> {
         self.inner.handshake_data().await
@@ -672,7 +722,7 @@ pub struct Connection<State: ConnectionState = HandshakeCompleted> {
 #[derive(Debug, Clone)]
 pub struct HandshakeCompletedData {
     info: StaticInfo,
-    paths: PathsWatcher,
+    paths: PathWatchable,
 }
 
 /// Static info from a completed TLS handshake.
@@ -1010,16 +1060,30 @@ impl Connection<HandshakeCompleted> {
     /// A connection can have several network paths to the remote endpoint, commonly there
     /// will be a path via the relay server and a holepunched path.
     ///
-    /// The watcher is updated whenever a path is opened or closed, or when the path selected
-    /// for transmission changes (see [`PathInfo::is_selected`]).
+    /// Returns a [`PathWatcher`], which implements the [`Watcher`] trait. The watcher is updated
+    /// whenever a path is opened or closed, or when the path selected for transmission changes
+    /// (see [`PathInfo::is_selected`]).
     ///
     /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
-    /// transmission path.
+    /// network path.
     ///
-    /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
-    /// [`PathInfo`]: crate::socket::PathInfo
-    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        self.data.paths.clone()
+    /// As long as a [`PathWatcher`] is alive, the list of paths will only grow. If paths
+    /// are closed, they will be marked as closed (see [`PathInfo::is_closed`]) but will
+    /// not be removed from the list of paths. This allows to reliably retrieve stats for
+    /// closed paths.
+    ///
+    /// A [`PathWatcher`] does not keep the [`Connection`] itself alive. If all references to
+    /// a connection are dropped, the [`PathWatcher`] will start to return an error when
+    /// updating. Its last value may still be used - note however that accessing
+    /// stats for a path via [`PathInfo::stats`] returns `None` if all references to a
+    /// [`Connection`] have been dropped. To reliably access path stats when a connection closes,
+    /// wait for [`Connection::closed`] and then call [`Connection::paths`] and directly
+    /// iterate over the path stats while the [`Connection`] struct is still in scope.
+    ///
+    /// [`PathInfoList`]: crate::endpoint::PathInfoList
+    /// [`Watcher`]: crate::Watcher
+    pub fn paths(&self) -> PathWatcher {
+        self.data.paths.watch()
     }
 
     /// Returns the side of the connection (client or server).
@@ -1142,21 +1206,11 @@ impl ConnectionInfo {
         self.inner.upgrade().is_some()
     }
 
-    /// Returns a [`Watcher`] for the network paths of this connection.
+    /// Returns a watcher for the network paths of this connection.
     ///
-    /// A connection can have several network paths to the remote endpoint, commonly there
-    /// will be a path via the relay server and a holepunched path.
-    ///
-    /// The watcher is updated whenever a path is opened or closed, or when the path selected
-    /// for transmission changes (see [`PathInfo::is_selected`]).
-    ///
-    /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
-    /// transmission path.
-    ///
-    /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
-    /// [`PathInfo`]: crate::socket::PathInfo
-    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        self.data.paths.clone()
+    /// See [`Connection::paths`] for details.
+    pub fn paths(&self) -> PathWatcher {
+        self.data.paths.watch()
     }
 
     /// Returns connection statistics.
@@ -1180,14 +1234,8 @@ impl ConnectionInfo {
     }
 
     /// Returns the currently selected path.
-    ///
-    /// Returns `None` if the connection has been dropped already before this call or if no path is currently selected.
     pub fn selected_path(&self) -> Option<PathInfo> {
-        if !self.is_alive() {
-            return None;
-        }
-        let paths = self.paths().get();
-        paths.into_iter().find(|paths| paths.is_selected())
+        self.paths().into_iter().find(|path| path.is_selected())
     }
 }
 
@@ -1196,6 +1244,7 @@ mod tests {
     use std::time::Duration;
 
     use iroh_base::{EndpointAddr, SecretKey};
+    use iroh_relay::tls::CaRootsConfig;
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::StreamExt;
     use n0_tracing_test::traced_test;
@@ -1426,14 +1475,14 @@ mod tests {
         let (relay_map, _relay_map, _guard) = run_relay_server().await?;
         let server = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
-            .insecure_skip_relay_cert_verify(true)
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
 
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
-            .insecure_skip_relay_cert_verify(true)
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
 
@@ -1484,23 +1533,23 @@ mod tests {
             }
         );
 
+        tokio::time::pause();
+
         // Close the client connection.
         info!("close client conn");
         conn_client.close(0u32.into(), b"");
 
-        // Verify that the path watch streams close.
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), paths_client.next())
-                .await
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), paths_server.next())
-                .await
-                .unwrap(),
-            None
-        );
+        // Verify that the path watch streams close shortly after the connection is closed
+        tokio::time::timeout(Duration::from_nanos(1), async {
+            while paths_client.next().await.is_some() {}
+        })
+        .await
+        .expect("client paths watcher did not close within 1s of connection close");
+        tokio::time::timeout(Duration::from_nanos(1), async {
+            while paths_client.next().await.is_some() {}
+        })
+        .await
+        .expect("server paths watcher did not close within 1s of connection close");
 
         server.close().await;
         client.close().await;

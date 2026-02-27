@@ -768,8 +768,7 @@ impl Inner {
         // build and register client, starting up read & write loops for the client
         // connection
         self.clients
-            .register(client_conn_builder, self.metrics.clone())
-            .await;
+            .register(client_conn_builder, self.metrics.clone());
         Ok(())
     }
 }
@@ -1004,6 +1003,7 @@ mod tests {
         client::{Client, ClientBuilder, ConnectError, conn::Conn},
         dns::DnsResolver,
         protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+        tls::{CaRootsConfig, default_provider},
     };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
@@ -1108,8 +1108,11 @@ mod tests {
         server_url: Url,
     ) -> Result<(PublicKey, Client), ConnectError> {
         let public_key = key.public();
-        let client =
-            ClientBuilder::new(server_url, key, DnsResolver::new()).insecure_skip_cert_verify(true);
+        let client = ClientBuilder::new(server_url, key, DnsResolver::new()).tls_client_config(
+            CaRootsConfig::insecure_skip_verify()
+                .client_config(default_provider())
+                .expect("infallible"),
+        );
         let client = client.connect().await?;
 
         Ok((public_key, client))

@@ -204,8 +204,7 @@ struct RelayConnectionOptions {
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
     prefer_ipv6: Arc<AtomicBool>,
-    #[cfg(any(test, feature = "test-utils"))]
-    insecure_skip_cert_verify: bool,
+    tls_config: rustls::ClientConfig,
 }
 
 /// Possible reasons for a failed relay connection.
@@ -291,8 +290,7 @@ impl ActiveRelayActor {
             dns_resolver,
             proxy_url,
             prefer_ipv6,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_cert_verify,
+            tls_config,
         } = opts;
 
         let mut builder = relay::client::ClientBuilder::new(
@@ -301,12 +299,11 @@ impl ActiveRelayActor {
             #[cfg(not(wasm_browser))]
             dns_resolver,
         )
+        .tls_client_config(tls_config)
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
-        #[cfg(any(test, feature = "test-utils"))]
-        let builder = builder.insecure_skip_cert_verify(insecure_skip_cert_verify);
         builder
     }
 
@@ -317,7 +314,7 @@ impl ActiveRelayActor {
         let mut backoff = Self::build_backoff();
 
         while let Err(err) = self.run_once().await {
-            warn!("{err}");
+            warn!("{err:#}");
             match err {
                 RelayConnectionError::Dial { .. } | RelayConnectionError::Handshake { .. } => {
                     // If dialing failed, or if the relay connection failed before we received a pong,
@@ -839,8 +836,7 @@ pub struct Config {
     pub proxy_url: Option<Url>,
     /// If the last net_report report, reports IPv6 to be available.
     pub ipv6_reported: Arc<AtomicBool>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub insecure_skip_relay_cert_verify: bool,
+    pub tls_config: rustls::ClientConfig,
     pub metrics: Arc<SocketMetrics>,
 }
 
@@ -1080,8 +1076,7 @@ impl RelayActor {
             dns_resolver: self.config.dns_resolver.clone(),
             proxy_url: self.config.proxy_url.clone(),
             prefer_ipv6: self.config.ipv6_reported.clone(),
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_cert_verify: self.config.insecure_skip_relay_cert_verify,
+            tls_config: self.config.tls_config.clone(),
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -1215,7 +1210,11 @@ mod tests {
     };
 
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
-    use iroh_relay::{PingTracker, protos::relay::Datagrams};
+    use iroh_relay::{
+        PingTracker,
+        protos::relay::Datagrams,
+        tls::{CaRootsConfig, default_provider},
+    };
     use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use n0_tracing_test::traced_test;
     use tokio::sync::{mpsc, oneshot};
@@ -1252,7 +1251,9 @@ mod tests {
                 dns_resolver: DnsResolver::new(),
                 proxy_url: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
-                insecure_skip_cert_verify: true,
+                tls_config: CaRootsConfig::insecure_skip_verify()
+                    .client_config(default_provider())
+                    .expect("infallible"),
             },
             stop_token,
             metrics: Default::default(),

@@ -451,7 +451,7 @@ impl ConcurrentAddressLookup {
         self.services.write().expect("poisoned").push(service);
     }
 
-    /// Is there any services configured?
+    /// Are there any services configured?
     pub fn is_empty(&self) -> bool {
         self.services.read().expect("poisoned").is_empty()
     }
@@ -459,6 +459,12 @@ impl ConcurrentAddressLookup {
     /// Returns the number of services configured.
     pub fn len(&self) -> usize {
         self.services.read().expect("poisoned").len()
+    }
+
+    /// Removes all configured services.
+    pub fn clear(&self) {
+        let mut services = self.services.write().expect("poisoned");
+        services.clear();
     }
 }
 
@@ -843,7 +849,11 @@ mod tests {
 #[cfg(test)]
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-    use iroh_relay::{RelayMap, endpoint_info::UserData};
+    use iroh_relay::{
+        RelayMap,
+        endpoint_info::UserData,
+        tls::{CaRootsConfig, default_provider},
+    };
     use n0_error::{AnyError, Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
@@ -907,9 +917,12 @@ mod test_dns_pkarr {
             "https://relay.example".parse().unwrap(),
         ));
 
+        let tls_config = CaRootsConfig::insecure_skip_verify()
+            .client_config(default_provider())
+            .expect("infallible");
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
-        let publisher =
-            PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone()).build(secret_key);
+        let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
+            .build(secret_key, tls_config);
         let user_data: UserData = "foobar".parse().unwrap();
         let data = EndpointData::new(relay_url.clone()).with_user_data(Some(user_data.clone()));
         // does not block, update happens in background task
@@ -964,11 +977,10 @@ mod test_dns_pkarr {
     ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
         let secret_key = SecretKey::generate(rng);
         let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .insecure_skip_relay_cert_verify(true)
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
-            .dns_resolver(dns_pkarr_server.dns_resolver())
-            .address_lookup(dns_pkarr_server.address_lookup(secret_key))
+            .preset(dns_pkarr_server.preset())
             .bind()
             .await?;
 

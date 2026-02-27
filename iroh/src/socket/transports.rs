@@ -795,6 +795,22 @@ impl PathSelectionData {
     }
 }
 
+impl PartialEq<TransportAddr> for Addr {
+    fn eq(&self, other: &TransportAddr) -> bool {
+        match self {
+            Addr::Ip(socket_addr) => {
+                matches!(other, TransportAddr::Ip(a) if a == socket_addr)
+            }
+            Addr::Relay(relay_url, _) => {
+                matches!(other, TransportAddr::Relay(a) if a == relay_url)
+            }
+            Addr::Custom(custom_addr) => {
+                matches!(other, TransportAddr::Custom(a) if a == custom_addr)
+            }
+        }
+    }
+}
+
 /// A sender that sends to all our transports.
 #[derive(Debug, Clone)]
 pub(crate) struct TransportsSender {

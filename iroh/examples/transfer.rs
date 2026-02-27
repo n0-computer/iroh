@@ -22,7 +22,6 @@
 //! ```
 
 use std::{
-    collections::BTreeMap,
     fmt,
     fs::File,
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -49,8 +48,8 @@ use iroh::{
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{
-        BindOpts, Connection, ConnectionError, PathId, PathInfoList, RecvStream, SendStream,
-        VarInt, WriteError,
+        BindOpts, Connection, ConnectionError, PathId, PathWatcher, RecvStream, SendStream, VarInt,
+        WriteError,
     },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
@@ -101,14 +100,61 @@ struct Cli {
     /// Output format.
     #[clap(global = true, long, value_enum, default_value_t)]
     output: OutputMode,
+    #[clap(flatten)]
+    log: LogArgs,
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Parser, Debug)]
+struct LogArgs {
     /// Save trace and qlog logs to ./logs/
     #[clap(global = true, long, conflicts_with = "logs_path")]
     logs: bool,
     /// Save trace and qlog logs the specified path
     #[clap(global = true, long, conflicts_with = "logs")]
     logs_path: Option<PathBuf>,
-    #[command(subcommand)]
-    command: Commands,
+    /// Generate qlog logs. Needs --logs or --logs_path.
+    ///
+    /// Alternatively, set the QLOGDIR environment variable.
+    ///
+    /// Has no effect if the `qlog` feature is not enabled.
+    #[clap(global = true, long)]
+    qlog: bool,
+}
+
+impl LogArgs {
+    fn init(self, command: &Commands, id: EndpointId) -> Result<Option<LogSettings>> {
+        let dir = match (self.logs_path, self.logs) {
+            (Some(path), _) => Some(path),
+            (_, true) => Some(PathBuf::from(format!(
+                "./logs/transfer-{command}-{}-{}",
+                Local::now().format("%y%m%d.%H%M%S"),
+                id.fmt_short()
+            ))),
+            _ => None,
+        };
+        if let Some(dir) = dir {
+            std::fs::create_dir_all(&dir)
+                .with_context(|_| format!("failed to create log directory at {}", dir.display()))?;
+            let tracing_file = dir.join(format!("logs-{command}"));
+            init_tracing(Some(&tracing_file));
+            Ok(Some(LogSettings {
+                dir,
+                #[cfg(feature = "qlog")]
+                qlog: self.qlog,
+            }))
+        } else {
+            init_tracing(None);
+            Ok(None)
+        }
+    }
+}
+
+struct LogSettings {
+    dir: PathBuf,
+    #[cfg(feature = "qlog")]
+    qlog: bool,
 }
 
 #[derive(Clone, Copy, Default, Debug, Eq, PartialEq, clap::ValueEnum, Serialize)]
@@ -325,8 +371,7 @@ async fn main() -> Result<()> {
     let Cli {
         command,
         output,
-        logs,
-        logs_path,
+        log,
     } = Cli::parse();
 
     let output = Output::new(output);
@@ -345,32 +390,13 @@ async fn main() -> Result<()> {
     };
 
     // Determine file logging path and init tracing subscriber.
-    let log_dir = {
-        let dir = match (logs_path, logs) {
-            (Some(path), _) => Some(path),
-            (_, true) => Some(PathBuf::from(format!(
-                "./logs/transfer-{command}-{}-{}",
-                Local::now().format("%y%m%d.%H%M%S"),
-                secret_key.public().fmt_short()
-            ))),
-            _ => None,
-        };
-        let log_file = if let Some(dir) = dir.as_ref() {
-            std::fs::create_dir_all(dir)
-                .with_context(|_| format!("failed to create log directory at {}", dir.display()))?;
-            Some(dir.join(format!("logs-{command}")))
-        } else {
-            None
-        };
-        init_tracing(log_file.as_ref());
-        dir
-    };
+    let log = log.init(&command, secret_key.public())?;
 
     match command {
         Commands::Provide { endpoint_args } => {
             output.emit_if_json(&endpoint_args);
             let endpoint = endpoint_args
-                .bind_endpoint(secret_key, output, log_dir.as_ref())
+                .bind_endpoint(secret_key, output, log.as_ref())
                 .await?;
             provide(endpoint, output).await?
         }
@@ -391,7 +417,7 @@ async fn main() -> Result<()> {
                 (Some(_), Some(_)) => unreachable!("--size and --duration args are conflicting"),
             };
             let endpoint = endpoint_args
-                .bind_endpoint(secret_key, output, log_dir.as_ref())
+                .bind_endpoint(secret_key, output, log.as_ref())
                 .await?;
             let addrs = remote_relay_url
                 .into_iter()
@@ -402,8 +428,10 @@ async fn main() -> Result<()> {
         }
     }
 
-    if let Some(path) = log_dir {
-        output.emit(LogsSaved { path });
+    if let Some(log) = log {
+        output.emit(LogsSaved {
+            path: log.dir.clone(),
+        });
     }
 
     Ok(())
@@ -414,7 +442,7 @@ impl EndpointArgs {
         self,
         secret_key: SecretKey,
         output: Output,
-        log_dir: Option<&PathBuf>,
+        log: Option<&LogSettings>,
     ) -> Result<Endpoint> {
         let relay_mode = if self.no_relay {
             RelayMode::Disabled
@@ -429,7 +457,7 @@ impl EndpointArgs {
         if Env::Dev == self.env {
             #[cfg(feature = "test-utils")]
             {
-                builder = builder.insecure_skip_relay_cert_verify(true);
+                builder = builder.ca_roots_config(iroh::tls::CaRootsConfig::insecure_skip_verify());
             }
             #[cfg(not(feature = "test-utils"))]
             {
@@ -492,18 +520,19 @@ impl EndpointArgs {
         }
         #[cfg(feature = "qlog")]
         {
-            let cfg = match log_dir {
-                None => QuicTransportConfig::builder()
-                    .qlog_from_env("transfer")
+            let cfg = match (std::env::var("QLOGDIR").ok(), log) {
+                (Some(dir), _) => QuicTransportConfig::builder()
+                    .qlog_from_path(dir, "transfer")
                     .build(),
-                Some(path) => QuicTransportConfig::builder()
-                    .qlog_from_path(path, "")
+                (_, Some(log)) if log.qlog => QuicTransportConfig::builder()
+                    .qlog_from_path(&log.dir, "")
                     .build(),
+                _ => Default::default(),
             };
             builder = builder.transport_config(cfg)
         }
         #[cfg(not(feature = "qlog"))]
-        let _ = log_dir;
+        let _ = log;
 
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
@@ -582,8 +611,8 @@ async fn provide(endpoint: Endpoint, output: Output) -> Result<()> {
 async fn handle_connection(conn: Connection, output: Output) {
     let start = Instant::now();
     let remote_id = conn.remote_id();
-    let _guard = watch_conn_type(conn.paths(), Some(remote_id), output);
-    let stats_task = watch_path_stats(conn.clone());
+    let watcher = conn.paths();
+    let _guard = watch_conn_type(&conn, Some(remote_id), output);
 
     // Accept incoming streams in a loop until the connection is closed by the remote.
     let close_reason = loop {
@@ -615,8 +644,7 @@ async fn handle_connection(conn: Connection, output: Output) {
             duration: start.elapsed(),
         },
     );
-    let path_stats = stats_task.await.expect("path stats task panicked");
-    output.emit_with_remote(remote_id, path_stats);
+    output.emit_with_remote(remote_id, PathStats::from_watcher(watcher));
 }
 
 #[instrument("handle", skip_all, fields(id=send.id().index()))]
@@ -658,9 +686,9 @@ async fn fetch(
         remote_id,
         duration: start.elapsed(),
     });
+    let watcher = conn.paths();
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(conn.paths(), None, output);
-    let stats_task = watch_path_stats(conn.clone());
+    let _guard = watch_conn_type(&conn, None, output);
 
     output.emit(StartRequest { mode, length });
     // Perform requests depending on the request mode.
@@ -706,8 +734,7 @@ async fn fetch(
     });
 
     close_endpoint_with_timeout(&endpoint, output).await;
-    let path_stats = stats_task.await.expect("path stats task panicked");
-    output.emit(path_stats);
+    output.emit(PathStats::from_watcher(watcher));
 
     res
 }
@@ -866,7 +893,7 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
 }
 
 fn watch_conn_type(
-    paths_watcher: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static,
+    conn: &Connection,
     remote_id: Option<EndpointId>,
     output: Output,
 ) -> AbortOnDropHandle<()> {
@@ -878,8 +905,8 @@ fn watch_conn_type(
             output.emit(event)
         }
     };
+    let mut stream = conn.paths().stream();
     let task = tokio::task::spawn(async move {
-        let mut stream = paths_watcher.stream();
         let mut previous = None;
         while let Some(paths) = stream.next().await {
             if let Some(path) = paths.iter().find(|p| p.is_selected()) {
@@ -890,7 +917,7 @@ fn watch_conn_type(
                 print(SelectedPath::Selected {
                     id: path.id(),
                     addr: path.remote_addr().clone(),
-                    rtt: path.rtt(),
+                    rtt: path.rtt().expect("conn is not dropped"),
                 });
                 previous = Some(path.clone());
             } else {
@@ -898,45 +925,6 @@ fn watch_conn_type(
                 previous = None;
             }
         }
-    });
-    AbortOnDropHandle::new(task)
-}
-
-fn watch_path_stats(conn: iroh::endpoint::Connection) -> AbortOnDropHandle<PathStats> {
-    let task = tokio::spawn(async move {
-        let mut watcher = conn.paths();
-        let mut latest_stats_by_path = BTreeMap::new();
-        while conn.close_reason().is_none() {
-            n0_future::future::race(
-                async {
-                    conn.closed().await;
-                },
-                async {
-                    let _ = watcher.updated().await;
-                },
-            )
-            .await;
-            // Insert what could possibly be new path stats.
-            for path in watcher.get() {
-                let stats = path.stats();
-                latest_stats_by_path.insert(path.remote_addr().clone(), (path, stats));
-            }
-            // Update all stat values, even for paths that are removed by now.
-            for (path, stats) in latest_stats_by_path.values_mut() {
-                *stats = path.stats();
-            }
-        }
-        let list = latest_stats_by_path
-            .into_iter()
-            .map(|(addr, (info, stats))| PathData {
-                id: info.id(),
-                remote_addr: addr,
-                rtt: stats.rtt,
-                bytes_sent: stats.udp_tx.bytes,
-                bytes_recv: stats.udp_tx.bytes,
-            })
-            .collect();
-        PathStats { paths: list }
     });
     AbortOnDropHandle::new(task)
 }
@@ -989,7 +977,10 @@ impl Output {
     fn emit(&self, event: impl Serialize + fmt::Display) {
         match self.mode {
             OutputMode::Text => println!("{event} {}", self.time()),
-            OutputMode::Json => println!("{}", serde_json::to_string(&event).unwrap()),
+            OutputMode::Json => println!(
+                "{}",
+                serde_json::to_string(&Timestamped::now(event)).unwrap()
+            ),
         }
     }
 
@@ -1004,14 +995,17 @@ impl Output {
             ),
             OutputMode::Json => println!(
                 "{}",
-                serde_json::to_string(&RemoteEvent::new(remote, event)).unwrap()
+                serde_json::to_string(&Timestamped::now(RemoteEvent::new(remote, event))).unwrap()
             ),
         }
     }
 
     fn emit_if_json(&self, event: &impl Serialize) {
         if matches!(self.mode, OutputMode::Json) {
-            println!("{}", serde_json::to_string(&event).unwrap())
+            println!(
+                "{}",
+                serde_json::to_string(&Timestamped::now(event)).unwrap()
+            )
         }
     }
 }
@@ -1130,6 +1124,26 @@ struct PathData {
 #[serde(tag = "kind")]
 struct PathStats {
     paths: Vec<PathData>,
+}
+
+impl PathStats {
+    fn from_watcher(mut watcher: PathWatcher) -> Self {
+        let list = watcher
+            .get()
+            .iter()
+            .filter_map(|info| {
+                let stats = info.stats()?;
+                Some(PathData {
+                    id: info.id(),
+                    remote_addr: info.remote_addr().clone(),
+                    rtt: stats.rtt,
+                    bytes_sent: stats.udp_tx.bytes,
+                    bytes_recv: stats.udp_rx.bytes,
+                })
+            })
+            .collect();
+        PathStats { paths: list }
+    }
 }
 
 impl fmt::Display for PathStats {
@@ -1254,6 +1268,22 @@ impl<T: Serialize + fmt::Display> RemoteEvent<T> {
     }
 }
 
+#[derive(Serialize)]
+struct Timestamped<T: Serialize> {
+    timestamp: String,
+    #[serde(flatten)]
+    inner: T,
+}
+
+impl<T: Serialize> Timestamped<T> {
+    fn now(inner: T) -> Self {
+        Self {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            inner,
+        }
+    }
+}
+
 fn duration_micros_opt<S: Serializer>(
     value: &Option<Duration>,
     serializer: S,
@@ -1279,7 +1309,7 @@ mod duration_micros {
     }
 }
 
-pub fn init_tracing(path: Option<impl AsRef<Path>>) {
+pub fn init_tracing(path: Option<&Path>) {
     use tracing_subscriber::{fmt, registry};
     if let Some(path) = path {
         let file = File::create(path).expect("failed to create trace log file");
