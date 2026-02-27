@@ -56,48 +56,48 @@
 <a href=#56 id=56 data-nosnippet>56</a><span class="kw">impl </span>CaRootsConfig {
 <a href=#57 id=57 data-nosnippet>57</a>    <span class="doccomment">/// Use the operating system's certificate facilities for verifying the validity of TLS certificates.
 <a href=#58 id=58 data-nosnippet>58</a>    ///
-<a href=#59 id=59 data-nosnippet>59</a>    /// See [`rustls_platform_verifier`] for details how roots are retrieved on different platforms.
-<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="attr">#[cfg(feature = <span class="string">"tls-system-certs"</span>)]
-<a href=#61 id=61 data-nosnippet>61</a>    </span><span class="kw">pub fn </span>system() -&gt; <span class="self">Self </span>{
-<a href=#62 id=62 data-nosnippet>62</a>        <span class="self">Self </span>{
-<a href=#63 id=63 data-nosnippet>63</a>            mode: Mode::System,
-<a href=#64 id=64 data-nosnippet>64</a>            extra_roots: Vec::new(),
-<a href=#65 id=65 data-nosnippet>65</a>        }
-<a href=#66 id=66 data-nosnippet>66</a>    }
-<a href=#67 id=67 data-nosnippet>67</a>
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// Use a compiled-in copy of the root certificates trusted by Mozilla.
-<a href=#69 id=69 data-nosnippet>69</a>    ///
-<a href=#70 id=70 data-nosnippet>70</a>    /// See [`webpki_roots`].
-<a href=#71 id=71 data-nosnippet>71</a>    </span><span class="kw">pub fn </span>embedded() -&gt; <span class="self">Self </span>{
-<a href=#72 id=72 data-nosnippet>72</a>        <span class="self">Self </span>{
-<a href=#73 id=73 data-nosnippet>73</a>            mode: Mode::EmbeddedWebPki,
-<a href=#74 id=74 data-nosnippet>74</a>            extra_roots: Vec::new(),
-<a href=#75 id=75 data-nosnippet>75</a>        }
-<a href=#76 id=76 data-nosnippet>76</a>    }
-<a href=#77 id=77 data-nosnippet>77</a>
-<a href=#78 id=78 data-nosnippet>78</a>    <span class="doccomment">/// INSECURE: Do not verify server certificates at all.
-<a href=#79 id=79 data-nosnippet>79</a>    ///
-<a href=#80 id=80 data-nosnippet>80</a>    /// May only be used in tests or local development setups.
-<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="kw">pub fn </span>insecure_skip_verify() -&gt; <span class="self">Self </span>{
-<a href=#83 id=83 data-nosnippet>83</a>        <span class="self">Self </span>{
-<a href=#84 id=84 data-nosnippet>84</a>            mode: Mode::InsecureSkipVerify,
-<a href=#85 id=85 data-nosnippet>85</a>            extra_roots: Vec::new(),
-<a href=#86 id=86 data-nosnippet>86</a>        }
-<a href=#87 id=87 data-nosnippet>87</a>    }
-<a href=#88 id=88 data-nosnippet>88</a>
-<a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// Only trust the explicitly set root certificates.
-<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="kw">pub fn </span>custom(roots: <span class="kw">impl </span>IntoIterator&lt;Item = CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;) -&gt; <span class="self">Self </span>{
-<a href=#91 id=91 data-nosnippet>91</a>        <span class="self">Self </span>{
-<a href=#92 id=92 data-nosnippet>92</a>            mode: Mode::ExtraRootsOnly,
-<a href=#93 id=93 data-nosnippet>93</a>            extra_roots: roots.into_iter().collect(),
-<a href=#94 id=94 data-nosnippet>94</a>        }
-<a href=#95 id=95 data-nosnippet>95</a>    }
-<a href=#96 id=96 data-nosnippet>96</a>
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// Add additional root certificates to the list of trusted certificates.
-<a href=#98 id=98 data-nosnippet>98</a>    ///
-<a href=#99 id=99 data-nosnippet>99</a>    /// Note: When used with [`Self::system`], the extra certificates will be ignored on Android
-<a href=#100 id=100 data-nosnippet>100</a>    /// due to missing support in `rustls`.
+<a href=#59 id=59 data-nosnippet>59</a>    /// See [`rustls_platform_verifier`] for details how trust anchors are retrieved on different platforms.
+<a href=#60 id=60 data-nosnippet>60</a>    ///
+<a href=#61 id=61 data-nosnippet>61</a>    /// Note: Additional certificates added via [`Self::with_extra_roots`] will be ignored on Android due to
+<a href=#62 id=62 data-nosnippet>62</a>    /// missing support in [`rustls`].
+<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="attr">#[cfg(feature = <span class="string">"tls-system-certs"</span>)]
+<a href=#64 id=64 data-nosnippet>64</a>    </span><span class="kw">pub fn </span>system() -&gt; <span class="self">Self </span>{
+<a href=#65 id=65 data-nosnippet>65</a>        <span class="self">Self </span>{
+<a href=#66 id=66 data-nosnippet>66</a>            mode: Mode::System,
+<a href=#67 id=67 data-nosnippet>67</a>            extra_roots: Vec::new(),
+<a href=#68 id=68 data-nosnippet>68</a>        }
+<a href=#69 id=69 data-nosnippet>69</a>    }
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Use a compiled-in copy of the root certificates trusted by Mozilla.
+<a href=#72 id=72 data-nosnippet>72</a>    ///
+<a href=#73 id=73 data-nosnippet>73</a>    /// See [`webpki_roots`] for details.
+<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="kw">pub fn </span>embedded() -&gt; <span class="self">Self </span>{
+<a href=#75 id=75 data-nosnippet>75</a>        <span class="self">Self </span>{
+<a href=#76 id=76 data-nosnippet>76</a>            mode: Mode::EmbeddedWebPki,
+<a href=#77 id=77 data-nosnippet>77</a>            extra_roots: Vec::new(),
+<a href=#78 id=78 data-nosnippet>78</a>        }
+<a href=#79 id=79 data-nosnippet>79</a>    }
+<a href=#80 id=80 data-nosnippet>80</a>
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// INSECURE: Do not verify server certificates at all.
+<a href=#82 id=82 data-nosnippet>82</a>    ///
+<a href=#83 id=83 data-nosnippet>83</a>    /// May only be used in tests or local development setups.
+<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">pub fn </span>insecure_skip_verify() -&gt; <span class="self">Self </span>{
+<a href=#86 id=86 data-nosnippet>86</a>        <span class="self">Self </span>{
+<a href=#87 id=87 data-nosnippet>87</a>            mode: Mode::InsecureSkipVerify,
+<a href=#88 id=88 data-nosnippet>88</a>            extra_roots: Vec::new(),
+<a href=#89 id=89 data-nosnippet>89</a>        }
+<a href=#90 id=90 data-nosnippet>90</a>    }
+<a href=#91 id=91 data-nosnippet>91</a>
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// Only trust the explicitly set root certificates.
+<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">pub fn </span>custom(roots: <span class="kw">impl </span>IntoIterator&lt;Item = CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;) -&gt; <span class="self">Self </span>{
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="self">Self </span>{
+<a href=#95 id=95 data-nosnippet>95</a>            mode: Mode::ExtraRootsOnly,
+<a href=#96 id=96 data-nosnippet>96</a>            extra_roots: roots.into_iter().collect(),
+<a href=#97 id=97 data-nosnippet>97</a>        }
+<a href=#98 id=98 data-nosnippet>98</a>    }
+<a href=#99 id=99 data-nosnippet>99</a>
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="doccomment">/// Add additional root certificates to the list of trusted certificates.
 <a href=#101 id=101 data-nosnippet>101</a>    </span><span class="kw">pub fn </span>with_extra_roots(
 <a href=#102 id=102 data-nosnippet>102</a>        <span class="kw-2">mut </span><span class="self">self</span>,
 <a href=#103 id=103 data-nosnippet>103</a>        extra_roots: <span class="kw">impl </span>IntoIterator&lt;Item = CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;,
