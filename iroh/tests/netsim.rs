@@ -36,8 +36,18 @@ async fn holepunch_simple() -> Result {
     let (relay_map, _relay_guard) = spawn_relay(&lab).await?;
 
     let nat_mode = NatMode::DestinationIndependent;
-    let nat1 = lab.add_router("nat1").nat(nat_mode).build().await?;
-    let nat2 = lab.add_router("nat2").nat(nat_mode).build().await?;
+    let nat1 = lab
+        .add_router("nat1")
+        .nat(nat_mode)
+        .downstream_cidr("192.168.77.0/24".parse().unwrap())
+        .build()
+        .await?;
+    let nat2 = lab
+        .add_router("nat2")
+        .nat(nat_mode)
+        .downstream_cidr("192.168.33.0/24".parse().unwrap())
+        .build()
+        .await?;
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
 
@@ -87,6 +97,8 @@ async fn holepunch_simple() -> Result {
 /// For this we observe a change in the selected path's remote addr on the *other* side.
 /// Whether the side that changes interfaces opens a new path or does an RFC9000-style migration
 /// is an implementation detail which we won't test for.
+///
+/// The test currently fails, but should pass.
 #[tokio::test]
 #[traced_test]
 async fn switch_uplink() -> Result {
@@ -94,9 +106,24 @@ async fn switch_uplink() -> Result {
     let (relay_map, _relay_guard) = spawn_relay(&lab).await?;
 
     let nat_mode = NatMode::DestinationIndependent;
-    let nat1 = lab.add_router("nat1").nat(nat_mode).build().await?;
-    let nat2 = lab.add_router("nat2").nat(nat_mode).build().await?;
-    let nat3 = lab.add_router("nat3").nat(nat_mode).build().await?;
+    let nat1 = lab
+        .add_router("nat1")
+        .nat(nat_mode)
+        .downstream_cidr("10.0.0.0/24".parse().unwrap())
+        .build()
+        .await?;
+    let nat2 = lab
+        .add_router("nat2")
+        .nat(nat_mode)
+        .downstream_cidr("192.168.0.0/24".parse().unwrap())
+        .build()
+        .await?;
+    let nat3 = lab
+        .add_router("nat3")
+        .nat(nat_mode)
+        .downstream_cidr("192.168.33.0/24".parse().unwrap())
+        .build()
+        .await?;
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
 
@@ -178,6 +205,7 @@ async fn switch_uplink() -> Result {
     task1.await.anyerr()??;
     Ok(())
 }
+
 /// Test that switching to a faster link works.
 ///
 /// Two devices, connected initiall over holepunched NAT. Then mid connection

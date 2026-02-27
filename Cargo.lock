@@ -2708,7 +2708,7 @@ dependencies = [
 [[package]]
 name = "netsim-core"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/netsim-rs#e181ecc3458d64e97337861e9ea98fdfee8aabe7"
+source = "git+https://github.com/n0-computer/netsim-rs#7dc84731c640895b3dbc7dd0097bfa0af65dab97"
 dependencies = [
  "anyhow",
  "chrono",
