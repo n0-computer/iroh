@@ -384,7 +384,7 @@ mod tests {
         let mut builder = Endpoint::builder()
             .secret_key(secret_key)
             .relay_mode(relay_mode)
-            .insecure_skip_relay_cert_verify(true)
+            .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
             .add_custom_transport(transport);
         if let Some(bias) = config.custom_bias {
             builder = builder.transport_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias);
