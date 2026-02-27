@@ -548,6 +548,7 @@ impl RemoteStateActor {
 
     /// Handles [`RemoteStateMessage::NetworkChange`].
     fn handle_msg_network_change(&mut self, is_major: bool) {
+        // Ping all the paths so loss-detection starts ASAP.
         for conn in self.connections.values() {
             if let Some(quinn_conn) = conn.handle.upgrade() {
                 for (path_id, addr) in &conn.paths {
@@ -565,6 +566,7 @@ impl RemoteStateActor {
             self.trigger_holepunching();
         }
     }
+
     fn handle_connection_close(&mut self, conn_id: ConnId) {
         if self.connections.remove(&conn_id).is_some() {
             self.metrics.num_conns_closed.inc();
@@ -593,7 +595,7 @@ impl RemoteStateActor {
 
     /// Handles an address lookup result.
     ///
-    /// All address lookup results and up being sent here. It takes care of updating the
+    /// All address lookup results end up being sent here. It takes care of updating the
     /// [`RemotePathState`] with the results.
     fn handle_address_lookup_item(
         &mut self,
@@ -647,7 +649,7 @@ impl RemoteStateActor {
 
     /// Updates QNT's candidate addresses to be the current set of direct addresses.
     ///
-    /// `direct addrs` must be a set of addresses extracted from the endpoint's current
+    /// `direct_addrs` must be a set of addresses extracted from the endpoint's current
     /// [`DirectAddr`]s.
     fn update_qnt_candidates(conn: &quinn::Connection, direct_addrs: &BTreeSet<SocketAddr>) {
         let quinn_candidates = match conn.get_local_nat_traversal_addresses() {
@@ -1230,12 +1232,12 @@ pub(crate) enum RemoteStateMessage {
     AddConnection(WeakConnectionHandle, oneshot::Sender<PathWatchable>),
     /// Asks if there is any possible path that could be used.
     ///
-    /// This adds the provided transport addresses to the list of potential paths for this remote
-    /// and starts Address Lookup if needed.
+    /// This adds the provided transport addresses to the list of potential paths for this
+    /// remote and starts Address Lookup if needed.
     ///
-    /// Returns `Ok` immediately if the provided address list is non-empy or we have are other known paths.
-    /// Otherwise returns `Ok` once Address Lookup produces a result, or the Address Lookup error if Address Lookup fails
-    /// or produces no results,
+    /// Sends back `Ok` immediately if the provided address list is non-empy or we have are
+    /// other known paths.  Otherwise sends back `Ok` once Address Lookup produces a result,
+    /// or the Address Lookup error if Address Lookup fails or produces no results,
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         BTreeSet<TransportAddr>,

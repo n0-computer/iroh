@@ -28,8 +28,10 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
+use mapped_addrs::MultipathMappedAddr;
 use n0_error::{bail, e, stack_error};
 use n0_future::{
+    MaybeFuture,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -37,8 +39,9 @@ use n0_watcher::{self, Watchable, Watcher};
 #[cfg(not(wasm_browser))]
 use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
-use quinn::WeakConnectionHandle;
+use quinn::{NetworkChangeHint, WeakConnectionHandle};
 use rand::Rng;
+use rustc_hash::FxHashSet;
 use tokio::sync::{
     Mutex as AsyncMutex,
     mpsc::{self},
@@ -954,6 +957,7 @@ impl EndpointInner {
 
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
+            endpoint: endpoint.clone(),
             sock: sock.clone(),
             remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
@@ -962,6 +966,7 @@ impl EndpointInner {
             direct_addr_update_state,
             transports_network_change,
             direct_addr_done_rx,
+            call_notify_quic_network_change: None,
         };
         // Initialize addresses
         #[cfg(not(wasm_browser))]
@@ -1235,6 +1240,19 @@ enum ActorMessage {
 }
 
 struct Actor {
+    /// A clone of the quinn Endpoint.
+    ///
+    /// The task of this actor is currently owned by the [`crate::Endpoint`] and wrapped in
+    /// an [`AbortOnDropHandle`]. When [`crate::Endpoint::close`] is called various
+    /// subsystems are being stopped. Then, when [`ShutdownState::at_endpoint_closed`] is
+    /// called by [`Handle::close`], this actor itself is stopped via it's
+    /// [`CancellationToken`] and we will drop this clone of the endpoint. The endpoint is
+    /// than finally dropped when the [`Handle`] itself is dropped.
+    ///
+    /// All of this to say: keeping the quinn endpoint alive here does not impact the
+    /// lifetime of it since it's lifetime is shorter than that one that's stored in the
+    /// [`Handle`].
+    endpoint: quinn::Endpoint,
     /// Shared state between an awful lot of iroh subsystems.
     ///
     /// In particular both the [`EndpointInner`] as well as this actor itself have a
@@ -1254,6 +1272,8 @@ struct Actor {
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
+    /// When to call [`Actor::notify_quic_network_change`].
+    call_notify_quic_network_change: Option<(Instant, bool)>,
 }
 
 impl Actor {
@@ -1287,6 +1307,12 @@ impl Actor {
             let portmap_watcher_changed = portmap_watcher.changed();
             #[cfg(wasm_browser)]
             let portmap_watcher_changed = n0_future::future::pending();
+
+            let notify_quic_network_change = match &self.call_notify_quic_network_change {
+                Some((when, _)) => MaybeFuture::Some(tokio::time::sleep_until(*when)),
+                None => MaybeFuture::None,
+            };
+            n0_future::pin!(notify_quic_network_change);
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
@@ -1390,6 +1416,11 @@ impl Actor {
                 eid = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
                     trace!(%eid, "cleaned up RemoteStateActor");
                 }
+                _ = &mut notify_quic_network_change => {
+                    if let Some((_, is_major)) = self.call_notify_quic_network_change.take() {
+                        self.notify_quic_network_change(is_major);
+                    }
+                }
                 else => {
                     trace!("tick: else");
                 }
@@ -1416,6 +1447,81 @@ impl Actor {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
 
+        let interfaces = self.local_interfaces_watcher.get();
+        if interfaces.default_route_interface.is_some() {
+            // This is considered a usable network change, propagate it to the QUIC stack
+            // right away.
+            self.call_notify_quic_network_change = None;
+            self.notify_quic_network_change(is_major);
+        } else {
+            // This is probably not a very usable state of our interfaces. Hopefully this
+            // will improve soon with a new interfaces change, but if not set a timer that
+            // will handle this change after some time. This should allow us to debounce a
+            // quick succession of network changes.
+            let scheduled_call = self
+                .call_notify_quic_network_change
+                .get_or_insert((Instant::now() + Duration::from_secs(2), is_major));
+            scheduled_call.1 = is_major;
+        }
+    }
+
+    /// Notifies the QUIC stack of the network change we observed.
+    ///
+    /// This is decoupled from receiving the network change, because we try to debounce
+    /// network changes as they often arrive in groups.
+    fn notify_quic_network_change(&mut self, is_major: bool) {
+        #[derive(Debug)]
+        struct Hint {
+            local_addrs: FxHashSet<IpAddr>,
+        }
+
+        impl NetworkChangeHint for Hint {
+            fn is_path_recoverable(
+                &self,
+                _path_id: quinn::PathId,
+                network_path: quinn_proto::FourTuple,
+            ) -> bool {
+                match MultipathMappedAddr::from(network_path.remote) {
+                    MultipathMappedAddr::Mixed(_) => {
+                        // This address is only ever used to send an Initial packet to, it
+                        // should never appear as an established path.
+                        unreachable!();
+                    }
+                    MultipathMappedAddr::Relay(_) => {
+                        // We pretend the relay path is never affected by link changes. The
+                        // relay actor transparently reconnects and the addreses never
+                        // change.
+                        true
+                    }
+                    MultipathMappedAddr::Ip(_) => {
+                        // If we no longer have a valid interface to send from for a local
+                        // IP then it can not be recovered.
+                        match network_path.local_ip {
+                            Some(local_ip) => self.local_addrs.contains(&local_ip),
+                            None => true,
+                        }
+                    }
+                }
+            }
+        }
+
+        let hint = Hint {
+            #[cfg(not(wasm_browser))]
+            local_addrs: {
+                let interfaces = self.local_interfaces_watcher.get();
+                interfaces
+                    .local_addresses
+                    .regular
+                    .iter()
+                    .chain(interfaces.local_addresses.loopback.iter())
+                    .copied()
+                    .collect()
+            },
+            #[cfg(wasm_browser)]
+            local_addrs: Default::default(),
+        };
+
+        self.endpoint.handle_network_change(Some(Arc::new(hint)));
         self.remote_map.on_network_change(is_major);
     }
 
