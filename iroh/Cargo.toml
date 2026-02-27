@@ -151,7 +151,7 @@ test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 address-lookup-mdns = ["dep:swarm-discovery"]
 address-lookup-pkarr-dht = ["pkarr/dht"]
 # Enables fetching TLS trust anchors from the operating system
-tls-system-certs = ["iroh-relay/tls-system-certs"]
+platform-verifier = ["iroh-relay/platform-verifier"]
 qlog = ["quinn/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["quinn/fast-apple-datapath"]

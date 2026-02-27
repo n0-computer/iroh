@@ -139,7 +139,7 @@ vergen-gitcl = "1.0.8"
 [features]
 default = ["metrics"]
 # Enables fetching TLS trust anchors from the operating system
-tls-system-certs = ["dep:rustls-platform-verifier"]
+platform-verifier = ["dep:rustls-platform-verifier"]
 server = [
     "metrics",
     "dep:clap",

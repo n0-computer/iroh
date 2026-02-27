@@ -33,7 +33,7 @@ enum Mode {
     /// Use the operating system's certificate facilities for verifying the validity of TLS certificates.
     ///
     /// See [`rustls_platform_verifier`] for details how roots are retrieved on different platforms.
-    #[cfg(feature = "tls-system-certs")]
+    #[cfg(feature = "platform-verifier")]
     System,
     /// Only trust explicitly set root certificates.
     ExtraRootsOnly,
@@ -60,7 +60,7 @@ impl CaRootsConfig {
     ///
     /// Note: Additional certificates added via [`Self::with_extra_roots`] will be ignored on Android due to
     /// missing support in [`rustls`].
-    #[cfg(feature = "tls-system-certs")]
+    #[cfg(feature = "platform-verifier")]
     pub fn system() -> Self {
         Self {
             mode: Mode::System,
@@ -112,7 +112,7 @@ impl CaRootsConfig {
         crypto_provider: Arc<CryptoProvider>,
     ) -> io::Result<Arc<dyn ServerCertVerifier>> {
         Ok(match self.mode {
-            #[cfg(feature = "tls-system-certs")]
+            #[cfg(feature = "platform-verifier")]
             Mode::System => {
                 #[cfg(not(target_os = "android"))]
                 let verifier = rustls_platform_verifier::Verifier::new_with_extra_roots(
