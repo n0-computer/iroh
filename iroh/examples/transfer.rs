@@ -457,7 +457,7 @@ impl EndpointArgs {
         if Env::Dev == self.env {
             #[cfg(feature = "test-utils")]
             {
-                builder = builder.ca_root_config(iroh::tls::CaRootsConfig::insecure_skip_verify());
+                builder = builder.ca_roots_config(iroh::tls::CaRootsConfig::insecure_skip_verify());
             }
             #[cfg(not(feature = "test-utils"))]
             {

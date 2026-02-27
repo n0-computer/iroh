@@ -605,8 +605,8 @@ impl Builder {
     /// iroh relays, pkarr servers, or DNS-over-HTTPS resolvers.
     /// They don't need to be trusted for the integrity or authenticity of native
     /// iroh connections, which rely on iroh's own cryptographic authentication mechanisms.
-    pub fn ca_roots_config(mut self, ca_root_config: CaRootsConfig) -> Self {
-        self.ca_roots_config = Some(ca_root_config);
+    pub fn ca_roots_config(mut self, ca_roots_config: CaRootsConfig) -> Self {
+        self.ca_roots_config = Some(ca_roots_config);
         self
     }
 
@@ -1212,7 +1212,7 @@ impl Endpoint {
     /// Note that this TLS config is unrelated to how iroh validates the authenticity
     /// of iroh connections itself.
     ///
-    /// The config is based on the trust anchors set via [`Builder::ca_root_config`].
+    /// The config is based on the trust anchors set via [`Builder::ca_roots_config`].
     pub fn tls_config(&self) -> &rustls::ClientConfig {
         &self.inner.tls_config
     }
