@@ -4,11 +4,11 @@ use iroh_base::SecretKey;
 use webpki_types::CertificateDer;
 
 #[derive(Debug)]
-pub(super) struct AlwaysResolvesCert {
+pub(super) struct ResolveRawPublicKeyCert {
     key: Arc<rustls::sign::CertifiedKey>,
 }
 
-impl AlwaysResolvesCert {
+impl ResolveRawPublicKeyCert {
     pub(super) fn new(secret_key: &SecretKey) -> Self {
         let client_private_key = Arc::new(IrohSecretKey::from(secret_key.clone()));
         let client_public_key = client_private_key.spki_public_key();
@@ -23,7 +23,7 @@ impl AlwaysResolvesCert {
     }
 }
 
-impl rustls::client::ResolvesClientCert for AlwaysResolvesCert {
+impl rustls::client::ResolvesClientCert for ResolveRawPublicKeyCert {
     fn resolve(
         &self,
         _root_hint_subjects: &[&[u8]],
@@ -41,7 +41,7 @@ impl rustls::client::ResolvesClientCert for AlwaysResolvesCert {
     }
 }
 
-impl rustls::server::ResolvesServerCert for AlwaysResolvesCert {
+impl rustls::server::ResolvesServerCert for ResolveRawPublicKeyCert {
     fn resolve(
         &self,
         _client_hello: rustls::server::ClientHello<'_>,
