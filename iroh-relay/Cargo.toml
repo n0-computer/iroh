@@ -56,7 +56,7 @@ rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
 rustls-platform-verifier = { version = "0.6.2", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_bytes = "0.11.17"
-strum = { version = "0.27", features = ["derive"] }
+strum = { version = "0.28", features = ["derive"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
