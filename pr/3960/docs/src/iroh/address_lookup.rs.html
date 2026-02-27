@@ -24,7 +24,7 @@
 <a href=#24 id=24 data-nosnippet>24</a>//! but may only publish a subset of them based on its own constraints.
 <a href=#25 id=25 data-nosnippet>25</a>//!
 <a href=#26 id=26 data-nosnippet>26</a>//! To control which addresses are published to a particular service, you can supply an
-<a href=#27 id=27 data-nosnippet>27</a>//! [`AddrFilter`] when configuring it via [`IntoAddressLookup::with_addr_filter`].  The filter
+<a href=#27 id=27 data-nosnippet>27</a>//! [`AddrFilter`] when configuring it via [`AddressLookupBuilder::with_addr_filter`].  The filter
 <a href=#28 id=28 data-nosnippet>28</a>//! receives the full set of addresses and returns an ordered [`Vec`], allowing you to both
 <a href=#29 id=29 data-nosnippet>29</a>//! remove addresses you don't want published and prioritize the ones you do Each service
 <a href=#30 id=30 data-nosnippet>30</a>//! may apply additional filtering on top based on its own constraints, but will not publish
@@ -53,15 +53,15 @@
 <a href=#53 id=53 data-nosnippet>53</a>//! This will use [`ConcurrentAddressLookup`] under the hood, which performs lookups to all
 <a href=#54 id=54 data-nosnippet>54</a>//! Address Lookupsystems at the same time.
 <a href=#55 id=55 data-nosnippet>55</a>//!
-<a href=#56 id=56 data-nosnippet>56</a>//! [`Builder::address_lookup`] takes any type that implements [`IntoAddressLookup`]. You can
+<a href=#56 id=56 data-nosnippet>56</a>//! [`Builder::address_lookup`] takes any type that implements [`AddressLookupBuilder`]. You can
 <a href=#57 id=57 data-nosnippet>57</a>//! implement that trait on a builder struct if your Address Lookup needs information
 <a href=#58 id=58 data-nosnippet>58</a>//! from the endpoint it is mounted on. After endpoint construction, your Address Lookup
-<a href=#59 id=59 data-nosnippet>59</a>//! is built by calling [`IntoAddressLookup::into_address_lookup`], passing the finished [`Endpoint`] to your
+<a href=#59 id=59 data-nosnippet>59</a>//! is built by calling [`AddressLookupBuilder::into_address_lookup`], passing the finished [`Endpoint`] to your
 <a href=#60 id=60 data-nosnippet>60</a>//! builder.
 <a href=#61 id=61 data-nosnippet>61</a>//!
 <a href=#62 id=62 data-nosnippet>62</a>//! If your Address Lookupdoes not need any information from its endpoint, you can
 <a href=#63 id=63 data-nosnippet>63</a>//! pass the Address Lookupservice directly to [`Builder::address_lookup`]: All types that
-<a href=#64 id=64 data-nosnippet>64</a>//! implement [`AddressLookup`] also have a blanket implementation of [`IntoAddressLookup`].
+<a href=#64 id=64 data-nosnippet>64</a>//! implement [`AddressLookup`] also have a blanket implementation of [`AddressLookupBuilder`].
 <a href=#65 id=65 data-nosnippet>65</a>//!
 <a href=#66 id=66 data-nosnippet>66</a>//! # Examples
 <a href=#67 id=67 data-nosnippet>67</a>//!
@@ -151,21 +151,21 @@
 <a href=#151 id=151 data-nosnippet>151</a>/// This trait is implemented on builders for Address Lookup's. Any type that implements this
 <a href=#152 id=152 data-nosnippet>152</a>/// trait can be added as a Address Lookup in [`Builder::address_lookup`].
 <a href=#153 id=153 data-nosnippet>153</a>///
-<a href=#154 id=154 data-nosnippet>154</a>/// Any type that implements [`AddressLookup`] also implements [`IntoAddressLookup`].
+<a href=#154 id=154 data-nosnippet>154</a>/// Any type that implements [`AddressLookup`] also implements [`AddressLookupBuilder`].
 <a href=#155 id=155 data-nosnippet>155</a>///
 <a href=#156 id=156 data-nosnippet>156</a>/// Iroh uses this trait to allow configuring the set of address lookup services on
 <a href=#157 id=157 data-nosnippet>157</a>/// the endpoint builder, while also providing them access to information about the
-<a href=#158 id=158 data-nosnippet>158</a>/// endpoint to [`IntoAddressLookup::into_address_lookup`].
+<a href=#158 id=158 data-nosnippet>158</a>/// endpoint to [`AddressLookupBuilder::into_address_lookup`].
 <a href=#159 id=159 data-nosnippet>159</a>///
 <a href=#160 id=160 data-nosnippet>160</a>/// [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
-<a href=#161 id=161 data-nosnippet>161</a></span><span class="kw">pub trait </span>IntoAddressLookup: Send + Sync + std::fmt::Debug + <span class="lifetime">'static </span>{
+<a href=#161 id=161 data-nosnippet>161</a></span><span class="kw">pub trait </span>AddressLookupBuilder: Send + Sync + std::fmt::Debug + <span class="lifetime">'static </span>{
 <a href=#162 id=162 data-nosnippet>162</a>    <span class="doccomment">/// Turns this AddressLookup builder into a ready-to-use Address Lookup.
 <a href=#163 id=163 data-nosnippet>163</a>    ///
 <a href=#164 id=164 data-nosnippet>164</a>    /// If an error is returned, building the endpoint will fail with this error.
 <a href=#165 id=165 data-nosnippet>165</a>    </span><span class="kw">fn </span>into_address_lookup(
 <a href=#166 id=166 data-nosnippet>166</a>        <span class="self">self</span>,
 <a href=#167 id=167 data-nosnippet>167</a>        endpoint: <span class="kw-2">&amp;</span>Endpoint,
-<a href=#168 id=168 data-nosnippet>168</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, IntoAddressLookupError&gt;;
+<a href=#168 id=168 data-nosnippet>168</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, AddressLookupBuilderError&gt;;
 <a href=#169 id=169 data-nosnippet>169</a>
 <a href=#170 id=170 data-nosnippet>170</a>    <span class="doccomment">/// Sets a filter to control which addresses are published by this service
 <a href=#171 id=171 data-nosnippet>171</a>    ///           
@@ -178,12 +178,12 @@
 <a href=#178 id=178 data-nosnippet>178</a>        </span><span class="self">Self</span>: Sized;
 <a href=#179 id=179 data-nosnippet>179</a>}
 <a href=#180 id=180 data-nosnippet>180</a>
-<a href=#181 id=181 data-nosnippet>181</a><span class="doccomment">/// Blanket no-op impl of `IntoAddressLookup` for `T: AddressLookup`.
-<a href=#182 id=182 data-nosnippet>182</a></span><span class="kw">impl</span>&lt;T: AddressLookup&gt; IntoAddressLookup <span class="kw">for </span>T {
+<a href=#181 id=181 data-nosnippet>181</a><span class="doccomment">/// Blanket no-op impl of `AddressLookupBuilder` for `T: AddressLookup`.
+<a href=#182 id=182 data-nosnippet>182</a></span><span class="kw">impl</span>&lt;T: AddressLookup&gt; AddressLookupBuilder <span class="kw">for </span>T {
 <a href=#183 id=183 data-nosnippet>183</a>    <span class="kw">fn </span>into_address_lookup(
 <a href=#184 id=184 data-nosnippet>184</a>        <span class="self">self</span>,
 <a href=#185 id=185 data-nosnippet>185</a>        _endpoint: <span class="kw-2">&amp;</span>Endpoint,
-<a href=#186 id=186 data-nosnippet>186</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, IntoAddressLookupError&gt; {
+<a href=#186 id=186 data-nosnippet>186</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, AddressLookupBuilderError&gt; {
 <a href=#187 id=187 data-nosnippet>187</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>)
 <a href=#188 id=188 data-nosnippet>188</a>    }
 <a href=#189 id=189 data-nosnippet>189</a>
@@ -195,31 +195,31 @@
 <a href=#195 id=195 data-nosnippet>195</a>    </span>}
 <a href=#196 id=196 data-nosnippet>196</a>}
 <a href=#197 id=197 data-nosnippet>197</a>
-<a href=#198 id=198 data-nosnippet>198</a><span class="doccomment">/// Non-public dyn-compatible version of [`IntoAddressLookup`], used in [`crate::endpoint::Builder`].
-<a href=#199 id=199 data-nosnippet>199</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>DynIntoAddressLookup: Send + Sync + std::fmt::Debug + <span class="lifetime">'static </span>{
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="doccomment">/// See [`IntoAddressLookup::into_address_lookup`]
+<a href=#198 id=198 data-nosnippet>198</a><span class="doccomment">/// Non-public dyn-compatible version of [`AddressLookupBuilder`], used in [`crate::endpoint::Builder`].
+<a href=#199 id=199 data-nosnippet>199</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>DynAddressLookupBuilder: Send + Sync + std::fmt::Debug + <span class="lifetime">'static </span>{
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="doccomment">/// See [`AddressLookupBuilder::into_address_lookup`]
 <a href=#201 id=201 data-nosnippet>201</a>    </span><span class="kw">fn </span>into_address_lookup(
 <a href=#202 id=202 data-nosnippet>202</a>        <span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;,
 <a href=#203 id=203 data-nosnippet>203</a>        endpoint: <span class="kw-2">&amp;</span>Endpoint,
-<a href=#204 id=204 data-nosnippet>204</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>AddressLookup&gt;, IntoAddressLookupError&gt;;
+<a href=#204 id=204 data-nosnippet>204</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>AddressLookup&gt;, AddressLookupBuilderError&gt;;
 <a href=#205 id=205 data-nosnippet>205</a>}
 <a href=#206 id=206 data-nosnippet>206</a>
-<a href=#207 id=207 data-nosnippet>207</a><span class="kw">impl</span>&lt;T: IntoAddressLookup&gt; DynIntoAddressLookup <span class="kw">for </span>T {
+<a href=#207 id=207 data-nosnippet>207</a><span class="kw">impl</span>&lt;T: AddressLookupBuilder&gt; DynAddressLookupBuilder <span class="kw">for </span>T {
 <a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">fn </span>into_address_lookup(
 <a href=#209 id=209 data-nosnippet>209</a>        <span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;,
 <a href=#210 id=210 data-nosnippet>210</a>        endpoint: <span class="kw-2">&amp;</span>Endpoint,
-<a href=#211 id=211 data-nosnippet>211</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>AddressLookup&gt;, IntoAddressLookupError&gt; {
+<a href=#211 id=211 data-nosnippet>211</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>AddressLookup&gt;, AddressLookupBuilderError&gt; {
 <a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>addr_lookup: Box&lt;<span class="kw">dyn </span>AddressLookup&gt; =
-<a href=#213 id=213 data-nosnippet>213</a>            Box::new(IntoAddressLookup::into_address_lookup(<span class="kw-2">*</span><span class="self">self</span>, endpoint)<span class="question-mark">?</span>);
+<a href=#213 id=213 data-nosnippet>213</a>            Box::new(AddressLookupBuilder::into_address_lookup(<span class="kw-2">*</span><span class="self">self</span>, endpoint)<span class="question-mark">?</span>);
 <a href=#214 id=214 data-nosnippet>214</a>        <span class="prelude-val">Ok</span>(addr_lookup)
 <a href=#215 id=215 data-nosnippet>215</a>    }
 <a href=#216 id=216 data-nosnippet>216</a>}
 <a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a><span class="doccomment">/// [`IntoAddressLookup`] errors
+<a href=#218 id=218 data-nosnippet>218</a><span class="doccomment">/// [`AddressLookupBuilder`] errors
 <a href=#219 id=219 data-nosnippet>219</a></span><span class="attr">#[allow(missing_docs)]
 <a href=#220 id=220 data-nosnippet>220</a>#[stack_error(derive, add_meta, from_sources, std_sources)]
 <a href=#221 id=221 data-nosnippet>221</a>#[non_exhaustive]
-<a href=#222 id=222 data-nosnippet>222</a></span><span class="kw">pub enum </span>IntoAddressLookupError {
+<a href=#222 id=222 data-nosnippet>222</a></span><span class="kw">pub enum </span>AddressLookupBuilderError {
 <a href=#223 id=223 data-nosnippet>223</a>    <span class="attr">#[error(<span class="string">"Service '{provenance}' error"</span>)]
 <a href=#224 id=224 data-nosnippet>224</a>    </span>User {
 <a href=#225 id=225 data-nosnippet>225</a>        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
@@ -229,13 +229,13 @@
 <a href=#229 id=229 data-nosnippet>229</a>    </span>EndpointClosed { source: EndpointError },
 <a href=#230 id=230 data-nosnippet>230</a>}
 <a href=#231 id=231 data-nosnippet>231</a>
-<a href=#232 id=232 data-nosnippet>232</a><span class="kw">impl </span>IntoAddressLookupError {
+<a href=#232 id=232 data-nosnippet>232</a><span class="kw">impl </span>AddressLookupBuilderError {
 <a href=#233 id=233 data-nosnippet>233</a>    <span class="doccomment">/// Creates a new user error from an arbitrary error type.
 <a href=#234 id=234 data-nosnippet>234</a>    </span><span class="kw">pub fn </span>from_err&lt;T: std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;(
 <a href=#235 id=235 data-nosnippet>235</a>        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
 <a href=#236 id=236 data-nosnippet>236</a>        source: T,
 <a href=#237 id=237 data-nosnippet>237</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="macro">e!</span>(IntoAddressLookupError::User {
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="macro">e!</span>(AddressLookupBuilderError::User {
 <a href=#239 id=239 data-nosnippet>239</a>            provenance,
 <a href=#240 id=240 data-nosnippet>240</a>            source: AnyError::from_std(source)
 <a href=#241 id=241 data-nosnippet>241</a>        })
@@ -246,7 +246,7 @@
 <a href=#246 id=246 data-nosnippet>246</a>        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
 <a href=#247 id=247 data-nosnippet>247</a>        source: Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;,
 <a href=#248 id=248 data-nosnippet>248</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#249 id=249 data-nosnippet>249</a>        <span class="macro">e!</span>(IntoAddressLookupError::User {
+<a href=#249 id=249 data-nosnippet>249</a>        <span class="macro">e!</span>(AddressLookupBuilderError::User {
 <a href=#250 id=250 data-nosnippet>250</a>            provenance,
 <a href=#251 id=251 data-nosnippet>251</a>            source: AnyError::from_std_box(source)
 <a href=#252 id=252 data-nosnippet>252</a>        })
@@ -877,148 +877,154 @@
 <a href=#877 id=877 data-nosnippet>877</a></span><span class="attr">#[cfg(test)]
 <a href=#878 id=878 data-nosnippet>878</a></span><span class="kw">mod </span>test_dns_pkarr {
 <a href=#879 id=879 data-nosnippet>879</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-<a href=#880 id=880 data-nosnippet>880</a>    <span class="kw">use </span>iroh_relay::{RelayMap, endpoint_info::UserData};
-<a href=#881 id=881 data-nosnippet>881</a>    <span class="kw">use </span>n0_error::{AnyError, <span class="prelude-ty">Result</span>, StackResultExt};
-<a href=#882 id=882 data-nosnippet>882</a>    <span class="kw">use </span>n0_future::time::Duration;
-<a href=#883 id=883 data-nosnippet>883</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#884 id=884 data-nosnippet>884</a>    <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
-<a href=#885 id=885 data-nosnippet>885</a>    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
-<a href=#886 id=886 data-nosnippet>886</a>
-<a href=#887 id=887 data-nosnippet>887</a>    <span class="kw">use crate</span>::{
-<a href=#888 id=888 data-nosnippet>888</a>        Endpoint, RelayMode,
-<a href=#889 id=889 data-nosnippet>889</a>        address_lookup::{EndpointData, PkarrPublisher},
-<a href=#890 id=890 data-nosnippet>890</a>        dns::DnsResolver,
-<a href=#891 id=891 data-nosnippet>891</a>        endpoint_info::EndpointInfo,
-<a href=#892 id=892 data-nosnippet>892</a>        test_utils::{
-<a href=#893 id=893 data-nosnippet>893</a>            DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
-<a href=#894 id=894 data-nosnippet>894</a>        },
-<a href=#895 id=895 data-nosnippet>895</a>    };
-<a href=#896 id=896 data-nosnippet>896</a>
-<a href=#897 id=897 data-nosnippet>897</a>    <span class="kw">const </span>PUBLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
-<a href=#898 id=898 data-nosnippet>898</a>
-<a href=#899 id=899 data-nosnippet>899</a>    <span class="attr">#[tokio::test]
-<a href=#900 id=900 data-nosnippet>900</a>    #[traced_test]
-<a href=#901 id=901 data-nosnippet>901</a>    </span><span class="kw">async fn </span>dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#902 id=902 data-nosnippet>902</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#903 id=903 data-nosnippet>903</a>        <span class="kw">let </span>origin = <span class="string">"testdns.example"</span>.to_string();
-<a href=#904 id=904 data-nosnippet>904</a>        <span class="kw">let </span>state = State::new(origin.clone());
-<a href=#905 id=905 data-nosnippet>905</a>        <span class="kw">let </span>(nameserver, _dns_drop_guard) = run_dns_server(state.clone())
-<a href=#906 id=906 data-nosnippet>906</a>            .<span class="kw">await
-<a href=#907 id=907 data-nosnippet>907</a>            </span>.context(<span class="string">"Running DNS server"</span>)<span class="question-mark">?</span>;
-<a href=#908 id=908 data-nosnippet>908</a>
-<a href=#909 id=909 data-nosnippet>909</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#910 id=910 data-nosnippet>910</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(secret_key.public())
-<a href=#911 id=911 data-nosnippet>911</a>            .with_relay_url(<span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap()));
-<a href=#912 id=912 data-nosnippet>912</a>        <span class="kw">let </span>signed_packet = endpoint_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
-<a href=#913 id=913 data-nosnippet>913</a>        state
-<a href=#914 id=914 data-nosnippet>914</a>            .upsert(signed_packet)
-<a href=#915 id=915 data-nosnippet>915</a>            .context(<span class="string">"update and insert signed packet"</span>)<span class="question-mark">?</span>;
-<a href=#916 id=916 data-nosnippet>916</a>
-<a href=#917 id=917 data-nosnippet>917</a>        <span class="kw">let </span>resolver = DnsResolver::with_nameserver(nameserver);
-<a href=#918 id=918 data-nosnippet>918</a>        <span class="kw">let </span>resolved = resolver
-<a href=#919 id=919 data-nosnippet>919</a>            .lookup_endpoint_by_id(<span class="kw-2">&amp;</span>endpoint_info.endpoint_id, <span class="kw-2">&amp;</span>origin)
-<a href=#920 id=920 data-nosnippet>920</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#921 id=921 data-nosnippet>921</a>
-<a href=#922 id=922 data-nosnippet>922</a>        <span class="macro">assert_eq!</span>(resolved, endpoint_info);
-<a href=#923 id=923 data-nosnippet>923</a>
-<a href=#924 id=924 data-nosnippet>924</a>        <span class="prelude-val">Ok</span>(())
-<a href=#925 id=925 data-nosnippet>925</a>    }
-<a href=#926 id=926 data-nosnippet>926</a>
-<a href=#927 id=927 data-nosnippet>927</a>    <span class="attr">#[tokio::test]
-<a href=#928 id=928 data-nosnippet>928</a>    #[traced_test]
-<a href=#929 id=929 data-nosnippet>929</a>    </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#930 id=930 data-nosnippet>930</a>        <span class="kw">let </span>origin = <span class="string">"testdns.example"</span>.to_string();
-<a href=#931 id=931 data-nosnippet>931</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#932 id=932 data-nosnippet>932</a>
-<a href=#933 id=933 data-nosnippet>933</a>        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
-<a href=#934 id=934 data-nosnippet>934</a>            .<span class="kw">await
-<a href=#935 id=935 data-nosnippet>935</a>            </span>.context(<span class="string">"DnsPkarrServer"</span>)<span class="question-mark">?</span>;
+<a href=#880 id=880 data-nosnippet>880</a>    <span class="kw">use </span>iroh_relay::{
+<a href=#881 id=881 data-nosnippet>881</a>        RelayMap,
+<a href=#882 id=882 data-nosnippet>882</a>        endpoint_info::UserData,
+<a href=#883 id=883 data-nosnippet>883</a>        tls::{CaRootsConfig, default_provider},
+<a href=#884 id=884 data-nosnippet>884</a>    };
+<a href=#885 id=885 data-nosnippet>885</a>    <span class="kw">use </span>n0_error::{AnyError, <span class="prelude-ty">Result</span>, StackResultExt};
+<a href=#886 id=886 data-nosnippet>886</a>    <span class="kw">use </span>n0_future::time::Duration;
+<a href=#887 id=887 data-nosnippet>887</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
+<a href=#888 id=888 data-nosnippet>888</a>    <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
+<a href=#889 id=889 data-nosnippet>889</a>    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<a href=#890 id=890 data-nosnippet>890</a>
+<a href=#891 id=891 data-nosnippet>891</a>    <span class="kw">use crate</span>::{
+<a href=#892 id=892 data-nosnippet>892</a>        Endpoint, RelayMode,
+<a href=#893 id=893 data-nosnippet>893</a>        address_lookup::{EndpointData, PkarrPublisher},
+<a href=#894 id=894 data-nosnippet>894</a>        dns::DnsResolver,
+<a href=#895 id=895 data-nosnippet>895</a>        endpoint_info::EndpointInfo,
+<a href=#896 id=896 data-nosnippet>896</a>        test_utils::{
+<a href=#897 id=897 data-nosnippet>897</a>            DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
+<a href=#898 id=898 data-nosnippet>898</a>        },
+<a href=#899 id=899 data-nosnippet>899</a>    };
+<a href=#900 id=900 data-nosnippet>900</a>
+<a href=#901 id=901 data-nosnippet>901</a>    <span class="kw">const </span>PUBLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
+<a href=#902 id=902 data-nosnippet>902</a>
+<a href=#903 id=903 data-nosnippet>903</a>    <span class="attr">#[tokio::test]
+<a href=#904 id=904 data-nosnippet>904</a>    #[traced_test]
+<a href=#905 id=905 data-nosnippet>905</a>    </span><span class="kw">async fn </span>dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#906 id=906 data-nosnippet>906</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#907 id=907 data-nosnippet>907</a>        <span class="kw">let </span>origin = <span class="string">"testdns.example"</span>.to_string();
+<a href=#908 id=908 data-nosnippet>908</a>        <span class="kw">let </span>state = State::new(origin.clone());
+<a href=#909 id=909 data-nosnippet>909</a>        <span class="kw">let </span>(nameserver, _dns_drop_guard) = run_dns_server(state.clone())
+<a href=#910 id=910 data-nosnippet>910</a>            .<span class="kw">await
+<a href=#911 id=911 data-nosnippet>911</a>            </span>.context(<span class="string">"Running DNS server"</span>)<span class="question-mark">?</span>;
+<a href=#912 id=912 data-nosnippet>912</a>
+<a href=#913 id=913 data-nosnippet>913</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#914 id=914 data-nosnippet>914</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(secret_key.public())
+<a href=#915 id=915 data-nosnippet>915</a>            .with_relay_url(<span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap()));
+<a href=#916 id=916 data-nosnippet>916</a>        <span class="kw">let </span>signed_packet = endpoint_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
+<a href=#917 id=917 data-nosnippet>917</a>        state
+<a href=#918 id=918 data-nosnippet>918</a>            .upsert(signed_packet)
+<a href=#919 id=919 data-nosnippet>919</a>            .context(<span class="string">"update and insert signed packet"</span>)<span class="question-mark">?</span>;
+<a href=#920 id=920 data-nosnippet>920</a>
+<a href=#921 id=921 data-nosnippet>921</a>        <span class="kw">let </span>resolver = DnsResolver::with_nameserver(nameserver);
+<a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">let </span>resolved = resolver
+<a href=#923 id=923 data-nosnippet>923</a>            .lookup_endpoint_by_id(<span class="kw-2">&amp;</span>endpoint_info.endpoint_id, <span class="kw-2">&amp;</span>origin)
+<a href=#924 id=924 data-nosnippet>924</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#925 id=925 data-nosnippet>925</a>
+<a href=#926 id=926 data-nosnippet>926</a>        <span class="macro">assert_eq!</span>(resolved, endpoint_info);
+<a href=#927 id=927 data-nosnippet>927</a>
+<a href=#928 id=928 data-nosnippet>928</a>        <span class="prelude-val">Ok</span>(())
+<a href=#929 id=929 data-nosnippet>929</a>    }
+<a href=#930 id=930 data-nosnippet>930</a>
+<a href=#931 id=931 data-nosnippet>931</a>    <span class="attr">#[tokio::test]
+<a href=#932 id=932 data-nosnippet>932</a>    #[traced_test]
+<a href=#933 id=933 data-nosnippet>933</a>    </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#934 id=934 data-nosnippet>934</a>        <span class="kw">let </span>origin = <span class="string">"testdns.example"</span>.to_string();
+<a href=#935 id=935 data-nosnippet>935</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#936 id=936 data-nosnippet>936</a>
-<a href=#937 id=937 data-nosnippet>937</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#938 id=938 data-nosnippet>938</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
-<a href=#939 id=939 data-nosnippet>939</a>
-<a href=#940 id=940 data-nosnippet>940</a>        <span class="kw">let </span>relay_url = <span class="prelude-val">Some</span>(TransportAddr::Relay(
-<a href=#941 id=941 data-nosnippet>941</a>            <span class="string">"https://relay.example"</span>.parse().unwrap(),
-<a href=#942 id=942 data-nosnippet>942</a>        ));
+<a href=#937 id=937 data-nosnippet>937</a>        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
+<a href=#938 id=938 data-nosnippet>938</a>            .<span class="kw">await
+<a href=#939 id=939 data-nosnippet>939</a>            </span>.context(<span class="string">"DnsPkarrServer"</span>)<span class="question-mark">?</span>;
+<a href=#940 id=940 data-nosnippet>940</a>
+<a href=#941 id=941 data-nosnippet>941</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#942 id=942 data-nosnippet>942</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#943 id=943 data-nosnippet>943</a>
-<a href=#944 id=944 data-nosnippet>944</a>        <span class="kw">let </span>resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
-<a href=#945 id=945 data-nosnippet>945</a>        <span class="kw">let </span>publisher =
-<a href=#946 id=946 data-nosnippet>946</a>            PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone()).build(secret_key);
-<a href=#947 id=947 data-nosnippet>947</a>        <span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse().unwrap();
-<a href=#948 id=948 data-nosnippet>948</a>        <span class="kw">let </span>data = EndpointData::new(relay_url.clone()).with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
-<a href=#949 id=949 data-nosnippet>949</a>        <span class="comment">// does not block, update happens in background task
-<a href=#950 id=950 data-nosnippet>950</a>        </span>publisher.update_endpoint_data(<span class="kw-2">&amp;</span>data);
-<a href=#951 id=951 data-nosnippet>951</a>        <span class="comment">// wait until our shared state received the update from pkarr publishing
-<a href=#952 id=952 data-nosnippet>952</a>        </span>dns_pkarr_server
-<a href=#953 id=953 data-nosnippet>953</a>            .on_endpoint(<span class="kw-2">&amp;</span>endpoint_id, PUBLISH_TIMEOUT)
-<a href=#954 id=954 data-nosnippet>954</a>            .<span class="kw">await
-<a href=#955 id=955 data-nosnippet>955</a>            </span>.context(<span class="string">"wait for on endpoint update"</span>)<span class="question-mark">?</span>;
-<a href=#956 id=956 data-nosnippet>956</a>        <span class="kw">let </span>resolved = resolver
-<a href=#957 id=957 data-nosnippet>957</a>            .lookup_endpoint_by_id(<span class="kw-2">&amp;</span>endpoint_id, <span class="kw-2">&amp;</span>origin)
-<a href=#958 id=958 data-nosnippet>958</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#959 id=959 data-nosnippet>959</a>        <span class="macro">println!</span>(<span class="string">"resolved {resolved:?}"</span>);
-<a href=#960 id=960 data-nosnippet>960</a>
-<a href=#961 id=961 data-nosnippet>961</a>        <span class="kw">let </span>expected_addr = EndpointAddr::from_parts(endpoint_id, relay_url);
-<a href=#962 id=962 data-nosnippet>962</a>
-<a href=#963 id=963 data-nosnippet>963</a>        <span class="macro">assert_eq!</span>(resolved.to_endpoint_addr(), expected_addr);
-<a href=#964 id=964 data-nosnippet>964</a>        <span class="macro">assert_eq!</span>(resolved.user_data(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>user_data));
-<a href=#965 id=965 data-nosnippet>965</a>        <span class="prelude-val">Ok</span>(())
-<a href=#966 id=966 data-nosnippet>966</a>    }
+<a href=#944 id=944 data-nosnippet>944</a>        <span class="kw">let </span>relay_url = <span class="prelude-val">Some</span>(TransportAddr::Relay(
+<a href=#945 id=945 data-nosnippet>945</a>            <span class="string">"https://relay.example"</span>.parse().unwrap(),
+<a href=#946 id=946 data-nosnippet>946</a>        ));
+<a href=#947 id=947 data-nosnippet>947</a>
+<a href=#948 id=948 data-nosnippet>948</a>        <span class="kw">let </span>tls_config = CaRootsConfig::insecure_skip_verify()
+<a href=#949 id=949 data-nosnippet>949</a>            .client_config(default_provider())
+<a href=#950 id=950 data-nosnippet>950</a>            .expect(<span class="string">"infallible"</span>);
+<a href=#951 id=951 data-nosnippet>951</a>        <span class="kw">let </span>resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
+<a href=#952 id=952 data-nosnippet>952</a>        <span class="kw">let </span>publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
+<a href=#953 id=953 data-nosnippet>953</a>            .build(secret_key, tls_config);
+<a href=#954 id=954 data-nosnippet>954</a>        <span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse().unwrap();
+<a href=#955 id=955 data-nosnippet>955</a>        <span class="kw">let </span>data = EndpointData::new(relay_url.clone()).with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
+<a href=#956 id=956 data-nosnippet>956</a>        <span class="comment">// does not block, update happens in background task
+<a href=#957 id=957 data-nosnippet>957</a>        </span>publisher.update_endpoint_data(<span class="kw-2">&amp;</span>data);
+<a href=#958 id=958 data-nosnippet>958</a>        <span class="comment">// wait until our shared state received the update from pkarr publishing
+<a href=#959 id=959 data-nosnippet>959</a>        </span>dns_pkarr_server
+<a href=#960 id=960 data-nosnippet>960</a>            .on_endpoint(<span class="kw-2">&amp;</span>endpoint_id, PUBLISH_TIMEOUT)
+<a href=#961 id=961 data-nosnippet>961</a>            .<span class="kw">await
+<a href=#962 id=962 data-nosnippet>962</a>            </span>.context(<span class="string">"wait for on endpoint update"</span>)<span class="question-mark">?</span>;
+<a href=#963 id=963 data-nosnippet>963</a>        <span class="kw">let </span>resolved = resolver
+<a href=#964 id=964 data-nosnippet>964</a>            .lookup_endpoint_by_id(<span class="kw-2">&amp;</span>endpoint_id, <span class="kw-2">&amp;</span>origin)
+<a href=#965 id=965 data-nosnippet>965</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#966 id=966 data-nosnippet>966</a>        <span class="macro">println!</span>(<span class="string">"resolved {resolved:?}"</span>);
 <a href=#967 id=967 data-nosnippet>967</a>
-<a href=#968 id=968 data-nosnippet>968</a>    <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"TEST"</span>;
+<a href=#968 id=968 data-nosnippet>968</a>        <span class="kw">let </span>expected_addr = EndpointAddr::from_parts(endpoint_id, relay_url);
 <a href=#969 id=969 data-nosnippet>969</a>
-<a href=#970 id=970 data-nosnippet>970</a>    <span class="attr">#[tokio::test]
-<a href=#971 id=971 data-nosnippet>971</a>    #[traced_test]
-<a href=#972 id=972 data-nosnippet>972</a>    </span><span class="kw">async fn </span>pkarr_publish_dns_address_lookup() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#973 id=973 data-nosnippet>973</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#970 id=970 data-nosnippet>970</a>        <span class="macro">assert_eq!</span>(resolved.to_endpoint_addr(), expected_addr);
+<a href=#971 id=971 data-nosnippet>971</a>        <span class="macro">assert_eq!</span>(resolved.user_data(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>user_data));
+<a href=#972 id=972 data-nosnippet>972</a>        <span class="prelude-val">Ok</span>(())
+<a href=#973 id=973 data-nosnippet>973</a>    }
 <a href=#974 id=974 data-nosnippet>974</a>
-<a href=#975 id=975 data-nosnippet>975</a>        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span>.context(<span class="string">"DnsPkarrServer run"</span>)<span class="question-mark">?</span>;
-<a href=#976 id=976 data-nosnippet>976</a>        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#977 id=977 data-nosnippet>977</a>
-<a href=#978 id=978 data-nosnippet>978</a>        <span class="kw">let </span>(ep1, _guard1) =
-<a href=#979 id=979 data-nosnippet>979</a>            ep_with_address_lookup(<span class="kw-2">&amp;mut </span>rng, <span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#980 id=980 data-nosnippet>980</a>        <span class="kw">let </span>(ep2, _guard2) =
-<a href=#981 id=981 data-nosnippet>981</a>            ep_with_address_lookup(<span class="kw-2">&amp;mut </span>rng, <span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#982 id=982 data-nosnippet>982</a>
-<a href=#983 id=983 data-nosnippet>983</a>        <span class="comment">// wait until our shared state received the update from pkarr publishing
-<a href=#984 id=984 data-nosnippet>984</a>        </span>dns_pkarr_server
-<a href=#985 id=985 data-nosnippet>985</a>            .on_endpoint(<span class="kw-2">&amp;</span>ep1.id(), PUBLISH_TIMEOUT)
-<a href=#986 id=986 data-nosnippet>986</a>            .<span class="kw">await
-<a href=#987 id=987 data-nosnippet>987</a>            </span>.context(<span class="string">"wait for on endpoint update"</span>)<span class="question-mark">?</span>;
-<a href=#988 id=988 data-nosnippet>988</a>
-<a href=#989 id=989 data-nosnippet>989</a>        <span class="comment">// we connect only by endpoint id!
-<a href=#990 id=990 data-nosnippet>990</a>        </span><span class="kw">let </span>_conn = ep2.connect(ep1.id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#991 id=991 data-nosnippet>991</a>        <span class="prelude-val">Ok</span>(())
-<a href=#992 id=992 data-nosnippet>992</a>    }
-<a href=#993 id=993 data-nosnippet>993</a>
-<a href=#994 id=994 data-nosnippet>994</a>    <span class="kw">async fn </span>ep_with_address_lookup&lt;R: CryptoRng + <span class="question-mark">?</span>Sized&gt;(
-<a href=#995 id=995 data-nosnippet>995</a>        rng: <span class="kw-2">&amp;mut </span>R,
-<a href=#996 id=996 data-nosnippet>996</a>        relay_map: <span class="kw-2">&amp;</span>RelayMap,
-<a href=#997 id=997 data-nosnippet>997</a>        dns_pkarr_server: <span class="kw-2">&amp;</span>DnsPkarrServer,
-<a href=#998 id=998 data-nosnippet>998</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
-<a href=#999 id=999 data-nosnippet>999</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
-<a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-<a href=#1001 id=1001 data-nosnippet>1001</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-<a href=#1002 id=1002 data-nosnippet>1002</a>            .secret_key(secret_key.clone())
-<a href=#1003 id=1003 data-nosnippet>1003</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#1004 id=1004 data-nosnippet>1004</a>            .dns_resolver(dns_pkarr_server.dns_resolver())
-<a href=#1005 id=1005 data-nosnippet>1005</a>            .address_lookup(dns_pkarr_server.address_lookup(secret_key))
-<a href=#1006 id=1006 data-nosnippet>1006</a>            .bind()
-<a href=#1007 id=1007 data-nosnippet>1007</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1008 id=1008 data-nosnippet>1008</a>
-<a href=#1009 id=1009 data-nosnippet>1009</a>        <span class="kw">let </span>handle = tokio::spawn({
-<a href=#1010 id=1010 data-nosnippet>1010</a>            <span class="kw">let </span>ep = ep.clone();
-<a href=#1011 id=1011 data-nosnippet>1011</a>            <span class="kw">async move </span>{
-<a href=#1012 id=1012 data-nosnippet>1012</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
-<a href=#1013 id=1013 data-nosnippet>1013</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(accepting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
-<a href=#1014 id=1014 data-nosnippet>1014</a>                    <span class="kw">let </span>_conn = accepting.<span class="kw">await</span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
-<a href=#1015 id=1015 data-nosnippet>1015</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
-<a href=#1016 id=1016 data-nosnippet>1016</a>                </span>}
-<a href=#1017 id=1017 data-nosnippet>1017</a>
-<a href=#1018 id=1018 data-nosnippet>1018</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, AnyError&gt;(())
-<a href=#1019 id=1019 data-nosnippet>1019</a>            }
-<a href=#1020 id=1020 data-nosnippet>1020</a>        });
-<a href=#1021 id=1021 data-nosnippet>1021</a>
-<a href=#1022 id=1022 data-nosnippet>1022</a>        <span class="prelude-val">Ok</span>((ep, AbortOnDropHandle::new(handle)))
-<a href=#1023 id=1023 data-nosnippet>1023</a>    }
-<a href=#1024 id=1024 data-nosnippet>1024</a>}</code></pre></div></section></main></body></html>
+<a href=#975 id=975 data-nosnippet>975</a>    <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"TEST"</span>;
+<a href=#976 id=976 data-nosnippet>976</a>
+<a href=#977 id=977 data-nosnippet>977</a>    <span class="attr">#[tokio::test]
+<a href=#978 id=978 data-nosnippet>978</a>    #[traced_test]
+<a href=#979 id=979 data-nosnippet>979</a>    </span><span class="kw">async fn </span>pkarr_publish_dns_address_lookup() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#980 id=980 data-nosnippet>980</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#981 id=981 data-nosnippet>981</a>
+<a href=#982 id=982 data-nosnippet>982</a>        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span>.context(<span class="string">"DnsPkarrServer run"</span>)<span class="question-mark">?</span>;
+<a href=#983 id=983 data-nosnippet>983</a>        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#984 id=984 data-nosnippet>984</a>
+<a href=#985 id=985 data-nosnippet>985</a>        <span class="kw">let </span>(ep1, _guard1) =
+<a href=#986 id=986 data-nosnippet>986</a>            ep_with_address_lookup(<span class="kw-2">&amp;mut </span>rng, <span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#987 id=987 data-nosnippet>987</a>        <span class="kw">let </span>(ep2, _guard2) =
+<a href=#988 id=988 data-nosnippet>988</a>            ep_with_address_lookup(<span class="kw-2">&amp;mut </span>rng, <span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#989 id=989 data-nosnippet>989</a>
+<a href=#990 id=990 data-nosnippet>990</a>        <span class="comment">// wait until our shared state received the update from pkarr publishing
+<a href=#991 id=991 data-nosnippet>991</a>        </span>dns_pkarr_server
+<a href=#992 id=992 data-nosnippet>992</a>            .on_endpoint(<span class="kw-2">&amp;</span>ep1.id(), PUBLISH_TIMEOUT)
+<a href=#993 id=993 data-nosnippet>993</a>            .<span class="kw">await
+<a href=#994 id=994 data-nosnippet>994</a>            </span>.context(<span class="string">"wait for on endpoint update"</span>)<span class="question-mark">?</span>;
+<a href=#995 id=995 data-nosnippet>995</a>
+<a href=#996 id=996 data-nosnippet>996</a>        <span class="comment">// we connect only by endpoint id!
+<a href=#997 id=997 data-nosnippet>997</a>        </span><span class="kw">let </span>_conn = ep2.connect(ep1.id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#998 id=998 data-nosnippet>998</a>        <span class="prelude-val">Ok</span>(())
+<a href=#999 id=999 data-nosnippet>999</a>    }
+<a href=#1000 id=1000 data-nosnippet>1000</a>
+<a href=#1001 id=1001 data-nosnippet>1001</a>    <span class="kw">async fn </span>ep_with_address_lookup&lt;R: CryptoRng + <span class="question-mark">?</span>Sized&gt;(
+<a href=#1002 id=1002 data-nosnippet>1002</a>        rng: <span class="kw-2">&amp;mut </span>R,
+<a href=#1003 id=1003 data-nosnippet>1003</a>        relay_map: <span class="kw-2">&amp;</span>RelayMap,
+<a href=#1004 id=1004 data-nosnippet>1004</a>        dns_pkarr_server: <span class="kw-2">&amp;</span>DnsPkarrServer,
+<a href=#1005 id=1005 data-nosnippet>1005</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
+<a href=#1006 id=1006 data-nosnippet>1006</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
+<a href=#1007 id=1007 data-nosnippet>1007</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+<a href=#1008 id=1008 data-nosnippet>1008</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#1009 id=1009 data-nosnippet>1009</a>            .secret_key(secret_key.clone())
+<a href=#1010 id=1010 data-nosnippet>1010</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+<a href=#1011 id=1011 data-nosnippet>1011</a>            .preset(dns_pkarr_server.preset())
+<a href=#1012 id=1012 data-nosnippet>1012</a>            .bind()
+<a href=#1013 id=1013 data-nosnippet>1013</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1014 id=1014 data-nosnippet>1014</a>
+<a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="kw">let </span>handle = tokio::spawn({
+<a href=#1016 id=1016 data-nosnippet>1016</a>            <span class="kw">let </span>ep = ep.clone();
+<a href=#1017 id=1017 data-nosnippet>1017</a>            <span class="kw">async move </span>{
+<a href=#1018 id=1018 data-nosnippet>1018</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
+<a href=#1019 id=1019 data-nosnippet>1019</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(accepting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
+<a href=#1020 id=1020 data-nosnippet>1020</a>                    <span class="kw">let </span>_conn = accepting.<span class="kw">await</span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
+<a href=#1021 id=1021 data-nosnippet>1021</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
+<a href=#1022 id=1022 data-nosnippet>1022</a>                </span>}
+<a href=#1023 id=1023 data-nosnippet>1023</a>
+<a href=#1024 id=1024 data-nosnippet>1024</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, AnyError&gt;(())
+<a href=#1025 id=1025 data-nosnippet>1025</a>            }
+<a href=#1026 id=1026 data-nosnippet>1026</a>        });
+<a href=#1027 id=1027 data-nosnippet>1027</a>
+<a href=#1028 id=1028 data-nosnippet>1028</a>        <span class="prelude-val">Ok</span>((ep, AbortOnDropHandle::new(handle)))
+<a href=#1029 id=1029 data-nosnippet>1029</a>    }
+<a href=#1030 id=1030 data-nosnippet>1030</a>}</code></pre></div></section></main></body></html>

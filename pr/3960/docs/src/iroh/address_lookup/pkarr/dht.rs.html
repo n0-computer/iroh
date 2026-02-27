@@ -20,8 +20,8 @@
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use crate</span>::{
 <a href=#21 id=21 data-nosnippet>21</a>    Endpoint,
 <a href=#22 id=22 data-nosnippet>22</a>    address_lookup::{
-<a href=#23 id=23 data-nosnippet>23</a>        AddrFilter, AddressLookup, EndpointData, Error <span class="kw">as </span>AddressLookupError, IntoAddressLookup,
-<a href=#24 id=24 data-nosnippet>24</a>        IntoAddressLookupError, Item <span class="kw">as </span>AddressLookupItem,
+<a href=#23 id=23 data-nosnippet>23</a>        AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
+<a href=#24 id=24 data-nosnippet>24</a>        Error <span class="kw">as </span>AddressLookupError, Item <span class="kw">as </span>AddressLookupItem,
 <a href=#25 id=25 data-nosnippet>25</a>        pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
 <a href=#26 id=26 data-nosnippet>26</a>    },
 <a href=#27 id=27 data-nosnippet>27</a>    endpoint_info::EndpointInfo,
@@ -208,9 +208,9 @@
 <a href=#208 id=208 data-nosnippet>208</a>    </span>}
 <a href=#209 id=209 data-nosnippet>209</a>
 <a href=#210 id=210 data-nosnippet>210</a>    <span class="doccomment">/// Builds the address lookup mechanism.
-<a href=#211 id=211 data-nosnippet>211</a>    </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;DhtAddressLookup, IntoAddressLookupError&gt; {
+<a href=#211 id=211 data-nosnippet>211</a>    </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;DhtAddressLookup, AddressLookupBuilderError&gt; {
 <a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">if </span>!(<span class="self">self</span>.dht || <span class="self">self</span>.pkarr_relay.is_some()) {
-<a href=#213 id=213 data-nosnippet>213</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(IntoAddressLookupError::from_err(
+<a href=#213 id=213 data-nosnippet>213</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(AddressLookupBuilderError::from_err(
 <a href=#214 id=214 data-nosnippet>214</a>                <span class="string">"pkarr"</span>,
 <a href=#215 id=215 data-nosnippet>215</a>                std::io::Error::other(<span class="string">"at least one of DHT or relay must be enabled"</span>),
 <a href=#216 id=216 data-nosnippet>216</a>            ));
@@ -226,11 +226,11 @@
 <a href=#226 id=226 data-nosnippet>226</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = <span class="kw-2">&amp;</span><span class="self">self</span>.pkarr_relay {
 <a href=#227 id=227 data-nosnippet>227</a>                    builder
 <a href=#228 id=228 data-nosnippet>228</a>                        .relays(std::slice::from_ref(url))
-<a href=#229 id=229 data-nosnippet>229</a>                        .map_err(|e| IntoAddressLookupError::from_err(<span class="string">"pkarr"</span>, e))<span class="question-mark">?</span>;
+<a href=#229 id=229 data-nosnippet>229</a>                        .map_err(|e| AddressLookupBuilderError::from_err(<span class="string">"pkarr"</span>, e))<span class="question-mark">?</span>;
 <a href=#230 id=230 data-nosnippet>230</a>                }
 <a href=#231 id=231 data-nosnippet>231</a>                builder
 <a href=#232 id=232 data-nosnippet>232</a>                    .build()
-<a href=#233 id=233 data-nosnippet>233</a>                    .map_err(|e| IntoAddressLookupError::from_err(<span class="string">"pkarr"</span>, e))<span class="question-mark">?
+<a href=#233 id=233 data-nosnippet>233</a>                    .map_err(|e| AddressLookupBuilderError::from_err(<span class="string">"pkarr"</span>, e))<span class="question-mark">?
 <a href=#234 id=234 data-nosnippet>234</a>            </span>}
 <a href=#235 id=235 data-nosnippet>235</a>        };
 <a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span>ttl = <span class="self">self</span>.ttl.unwrap_or(DEFAULT_PKARR_TTL);
@@ -248,11 +248,11 @@
 <a href=#248 id=248 data-nosnippet>248</a>    }
 <a href=#249 id=249 data-nosnippet>249</a>}
 <a href=#250 id=250 data-nosnippet>250</a>
-<a href=#251 id=251 data-nosnippet>251</a><span class="kw">impl </span>IntoAddressLookup <span class="kw">for </span>Builder {
+<a href=#251 id=251 data-nosnippet>251</a><span class="kw">impl </span>AddressLookupBuilder <span class="kw">for </span>Builder {
 <a href=#252 id=252 data-nosnippet>252</a>    <span class="kw">fn </span>into_address_lookup(
 <a href=#253 id=253 data-nosnippet>253</a>        <span class="self">self</span>,
 <a href=#254 id=254 data-nosnippet>254</a>        endpoint: <span class="kw-2">&amp;</span>Endpoint,
-<a href=#255 id=255 data-nosnippet>255</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, IntoAddressLookupError&gt; {
+<a href=#255 id=255 data-nosnippet>255</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, AddressLookupBuilderError&gt; {
 <a href=#256 id=256 data-nosnippet>256</a>        <span class="self">self</span>.secret_key(endpoint.secret_key().clone()).build()
 <a href=#257 id=257 data-nosnippet>257</a>    }
 <a href=#258 id=258 data-nosnippet>258</a>

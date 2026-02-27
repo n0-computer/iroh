@@ -80,12 +80,12 @@
 <a href=#80 id=80 data-nosnippet>80</a><span class="kw">use </span>tokio::sync::mpsc::{<span class="self">self</span>, error::TrySendError};
 <a href=#81 id=81 data-nosnippet>81</a><span class="kw">use </span>tracing::{Instrument, debug, error, info_span, trace, warn};
 <a href=#82 id=82 data-nosnippet>82</a>
-<a href=#83 id=83 data-nosnippet>83</a><span class="kw">use </span><span class="kw">super</span>::IntoAddressLookup;
+<a href=#83 id=83 data-nosnippet>83</a><span class="kw">use </span><span class="kw">super</span>::AddressLookupBuilder;
 <a href=#84 id=84 data-nosnippet>84</a><span class="kw">use crate</span>::{
 <a href=#85 id=85 data-nosnippet>85</a>    Endpoint,
 <a href=#86 id=86 data-nosnippet>86</a>    address_lookup::{
-<a href=#87 id=87 data-nosnippet>87</a>        AddrFilter, AddressLookup, EndpointData, EndpointInfo, Error <span class="kw">as </span>AddressLookupError,
-<a href=#88 id=88 data-nosnippet>88</a>        IntoAddressLookupError, Item <span class="kw">as </span>AddressLookupItem,
+<a href=#87 id=87 data-nosnippet>87</a>        AddrFilter, AddressLookup, AddressLookupBuilderError, EndpointData, EndpointInfo,
+<a href=#88 id=88 data-nosnippet>88</a>        Error <span class="kw">as </span>AddressLookupError, Item <span class="kw">as </span>AddressLookupItem,
 <a href=#89 id=89 data-nosnippet>89</a>    },
 <a href=#90 id=90 data-nosnippet>90</a>};
 <a href=#91 id=91 data-nosnippet>91</a>
@@ -223,7 +223,7 @@
 <a href=#223 id=223 data-nosnippet>223</a>    </span><span class="kw">pub fn </span>build(
 <a href=#224 id=224 data-nosnippet>224</a>        <span class="self">self</span>,
 <a href=#225 id=225 data-nosnippet>225</a>        endpoint_id: EndpointId,
-<a href=#226 id=226 data-nosnippet>226</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;MdnsAddressLookup, IntoAddressLookupError&gt; {
+<a href=#226 id=226 data-nosnippet>226</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;MdnsAddressLookup, AddressLookupBuilderError&gt; {
 <a href=#227 id=227 data-nosnippet>227</a>        MdnsAddressLookup::new(endpoint_id, <span class="self">self</span>.advertise, <span class="self">self</span>.service_name, <span class="self">self</span>.filter)
 <a href=#228 id=228 data-nosnippet>228</a>    }
 <a href=#229 id=229 data-nosnippet>229</a>}
@@ -234,11 +234,11 @@
 <a href=#234 id=234 data-nosnippet>234</a>    }
 <a href=#235 id=235 data-nosnippet>235</a>}
 <a href=#236 id=236 data-nosnippet>236</a>
-<a href=#237 id=237 data-nosnippet>237</a><span class="kw">impl </span>IntoAddressLookup <span class="kw">for </span>MdnsAddressLookupBuilder {
+<a href=#237 id=237 data-nosnippet>237</a><span class="kw">impl </span>AddressLookupBuilder <span class="kw">for </span>MdnsAddressLookupBuilder {
 <a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">fn </span>into_address_lookup(
 <a href=#239 id=239 data-nosnippet>239</a>        <span class="self">self</span>,
 <a href=#240 id=240 data-nosnippet>240</a>        endpoint: <span class="kw-2">&amp;</span>Endpoint,
-<a href=#241 id=241 data-nosnippet>241</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, IntoAddressLookupError&gt; {
+<a href=#241 id=241 data-nosnippet>241</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, AddressLookupBuilderError&gt; {
 <a href=#242 id=242 data-nosnippet>242</a>        <span class="self">self</span>.build(endpoint.id())
 <a href=#243 id=243 data-nosnippet>243</a>    }
 <a href=#244 id=244 data-nosnippet>244</a>
@@ -286,7 +286,7 @@
 <a href=#286 id=286 data-nosnippet>286</a>        advertise: bool,
 <a href=#287 id=287 data-nosnippet>287</a>        service_name: String,
 <a href=#288 id=288 data-nosnippet>288</a>        filter: AddrFilter,
-<a href=#289 id=289 data-nosnippet>289</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, IntoAddressLookupError&gt; {
+<a href=#289 id=289 data-nosnippet>289</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, AddressLookupBuilderError&gt; {
 <a href=#290 id=290 data-nosnippet>290</a>        <span class="macro">debug!</span>(<span class="string">"Creating new Mdns service"</span>);
 <a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>(send, <span class="kw-2">mut </span>recv) = mpsc::channel(<span class="number">64</span>);
 <a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>task_sender = send.clone();
@@ -492,7 +492,7 @@
 <a href=#492 id=492 data-nosnippet>492</a>        socketaddrs: BTreeSet&lt;SocketAddr&gt;,
 <a href=#493 id=493 data-nosnippet>493</a>        service_name: String,
 <a href=#494 id=494 data-nosnippet>494</a>        rt: <span class="kw-2">&amp;</span>tokio::runtime::Handle,
-<a href=#495 id=495 data-nosnippet>495</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;DropGuard, IntoAddressLookupError&gt; {
+<a href=#495 id=495 data-nosnippet>495</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;DropGuard, AddressLookupBuilderError&gt; {
 <a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">let </span>spawn_rt = rt.clone();
 <a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">let </span>callback = <span class="kw">move </span>|endpoint_id: <span class="kw-2">&amp;</span>str, peer: <span class="kw-2">&amp;</span>Peer| {
 <a href=#498 id=498 data-nosnippet>498</a>            <span class="macro">trace!</span>(endpoint_id, <span class="question-mark">?</span>peer, <span class="string">"Received peer information from Mdns"</span>);
@@ -521,7 +521,7 @@
 <a href=#521 id=521 data-nosnippet>521</a>        }
 <a href=#522 id=522 data-nosnippet>522</a>        discoverer
 <a href=#523 id=523 data-nosnippet>523</a>            .spawn(rt)
-<a href=#524 id=524 data-nosnippet>524</a>            .map_err(|e| IntoAddressLookupError::from_err(<span class="string">"mdns"</span>, e))
+<a href=#524 id=524 data-nosnippet>524</a>            .map_err(|e| AddressLookupBuilderError::from_err(<span class="string">"mdns"</span>, e))
 <a href=#525 id=525 data-nosnippet>525</a>    }
 <a href=#526 id=526 data-nosnippet>526</a>
 <a href=#527 id=527 data-nosnippet>527</a>    <span class="kw">fn </span>socketaddrs_to_addrs&lt;<span class="lifetime">'a</span>&gt;(
