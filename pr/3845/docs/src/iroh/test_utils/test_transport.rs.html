@@ -384,7 +384,7 @@
 <a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder()
 <a href=#385 id=385 data-nosnippet>385</a>            .secret_key(secret_key)
 <a href=#386 id=386 data-nosnippet>386</a>            .relay_mode(relay_mode)
-<a href=#387 id=387 data-nosnippet>387</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
+<a href=#387 id=387 data-nosnippet>387</a>            .ca_roots_config(<span class="kw">crate</span>::tls::CaRootsConfig::insecure_skip_verify())
 <a href=#388 id=388 data-nosnippet>388</a>            .add_custom_transport(transport);
 <a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(bias) = config.custom_bias {
 <a href=#390 id=390 data-nosnippet>390</a>            builder = builder.transport_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias);
