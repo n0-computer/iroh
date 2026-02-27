@@ -6,8 +6,10 @@
 //!
 //! The primary way of addressing an endpoint is by using the [`EndpointAddr`].
 
-use std::{collections::BTreeSet, net::SocketAddr};
+use std::{collections::BTreeSet, fmt, net::SocketAddr};
 
+use data_encoding::HEXLOWER;
+use n0_error::stack_error;
 use serde::{Deserialize, Serialize};
 
 use crate::{EndpointId, PublicKey, RelayUrl};
@@ -55,6 +57,8 @@ pub enum TransportAddr {
     Relay(RelayUrl),
     /// IP based addresses
     Ip(SocketAddr),
+    /// Custom transport address
+    Custom(CustomAddr),
 }
 
 impl TransportAddr {
@@ -66,6 +70,21 @@ impl TransportAddr {
     /// Whether this is an IP transport address.
     pub fn is_ip(&self) -> bool {
         matches!(self, Self::Ip(_))
+    }
+
+    /// Whether this is a custom transport address.
+    pub fn is_custom(&self) -> bool {
+        matches!(self, Self::Custom(_))
+    }
+}
+
+impl fmt::Display for TransportAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Relay(url) => write!(f, "relay:{url}"),
+            Self::Ip(addr) => write!(f, "ip:{addr}"),
+            Self::Custom(addr) => write!(f, "custom:{addr}"),
+        }
     }
 }
 
@@ -139,6 +158,146 @@ impl From<EndpointId> for EndpointAddr {
     }
 }
 
+/// TODO
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CustomAddr {
+    /// id
+    id: u64,
+    /// data
+    data: CustomAddrBytes,
+}
+
+impl fmt::Display for CustomAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:x}_{}", self.id, HEXLOWER.encode(self.data.as_bytes()))
+    }
+}
+
+impl std::str::FromStr for CustomAddr {
+    type Err = CustomAddrParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let Some((id_str, data_str)) = s.split_once('_') else {
+            return Err(CustomAddrParseError::MissingSeparator);
+        };
+        let Ok(id) = u64::from_str_radix(id_str, 16) else {
+            return Err(CustomAddrParseError::InvalidId);
+        };
+        let Ok(data) = HEXLOWER.decode(data_str.as_bytes()) else {
+            return Err(CustomAddrParseError::InvalidData);
+        };
+        Ok(Self::from_parts(id, &data))
+    }
+}
+
+/// Error parsing a [`crate::CustomAddr`].
+#[stack_error(derive)]
+#[allow(missing_docs)]
+pub enum CustomAddrParseError {
+    /// Missing `_` separator between id and data.
+    #[error("missing '_' separator")]
+    MissingSeparator,
+    /// Invalid hex-encoded id.
+    #[error("invalid id")]
+    InvalidId,
+    /// Invalid hex-encoded data.
+    #[error("invalid data")]
+    InvalidData,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum CustomAddrBytes {
+    Inline { size: u8, data: [u8; 30] },
+    Heap(Box<[u8]>),
+}
+
+impl fmt::Debug for CustomAddrBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !f.alternate() {
+            write!(f, "[{}]", HEXLOWER.encode(self.as_bytes()))
+        } else {
+            let bytes = self.as_bytes();
+            match self {
+                Self::Inline { .. } => write!(f, "Inline[{}]", HEXLOWER.encode(bytes)),
+                Self::Heap(_) => write!(f, "Heap[{}]", HEXLOWER.encode(bytes)),
+            }
+        }
+    }
+}
+
+impl From<(u64, &[u8])> for CustomAddr {
+    fn from((id, data): (u64, &[u8])) -> Self {
+        Self::from_parts(id, data)
+    }
+}
+
+impl CustomAddrBytes {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Inline { size, .. } => *size as usize,
+            Self::Heap(data) => data.len(),
+        }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Inline { size, data } => &data[..*size as usize],
+            Self::Heap(data) => data,
+        }
+    }
+
+    pub fn copy_from_slice(data: &[u8]) -> Self {
+        if data.len() <= 30 {
+            let mut inline = [0u8; 30];
+            inline[..data.len()].copy_from_slice(data);
+            Self::Inline {
+                size: data.len() as u8,
+                data: inline,
+            }
+        } else {
+            Self::Heap(data.to_vec().into_boxed_slice())
+        }
+    }
+}
+
+impl CustomAddr {
+    /// Creates a new [`CustomAddr`] from its parts.
+    pub fn from_parts(id: u64, data: &[u8]) -> Self {
+        Self {
+            id,
+            data: CustomAddrBytes::copy_from_slice(data),
+        }
+    }
+
+    /// Id to distinguish different custom address types
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Data associated with this custom address
+    pub fn data(&self) -> &[u8] {
+        self.data.as_bytes()
+    }
+
+    /// Convert to byte representation
+    pub fn as_vec(&self) -> Vec<u8> {
+        let mut out = vec![0u8; 8 + self.data.len()];
+        out[..8].copy_from_slice(&self.id().to_le_bytes());
+        out[8..].copy_from_slice(self.data());
+        out
+    }
+
+    /// Parse from bytes
+    pub fn from_bytes(data: &[u8]) -> Result<Self, &'static str> {
+        if data.len() < 8 {
+            return Err("data too short");
+        }
+        let id = u64::from_le_bytes(data[..8].try_into().expect("data length checked above"));
+        let data = &data[8..];
+        Ok(Self::from_parts(id, data))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +343,54 @@ mod tests {
                 NewAddrType::Relay("https://example.com".parse().unwrap()),
             ]
         );
+    }
+
+    #[test]
+    fn test_custom_addr_roundtrip() {
+        // Small id, small data (e.g., Bluetooth MAC)
+        let addr = CustomAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
+        let s = addr.to_string();
+        assert_eq!(s, "1_a1b2c3d4e5f6");
+        let parsed: CustomAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+
+        // Larger id, 32-byte data (e.g., Tor pubkey)
+        let addr = CustomAddr::from_parts(42, &[0xab; 32]);
+        let s = addr.to_string();
+        assert_eq!(
+            s,
+            "2a_abababababababababababababababababababababababababababababababab"
+        );
+        let parsed: CustomAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+
+        // Zero id, empty data
+        let addr = CustomAddr::from_parts(0, &[]);
+        let s = addr.to_string();
+        assert_eq!(s, "0_");
+        let parsed: CustomAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+
+        // Large id
+        let addr = CustomAddr::from_parts(0xdeadbeef, &[0x01, 0x02]);
+        let s = addr.to_string();
+        assert_eq!(s, "deadbeef_0102");
+        let parsed: CustomAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
+
+    #[test]
+    fn test_custom_addr_parse_errors() {
+        // Missing separator
+        assert!("abc123".parse::<CustomAddr>().is_err());
+
+        // Invalid id (not hex)
+        assert!("xyz_0102".parse::<CustomAddr>().is_err());
+
+        // Invalid data (not hex)
+        assert!("1_ghij".parse::<CustomAddr>().is_err());
+
+        // Odd-length hex data
+        assert!("1_abc".parse::<CustomAddr>().is_err());
     }
 }

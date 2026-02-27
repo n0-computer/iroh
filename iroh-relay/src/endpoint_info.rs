@@ -296,6 +296,8 @@ impl From<TxtAttrs<IrohAttr>> for EndpointInfo {
 
 impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
     fn from(attrs: &TxtAttrs<IrohAttr>) -> Self {
+        use iroh_base::CustomAddr;
+
         let endpoint_id = attrs.endpoint_id();
         let attrs = attrs.attrs();
         let relay_urls = attrs
@@ -304,12 +306,20 @@ impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
             .flatten()
             .filter_map(|s| Url::parse(s).ok())
             .map(|url| TransportAddr::Relay(url.into()));
-        let ip_addrs = attrs
+        // Parse addresses: try IP first, then CustomAddr
+        let addrs = attrs
             .get(&IrohAttr::Addr)
             .into_iter()
             .flatten()
-            .filter_map(|s| SocketAddr::from_str(s).ok())
-            .map(TransportAddr::Ip);
+            .filter_map(|s| {
+                if let Ok(addr) = SocketAddr::from_str(s) {
+                    Some(TransportAddr::Ip(addr))
+                } else if let Ok(addr) = CustomAddr::from_str(s) {
+                    Some(TransportAddr::Custom(addr))
+                } else {
+                    None
+                }
+            });
 
         let user_data = attrs
             .get(&IrohAttr::UserData)
@@ -319,7 +329,7 @@ impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
             .and_then(|s| UserData::from_str(s).ok());
         let mut data = EndpointData::default();
         data.set_user_data(user_data);
-        data.add_addrs(relay_urls.chain(ip_addrs));
+        data.add_addrs(relay_urls.chain(addrs));
 
         Self { endpoint_id, data }
     }
@@ -489,7 +499,7 @@ fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
 pub(crate) enum IrohAttr {
     /// URL of home relay.
     Relay,
-    /// Direct address.
+    /// Address (IP or custom transport).
     Addr,
     /// User-defined data
     UserData,
@@ -511,10 +521,9 @@ impl From<&EndpointInfo> for TxtAttrs<IrohAttr> {
         let mut attrs = vec![];
         for addr in &info.data.addrs {
             match addr {
-                TransportAddr::Relay(relay_url) => {
-                    attrs.push((IrohAttr::Relay, relay_url.to_string()))
-                }
+                TransportAddr::Relay(url) => attrs.push((IrohAttr::Relay, url.to_string())),
                 TransportAddr::Ip(addr) => attrs.push((IrohAttr::Addr, addr.to_string())),
+                TransportAddr::Custom(addr) => attrs.push((IrohAttr::Addr, addr.to_string())),
                 _ => {}
             }
         }
@@ -702,6 +711,56 @@ mod tests {
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
         ])
         .with_user_data(Some("foobar".parse().unwrap()));
+        let expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
+        let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
+        let actual = EndpointInfo::from_pkarr_signed_packet(&packet).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn txt_attr_roundtrip_with_custom_addr() {
+        use iroh_base::CustomAddr;
+
+        // Bluetooth-like address (small id, 6 byte MAC)
+        let bt_addr = CustomAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
+        // Tor-like address (larger id, 32 byte pubkey)
+        let tor_addr = CustomAddr::from_parts(42, &[0xab; 32]);
+
+        let endpoint_data = EndpointData::new([
+            TransportAddr::Relay("https://example.com".parse().unwrap()),
+            TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
+            TransportAddr::Custom(bt_addr),
+            TransportAddr::Custom(tor_addr),
+        ]);
+        let endpoint_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
+            .parse()
+            .unwrap();
+        let expected = EndpointInfo::from_parts(endpoint_id, endpoint_data);
+        let attrs = expected.to_attrs();
+        let actual = EndpointInfo::from(&attrs);
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn signed_packet_roundtrip_with_custom_addr() {
+        use iroh_base::CustomAddr;
+
+        let secret_key =
+            SecretKey::from_str("vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia").unwrap();
+
+        // Bluetooth-like address (small id, 6 byte MAC)
+        let bt_addr = CustomAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
+        // Tor-like address (larger id, 32 byte pubkey)
+        let tor_addr = CustomAddr::from_parts(42, &[0xab; 32]);
+
+        let endpoint_data = EndpointData::new([
+            TransportAddr::Relay("https://example.com".parse().unwrap()),
+            TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
+            TransportAddr::Custom(bt_addr),
+            TransportAddr::Custom(tor_addr),
+        ])
+        .with_user_data(Some("foobar".parse().unwrap()));
+
         let expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
         let actual = EndpointInfo::from_pkarr_signed_packet(&packet).unwrap();

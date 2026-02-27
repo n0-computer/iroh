@@ -6,7 +6,7 @@ use std::{
     task::Poll,
 };
 
-use iroh_base::{EndpointId, RelayUrl, TransportAddr};
+use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_error::StackResultExt;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
@@ -16,7 +16,7 @@ use n0_future::{
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
-use quinn_proto::{PathError, PathEvent, PathId, PathStatus, n0_nat_traversal};
+use quinn_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
@@ -39,9 +39,9 @@ use crate::{
     endpoint::DirectAddr,
     socket::{
         Metrics as SocketMetrics,
-        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
-        remote_map::Private,
-        transports::{self, OwnedTransmit, TransportsSender},
+        mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
+        remote_map::{Private, to_transport_addr},
+        transports::{self, OwnedTransmit, PathSelectionData, TransportBiasMap, TransportsSender},
     },
     util::MaybeFuture,
 };
@@ -80,9 +80,6 @@ const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The minimum RTT difference to make it worth switching IP paths
 const RTT_SWITCHING_MIN_IP: Duration = Duration::from_millis(5);
-
-/// How much do we prefer IPv6 over IPv4?
-const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
 
 /// A stream of events from all paths for all connections.
 ///
@@ -143,6 +140,8 @@ pub(super) struct RemoteStateActor {
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
+    custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
     /// Address lookup service, cloned from the socket.
     address_lookup: ConcurrentAddressLookup,
 
@@ -189,6 +188,9 @@ pub(super) struct RemoteStateActor {
     //
     /// Stream of Address Lookup results, or always pending if Address Lookup is not running.
     address_lookup_stream: AddressLookupStream,
+
+    /// Biases for different transport kinds.
+    transport_bias: TransportBiasMap,
 }
 
 impl RemoteStateActor {
@@ -198,8 +200,10 @@ impl RemoteStateActor {
         local_endpoint_id: EndpointId,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+        custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
         metrics: Arc<SocketMetrics>,
         address_lookup: ConcurrentAddressLookup,
+        transport_bias: TransportBiasMap,
     ) -> Self {
         Self {
             endpoint_id,
@@ -207,6 +211,7 @@ impl RemoteStateActor {
             metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
+            custom_mapped_addrs,
             address_lookup,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
@@ -219,6 +224,7 @@ impl RemoteStateActor {
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
             address_lookup_stream: Either::Left(n0_future::stream::pending()),
+            transport_bias,
         }
     }
 
@@ -490,13 +496,15 @@ impl RemoteStateActor {
             // is needed.
             if let Some(path) = conn.path(PathId::ZERO)
                 && let Ok(socketaddr) = path.remote_address()
-                && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
+                && let Some(path_remote) = to_transport_addr(
+                    socketaddr,
+                    &self.relay_mapped_addrs,
+                    &self.custom_mapped_addrs,
+                )
             {
                 trace!(?path_remote, "added new connection");
-                let path_status = match path_remote {
-                    transports::Addr::Ip(_) => PathStatus::Available,
-                    transports::Addr::Relay(_, _) => PathStatus::Backup,
-                };
+                let bias = self.transport_bias.get(&path_remote);
+                let path_status = bias.transport_type.to_path_status();
                 let res = path.set_status(path_status);
                 event!(
                     target: "iroh::_events::path::set_status",
@@ -798,16 +806,17 @@ impl RemoteStateActor {
     /// the path exists, or opens it.
     #[instrument(level = "warn", skip(self))]
     fn open_path(&mut self, open_addr: &transports::Addr) {
-        let path_status = match open_addr {
-            transports::Addr::Ip(_) => PathStatus::Available,
-            transports::Addr::Relay(_, _) => PathStatus::Backup,
-        };
+        let bias = self.transport_bias.get(open_addr);
+        let path_status = bias.transport_type.to_path_status();
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
             transports::Addr::Relay(relay_url, eid) => self
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *eid))
                 .private_socket_addr(),
+            transports::Addr::Custom(addr) => {
+                self.custom_mapped_addrs.get(addr).private_socket_addr()
+            }
         };
 
         for (conn_id, conn_state) in self.connections.iter_mut() {
@@ -905,7 +914,11 @@ impl RemoteStateActor {
                 };
 
                 if let Ok(socketaddr) = path.remote_address()
-                    && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
+                    && let Some(path_remote) = to_transport_addr(
+                        socketaddr,
+                        &self.relay_mapped_addrs,
+                        &self.custom_mapped_addrs,
+                    )
                 {
                     event!(
                         target: "iroh::_events::path::open",
@@ -973,32 +986,6 @@ impl RemoteStateActor {
         }
     }
 
-    fn path_selection_data(
-        &self,
-        addr: transports::Addr,
-        rtt: Duration,
-    ) -> (transports::Addr, PathSelectionData) {
-        let status = match addr {
-            transports::Addr::Ip(_) => PathStatus::Available,
-            transports::Addr::Relay(_, _) => PathStatus::Backup,
-        };
-        let biased_rtt = match addr {
-            transports::Addr::Ip(SocketAddr::V4(_)) => rtt.as_nanos() as i128,
-            transports::Addr::Ip(SocketAddr::V6(_)) => {
-                rtt.as_nanos() as i128 - IPV6_RTT_ADVANTAGE.as_nanos() as i128
-            }
-            transports::Addr::Relay(_, _) => rtt.as_nanos() as i128,
-        };
-        (
-            addr,
-            PathSelectionData {
-                status,
-                rtt,
-                biased_rtt,
-            },
-        )
-    }
-
     /// Selects the path with the lowest RTT, prefers direct paths.
     ///
     /// If there are direct paths, this selects the direct path with the lowest RTT.  If
@@ -1028,7 +1015,12 @@ impl RemoteStateActor {
         let path_rtts: FxHashMap<transports::Addr, PathSelectionData> = all_path_rtts
             .into_iter()
             .filter_map(|(addr, rtts)| rtts.into_iter().min().map(|rtt| (addr, rtt)))
-            .map(|(addr, rtt)| self.path_selection_data(addr, rtt))
+            .map(|(addr, rtt)| {
+                (
+                    addr.clone(),
+                    self.transport_bias.path_selection_data(&addr, rtt),
+                )
+            })
             .collect();
 
         let current_path = self.selected_path.get();
@@ -1069,7 +1061,7 @@ impl RemoteStateActor {
             for (path_id, path_remote) in conn_state
                 .paths
                 .iter()
-                .filter(|(_, addr)| addr.is_ip())
+                .filter(|(_, addr)| !addr.is_relay())
                 .filter(|(_, addr)| *addr != selected_path)
             {
                 if conn_state.paths.values().filter(|a| a.is_ip()).count() <= 1 {
@@ -1139,29 +1131,6 @@ impl RemoteStateActor {
     }
 }
 
-/// Data used during path selection.
-#[derive(Debug)]
-struct PathSelectionData {
-    /// Status of the path if it would be selected.
-    status: PathStatus,
-    /// Measured RTT for path selection.
-    rtt: Duration,
-    /// Biased RTT for path selection.
-    ///
-    /// This is an i128 so we can subtract an advantage for e.g. IPv6 without underflowing.
-    biased_rtt: i128,
-}
-
-impl PathSelectionData {
-    /// Key for sorting paths. Lower is better.
-    ///
-    /// First part is the status, 0 for Available, 1 for Backup.
-    /// Second part is the biased RTT.
-    fn sort_key(&self) -> (u8, i128) {
-        (self.status as u8, self.biased_rtt)
-    }
-}
-
 /// Returns `Some` if a new path should be selected, `None` if the `current_path` should
 /// continued to be used.
 fn select_best_path(
@@ -1179,11 +1148,13 @@ fn select_best_path(
     let Some(current_data) = all_paths.get(addr) else {
         return Some((best_addr.clone(), best_data.rtt));
     };
-    if current_data.status != best_data.status {
+    if current_data.transport_type != best_data.transport_type {
         // Always switch if the status is different (better).
         Some((best_addr.clone(), best_data.rtt))
-    } else if best_data.rtt + RTT_SWITCHING_MIN_IP <= current_data.rtt {
-        // For the same status, only switch if the RTT is significantly better.
+    } else if best_data.biased_rtt + RTT_SWITCHING_MIN_IP.as_nanos() as i128
+        <= current_data.biased_rtt
+    {
+        // For the same status, only switch if the biased RTT is significantly better.
         Some((best_addr.clone(), best_data.rtt))
     } else {
         None
@@ -1311,6 +1282,7 @@ impl ConnectionState {
         match remote {
             transports::Addr::Ip(_) => metrics.paths_direct.inc(),
             transports::Addr::Relay(_, _) => metrics.paths_relay.inc(),
+            transports::Addr::Custom(_) => metrics.paths_custom.inc(),
         };
         if !self.has_been_direct && remote.is_ip() {
             self.has_been_direct = true;
@@ -1379,6 +1351,7 @@ fn to_transports_addr(
     addrs.into_iter().filter_map(move |addr| match addr {
         TransportAddr::Relay(relay_url) => Some(transports::Addr::from((relay_url, endpoint_id))),
         TransportAddr::Ip(sockaddr) => Some(transports::Addr::from(sockaddr)),
+        TransportAddr::Custom(custom_addr) => Some(transports::Addr::from(custom_addr)),
         _ => {
             warn!(?addr, "Unsupported TransportAddr");
             None
@@ -1391,6 +1364,7 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
     use super::*;
+    use crate::socket::transports::TransportType;
 
     fn v4(port: u16) -> transports::Addr {
         transports::Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
@@ -1412,22 +1386,22 @@ mod tests {
         transports::Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap())
     }
 
-    fn psd(status: PathStatus, rtt_ms: u64) -> PathSelectionData {
+    fn psd(transport_type: TransportType, rtt_ms: u64) -> PathSelectionData {
         let rtt = Duration::from_millis(rtt_ms);
         let biased_rtt = rtt.as_nanos() as i128;
         PathSelectionData {
-            status,
+            transport_type,
             rtt,
             biased_rtt,
         }
     }
 
-    fn psd_v6(status: PathStatus, rtt_ms: u64) -> PathSelectionData {
+    fn psd_v6(transport_type: TransportType, rtt_ms: u64) -> PathSelectionData {
         let rtt = Duration::from_millis(rtt_ms);
         // IPv6 gets a bias advantage
-        let biased_rtt = rtt.as_nanos() as i128 - IPV6_RTT_ADVANTAGE.as_nanos() as i128;
+        let biased_rtt = rtt.as_nanos() as i128 - transports::IPV6_RTT_ADVANTAGE.as_nanos() as i128;
         PathSelectionData {
-            status,
+            transport_type,
             rtt,
             biased_rtt,
         }
@@ -1437,8 +1411,8 @@ mod tests {
     fn test_ipv6_wins_over_ipv4_within_bias() {
         // IPv6 should win over IPv4 when RTTs are the same
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(PathStatus::Available, 10));
-        paths.insert(v6(1), psd_v6(PathStatus::Available, 10));
+        paths.insert(v4(1), psd(TransportType::Primary, 10));
+        paths.insert(v6(1), psd_v6(TransportType::Primary, 10));
 
         let result = select_best_path(paths, &None);
         assert!(result.is_some());
@@ -1447,8 +1421,8 @@ mod tests {
 
         // IPv6 should still win when it's slightly slower (within bias range)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(PathStatus::Available, 10));
-        paths.insert(v6(1), psd_v6(PathStatus::Available, 12)); // 2ms slower, but 3ms bias
+        paths.insert(v4(1), psd(TransportType::Primary, 10));
+        paths.insert(v6(1), psd_v6(TransportType::Primary, 12)); // 2ms slower, but 3ms bias
 
         let result = select_best_path(paths, &None);
         assert!(result.is_some());
@@ -1457,8 +1431,8 @@ mod tests {
 
         // IPv4 should win when IPv6 is significantly slower
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(PathStatus::Available, 10));
-        paths.insert(v6(1), psd_v6(PathStatus::Available, 20)); // 10ms slower, exceeds 3ms bias
+        paths.insert(v4(1), psd(TransportType::Primary, 10));
+        paths.insert(v6(1), psd_v6(TransportType::Primary, 20)); // 10ms slower, exceeds 3ms bias
 
         let result = select_best_path(paths, &None);
         assert!(result.is_some());
@@ -1470,8 +1444,8 @@ mod tests {
     fn test_available_wins_over_backup_regardless_of_rtt() {
         // Available path should win even with much higher RTT
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(PathStatus::Available, 100)); // High RTT but Available
-        paths.insert(relay(1), psd(PathStatus::Backup, 10)); // Low RTT but Backup
+        paths.insert(v4(1), psd(TransportType::Primary, 100)); // High RTT but Available
+        paths.insert(relay(1), psd(TransportType::Backup, 10)); // Low RTT but Backup
 
         let result = select_best_path(paths, &None);
         assert!(result.is_some());
@@ -1480,8 +1454,8 @@ mod tests {
 
         // Even more extreme: 1000ms Available vs 1ms Backup
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(PathStatus::Available, 1000));
-        paths.insert(relay(1), psd(PathStatus::Backup, 1));
+        paths.insert(v4(1), psd(TransportType::Primary, 1000));
+        paths.insert(relay(1), psd(TransportType::Backup, 1));
 
         let result = select_best_path(paths, &None);
         assert!(result.is_some());
@@ -1495,24 +1469,24 @@ mod tests {
 
         // Should NOT switch: new path is only slightly better (2ms < 5ms threshold)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(PathStatus::Available, 20));
-        paths.insert(v4(2), psd(PathStatus::Available, 18));
+        paths.insert(v4(1), psd(TransportType::Primary, 20));
+        paths.insert(v4(2), psd(TransportType::Primary, 18));
 
         let result = select_best_path(paths, &Some(current.clone()));
         assert!(result.is_none()); // Should keep current
 
         // Should NOT switch: new path is just under threshold (4ms < 5ms)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(PathStatus::Available, 20));
-        paths.insert(v4(2), psd(PathStatus::Available, 16));
+        paths.insert(v4(1), psd(TransportType::Primary, 20));
+        paths.insert(v4(2), psd(TransportType::Primary, 16));
 
         let result = select_best_path(paths, &Some(current.clone()));
         assert!(result.is_none()); // Should keep current
 
         // SHOULD switch: new path is exactly at threshold (5ms, condition is <=)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(PathStatus::Available, 20));
-        paths.insert(v4(2), psd(PathStatus::Available, 15));
+        paths.insert(v4(1), psd(TransportType::Primary, 20));
+        paths.insert(v4(2), psd(TransportType::Primary, 15));
 
         let result = select_best_path(paths, &Some(current.clone()));
         assert!(result.is_some());
@@ -1521,8 +1495,8 @@ mod tests {
 
         // SHOULD switch: new path is significantly better (6ms > 5ms threshold)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(PathStatus::Available, 20));
-        paths.insert(v4(2), psd(PathStatus::Available, 14));
+        paths.insert(v4(1), psd(TransportType::Primary, 20));
+        paths.insert(v4(2), psd(TransportType::Primary, 14));
 
         let result = select_best_path(paths, &Some(current.clone()));
         assert!(result.is_some());
@@ -1533,8 +1507,8 @@ mod tests {
     #[test]
     fn test_no_current_path_selects_best() {
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(PathStatus::Available, 20));
-        paths.insert(v4(2), psd(PathStatus::Available, 10));
+        paths.insert(v4(1), psd(TransportType::Primary, 20));
+        paths.insert(v4(2), psd(TransportType::Primary, 10));
 
         let result = select_best_path(paths, &None);
         assert!(result.is_some());
