@@ -38,6 +38,7 @@
 use std::{
     collections::BTreeMap,
     future::Future,
+    net::SocketAddr,
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -53,7 +54,7 @@ use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
-    endpoint::{Accepting, Connection, RemoteEndpointIdError, quic},
+    endpoint::{Accepting, Connection, IncomingAddr, RemoteEndpointIdError, VarInt, quic},
 };
 
 /// The built router.
@@ -99,6 +100,7 @@ pub struct Router {
 pub struct RouterBuilder {
     endpoint: Endpoint,
     protocols: ProtocolMap,
+    connection_filter: Option<Arc<dyn ConnectionFilter>>,
 }
 
 #[allow(missing_docs)]
@@ -149,6 +151,102 @@ impl From<std::io::Error> for AcceptError {
 impl From<quic::ClosedStream> for AcceptError {
     fn from(err: quic::ClosedStream) -> Self {
         Self::from_err(err)
+    }
+}
+
+/// Outcome when filtering incoming connections by their remote address.
+///
+/// We can either accept the connection, use retry to make sure the socket
+/// addr is not spoofed, reject it, or ignore the connection entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AcceptAddrOutcome {
+    /// Accept the connection. Later filters will still run.
+    Accept,
+    /// Tell the remote to retry. If the socket address was spoofed, this will
+    /// send the retry token to the spoofed address, so we will never hear from
+    /// the attacker again. If the socket address was correct, we will get
+    /// a connection attempt for which the socket address is validated.
+    Retry,
+    /// Actively refuse the connection. The remote will receive a
+    /// CONNECTION_REFUSED error immediately.
+    Reject,
+    /// Ignore the connection entirely. The remote gets no response and will
+    /// eventually time out. No further filters will run.
+    Ignore,
+}
+
+/// Outcome of filtering a connection by endpoint ID.
+///
+/// Unlike [`AcceptAddrOutcome`], this does not have a `Retry` variant since
+/// address validation is not applicable at this stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AcceptOutcome {
+    /// Accept the connection. Later filters will still run.
+    Accept,
+    /// Actively refuse the connection. The remote will receive an error.
+    Reject,
+    /// Ignore the connection entirely. The remote gets no response.
+    Ignore,
+}
+
+/// Outcome of filtering a connection by ALPN.
+///
+/// At this stage, the connection is fully established, so the filter can
+/// provide a close error code and reason that will be sent to the remote peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AcceptAlpnOutcome {
+    /// Accept the connection.
+    Accept,
+    /// Close the connection with the given error code and reason.
+    ///
+    /// Note: at this stage the QUIC connection is fully established, so there is
+    /// no way to silently ignore it — dropping the connection also sends a
+    /// CONNECTION_CLOSE frame.
+    Close {
+        /// The error code to send to the remote peer.
+        error_code: VarInt,
+        /// The reason to send to the remote peer.
+        reason: Vec<u8>,
+    },
+}
+
+impl AcceptAlpnOutcome {
+    /// Create a `Close` outcome with the given error code and reason.
+    pub fn close(error_code: impl Into<VarInt>, reason: impl Into<Vec<u8>>) -> Self {
+        Self::Close {
+            error_code: error_code.into(),
+            reason: reason.into(),
+        }
+    }
+}
+
+/// A filter that allows rejecting incoming connections early, based on socket
+/// address, endpoint ID, or ALPN.
+pub trait ConnectionFilter: std::fmt::Debug + Send + Sync + 'static {
+    /// Accept an incoming connection by its socket address.
+    ///
+    /// If `validated` is false, this is just the socket address in the UDP packet,
+    /// which might be spoofed. If `validated` is true, the remote has responded
+    /// to a retry and we know that the socket address is correct.
+    fn accept_addr(&self, _addr: SocketAddr, _validated: bool) -> AcceptAddrOutcome {
+        AcceptAddrOutcome::Accept
+    }
+
+    /// Accept an incoming connection by its endpoint ID.
+    fn accept_endpoint_id(&self, _endpoint_id: EndpointId) -> AcceptOutcome {
+        AcceptOutcome::Accept
+    }
+
+    /// Accept an incoming connection by its ALPN. This can be used to implement
+    /// protocol level access control without having to wrap the protocol handler.
+    ///
+    /// This is called after the connection is fully established, so the filter
+    /// can provide a close error code and reason.
+    fn accept_alpn(&self, _endpoint_id: EndpointId, _alpn: &[u8]) -> AcceptAlpnOutcome {
+        AcceptAlpnOutcome::Accept
     }
 }
 
@@ -390,7 +488,14 @@ impl RouterBuilder {
         Self {
             endpoint,
             protocols: ProtocolMap::default(),
+            connection_filter: None,
         }
+    }
+
+    /// Sets a [`ConnectionFilter`] for the router.
+    pub fn connection_filter(mut self, filter: Arc<dyn ConnectionFilter>) -> Self {
+        self.connection_filter = Some(filter);
+        self
     }
 
     /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
@@ -426,6 +531,7 @@ impl RouterBuilder {
             .collect::<Vec<_>>();
 
         let protocols = Arc::new(self.protocols);
+        let connection_filter = self.connection_filter;
         self.endpoint.set_alpns(alpns);
 
         let mut join_set = JoinSet::new();
@@ -477,11 +583,57 @@ impl RouterBuilder {
                             break; // Endpoint is closed.
                         };
 
+                        let addr = incoming.remote_addr();
+                        if let Some(filter) = &connection_filter {
+                            match &addr {
+                                // Addr filter: direct connections only.
+                                IncomingAddr::Ip(socket_addr) => {
+                                    let validated = incoming.remote_addr_validated();
+                                    match filter.accept_addr(*socket_addr, validated) {
+                                        AcceptAddrOutcome::Accept => {}
+                                        AcceptAddrOutcome::Retry => {
+                                            if validated {
+                                                incoming.refuse();
+                                            } else if let Err(err) = incoming.retry() {
+                                                err.into_incoming().refuse();
+                                            }
+                                            continue;
+                                        }
+                                        AcceptAddrOutcome::Reject => {
+                                            incoming.refuse();
+                                            continue;
+                                        }
+                                        AcceptAddrOutcome::Ignore => {
+                                            incoming.ignore();
+                                            continue;
+                                        }
+                                    }
+                                }
+                                // Endpoint ID filter: relay connections only.
+                                // We have the endpoint ID from the relay frame,
+                                // before the TLS handshake.
+                                IncomingAddr::Relay { endpoint_id, .. } => {
+                                    match filter.accept_endpoint_id(*endpoint_id) {
+                                        AcceptOutcome::Accept => {}
+                                        AcceptOutcome::Reject => {
+                                            incoming.refuse();
+                                            continue;
+                                        }
+                                        AcceptOutcome::Ignore => {
+                                            incoming.ignore();
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         let protocols = protocols.clone();
+                        let filter = connection_filter.clone();
                         let token = handler_cancel_token.child_token();
                         let span = info_span!("router.accept", me=%endpoint.id().fmt_short(), remote=Empty, alpn=Empty);
                         join_set.spawn(async move {
-                            token.run_until_cancelled(handle_connection(incoming, protocols)).await
+                            token.run_until_cancelled(handle_connection(incoming, protocols, filter)).await
                         }.instrument(span));
                     },
                 }
@@ -515,7 +667,11 @@ impl RouterBuilder {
     }
 }
 
-async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
+async fn handle_connection(
+    incoming: crate::endpoint::Incoming,
+    protocols: Arc<ProtocolMap>,
+    filter: Option<Arc<dyn ConnectionFilter>>,
+) {
     let mut accepting = match incoming.accept() {
         Ok(conn) => conn,
         Err(err) => {
@@ -531,6 +687,7 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
         }
     };
     tracing::Span::current().record("alpn", String::from_utf8_lossy(&alpn).to_string());
+
     let Some(handler) = protocols.get(&alpn) else {
         warn!("Ignoring connection: unsupported ALPN protocol");
         return;
@@ -541,6 +698,23 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
                 "remote",
                 tracing::field::display(connection.remote_id().fmt_short()),
             );
+
+            // ALPN filter: runs after the connection is established for both
+            // relay and direct connections.
+            if let Some(filter) = &filter {
+                match filter.accept_alpn(connection.remote_id(), &alpn) {
+                    AcceptAlpnOutcome::Accept => {}
+                    AcceptAlpnOutcome::Close { error_code, reason } => {
+                        trace!(
+                            "Connection rejected by ALPN filter: endpoint {}",
+                            connection.remote_id().fmt_short()
+                        );
+                        connection.close(error_code, &reason);
+                        return;
+                    }
+                }
+            }
+
             if let Err(err) = handler.accept(connection).await {
                 warn!("Handling incoming connection ended with error: {err}");
             }
@@ -723,6 +897,242 @@ mod tests {
         e2.close().await;
 
         Ok(())
+    }
+
+    /// Test that `Accepting::remote_addr()` is consistent with `Incoming::remote_addr()`.
+    #[tokio::test]
+    async fn test_accepting_remote_addr() -> Result {
+        use crate::endpoint::IncomingAddr;
+
+        let e1 = Endpoint::empty_builder(RelayMode::Disabled)
+            .alpns(vec![ECHO_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let addr1 = e1.addr();
+
+        let e2 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+
+        // Spawn the client connect so it runs concurrently with accept.
+        let connect_task = tokio::spawn({
+            let addr1 = addr1.clone();
+            let e2 = e2.clone();
+            async move { e2.connect(addr1, ECHO_ALPN).await }
+        });
+
+        let incoming = e1.accept().await.expect("accept");
+        let incoming_addr = incoming.remote_addr();
+        assert!(matches!(incoming_addr, IncomingAddr::Ip(_)));
+
+        let accepting = incoming.accept().anyerr()?;
+        assert_eq!(incoming_addr, accepting.remote_addr());
+
+        // Clean up.
+        drop(accepting);
+        drop(connect_task);
+        e1.close().await;
+        e2.close().await;
+        Ok(())
+    }
+
+    mod connection_filter {
+        use std::{net::SocketAddr, sync::Arc, time::Duration};
+
+        use n0_error::{Result, StdResultExt};
+
+        use crate::{
+            Endpoint, EndpointAddr, RelayMode,
+            endpoint::ConnectError,
+            protocol::{
+                AcceptAddrOutcome, AcceptAlpnOutcome, AcceptOutcome, ConnectionFilter, Router,
+                tests::{ECHO_ALPN, Echo},
+            },
+        };
+
+        // -- Reusable filter impls --
+
+        /// Filter that returns a fixed outcome for every `accept_addr` call.
+        #[derive(Debug)]
+        struct AddrFilter(AcceptAddrOutcome);
+        impl ConnectionFilter for AddrFilter {
+            fn accept_addr(&self, _addr: SocketAddr, _validated: bool) -> AcceptAddrOutcome {
+                self.0
+            }
+        }
+
+        /// Filter that matches a specific endpoint ID and returns a fixed outcome.
+        #[derive(Debug)]
+        struct EndpointIdFilter(crate::EndpointId, AcceptOutcome);
+        impl ConnectionFilter for EndpointIdFilter {
+            fn accept_endpoint_id(&self, endpoint_id: crate::EndpointId) -> AcceptOutcome {
+                if endpoint_id == self.0 {
+                    self.1
+                } else {
+                    AcceptOutcome::Accept
+                }
+            }
+        }
+
+        /// Filter that matches a specific endpoint ID and closes with an error.
+        #[derive(Debug)]
+        struct AlpnFilter(crate::EndpointId);
+        impl ConnectionFilter for AlpnFilter {
+            fn accept_alpn(
+                &self,
+                endpoint_id: crate::EndpointId,
+                _alpn: &[u8],
+            ) -> AcceptAlpnOutcome {
+                if endpoint_id == self.0 {
+                    AcceptAlpnOutcome::close(0u32, b"not allowed")
+                } else {
+                    AcceptAlpnOutcome::Accept
+                }
+            }
+        }
+
+        // -- Setup helpers --
+
+        /// Two direct endpoints with a filtered router on the first.
+        async fn direct_pair(
+            filter: impl ConnectionFilter,
+        ) -> Result<(Router, Endpoint, EndpointAddr)> {
+            let e1 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+            let r1 = Router::builder(e1.clone())
+                .connection_filter(Arc::new(filter))
+                .accept(ECHO_ALPN, Echo)
+                .spawn();
+            let addr = r1.endpoint().addr();
+            let e2 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+            Ok((r1, e2, addr))
+        }
+
+        /// Two relay-only endpoints and a relay-only address for the server.
+        /// The caller wires up the filter using the returned endpoints.
+        async fn relay_endpoints()
+        -> Result<(Endpoint, Endpoint, crate::RelayUrl, impl std::any::Any)> {
+            let (_relay_map, relay_url, guard) =
+                crate::test_utils::run_relay_server().await.anyerr()?;
+            let relay_mode = RelayMode::Custom(crate::RelayMap::from(relay_url.clone()));
+
+            let e1 = Endpoint::empty_builder(relay_mode.clone())
+                .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+                .bind()
+                .await?;
+            let e2 = Endpoint::empty_builder(relay_mode)
+                .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+                .bind()
+                .await?;
+            Ok((e1, e2, relay_url, guard))
+        }
+
+        // -- accept_addr tests (direct only) --
+
+        #[tokio::test]
+        async fn addr_retry() -> Result {
+            let (r1, e2, addr) = direct_pair(AddrFilter(AcceptAddrOutcome::Retry)).await?;
+            // Server sends retry (unvalidated), then refuses (validated).
+            assert!(e2.connect(addr, ECHO_ALPN).await.is_err());
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn addr_reject() -> Result {
+            let (r1, e2, addr) = direct_pair(AddrFilter(AcceptAddrOutcome::Reject)).await?;
+            assert!(e2.connect(addr, ECHO_ALPN).await.is_err());
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn addr_ignore() -> Result {
+            let (r1, e2, addr) = direct_pair(AddrFilter(AcceptAddrOutcome::Ignore)).await?;
+            // No response at all — connect times out.
+            let result =
+                tokio::time::timeout(Duration::from_millis(500), e2.connect(addr, ECHO_ALPN)).await;
+            assert!(result.is_err(), "expected timeout");
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        // -- accept_endpoint_id tests (relay only) --
+
+        #[tokio::test]
+        async fn endpoint_id_reject() -> Result {
+            let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
+            let r1 = Router::builder(e1.clone())
+                .connection_filter(Arc::new(EndpointIdFilter(e2.id(), AcceptOutcome::Reject)))
+                .accept(ECHO_ALPN, Echo)
+                .spawn();
+            let addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
+
+            let result: Result<_, ConnectError> = e2.connect(addr, ECHO_ALPN).await;
+            assert!(result.is_err());
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn endpoint_id_ignore() -> Result {
+            let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
+            let r1 = Router::builder(e1.clone())
+                .connection_filter(Arc::new(EndpointIdFilter(e2.id(), AcceptOutcome::Ignore)))
+                .accept(ECHO_ALPN, Echo)
+                .spawn();
+            let addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
+
+            let result =
+                tokio::time::timeout(Duration::from_millis(500), e2.connect(addr, ECHO_ALPN)).await;
+            assert!(result.is_err(), "expected timeout");
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        // -- accept_alpn tests (both paths) --
+
+        #[tokio::test]
+        async fn alpn_close_direct() -> Result {
+            let e1 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+            let e2 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+            let r1 = Router::builder(e1.clone())
+                .connection_filter(Arc::new(AlpnFilter(e2.id())))
+                .accept(ECHO_ALPN, Echo)
+                .spawn();
+            let addr = r1.endpoint().addr();
+
+            // Connection succeeds (ALPN filter runs post-handshake), but streams fail.
+            let conn = e2.connect(addr, ECHO_ALPN).await?;
+            let (_send, mut recv) = conn.open_bi().await.anyerr()?;
+            let err = recv.read_to_end(1000).await.unwrap_err();
+            assert!(format!("{err:#?}").contains("not allowed"));
+
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn alpn_close_relay() -> Result {
+            let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
+            let r1 = Router::builder(e1.clone())
+                .connection_filter(Arc::new(AlpnFilter(e2.id())))
+                .accept(ECHO_ALPN, Echo)
+                .spawn();
+            let addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
+
+            let conn = e2.connect(addr, ECHO_ALPN).await?;
+            let (_send, mut recv) = conn.open_bi().await.anyerr()?;
+            let err = recv.read_to_end(1000).await.unwrap_err();
+            assert!(format!("{err:#?}").contains("not allowed"));
+
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
     }
 
     #[tokio::test]
