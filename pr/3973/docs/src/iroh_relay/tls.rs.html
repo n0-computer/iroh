@@ -33,7 +33,7 @@
 <a href=#33 id=33 data-nosnippet>33</a>    <span class="doccomment">/// Use the operating system's certificate facilities for verifying the validity of TLS certificates.
 <a href=#34 id=34 data-nosnippet>34</a>    ///
 <a href=#35 id=35 data-nosnippet>35</a>    /// See [`rustls_platform_verifier`] for details how roots are retrieved on different platforms.
-<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="attr">#[cfg(feature = <span class="string">"tls-system-certs"</span>)]
+<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="attr">#[cfg(feature = <span class="string">"platform-verifier"</span>)]
 <a href=#37 id=37 data-nosnippet>37</a>    </span>System,
 <a href=#38 id=38 data-nosnippet>38</a>    <span class="doccomment">/// Only trust explicitly set root certificates.
 <a href=#39 id=39 data-nosnippet>39</a>    </span>ExtraRootsOnly,
@@ -60,7 +60,7 @@
 <a href=#60 id=60 data-nosnippet>60</a>    ///
 <a href=#61 id=61 data-nosnippet>61</a>    /// Note: Additional certificates added via [`Self::with_extra_roots`] will be ignored on Android due to
 <a href=#62 id=62 data-nosnippet>62</a>    /// missing support in [`rustls`].
-<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="attr">#[cfg(feature = <span class="string">"tls-system-certs"</span>)]
+<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="attr">#[cfg(feature = <span class="string">"platform-verifier"</span>)]
 <a href=#64 id=64 data-nosnippet>64</a>    </span><span class="kw">pub fn </span>system() -&gt; <span class="self">Self </span>{
 <a href=#65 id=65 data-nosnippet>65</a>        <span class="self">Self </span>{
 <a href=#66 id=66 data-nosnippet>66</a>            mode: Mode::System,
@@ -112,7 +112,7 @@
 <a href=#112 id=112 data-nosnippet>112</a>        crypto_provider: Arc&lt;CryptoProvider&gt;,
 <a href=#113 id=113 data-nosnippet>113</a>    ) -&gt; io::Result&lt;Arc&lt;<span class="kw">dyn </span>ServerCertVerifier&gt;&gt; {
 <a href=#114 id=114 data-nosnippet>114</a>        <span class="prelude-val">Ok</span>(<span class="kw">match </span><span class="self">self</span>.mode {
-<a href=#115 id=115 data-nosnippet>115</a>            <span class="attr">#[cfg(feature = <span class="string">"tls-system-certs"</span>)]
+<a href=#115 id=115 data-nosnippet>115</a>            <span class="attr">#[cfg(feature = <span class="string">"platform-verifier"</span>)]
 <a href=#116 id=116 data-nosnippet>116</a>            </span>Mode::System =&gt; {
 <a href=#117 id=117 data-nosnippet>117</a>                <span class="attr">#[cfg(not(target_os = <span class="string">"android"</span>))]
 <a href=#118 id=118 data-nosnippet>118</a>                </span><span class="kw">let </span>verifier = rustls_platform_verifier::Verifier::new_with_extra_roots(
