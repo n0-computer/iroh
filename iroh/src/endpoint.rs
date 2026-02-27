@@ -11,9 +11,7 @@
 //!
 //! [module docs]: crate
 
-#[cfg(not(wasm_browser))]
-use std::net::SocketAddr;
-use std::{pin::Pin, sync::Arc};
+use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
