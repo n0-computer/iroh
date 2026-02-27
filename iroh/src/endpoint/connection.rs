@@ -188,7 +188,6 @@ impl Incoming {
     /// Returns the remote address of this incoming connection.
     pub fn remote_addr(&self) -> IncomingAddr {
         self.ep
-            .inner
             .to_transport_addr(self.inner.remote_address())
             .into()
     }
@@ -616,7 +615,6 @@ impl Accepting {
     /// Returns the remote address of this connection.
     pub fn remote_addr(&self) -> IncomingAddr {
         self.ep
-            .inner
             .to_transport_addr(self.inner.remote_address())
             .into()
     }
@@ -1241,6 +1239,7 @@ mod tests {
     use std::time::Duration;
 
     use iroh_base::{EndpointAddr, SecretKey};
+    use iroh_relay::tls::CaRootsConfig;
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::StreamExt;
     use n0_tracing_test::traced_test;
@@ -1471,14 +1470,14 @@ mod tests {
         let (relay_map, _relay_map, _guard) = run_relay_server().await?;
         let server = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
-            .insecure_skip_relay_cert_verify(true)
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
 
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
-            .insecure_skip_relay_cert_verify(true)
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
 

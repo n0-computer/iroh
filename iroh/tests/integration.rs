@@ -89,8 +89,9 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
         tracing::info!(
             "start timeout waiting for records to be published, waiting for {endpoint_id} address lookup"
         );
+        let tls_config = server.tls_config().clone();
         async move {
-            let resolver = PkarrResolver::n0_dns().build();
+            let resolver = PkarrResolver::n0_dns().build(tls_config);
             loop {
                 // Very rudimentary non-backoff algorithm
                 time::sleep(Duration::from_secs(1)).await;

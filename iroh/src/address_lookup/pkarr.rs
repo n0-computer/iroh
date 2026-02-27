@@ -205,7 +205,7 @@ impl PkarrPublisherBuilder {
     /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
     ///
     /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
-    pub fn build(self, secret_key: SecretKey) -> PkarrPublisher {
+    pub fn build(self, secret_key: SecretKey, tls_config: rustls::ClientConfig) -> PkarrPublisher {
         PkarrPublisher::new(
             secret_key,
             self.pkarr_relay,
@@ -213,6 +213,7 @@ impl PkarrPublisherBuilder {
             self.republish_interval,
             #[cfg(not(wasm_browser))]
             self.dns_resolver,
+            tls_config,
         )
     }
 }
@@ -226,8 +227,8 @@ impl IntoAddressLookup for PkarrPublisherBuilder {
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
         }
-
-        Ok(self.build(endpoint.secret_key().clone()))
+        let tls_config = endpoint.tls_config().clone();
+        Ok(self.build(endpoint.secret_key().clone(), tls_config))
     }
 }
 
@@ -279,18 +280,19 @@ impl PkarrPublisher {
         ttl: u32,
         republish_interval: Duration,
         #[cfg(not(wasm_browser))] dns_resolver: Option<DnsResolver>,
+        tls_config: rustls::ClientConfig,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let endpoint_id = secret_key.public();
 
         #[cfg(wasm_browser)]
-        let pkarr_client = PkarrRelayClient::new(pkarr_relay);
+        let pkarr_client = PkarrRelayClient::new(pkarr_relay, tls_config);
 
         #[cfg(not(wasm_browser))]
         let pkarr_client = if let Some(dns_resolver) = dns_resolver {
-            PkarrRelayClient::with_dns_resolver(pkarr_relay, dns_resolver)
+            PkarrRelayClient::with_dns_resovler(pkarr_relay, tls_config, dns_resolver)
         } else {
-            PkarrRelayClient::new(pkarr_relay)
+            PkarrRelayClient::new(pkarr_relay, tls_config)
         };
 
         let watchable = Watchable::default();
@@ -436,15 +438,15 @@ impl PkarrResolverBuilder {
     }
 
     /// Creates a [`PkarrResolver`] from this builder.
-    pub fn build(self) -> PkarrResolver {
+    pub fn build(self, tls_config: rustls::ClientConfig) -> PkarrResolver {
         #[cfg(wasm_browser)]
-        let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
+        let pkarr_client = PkarrRelayClient::new(self.pkarr_relay, tls_config);
 
         #[cfg(not(wasm_browser))]
         let pkarr_client = if let Some(dns_resolver) = self.dns_resolver {
-            PkarrRelayClient::with_dns_resolver(self.pkarr_relay, dns_resolver)
+            PkarrRelayClient::with_dns_resovler(self.pkarr_relay, tls_config, dns_resolver)
         } else {
-            PkarrRelayClient::new(self.pkarr_relay)
+            PkarrRelayClient::new(self.pkarr_relay, tls_config)
         };
 
         PkarrResolver { pkarr_client }
@@ -460,8 +462,8 @@ impl IntoAddressLookup for PkarrResolverBuilder {
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
         }
-
-        Ok(self.build())
+        let tls_config = endpoint.tls_config().clone();
+        Ok(self.build(tls_config))
     }
 }
 
@@ -544,9 +546,9 @@ pub struct PkarrRelayClient {
 
 impl PkarrRelayClient {
     /// Creates a new client.
-    pub fn new(pkarr_relay_url: Url) -> Self {
+    pub fn new(pkarr_relay_url: Url, tls_config: rustls::ClientConfig) -> Self {
         Self {
-            http_client: reqwest_client_builder()
+            http_client: reqwest_client_builder(Some(tls_config))
                 .build()
                 .expect("failed to create reqwest client"),
             pkarr_relay_url,
@@ -555,8 +557,12 @@ impl PkarrRelayClient {
 
     /// Creates a new client while passing a DNS resolver to use.
     #[cfg(not(wasm_browser))]
-    pub fn with_dns_resolver(pkarr_relay_url: Url, dns_resolver: crate::dns::DnsResolver) -> Self {
-        let http_client = reqwest_client_builder()
+    pub fn with_dns_resovler(
+        pkarr_relay_url: Url,
+        tls_config: rustls::ClientConfig,
+        dns_resolver: crate::dns::DnsResolver,
+    ) -> Self {
+        let http_client = reqwest_client_builder(Some(tls_config))
             .dns_resolver(Arc::new(dns_resolver))
             .build()
             .expect("failed to create request client");

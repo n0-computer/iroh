@@ -1014,11 +1014,11 @@ mod tests {
             let relay_mode = RelayMode::Custom(crate::RelayMap::from(relay_url.clone()));
 
             let e1 = Endpoint::empty_builder(relay_mode.clone())
-                .insecure_skip_relay_cert_verify(true)
+                .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
                 .bind()
                 .await?;
             let e2 = Endpoint::empty_builder(relay_mode)
-                .insecure_skip_relay_cert_verify(true)
+                .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
                 .bind()
                 .await?;
             Ok((e1, e2, relay_url, guard))

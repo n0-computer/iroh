@@ -138,14 +138,12 @@ pub(crate) struct Options {
     /// Proxy configuration.
     pub(crate) proxy_url: Option<Url>,
 
+    /// TLS configuration for HTTPS and non-iroh-QUIC connections.
+    pub(crate) tls_config: rustls::ClientConfig,
+
     /// ServerConfig for the internal QUIC endpoint
     pub(crate) server_config: quinn_proto::ServerConfig,
 
-    /// Skip verification of SSL certificates from relay servers
-    ///
-    /// May only be used in tests.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) insecure_skip_relay_cert_verify: bool,
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
 
@@ -303,6 +301,8 @@ pub(crate) struct Socket {
     address_lookup: address_lookup::ConcurrentAddressLookup,
     /// Optional user-defined discover data.
     address_lookup_user_data: RwLock<Option<UserData>>,
+
+    pub(crate) tls_config: rustls::ClientConfig,
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
@@ -745,6 +745,8 @@ pub enum BindError {
     CreateNetmonMonitor { source: netmon::Error },
     #[error("Invalid transport configuration")]
     InvalidTransportConfig,
+    #[error("Invalid CA root configuration")]
+    InvalidCaRootConfig { source: io::Error },
     #[error("Failed to create an address lookup service")]
     AddressLookup {
         #[error(from)]
@@ -763,8 +765,7 @@ impl EndpointInner {
             dns_resolver,
             proxy_url,
             server_config,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
+            tls_config,
             metrics,
             hooks,
             static_config,
@@ -807,8 +808,7 @@ impl EndpointInner {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
+            tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
         };
 
@@ -882,6 +882,7 @@ impl EndpointInner {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            tls_config: tls_config.clone(),
             hooks,
         });
 
@@ -910,17 +911,6 @@ impl EndpointInner {
             .await
             .map_err(|err| e!(BindError::CreateNetmonMonitor, err))?;
 
-        #[cfg(any(test, feature = "test-utils"))]
-        let client_config = if insecure_skip_relay_cert_verify {
-            iroh_relay::client::make_dangerous_client_config()
-        } else {
-            default_quic_client_config()
-        };
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let client_config = default_quic_client_config();
-
-        let net_report_config = net_report::Options::default();
-
         #[cfg(not(wasm_browser))]
         let net_report_config = {
             // Set a `QuicConfig` for address discovery (QAD), but only if we have IP transports.
@@ -931,16 +921,15 @@ impl EndpointInner {
             // because all outgoing packets to IP destinations would be dropped.
             let qad_config = has_ip_transports.then(|| QuicConfig {
                 ep: endpoint.clone(),
-                client_config,
+                client_config: tls_config.clone(),
                 ipv4: true,
                 ipv6: has_ipv6_transport,
             });
-            net_report_config.quic_config(qad_config)
+            net_report::Options::new(tls_config.clone()).quic_config(qad_config)
         };
 
-        #[cfg(any(test, feature = "test-utils"))]
-        let net_report_config =
-            net_report_config.insecure_skip_relay_cert_verify(insecure_skip_relay_cert_verify);
+        #[cfg(wasm_browser)]
+        let net_report_config = net_report::Options::default();
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
@@ -1219,19 +1208,6 @@ impl EndpointInner {
             rx.await.map_err(|_| RemoteStateActorStoppedError::new())
         }
     }
-}
-
-fn default_quic_client_config() -> rustls::ClientConfig {
-    // create a client config for the endpoint to use for QUIC address discovery
-    let root_store =
-        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    rustls::client::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .expect("ring supports these")
-    .with_root_certificates(root_store)
-    .with_no_client_auth()
 }
 
 #[derive(derive_more::Debug)]
@@ -1759,6 +1735,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
+    use iroh_relay::tls::{CaRootsConfig, default_provider};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_tracing_test::traced_test;
@@ -1799,8 +1776,9 @@ mod tests {
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
             server_config,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: false,
+            tls_config: CaRootsConfig::default()
+                .client_config(default_provider())
+                .unwrap(),
             #[cfg(any(test, feature = "test-utils"))]
             address_lookup_user_data: None,
             metrics: Default::default(),
@@ -2195,7 +2173,9 @@ mod tests {
             dns_resolver,
             proxy_url: None,
             server_config,
-            insecure_skip_relay_cert_verify: false,
+            tls_config: CaRootsConfig::default()
+                .client_config(default_provider())
+                .unwrap(),
             metrics: Default::default(),
             hooks: Default::default(),
             static_config,
