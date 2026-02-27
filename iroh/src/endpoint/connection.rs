@@ -54,7 +54,7 @@ use crate::{
 ///
 /// When the incoming connection is a direct connection, this is a SocketAddr.
 /// When it is a relay connection, we know both the relay URL and the endpoint ID.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IncomingAddr {
     /// A direct connection from an IP address.
@@ -189,7 +189,7 @@ impl Incoming {
     /// Returns the remote address of this incoming connection.
     pub fn remote_addr(&self) -> IncomingAddr {
         self.ep
-            .sock
+            .inner
             .to_transport_addr(self.inner.remote_address())
             .into()
     }
@@ -615,9 +615,9 @@ impl Accepting {
     }
 
     /// Returns the remote address of this connection.
-    pub fn remote_address(&self) -> IncomingAddr {
+    pub fn remote_addr(&self) -> IncomingAddr {
         self.ep
-            .sock
+            .inner
             .to_transport_addr(self.inner.remote_address())
             .into()
     }
