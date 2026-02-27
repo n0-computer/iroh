@@ -8,11 +8,16 @@ use rustls::{
 };
 use webpki_types::CertificateDer;
 
-/// Configures the trust roots for verifying the validity of TLS certificates.
+/// Configures the trusted CA root certificates for non-iroh TLS connections.
 ///
-/// This is used throughout iroh whenever TLS connections are established that are not iroh connections.
+/// These roots are used whenever iroh establishes standard TLS connections to
+/// external services, such as iroh relays, pkarr servers, or DNS-over-HTTPS
+/// resolvers.
 ///
-/// This includes the connection to iroh relays, to pkarr servers, and DNS resolution over HTTPS.
+/// The configured Certificate Authority (CA) roots are only used for verifying
+/// the validity of TLS certificates presented by those external services. These
+/// CAs don't need to be trusted for the integrity or authenticity of native
+/// iroh connections, which rely on iroh's own cryptographic authentication mechanisms.
 #[derive(Debug, Clone)]
 pub struct CaRootsConfig {
     mode: Mode,
@@ -25,9 +30,10 @@ enum Mode {
     ///
     /// See [`webpki_roots`].
     EmbeddedWebPki,
-    /// Use the operating system’s certificate facilities for verifying the validity of TLS certificates.
+    /// Use the operating system's certificate facilities for verifying the validity of TLS certificates.
     ///
     /// See [`rustls_platform_verifier`] for details how roots are retrieved on different platforms.
+    #[cfg(feature = "tls-system-certs")]
     System,
     /// Only trust explicitly set root certificates.
     ExtraRootsOnly,
@@ -48,9 +54,10 @@ impl Default for CaRootsConfig {
 }
 
 impl CaRootsConfig {
-    /// Use the operating system’s certificate facilities for verifying the validity of TLS certificates.
+    /// Use the operating system's certificate facilities for verifying the validity of TLS certificates.
     ///
     /// See [`rustls_platform_verifier`] for details how roots are retrieved on different platforms.
+    #[cfg(feature = "tls-system-certs")]
     pub fn system() -> Self {
         Self {
             mode: Mode::System,
@@ -105,6 +112,7 @@ impl CaRootsConfig {
         crypto_provider: Arc<CryptoProvider>,
     ) -> io::Result<Arc<dyn ServerCertVerifier>> {
         Ok(match self.mode {
+            #[cfg(feature = "tls-system-certs")]
             Mode::System => {
                 #[cfg(not(target_os = "android"))]
                 let verifier = rustls_platform_verifier::Verifier::new_with_extra_roots(

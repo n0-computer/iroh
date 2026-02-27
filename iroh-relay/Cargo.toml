@@ -19,7 +19,9 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
+blake3 = "1.8.2"
 bytes = "1.11"
+data-encoding = "2.6.0"
 derive_more = { version = "2.0.1", features = [
     "debug",
     "display",
@@ -33,6 +35,8 @@ hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 iroh-base = { version = "0.96.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.38", default-features = false }
+lru = "0.16.3"
+n0-error = "0.1"
 n0-future = "0.3"
 num_enum = "0.7"
 pin-project = "1"
@@ -49,7 +53,9 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
+rustls-platform-verifier = { version = "0.6.2", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
+serde_bytes = "0.11.17"
 strum = { version = "0.27", features = ["derive"] }
 tokio = { version = "1", features = [
     "io-util",
@@ -66,10 +72,7 @@ tracing = "0.1"
 url = { version = "2.5.3", features = ["serde"] }
 webpki-roots = "1.0.3"
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
-data-encoding = "2.6.0"
-lru = "0.16.3"
 z32 = "1.0.3"
-n0-error = "0.1"
 
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }
@@ -89,9 +92,6 @@ serde_json = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
-blake3 = "1.8.2"
-serde_bytes = "0.11.17"
-rustls-platform-verifier = "0.6.2"
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
@@ -138,6 +138,8 @@ vergen-gitcl = "1.0.8"
 
 [features]
 default = ["metrics"]
+# Enables fetching TLS trust anchors from the operating system
+tls-system-certs = ["dep:rustls-platform-verifier"]
 server = [
     "metrics",
     "dep:clap",

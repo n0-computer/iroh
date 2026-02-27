@@ -1424,14 +1424,14 @@ mod tests {
         let (relay_map, _relay_map, _guard) = run_relay_server().await?;
         let server = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
-            .ca_root_config(CaRootsConfig::insecure_skip_verify())
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
 
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
-            .ca_root_config(CaRootsConfig::insecure_skip_verify())
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
 

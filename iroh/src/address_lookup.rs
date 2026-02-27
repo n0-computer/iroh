@@ -977,7 +977,7 @@ mod test_dns_pkarr {
     ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
         let secret_key = SecretKey::generate(rng);
         let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .ca_root_config(CaRootsConfig::insecure_skip_verify())
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .preset(dns_pkarr_server.preset())
