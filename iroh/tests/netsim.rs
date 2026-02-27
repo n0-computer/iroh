@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use iroh::{
     Endpoint, EndpointAddr, RelayMap, RelayMode, Watcher,
-    endpoint::{Connection, PathInfo, PathWatcher, QuicTransportConfig},
+    endpoint::{Connection, PathInfo, PathWatcher},
     tls::CaRootsConfig,
 };
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
@@ -356,18 +356,23 @@ async fn match_selected_path(
 }
 
 fn endpoint_builder(relay_map: RelayMap) -> iroh::endpoint::Builder {
-    let name = tracing::Span::current()
-        .metadata()
-        .map(|m| m.name())
-        .unwrap_or("ep");
+    #[allow(unused_mut)]
     let mut builder = Endpoint::empty_builder(RelayMode::Custom(relay_map))
         .ca_roots_config(CaRootsConfig::insecure_skip_verify())
         .alpns(vec![TEST_ALPN.to_vec()]);
+
     #[cfg(feature = "qlog")]
     {
-        let transport_config = QuicTransportConfig::builder().qlog_from_env(name).build();
+        let name = tracing::Span::current()
+            .metadata()
+            .map(|m| m.name())
+            .unwrap_or("ep");
+        let transport_config = iroh::endpoint::QuicTransportConfig::builder()
+            .qlog_from_env(name)
+            .build();
         builder = builder.transport_config(transport_config);
     }
+
     builder
 }
 
