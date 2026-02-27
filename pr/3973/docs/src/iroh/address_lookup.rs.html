@@ -977,7 +977,7 @@
 <a href=#977 id=977 data-nosnippet>977</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
 <a href=#978 id=978 data-nosnippet>978</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
 <a href=#979 id=979 data-nosnippet>979</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-<a href=#980 id=980 data-nosnippet>980</a>            .ca_root_config(CaRootsConfig::insecure_skip_verify())
+<a href=#980 id=980 data-nosnippet>980</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
 <a href=#981 id=981 data-nosnippet>981</a>            .secret_key(secret_key.clone())
 <a href=#982 id=982 data-nosnippet>982</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#983 id=983 data-nosnippet>983</a>            .preset(dns_pkarr_server.preset())
