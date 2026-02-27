@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["KeyParsingError","TransportAddr"],"struct":["CustomAddr","EndpointAddr","PublicKey","RelayUrl","RelayUrlParseError","SecretKey","Signature","SignatureError"],"type":["EndpointId"]};
