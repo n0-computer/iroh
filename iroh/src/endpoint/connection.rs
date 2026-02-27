@@ -27,7 +27,7 @@ use std::{
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
-use iroh_base::EndpointId;
+use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use pin_project::pin_project;
@@ -47,8 +47,45 @@ use crate::{
     socket::{
         RemoteStateActorStoppedError,
         remote_map::{PathInfo, PathWatchable, PathWatcher},
+        transports,
     },
 };
+
+/// The remote address for an incoming connection.
+///
+/// When the incoming connection is a direct connection, this is a SocketAddr.
+/// When it is a relay connection, we know both the relay URL and the endpoint ID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IncomingAddr {
+    /// A direct connection from an IP address.
+    Ip(SocketAddr),
+    /// A connection via a relay.
+    Relay {
+        /// The URL of the relay.
+        url: RelayUrl,
+        /// The endpoint ID of the remote peer.
+        endpoint_id: EndpointId,
+    },
+}
+
+impl From<IncomingAddr> for iroh_base::TransportAddr {
+    fn from(addr: IncomingAddr) -> Self {
+        match addr {
+            IncomingAddr::Ip(addr) => Self::Ip(addr),
+            IncomingAddr::Relay { url, .. } => Self::Relay(url),
+        }
+    }
+}
+
+impl From<transports::Addr> for IncomingAddr {
+    fn from(addr: transports::Addr) -> Self {
+        match addr {
+            transports::Addr::Ip(addr) => Self::Ip(addr),
+            transports::Addr::Relay(url, endpoint_id) => Self::Relay { url, endpoint_id },
+        }
+    }
+}
 
 /// Future produced by [`Endpoint::accept`].
 #[derive(derive_more::Debug)]
@@ -148,16 +185,19 @@ impl Incoming {
         self.inner.local_ip()
     }
 
-    /// Returns the peer's UDP address.
-    pub fn remote_address(&self) -> SocketAddr {
-        self.inner.remote_address()
+    /// Returns the remote address of this incoming connection.
+    pub fn remote_addr(&self) -> IncomingAddr {
+        self.ep
+            .inner
+            .to_transport_addr(self.inner.remote_address())
+            .into()
     }
 
     /// Whether the socket address that is initiating this connection has been validated.
     ///
     /// This means that the sender of the initial packet has proved that they can receive
-    /// traffic sent to `self.remote_address()`.
-    pub fn remote_address_validated(&self) -> bool {
+    /// traffic sent to `self.remote_addr()`.
+    pub fn remote_addr_validated(&self) -> bool {
         self.inner.remote_address_validated()
     }
 }
@@ -571,6 +611,14 @@ impl Accepting {
             inner: quinn_conn,
             data: IncomingZeroRttData { accepted },
         }
+    }
+
+    /// Returns the remote address of this connection.
+    pub fn remote_addr(&self) -> IncomingAddr {
+        self.ep
+            .inner
+            .to_transport_addr(self.inner.remote_address())
+            .into()
     }
 
     /// Parameters negotiated during the handshake
