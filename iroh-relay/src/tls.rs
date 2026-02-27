@@ -56,7 +56,10 @@ impl Default for CaRootsConfig {
 impl CaRootsConfig {
     /// Use the operating system's certificate facilities for verifying the validity of TLS certificates.
     ///
-    /// See [`rustls_platform_verifier`] for details how roots are retrieved on different platforms.
+    /// See [`rustls_platform_verifier`] for details how trust anchors are retrieved on different platforms.
+    ///
+    /// Note: Additional certificates added via [`Self::with_extra_roots`] will be ignored on Android due to
+    /// missing support in [`rustls`].
     #[cfg(feature = "tls-system-certs")]
     pub fn system() -> Self {
         Self {
@@ -67,7 +70,7 @@ impl CaRootsConfig {
 
     /// Use a compiled-in copy of the root certificates trusted by Mozilla.
     ///
-    /// See [`webpki_roots`].
+    /// See [`webpki_roots`] for details.
     pub fn embedded() -> Self {
         Self {
             mode: Mode::EmbeddedWebPki,
@@ -95,9 +98,6 @@ impl CaRootsConfig {
     }
 
     /// Add additional root certificates to the list of trusted certificates.
-    ///
-    /// Note: When used with [`Self::system`], the extra certificates will be ignored on Android
-    /// due to missing support in `rustls`.
     pub fn with_extra_roots(
         mut self,
         extra_roots: impl IntoIterator<Item = CertificateDer<'static>>,
