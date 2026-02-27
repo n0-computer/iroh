@@ -80,12 +80,12 @@ use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{Instrument, debug, error, info_span, trace, warn};
 
-use super::IntoAddressLookup;
+use super::AddressLookupBuilder;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddrFilter, AddressLookup, EndpointData, EndpointInfo, Error as AddressLookupError,
-        IntoAddressLookupError, Item as AddressLookupItem,
+        AddrFilter, AddressLookup, AddressLookupBuilderError, EndpointData, EndpointInfo,
+        Error as AddressLookupError, Item as AddressLookupItem,
     },
 };
 
@@ -223,7 +223,7 @@ impl MdnsAddressLookupBuilder {
     pub fn build(
         self,
         endpoint_id: EndpointId,
-    ) -> Result<MdnsAddressLookup, IntoAddressLookupError> {
+    ) -> Result<MdnsAddressLookup, AddressLookupBuilderError> {
         MdnsAddressLookup::new(endpoint_id, self.advertise, self.service_name, self.filter)
     }
 }
@@ -234,11 +234,11 @@ impl Default for MdnsAddressLookupBuilder {
     }
 }
 
-impl IntoAddressLookup for MdnsAddressLookupBuilder {
+impl AddressLookupBuilder for MdnsAddressLookupBuilder {
     fn into_address_lookup(
         self,
         endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         self.build(endpoint.id())
     }
 
@@ -286,7 +286,7 @@ impl MdnsAddressLookup {
         advertise: bool,
         service_name: String,
         filter: AddrFilter,
-    ) -> Result<Self, IntoAddressLookupError> {
+    ) -> Result<Self, AddressLookupBuilderError> {
         debug!("Creating new Mdns service");
         let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
@@ -492,7 +492,7 @@ impl MdnsAddressLookup {
         socketaddrs: BTreeSet<SocketAddr>,
         service_name: String,
         rt: &tokio::runtime::Handle,
-    ) -> Result<DropGuard, IntoAddressLookupError> {
+    ) -> Result<DropGuard, AddressLookupBuilderError> {
         let spawn_rt = rt.clone();
         let callback = move |endpoint_id: &str, peer: &Peer| {
             trace!(endpoint_id, ?peer, "Received peer information from Mdns");
@@ -521,7 +521,7 @@ impl MdnsAddressLookup {
         }
         discoverer
             .spawn(rt)
-            .map_err(|e| IntoAddressLookupError::from_err("mdns", e))
+            .map_err(|e| AddressLookupBuilderError::from_err("mdns", e))
     }
 
     fn socketaddrs_to_addrs<'a>(

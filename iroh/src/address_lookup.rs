@@ -24,7 +24,7 @@
 //! but may only publish a subset of them based on its own constraints.
 //!
 //! To control which addresses are published to a particular service, you can supply an
-//! [`AddrFilter`] when configuring it via [`IntoAddressLookup::with_addr_filter`].  The filter
+//! [`AddrFilter`] when configuring it via [`AddressLookupBuilder::with_addr_filter`].  The filter
 //! receives the full set of addresses and returns an ordered [`Vec`], allowing you to both
 //! remove addresses you don't want published and prioritize the ones you do Each service
 //! may apply additional filtering on top based on its own constraints, but will not publish
@@ -53,15 +53,15 @@
 //! This will use [`ConcurrentAddressLookup`] under the hood, which performs lookups to all
 //! Address Lookupsystems at the same time.
 //!
-//! [`Builder::address_lookup`] takes any type that implements [`IntoAddressLookup`]. You can
+//! [`Builder::address_lookup`] takes any type that implements [`AddressLookupBuilder`]. You can
 //! implement that trait on a builder struct if your Address Lookup needs information
 //! from the endpoint it is mounted on. After endpoint construction, your Address Lookup
-//! is built by calling [`IntoAddressLookup::into_address_lookup`], passing the finished [`Endpoint`] to your
+//! is built by calling [`AddressLookupBuilder::into_address_lookup`], passing the finished [`Endpoint`] to your
 //! builder.
 //!
 //! If your Address Lookupdoes not need any information from its endpoint, you can
 //! pass the Address Lookupservice directly to [`Builder::address_lookup`]: All types that
-//! implement [`AddressLookup`] also have a blanket implementation of [`IntoAddressLookup`].
+//! implement [`AddressLookup`] also have a blanket implementation of [`AddressLookupBuilder`].
 //!
 //! # Examples
 //!
@@ -151,21 +151,21 @@ pub use pkarr::*;
 /// This trait is implemented on builders for Address Lookup's. Any type that implements this
 /// trait can be added as a Address Lookup in [`Builder::address_lookup`].
 ///
-/// Any type that implements [`AddressLookup`] also implements [`IntoAddressLookup`].
+/// Any type that implements [`AddressLookup`] also implements [`AddressLookupBuilder`].
 ///
 /// Iroh uses this trait to allow configuring the set of address lookup services on
 /// the endpoint builder, while also providing them access to information about the
-/// endpoint to [`IntoAddressLookup::into_address_lookup`].
+/// endpoint to [`AddressLookupBuilder::into_address_lookup`].
 ///
 /// [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
-pub trait IntoAddressLookup: Send + Sync + std::fmt::Debug + 'static {
+pub trait AddressLookupBuilder: Send + Sync + std::fmt::Debug + 'static {
     /// Turns this AddressLookup builder into a ready-to-use Address Lookup.
     ///
     /// If an error is returned, building the endpoint will fail with this error.
     fn into_address_lookup(
         self,
         endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError>;
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError>;
 
     /// Sets a filter to control which addresses are published by this service
     ///           
@@ -178,12 +178,12 @@ pub trait IntoAddressLookup: Send + Sync + std::fmt::Debug + 'static {
         Self: Sized;
 }
 
-/// Blanket no-op impl of `IntoAddressLookup` for `T: AddressLookup`.
-impl<T: AddressLookup> IntoAddressLookup for T {
+/// Blanket no-op impl of `AddressLookupBuilder` for `T: AddressLookup`.
+impl<T: AddressLookup> AddressLookupBuilder for T {
     fn into_address_lookup(
         self,
         _endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         Ok(self)
     }
 
@@ -195,31 +195,31 @@ impl<T: AddressLookup> IntoAddressLookup for T {
     }
 }
 
-/// Non-public dyn-compatible version of [`IntoAddressLookup`], used in [`crate::endpoint::Builder`].
-pub(crate) trait DynIntoAddressLookup: Send + Sync + std::fmt::Debug + 'static {
-    /// See [`IntoAddressLookup::into_address_lookup`]
+/// Non-public dyn-compatible version of [`AddressLookupBuilder`], used in [`crate::endpoint::Builder`].
+pub(crate) trait DynAddressLookupBuilder: Send + Sync + std::fmt::Debug + 'static {
+    /// See [`AddressLookupBuilder::into_address_lookup`]
     fn into_address_lookup(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn AddressLookup>, IntoAddressLookupError>;
+    ) -> Result<Box<dyn AddressLookup>, AddressLookupBuilderError>;
 }
 
-impl<T: IntoAddressLookup> DynIntoAddressLookup for T {
+impl<T: AddressLookupBuilder> DynAddressLookupBuilder for T {
     fn into_address_lookup(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn AddressLookup>, IntoAddressLookupError> {
+    ) -> Result<Box<dyn AddressLookup>, AddressLookupBuilderError> {
         let addr_lookup: Box<dyn AddressLookup> =
-            Box::new(IntoAddressLookup::into_address_lookup(*self, endpoint)?);
+            Box::new(AddressLookupBuilder::into_address_lookup(*self, endpoint)?);
         Ok(addr_lookup)
     }
 }
 
-/// [`IntoAddressLookup`] errors
+/// [`AddressLookupBuilder`] errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
-pub enum IntoAddressLookupError {
+pub enum AddressLookupBuilderError {
     #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
@@ -229,13 +229,13 @@ pub enum IntoAddressLookupError {
     EndpointClosed { source: EndpointError },
 }
 
-impl IntoAddressLookupError {
+impl AddressLookupBuilderError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
         provenance: &'static str,
         source: T,
     ) -> Self {
-        e!(IntoAddressLookupError::User {
+        e!(AddressLookupBuilderError::User {
             provenance,
             source: AnyError::from_std(source)
         })
@@ -246,7 +246,7 @@ impl IntoAddressLookupError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        e!(IntoAddressLookupError::User {
+        e!(AddressLookupBuilderError::User {
             provenance,
             source: AnyError::from_std_box(source)
         })

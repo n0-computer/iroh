@@ -17,7 +17,7 @@
 
 use crate::{
     RelayMode,
-    address_lookup::{AddrFilter, IntoAddressLookup, PkarrPublisher},
+    address_lookup::{AddrFilter, AddressLookupBuilder, PkarrPublisher},
     endpoint::{Builder, default_relay_mode},
 };
 

@@ -706,7 +706,7 @@ pub enum BindError {
     #[error("Failed to create an address lookup service")]
     AddressLookup {
         #[error(from)]
-        source: crate::address_lookup::IntoAddressLookupError,
+        source: crate::address_lookup::AddressLookupBuilderError,
     },
 }
 

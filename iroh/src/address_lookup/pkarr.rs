@@ -73,8 +73,8 @@ use crate::dns::DnsResolver;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddrFilter, AddressLookup, EndpointData, Error as AddressLookupError, IntoAddressLookup,
-        IntoAddressLookupError, Item as AddressLookupItem,
+        AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
+        Error as AddressLookupError, Item as AddressLookupItem,
     },
     endpoint::force_staging_infra,
     util::reqwest_client_builder,
@@ -232,11 +232,11 @@ impl PkarrPublisherBuilder {
     }
 }
 
-impl IntoAddressLookup for PkarrPublisherBuilder {
+impl AddressLookupBuilder for PkarrPublisherBuilder {
     fn into_address_lookup(
         mut self,
         endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
@@ -283,7 +283,7 @@ impl PkarrPublisher {
     /// time-to-live value for the published packets, and it will republish Address Lookup information
     /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
     ///
-    /// [`PkarrPublisherBuilder`] implements [`IntoAddressLookup`], so it can be passed to [`address_lookup`].
+    /// [`PkarrPublisherBuilder`] implements [`AddressLookupBuilder`], so it can be passed to [`address_lookup`].
     /// It will then use the endpoint's secret key to sign published packets.
     ///
     /// [`address_lookup`]:  crate::endpoint::Builder::address_lookup
@@ -469,11 +469,11 @@ impl PkarrResolverBuilder {
     }
 }
 
-impl IntoAddressLookup for PkarrResolverBuilder {
+impl AddressLookupBuilder for PkarrResolverBuilder {
     fn into_address_lookup(
         mut self,
         endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
@@ -508,7 +508,7 @@ pub struct PkarrResolver {
 impl PkarrResolver {
     /// Creates a new resolver builder using the pkarr relay server at the URL.
     ///
-    /// The builder implements [`IntoAddressLookup`].
+    /// The builder implements [`AddressLookupBuilder`].
     pub fn builder(pkarr_relay: Url) -> PkarrResolverBuilder {
         PkarrResolverBuilder {
             pkarr_relay,

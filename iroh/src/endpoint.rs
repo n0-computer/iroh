@@ -43,8 +43,8 @@ use crate::dns::DnsResolver;
 use crate::{
     NetReport,
     address_lookup::{
-        ConcurrentAddressLookup, DynIntoAddressLookup, Error as AddressLookupError,
-        IntoAddressLookup, UserData,
+        AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
+        Error as AddressLookupError, UserData,
     },
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
@@ -104,7 +104,7 @@ pub struct Builder {
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: QuicTransportConfig,
     keylog: bool,
-    address_lookup: Vec<Box<dyn DynIntoAddressLookup>>,
+    address_lookup: Vec<Box<dyn DynAddressLookupBuilder>>,
     address_lookup_user_data: Option<UserData>,
     proxy_url: Option<Url>,
     #[cfg(not(wasm_browser))]
@@ -511,7 +511,7 @@ impl Builder {
 
     /// Adds an additional Address Lookup for this endpoint.
     ///
-    /// Once the endpoint is created the provided [`IntoAddressLookup::into_address_lookup`] will be
+    /// Once the endpoint is created the provided [`AddressLookupBuilder::into_address_lookup`] will be
     /// called. This allows Address Lookup's to finalize their configuration by e.g. using
     /// the secret key from the endpoint which can be needed to sign published information.
     ///
@@ -524,7 +524,7 @@ impl Builder {
     /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`crate::address_lookup::AddressLookup`] trait for details.
-    pub fn address_lookup(mut self, address_lookup: impl IntoAddressLookup) -> Self {
+    pub fn address_lookup(mut self, address_lookup: impl AddressLookupBuilder) -> Self {
         self.address_lookup.push(Box::new(address_lookup));
         self
     }

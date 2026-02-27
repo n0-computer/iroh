@@ -20,8 +20,8 @@ use url::Url;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddrFilter, AddressLookup, EndpointData, Error as AddressLookupError, IntoAddressLookup,
-        IntoAddressLookupError, Item as AddressLookupItem,
+        AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
+        Error as AddressLookupError, Item as AddressLookupItem,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
     endpoint_info::EndpointInfo,
@@ -208,9 +208,9 @@ impl Builder {
     }
 
     /// Builds the address lookup mechanism.
-    pub fn build(self) -> Result<DhtAddressLookup, IntoAddressLookupError> {
+    pub fn build(self) -> Result<DhtAddressLookup, AddressLookupBuilderError> {
         if !(self.dht || self.pkarr_relay.is_some()) {
-            return Err(IntoAddressLookupError::from_err(
+            return Err(AddressLookupBuilderError::from_err(
                 "pkarr",
                 std::io::Error::other("at least one of DHT or relay must be enabled"),
             ));
@@ -226,11 +226,11 @@ impl Builder {
                 if let Some(url) = &self.pkarr_relay {
                     builder
                         .relays(std::slice::from_ref(url))
-                        .map_err(|e| IntoAddressLookupError::from_err("pkarr", e))?;
+                        .map_err(|e| AddressLookupBuilderError::from_err("pkarr", e))?;
                 }
                 builder
                     .build()
-                    .map_err(|e| IntoAddressLookupError::from_err("pkarr", e))?
+                    .map_err(|e| AddressLookupBuilderError::from_err("pkarr", e))?
             }
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
@@ -248,11 +248,11 @@ impl Builder {
     }
 }
 
-impl IntoAddressLookup for Builder {
+impl AddressLookupBuilder for Builder {
     fn into_address_lookup(
         self,
         endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         self.secret_key(endpoint.secret_key().clone()).build()
     }
 
