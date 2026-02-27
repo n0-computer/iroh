@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["N0"],"trait":["Preset"]};
+window.SIDEBAR_ITEMS = {"struct":["N0","N0DisableRelay"],"trait":["Preset"]};

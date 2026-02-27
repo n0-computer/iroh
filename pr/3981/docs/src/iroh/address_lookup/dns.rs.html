@@ -8,8 +8,8 @@
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use crate</span>::{
 <a href=#9 id=9 data-nosnippet>9</a>    Endpoint,
 <a href=#10 id=10 data-nosnippet>10</a>    address_lookup::{
-<a href=#11 id=11 data-nosnippet>11</a>        AddressLookup, Error <span class="kw">as </span>AddressLookupError, IntoAddressLookup, IntoAddressLookupError,
-<a href=#12 id=12 data-nosnippet>12</a>        Item <span class="kw">as </span>AddressLookupItem,
+<a href=#11 id=11 data-nosnippet>11</a>        AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError,
+<a href=#12 id=12 data-nosnippet>12</a>        Error <span class="kw">as </span>AddressLookupError, Item <span class="kw">as </span>AddressLookupItem,
 <a href=#13 id=13 data-nosnippet>13</a>    },
 <a href=#14 id=14 data-nosnippet>14</a>    endpoint::force_staging_infra,
 <a href=#15 id=15 data-nosnippet>15</a>};
@@ -69,7 +69,7 @@
 <a href=#69 id=69 data-nosnippet>69</a>}
 <a href=#70 id=70 data-nosnippet>70</a>
 <a href=#71 id=71 data-nosnippet>71</a><span class="kw">impl </span>DnsAddressLookup {
-<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// Creates a [`DnsAddressLookupBuilder`] that implements [`IntoAddressLookup`].
+<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// Creates a [`DnsAddressLookupBuilder`] that implements [`AddressLookupBuilder`].
 <a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">pub fn </span>builder(origin_domain: String) -&gt; DnsAddressLookupBuilder {
 <a href=#74 id=74 data-nosnippet>74</a>        DnsAddressLookupBuilder {
 <a href=#75 id=75 data-nosnippet>75</a>            origin_domain,
@@ -95,33 +95,40 @@
 <a href=#95 id=95 data-nosnippet>95</a>    }
 <a href=#96 id=96 data-nosnippet>96</a>}
 <a href=#97 id=97 data-nosnippet>97</a>
-<a href=#98 id=98 data-nosnippet>98</a><span class="kw">impl </span>IntoAddressLookup <span class="kw">for </span>DnsAddressLookupBuilder {
+<a href=#98 id=98 data-nosnippet>98</a><span class="kw">impl </span>AddressLookupBuilder <span class="kw">for </span>DnsAddressLookupBuilder {
 <a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">fn </span>into_address_lookup(
 <a href=#100 id=100 data-nosnippet>100</a>        <span class="kw-2">mut </span><span class="self">self</span>,
 <a href=#101 id=101 data-nosnippet>101</a>        endpoint: <span class="kw-2">&amp;</span>Endpoint,
-<a href=#102 id=102 data-nosnippet>102</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, IntoAddressLookupError&gt; {
+<a href=#102 id=102 data-nosnippet>102</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>AddressLookup, AddressLookupBuilderError&gt; {
 <a href=#103 id=103 data-nosnippet>103</a>        <span class="kw">if </span><span class="self">self</span>.dns_resolver.is_none() {
 <a href=#104 id=104 data-nosnippet>104</a>            <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(endpoint.dns_resolver()<span class="question-mark">?</span>.clone());
 <a href=#105 id=105 data-nosnippet>105</a>        }
 <a href=#106 id=106 data-nosnippet>106</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.build())
 <a href=#107 id=107 data-nosnippet>107</a>    }
-<a href=#108 id=108 data-nosnippet>108</a>}
-<a href=#109 id=109 data-nosnippet>109</a>
-<a href=#110 id=110 data-nosnippet>110</a><span class="kw">impl </span>AddressLookup <span class="kw">for </span>DnsAddressLookup {
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">fn </span>resolve(
-<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#113 id=113 data-nosnippet>113</a>        endpoint_id: EndpointId,
-<a href=#114 id=114 data-nosnippet>114</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;AddressLookupItem, AddressLookupError&gt;&gt;&gt; {
-<a href=#115 id=115 data-nosnippet>115</a>        <span class="kw">let </span>resolver = <span class="self">self</span>.dns_resolver.clone();
-<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">let </span>origin_domain = <span class="self">self</span>.origin_domain.clone();
-<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span>fut = <span class="kw">async move </span>{
-<a href=#118 id=118 data-nosnippet>118</a>            <span class="kw">let </span>endpoint_info = resolver
-<a href=#119 id=119 data-nosnippet>119</a>                .lookup_endpoint_by_id_staggered(<span class="kw-2">&amp;</span>endpoint_id, <span class="kw-2">&amp;</span>origin_domain, DNS_STAGGERING_MS)
-<a href=#120 id=120 data-nosnippet>120</a>                .<span class="kw">await
-<a href=#121 id=121 data-nosnippet>121</a>                </span>.map_err(|e| AddressLookupError::from_err_any(<span class="string">"dns"</span>, e))<span class="question-mark">?</span>;
-<a href=#122 id=122 data-nosnippet>122</a>            <span class="prelude-val">Ok</span>(AddressLookupItem::new(endpoint_info, <span class="string">"dns"</span>, <span class="prelude-val">None</span>))
-<a href=#123 id=123 data-nosnippet>123</a>        };
-<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">let </span>stream = n0_future::stream::once_future(fut);
-<a href=#125 id=125 data-nosnippet>125</a>        <span class="prelude-val">Some</span>(Box::pin(stream))
-<a href=#126 id=126 data-nosnippet>126</a>    }
-<a href=#127 id=127 data-nosnippet>127</a>}</code></pre></div></section></main></body></html>
+<a href=#108 id=108 data-nosnippet>108</a>
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">fn </span>with_addr_filter(<span class="self">self</span>, _filter: AddrFilter) -&gt; <span class="self">Self
+<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">where
+<a href=#111 id=111 data-nosnippet>111</a>        </span><span class="self">Self</span>: Sized,
+<a href=#112 id=112 data-nosnippet>112</a>    {
+<a href=#113 id=113 data-nosnippet>113</a>        <span class="self">self
+<a href=#114 id=114 data-nosnippet>114</a>    </span>}
+<a href=#115 id=115 data-nosnippet>115</a>}
+<a href=#116 id=116 data-nosnippet>116</a>
+<a href=#117 id=117 data-nosnippet>117</a><span class="kw">impl </span>AddressLookup <span class="kw">for </span>DnsAddressLookup {
+<a href=#118 id=118 data-nosnippet>118</a>    <span class="kw">fn </span>resolve(
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#120 id=120 data-nosnippet>120</a>        endpoint_id: EndpointId,
+<a href=#121 id=121 data-nosnippet>121</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;AddressLookupItem, AddressLookupError&gt;&gt;&gt; {
+<a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">let </span>resolver = <span class="self">self</span>.dns_resolver.clone();
+<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">let </span>origin_domain = <span class="self">self</span>.origin_domain.clone();
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">let </span>fut = <span class="kw">async move </span>{
+<a href=#125 id=125 data-nosnippet>125</a>            <span class="kw">let </span>endpoint_info = resolver
+<a href=#126 id=126 data-nosnippet>126</a>                .lookup_endpoint_by_id_staggered(<span class="kw-2">&amp;</span>endpoint_id, <span class="kw-2">&amp;</span>origin_domain, DNS_STAGGERING_MS)
+<a href=#127 id=127 data-nosnippet>127</a>                .<span class="kw">await
+<a href=#128 id=128 data-nosnippet>128</a>                </span>.map_err(|e| AddressLookupError::from_err_any(<span class="string">"dns"</span>, e))<span class="question-mark">?</span>;
+<a href=#129 id=129 data-nosnippet>129</a>            <span class="prelude-val">Ok</span>(AddressLookupItem::new(endpoint_info, <span class="string">"dns"</span>, <span class="prelude-val">None</span>))
+<a href=#130 id=130 data-nosnippet>130</a>        };
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">let </span>stream = n0_future::stream::once_future(fut);
+<a href=#132 id=132 data-nosnippet>132</a>        <span class="prelude-val">Some</span>(Box::pin(stream))
+<a href=#133 id=133 data-nosnippet>133</a>    }
+<a href=#134 id=134 data-nosnippet>134</a>}</code></pre></div></section></main></body></html>

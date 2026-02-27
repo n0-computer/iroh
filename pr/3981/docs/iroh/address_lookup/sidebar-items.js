@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Error","IntoAddressLookupError","ParseError"],"mod":["dns","mdns","memory","pkarr"],"struct":["ConcurrentAddressLookup","EndpointData","EndpointInfo","Item","UserData"],"trait":["AddressLookup","IntoAddressLookup"]};
+window.SIDEBAR_ITEMS = {"enum":["AddressLookupBuilderError","Error","ParseError"],"mod":["dns","mdns","memory","pkarr"],"struct":["AddrFilter","ConcurrentAddressLookup","EndpointData","EndpointInfo","Item","UserData"],"trait":["AddressLookup","AddressLookupBuilder"]};
