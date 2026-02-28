@@ -20,7 +20,7 @@ use url::Url;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
+        AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
         Error as AddressLookupError, Item as AddressLookupItem,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
@@ -46,7 +46,7 @@ const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 /// direct IP addresses and relay URLs. No internal address limits or truncation
 /// are applied.
 ///
-/// You can supply an [`AddrFilter`] via [`Builder::set_addr_filter`] to
+/// You can supply an [`AddrFilter`] via [`AddrLookupBuilder::with_addr_filter`] to
 /// control which addresses are published.
 ///
 /// [`AddrFilter`]: crate::address_lookup::AddrFilter
@@ -78,8 +78,6 @@ struct Inner {
     ttl: u32,
     /// Republish delay for the DHT.
     republish_delay: Duration,
-    /// User supplied filter to filter and reorder addresses for publishing
-    filter: AddrFilter,
 }
 
 impl Inner {
@@ -125,7 +123,6 @@ pub struct Builder {
     dht: bool,
     republish_delay: Duration,
     enable_publish: bool,
-    filter: AddrFilter,
 }
 
 impl Default for Builder {
@@ -138,7 +135,6 @@ impl Default for Builder {
             dht: true,
             republish_delay: REPUBLISH_DELAY,
             enable_publish: true,
-            filter: AddrFilter::default(),
         }
     }
 }
@@ -201,12 +197,6 @@ impl Builder {
         self
     }
 
-    /// Sets a filter to control which addresses are published by this service.
-    pub fn set_addr_filter(mut self, filter: AddrFilter) -> Self {
-        self.filter = filter;
-        self
-    }
-
     /// Builds the address lookup mechanism.
     pub fn build(self) -> Result<DhtAddressLookup, AddressLookupBuilderError> {
         if !(self.dht || self.pkarr_relay.is_some()) {
@@ -243,7 +233,6 @@ impl Builder {
             secret_key,
             republish_delay: self.republish_delay,
             task: Default::default(),
-            filter: self.filter,
         })))
     }
 }
@@ -254,10 +243,6 @@ impl AddressLookupBuilder for Builder {
         endpoint: &Endpoint,
     ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         self.secret_key(endpoint.secret_key().clone()).build()
-    }
-
-    fn with_addr_filter(self, filter: AddrFilter) -> Self {
-        self.set_addr_filter(filter)
     }
 }
 
@@ -308,16 +293,12 @@ impl AddressLookup for DhtAddressLookup {
             return;
         };
 
-        // apply user-supplied filter
-        let addrs = data.filtered_addrs(&self.0.filter);
-
-        if addrs.is_empty() {
+        if data.addrs().next().is_none() {
             tracing::debug!("no relay url or direct addresses in endpoint data, not publishing");
             return;
         }
 
         tracing::debug!("publishing {data:?}");
-        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
         let info = EndpointInfo::from_parts(keypair.public(), data.clone());
         let Ok(signed_packet) = info.to_pkarr_signed_packet(keypair, self.0.ttl) else {
             tracing::warn!("failed to create signed packet");

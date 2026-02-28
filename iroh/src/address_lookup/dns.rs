@@ -8,7 +8,7 @@ use n0_future::boxed::BoxStream;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError,
+        AddressLookup, AddressLookupBuilder, AddressLookupBuilderError,
         Error as AddressLookupError, Item as AddressLookupItem,
     },
     endpoint::force_staging_infra,
@@ -104,13 +104,6 @@ impl AddressLookupBuilder for DnsAddressLookupBuilder {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
         }
         Ok(self.build())
-    }
-
-    fn with_addr_filter(self, _filter: AddrFilter) -> Self
-    where
-        Self: Sized,
-    {
-        self
     }
 }
 

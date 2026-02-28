@@ -20,7 +20,7 @@
 //!   to improve performance.
 //!
 //! [`PkarrPublisher`] publishes all addresses it receives by default, with no internal limiting.
-//! You can supply an [`AddrFilter`] via [`PkarrPublisherBuilder::set_addr_filter`] to limit the kinds
+//! You can supply an [`AddrFilter`] via [`AddrLookupBuilder::with_addr_filter`] to limit the kinds
 //! and number of addresses that get published.
 //!
 //! Note that [`PkarrResolver`] and [`address_lookup::DnsAddressLookup`] only resolve and do not publish, so filtering does not apply to them.
@@ -73,7 +73,7 @@ use crate::dns::DnsResolver;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
+        AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
         Error as AddressLookupError, Item as AddressLookupItem,
     },
     endpoint::force_staging_infra,
@@ -160,7 +160,6 @@ pub struct PkarrPublisherBuilder {
     republish_interval: Duration,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
-    filter: AddrFilter,
 }
 
 impl PkarrPublisherBuilder {
@@ -172,7 +171,6 @@ impl PkarrPublisherBuilder {
             republish_interval: DEFAULT_REPUBLISH_INTERVAL,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
-            filter: AddrFilter::default(),
         }
     }
 
@@ -210,12 +208,6 @@ impl PkarrPublisherBuilder {
         self
     }
 
-    /// Sets a filter to control which addresses are published by this service
-    pub fn set_addr_filter(mut self, filter: AddrFilter) -> Self {
-        self.filter = filter;
-        self
-    }
-
     /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
     ///
     /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
@@ -228,7 +220,6 @@ impl PkarrPublisherBuilder {
             #[cfg(not(wasm_browser))]
             self.dns_resolver,
             tls_config,
-            self.filter,
         )
     }
 }
@@ -244,13 +235,6 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
         }
         let tls_config = endpoint.tls_config().clone();
         Ok(self.build(endpoint.secret_key().clone(), tls_config))
-    }
-
-    fn with_addr_filter(self, filter: AddrFilter) -> Self
-    where
-        Self: Sized,
-    {
-        self.set_addr_filter(filter)
     }
 }
 
@@ -273,7 +257,6 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
 pub struct PkarrPublisher {
     endpoint_id: EndpointId,
     watchable: Watchable<Option<EndpointInfo>>,
-    filter: AddrFilter,
     _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
 
@@ -304,7 +287,6 @@ impl PkarrPublisher {
         republish_interval: Duration,
         #[cfg(not(wasm_browser))] dns_resolver: Option<DnsResolver>,
         tls_config: rustls::ClientConfig,
-        filter: AddrFilter,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let endpoint_id = secret_key.public();
@@ -333,7 +315,6 @@ impl PkarrPublisher {
         Self {
             watchable,
             endpoint_id,
-            filter,
             _drop_guard: Arc::new(AbortOnDropHandle::new(join_handle)),
         }
     }
@@ -356,10 +337,7 @@ impl PkarrPublisher {
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_endpoint_data(&self, data: &EndpointData) {
-        let addrs = data.filtered_addrs(&self.filter);
-        debug!(addrs = ?addrs, "Applied address filter to endpoint data");
-        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
-        let info = EndpointInfo::from_parts(self.endpoint_id, data);
+        let info = EndpointInfo::from_parts(self.endpoint_id, data.clone());
         self.watchable.set(Some(info)).ok();
     }
 }
@@ -483,11 +461,6 @@ impl AddressLookupBuilder for PkarrResolverBuilder {
         }
         let tls_config = endpoint.tls_config().clone();
         Ok(self.build(tls_config))
-    }
-
-    /// no-op: resolver does not publish
-    fn with_addr_filter(self, _filter: AddrFilter) -> Self {
-        self
     }
 }
 
