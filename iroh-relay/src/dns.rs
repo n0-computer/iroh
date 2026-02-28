@@ -1,4 +1,10 @@
-//! DNS resolver
+//! Configurable DNS resolver for `iroh-relay` and `iroh`.
+//!
+//! The main export is the [`DnsResolver`] struct. It provides methods to resolve domain names
+//! to IPv4 and IPv6 addresses. Additionally, the resolver features methods to resolve the
+//! [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
+//! See the [`endpoint_info`] module documentation for details on how iroh endpoint records
+//! are structured.
 
 use std::{
     fmt,
@@ -29,9 +35,9 @@ use crate::{
     endpoint_info::{self, EndpointInfo, ParseError},
 };
 
-/// The n0 testing DNS endpoint origin, for production.
+/// The n0 address lookup DNS origin, for production.
 pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link";
-/// The n0 testing DNS endpoint origin, for testing.
+/// The n0 address lookup DNS origin, for testing.
 pub const N0_DNS_ENDPOINT_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 
 /// Percent of total delay to jitter. 20 means +/- 20% of delay.
@@ -59,9 +65,11 @@ pub trait Resolver: fmt::Debug + Send + Sync + 'static {
 }
 
 /// Boxed iterator alias.
+///
+/// Used in return types of [`Resolver`] methods.
 pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
-/// Potential errors related to dns.
+/// Potential errors related to DNS operations.
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
@@ -85,6 +93,7 @@ pub enum DnsError {
     InvalidResponse {},
 }
 
+/// Potential errors related to DNS endpoint address lookups.
 #[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources)]
@@ -197,6 +206,11 @@ impl Builder {
 }
 
 /// The DNS resolver used throughout `iroh`.
+///
+/// By default, we use a built-in resolver that reads the system's DNS configuration.
+/// The nameservers can be customized by constructing the resolver with [`Self::builder`].
+/// Alternatively, you can create a fully custom DNS resolver by implementing the [`Resolver`]
+/// trait and creating the resolver with [`Self::custom`].
 #[derive(Debug, Clone)]
 pub struct DnsResolver(DnsResolverInner);
 
