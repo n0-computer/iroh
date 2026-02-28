@@ -115,7 +115,7 @@ impl Preset for N0DisableRelay {
             use crate::address_lookup::PkarrResolver;
 
             builder =
-                builder.address_lookup(PkarrResolver::n0_dns().with_addr_filter(filter.clone()));
+                builder.address_lookup(PkarrResolver::n0_dns().with_addr_filter2(filter.clone()));
         }
         // Resolve using DNS queries outside browsers.
         #[cfg(not(wasm_browser))]
