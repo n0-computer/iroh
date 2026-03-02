@@ -752,6 +752,10 @@ pub enum BindError {
         #[error(from)]
         source: crate::address_lookup::AddressLookupBuilderError,
     },
+    #[error(
+        "No rustls crypto provider configured while both ring and aws-lc-rs feature flags are disabled"
+    )]
+    MissingCryptoProvider,
 }
 
 impl EndpointInner {
@@ -1762,7 +1766,11 @@ mod tests {
     fn default_options<R: CryptoRng + ?Sized>(rng: &mut R) -> Options {
         let secret_key = SecretKey::generate(rng);
         let static_config = StaticConfig {
-            tls_config: tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            tls_config: tls::TlsConfig::new(
+                secret_key.clone(),
+                DEFAULT_MAX_TLS_TICKETS,
+                default_provider(),
+            ),
             transport_config: QuicTransportConfig::default(),
             keylog: false,
         };
@@ -2156,7 +2164,11 @@ mod tests {
     #[instrument(name = "ep", skip_all, fields(me = %secret_key.public().fmt_short()))]
     async fn socket_ep(secret_key: SecretKey) -> Result<EndpointInner> {
         let static_config = StaticConfig {
-            tls_config: tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            tls_config: tls::TlsConfig::new(
+                secret_key.clone(),
+                DEFAULT_MAX_TLS_TICKETS,
+                default_provider(),
+            ),
             transport_config: QuicTransportConfig::default(),
             keylog: true,
         };
@@ -2222,9 +2234,12 @@ mod tests {
         transport_config: Arc<quinn::TransportConfig>,
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
-        let quic_client_config =
-            tls::TlsConfig::new(ep_secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
-                .make_client_config(alpns, true);
+        let quic_client_config = tls::TlsConfig::new(
+            ep_secret_key.clone(),
+            DEFAULT_MAX_TLS_TICKETS,
+            default_provider(),
+        )
+        .make_client_config(alpns, true);
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep

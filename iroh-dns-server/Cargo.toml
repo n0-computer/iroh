@@ -77,6 +77,10 @@ ring = ["rustls/ring", "tokio-rustls/ring"]
 name = "write"
 harness = false
 
+[[example]]
+name = "publish"
+required-features = ["ring"]
+
 [build-dependencies]
 vergen-gitcl = "1.0.8"
 

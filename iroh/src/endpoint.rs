@@ -14,10 +14,7 @@
 use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-use iroh_relay::{
-    RelayConfig, RelayMap,
-    tls::{CaRootsConfig, default_provider},
-};
+use iroh_relay::{RelayConfig, RelayMap, tls::CaRootsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
 use n0_error::{e, ensure, stack_error};
@@ -114,6 +111,7 @@ pub struct Builder {
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
+    crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -178,6 +176,12 @@ impl Builder {
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
+            #[cfg(feature = "ring")]
+            crypto_provider: Some(Arc::new(rustls::crypto::ring::default_provider())),
+            #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+            crypto_provider: Some(Arc::new(rustls::crypto::aws_lc_rs::default_provider())),
+            #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+            crypto_provider: None,
         }
     }
 
@@ -190,9 +194,17 @@ impl Builder {
             .secret_key
             .unwrap_or_else(move || SecretKey::generate(&mut rng));
 
+        let crypto_provider = self
+            .crypto_provider
+            .ok_or_else(|| e!(BindError::MissingCryptoProvider))?;
+
         let static_config = StaticConfig {
             transport_config: self.transport_config.clone(),
-            tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
+            tls_config: tls::TlsConfig::new(
+                secret_key.clone(),
+                self.max_tls_tickets,
+                crypto_provider.clone(),
+            ),
             keylog: self.keylog,
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
@@ -205,7 +217,7 @@ impl Builder {
         let tls_config = self
             .ca_roots_config
             .unwrap_or_default()
-            .client_config(default_provider())
+            .client_config(crypto_provider)
             .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
 
         let sock_opts = socket::Options {
@@ -628,6 +640,24 @@ impl Builder {
     /// The default is 256, taking about 150 KiB in memory.
     pub fn max_tls_tickets(mut self, n: usize) -> Self {
         self.max_tls_tickets = n;
+        self
+    }
+
+    /// Specify the rustls cryptography to use for all TLS operations.
+    ///
+    /// This includes
+    /// - TLS for encryption and authentication of iroh connections themselves, but also
+    /// - HTTPS connections to relays
+    /// - Pkarr relay publishing HTTPS connections
+    /// - and any other Address Lookup services that decide to use [`Endpoint::crypto_provider`].
+    ///
+    /// The two most common crypto providers in use today are `ring` as well as `aws-lc-rs`.
+    ///
+    /// If either the `ring` or `aws-lc-rs` feature is set in iroh, this function doesn't need to be called.
+    ///
+    /// If none of these features are set, then calling this function in the builder is mandatory.
+    pub fn crypto_provider(mut self, crypto_provider: Arc<rustls::crypto::CryptoProvider>) -> Self {
+        self.crypto_provider = Some(crypto_provider);
         self
     }
 
@@ -2126,7 +2156,9 @@ mod tests {
             }
             info!("Have direct connection");
             // Validate holepunch metrics.
+            #[cfg(feature = "metrics")]
             assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
+            #[cfg(feature = "metrics")]
             assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
 
             send.write_all(b"close please").await.anyerr()?;
@@ -3460,9 +3492,12 @@ mod tests {
         assert!(ep.dns_resolver().is_err());
         assert!(ep.address_lookup().is_err());
 
-        // this should work
-        let metrics = ep.metrics();
-        info!("Metrics: {metrics:?}");
+        #[cfg(feature = "metrics")]
+        {
+            // this should work
+            let metrics = ep.metrics();
+            info!("Metrics: {metrics:?}");
+        }
 
         // this should return none
         assert!(ep.remote_info(ep_id).await.is_none());

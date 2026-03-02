@@ -123,7 +123,6 @@ impl CaRootsConfig {
                 let verifier = rustls_platform_verifier::Verifier::new(crypto_provider);
                 Arc::new(verifier.map_err(io::Error::other)?)
             }
-
             Mode::EmbeddedWebPki => {
                 let mut root_store = rustls::RootCertStore {
                     roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),

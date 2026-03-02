@@ -17,7 +17,9 @@ pub(crate) mod name;
 mod resolver;
 mod verifier;
 
-pub use iroh_relay::tls::{CaRootsConfig, default_provider};
+pub use iroh_relay::tls::CaRootsConfig;
+#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+pub use iroh_relay::tls::default_provider;
 
 /// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
 /// establishment.
@@ -43,10 +45,15 @@ pub(crate) struct TlsConfig {
     server_verifier: Arc<verifier::ServerCertificateVerifier>,
     client_verifier: Arc<verifier::ClientCertificateVerifier>,
     session_store: Arc<dyn rustls::client::ClientSessionStore>,
+    crypto_provider: Arc<rustls::crypto::CryptoProvider>,
 }
 
 impl TlsConfig {
-    pub(crate) fn new(secret_key: SecretKey, max_tls_tickets: usize) -> Self {
+    pub(crate) fn new(
+        secret_key: SecretKey,
+        max_tls_tickets: usize,
+        crypto_provider: Arc<rustls::crypto::CryptoProvider>,
+    ) -> Self {
         Self {
             cert_resolver: Arc::new(ResolveRawPublicKeyCert::new(&secret_key)),
             server_verifier: Arc::new(verifier::ServerCertificateVerifier),
@@ -54,6 +61,7 @@ impl TlsConfig {
             session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
                 max_tls_tickets,
             )),
+            crypto_provider,
             secret_key,
         }
     }
@@ -68,9 +76,9 @@ impl TlsConfig {
         alpn_protocols: Vec<Vec<u8>>,
         keylog: bool,
     ) -> QuicClientConfig {
-        let mut crypto = rustls::ClientConfig::builder_with_provider(default_provider())
+        let mut crypto = rustls::ClientConfig::builder_with_provider(self.crypto_provider.clone())
             .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-            .expect("version supported by ring")
+            .expect("version supported by ring") // TODO(matheus23): This is no longer a fixed config
             .dangerous()
             .with_custom_certificate_verifier(self.server_verifier.clone())
             .with_client_cert_resolver(self.cert_resolver.clone());
@@ -100,13 +108,11 @@ impl TlsConfig {
         alpn_protocols: Vec<Vec<u8>>,
         keylog: bool,
     ) -> QuicServerConfig {
-        let mut crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-        .expect("fixed config")
-        .with_client_cert_verifier(self.client_verifier.clone())
-        .with_cert_resolver(self.cert_resolver.clone());
+        let mut crypto = rustls::ServerConfig::builder_with_provider(self.crypto_provider.clone())
+            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+            .expect("fixed config") // TODO(matheus23): This is no longer a fixed config
+            .with_client_cert_verifier(self.client_verifier.clone())
+            .with_cert_resolver(self.cert_resolver.clone());
         crypto.alpn_protocols = alpn_protocols;
         if keylog {
             warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
