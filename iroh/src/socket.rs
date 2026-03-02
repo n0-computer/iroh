@@ -264,8 +264,6 @@ impl ShutdownState {
 /// It is usually only necessary to use a single [`Socket`] instance in an application, it
 /// means any QUIC endpoints on top will be sharing as much information about endpoints as
 /// possible.
-///
-/// To create a [`Socket`] use [`EndpointInner::new`], there's no direct constructor.
 #[derive(Debug)]
 pub(crate) struct Socket {
     /// Channels for sending time-crucial messages to `RemoteStateActors`.
