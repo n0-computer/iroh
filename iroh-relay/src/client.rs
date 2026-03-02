@@ -136,9 +136,8 @@ pub struct ClientBuilder {
     address_family_selector: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Server url.
     url: RelayUrl,
-    /// Allow self-signed certificates from relay servers
-    #[cfg(any(test, feature = "test-utils"))]
-    insecure_skip_cert_verify: bool,
+    /// TLS verification config.
+    tls_config: Option<rustls::ClientConfig>,
     /// HTTP Proxy
     proxy_url: Option<Url>,
     /// The secret key of this client.
@@ -160,16 +159,19 @@ impl ClientBuilder {
         ClientBuilder {
             address_family_selector: None,
             url: url.into(),
-
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_cert_verify: false,
-
+            tls_config: None,
             proxy_url: None,
             secret_key,
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
         }
+    }
+
+    /// Sets a custom TLS config.
+    pub fn tls_client_config(mut self, tls_config: rustls::ClientConfig) -> Self {
+        self.tls_config = Some(tls_config);
+        self
     }
 
     /// Returns if we should prefer ipv6
@@ -183,15 +185,6 @@ impl ClientBuilder {
         S: Fn() -> bool + Send + Sync + 'static,
     {
         self.address_family_selector = Some(Arc::new(selector));
-        self
-    }
-
-    /// Skip the verification of the relay server's SSL certificates.
-    ///
-    /// May only be used in tests.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn insecure_skip_cert_verify(mut self, skip: bool) -> Self {
-        self.insecure_skip_cert_verify = skip;
         self
     }
 
@@ -216,6 +209,7 @@ impl ClientBuilder {
         use crate::{
             http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION},
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
+            tls::{CaRootsConfig, default_provider},
         };
 
         let mut dial_url = (*self.url).clone();
@@ -236,15 +230,16 @@ impl ClientBuilder {
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        #[allow(unused_mut)]
-        let mut builder = MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone())
-            .prefer_ipv6(self.prefer_ipv6())
-            .proxy_url(self.proxy_url.clone());
+        let tls_config = match self.tls_config.clone() {
+            Some(config) => config,
+            None => CaRootsConfig::default().client_config(default_provider())?,
+        };
 
-        #[cfg(any(test, feature = "test-utils"))]
-        if self.insecure_skip_cert_verify {
-            builder = builder.insecure_skip_cert_verify(self.insecure_skip_cert_verify);
-        }
+        #[allow(unused_mut)]
+        let mut builder =
+            MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone(), tls_config)
+                .prefer_ipv6(self.prefer_ipv6())
+                .proxy_url(self.proxy_url.clone());
 
         let stream = builder.connect().await?;
         let local_addr = stream
