@@ -71,33 +71,39 @@
 <a href=#71 id=71 data-nosnippet>71</a>
 <a href=#72 id=72 data-nosnippet>72</a><span class="doccomment">/// Creates a reqwest client builder that always uses the rustls backend, unless we
 <a href=#73 id=73 data-nosnippet>73</a>/// are in a browser context, where that is not supported.
-<a href=#74 id=74 data-nosnippet>74</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>reqwest_client_builder() -&gt; reqwest::ClientBuilder {
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest::Client::builder();
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="attr">#[cfg(not(wasm_browser))]
-<a href=#77 id=77 data-nosnippet>77</a>    </span>{
-<a href=#78 id=78 data-nosnippet>78</a>        builder = builder.use_rustls_tls();
-<a href=#79 id=79 data-nosnippet>79</a>    }
-<a href=#80 id=80 data-nosnippet>80</a>    builder
-<a href=#81 id=81 data-nosnippet>81</a>}
-<a href=#82 id=82 data-nosnippet>82</a>
-<a href=#83 id=83 data-nosnippet>83</a><span class="attr">#[cfg(test)]
-<a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">mod </span>tests {
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">use </span>std::pin::pin;
-<a href=#86 id=86 data-nosnippet>86</a>
-<a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">use </span>n0_future::time::Duration;
+<a href=#74 id=74 data-nosnippet>74</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>reqwest_client_builder(
+<a href=#75 id=75 data-nosnippet>75</a>    tls_client_config: <span class="prelude-ty">Option</span>&lt;rustls::ClientConfig&gt;,
+<a href=#76 id=76 data-nosnippet>76</a>) -&gt; reqwest::ClientBuilder {
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest::Client::builder();
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#79 id=79 data-nosnippet>79</a>    </span>{
+<a href=#80 id=80 data-nosnippet>80</a>        builder = <span class="kw">if let </span><span class="prelude-val">Some</span>(config) = tls_client_config {
+<a href=#81 id=81 data-nosnippet>81</a>            builder.use_preconfigured_tls(config)
+<a href=#82 id=82 data-nosnippet>82</a>        } <span class="kw">else </span>{
+<a href=#83 id=83 data-nosnippet>83</a>            builder.use_rustls_tls()
+<a href=#84 id=84 data-nosnippet>84</a>        };
+<a href=#85 id=85 data-nosnippet>85</a>    }
+<a href=#86 id=86 data-nosnippet>86</a>    builder
+<a href=#87 id=87 data-nosnippet>87</a>}
 <a href=#88 id=88 data-nosnippet>88</a>
-<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#90 id=90 data-nosnippet>90</a>
-<a href=#91 id=91 data-nosnippet>91</a>    <span class="attr">#[tokio::test]
-<a href=#92 id=92 data-nosnippet>92</a>    </span><span class="kw">async fn </span>test_maybefuture_poll_after_use() {
-<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw">let </span>fut = <span class="kw">async move </span>{ <span class="string">"hello" </span>};
-<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">let </span><span class="kw-2">mut </span>maybe_fut = <span class="macro">pin!</span>(MaybeFuture::Some(fut));
-<a href=#95 id=95 data-nosnippet>95</a>        <span class="kw">let </span>res = (<span class="kw-2">&amp;mut </span>maybe_fut).<span class="kw">await</span>;
+<a href=#89 id=89 data-nosnippet>89</a><span class="attr">#[cfg(test)]
+<a href=#90 id=90 data-nosnippet>90</a></span><span class="kw">mod </span>tests {
+<a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">use </span>std::pin::pin;
+<a href=#92 id=92 data-nosnippet>92</a>
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">use </span>n0_future::time::Duration;
+<a href=#94 id=94 data-nosnippet>94</a>
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#96 id=96 data-nosnippet>96</a>
-<a href=#97 id=97 data-nosnippet>97</a>        <span class="macro">assert_eq!</span>(res, <span class="string">"hello"</span>);
-<a href=#98 id=98 data-nosnippet>98</a>
-<a href=#99 id=99 data-nosnippet>99</a>        <span class="comment">// Now poll again
-<a href=#100 id=100 data-nosnippet>100</a>        </span><span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">10</span>), maybe_fut).<span class="kw">await</span>;
-<a href=#101 id=101 data-nosnippet>101</a>        <span class="macro">assert!</span>(res.is_err());
-<a href=#102 id=102 data-nosnippet>102</a>    }
-<a href=#103 id=103 data-nosnippet>103</a>}</code></pre></div></section></main></body></html>
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="attr">#[tokio::test]
+<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">async fn </span>test_maybefuture_poll_after_use() {
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>fut = <span class="kw">async move </span>{ <span class="string">"hello" </span>};
+<a href=#100 id=100 data-nosnippet>100</a>        <span class="kw">let </span><span class="kw-2">mut </span>maybe_fut = <span class="macro">pin!</span>(MaybeFuture::Some(fut));
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="kw">let </span>res = (<span class="kw-2">&amp;mut </span>maybe_fut).<span class="kw">await</span>;
+<a href=#102 id=102 data-nosnippet>102</a>
+<a href=#103 id=103 data-nosnippet>103</a>        <span class="macro">assert_eq!</span>(res, <span class="string">"hello"</span>);
+<a href=#104 id=104 data-nosnippet>104</a>
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="comment">// Now poll again
+<a href=#106 id=106 data-nosnippet>106</a>        </span><span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">10</span>), maybe_fut).<span class="kw">await</span>;
+<a href=#107 id=107 data-nosnippet>107</a>        <span class="macro">assert!</span>(res.is_err());
+<a href=#108 id=108 data-nosnippet>108</a>    }
+<a href=#109 id=109 data-nosnippet>109</a>}</code></pre></div></section></main></body></html>
