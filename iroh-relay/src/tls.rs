@@ -158,13 +158,6 @@ impl CaRootsConfig {
     }
 }
 
-/// Returns iroh's default crypto provider.
-///
-/// Currently, this is [`rustls::crypto::ring`].
-pub fn default_provider() -> Arc<CryptoProvider> {
-    Arc::new(rustls::crypto::ring::default_provider())
-}
-
 #[cfg(any(test, feature = "test-utils"))]
 mod no_cert_verifier {
     use rustls::{
