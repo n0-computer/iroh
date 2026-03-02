@@ -26,7 +26,7 @@ use n0_watcher::Watcher;
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
-use tracing::{debug, instrument, trace, warn};
+use tracing::{Instrument, Span, debug, info_span, instrument, warn};
 use url::Url;
 
 use self::hooks::EndpointHooksList;
@@ -190,6 +190,9 @@ impl Builder {
             .secret_key
             .unwrap_or_else(move || SecretKey::generate(&mut rng));
 
+        let span = info_span!("endpoint", id = %secret_key.public().fmt_short());
+        let _guard = span.enter();
+
         let static_config = StaticConfig {
             transport_config: self.transport_config.clone(),
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
@@ -222,9 +225,14 @@ impl Builder {
             static_config,
         };
 
-        let inner = socket::Socket::spawn(sock_opts).await?;
-        trace!("created socket");
-        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
+        let inner = socket::EndpointInner::bind(sock_opts)
+            .instrument(Span::current())
+            .await?;
+        debug!(
+            id = %inner.static_config.tls_config.secret_key.public(),
+            iroh_version = %env!("CARGO_PKG_VERSION"),
+            "iroh endpoint created"
+        );
 
         let ep = Endpoint {
             inner: Arc::new(inner),
@@ -860,7 +868,7 @@ impl Endpoint {
     #[instrument(name = "connect", skip_all, fields(
         me = %self.id().fmt_short(),
         remote = tracing::field::Empty,
-        alpn = String::from_utf8_lossy(alpn).to_string(),
+        alpn = %String::from_utf8_lossy(alpn).to_string(),
     ))]
     pub async fn connect_with_opts(
         &self,
@@ -871,21 +879,22 @@ impl Endpoint {
         if self.is_closed() {
             return Err(e!(ConnectWithOptsError::EndpointClosed));
         }
+
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
+        let endpoint_id = endpoint_addr.id;
+
+        Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
+
         if let BeforeConnectOutcome::Reject =
             self.inner.hooks.before_connect(&endpoint_addr, alpn).await
         {
             return Err(e!(ConnectWithOptsError::LocallyRejected));
         }
-        let endpoint_id = endpoint_addr.id;
-
-        tracing::Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
 
         // Connecting to ourselves is not supported.
         ensure!(endpoint_id != self.id(), ConnectWithOptsError::SelfConnect);
 
-        trace!(
-            dst_endpoint_id = %endpoint_id.fmt_short(),
+        debug!(
             relay_url = ?endpoint_addr.relay_urls().next().cloned(),
             ip_addresses = ?endpoint_addr.ip_addrs().cloned().collect::<Vec<_>>(),
             "connecting",

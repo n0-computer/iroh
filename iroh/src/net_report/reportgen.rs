@@ -409,7 +409,7 @@ impl Actor {
                         "run-probe",
                         ?proto,
                         ?delay,
-                        ?relay,
+                        relay=%relay.url,
                     )),
                 );
             }
@@ -511,7 +511,7 @@ impl Probe {
         }
         debug!("starting probe");
 
-        match self {
+        let report = match self {
             Probe::Https => {
                 match run_https_probe(
                     #[cfg(not(wasm_browser))]
@@ -528,7 +528,9 @@ impl Probe {
             }
             #[cfg(not(wasm_browser))]
             Probe::QadIpv4 | Probe::QadIpv6 => unreachable!("must not be used"),
-        }
+        };
+        debug!(?report, "probe finished");
+        report
     }
 }
 

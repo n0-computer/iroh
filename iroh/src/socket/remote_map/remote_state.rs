@@ -22,7 +22,7 @@ use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 
 use self::path_state::RemotePathState;
 pub(crate) use self::path_watcher::PathWatchable;
@@ -130,8 +130,6 @@ type AddressLookupStream = Either<
 pub(super) struct RemoteStateActor {
     /// The endpoint ID of the remote endpoint.
     endpoint_id: EndpointId,
-    /// The endpoint ID of the local endpoint.
-    local_endpoint_id: EndpointId,
 
     // Hooks into the rest of the Socket.
     //
@@ -195,7 +193,6 @@ impl RemoteStateActor {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         endpoint_id: EndpointId,
-        local_endpoint_id: EndpointId,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<SocketMetrics>,
@@ -203,7 +200,6 @@ impl RemoteStateActor {
     ) -> Self {
         Self {
             endpoint_id,
-            local_endpoint_id,
             metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
@@ -227,9 +223,9 @@ impl RemoteStateActor {
         initial_msgs: Vec<RemoteStateMessage>,
         tasks: &mut JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
         shutdown_token: CancellationToken,
+        parent_span: Span,
     ) -> mpsc::Sender<RemoteStateMessage> {
         let (tx, rx) = mpsc::channel(16);
-        let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
 
         // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
@@ -240,9 +236,8 @@ impl RemoteStateActor {
         tasks.spawn(
             self.run(initial_msgs, rx, shutdown_token)
                 .instrument(info_span!(
-                    parent: None,
+                    parent: parent_span,
                     "RemoteStateActor",
-                    me = %me.fmt_short(),
                     remote = %endpoint_id.fmt_short(),
                 )),
         );
