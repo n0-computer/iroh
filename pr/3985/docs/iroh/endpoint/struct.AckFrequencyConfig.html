@@ -3,7 +3,7 @@ Parameters for controlling the peer’s acknowledgement frequency</p>
 <p>The parameters provided in this config will be sent to the peer at the beginning of the
 connection, so it can take them into account when sending acknowledgements (see each parameter’s
 description for details on how it influences acknowledgement frequency).</p>
-<p>Quinn’s implementation follows the fourth draft of the
+<p>noq’s implementation follows the fourth draft of the
 <a href="https://datatracker.ietf.org/doc/html/draft-ietf-quic-ack-frequency-04">QUIC Acknowledgement Frequency extension</a>.
 The defaults produce behavior slightly different than the behavior without this extension,
 because they change the way reordered packets are handled (see
