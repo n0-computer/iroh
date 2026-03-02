@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["N0"],"trait":["Preset"]};

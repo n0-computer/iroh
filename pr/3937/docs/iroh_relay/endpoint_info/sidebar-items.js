@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["IROH_TXT_NAME"],"enum":["DecodingError","EncodingError","ParseError"],"struct":["EndpointData","EndpointInfo","MaxLengthExceededError","UserData"],"trait":["EndpointIdExt"]};
