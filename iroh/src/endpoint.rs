@@ -231,7 +231,7 @@ impl Builder {
         debug!(
             id = %inner.static_config.tls_config.secret_key.public(),
             iroh_version = %env!("CARGO_PKG_VERSION"),
-            "iroh endpoint created"
+            "iroh endpoint bound"
         );
 
         let ep = Endpoint {

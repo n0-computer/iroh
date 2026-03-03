@@ -249,7 +249,7 @@ impl Actor {
 
                         // If all probes are done & we have_udp cancel captive
                         if num_probes == 0 {
-                            debug!("all regular probes done");
+                            trace!("all regular probes done");
                             debug_assert!(probes.len() <= 1, "{} probes", probes.len());
 
                             if have_udp {
@@ -509,7 +509,7 @@ impl Probe {
             trace!("delaying probe");
             time::sleep(delay).await;
         }
-        debug!("starting probe");
+        trace!("starting probe");
 
         let report = match self {
             Probe::Https => {
@@ -579,7 +579,7 @@ async fn check_captive_portal(
         None => {
             let urls: Vec<_> = dm.urls();
             if urls.is_empty() {
-                debug!("No suitable relay for captive portal check");
+                trace!("No suitable relay for captive portal check");
                 return Ok(false);
             }
 
@@ -630,7 +630,7 @@ async fn check_captive_portal(
         .map(|s| s.to_str().unwrap_or_default())
         == Some(&expected_response);
 
-    debug!(
+    trace!(
         "check_captive_portal url={} status_code={} valid_response={}",
         res.url(),
         res.status(),

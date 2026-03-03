@@ -499,7 +499,7 @@ impl RemoteStateActor {
                     remote = %self.endpoint_id.fmt_short(),
                     ?path_remote,
                     ?path_status,
-                    ?conn_id,
+                    %conn_id,
                     path_id = %PathId::ZERO,
                     ?res,
                 );
@@ -823,7 +823,7 @@ impl RemoteStateActor {
                     remote = %self.endpoint_id.fmt_short(),
                     ?open_addr,
                     ?path_status,
-                    ?conn_id,
+                    %conn_id,
                     %path_id,
                     ?res,
                 );
@@ -835,7 +835,7 @@ impl RemoteStateActor {
             let fut = conn.open_path_ensure(quic_addr, path_status);
             match fut.path_id() {
                 Some(path_id) => {
-                    trace!(?conn_id, %path_id, ?path_status, "opening new path");
+                    trace!(%conn_id, %path_id, ?path_status, "opening new path");
                     // Just like in the PATH_STATUS comment above, we need to make sure that the
                     // path status is set correctly, even if the path already existed.
                     if let Some(path) = conn.path(path_id) {
@@ -846,7 +846,7 @@ impl RemoteStateActor {
                             remote = %self.endpoint_id.fmt_short(),
                             ?open_addr,
                             ?path_status,
-                            ?conn_id,
+                            %conn_id,
                             %path_id,
                             ?res,
                         );
@@ -907,7 +907,7 @@ impl RemoteStateActor {
                         Level::DEBUG,
                         remote = %self.endpoint_id.fmt_short(),
                         ?path_remote,
-                        ?conn_id,
+                        %conn_id,
                         %path_id,
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
@@ -931,7 +931,7 @@ impl RemoteStateActor {
                     Level::DEBUG,
                     remote = %self.endpoint_id.fmt_short(),
                     ?path_remote,
-                    ?conn_id,
+                    %conn_id,
                     path_id = ?id,
                 );
 
@@ -944,11 +944,11 @@ impl RemoteStateActor {
                         continue;
                     };
                     if let Some(path) = conn.path(*path_id) {
-                        trace!(?path_remote, ?conn_id, %path_id, "closing path");
+                        trace!(?path_remote, %conn_id, %path_id, "closing path");
                         if let Err(err) = path.close() {
                             trace!(
                                 ?path_remote,
-                                ?conn_id,
+                                %conn_id,
                                 %path_id,
                                 "path close failed: {err:#}"
                             );
@@ -1076,7 +1076,7 @@ impl RemoteStateActor {
                     .filter(|conn| conn.side().is_client())
                     .and_then(|conn| conn.path(*path_id))
                 {
-                    trace!(?path_remote, ?conn_id, %path_id, "closing direct path");
+                    trace!(?path_remote, %conn_id, %path_id, "closing direct path");
                     match path.close() {
                         Err(quinn_proto::ClosePathError::MultipathNotNegotiated) => {
                             error!("multipath not negotiated");
@@ -1269,7 +1269,8 @@ struct HolepunchAttempt {
 ///
 /// The wrapped value is the [`quinn::Connection::stable_id`] value, and is thus only valid
 /// for active connections.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
+#[display("{_0}")]
 struct ConnId(usize);
 
 /// State about one connection.

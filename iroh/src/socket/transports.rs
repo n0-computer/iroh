@@ -431,7 +431,7 @@ pub(crate) struct Transmit<'a> {
 }
 
 impl<'a> Transmit<'a> {
-    pub(crate) fn datagram_count(&self) -> usize {
+    fn datagram_count(&self) -> usize {
         match self.segment_size {
             None => 1,
             Some(size) => self.contents.len().div_ceil(size),
