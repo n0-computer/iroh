@@ -177,15 +177,9 @@ impl Client {
     ) -> Result<(), TrySendError<RelayToClientMsg>> {
         let message = match self.protocol_version {
             ProtocolVersion::V2 => RelayToClientMsg::Status(status),
-            ProtocolVersion::V1 => {
-                let problem = match status {
-                    HealthStatus::SameEndpointIdConnected => {
-                        "Another endpoint connected with the same endpoint id. No more messages will be received".to_string()
-                    }
-                    HealthStatus::Unknown(n) => format!("Unknown health issue ({n})")
-                };
-                RelayToClientMsg::Health { problem }
-            }
+            ProtocolVersion::V1 => RelayToClientMsg::Health {
+                problem: status.to_string(),
+            },
         };
         self.message_queue.try_send(message)
     }

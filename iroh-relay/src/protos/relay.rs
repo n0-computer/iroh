@@ -125,6 +125,9 @@ pub enum RelayToClientMsg {
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[non_exhaustive]
 pub enum HealthStatus {
+    /// The connection is healthy and recovered from previous problems.
+    #[display("The connection is healthy and has recovered from previous problems")]
+    Healthy,
     /// Another endpoint connected with the same endpoint id. No more messages will be received.
     #[display(
         "Another endpoint connected with the same endpoint id. No more messages will be received."
@@ -139,7 +142,8 @@ impl HealthStatus {
     #[cfg(feature = "server")]
     fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         match self {
-            HealthStatus::SameEndpointIdConnected => dst.put_u8(0),
+            HealthStatus::Healthy => dst.put_u8(0),
+            HealthStatus::SameEndpointIdConnected => dst.put_u8(1),
             HealthStatus::Unknown(discriminant) => dst.put_u8(*discriminant),
         }
         dst
@@ -154,7 +158,8 @@ impl HealthStatus {
         ensure!(bytes.len() >= 1, Error::InvalidFrame);
         let discriminant = bytes.get_u8();
         match discriminant {
-            0 => Ok(Self::SameEndpointIdConnected),
+            0 => Ok(Self::Healthy),
+            1 => Ok(Self::SameEndpointIdConnected),
             n => Ok(Self::Unknown(n)),
         }
     }

@@ -125,6 +125,8 @@ impl Clients {
                 if let Some(last_inactive_client) = state.inactive.pop() {
                     // There is an inactive client, promote to active again.
                     state.active = last_inactive_client;
+                    // Inform the old client that it is healthy again.
+                    state.active.try_send_health(HealthStatus::Healthy).ok();
                     // Don't remove the entry from client map.
                     false
                 } else {
