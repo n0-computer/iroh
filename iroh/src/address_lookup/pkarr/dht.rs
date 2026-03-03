@@ -49,8 +49,9 @@ const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 /// You can supply an [`AddrFilter`] via [`AddrLookupBuilder::with_addr_filter`] to
 /// control which addresses are published.
 ///
-/// [`AddrFilter`]: crate::address_lookup::AddrFilter
 /// [pkarr module]: super
+/// [`AddrFilter`]: crate::address_lookup::AddrFilter
+/// [`AddrLookupBuilder::with_addr_filter`]: crate::address_lookup::AddressLookupBuilder::with_addr_filter
 #[derive(Debug, Clone)]
 pub struct DhtAddressLookup(Arc<Inner>);
 

@@ -21,9 +21,12 @@
 //!
 //! [`PkarrPublisher`] publishes all addresses it receives by default, with no internal limiting.
 //! You can supply an [`AddrFilter`] via [`AddrLookupBuilder::with_addr_filter`] to limit the kinds
-//! and number of addresses that get published.
+//! and number of addresses that get published. When the [`PkarrPublisher`] is added via the
+//! [`N0` preset], a filter to publish only relay addresses is applied. If you add the publisher
+//! directly to an endpoint, you might want to do the same to not leak IP addresses publicly.
 //!
-//! Note that [`PkarrResolver`] and [`address_lookup::DnsAddressLookup`] only resolve and do not publish, so filtering does not apply to them.
+//! Note that [`PkarrResolver`] and [`address_lookup::DnsAddressLookup`] only resolve and do not publish,
+//! so filtering does not apply to them.
 //!
 //! For address lookup in iroh the pkarr Resource Records contain the addressing information,
 //! providing endpoints which retrieve the pkarr Resource Record with enough detail
@@ -49,6 +52,9 @@
 //! [`EndpointId`]: crate::EndpointId
 //! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
 //! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
+//! [`N0` preset]: crate::endpoint::presets::N0
+//! [`AddrFilter`]: crate::address_lookup::AddrFilter
+//! [`AddrLookupBuilder::with_addr_filter`]: crate::address_lookup::AddressLookupBuilder::with_addr_filter
 
 use std::sync::Arc;
 
