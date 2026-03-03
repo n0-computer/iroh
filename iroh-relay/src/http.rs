@@ -40,6 +40,7 @@ pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay
     strum::IntoStaticStr,
 )]
 #[strum(parse_err_ty = UnsupportedRelayProtocolVersion, parse_err_fn = strum_err_fn)]
+// Needs to be ordered with latest version last, so that the `Ord` impl orders by latest version as max.
 pub enum ProtocolVersion {
     /// Version 1 (before iroh 0.97.0)
     #[strum(serialize = "iroh-relay-v1")]
@@ -59,6 +60,8 @@ impl ProtocolVersion {
         Self::VARIANTS
             .iter()
             .map(ProtocolVersion::to_str)
+            // Need to reverse order so that the latest version comes last.
+            .rev()
             .collect::<Vec<_>>()
             .join(", ")
     }
