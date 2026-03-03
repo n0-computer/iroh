@@ -3342,7 +3342,8 @@ mod tests {
         // so we resort to log assertions.
         // TODO(Frando): Replace once we add a proper API for this.
         let expected_log_line = format!(
-            "ep2:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected"
+            "ep2:endpoint{{id={}}}:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected",
+            ep2.id().fmt_short()
         );
         tokio::time::timeout(Duration::from_secs(5), async {
             while !logs_contain(&expected_log_line) {
