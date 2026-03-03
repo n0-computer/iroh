@@ -402,8 +402,8 @@
 <a href=#402 id=402 data-nosnippet>402</a>        <span class="self">self</span>.add_report_history_and_set_preferred_relay(<span class="kw-2">&amp;mut </span>report);
 <a href=#403 id=403 data-nosnippet>403</a>        <span class="macro">debug!</span>(
 <a href=#404 id=404 data-nosnippet>404</a>            <span class="question-mark">?</span>report,
-<a href=#405 id=405 data-nosnippet>405</a>            <span class="string">"generated report in {:02}ms"</span>,
-<a href=#406 id=406 data-nosnippet>406</a>            now.elapsed().as_millis()
+<a href=#405 id=405 data-nosnippet>405</a>            duration = <span class="question-mark">?</span>now.elapsed(),
+<a href=#406 id=406 data-nosnippet>406</a>            <span class="string">"net_report generated"</span>,
 <a href=#407 id=407 data-nosnippet>407</a>        );
 <a href=#408 id=408 data-nosnippet>408</a>
 <a href=#409 id=409 data-nosnippet>409</a>        report
@@ -474,7 +474,7 @@
 <a href=#474 id=474 data-nosnippet>474</a>        <span class="kw">let </span>relays = <span class="self">self</span>.relay_map.relays::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 <a href=#475 id=475 data-nosnippet>475</a>        <span class="kw">for </span>relay <span class="kw">in </span>relays.into_iter().take(MAX_RELAYS) {
 <a href=#476 id=476 data-nosnippet>476</a>            <span class="kw">if </span>if_state.have_v4 &amp;&amp; needs_v4_probe {
-<a href=#477 id=477 data-nosnippet>477</a>                <span class="macro">debug!</span>(<span class="question-mark">?</span>relay.url, <span class="string">"v4 QAD probe"</span>);
+<a href=#477 id=477 data-nosnippet>477</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>relay.url, <span class="string">"v4 QAD probe starting"</span>);
 <a href=#478 id=478 data-nosnippet>478</a>                <span class="kw">let </span>relay = relay.clone();
 <a href=#479 id=479 data-nosnippet>479</a>                <span class="kw">let </span>dns_resolver = <span class="self">self</span>.socket_state.dns_resolver.clone();
 <a href=#480 id=480 data-nosnippet>480</a>                <span class="kw">let </span>quic_client = quic_client.clone();
@@ -491,7 +491,7 @@
 <a href=#491 id=491 data-nosnippet>491</a>                );
 <a href=#492 id=492 data-nosnippet>492</a>            }
 <a href=#493 id=493 data-nosnippet>493</a>            <span class="kw">if </span>if_state.have_v6 &amp;&amp; needs_v6_probe {
-<a href=#494 id=494 data-nosnippet>494</a>                <span class="macro">debug!</span>(<span class="question-mark">?</span>relay.url, <span class="string">"v6 QAD probe"</span>);
+<a href=#494 id=494 data-nosnippet>494</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>relay.url, <span class="string">"v6 QAD probe starting"</span>);
 <a href=#495 id=495 data-nosnippet>495</a>                <span class="kw">let </span>relay = relay.clone();
 <a href=#496 id=496 data-nosnippet>496</a>                <span class="kw">let </span>dns_resolver = <span class="self">self</span>.socket_state.dns_resolver.clone();
 <a href=#497 id=497 data-nosnippet>497</a>                <span class="kw">let </span>quic_client = quic_client.clone();

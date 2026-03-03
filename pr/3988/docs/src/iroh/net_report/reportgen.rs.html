@@ -249,7 +249,7 @@
 <a href=#249 id=249 data-nosnippet>249</a>
 <a href=#250 id=250 data-nosnippet>250</a>                        <span class="comment">// If all probes are done &amp; we have_udp cancel captive
 <a href=#251 id=251 data-nosnippet>251</a>                        </span><span class="kw">if </span>num_probes == <span class="number">0 </span>{
-<a href=#252 id=252 data-nosnippet>252</a>                            <span class="macro">debug!</span>(<span class="string">"all regular probes done"</span>);
+<a href=#252 id=252 data-nosnippet>252</a>                            <span class="macro">trace!</span>(<span class="string">"all regular probes done"</span>);
 <a href=#253 id=253 data-nosnippet>253</a>                            <span class="macro">debug_assert!</span>(probes.len() &lt;= <span class="number">1</span>, <span class="string">"{} probes"</span>, probes.len());
 <a href=#254 id=254 data-nosnippet>254</a>
 <a href=#255 id=255 data-nosnippet>255</a>                            <span class="kw">if </span>have_udp {
@@ -509,7 +509,7 @@
 <a href=#509 id=509 data-nosnippet>509</a>            <span class="macro">trace!</span>(<span class="string">"delaying probe"</span>);
 <a href=#510 id=510 data-nosnippet>510</a>            time::sleep(delay).<span class="kw">await</span>;
 <a href=#511 id=511 data-nosnippet>511</a>        }
-<a href=#512 id=512 data-nosnippet>512</a>        <span class="macro">debug!</span>(<span class="string">"starting probe"</span>);
+<a href=#512 id=512 data-nosnippet>512</a>        <span class="macro">trace!</span>(<span class="string">"starting probe"</span>);
 <a href=#513 id=513 data-nosnippet>513</a>
 <a href=#514 id=514 data-nosnippet>514</a>        <span class="kw">let </span>report = <span class="kw">match </span><span class="self">self </span>{
 <a href=#515 id=515 data-nosnippet>515</a>            Probe::Https =&gt; {
@@ -579,7 +579,7 @@
 <a href=#579 id=579 data-nosnippet>579</a>        <span class="prelude-val">None </span>=&gt; {
 <a href=#580 id=580 data-nosnippet>580</a>            <span class="kw">let </span>urls: Vec&lt;<span class="kw">_</span>&gt; = dm.urls();
 <a href=#581 id=581 data-nosnippet>581</a>            <span class="kw">if </span>urls.is_empty() {
-<a href=#582 id=582 data-nosnippet>582</a>                <span class="macro">debug!</span>(<span class="string">"No suitable relay for captive portal check"</span>);
+<a href=#582 id=582 data-nosnippet>582</a>                <span class="macro">trace!</span>(<span class="string">"No suitable relay for captive portal check"</span>);
 <a href=#583 id=583 data-nosnippet>583</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
 <a href=#584 id=584 data-nosnippet>584</a>            }
 <a href=#585 id=585 data-nosnippet>585</a>
@@ -630,7 +630,7 @@
 <a href=#630 id=630 data-nosnippet>630</a>        .map(|s| s.to_str().unwrap_or_default())
 <a href=#631 id=631 data-nosnippet>631</a>        == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>expected_response);
 <a href=#632 id=632 data-nosnippet>632</a>
-<a href=#633 id=633 data-nosnippet>633</a>    <span class="macro">debug!</span>(
+<a href=#633 id=633 data-nosnippet>633</a>    <span class="macro">trace!</span>(
 <a href=#634 id=634 data-nosnippet>634</a>        <span class="string">"check_captive_portal url={} status_code={} valid_response={}"</span>,
 <a href=#635 id=635 data-nosnippet>635</a>        res.url(),
 <a href=#636 id=636 data-nosnippet>636</a>        res.status(),
