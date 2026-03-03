@@ -402,8 +402,8 @@ impl Client {
         self.add_report_history_and_set_preferred_relay(&mut report);
         debug!(
             ?report,
-            "generated report in {:02}ms",
-            now.elapsed().as_millis()
+            duration = ?now.elapsed(),
+            "net_report generated",
         );
 
         report
@@ -474,7 +474,7 @@ impl Client {
         let relays = self.relay_map.relays::<Vec<_>>();
         for relay in relays.into_iter().take(MAX_RELAYS) {
             if if_state.have_v4 && needs_v4_probe {
-                debug!(?relay.url, "v4 QAD probe");
+                trace!(?relay.url, "v4 QAD probe starting");
                 let relay = relay.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
@@ -491,7 +491,7 @@ impl Client {
                 );
             }
             if if_state.have_v6 && needs_v6_probe {
-                debug!(?relay.url, "v6 QAD probe");
+                trace!(?relay.url, "v6 QAD probe starting");
                 let relay = relay.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
