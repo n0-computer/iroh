@@ -664,7 +664,7 @@ mod tests {
             (
                 RelayToClientMsg::Status(HealthStatus::SameEndpointIdConnected)
                     .write_to(Vec::new()),
-                "0d 00",
+                "0d 01",
             ),
         ]);
 
