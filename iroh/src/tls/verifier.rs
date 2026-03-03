@@ -13,6 +13,9 @@ use rustls::{
     pki_types::CertificateDer as Certificate,
     server::danger::{ClientCertVerified, ClientCertVerifier},
 };
+#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+use webpki::aws_lc_rs as webpki_algs;
+#[cfg(feature = "ring")]
 use webpki::ring as webpki_algs;
 use webpki_types::SubjectPublicKeyInfoDer;
 
