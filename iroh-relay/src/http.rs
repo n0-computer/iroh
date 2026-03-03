@@ -46,7 +46,7 @@ pub enum ProtocolVersion {
     V1,
     /// Version 2 (added in iroh 0.97.0)
     /// - Removed `Health` frame (id 11)
-    /// - Added new `Health` frame (id 13)
+    /// - Added new `Status` frame (id 13)
     /// - Changed behavior such that unknown frames are allowed
     #[default]
     #[strum(serialize = "iroh-relay-v2")]

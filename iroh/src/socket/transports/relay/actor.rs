@@ -681,14 +681,15 @@ impl ActiveRelayActor {
                 state.ping_tracker.pong_received(data);
                 state.established = true;
             }
-            RelayToClientMsg::V1Health { problem } => {
-                warn!("Relay server reports problem: {problem}");
-            }
-            RelayToClientMsg::Health { status } => {
+            RelayToClientMsg::Status(status) => {
                 warn!("Relay server reports problem: {status}");
             }
             RelayToClientMsg::Restarting { .. } => {
                 trace!("Ignoring {msg:?}")
+            }
+            // Deprecated variants, kept for backwards compatibility with older relay protocol versions.
+            RelayToClientMsg::Health { problem } => {
+                warn!("Relay server reports problem: {problem}");
             }
             frame @ _ => {
                 trace!("Ignoring {frame}")

@@ -176,13 +176,15 @@ impl Client {
         status: HealthStatus,
     ) -> Result<(), TrySendError<RelayToClientMsg>> {
         let message = match self.protocol_version {
-            ProtocolVersion::V2 => {
-                RelayToClientMsg::Health { status }
-            }
+            ProtocolVersion::V2 => RelayToClientMsg::Status(status),
             ProtocolVersion::V1 => {
-                RelayToClientMsg::V1Health { problem:
-                    "Another endpoint connected with the same endpoint id. No more messages will be received".to_string()
-                }
+                let problem = match status {
+                    HealthStatus::SameEndpointIdConnected => {
+                        "Another endpoint connected with the same endpoint id. No more messages will be received".to_string()
+                    }
+                    HealthStatus::Unknown(n) => format!("Unknown health issue ({n})")
+                };
+                RelayToClientMsg::Health { problem }
             }
         };
         self.message_queue.try_send(message)
@@ -747,9 +749,9 @@ mod tests {
         let (builder_second, _second_rw) = test_client_builder(key, ProtocolVersion::V1);
         clients.register(builder_second, metrics.clone());
 
-        let frame = recv_frame(FrameType::V1Health, &mut first_rw).await?;
+        let frame = recv_frame(FrameType::Health, &mut first_rw).await?;
         assert!(
-            matches!(frame, RelayToClientMsg::V1Health { .. }),
+            matches!(frame, RelayToClientMsg::Health { .. }),
             "expected V1Health frame for V1 client, got {frame:?}"
         );
 
@@ -775,12 +777,10 @@ mod tests {
         let (builder_second, _second_rw) = test_client_builder(key, ProtocolVersion::V2);
         clients.register(builder_second, metrics.clone());
 
-        let frame = recv_frame(FrameType::Health, &mut first_rw).await?;
+        let frame = recv_frame(FrameType::Status, &mut first_rw).await?;
         assert_eq!(
             frame,
-            RelayToClientMsg::Health {
-                status: HealthStatus::SameEndpointIdConnected,
-            }
+            RelayToClientMsg::Status(HealthStatus::SameEndpointIdConnected)
         );
 
         clients.shutdown().await;

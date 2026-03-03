@@ -85,10 +85,7 @@ pub enum RelayToClientMsg {
     /// packet but has now disconnected from the relay.
     EndpointGone(EndpointId),
     /// A one-way message from relay to client, declaring the connection health state.
-    Health {
-        /// Health status of this relay connection.
-        status: HealthStatus,
-    },
+    Status(HealthStatus),
     /// A one-way message from relay to client, advertising that the relay is restarting.
     Restarting {
         /// An advisory duration that the client should wait before attempting to reconnect.
@@ -107,12 +104,13 @@ pub enum RelayToClientMsg {
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
 
-    // -- Deprecated methods --
+    // -- Deprecated variants --
     // We don't use `#[deprecated]` because this would throw warnings for the derived serde impls.
-    /// Deprecated: A one-way message from relay to client, declaring the connection health state.
+    /// Removed since relay-protocol-v2:
+    /// A one-way message from relay to client, declaring the connection health state.
     ///
-    /// Use [`Self::Health`] instead.
-    V1Health {
+    /// Use [`Self::Status`] instead.
+    Health {
         /// If set, is a description of why the connection is unhealthy.
         ///
         /// If `None` means the connection is healthy again.
@@ -307,9 +305,9 @@ impl RelayToClientMsg {
             Self::EndpointGone { .. } => FrameType::EndpointGone,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
-            Self::Health { .. } => FrameType::Health,
+            Self::Status { .. } => FrameType::Status,
             Self::Restarting { .. } => FrameType::Restarting,
-            Self::V1Health { .. } => FrameType::V1Health,
+            Self::Health { .. } => FrameType::Health,
         }
     }
 
@@ -341,7 +339,7 @@ impl RelayToClientMsg {
             Self::Pong(data) => {
                 dst.put(&data[..]);
             }
-            Self::V1Health { problem } => {
+            Self::Health { problem } => {
                 dst.put(problem.as_ref());
             }
             Self::Restarting {
@@ -351,7 +349,7 @@ impl RelayToClientMsg {
                 dst.put_u32(reconnect_in.as_millis() as u32);
                 dst.put_u32(try_for.as_millis() as u32);
             }
-            Self::Health { status } => {
+            Self::Status(status) => {
                 dst = status.write_to(dst);
             }
         }
@@ -367,12 +365,12 @@ impl RelayToClientMsg {
             }
             Self::EndpointGone(_) => 32,
             Self::Ping(_) | Self::Pong(_) => 8,
-            Self::Health { status } => status.encoded_len(),
+            Self::Status(status) => status.encoded_len(),
             Self::Restarting { .. } => {
                 4 // u32
                 + 4 // u32
             }
-            Self::V1Health { problem } => problem.len(),
+            Self::Health { problem } => problem.len(),
         };
         self.typ().encoded_len() + payload_len
     }
@@ -420,9 +418,9 @@ impl RelayToClientMsg {
                 data.copy_from_slice(&content[..8]);
                 Self::Pong(data)
             }
-            FrameType::V1Health => {
+            FrameType::Health => {
                 let problem = std::str::from_utf8(&content)?.to_owned();
-                Self::V1Health { problem }
+                Self::Health { problem }
             }
             FrameType::Restarting => {
                 ensure!(content.len() == 4 + 4, Error::InvalidFrame);
@@ -443,9 +441,9 @@ impl RelayToClientMsg {
                     try_for,
                 }
             }
-            FrameType::Health => {
+            FrameType::Status => {
                 let status = HealthStatus::from_bytes(content)?;
-                Self::Health { status }
+                Self::Status(status)
             }
             _ => {
                 return Err(e!(Error::InvalidFrameType { frame_type }));
@@ -585,7 +583,7 @@ mod tests {
 
         check_expected_bytes(vec![
             (
-                RelayToClientMsg::V1Health {
+                RelayToClientMsg::Health {
                     problem: "Hello? Yes this is dog.".into(),
                 }
                 .write_to(Vec::new()),
@@ -659,10 +657,8 @@ mod tests {
                 "0c 00 00 00 0a 00 00 00 14",
             ),
             (
-                RelayToClientMsg::Health {
-                    status: HealthStatus::SameEndpointIdConnected,
-                }
-                .write_to(Vec::new()),
+                RelayToClientMsg::Status(HealthStatus::SameEndpointIdConnected)
+                    .write_to(Vec::new()),
                 "0d 00",
             ),
         ]);
@@ -789,9 +785,9 @@ mod proptests {
             .prop_filter("exceeds MAX_PACKET_SIZE", |s| {
                 s.len() < MAX_PACKET_SIZE // a single unicode character can match a regex "." but take up multiple bytes
             })
-            .prop_map(|problem| RelayToClientMsg::V1Health { problem });
+            .prop_map(|problem| RelayToClientMsg::Health { problem });
         let health = Just(HealthStatus::SameEndpointIdConnected)
-            .prop_map(|status| RelayToClientMsg::Health { status });
+            .prop_map(|status| RelayToClientMsg::Status(status));
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),

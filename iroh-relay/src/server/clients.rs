@@ -347,7 +347,7 @@ mod tests {
         assert!(a2_conn_id != a1_conn_id);
 
         // a1 is marked inactive and should receive a health frame
-        let _frame = recv_frame(FrameType::Health, &mut a1_rw).await?;
+        let _frame = recv_frame(FrameType::Status, &mut a1_rw).await?;
 
         // send packet and verify it is send to a2
         clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
