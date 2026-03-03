@@ -306,6 +306,7 @@ mod tests {
         RelayUrl, SecretKey,
         address_lookup::{EndpointInfo, PkarrRelayClient},
         endpoint_info::EndpointIdExt,
+        tls::{CaRootsConfig, default_provider},
     };
     use n0_error::StdResultExt;
     use n0_tracing_test::traced_test;
@@ -344,7 +345,10 @@ mod tests {
         };
 
         let http_url = server.http_url().expect("http is bound");
-        let pkarr = PkarrRelayClient::new(format!("{http_url}pkarr").parse().anyerr()?);
+        let tls_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .expect("infallible");
+        let pkarr = PkarrRelayClient::new(format!("{http_url}pkarr").parse().anyerr()?, tls_config);
         pkarr.publish(&signed_packet).await?;
 
         // Create a reqwest client that does not verify certificates.

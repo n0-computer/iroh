@@ -132,6 +132,12 @@ jobs:
         ./setup.sh
         ./cleanup.sh || true
 
+    - name: Copy sim configs
+      run: |
+        cp -r .github/sims/iroh/ ../chuck/netsim/sims/iroh/
+        cp -r .github/sims/integration/ ../chuck/netsim/sims/integration/
+        cp -r .github/sims/paused/ ../chuck/netsim/sims/paused/
+
     - name: Copy binaries to right location
       run: |
         cp target/${{inputs.build_profile}}/examples/* ../chuck/netsim/bins/
