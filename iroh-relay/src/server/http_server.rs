@@ -1153,6 +1153,43 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    async fn test_subprotocol_negotiation_picks_latest() -> Result {
+        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            .spawn()
+            .await?;
+        let addr = server.addr();
+
+        for offered in [
+            "iroh-relay-v2,iroh-relay-v1",
+            "iroh-relay-v1,iroh-relay-v2",
+            "baz, iroh-relay-v1, iroh-relay-v2, boo",
+            "foo, iroh-relay-v2, bar",
+        ] {
+            let ws_uri = format!("ws://{addr}{RELAY_PATH}");
+            let (_stream, response) = tokio_websockets::ClientBuilder::new()
+                .uri(&ws_uri)
+                .expect("valid websocket URI")
+                .add_header(
+                    SEC_WEBSOCKET_PROTOCOL,
+                    HeaderValue::from_str(offered).expect("valid subprotocol header value"),
+                )
+                .expect("header accepted by websocket client")
+                .connect()
+                .await
+                .expect("websocket upgrade succeeds");
+            let negotiated = response
+                .headers()
+                .get(SEC_WEBSOCKET_PROTOCOL)
+                .expect("Sec-WebSocket-Protocol response header is present");
+            assert_eq!(negotiated, "iroh-relay-v2", "offered={offered}");
+        }
+
+        server.shutdown();
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
     async fn test_https_clients_and_server() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
