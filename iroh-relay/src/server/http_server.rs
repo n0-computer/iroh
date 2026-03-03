@@ -571,7 +571,7 @@ impl RelayService {
         let protocol_version = subprotocols
             .split(",")
             .map(|s| s.trim())
-            .flat_map(|s| ProtocolVersion::try_from(s).ok())
+            .filter_map(ProtocolVersion::match_from_str)
             .max()
             .ok_or_else(|| {
                 e!(RelayUpgradeReqError::UnsupportedRelayVersion {

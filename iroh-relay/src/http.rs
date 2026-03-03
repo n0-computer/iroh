@@ -25,16 +25,32 @@ pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay
 ///
 /// Variants are ordered by preference (highest first), so the [`Ord`] impl
 /// can be used during negotiation to pick the best version.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default, VariantArray)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    strum::VariantArray,
+    strum::EnumString,
+    strum::Display,
+    strum::IntoStaticStr,
+)]
+#[strum(parse_err_ty = UnsupportedRelayProtocolVersion, parse_err_fn = strum_err_fn)]
 pub enum ProtocolVersion {
-    /// Added in iroh 0.97.0.
-    /// - Deprecated `Health` frame (id 11)
+    /// Version 1 (before iroh 0.97.0)
+    #[strum(serialize = "iroh-relay-v1")]
+    V1,
+    /// Version 2 (added in iroh 0.97.0)
+    /// - Removed `Health` frame (id 11)
     /// - Added new `Health` frame (id 13)
     /// - Changed behavior such that unknown frames are allowed
     #[default]
+    #[strum(serialize = "iroh-relay-v2")]
     V2,
-    /// Deprecated version 1 (before iroh 0.97.0)
-    V1,
 }
 
 impl ProtocolVersion {
@@ -54,10 +70,14 @@ impl ProtocolVersion {
 
     /// Returns the protocol version identifier string.
     pub fn to_str(&self) -> &'static str {
-        match self {
-            ProtocolVersion::V1 => "iroh-relay-v1",
-            ProtocolVersion::V2 => "iroh-relay-v2",
-        }
+        self.into()
+    }
+
+    /// Tries to parse a [`ProtocolVersion`] from `s`.
+    ///
+    /// Returns `None` if `s` is not a valid protocol version string.
+    pub fn match_from_str(s: &str) -> Option<Self> {
+        Self::try_from(s).ok()
     }
 
     /// Returns this protocol version as an HTTP header value.
@@ -66,19 +86,11 @@ impl ProtocolVersion {
     }
 }
 
-impl TryFrom<&str> for ProtocolVersion {
-    type Error = UnsupportedRelayProtocolVersion;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "iroh-relay-v1" => Ok(Self::V1),
-            "iroh-relay-v2" => Ok(Self::V2),
-            _ => Err(UnsupportedRelayProtocolVersion),
-        }
-    }
-}
-
 /// Error returned when the relay protocol version is not recognized.
 #[stack_error(derive)]
 #[error("Relay protocol version is not supported")]
 pub struct UnsupportedRelayProtocolVersion;
+
+fn strum_err_fn(_item: &str) -> UnsupportedRelayProtocolVersion {
+    UnsupportedRelayProtocolVersion::new()
+}
