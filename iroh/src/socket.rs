@@ -26,6 +26,7 @@ use std::{
     },
 };
 
+use ctutils::CtEq;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{bail, e, stack_error};
@@ -199,7 +200,7 @@ impl StaticConfig {
         let quic_server_config = self
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
-        let mut inner = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+        let mut inner = quinn::ServerConfig::new(Arc::new(quic_server_config));
         inner.transport_config(self.transport_config.to_inner_arc());
         inner
     }
@@ -890,7 +891,35 @@ impl EndpointInner {
             hooks,
         });
 
-        let mut endpoint_config = quinn::EndpointConfig::default();
+        struct Blake3HmacKey([u8; 32]);
+
+        impl quinn::crypto::HmacKey for Blake3HmacKey {
+            fn sign(&self, data: &[u8], signature_out: &mut [u8]) {
+                signature_out.copy_from_slice(blake3::keyed_hash(&self.0, data).as_slice());
+            }
+
+            fn signature_len(&self) -> usize {
+                blake3::OUT_LEN // 32 bytes
+            }
+
+            fn verify(
+                &self,
+                data: &[u8],
+                signature: &[u8],
+            ) -> Result<(), quinn::crypto::CryptoError> {
+                let reference = blake3::keyed_hash(&self.0, data);
+                // to_bool is fine here, because it's the last thing we do to
+                // distinguish success or failure (see to_bool documentation)
+                if signature.ct_eq(reference.as_slice()).to_bool() {
+                    Ok(())
+                } else {
+                    Err(quinn::crypto::CryptoError)
+                }
+            }
+        }
+
+        let mut endpoint_config =
+            quinn::EndpointConfig::new(Arc::new(Blake3HmacKey(rand::random())));
         // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
         // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
         // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
