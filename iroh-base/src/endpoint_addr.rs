@@ -158,12 +158,18 @@ impl From<EndpointId> for EndpointAddr {
     }
 }
 
-/// TODO
+/// A custom address.
+///
+/// This is a generic address type with a type id and opaque data,
+/// to allow external crates to implement custom transports.
+///
+/// Custom addresses can be written by anybody, so you need to be prepared to handle
+/// unexpected type ids and data when parsing custom addresses.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CustomAddr {
-    /// id
+    /// The transport id.
     id: u64,
-    /// data
+    /// Opaque address data for this transport.
     data: CustomAddrBytes,
 }
 
@@ -191,6 +197,10 @@ impl std::str::FromStr for CustomAddr {
 }
 
 /// Error parsing a [`crate::CustomAddr`].
+///
+/// Parsing a string into a [`CustomAddr`] represents just the first part of
+/// validation. Even if the string is well-formed, the resulting [`CustomAddr`] might
+/// still have an invalid data size or format for the transport type.
 #[stack_error(derive)]
 #[allow(missing_docs)]
 pub enum CustomAddrParseError {
@@ -269,12 +279,23 @@ impl CustomAddr {
         }
     }
 
-    /// Id to distinguish different custom address types
+    /// Returns the transport id.
+    ///
+    /// You can freely choose this. There is a table of reserved custom transport ids in
+    /// <https://github.com/n0-computer/iroh/blob/main/TRANSPORTS.md>, where you could
+    /// submit your transport for registration to get a reserved id.
+    ///
+    /// But this is only relevant if you care for interop.
     pub fn id(&self) -> u64 {
         self.id
     }
 
-    /// Data associated with this custom address
+    /// Returns the opaque address data for this transport.
+    ///
+    /// Below a certain size (currently 30 bytes) this is stored inline, otherwise on the heap.
+    ///
+    /// Note that there are no guarantees about the size of this data. When parsing custom
+    /// addresses you must be prepared to handle unexpected sizes here.
     pub fn data(&self) -> &[u8] {
         self.data.as_bytes()
     }

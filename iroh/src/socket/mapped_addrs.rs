@@ -96,7 +96,7 @@ pub(crate) enum MultipathMappedAddr {
     Relay(RelayMappedAddr),
     /// An IP based transport address.
     Ip(SocketAddr),
-    /// Custom transport version
+    /// Custom transport address.
     Custom(CustomMappedAddr),
 }
 

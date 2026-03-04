@@ -17,6 +17,7 @@ pub struct Metrics {
 
     // Data packets (non-disco)
     pub recv_data_relay: Counter,
+    // Number of bytes received on any custom transport.
     pub recv_data_custom: Counter,
     pub recv_data_ipv4: Counter,
     pub recv_data_ipv6: Counter,

@@ -19,6 +19,9 @@ use super::{Addr, Transmit};
 /// be created using [CustomTransport::bind].
 pub trait CustomTransport: std::fmt::Debug + Send + Sync + 'static {
     /// Create a custom endpoint
+    ///
+    /// Analogously to [std::net::UdpSocket::bind], this is where the actual
+    /// underlying hardware resource is created.
     fn bind(&self) -> io::Result<Box<dyn CustomEndpoint>>;
 }
 
@@ -27,11 +30,22 @@ pub trait CustomTransport: std::fmt::Debug + Send + Sync + 'static {
 /// An endpoint has a local address (or multiple local addresses), can receive
 /// packets, and can create senders to send packets.
 pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
-    /// Watch local addrs
+    /// A watcher for local addresses for this custom endpoint.
     fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<CustomAddr>>;
-    /// Create a sender
+    /// Create a custom sender for this custom endpoint.
     fn create_sender(&self) -> Arc<dyn CustomSender>;
-    /// Poll recv
+    /// poll receiving a packet on this custom endpoint.
+    ///
+    /// This will be called with `bufs`, `metas` and `source_addrs` of the same length.
+    /// It is acceptable to panic if this is not the case.
+    ///
+    /// The maximum length of the slices is [`quinn_udp::BATCH_SIZE`].
+    /// It is acceptable to panic if this is exceeded.
+    ///
+    /// On success, all three slices must be filled up to the returned length,
+    /// and the returned length must be less than or equal to the length of the slices.
+    ///
+    /// It does not make much sense to return addresses unrelated to this transport.
     fn poll_recv(
         &mut self,
         cx: &mut Context,
@@ -59,9 +73,13 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
 /// only be called with addresses for which [CustomSender::is_valid_send_addr]
 /// returns true.
 pub trait CustomSender: std::fmt::Debug + Send + Sync + 'static {
-    /// is addr valid for this transport?
+    /// True if this sender can send to the given address.
     fn is_valid_send_addr(&self, addr: &CustomAddr) -> bool;
-    /// poll_send
+    /// poll sending a packet on this sender.
+    ///
+    /// This will only be called from iroh with addresses for which [CustomSender::is_valid_send_addr] returns true.
+    ///
+    /// You should handle invalid addresses by returning an error.
     fn poll_send(
         &self,
         cx: &mut std::task::Context,
