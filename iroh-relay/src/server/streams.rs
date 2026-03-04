@@ -2,14 +2,14 @@
 
 use std::{
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
     task::{Context, Poll},
 };
 
 use n0_error::{ensure, stack_error};
 use n0_future::{FutureExt, Sink, Stream, ready, time};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tracing::instrument;
+use tracing::{instrument, warn};
 
 use super::{ClientRateLimit, Metrics};
 use crate::{
@@ -195,6 +195,34 @@ pub enum MaybeTlsStream {
     /// An in-memory bidirectional pipe.
     #[cfg(test)]
     Test(tokio::io::DuplexStream),
+}
+
+impl MaybeTlsStream {
+    /// Tries to disable the nagle algorithm on the TCP stream.
+    ///
+    /// This sets the NO_DELAY option on the TCP stream, which turns off the
+    /// nagle algorithm for coalecing writes together.
+    ///
+    /// If this fails, this will print a warning the first time it fails.
+    pub fn disable_nagle(&self) {
+        let stream = match self {
+            #[cfg(test)]
+            Self::Test(_) => return,
+            Self::Plain(stream) => stream,
+            Self::Tls(tls_stream) => &tls_stream.get_ref().0,
+        };
+
+        if stream.set_nodelay(true).is_err() {
+            use std::sync::atomic::Ordering::Relaxed;
+
+            static FAILED_NO_DELAY: AtomicBool = AtomicBool::new(false);
+            if !FAILED_NO_DELAY.swap(true, Relaxed) {
+                warn!(
+                    "Failed to set TCP socket to NO_DELAY (turning off Nagle failed). This will impair relay performance."
+                );
+            }
+        }
+    }
 }
 
 impl ExportKeyingMaterial for MaybeTlsStream {
