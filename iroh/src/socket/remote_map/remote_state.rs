@@ -22,7 +22,7 @@ use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 
 use self::path_state::RemotePathState;
 pub(crate) use self::path_watcher::PathWatchable;
@@ -130,8 +130,6 @@ type AddressLookupStream = Either<
 pub(super) struct RemoteStateActor {
     /// The endpoint ID of the remote endpoint.
     endpoint_id: EndpointId,
-    /// The endpoint ID of the local endpoint.
-    local_endpoint_id: EndpointId,
 
     // Hooks into the rest of the Socket.
     //
@@ -195,7 +193,6 @@ impl RemoteStateActor {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         endpoint_id: EndpointId,
-        local_endpoint_id: EndpointId,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<SocketMetrics>,
@@ -203,7 +200,6 @@ impl RemoteStateActor {
     ) -> Self {
         Self {
             endpoint_id,
-            local_endpoint_id,
             metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
@@ -227,9 +223,9 @@ impl RemoteStateActor {
         initial_msgs: Vec<RemoteStateMessage>,
         tasks: &mut JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
         shutdown_token: CancellationToken,
+        parent_span: Span,
     ) -> mpsc::Sender<RemoteStateMessage> {
         let (tx, rx) = mpsc::channel(16);
-        let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
 
         // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
@@ -240,9 +236,8 @@ impl RemoteStateActor {
         tasks.spawn(
             self.run(initial_msgs, rx, shutdown_token)
                 .instrument(info_span!(
-                    parent: None,
+                    parent: parent_span,
                     "RemoteStateActor",
-                    me = %me.fmt_short(),
                     remote = %endpoint_id.fmt_short(),
                 )),
         );
@@ -504,7 +499,7 @@ impl RemoteStateActor {
                     remote = %self.endpoint_id.fmt_short(),
                     ?path_remote,
                     ?path_status,
-                    ?conn_id,
+                    %conn_id,
                     path_id = %PathId::ZERO,
                     ?res,
                 );
@@ -830,7 +825,7 @@ impl RemoteStateActor {
                     remote = %self.endpoint_id.fmt_short(),
                     ?open_addr,
                     ?path_status,
-                    ?conn_id,
+                    %conn_id,
                     %path_id,
                     ?res,
                 );
@@ -842,7 +837,7 @@ impl RemoteStateActor {
             let fut = conn.open_path_ensure(quic_addr, path_status);
             match fut.path_id() {
                 Some(path_id) => {
-                    trace!(?conn_id, %path_id, ?path_status, "opening new path");
+                    trace!(%conn_id, %path_id, ?path_status, "opening new path");
                     // Just like in the PATH_STATUS comment above, we need to make sure that the
                     // path status is set correctly, even if the path already existed.
                     if let Some(path) = conn.path(path_id) {
@@ -853,7 +848,7 @@ impl RemoteStateActor {
                             remote = %self.endpoint_id.fmt_short(),
                             ?open_addr,
                             ?path_status,
-                            ?conn_id,
+                            %conn_id,
                             %path_id,
                             ?res,
                         );
@@ -914,7 +909,7 @@ impl RemoteStateActor {
                         Level::DEBUG,
                         remote = %self.endpoint_id.fmt_short(),
                         ?path_remote,
-                        ?conn_id,
+                        %conn_id,
                         %path_id,
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
@@ -938,7 +933,7 @@ impl RemoteStateActor {
                     Level::DEBUG,
                     remote = %self.endpoint_id.fmt_short(),
                     ?path_remote,
-                    ?conn_id,
+                    %conn_id,
                     path_id = ?id,
                 );
 
@@ -951,11 +946,11 @@ impl RemoteStateActor {
                         continue;
                     };
                     if let Some(path) = conn.path(*path_id) {
-                        trace!(?path_remote, ?conn_id, %path_id, "closing path");
+                        trace!(?path_remote, %conn_id, %path_id, "closing path");
                         if let Err(err) = path.close() {
                             trace!(
                                 ?path_remote,
-                                ?conn_id,
+                                %conn_id,
                                 %path_id,
                                 "path close failed: {err:#}"
                             );
@@ -1083,7 +1078,7 @@ impl RemoteStateActor {
                     .filter(|conn| conn.side().is_client())
                     .and_then(|conn| conn.path(*path_id))
                 {
-                    trace!(?path_remote, ?conn_id, %path_id, "closing direct path");
+                    trace!(?path_remote, %conn_id, %path_id, "closing direct path");
                     match path.close() {
                         Err(quinn_proto::ClosePathError::MultipathNotNegotiated) => {
                             error!("multipath not negotiated");
@@ -1276,7 +1271,8 @@ struct HolepunchAttempt {
 ///
 /// The wrapped value is the [`quinn::Connection::stable_id`] value, and is thus only valid
 /// for active connections.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
+#[display("{_0}")]
 struct ConnId(usize);
 
 /// State about one connection.

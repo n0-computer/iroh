@@ -254,7 +254,7 @@
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
 mod socket;
-mod tls;
+pub mod tls;
 
 pub(crate) mod runtime;
 pub(crate) mod util;
