@@ -1,9 +1,7 @@
-use std::{
-    pin::Pin,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::pin::Pin;
 
 use iroh_base::EndpointId;
+use portable_atomic::{AtomicU64, Ordering};
 use tokio_util::sync::CancellationToken;
 #[cfg(not(wasm_browser))]
 use tokio_util::task::TaskTracker;
