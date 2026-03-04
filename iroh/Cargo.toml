@@ -90,8 +90,6 @@ tokio = { version = "1", features = [
     "net",
     "fs",
     "io-std",
-    "signal",
-    "process",
 ] }
 
 # wasm-in-browser dependencies
