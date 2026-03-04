@@ -45,7 +45,7 @@ use tokio::sync::{
     oneshot,
 };
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
-use tracing::{Instrument, Level, debug, event, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, Span, debug, event, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, Transport, TransportConfig};
 use url::Url;
 
@@ -309,14 +309,11 @@ pub(crate) struct Socket {
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
+    /// Tracing span for this endpoint.
+    pub(crate) span: Span,
 }
 
 impl Socket {
-    /// Creates a [`Socket`] listening.
-    pub(crate) async fn spawn(opts: Options) -> Result<EndpointInner, BindError> {
-        EndpointInner::new(opts).await
-    }
-
     /// Returns the relay endpoint we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay endpoints.
@@ -763,13 +760,18 @@ pub enum BindError {
     #[error("Failed to create an address lookup service")]
     AddressLookup {
         #[error(from)]
-        source: crate::address_lookup::IntoAddressLookupError,
+        source: crate::address_lookup::AddressLookupBuilderError,
     },
 }
 
 impl EndpointInner {
-    /// Creates a [`Socket`].
-    async fn new(opts: Options) -> Result<Self, BindError> {
+    /// Creates a [`EndpointInner`].
+    pub(crate) async fn bind(opts: Options) -> Result<Self, BindError> {
+        // Use the current span as the main span for all tasks spawned in this endpoint.
+        // `EndpointInner::bind` is not public and only called from `crate::endpoint::Builder::bind`,
+        // which instruments the call with a span created for this purpose.
+        let span = tracing::Span::current();
+
         let Options {
             secret_key,
             transports: transport_configs,
@@ -871,12 +873,12 @@ impl EndpointInner {
 
         let remote_map = {
             RemoteMap::new(
-                secret_key.public(),
                 metrics.socket.clone(),
                 direct_addrs.addrs.watch(),
                 address_lookup.clone(),
                 shutdown_token.child_token(),
                 transport_bias,
+                span.clone(),
             )
         };
 
@@ -899,6 +901,7 @@ impl EndpointInner {
             ip_bind_addrs: transports.ip_bind_addrs(),
             tls_config: tls_config.clone(),
             hooks,
+            span: span.clone(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -989,7 +992,7 @@ impl EndpointInner {
                     shutdown_token.child_token(),
                     local_addrs_watch,
                 )
-                .instrument(info_span!("actor")),
+                .instrument(info_span!(parent: span, "actor")),
         );
 
         let actor_task = Mutex::new(Some(AbortOnDropHandle::new(actor_task)));
@@ -1016,7 +1019,7 @@ impl EndpointInner {
     /// after this call.
     ///
     /// [`Poll::Pending`]: std::task::Poll::Pending
-    #[instrument(skip_all)]
+    #[instrument(skip_all, parent = self.sock.span.clone())]
     pub(crate) async fn close(&self) {
         if self.sock.is_closed() || self.sock.is_closing() {
             return;
@@ -1766,7 +1769,7 @@ mod tests {
         dns::DnsResolver,
         endpoint::QuicTransportConfig,
         socket::{
-            EndpointInner, Socket, StaticConfig, TransportConfig,
+            EndpointInner, StaticConfig, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
         },
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -2150,7 +2153,9 @@ mod tests {
     #[traced_test]
     async fn test_direct_addresses() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let sock = EndpointInner::new(default_options(&mut rng)).await.unwrap();
+        let sock = EndpointInner::bind(default_options(&mut rng))
+            .await
+            .unwrap();
 
         // See if we can get endpoints.
         let eps0 = sock.ip_addrs().get();
@@ -2197,7 +2202,7 @@ mod tests {
             transport_bias: Default::default(),
             static_config,
         };
-        let sock = Socket::spawn(opts).await?;
+        let sock = EndpointInner::bind(opts).await?;
         Ok(sock)
     }
 

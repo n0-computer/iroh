@@ -11,7 +11,7 @@ use n0_future::task::JoinSet;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error};
+use tracing::{Span, debug, error};
 
 pub(crate) use self::remote_state::PathWatchable;
 use self::remote_state::RemoteStateActor;
@@ -125,8 +125,6 @@ struct Tasks {
     //
     // State required for spawning new actors.
     //
-    /// The endpoint ID of the local endpoint.
-    local_endpoint_id: EndpointId,
     metrics: Arc<SocketMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
@@ -145,23 +143,24 @@ struct Tasks {
     poll_cleanup_waker: Option<Waker>,
     /// Biases for different transport kinds.
     transport_bias: TransportBiasMap,
+    /// The tracing span for this endpoint, to be used as parent span for `RemoteStateActor` tasks.
+    span: Span,
 }
 
 impl RemoteMap {
     /// Creates a new [`RemoteMap`].
     pub(super) fn new(
-        local_endpoint_id: EndpointId,
         metrics: Arc<SocketMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         address_lookup: address_lookup::ConcurrentAddressLookup,
         shutdown_token: CancellationToken,
         transport_bias: TransportBiasMap,
+        span: Span,
     ) -> Self {
         Self {
             mapped_addrs: Default::default(),
             senders: Default::default(),
             tasks: Tasks {
-                local_endpoint_id,
                 metrics,
                 local_direct_addrs,
                 address_lookup,
@@ -169,6 +168,7 @@ impl RemoteMap {
                 tasks: Default::default(),
                 poll_cleanup_waker: None,
                 transport_bias,
+                span,
             },
         }
     }
@@ -316,7 +316,6 @@ impl Tasks {
         mapped_addrs.endpoint_addrs.get(&eid);
         let sender = RemoteStateActor::new(
             eid,
-            self.local_endpoint_id,
             self.local_direct_addrs.clone(),
             mapped_addrs.relay_addrs.clone(),
             mapped_addrs.custom_addrs.clone(),
@@ -324,7 +323,12 @@ impl Tasks {
             self.address_lookup.clone(),
             self.transport_bias.clone(),
         )
-        .start(initial_msgs, &mut self.tasks, self.shutdown_token.clone());
+        .start(
+            initial_msgs,
+            &mut self.tasks,
+            self.shutdown_token.clone(),
+            self.span.clone(),
+        );
         if let Some(waker) = self.poll_cleanup_waker.take() {
             // Notify something waiting for changes to tasks when there's a new task.
             waker.wake();
