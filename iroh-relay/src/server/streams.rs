@@ -209,7 +209,7 @@ impl MaybeTlsStream {
             #[cfg(test)]
             Self::Test(_) => return,
             Self::Plain(stream) => stream,
-            Self::Tls(tls_stream) => &tls_stream.get_ref().0,
+            Self::Tls(tls_stream) => tls_stream.get_ref().0,
         };
 
         if stream.set_nodelay(true).is_err() {
