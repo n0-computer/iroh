@@ -29,7 +29,7 @@ to B so B can forget that a reverse path exists on that connection to get back t
 </div><section id="variant.Ping" class="variant"><a href="#variant.Ping" class="anchor">§</a><h3 class="code-header">Ping = 9</h3></section><div class="docblock"><p>Messages with these frames will be ignored.
 8 byte ping payload, to be echoed back in FrameType::Pong</p>
 </div><section id="variant.Pong" class="variant"><a href="#variant.Pong" class="anchor">§</a><h3 class="code-header">Pong = 10</h3></section><div class="docblock"><p>8 byte payload, the contents of ping being replied to</p>
-</div><section id="variant.Health" class="variant"><a href="#variant.Health" class="anchor">§</a><h3 class="code-header">Health = 11</h3></section><div class="docblock"><p>REMOVED since relay-protocol-v2 (use <a href="enum.FrameType.html#variant.Health" title="variant iroh_relay::protos::common::FrameType::Health"><code>Self::Health</code></a> instead)</p>
+</div><section id="variant.Health" class="variant"><a href="#variant.Health" class="anchor">§</a><h3 class="code-header">Health = 11</h3></section><div class="docblock"><p>REMOVED since relay-protocol-v2, use <code>Self::Status</code> instead.</p>
 <p>Sent from server to client to tell the client if their connection is unhealthy somehow.
 Contains only UTF-8 bytes.</p>
 </div><section id="variant.Restarting" class="variant"><a href="#variant.Restarting" class="anchor">§</a><h3 class="code-header">Restarting = 12</h3></section><div class="docblock"><p>Sent from server to client for the server to declare that it’s restarting.
