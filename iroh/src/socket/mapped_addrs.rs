@@ -8,14 +8,12 @@ use std::{
     fmt,
     hash::Hash,
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
 };
 
 use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
+use portable_atomic::{AtomicU64, Ordering};
 use rustc_hash::FxHashMap;
 use tracing::{error, trace};
 

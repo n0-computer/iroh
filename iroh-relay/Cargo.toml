@@ -104,8 +104,6 @@ tokio = { version = "1", features = [
     "net",
     "fs",
     "io-std",
-    "signal",
-    "process",
 ] }
 tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "client"] }
 
@@ -142,6 +140,7 @@ default = ["metrics"]
 platform-verifier = ["dep:rustls-platform-verifier"]
 server = [
     "metrics",
+    "tokio/signal",
     "dep:clap",
     "dep:dashmap",
     "dep:ahash",
