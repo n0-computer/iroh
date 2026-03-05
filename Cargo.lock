@@ -2113,6 +2113,7 @@ dependencies = [
 name = "iroh"
 version = "0.96.1"
 dependencies = [
+ "aes-gcm",
  "axum",
  "backon",
  "blake3",

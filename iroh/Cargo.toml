@@ -60,6 +60,9 @@ webpki = { package = "rustls-webpki", version = "0.103.7", default-features = fa
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 webpki-roots = "1.0.3"
 pkcs8 = "0.11.0-rc.9"
+blake3 = { version = "1.8.3", default-features = false }
+ctutils = { version = "0.4.0", default-features = false }
+aes-gcm = { version = "0.10.3", default-features = false, features = ["alloc"] }
 
 # metrics
 iroh-metrics = { version = "0.38", default-features = false }
@@ -71,8 +74,6 @@ futures-util = "0.3"
 # test_utils
 axum = { version = "0.8", optional = true }
 sync_wrapper = { version = "1.0.2", features = ["futures"] }
-blake3 = { version = "1.8.3", default-features = false }
-ctutils = { version = "0.4.0", default-features = false }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]

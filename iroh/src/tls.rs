@@ -13,6 +13,7 @@ use tracing::warn;
 
 use self::resolver::ResolveRawPublicKeyCert;
 
+pub(crate) mod misc;
 pub(crate) mod name;
 mod resolver;
 mod verifier;
