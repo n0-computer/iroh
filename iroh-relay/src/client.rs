@@ -27,7 +27,7 @@ pub use self::conn::{RecvError, SendError};
 use crate::dns::{DnsError, DnsResolver};
 use crate::{
     KeyCache,
-    http::RELAY_PATH,
+    http::{ProtocolVersion, RELAY_PATH},
     protos::{
         handshake,
         relay::{ClientToRelayMsg, RelayToClientMsg},
@@ -207,7 +207,7 @@ impl ClientBuilder {
         use tls::MaybeTlsStreamBuilder;
 
         use crate::{
-            http::{CLIENT_AUTH_HEADER, ProtocolVersion},
+            http::CLIENT_AUTH_HEADER,
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
             tls::{CaRootsConfig, default_provider},
         };
@@ -312,8 +312,6 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     #[cfg(wasm_browser)]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
-        use crate::http::RELAY_PROTOCOL_VERSION;
-
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -332,9 +330,11 @@ impl ClientBuilder {
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let (_, ws_stream) =
-            ws_stream_wasm::WsMeta::connect(dial_url.as_str(), Some(vec![RELAY_PROTOCOL_VERSION]))
-                .await?;
+        let (_, ws_stream) = ws_stream_wasm::WsMeta::connect(
+            dial_url.as_str(),
+            Some(ProtocolVersion::all().collect()),
+        )
+        .await?;
         let conn = Conn::new(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
 
         event!(

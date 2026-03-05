@@ -55,20 +55,23 @@ pub enum ProtocolVersion {
 }
 
 impl ProtocolVersion {
-    /// Returns a comma-separated string of all supported protocol version identifiers.
-    pub fn all() -> String {
+    /// Returns an iterator of all supported protocol version identifiers, in order of preference.
+    pub fn all() -> impl Iterator<Item = &'static str> {
         Self::VARIANTS
             .iter()
             .map(ProtocolVersion::to_str)
             // Need to reverse order so that the latest version comes last.
             .rev()
-            .collect::<Vec<_>>()
-            .join(", ")
+    }
+
+    /// Returns a comma-separated string of all supported protocol version identifiers.
+    pub fn all_joined() -> String {
+        Self::all().collect::<Vec<_>>().join(", ")
     }
 
     /// Returns all supported protocol versions in a comma-seperated string as an HTTP header value.
     pub fn all_as_header_value() -> HeaderValue {
-        HeaderValue::from_bytes(Self::all().as_bytes()).expect("valid header name")
+        HeaderValue::from_bytes(Self::all_joined().as_bytes()).expect("valid header name")
     }
 
     /// Returns the protocol version identifier string.

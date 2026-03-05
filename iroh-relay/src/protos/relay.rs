@@ -155,7 +155,7 @@ impl HealthStatus {
     }
 
     fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
-        ensure!(bytes.len() >= 1, Error::InvalidFrame);
+        ensure!(!bytes.is_empty(), Error::InvalidFrame);
         let discriminant = bytes.get_u8();
         match discriminant {
             0 => Ok(Self::Healthy),

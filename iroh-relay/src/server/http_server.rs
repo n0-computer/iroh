@@ -575,7 +575,7 @@ impl RelayService {
             .max()
             .ok_or_else(|| {
                 e!(RelayUpgradeReqError::UnsupportedRelayVersion {
-                    we_support: ProtocolVersion::all(),
+                    we_support: ProtocolVersion::all_joined(),
                     you_support: subprotocols.to_string()
                 })
             })?;
