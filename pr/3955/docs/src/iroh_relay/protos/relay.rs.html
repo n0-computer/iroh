@@ -155,7 +155,7 @@
 <a href=#155 id=155 data-nosnippet>155</a>    </span>}
 <a href=#156 id=156 data-nosnippet>156</a>
 <a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">fn </span>from_bytes(<span class="kw-2">mut </span>bytes: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="macro">ensure!</span>(bytes.len() &gt;= <span class="number">1</span>, Error::InvalidFrame);
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="macro">ensure!</span>(!bytes.is_empty(), Error::InvalidFrame);
 <a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">let </span>discriminant = bytes.get_u8();
 <a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">match </span>discriminant {
 <a href=#161 id=161 data-nosnippet>161</a>            <span class="number">0 </span>=&gt; <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Healthy),
