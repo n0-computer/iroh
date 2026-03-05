@@ -45,7 +45,7 @@ pub enum FrameType {
     Ping = 9,
     /// 8 byte payload, the contents of ping being replied to
     Pong = 10,
-    /// REMOVED since relay-protocol-v2 (use [`Self::Health`] instead)
+    /// REMOVED since relay-protocol-v2, use `Self::Status` instead.
     ///
     /// Sent from server to client to tell the client if their connection is unhealthy somehow.
     /// Contains only UTF-8 bytes.
