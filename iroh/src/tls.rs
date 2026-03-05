@@ -11,11 +11,13 @@ use iroh_base::SecretKey;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use tracing::warn;
 
-use self::resolver::AlwaysResolvesCert;
+use self::resolver::ResolveRawPublicKeyCert;
 
 pub(crate) mod name;
 mod resolver;
 mod verifier;
+
+pub use iroh_relay::tls::{CaRootsConfig, default_provider};
 
 /// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
 /// establishment.
@@ -37,7 +39,7 @@ pub(crate) const DEFAULT_MAX_TLS_TICKETS: usize = 8 * 32;
 #[derive(Debug)]
 pub(crate) struct TlsConfig {
     pub(crate) secret_key: SecretKey,
-    cert_resolver: Arc<AlwaysResolvesCert>,
+    cert_resolver: Arc<ResolveRawPublicKeyCert>,
     server_verifier: Arc<verifier::ServerCertificateVerifier>,
     client_verifier: Arc<verifier::ClientCertificateVerifier>,
     session_store: Arc<dyn rustls::client::ClientSessionStore>,
@@ -45,17 +47,14 @@ pub(crate) struct TlsConfig {
 
 impl TlsConfig {
     pub(crate) fn new(secret_key: SecretKey, max_tls_tickets: usize) -> Self {
-        let cert_resolver = Arc::new(
-            AlwaysResolvesCert::new(&secret_key).expect("Client cert key DER is valid; qed"),
-        );
         Self {
-            secret_key,
-            cert_resolver,
+            cert_resolver: Arc::new(ResolveRawPublicKeyCert::new(&secret_key)),
             server_verifier: Arc::new(verifier::ServerCertificateVerifier),
             client_verifier: Arc::new(verifier::ClientCertificateVerifier),
             session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
                 max_tls_tickets,
             )),
+            secret_key,
         }
     }
 
@@ -69,14 +68,12 @@ impl TlsConfig {
         alpn_protocols: Vec<Vec<u8>>,
         keylog: bool,
     ) -> QuicClientConfig {
-        let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-        .expect("version supported by ring")
-        .dangerous()
-        .with_custom_certificate_verifier(self.server_verifier.clone())
-        .with_client_cert_resolver(self.cert_resolver.clone());
+        let mut crypto = rustls::ClientConfig::builder_with_provider(default_provider())
+            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+            .expect("version supported by ring")
+            .dangerous()
+            .with_custom_certificate_verifier(self.server_verifier.clone())
+            .with_client_cert_resolver(self.cert_resolver.clone());
         crypto.alpn_protocols = alpn_protocols;
 
         // TODO: enable/disable 0-RTT/storing tickets

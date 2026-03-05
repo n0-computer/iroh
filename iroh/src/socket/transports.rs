@@ -430,6 +430,15 @@ pub(crate) struct Transmit<'a> {
     pub(crate) segment_size: Option<usize>,
 }
 
+impl<'a> Transmit<'a> {
+    fn datagram_count(&self) -> usize {
+        match self.segment_size {
+            None => 1,
+            Some(size) => self.contents.len().div_ceil(size),
+        }
+    }
+}
+
 /// An outgoing packet that can be sent across channels.
 #[derive(Debug, Clone)]
 pub(crate) struct OwnedTransmit {
@@ -827,9 +836,17 @@ impl quinn::UdpSender for Sender {
             .sender
             .poll_send(cx, &transport_addr, quinn_transmit.src_ip, &transmit)
         {
-            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+            Poll::Ready(Ok(())) => {
+                trace!(
+                    dst = ?transport_addr,
+                    len = transmit.contents.len(),
+                    datagram_count = transmit.datagram_count(),
+                    "sent transmit"
+                );
+                Poll::Ready(Ok(()))
+            }
             Poll::Ready(Err(ref err)) => {
-                warn!(?transport_addr, "dropped transmit: {err:#}");
+                warn!(dst=?transport_addr, "dropped transmit: {err:#}");
                 Poll::Ready(Ok(()))
             }
             Poll::Pending => {
@@ -837,7 +854,7 @@ impl quinn::UdpSender for Sender {
                 // different transport.  Instead we let Quinn handle this as a lost
                 // datagram.
                 // TODO: Revisit this: we might want to do something better.
-                trace!(?transport_addr, "transport pending, dropped transmit");
+                trace!(dst=?transport_addr, "transport pending, dropped transmit");
                 Poll::Ready(Ok(()))
             }
         }

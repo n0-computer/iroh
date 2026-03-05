@@ -25,6 +25,7 @@ use n0_future::{
     boxed::BoxFuture,
     time::{self, Duration},
 };
+use rustls::ClientConfig;
 use tokio::sync::RwLock;
 use tracing::debug;
 use url::Url;
@@ -123,6 +124,7 @@ impl<E: StackError + 'static> StaggeredError<E> {
 pub struct Builder {
     use_system_defaults: bool,
     nameservers: Vec<(SocketAddr, DnsProtocol)>,
+    tls_client_config: Option<ClientConfig>,
 }
 
 /// Protocols over which DNS records can be resolved.
@@ -187,6 +189,12 @@ impl Builder {
         nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
     ) -> Self {
         self.nameservers.extend(nameservers);
+        self
+    }
+
+    /// Sets a custom TLS verification config.
+    pub fn tls_client_config(mut self, client_config: ClientConfig) -> Self {
+        self.tls_client_config = Some(client_config);
         self
     }
 
@@ -562,6 +570,10 @@ impl HickoryResolver {
         } else {
             (ResolverConfig::new(), ResolverOpts::default())
         };
+
+        if let Some(client_config) = builder.tls_client_config.clone() {
+            options.tls_config = client_config;
+        }
 
         for (addr, proto) in builder.nameservers.iter() {
             let nameserver =
