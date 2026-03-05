@@ -16,13 +16,13 @@ use crate::{
     address_lookup::Error as AddressLookupError, metrics::SocketMetrics, socket::transports,
 };
 
-/// Maximum number of IP paths we keep around per endpoint.
-pub(super) const MAX_IP_PATHS: usize = 30;
+/// Maximum number of non-relay paths we keep around per endpoint.
+pub(super) const MAX_NON_RELAY_PATHS: usize = 30;
 
-/// Maximum number of inactive IP paths we keep around per endpoint.
+/// Maximum number of inactive non-relay paths we keep around per endpoint.
 ///
 /// These are paths that at one point been opened and are now closed.
-pub(super) const MAX_INACTIVE_IP_PATHS: usize = 10;
+pub(super) const MAX_INACTIVE_NON_RELAY_PATHS: usize = 10;
 
 /// Map of all paths that we are aware of for a remote endpoint.
 ///
@@ -90,6 +90,7 @@ impl RemotePathState {
         match addr {
             transports::Addr::Ip(_) => self.metrics.transport_ip_paths_added.inc(),
             transports::Addr::Relay(_, _) => self.metrics.transport_relay_paths_added.inc(),
+            transports::Addr::Custom(_) => self.metrics.transport_custom_paths_added.inc(),
         };
         let state = self.paths.entry(addr).or_default();
         state.status = PathStatus::Open;
@@ -109,6 +110,9 @@ impl RemotePathState {
                     transports::Addr::Ip(_) => self.metrics.transport_ip_paths_removed.inc(),
                     transports::Addr::Relay(_, _) => {
                         self.metrics.transport_relay_paths_removed.inc()
+                    }
+                    transports::Addr::Custom(_) => {
+                        self.metrics.transport_custom_paths_removed.inc()
                     }
                 };
             }
@@ -196,11 +200,10 @@ impl RemotePathState {
     ///
     /// Should be invoked any time we insert a new path.
     ///
-    /// We currently only prune IP paths. For more information on the criteria
-    /// for when and which paths we prune, look at the [`prune_ip_paths`] function.
+    /// We currently only prune non-relay paths. For more information on the
+    /// criteria for when and which paths we prune, look at the [`prune_non_relay_paths`] function.
     pub(super) fn prune_paths(&mut self) {
-        // right now we only prune IP paths
-        prune_ip_paths(&mut self.paths);
+        prune_non_relay_paths(&mut self.paths);
     }
 }
 
@@ -221,15 +224,15 @@ pub(super) struct PathState {
     pub(super) status: PathStatus,
 }
 
-/// Prunes the IP paths in the paths HashMap.
+/// Prunes the non-relay paths in the paths HashMap.
 ///
-/// Only prunes if the number of IP paths is above [`MAX_IP_PATHS`].
+/// Only prunes if the number of non-relay paths is above [`MAX_NON_RELAY_PATHS`].
 ///
 /// Keeps paths that are open or of unknown status.
 ///
 /// Always prunes paths that have unsuccessfully holepunched.
 ///
-/// Keeps [`MAX_INACTIVE_IP_PATHS`] of the most recently closed paths
+/// Keeps [`MAX_INACTIVE_NON_RELAY_PATHS`] of the most recently closed paths
 /// that are not currently being used but have successfully been
 /// holepunched previously.
 ///
@@ -238,25 +241,25 @@ pub(super) struct PathState {
 /// - We do not have unbounded growth of paths.
 /// - If we have many paths for this remote, we prune the paths that cannot hole punch.
 /// - We do not prune holepunched paths that are currently not in use too quickly. For example, if a large number of untested paths are added at once, we will not immediately prune all of the unused, but valid, paths at once.
-fn prune_ip_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
+fn prune_non_relay_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
     // if the total number of paths is less than the max, bail early
-    if paths.len() < MAX_IP_PATHS {
+    if paths.len() < MAX_NON_RELAY_PATHS {
         return;
     }
 
-    let ip_paths: Vec<_> = paths.iter().filter(|(addr, _)| addr.is_ip()).collect();
+    let primary_paths: Vec<_> = paths.iter().filter(|(addr, _)| !addr.is_relay()).collect();
 
-    // if the total number of ip paths is less than the max, bail early
-    if ip_paths.len() < MAX_IP_PATHS {
+    // if the total number of non-relay paths is less than the max, bail early
+    if primary_paths.len() < MAX_NON_RELAY_PATHS {
         return;
     }
 
     // paths that were opened at one point but have previously been closed
-    let mut inactive = Vec::with_capacity(ip_paths.len());
+    let mut inactive = Vec::with_capacity(primary_paths.len());
     // paths where we attempted hole punching but it not successful
-    let mut failed = Vec::with_capacity(ip_paths.len());
+    let mut failed = Vec::with_capacity(primary_paths.len());
 
-    for (addr, state) in ip_paths {
+    for (addr, state) in primary_paths {
         match state.status {
             PathStatus::Inactive(t) => {
                 // paths where holepunching succeeded at one point, but the path was closed.
@@ -276,15 +279,16 @@ fn prune_ip_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
     //
     // This implies that `inactive` is empty.
     if failed.len() == paths.len() {
-        // leave the max number of IP paths
-        failed.truncate(paths.len().saturating_sub(MAX_IP_PATHS));
+        // leave the max number of non-relay paths
+        failed.truncate(paths.len().saturating_sub(MAX_NON_RELAY_PATHS));
     }
 
     // sort the potentially prunable from most recently closed to least recently closed
     inactive.sort_by(|a, b| b.1.cmp(&a.1));
 
     // Prune the "oldest" closed paths.
-    let old_inactive = inactive.split_off(inactive.len().saturating_sub(MAX_INACTIVE_IP_PATHS));
+    let old_inactive =
+        inactive.split_off(inactive.len().saturating_sub(MAX_INACTIVE_NON_RELAY_PATHS));
 
     // collect all the paths that should be pruned
     let must_prune: HashSet<_> = failed
@@ -332,20 +336,28 @@ mod tests {
             paths.insert(ip_addr(i), PathState::default());
         }
 
-        prune_ip_paths(&mut paths);
-        assert_eq!(20, paths.len(), "should not prune when under MAX_IP_PATHS");
+        prune_non_relay_paths(&mut paths);
+        assert_eq!(
+            20,
+            paths.len(),
+            "should not prune when under MAX_NON_RELAY_PATHS"
+        );
     }
 
     #[test]
     fn test_prune_at_max_paths_no_prunable() {
         let mut paths = FxHashMap::default();
         // All paths are active (never abandoned), so none should be pruned
-        for i in 0..MAX_IP_PATHS {
+        for i in 0..MAX_NON_RELAY_PATHS {
             paths.insert(ip_addr(i as u16), PathState::default());
         }
 
-        prune_ip_paths(&mut paths);
-        assert_eq!(MAX_IP_PATHS, paths.len(), "should not prune active paths");
+        prune_non_relay_paths(&mut paths);
+        assert_eq!(
+            MAX_NON_RELAY_PATHS,
+            paths.len(),
+            "should not prune active paths"
+        );
     }
 
     #[test]
@@ -362,7 +374,7 @@ mod tests {
             paths.insert(ip_addr(i), path_state_unusable());
         }
 
-        prune_ip_paths(&mut paths);
+        prune_non_relay_paths(&mut paths);
 
         // All failed holepunch paths should be pruned
         assert_eq!(20, paths.len());
@@ -392,7 +404,7 @@ mod tests {
         }
 
         assert_eq!(35, paths.len());
-        prune_ip_paths(&mut paths);
+        prune_non_relay_paths(&mut paths);
 
         // Should keep 15 active + 10 most recently abandoned
         assert_eq!(25, paths.len());
@@ -439,10 +451,10 @@ mod tests {
         }
 
         assert_eq!(35, paths.len());
-        prune_ip_paths(&mut paths);
+        prune_non_relay_paths(&mut paths);
 
         // Remove all failed paths -> down to 30
-        // Keep MAX_INACTIVE_IP_PATHS, eg remove 5 usable but abandoned paths -> down to 20
+        // Keep MAX_INACTIVE_NON_RELAY_PATHS, eg remove 5 usable but abandoned paths -> down to 20
         assert_eq!(20, paths.len());
 
         // Active paths should remain
@@ -462,10 +474,10 @@ mod tests {
     }
 
     #[test]
-    fn test_prune_non_ip_paths_not_counted() {
+    fn test_prune_relay_paths_not_counted() {
         let mut paths = FxHashMap::default();
 
-        // Add 25 IP paths (under MAX_IP_PATHS)
+        // Add 25 IP paths (under MAX_NON_RELAY_PATHS)
         for i in 0..25 {
             paths.insert(ip_addr(i), path_state_unusable());
         }
@@ -482,9 +494,9 @@ mod tests {
         }
 
         assert_eq!(35, paths.len()); // 25 IP + 10 relay
-        prune_ip_paths(&mut paths);
+        prune_non_relay_paths(&mut paths);
 
-        // Should not prune since IP paths < MAX_IP_PATHS
+        // Should not prune since non-relay paths < MAX_NON_RELAY_PATHS
         assert_eq!(35, paths.len());
     }
 
@@ -502,7 +514,7 @@ mod tests {
             paths.insert(ip_addr(i), path_state_unusable());
         }
 
-        prune_ip_paths(&mut paths);
+        prune_non_relay_paths(&mut paths);
 
         // Never-dialed paths should be preserved
         for i in 0..20 {
@@ -520,14 +532,14 @@ mod tests {
         }
 
         assert_eq!(40, paths.len());
-        prune_ip_paths(&mut paths);
+        prune_non_relay_paths(&mut paths);
 
-        // Should keep MAX_IP_PATHS instead of pruning everything
+        // Should keep MAX_NON_RELAY_PATHS instead of pruning everything
         // This prevents catastrophic loss of all path information
         assert_eq!(
-            MAX_IP_PATHS,
+            MAX_NON_RELAY_PATHS,
             paths.len(),
-            "should keep MAX_IP_PATHS when all paths failed"
+            "should keep MAX_NON_RELAY_PATHS when all paths failed"
         );
     }
 
