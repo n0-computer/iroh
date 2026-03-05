@@ -1,0 +1,14 @@
+[[router]]
+name = "dc"
+
+[device.provider]
+count = 2
+
+[device.provider.eth0]
+gateway = "dc"
+
+[device.fetcher]
+count = 2
+
+[device.fetcher.eth0]
+gateway = "dc"

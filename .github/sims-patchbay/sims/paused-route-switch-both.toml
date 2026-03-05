@@ -1,0 +1,50 @@
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[sim]
+name     = "paused-route-switch-both"
+topology = "1to1-both-multi-nat"
+
+[[step]]
+use  = "relay-setup"
+vars = { device = "relay" }
+
+[[step]]
+use      = "transfer-provider"
+id       = "provider"
+device   = "provider"
+requires = ["relay.ready"]
+args     = ["--env", "dev",
+            "--relay-url", "https://$NETSIM_IP_relay:3340"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--env", "dev",
+          "--duration=15",
+          "--relay-url",        "https://$NETSIM_IP_relay:3340",
+          "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+# After 5s, switch fetcher's default route from eth0 to eth1
+[[step]]
+action = "wait"
+duration = "5s"
+
+[[step]]
+action = "set-default-route"
+device = "fetcher"
+to     = "eth1"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "60s"
+
+[[step]]
+action = "assert"
+checks = [
+  "fetcher.size matches [0-9]+",
+]

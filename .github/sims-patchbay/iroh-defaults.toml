@@ -1,0 +1,94 @@
+# Shared defaults for iroh patchbay simulations.
+# Defines binaries, step templates, and step groups used across all sims.
+
+# -- Prepare: build binaries from the iroh workspace --
+
+[[prepare]]
+examples     = ["transfer"]
+bins         = ["iroh-relay"]
+all-features = true
+
+# -- Binaries --
+
+[[binary]]
+name    = "transfer"
+mode    = "target"
+example = "transfer"
+
+[[binary]]
+name    = "relay"
+mode    = "target"
+bin     = "iroh-relay"
+
+# -- Relay setup step group --
+# Expands to: gen-certs → gen-file (relay config) → spawn relay.
+# Caller supplies: vars.device
+
+[[step-group]]
+name = "relay-setup"
+
+[[step-group.step]]
+action = "gen-certs"
+id     = "${group.device}-cert"
+device = "${group.device}"
+
+[[step-group.step]]
+action  = "gen-file"
+id      = "${group.device}-cfg"
+content = """
+enable_relay               = true
+enable_metrics             = true
+enable_quic_addr_discovery = true
+[tls]
+https_bind_addr  = "0.0.0.0:3340"
+cert_mode        = "Manual"
+manual_cert_path = "${${group.device}-cert.cert_pem_path}"
+manual_key_path  = "${${group.device}-cert.key_pem_path}"
+"""
+
+[[step-group.step]]
+action      = "spawn"
+id          = "${group.device}"
+device      = "${group.device}"
+cmd         = ["${binary.relay}", "--config-path", "${${group.device}-cfg.path}"]
+env         = { RUST_LOG = "iroh_relay=info" }
+ready_after = "2s"
+[step-group.step.captures.ready]
+pipe  = "stderr"
+regex = "relay: serving on"
+
+# -- Transfer provider template --
+
+[[step-template]]
+name   = "transfer-provider"
+action = "spawn"
+parser = "ndjson"
+cmd    = ["${binary.transfer}", "--output", "json", "provide"]
+env    = { RUST_LOG = "iroh=info,iroh::_events=debug" }
+[step-template.captures.endpoint_id]
+match = { kind = "EndpointBound" }
+pick  = ".endpoint_id"
+[step-template.captures.direct_addr]
+match = { kind = "EndpointBound" }
+pick  = ".direct_addresses.0"
+
+# -- Transfer fetcher template --
+
+[[step-template]]
+name   = "transfer-fetcher"
+action = "spawn"
+parser = "ndjson"
+cmd    = ["${binary.transfer}", "--output", "json", "fetch"]
+env    = { RUST_LOG = "iroh=info,iroh::_events=debug" }
+[step-template.captures.size]
+match = { kind = "DownloadComplete" }
+pick  = ".size"
+[step-template.captures.duration]
+match = { kind = "DownloadComplete" }
+pick  = ".duration"
+[step-template.captures.conn_type]
+match = { kind = "ConnectionTypeChanged", status = "Selected" }
+pick  = ".addr"
+[step-template.results]
+duration   = ".duration"
+down_bytes = ".size"

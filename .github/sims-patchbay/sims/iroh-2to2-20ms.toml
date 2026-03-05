@@ -1,0 +1,49 @@
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[sim]
+name     = "iroh-2to2-20ms"
+topology = "2to2-public"
+
+[[step]]
+action    = "set-link-condition"
+device    = "fetcher"
+condition = { latency_ms = 20, rate_kbit = 100000 }
+
+[[step]]
+use    = "transfer-provider"
+id     = "provider"
+device = "provider"
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-0"
+device = "fetcher-0"
+args   = ["${provider-0.endpoint_id}",
+          "--size=1G",
+          "--remote-direct-address", "${provider-0.direct_addr}"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher-1"
+device = "fetcher-1"
+args   = ["${provider-1.endpoint_id}",
+          "--size=1G",
+          "--remote-direct-address", "${provider-1.direct_addr}"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-0"
+timeout = "120s"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher-1"
+timeout = "120s"
+
+[[step]]
+action = "assert"
+checks = [
+  "fetcher-0.size matches [0-9]+",
+  "fetcher-1.size matches [0-9]+",
+]

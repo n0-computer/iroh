@@ -1,0 +1,104 @@
+name: netsim-patchbay
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to test"
+        required: false
+        type: string
+        default: ""
+      sims:
+        description: "Comma-separated sim file names to run (e.g. 'iroh-1to1-public.toml,intg-1to1-relay.toml'). Empty = all active sims."
+        required: false
+        type: string
+        default: ""
+      patchbay_branch:
+        description: "Branch of netsim-rs/patchbay to use"
+        required: false
+        type: string
+        default: "main"
+
+env:
+  RUST_BACKTRACE: 1
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  netsim-patchbay:
+    permissions: write-all
+    name: Patchbay netsim
+    timeout-minutes: 60
+    runs-on: [self-hosted, linux, X64]
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.branch || github.ref }}
+
+    - name: Install rust stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.9
+
+    - name: Build iroh
+      run: |
+        cargo build --release --all-features --workspace --bins --examples
+
+    - name: Install patchbay
+      run: |
+        cargo install --git https://github.com/n0-computer/netsim-rs \
+          --branch ${{ inputs.patchbay_branch || 'main' }} \
+          --bin patchbay
+
+    - name: Collect sim files
+      id: collect_sims
+      run: |
+        if [[ -n "${{ inputs.sims }}" ]]; then
+          IFS=',' read -ra names <<< "${{ inputs.sims }}"
+          sims=""
+          for name in "${names[@]}"; do
+            name=$(echo "$name" | xargs)
+            sims="$sims .github/sims-patchbay/sims/$name"
+          done
+        else
+          # Run all active sims (iroh-* and intg-*), skip paused-*
+          sims=$(ls .github/sims-patchbay/sims/iroh-*.toml \
+                    .github/sims-patchbay/sims/intg-*.toml 2>/dev/null | tr '\n' ' ')
+        fi
+        echo "SIM_FILES=$sims" >> "$GITHUB_ENV"
+
+    - name: Run simulations
+      id: run_sims
+      continue-on-error: true
+      run: |
+        sudo $(which patchbay) run -v $SIM_FILES
+
+    - name: Upload results
+      if: always()
+      uses: actions/upload-artifact@v6
+      id: upload-results
+      with:
+        name: patchbay-results-${{ github.sha }}
+        path: .patchbay-work/latest/
+        retention-days: 7
+
+    - name: Show summary
+      if: always()
+      run: |
+        if [[ -f .patchbay-work/latest/combined-results.md ]]; then
+          cat .patchbay-work/latest/combined-results.md >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Fail if sims failed
+      if: ${{ steps.run_sims.outcome == 'failure' }}
+      run: |
+        echo "One or more simulations failed."
+        if [[ -f .patchbay-work/latest/manifest.json ]]; then
+          cat .patchbay-work/latest/manifest.json
+        fi
+        exit 1
