@@ -26,7 +26,7 @@ args   = ["${provider-0.endpoint_id}",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--remote-direct-address", "${provider-0.direct_addr}"]
+]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -37,7 +37,7 @@ args   = ["${provider-1.endpoint_id}",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--remote-direct-address", "${provider-1.direct_addr}"]
+]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -48,7 +48,7 @@ args   = ["${provider-0.endpoint_id}",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--remote-direct-address", "${provider-0.direct_addr}"]
+]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -59,7 +59,7 @@ args   = ["${provider-1.endpoint_id}",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--remote-direct-address", "${provider-1.direct_addr}"]
+]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -70,7 +70,7 @@ args   = ["${provider-0.endpoint_id}",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--remote-direct-address", "${provider-0.direct_addr}"]
+]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -81,7 +81,7 @@ args   = ["${provider-1.endpoint_id}",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--remote-direct-address", "${provider-1.direct_addr}"]
+]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -92,7 +92,7 @@ args   = ["${provider-0.endpoint_id}",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--remote-direct-address", "${provider-0.direct_addr}"]
+]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -103,7 +103,7 @@ args   = ["${provider-1.endpoint_id}",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--remote-direct-address", "${provider-1.direct_addr}"]
+]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -114,7 +114,7 @@ args   = ["${provider-0.endpoint_id}",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--remote-direct-address", "${provider-0.direct_addr}"]
+]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -125,7 +125,7 @@ args   = ["${provider-1.endpoint_id}",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--remote-direct-address", "${provider-1.direct_addr}"]
+]
 
 [[step]]
 action  = "wait-for"
