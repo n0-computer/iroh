@@ -1,4 +1,7 @@
+// patchbay only runs on linux
 #![cfg(target_os = "linux")]
+// Allow to skip patchbay tests. Used by CI to not run patchbay tests via cross.
+#![cfg(not(iroh_skip_patchbay))]
 
 use std::time::Duration;
 
