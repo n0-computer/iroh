@@ -1,59 +1,102 @@
-use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit};
-
 use ctutils::CtEq;
 use quinn_proto::crypto;
+use rand::Rng;
+use rustls::crypto::cipher::{
+    AeadKey, InboundOpaqueMessage, Iv, NONCE_LEN, OutboundPlainMessage, Tls13AeadAlgorithm,
+};
 
-pub(crate) struct Blake3Prk(pub(crate) [u8; 32]);
+/// Implements [`crypto::HandshakeTokenKey`] using a [`Tls13AeadAlgorithm`].
+///
+/// This can be obtained from looking through available ciphers from a
+/// [`rustls::crypto::CryptoProvider`].
+pub struct RustlsTokenKey {
+    key: [u8; 32],
+    aead: &'static dyn Tls13AeadAlgorithm,
+}
 
-impl Blake3Prk {
-    pub fn new(rng: &mut impl rand::RngCore) -> Self {
-        let mut key = [0u8; 32];
-        rng.fill_bytes(&mut key);
-        Self(key)
+impl RustlsTokenKey {
+    /// Constructs [`crypto::HandshakeTokenKey`] from a [`rustls::crypto::CryptoProvider`].
+    ///
+    /// Tries to find a suitable TLS 1.3 cipher suite from the provided crypto provider,
+    /// then uses it to extract an AEAD to use as the token key encryption method.
+    ///
+    /// Then generates a random master key to use.
+    ///
+    /// Returns `None` when this can't find a suitable TLS cipher suite in the given crypto
+    /// provider.
+    pub fn new(
+        rng: &mut impl rand::CryptoRng,
+        crypto_provider: &rustls::crypto::CryptoProvider,
+    ) -> Option<Self> {
+        let suite = crypto_provider
+            .cipher_suites
+            .iter()
+            .filter_map(|suite| suite.tls13())
+            .next()?;
+        let aead = suite.aead_alg;
+        Some(Self {
+            key: rng.random(),
+            aead,
+        })
     }
 }
 
-impl crypto::HandshakeTokenKey for Blake3Prk {
-    fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Box<dyn crypto::AeadKey> {
-        let okm = blake3::keyed_hash(&self.0, random_bytes);
-        let aead = Aes256Gcm::new(okm.as_bytes().into());
-        Box::new(AesGcmAeadKey(aead))
-    }
-}
-
-pub(crate) struct AesGcmAeadKey(Aes256Gcm);
-
-impl crypto::AeadKey for AesGcmAeadKey {
-    fn seal(&self, data: &mut Vec<u8>, additional_data: &[u8]) -> Result<(), crypto::CryptoError> {
-        // TODO(matheus23): Find some reference as to why the fuck this is a zeroed nonce
-        let zero_nonce = aes_gcm::Nonce::from([0u8; 12]);
-        self.0
-            .encrypt_in_place(&zero_nonce, additional_data, data)
+impl crypto::HandshakeTokenKey for RustlsTokenKey {
+    fn seal(&self, token_nonce: u128, data: &mut Vec<u8>) -> Result<(), crypto::CryptoError> {
+        let key = AeadKey::from(self.key);
+        let nonce: [u8; NONCE_LEN] = *token_nonce
+            .to_le_bytes()
+            .first_chunk()
+            .expect("expected u128 > 96 bit");
+        let iv = Iv::from(nonce);
+        let msg = OutboundPlainMessage {
+            typ: rustls::ContentType::ApplicationData,
+            version: rustls::ProtocolVersion::TLSv1_3,
+            payload: rustls::crypto::cipher::OutboundChunks::Single(&*data),
+        };
+        let out = self
+            .aead
+            .encrypter(key, iv)
+            .encrypt(msg, 0)
             .map_err(|_| crypto::CryptoError)?;
+
+        data.clear();
+        data.extend(out.payload.as_ref());
+
         Ok(())
     }
 
     fn open<'a>(
         &self,
+        token_nonce: u128,
         data: &'a mut [u8],
-        additional_data: &[u8],
-    ) -> Result<&'a mut [u8], crypto::CryptoError> {
-        let (data, tag) = data
-            .split_last_chunk_mut::<16>()
-            .ok_or(crypto::CryptoError)?;
-        let zero_nonce = aes_gcm::Nonce::from([0u8; 12]);
-        let tag = aes_gcm::Tag::from_slice(tag);
-        self.0
-            .decrypt_in_place_detached(&zero_nonce, additional_data, data, tag)
+    ) -> Result<&'a [u8], crypto::CryptoError> {
+        let key = AeadKey::from(self.key);
+        let nonce: [u8; NONCE_LEN] = *token_nonce
+            .to_le_bytes()
+            .first_chunk()
+            .expect("expected u128 > 96 bit");
+        let iv = Iv::from(nonce);
+
+        let msg = InboundOpaqueMessage::new(
+            rustls::ContentType::ApplicationData,
+            rustls::ProtocolVersion::TLSv1_3,
+            data,
+        );
+        let plain = self
+            .aead
+            .decrypter(key, iv)
+            .decrypt(msg, 0)
             .map_err(|_| crypto::CryptoError)?;
-        Ok(data)
+
+        Ok(plain.payload)
     }
 }
 
 pub(crate) struct Blake3HmacKey([u8; 32]);
 
 impl Blake3HmacKey {
-    pub fn new(rng: &mut impl rand::RngCore) -> Self {
+    pub fn new(rng: &mut impl rand::CryptoRng) -> Self {
         let mut key = [0u8; 32];
         rng.fill_bytes(&mut key);
         Self(key)

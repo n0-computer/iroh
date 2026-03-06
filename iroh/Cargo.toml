@@ -22,7 +22,9 @@ workspace = true
 
 [dependencies]
 backon = { version = "1.4" }
+blake3 = { version = "1.8.3", default-features = false }
 bytes = "1.11"
+ctutils = { version = "0.4.0", default-features = false }
 data-encoding = "2.2"
 derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_into", "deref", "from_str", "into_iterator"] }
 ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
@@ -60,9 +62,6 @@ webpki = { package = "rustls-webpki", version = "0.103.7", default-features = fa
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 webpki-roots = "1.0.3"
 pkcs8 = "0.11.0-rc.9"
-blake3 = { version = "1.8.3", default-features = false }
-ctutils = { version = "0.4.0", default-features = false }
-aes-gcm = { version = "0.10.3", default-features = false, features = ["alloc"] }
 
 # metrics
 iroh-metrics = { version = "0.38", default-features = false }

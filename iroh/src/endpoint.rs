@@ -49,7 +49,7 @@ use crate::{
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
     },
-    tls::{self, DEFAULT_MAX_TLS_TICKETS},
+    tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
 
 #[cfg(not(wasm_browser))]
@@ -73,7 +73,7 @@ pub use self::{
         RemoteEndpointIdError, RetryError, ZeroRttStatus,
     },
     quic::{
-        AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
+        AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
         ControllerMetrics, CryptoError, Dir, ExportKeyingMaterialError, FrameStats, FrameType,
         HandshakeTokenKey, HeaderKey, IdleTimeout, Keys, MtuDiscoveryConfig, OpenBi, OpenUni,
@@ -189,14 +189,18 @@ impl Builder {
 
     /// Binds the endpoint.
     pub async fn bind(self) -> Result<Endpoint, BindError> {
-        let mut rng = rand::rng();
         let secret_key = self
             .secret_key
-            .unwrap_or_else(move || SecretKey::generate(&mut rng));
+            .unwrap_or_else(|| SecretKey::generate(&mut rand::rng()));
 
         let crypto_provider = self
             .crypto_provider
-            .ok_or_else(|| e!(BindError::MissingCryptoProvider))?;
+            .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?;
+
+        let token_key = Arc::new(
+            RustlsTokenKey::new(&mut rand::rng(), &crypto_provider)
+                .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?,
+        );
 
         let static_config = StaticConfig {
             transport_config: self.transport_config.clone(),
@@ -205,6 +209,7 @@ impl Builder {
                 self.max_tls_tickets,
                 crypto_provider.clone(),
             ),
+            token_key,
             keylog: self.keylog,
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);

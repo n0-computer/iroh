@@ -70,7 +70,7 @@ use crate::{
     },
     tls::{
         self,
-        misc::{Blake3HmacKey, Blake3Prk},
+        misc::{Blake3HmacKey, RustlsTokenKey},
     },
 };
 
@@ -186,9 +186,11 @@ impl Drop for EndpointInner {
 }
 
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub(crate) struct StaticConfig {
     pub(crate) tls_config: tls::TlsConfig,
+    #[debug("Arc<RustlsTokenKey>")]
+    pub(crate) token_key: Arc<RustlsTokenKey>,
     pub(crate) transport_config: QuicTransportConfig,
     pub(crate) keylog: bool,
 }
@@ -202,10 +204,8 @@ impl StaticConfig {
         let quic_server_config = self
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
-        let mut inner = quinn::ServerConfig::new(
-            Arc::new(quic_server_config),
-            Arc::new(Blake3Prk::new(&mut rand::rng())),
-        );
+        let mut inner =
+            quinn::ServerConfig::new(Arc::new(quic_server_config), self.token_key.clone());
         inner.transport_config(self.transport_config.to_inner_arc());
         inner
     }
@@ -758,10 +758,8 @@ pub enum BindError {
         #[error(from)]
         source: crate::address_lookup::AddressLookupBuilderError,
     },
-    #[error(
-        "No rustls crypto provider configured while both ring and aws-lc-rs feature flags are disabled"
-    )]
-    MissingCryptoProvider,
+    #[error("Missing or incompatible rustls crypto provider configured")]
+    InvalidCryptoProvider,
 }
 
 impl EndpointInner {
@@ -1765,19 +1763,21 @@ mod tests {
             EndpointInner, Socket, StaticConfig, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
         },
-        tls::{self, DEFAULT_MAX_TLS_TICKETS},
+        tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
     };
 
     const ALPN: &[u8] = b"n0/test/1";
 
-    fn default_options<R: CryptoRng + ?Sized>(rng: &mut R) -> Options {
+    fn default_options(rng: &mut impl CryptoRng) -> Options {
+        let crypto_provider = default_provider();
         let secret_key = SecretKey::generate(rng);
         let static_config = StaticConfig {
             tls_config: tls::TlsConfig::new(
                 secret_key.clone(),
                 DEFAULT_MAX_TLS_TICKETS,
-                default_provider(),
+                crypto_provider.clone(),
             ),
+            token_key: Arc::new(RustlsTokenKey::new(rng, &crypto_provider).unwrap()),
             transport_config: QuicTransportConfig::default(),
             keylog: false,
         };
@@ -1792,7 +1792,7 @@ mod tests {
             dns_resolver: DnsResolver::new(),
             server_config,
             tls_config: CaRootsConfig::default()
-                .client_config(default_provider())
+                .client_config(crypto_provider.clone())
                 .unwrap(),
             #[cfg(any(test, feature = "test-utils"))]
             address_lookup_user_data: None,
@@ -2170,12 +2170,14 @@ mod tests {
     /// Use [`socket_connect`] to establish connections.
     #[instrument(name = "ep", skip_all, fields(me = %secret_key.public().fmt_short()))]
     async fn socket_ep(secret_key: SecretKey) -> Result<EndpointInner> {
+        let crypto_provider = default_provider();
         let static_config = StaticConfig {
             tls_config: tls::TlsConfig::new(
                 secret_key.clone(),
                 DEFAULT_MAX_TLS_TICKETS,
-                default_provider(),
+                crypto_provider.clone(),
             ),
+            token_key: Arc::new(RustlsTokenKey::new(&mut rand::rng(), &crypto_provider).unwrap()),
             transport_config: QuicTransportConfig::default(),
             keylog: true,
         };
@@ -2193,7 +2195,7 @@ mod tests {
             proxy_url: None,
             server_config,
             tls_config: CaRootsConfig::default()
-                .client_config(default_provider())
+                .client_config(crypto_provider.clone())
                 .unwrap(),
             metrics: Default::default(),
             hooks: Default::default(),
