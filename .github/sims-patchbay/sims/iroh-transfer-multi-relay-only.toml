@@ -1,9 +1,16 @@
+# Matrix sim: multi-provider relay-only transfers (2 providers, N fetchers).
+# Expands to: iroh-{topo}-relay-only for each topology.
+# Fetchers connect round-robin: fetcher-i → provider-(i % 2).
+
 [[extends]]
 file = "../iroh-defaults.toml"
 
+[matrix]
+topo = ["2to2", "2to4", "2to6", "2to10"]
+
 [sim]
-name     = "intg-1to3-relay-only"
-topology = "1to3-relay"
+name     = "iroh-${matrix.topo}-relay-only"
+topology = "${matrix.topo}-relay"
 
 [[step]]
 use  = "relay-setup"
@@ -21,7 +28,7 @@ args     = ["--env", "dev", "--relay-only",
 use    = "transfer-fetcher"
 id     = "fetcher"
 device = "fetcher"
-args   = ["${provider.endpoint_id}",
+args   = ["${provider-${i % 2}.endpoint_id}",
           "--env", "dev", "--relay-only",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",

@@ -1,9 +1,15 @@
+# Matrix sim: single-provider relay-only transfers.
+# Expands to: iroh-{topo}-relay-only for each topology.
+
 [[extends]]
 file = "../iroh-defaults.toml"
 
+[matrix]
+topo = ["1to1", "1to3", "1to5", "1to10"]
+
 [sim]
-name     = "iroh-1to5-relay-only"
-topology = "1to5-relay"
+name     = "iroh-${matrix.topo}-relay-only"
+topology = "${matrix.topo}-relay"
 
 [[step]]
 use  = "relay-setup"
