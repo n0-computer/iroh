@@ -60,7 +60,9 @@ impl ProtocolVersion {
         Self::VARIANTS
             .iter()
             .map(ProtocolVersion::to_str)
-            // Need to reverse order so that the latest version comes last.
+            // We reverse the order so that the latest version comes first:
+            // `Self::VARIANTS` is ordered in definition order, where the latest version comes last
+            // so that the `Ord` derive correctly orderes by "latest is max".
             .rev()
     }
 
