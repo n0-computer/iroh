@@ -8,10 +8,7 @@ use axum::{
     extract::State,
     response::{IntoResponse, Response},
 };
-use hickory_server::proto::{
-    serialize::binary::BinDecodable,
-    {self},
-};
+use domain::base::Message;
 use http::{
     HeaderValue, StatusCode,
     header::{CACHE_CONTROL, CONTENT_TYPE},
@@ -19,7 +16,7 @@ use http::{
 use n0_error::StdResultExt;
 
 use super::error::AppResult;
-use crate::state::AppState;
+use crate::{dns::DnsProtocol, state::AppState};
 
 mod extract;
 mod response;
@@ -31,18 +28,33 @@ pub(crate) use self::response::DnsResponse;
 /// GET handler for resolving DoH queries
 pub async fn get(
     State(state): State<AppState>,
-    DnsRequestQuery(request, accept_type): DnsRequestQuery,
+    DnsRequestQuery(query_bytes, accept_type): DnsRequestQuery,
 ) -> AppResult<Response> {
-    let message_bytes = state.dns_handler.answer_request(request).await?;
-    let message = proto::op::Message::from_bytes(&message_bytes).anyerr()?;
+    let response_bytes = state
+        .dns_handler
+        .answer(&query_bytes, DnsProtocol::Https)
+        .await?;
 
-    let min_ttl = message.answers().iter().map(|rec| rec.ttl()).min();
+    // Parse the response to extract TTL for cache headers
+    let min_ttl = if let Ok(message) = Message::from_octets(response_bytes.to_vec()) {
+        if let Ok(answer) = message.answer() {
+            answer
+                .into_iter()
+                .filter_map(|r| r.ok())
+                .map(|r| r.ttl().as_secs() as u32)
+                .min()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let mut response = match accept_type {
-        DnsMimeType::Message => (StatusCode::OK, message_bytes).into_response(),
+        DnsMimeType::Message => (StatusCode::OK, response_bytes).into_response(),
         DnsMimeType::Json => {
-            let response = self::response::DnsResponse::from_message(message)?;
-            (StatusCode::OK, Json(response)).into_response()
+            let dns_response = self::response::DnsResponse::from_bytes(&response_bytes)?;
+            (StatusCode::OK, Json(dns_response)).into_response()
         }
     };
 
@@ -61,9 +73,13 @@ pub async fn get(
 /// POST handler for resolvng DoH queries
 pub async fn post(
     State(state): State<AppState>,
-    DnsRequestBody(request): DnsRequestBody,
+    DnsRequestBody(query_bytes): DnsRequestBody,
 ) -> Response {
-    let response = match state.dns_handler.answer_request(request).await {
+    let response = match state
+        .dns_handler
+        .answer(&query_bytes, DnsProtocol::Https)
+        .await
+    {
         Ok(response) => response,
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     };

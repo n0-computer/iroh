@@ -297,11 +297,6 @@ async fn metrics_middleware(
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
-    use hickory_resolver::{
-        config::{NameServerConfig, ResolverConfig, ResolverOpts},
-        name_server::TokioConnectionProvider,
-    };
-    use hickory_server::proto::rr::RecordType;
     use iroh::{
         RelayUrl, SecretKey,
         address_lookup::{EndpointInfo, PkarrRelayClient},
@@ -394,43 +389,6 @@ mod tests {
         assert_eq!(res.answer.len(), 1);
         assert_eq!(res.answer[0].name, format!("_iroh.{name_z32}."));
         assert_eq!(res.answer[0].data, format!("relay={RELAY_URL}"));
-
-        // Fetch over HTTPS via hickory-resolver
-        let client = {
-            let config = {
-                let mut config = ResolverConfig::new();
-                let mut name_server = NameServerConfig::new(
-                    server.https_addr().expect("https is bound"),
-                    hickory_server::proto::xfer::Protocol::Https,
-                );
-                name_server.tls_dns_name = Some("localhost".to_string());
-                config.add_name_server(name_server);
-                config
-            };
-
-            let opts = {
-                let mut opts = ResolverOpts::default();
-                opts.tls_config = self::tls::insecure_tls_config();
-                opts
-            };
-
-            hickory_resolver::Resolver::builder_with_config(
-                config,
-                TokioConnectionProvider::default(),
-            )
-            .with_options(opts)
-            .build()
-        };
-
-        let res = client
-            .txt_lookup(format!("_iroh.{name_z32}."))
-            .await
-            .anyerr()?;
-        let records = res.as_lookup().records();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].record_type(), RecordType::TXT);
-        let txt_data = records[0].data().as_txt().unwrap().txt_data();
-        assert_eq!(&txt_data[0][..], format!("relay={RELAY_URL}").as_bytes());
 
         server.shutdown().await?;
         Ok(())

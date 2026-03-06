@@ -13,10 +13,9 @@ use std::{
     sync::Arc,
 };
 
-use hickory_resolver::{
-    TokioResolver,
-    config::{ResolverConfig, ResolverOpts},
-    name_server::TokioConnectionProvider,
+use domain::{
+    base::{iana::Rtype, name::Name, question::Question},
+    resolv::stub::StubResolver,
 };
 use iroh_base::EndpointId;
 use n0_error::{StackError, e, stack_error};
@@ -86,9 +85,7 @@ pub enum DnsError {
     #[error("missing host")]
     MissingHost {},
     #[error(transparent)]
-    Resolve {
-        source: hickory_resolver::ResolveError,
-    },
+    Resolve { source: std::io::Error },
     #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
 }
@@ -155,13 +152,15 @@ pub enum DnsProtocol {
 }
 
 impl DnsProtocol {
-    fn to_hickory(self) -> hickory_resolver::proto::xfer::Protocol {
-        use hickory_resolver::proto::xfer::Protocol;
+    fn to_domain(self) -> domain::resolv::stub::conf::Transport {
+        use domain::resolv::stub::conf::Transport;
         match self {
-            DnsProtocol::Udp => Protocol::Udp,
-            DnsProtocol::Tcp => Protocol::Tcp,
-            DnsProtocol::Tls => Protocol::Tls,
-            DnsProtocol::Https => Protocol::Https,
+            DnsProtocol::Udp => Transport::UdpTcp,
+            DnsProtocol::Tcp => Transport::Tcp,
+            // domain's StubResolver doesn't support DoT/DoH natively,
+            // fall back to UDP+TCP
+            DnsProtocol::Tls => Transport::Tcp,
+            DnsProtocol::Https => Transport::UdpTcp,
         }
     }
 }
@@ -200,8 +199,8 @@ impl Builder {
 
     /// Builds the DNS resolver.
     pub fn build(self) -> DnsResolver {
-        let resolver = HickoryResolver::new(self);
-        DnsResolver(DnsResolverInner::Hickory(Arc::new(RwLock::new(resolver))))
+        let resolver = DomainResolver::new(self);
+        DnsResolver(DnsResolverInner::Domain(Arc::new(RwLock::new(resolver))))
     }
 }
 
@@ -490,13 +489,13 @@ impl reqwest::dns::Resolve for DnsResolver {
     }
 }
 
-/// Wrapper enum that contains either a hickory resolver or a custom resolver.
+/// Wrapper enum that contains either a domain resolver or a custom resolver.
 ///
 /// We do this to save the cost of boxing the futures and iterators when using
-/// default hickory resolver.
+/// default domain resolver.
 #[derive(Debug, Clone)]
 enum DnsResolverInner {
-    Hickory(Arc<RwLock<HickoryResolver>>),
+    Domain(Arc<RwLock<DomainResolver>>),
     Custom(Arc<RwLock<dyn Resolver>>),
 }
 
@@ -506,7 +505,7 @@ impl DnsResolverInner {
         host: String,
     ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
         Ok(match self {
-            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_ipv4(host).await?),
+            Self::Domain(resolver) => Either::Left(resolver.read().await.lookup_ipv4(host).await?),
             Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_ipv4(host).await?),
         })
     }
@@ -516,7 +515,7 @@ impl DnsResolverInner {
         host: String,
     ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
         Ok(match self {
-            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_ipv6(host).await?),
+            Self::Domain(resolver) => Either::Left(resolver.read().await.lookup_ipv6(host).await?),
             Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_ipv6(host).await?),
         })
     }
@@ -526,131 +525,169 @@ impl DnsResolverInner {
         host: String,
     ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
         Ok(match self {
-            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_txt(host).await?),
+            Self::Domain(resolver) => Either::Left(resolver.read().await.lookup_txt(host).await?),
             Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_txt(host).await?),
         })
     }
 
     async fn clear_cache(&self) {
         match self {
-            Self::Hickory(resolver) => resolver.read().await.clear_cache(),
+            Self::Domain(resolver) => resolver.read().await.clear_cache(),
             Self::Custom(resolver) => resolver.read().await.clear_cache(),
         }
     }
 
     async fn reset(&self) {
         match self {
-            Self::Hickory(resolver) => resolver.write().await.reset(),
+            Self::Domain(resolver) => resolver.write().await.reset(),
             Self::Custom(resolver) => resolver.write().await.reset(),
         }
     }
 }
 
 #[derive(Debug)]
-struct HickoryResolver {
-    resolver: TokioResolver,
+struct DomainResolver {
+    resolver: StubResolver,
     builder: Builder,
 }
 
-impl HickoryResolver {
+impl DomainResolver {
     fn new(builder: Builder) -> Self {
         let resolver = Self::build_resolver(&builder);
         Self { resolver, builder }
     }
 
-    fn build_resolver(builder: &Builder) -> TokioResolver {
-        let (mut config, mut options) = if builder.use_system_defaults {
-            match Self::system_config() {
-                Ok((config, options)) => (config, options),
-                Err(error) => {
-                    debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
-                    (ResolverConfig::google(), ResolverOpts::default())
-                }
+    fn build_resolver(builder: &Builder) -> StubResolver {
+        use domain::resolv::stub::conf::{ResolvConf, ServerConf};
+
+        let mut conf = if builder.use_system_defaults {
+            let mut conf = ResolvConf::new();
+            if let Err(error) = conf.parse_file("/etc/resolv.conf") {
+                debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
+                // Fallback: add Google DNS servers
+                conf.servers.push(ServerConf::new(
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 53),
+                    domain::resolv::stub::conf::Transport::UdpTcp,
+                ));
+                conf.servers.push(ServerConf::new(
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)), 53),
+                    domain::resolv::stub::conf::Transport::UdpTcp,
+                ));
+            } else {
+                // Strip bad Windows site-local DNS servers
+                conf.servers.retain(|server| {
+                    !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&server.addr.ip())
+                });
             }
+            conf
         } else {
-            (ResolverConfig::new(), ResolverOpts::default())
+            ResolvConf::new()
         };
 
-        if let Some(client_config) = builder.tls_client_config.clone() {
-            options.tls_config = client_config;
-        }
-
         for (addr, proto) in builder.nameservers.iter() {
-            let nameserver =
-                hickory_resolver::config::NameServerConfig::new(*addr, proto.to_hickory());
-            config.add_name_server(nameserver);
+            conf.servers.push(ServerConf::new(*addr, proto.to_domain()));
         }
 
-        // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
-        options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
-
-        let mut hickory_builder =
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
-        *hickory_builder.options_mut() = options;
-        hickory_builder.build()
-    }
-
-    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::ResolveError> {
-        let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
-
-        // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
-        // there is no easy way to do this.
-        let mut config = hickory_resolver::config::ResolverConfig::new();
-        if let Some(name) = system_config.domain() {
-            config.set_domain(name.clone());
-        }
-        for name in system_config.search() {
-            config.add_search(name.clone());
-        }
-        for nameserver_cfg in system_config.name_servers() {
-            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.socket_addr.ip()) {
-                config.add_name_server(nameserver_cfg.clone());
-            }
-        }
-        Ok((config, options))
+        StubResolver::from_conf(conf)
     }
 
     async fn lookup_ipv4(
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
-        Ok(self
+        use domain::rdata::A;
+
+        let name: Name<Vec<u8>> = host
+            .parse()
+            .map_err(|e: domain::base::name::FromStrError| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+            })?;
+
+        let answer = self
             .resolver
-            .ipv4_lookup(host)
-            .await?
-            .into_iter()
-            .map(Ipv4Addr::from))
+            .query(Question::new_in(name, Rtype::A))
+            .await?;
+
+        let records: Vec<Ipv4Addr> = answer
+            .answer()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?
+            .limit_to::<A>()
+            .filter_map(|r| r.ok())
+            .map(|r| r.data().addr())
+            .collect();
+
+        Ok(records.into_iter())
     }
 
-    /// Looks up an IPv6 address.
     async fn lookup_ipv6(
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
-        Ok(self
+        use domain::rdata::Aaaa;
+
+        let name: Name<Vec<u8>> = host
+            .parse()
+            .map_err(|e: domain::base::name::FromStrError| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+            })?;
+
+        let answer = self
             .resolver
-            .ipv6_lookup(host)
-            .await?
-            .into_iter()
-            .map(Ipv6Addr::from))
+            .query(Question::new_in(name, Rtype::AAAA))
+            .await?;
+
+        let records: Vec<Ipv6Addr> = answer
+            .answer()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?
+            .limit_to::<Aaaa>()
+            .filter_map(|r| r.ok())
+            .map(|r| r.data().addr())
+            .collect();
+
+        Ok(records.into_iter())
     }
 
-    /// Looks up TXT records.
     async fn lookup_txt(
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
-        Ok(self
+        use domain::rdata::Txt;
+
+        let name: Name<Vec<u8>> = host
+            .parse()
+            .map_err(|e: domain::base::name::FromStrError| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+            })?;
+
+        let answer = self
             .resolver
-            .txt_lookup(host)
-            .await?
-            .into_iter()
-            .map(|txt| TxtRecordData::from_iter(txt.iter().cloned())))
+            .query(Question::new_in(name, Rtype::TXT))
+            .await?;
+
+        let records: Vec<TxtRecordData> = answer
+            .answer()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?
+            .limit_to::<Txt<_>>()
+            .filter_map(|r| r.ok())
+            .map(|r| {
+                let txt = r.data();
+                let strings: Vec<Box<[u8]>> = txt
+                    .iter()
+                    .map(|cs| cs.as_ref().to_vec().into_boxed_slice())
+                    .collect();
+                TxtRecordData::from(strings)
+            })
+            .collect();
+
+        Ok(records.into_iter())
     }
 
     /// Clears the internal cache.
+    ///
+    /// domain's StubResolver doesn't expose cache clearing, so we recreate the resolver.
     fn clear_cache(&self) {
-        self.resolver.clear_cache()
+        // No-op: domain's StubResolver doesn't support cache clearing.
+        // The resolver is recreated on `reset()`.
     }
 
     fn reset(&mut self) {

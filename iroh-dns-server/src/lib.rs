@@ -17,7 +17,7 @@ pub use store::ZoneStore;
 #[cfg(test)]
 mod tests {
     use std::{
-        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         time::Duration,
     };
 
@@ -115,45 +115,50 @@ mod tests {
             .anyerr()?;
         pkarr_client.publish(&signed_packet, None).await.anyerr()?;
 
-        use hickory_server::proto::rr::Name;
         let pubkey = signed_packet.public_key().to_z32();
         let resolver = test_resolver(server.dns_addr());
 
         // resolve root record
-        let name = Name::from_utf8(format!("{pubkey}.")).anyerr()?;
-        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let res = resolver
+            .lookup_txt(format!("{pubkey}."), DNS_TIMEOUT)
+            .await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
         // resolve level one record
-        let name = Name::from_utf8(format!("_hello.{pubkey}.")).anyerr()?;
-        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let res = resolver
+            .lookup_txt(format!("_hello.{pubkey}."), DNS_TIMEOUT)
+            .await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi1".to_string()]);
 
         // resolve level two record
-        let name = Name::from_utf8(format!("_hello.world.{pubkey}.")).anyerr()?;
-        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let res = resolver
+            .lookup_txt(format!("_hello.world.{pubkey}."), DNS_TIMEOUT)
+            .await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
 
         // resolve multiple records for same name
-        let name = Name::from_utf8(format!("multiple.{pubkey}.")).anyerr()?;
-        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let res = resolver
+            .lookup_txt(format!("multiple.{pubkey}."), DNS_TIMEOUT)
+            .await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
         // resolve A record
-        let name = Name::from_utf8(format!("{pubkey}.")).anyerr()?;
-        let res = resolver.lookup_ipv4(name, DNS_TIMEOUT).await?;
+        let res = resolver
+            .lookup_ipv4(format!("{pubkey}."), DNS_TIMEOUT)
+            .await?;
         let records = res.collect::<Vec<_>>();
-        assert_eq!(records, vec![Ipv4Addr::LOCALHOST]);
+        assert_eq!(records, vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]);
 
         // resolve AAAA record
-        let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}.")).anyerr()?;
-        let res = resolver.lookup_ipv6(name, DNS_TIMEOUT).await?;
+        let res = resolver
+            .lookup_ipv6(format!("foo.bar.baz.{pubkey}."), DNS_TIMEOUT)
+            .await?;
         let records = res.collect::<Vec<_>>();
-        assert_eq!(records, vec![Ipv6Addr::LOCALHOST]);
+        assert_eq!(records, vec![IpAddr::V6(Ipv6Addr::LOCALHOST)]);
 
         server.shutdown().await?;
         Ok(())

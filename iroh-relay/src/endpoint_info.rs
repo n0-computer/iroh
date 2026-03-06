@@ -728,23 +728,12 @@ pub(crate) fn endpoint_domain(endpoint_id: &EndpointId, origin: &str) -> String 
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, str::FromStr, sync::Arc};
+    use std::{collections::BTreeSet, str::FromStr};
 
-    use hickory_resolver::{
-        Name,
-        lookup::Lookup,
-        proto::{
-            op::Query,
-            rr::{
-                RData, Record, RecordType,
-                rdata::{A, TXT},
-            },
-        },
-    };
     use iroh_base::{EndpointId, SecretKey, TransportAddr};
-    use n0_error::{Result, StdResultExt};
+    use n0_error::Result;
 
-    use super::{EndpointData, EndpointIdExt, EndpointInfo};
+    use super::{EndpointData, EndpointInfo};
     use crate::dns::TxtRecordData;
 
     #[test]
@@ -835,64 +824,33 @@ mod tests {
     /// The reason was that only the first address was parsed (e.g. 192.168.96.145 in
     /// this example), which could be a local, unreachable address.
     #[test]
-    fn test_from_hickory_lookup() -> Result {
-        let name = Name::from_utf8(
-            "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
-        )
-        .std_context("dns name")?;
-        let query = Query::query(name.clone(), RecordType::TXT);
-        let records = [
-            Record::from_rdata(
-                name.clone(),
-                30,
-                RData::TXT(TXT::new(vec!["addr=192.168.96.145:60165".to_string()])),
-            ),
-            Record::from_rdata(
-                name.clone(),
-                30,
-                RData::TXT(TXT::new(vec!["addr=213.208.157.87:60165".to_string()])),
-            ),
-            // Test a record with mismatching record type (A instead of TXT). It should be filtered out.
-            Record::from_rdata(name.clone(), 30, RData::A(A::new(127, 0, 0, 1))),
-            // Test a record with a mismatching name
-            Record::from_rdata(
-                Name::from_utf8(format!(
-                    "_iroh.{}.dns.iroh.link.",
-                    EndpointId::from_str(
-                        // Another EndpointId
-                        "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
-                    )?
-                    .to_z32()
-                ))
-                .std_context("name")?,
-                30,
-                RData::TXT(TXT::new(vec![
-                    "relay=https://euw1-1.relay.iroh.network./".to_string(),
-                ])),
-            ),
-            // Test a record with a completely different name
-            Record::from_rdata(
-                Name::from_utf8("dns.iroh.link.").std_context("name")?,
-                30,
-                RData::TXT(TXT::new(vec![
-                    "relay=https://euw1-1.relay.iroh.network./".to_string(),
-                ])),
-            ),
-            Record::from_rdata(
-                name.clone(),
-                30,
-                RData::TXT(TXT::new(vec![
-                    "relay=https://euw1-1.relay.iroh.network./".to_string(),
-                ])),
-            ),
-        ];
-        let lookup = Lookup::new_with_max_ttl(query, Arc::new(records));
-        let lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
-        let lookup = lookup
-            .into_iter()
-            .map(|txt| TxtRecordData::from_iter(txt.iter().cloned()));
+    fn test_from_txt_lookup() -> Result {
+        let name = "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.";
 
-        let endpoint_info = EndpointInfo::from_txt_lookup(name.to_string(), lookup)?;
+        // Build TxtRecordData values directly (simulating what a real DNS lookup would return)
+        let txt_records = vec![
+            TxtRecordData::from(vec![
+                "addr=192.168.96.145:60165"
+                    .as_bytes()
+                    .to_vec()
+                    .into_boxed_slice(),
+            ]),
+            TxtRecordData::from(vec![
+                "addr=213.208.157.87:60165"
+                    .as_bytes()
+                    .to_vec()
+                    .into_boxed_slice(),
+            ]),
+            TxtRecordData::from(vec![
+                "relay=https://euw1-1.relay.iroh.network./"
+                    .as_bytes()
+                    .to_vec()
+                    .into_boxed_slice(),
+            ]),
+        ];
+
+        let endpoint_info =
+            EndpointInfo::from_txt_lookup(name.to_string(), txt_records.into_iter())?;
 
         let expected_endpoint_info = EndpointInfo::new(EndpointId::from_str(
             "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",

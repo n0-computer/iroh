@@ -1,11 +1,8 @@
 //! Pkarr packet store used to resolve DNS queries.
 
-use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
-use hickory_server::proto::{
-    ProtoError,
-    rr::{Name, RecordSet, RecordType, RrKey},
-};
+use domain::base::iana::Rtype;
 use lru::LruCache;
 use n0_error::{Result, StdResultExt};
 use pkarr::{Client as PkarrClient, SignedPacket};
@@ -17,7 +14,7 @@ use self::signed_packets::SignedPacketStore;
 use crate::{
     config::BootstrapOption,
     metrics::Metrics,
-    util::{PublicKeyBytes, signed_packet_to_hickory_records_without_origin},
+    util::{PkarrZone, PublicKeyBytes, ZoneRecord, signed_packet_to_zone},
 };
 
 mod signed_packets;
@@ -95,20 +92,20 @@ impl ZoneStore {
     }
 
     /// Resolve a DNS query.
-    #[tracing::instrument("resolve", skip_all, fields(pubkey=%pubkey,name=%name,typ=%record_type))]
+    ///
+    /// `name` is the DNS name relative to the zone (without the z32 public key label).
+    /// Empty string means the zone apex.
+    #[tracing::instrument("resolve", skip_all, fields(pubkey=%pubkey,name=%name,typ=?record_type))]
     pub async fn resolve(
         &self,
         pubkey: &PublicKeyBytes,
-        name: &Name,
-        record_type: RecordType,
-    ) -> Result<Option<Arc<RecordSet>>> {
+        name: &str,
+        record_type: Rtype,
+    ) -> Result<Option<Vec<ZoneRecord>>> {
         trace!("store resolve");
-        if let Some(rset) = self.cache.lock().await.resolve(pubkey, name, record_type) {
-            debug!(
-                len = rset.records_without_rrsigs().count(),
-                "resolved from cache"
-            );
-            return Ok(Some(rset));
+        if let Some(records) = self.cache.lock().await.resolve(pubkey, name, record_type) {
+            debug!(len = records.len(), "resolved from cache");
+            return Ok(Some(records));
         }
 
         if let Some(packet) = self.store.get(pubkey).await? {
@@ -119,12 +116,9 @@ impl ZoneStore {
                 .await
                 .insert_and_resolve(&packet, name, record_type)
             {
-                Ok(Some(rset)) => {
-                    debug!(
-                        len = rset.records_without_rrsigs().count(),
-                        "resolved from store"
-                    );
-                    Ok(Some(rset))
+                Ok(Some(records)) => {
+                    debug!(len = records.len(), "resolved from store");
+                    Ok(Some(records))
                 }
                 Ok(None) => {
                     debug!("resolved to zone, but no matching records in zone");
@@ -204,9 +198,9 @@ impl ZoneCache {
     fn resolve(
         &mut self,
         pubkey: &PublicKeyBytes,
-        name: &Name,
-        record_type: RecordType,
-    ) -> Option<Arc<RecordSet>> {
+        name: &str,
+        record_type: Rtype,
+    ) -> Option<Vec<ZoneRecord>> {
         let zone = if let Some(zone) = self.cache.get(pubkey) {
             trace!("cache hit {}", pubkey.to_z32());
             zone
@@ -222,9 +216,9 @@ impl ZoneCache {
     fn insert_and_resolve(
         &mut self,
         signed_packet: &SignedPacket,
-        name: &Name,
-        record_type: RecordType,
-    ) -> Result<Option<Arc<RecordSet>>> {
+        name: &str,
+        record_type: Rtype,
+    ) -> Result<Option<Vec<ZoneRecord>>> {
         let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
         self.insert(signed_packet)?;
         Ok(self.resolve(&pubkey, name, record_type))
@@ -233,11 +227,11 @@ impl ZoneCache {
     fn insert_and_resolve_dht(
         &mut self,
         signed_packet: &SignedPacket,
-        name: &Name,
-        record_type: RecordType,
-    ) -> Result<Option<Arc<RecordSet>>> {
+        name: &str,
+        record_type: Rtype,
+    ) -> Result<Option<Vec<ZoneRecord>>> {
         let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
-        let zone = CachedZone::from_signed_packet(signed_packet).anyerr()?;
+        let zone = CachedZone::from_signed_packet(signed_packet)?;
         let res = zone.resolve(name, record_type);
         self.dht_cache.insert(pubkey, zone, DHT_CACHE_TTL);
         Ok(res)
@@ -254,10 +248,8 @@ impl ZoneCache {
             trace!("insert skip: cached is newer");
             Ok(())
         } else {
-            self.cache.put(
-                pubkey,
-                CachedZone::from_signed_packet(signed_packet).anyerr()?,
-            );
+            self.cache
+                .put(pubkey, CachedZone::from_signed_packet(signed_packet)?);
             trace!("inserted into cache");
             Ok(())
         }
@@ -272,15 +264,14 @@ impl ZoneCache {
 #[derive(Debug)]
 struct CachedZone {
     timestamp: u64,
-    records: BTreeMap<RrKey, Arc<RecordSet>>,
+    zone: PkarrZone,
 }
 
 impl CachedZone {
-    fn from_signed_packet(signed_packet: &SignedPacket) -> Result<Self, ProtoError> {
-        let (_label, records) =
-            signed_packet_to_hickory_records_without_origin(signed_packet, |_| true)?;
+    fn from_signed_packet(signed_packet: &SignedPacket) -> Result<Self> {
+        let zone = signed_packet_to_zone(signed_packet).anyerr()?;
         Ok(Self {
-            records,
+            zone,
             timestamp: signed_packet.timestamp().into(),
         })
     }
@@ -289,9 +280,10 @@ impl CachedZone {
         self.timestamp > signed_packet.timestamp().into()
     }
 
-    fn resolve(&self, name: &Name, record_type: RecordType) -> Option<Arc<RecordSet>> {
-        trace!(name=%name, typ=%record_type, "resolve in zone");
-        let key = RrKey::new(name.into(), record_type);
-        self.records.get(&key).cloned()
+    fn resolve(&self, name: &str, record_type: Rtype) -> Option<Vec<ZoneRecord>> {
+        trace!(name=%name, typ=?record_type, "resolve in zone");
+        self.zone
+            .lookup(name, record_type)
+            .map(|records| records.to_vec())
     }
 }

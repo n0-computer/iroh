@@ -78,7 +78,7 @@ sync_wrapper = { version = "1.0.2", features = ["futures"] }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = "0.25.1"
+domain = { version = "0.11.1", features = ["resolv", "bytes"] }
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.40.0" }
 portmapper = { version = "0.14", default-features = false }

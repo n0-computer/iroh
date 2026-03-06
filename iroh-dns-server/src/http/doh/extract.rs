@@ -6,24 +6,19 @@
 use std::{
     fmt::{self, Display, Formatter},
     future::Future,
-    net::SocketAddr,
-    str::FromStr,
 };
 
 use axum::{
     body::Body,
-    extract::{ConnectInfo, FromRequest, FromRequestParts, Query},
+    extract::{FromRequest, FromRequestParts, Query},
     http::Request,
 };
 use bytes::Bytes;
-use hickory_server::{
-    authority::MessageRequest,
-    proto::{
-        serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
-        xfer::Protocol,
-        {self},
-    },
-    server::Request as DNSRequest,
+use domain::base::{
+    Message, MessageBuilder,
+    iana::{Opcode, Rtype},
+    name::Name,
+    question::Question,
 };
 use http::{HeaderValue, StatusCode, header, request::Parts};
 use serde::Deserialize;
@@ -91,13 +86,15 @@ pub struct DnsQuery {
     pub recursion_desired: Option<bool>,
 }
 
-/// A DNS request encoded in the query string
+/// A DNS request encoded in the query string.
+/// Contains the raw DNS query bytes and the accepted response MIME type.
 #[derive(Debug)]
-pub struct DnsRequestQuery(pub(crate) DNSRequest, pub(crate) DnsMimeType);
+pub struct DnsRequestQuery(pub(crate) Vec<u8>, pub(crate) DnsMimeType);
 
-/// A DNS request encoded in the body
+/// A DNS request encoded in the body.
+/// Contains the raw DNS query bytes.
 #[derive(Debug)]
-pub struct DnsRequestBody(pub(crate) DNSRequest);
+pub struct DnsRequestBody(pub(crate) Vec<u8>);
 
 impl<S> FromRequestParts<S> for DnsRequestQuery
 where
@@ -111,19 +108,17 @@ where
         state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
-            let ConnectInfo(src_addr) = ConnectInfo::from_request_parts(parts, state).await?;
-
             match parts.headers.get(header::ACCEPT) {
                 Some(content_type) if content_type == "application/dns-message" => {
-                    handle_dns_message_query(parts, state, src_addr).await
+                    handle_dns_message_query(parts, state).await
                 }
                 Some(content_type) if content_type == "application/dns-json" => {
-                    handle_dns_json_query(parts, state, src_addr).await
+                    handle_dns_json_query(parts, state).await
                 }
                 Some(content_type) if content_type == "application/x-javascript" => {
-                    handle_dns_json_query(parts, state, src_addr).await
+                    handle_dns_json_query(parts, state).await
                 }
-                None => handle_dns_message_query(parts, state, src_addr).await,
+                None => handle_dns_message_query(parts, state).await,
                 _ => Err(AppError::with_status(StatusCode::NOT_ACCEPTABLE)),
             }
         }
@@ -142,19 +137,17 @@ where
         state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
-            let (mut parts, body) = req.into_parts();
-
-            let ConnectInfo(src_addr) = ConnectInfo::from_request_parts(&mut parts, state).await?;
-
+            let (parts, body) = req.into_parts();
             let req = Request::from_parts(parts, body);
 
             let body = Bytes::from_request(req, state)
                 .await
                 .map_err(|_| AppError::with_status(StatusCode::INTERNAL_SERVER_ERROR))?;
 
-            let request = decode_request(&body, src_addr)?;
+            // Validate that it's a valid DNS message
+            validate_dns_query(&body)?;
 
-            Ok(DnsRequestBody(request))
+            Ok(DnsRequestBody(body.to_vec()))
         }
     }
 }
@@ -162,7 +155,6 @@ where
 async fn handle_dns_message_query<S>(
     parts: &mut Parts,
     state: &S,
-    src_addr: SocketAddr,
 ) -> Result<DnsRequestQuery, AppError>
 where
     S: Send + Sync,
@@ -172,92 +164,108 @@ where
     let buf = base64_url::decode(params.dns.as_bytes())
         .map_err(|err| AppError::new(StatusCode::BAD_REQUEST, Some(err)))?;
 
-    let request = decode_request(&buf, src_addr)?;
+    validate_dns_query(&buf)?;
 
-    Ok(DnsRequestQuery(request, DnsMimeType::Message))
+    Ok(DnsRequestQuery(buf, DnsMimeType::Message))
 }
 
-async fn handle_dns_json_query<S>(
-    parts: &mut Parts,
-    state: &S,
-    src_addr: SocketAddr,
-) -> Result<DnsRequestQuery, AppError>
+async fn handle_dns_json_query<S>(parts: &mut Parts, state: &S) -> Result<DnsRequestQuery, AppError>
 where
     S: Send + Sync,
 {
     let Query(dns_query) = Query::<DnsQuery>::from_request_parts(parts, state).await?;
 
-    let request = encode_query_as_request(dns_query, src_addr)?;
+    let query_bytes = encode_query_as_bytes(dns_query)?;
 
-    Ok(DnsRequestQuery(request, DnsMimeType::Json))
+    Ok(DnsRequestQuery(query_bytes, DnsMimeType::Json))
 }
 
-/// Exposed to make it usable internally...
-pub(crate) fn encode_query_as_request(
-    question: DnsQuery,
-    src_addr: SocketAddr,
-) -> Result<DNSRequest, AppError> {
+/// Build DNS query wire-format bytes from a JSON query.
+pub(crate) fn encode_query_as_bytes(question: DnsQuery) -> Result<Vec<u8>, AppError> {
     let query_type = if let Some(record_type) = question.record_type {
-        record_type
-            .parse::<u16>()
-            .map(proto::rr::RecordType::from)
-            .or_else(|_| FromStr::from_str(&record_type.to_uppercase()))
-            .map_err(|err| AppError::new(StatusCode::BAD_REQUEST, Some(err)))?
+        // Try parsing as a number first, then as a string
+        if let Ok(num) = record_type.parse::<u16>() {
+            Rtype::from_int(num)
+        } else {
+            parse_rtype_name(&record_type.to_uppercase()).ok_or_else(|| {
+                AppError::new(
+                    StatusCode::BAD_REQUEST,
+                    Some(format!("Unknown record type: {record_type}")),
+                )
+            })?
+        }
     } else {
-        proto::rr::RecordType::A
+        Rtype::A
     };
 
-    let name = proto::rr::Name::from_utf8(question.name)
-        .map_err(|err| AppError::new(StatusCode::BAD_REQUEST, Some(err)))?;
+    let name: Name<Vec<u8>> =
+        question
+            .name
+            .parse()
+            .map_err(|err: domain::base::name::FromStrError| {
+                AppError::new(StatusCode::BAD_REQUEST, Some(err.to_string()))
+            })?;
 
-    let query = proto::op::Query::query(name, query_type);
+    let mut builder = MessageBuilder::new_vec();
+    builder.header_mut().set_opcode(Opcode::QUERY);
+    builder
+        .header_mut()
+        .set_rd(question.recursion_desired.unwrap_or(true));
+    builder.header_mut().set_cd(question.cd.unwrap_or(false));
+    builder
+        .header_mut()
+        .set_ad(question.dnssec_ok.unwrap_or(false));
 
-    let mut message = proto::op::Message::new();
+    let mut question_builder = builder.question();
+    question_builder.header_mut().set_opcode(Opcode::QUERY);
+    question_builder
+        .header_mut()
+        .set_rd(question.recursion_desired.unwrap_or(true));
+    question_builder
+        .header_mut()
+        .set_cd(question.cd.unwrap_or(false));
+    question_builder
+        .header_mut()
+        .set_ad(question.dnssec_ok.unwrap_or(false));
 
-    message
-        .add_query(query)
-        .set_message_type(proto::op::MessageType::Query)
-        .set_op_code(proto::op::OpCode::Query)
-        .set_checking_disabled(question.cd.unwrap_or(false))
-        .set_recursion_desired(question.recursion_desired.unwrap_or(true))
-        .set_recursion_available(true)
-        .set_authentic_data(question.dnssec_ok.unwrap_or(false));
+    question_builder
+        .push(Question::new_in(name, query_type))
+        .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, Some(e.to_string())))?;
 
-    // This is kind of a hack, but the only way I can find to
-    // create a MessageRequest is by decoding a buffer of bytes,
-    // so we encode the message into a buffer and then decode it
-    let mut buf = Vec::with_capacity(4096);
-    let mut encoder = BinEncoder::new(&mut buf);
-
-    message
-        .emit(&mut encoder)
-        .map_err(|err| AppError::new(StatusCode::BAD_REQUEST, Some(err)))?;
-
-    let request = decode_request(&buf, src_addr)?;
-
-    Ok(request)
+    let message = question_builder.into_message();
+    Ok(message.into_octets())
 }
 
-fn decode_request(bytes: &[u8], src_addr: SocketAddr) -> Result<DNSRequest, AppError> {
-    let mut decoder = BinDecoder::new(bytes);
+/// Validate that bytes contain a valid DNS query message.
+fn validate_dns_query(bytes: &[u8]) -> Result<(), AppError> {
+    let message = Message::from_octets(bytes.to_vec())
+        .map_err(|_| AppError::new(StatusCode::BAD_REQUEST, Some("Invalid DNS message")))?;
 
-    match MessageRequest::read(&mut decoder) {
-        Ok(message) => {
-            info!("received message {message:?}");
-            if message.message_type() != proto::op::MessageType::Query {
-                return Err(AppError::new(
-                    StatusCode::BAD_REQUEST,
-                    Some("Invalid message type: expected query"),
-                ));
-            }
+    info!("received DNS query message: {:?}", message.header());
 
-            let request = DNSRequest::new(message, src_addr, Protocol::Https);
-
-            Ok(request)
-        }
-        Err(err) => Err(AppError::new(
+    if message.header().qr() {
+        return Err(AppError::new(
             StatusCode::BAD_REQUEST,
-            Some(format!("Invalid DNS message: {err}")),
-        )),
+            Some("Invalid message type: expected query"),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Parse a record type name string (e.g. "A", "AAAA", "TXT") to Rtype.
+fn parse_rtype_name(name: &str) -> Option<Rtype> {
+    match name {
+        "A" => Some(Rtype::A),
+        "AAAA" => Some(Rtype::AAAA),
+        "TXT" => Some(Rtype::TXT),
+        "MX" => Some(Rtype::MX),
+        "NS" => Some(Rtype::NS),
+        "SOA" => Some(Rtype::SOA),
+        "CNAME" => Some(Rtype::CNAME),
+        "SRV" => Some(Rtype::SRV),
+        "PTR" => Some(Rtype::PTR),
+        "CAA" => Some(Rtype::CAA),
+        _ => None,
     }
 }

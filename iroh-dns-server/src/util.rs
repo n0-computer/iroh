@@ -1,19 +1,7 @@
 use core::fmt;
-use std::{
-    collections::{BTreeMap, btree_map},
-    str::FromStr,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, str::FromStr};
 
-use hickory_server::proto::{
-    ProtoError,
-    op::Message,
-    rr::{
-        Name, Record, RecordSet, RecordType, RrKey,
-        domain::{IntoLabel, Label},
-    },
-    serialize::binary::BinDecodable,
-};
+use domain::base::{Message, iana::Rtype};
 use n0_error::{AnyError, StdResultExt, e, stack_error};
 use pkarr::SignedPacket;
 
@@ -101,73 +89,129 @@ impl AsRef<[u8; 32]> for PublicKeyBytes {
     }
 }
 
-pub fn signed_packet_to_hickory_message(
-    signed_packet: &SignedPacket,
-) -> Result<Message, ProtoError> {
+/// A key for looking up records in a zone: (name_without_zone, record_type).
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
+pub struct ZoneRecordKey {
+    /// The DNS name relative to the zone (without the z32 public key label).
+    /// Empty string means the zone apex.
+    pub name: String,
+    /// The DNS record type.
+    pub rtype: Rtype,
+}
+
+/// A single DNS record stored in a zone.
+#[derive(Debug, Clone)]
+pub struct ZoneRecord {
+    /// TTL in seconds.
+    pub ttl: u32,
+    /// The record data as a display string (e.g. for TXT: `"relay=https://example.com/"`)
+    pub data: String,
+}
+
+/// A collection of DNS records for a pkarr zone, keyed by (name, record_type).
+#[derive(Debug, Clone)]
+pub struct PkarrZone {
+    pub records: BTreeMap<ZoneRecordKey, Vec<ZoneRecord>>,
+}
+
+impl PkarrZone {
+    /// Look up records by name and type.
+    pub fn lookup(&self, name: &str, rtype: Rtype) -> Option<&[ZoneRecord]> {
+        let key = ZoneRecordKey {
+            name: name.to_string(),
+            rtype,
+        };
+        self.records.get(&key).map(|v| v.as_slice())
+    }
+}
+
+/// Parse a signed packet into zone records, stripping the z32 public key label.
+/// Returns the z32 label and the zone records.
+pub fn signed_packet_to_zone(signed_packet: &SignedPacket) -> Result<PkarrZone, std::io::Error> {
+    let pubkey_z32 = signed_packet.public_key().to_z32();
     let encoded = signed_packet.encoded_packet();
-    let message = Message::from_bytes(&encoded)?;
-    Ok(message)
+    let message = Message::from_octets(encoded.to_vec()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid DNS message in signed packet",
+        )
+    })?;
+
+    let answer = message
+        .answer()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+
+    let mut records: BTreeMap<ZoneRecordKey, Vec<ZoneRecord>> = BTreeMap::new();
+
+    for record in answer {
+        let record = match record {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let rtype = record.rtype();
+
+        // Skip SOA and NS records
+        if rtype == Rtype::SOA || rtype == Rtype::NS {
+            continue;
+        }
+
+        let owner = record.owner().to_string();
+        let name_without_zone = strip_zone_suffix(&owner, &pubkey_z32);
+        let ttl = record.ttl().as_secs() as u32;
+
+        let data = if rtype == Rtype::TXT {
+            // For TXT records, extract raw content without zone-file quoting.
+            // AllRecordData::to_string() wraps TXT data in quotes (zone-file format),
+            // so we extract raw bytes from character strings instead.
+            match record.to_record::<domain::rdata::Txt<&[u8]>>() {
+                Ok(Some(txt_record)) => {
+                    let mut bytes = Vec::new();
+                    for cs in txt_record.data().iter() {
+                        bytes.extend_from_slice(cs.as_ref());
+                    }
+                    match String::from_utf8(bytes) {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    }
+                }
+                _ => continue,
+            }
+        } else {
+            match record.to_any_record::<domain::rdata::AllRecordData<&[u8], domain::base::name::ParsedName<&[u8]>>>() {
+                Ok(any) => any.data().to_string(),
+                Err(_) => continue,
+            }
+        };
+
+        let key = ZoneRecordKey {
+            name: name_without_zone,
+            rtype,
+        };
+        records
+            .entry(key)
+            .or_default()
+            .push(ZoneRecord { ttl, data });
+    }
+
+    Ok(PkarrZone { records })
 }
 
-pub fn signed_packet_to_hickory_records_without_origin(
-    signed_packet: &SignedPacket,
-    filter: impl Fn(&Record) -> bool,
-) -> Result<(Label, BTreeMap<RrKey, Arc<RecordSet>>), ProtoError> {
-    let common_zone = Label::from_utf8(&signed_packet.public_key().to_z32())?;
-    let mut message = signed_packet_to_hickory_message(signed_packet)?;
-    let answers = message.take_answers();
-    let mut output: BTreeMap<RrKey, Arc<RecordSet>> = BTreeMap::new();
-    for mut record in answers.into_iter() {
-        // disallow SOA and NS records
-        if matches!(record.record_type(), RecordType::SOA | RecordType::NS) {
-            continue;
-        }
-        // expect the z32 encoded pubkey as root name
-        let name = record.name();
-        if name.num_labels() < 1 {
-            continue;
-        }
-        let zone = name.iter().next_back().unwrap().into_label()?;
-        if zone != common_zone {
-            continue;
-        }
-        if !filter(&record) {
-            continue;
-        }
+/// Strip the z32 zone suffix from a DNS name.
+/// e.g., "_iroh.abc123." -> "_iroh", "abc123." -> "" (root)
+fn strip_zone_suffix(full_name: &str, zone_label: &str) -> String {
+    let full_name = full_name.trim_end_matches('.');
+    let zone_label = zone_label.trim_end_matches('.');
 
-        let name_without_zone =
-            Name::from_labels(name.iter().take(name.num_labels() as usize - 1))?;
-        record.set_name(name_without_zone);
-
-        let rrkey = RrKey::new(record.name().into(), record.record_type());
-        match output.entry(rrkey) {
-            btree_map::Entry::Vacant(e) => {
-                let set: RecordSet = record.into();
-                e.insert(Arc::new(set));
-            }
-            btree_map::Entry::Occupied(mut e) => {
-                let set = e.get_mut();
-                let serial = set.serial();
-                // safe because we just created the arc and are sync iterating
-                Arc::get_mut(set).unwrap().insert(record, serial);
-            }
-        }
+    if full_name == zone_label {
+        return String::new();
     }
-    Ok((common_zone, output))
-}
 
-pub fn record_set_append_origin(
-    input: &RecordSet,
-    origin: &Name,
-    serial: u32,
-) -> Result<RecordSet, ProtoError> {
-    let new_name = input.name().clone().append_name(origin)?;
-    let mut output = RecordSet::new(new_name.clone(), input.record_type(), serial);
-    // TODO: less clones
-    for record in input.records_without_rrsigs() {
-        let mut record = record.clone();
-        record.set_name(new_name.clone());
-        output.insert(record, serial);
+    // Try to strip ".zone_label" suffix
+    let suffix = format!(".{zone_label}");
+    if let Some(prefix) = full_name.strip_suffix(&suffix) {
+        return prefix.to_string();
     }
-    Ok(output)
+
+    // Fallback: return the full name
+    full_name.to_string()
 }

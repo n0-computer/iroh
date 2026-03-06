@@ -189,10 +189,7 @@ pub(crate) mod dns_server {
         net::{Ipv4Addr, SocketAddr},
     };
 
-    use hickory_resolver::proto::{
-        op::{Message, header::MessageType},
-        serialize::binary::BinDecodable,
-    };
+    use domain::base::{Message, MessageBuilder, iana::Rcode, name::Name};
     use n0_future::future::Boxed as BoxFuture;
     use tokio::{net::UdpSocket, sync::oneshot};
     use tracing::{debug, error, warn};
@@ -201,24 +198,52 @@ pub(crate) mod dns_server {
 
     /// Trait used by [`run_dns_server`] for answering DNS queries.
     pub trait QueryHandler: Send + Sync + 'static {
+        /// Resolve a DNS query. Takes the parsed query message and an answer builder.
+        /// The implementation should push answer records into the builder.
         fn resolve(
             &self,
-            query: &Message,
-            reply: &mut Message,
+            query: &Message<[u8]>,
+            answer: &mut DnsAnswerBuilder,
         ) -> impl Future<Output = std::io::Result<()>> + Send;
     }
 
+    /// A builder for DNS answer records, wrapping domain's message builder.
+    pub struct DnsAnswerBuilder {
+        records: Vec<(Name<Vec<u8>>, u32, DnsRdata)>,
+    }
+
+    /// Supported record data types for test DNS server responses.
+    pub enum DnsRdata {
+        Txt(Vec<String>),
+    }
+
+    impl DnsAnswerBuilder {
+        fn new() -> Self {
+            Self {
+                records: Vec::new(),
+            }
+        }
+
+        /// Push a TXT record answer.
+        pub fn push_txt(&mut self, name: Name<Vec<u8>>, ttl: u32, strings: Vec<String>) {
+            self.records.push((name, ttl, DnsRdata::Txt(strings)));
+        }
+    }
+
     pub type QueryHandlerFunction = Box<
-        dyn Fn(&Message, &mut Message) -> BoxFuture<std::io::Result<()>> + Send + Sync + 'static,
+        dyn Fn(&Message<[u8]>, &mut DnsAnswerBuilder) -> BoxFuture<std::io::Result<()>>
+            + Send
+            + Sync
+            + 'static,
     >;
 
     impl QueryHandler for QueryHandlerFunction {
         fn resolve(
             &self,
-            query: &Message,
-            reply: &mut Message,
+            query: &Message<[u8]>,
+            answer: &mut DnsAnswerBuilder,
         ) -> impl Future<Output = std::io::Result<()>> + Send {
-            (self)(query, reply)
+            (self)(query, answer)
         }
     }
 
@@ -266,15 +291,51 @@ pub(crate) mod dns_server {
         }
 
         async fn handle_datagram(&self, from: SocketAddr, buf: &[u8]) -> std::io::Result<()> {
-            let packet = Message::from_bytes(buf)?;
-            debug!(queries = ?packet.queries(), %from, "received query");
-            let mut reply = packet.clone();
-            reply.set_message_type(MessageType::Response);
-            self.resolver.resolve(&packet, &mut reply).await?;
-            debug!(?reply, %from, "send reply");
-            let buf = reply.to_vec()?;
-            let len = self.socket.send_to(&buf, from).await?;
-            assert_eq!(len, buf.len(), "failed to send complete packet");
+            let query = Message::from_slice(buf).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid DNS message")
+            })?;
+
+            debug!(%from, "received DNS query");
+
+            // Collect answers from the handler
+            let mut answer_builder = DnsAnswerBuilder::new();
+            self.resolver.resolve(&query, &mut answer_builder).await?;
+
+            // Build the response message
+            let builder = MessageBuilder::new_vec();
+            let mut answer = builder
+                .start_answer(&query, Rcode::NOERROR)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+            for (name, ttl, rdata) in &answer_builder.records {
+                match rdata {
+                    DnsRdata::Txt(strings) => {
+                        use domain::{base::record::Record, rdata::Txt};
+                        for s in strings {
+                            let txt: Txt<Vec<u8>> =
+                                Txt::build_from_slice(s.as_bytes()).map_err(|e| {
+                                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                                })?;
+                            let record = Record::new(
+                                name.clone(),
+                                domain::base::iana::Class::IN,
+                                domain::base::Ttl::from_secs((*ttl).into()),
+                                txt,
+                            );
+                            answer.push(record).map_err(|e| {
+                                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                            })?;
+                        }
+                    }
+                }
+            }
+
+            let response = answer.into_message();
+            let response_bytes = response.as_octets();
+
+            debug!(%from, "send DNS reply");
+            let len = self.socket.send_to(response_bytes, from).await?;
+            assert_eq!(len, response_bytes.len(), "failed to send complete packet");
             Ok(())
         }
     }
@@ -448,12 +509,17 @@ pub(crate) mod pkarr_dns_state {
 
         pub fn resolve_dns(
             &self,
-            query: &hickory_resolver::proto::op::Message,
-            reply: &mut hickory_resolver::proto::op::Message,
+            query: &domain::base::Message<[u8]>,
+            answer: &mut super::dns_server::DnsAnswerBuilder,
             ttl: u32,
         ) -> std::io::Result<()> {
-            for query in query.queries() {
-                let domain_name = query.name().to_string();
+            use domain::base::name::Name;
+
+            for question in query.question() {
+                let question = question.map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                })?;
+                let domain_name = question.qname().to_string();
                 let Some(endpoint_id) = endpoint_id_from_domain_name(&domain_name) else {
                     continue;
                 };
@@ -462,10 +528,20 @@ pub(crate) mod pkarr_dns_state {
                     if let Some(packet) = packet {
                         let endpoint_info = EndpointInfo::from_pkarr_signed_packet(packet)
                             .map_err(std::io::Error::other)?;
-                        for record in
-                            endpoint_info_to_hickory_records(&endpoint_info, &self.origin, ttl)
-                        {
-                            reply.add_answer(record);
+                        let txt_strings = endpoint_info.to_txt_strings();
+                        let name_str =
+                            format!("{IROH_TXT_NAME}.{}.{}", endpoint_id.to_z32(), &self.origin);
+                        let name: Name<Vec<u8>> =
+                            name_str
+                                .parse()
+                                .map_err(|e: domain::base::name::FromStrError| {
+                                    std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        e.to_string(),
+                                    )
+                                })?;
+                        for s in txt_strings {
+                            answer.push_txt(name.clone(), ttl, vec![s]);
                         }
                     }
                     Ok::<_, std::io::Error>(())
@@ -478,11 +554,11 @@ pub(crate) mod pkarr_dns_state {
     impl QueryHandler for State {
         fn resolve(
             &self,
-            query: &hickory_resolver::proto::op::Message,
-            reply: &mut hickory_resolver::proto::op::Message,
+            query: &domain::base::Message<[u8]>,
+            answer: &mut super::dns_server::DnsAnswerBuilder,
         ) -> impl Future<Output = std::io::Result<()>> + Send {
             const TTL: u32 = 30;
-            let res = self.resolve_dns(query, reply, TTL);
+            let res = self.resolve_dns(query, answer, TTL);
             std::future::ready(res)
         }
     }
@@ -503,34 +579,6 @@ pub(crate) mod pkarr_dns_state {
         let label = labels.next()?;
         let endpoint_id = EndpointId::from_z32(label).ok()?;
         Some(endpoint_id)
-    }
-
-    /// Converts a [`EndpointInfo`]into a [`hickory_resolver::proto::rr::Record`] DNS record.
-    fn endpoint_info_to_hickory_records(
-        endpoint_info: &EndpointInfo,
-        origin: &str,
-        ttl: u32,
-    ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static {
-        let txt_strings = endpoint_info.to_txt_strings();
-        let records = to_hickory_records(txt_strings, endpoint_info.endpoint_id, origin, ttl);
-        records.collect::<Vec<_>>().into_iter()
-    }
-
-    /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
-    fn to_hickory_records(
-        txt_strings: Vec<String>,
-        endpoint_id: EndpointId,
-        origin: &str,
-        ttl: u32,
-    ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_ {
-        use hickory_resolver::proto::rr;
-        let name = format!("{IROH_TXT_NAME}.{}.{origin}", endpoint_id.to_z32());
-        let name = rr::Name::from_utf8(name).expect("invalid name");
-        txt_strings.into_iter().map(move |s| {
-            let txt = rr::rdata::TXT::new(vec![s]);
-            let rdata = rr::RData::TXT(txt);
-            rr::Record::from_rdata(name.clone(), ttl, rdata)
-        })
     }
 
     #[cfg(test)]

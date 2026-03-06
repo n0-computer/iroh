@@ -3,7 +3,7 @@
 // This module is mostly copied from
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-core/src/dns.rs
 
-use hickory_server::proto;
+use domain::base::{Message, iana::Rtype};
 use n0_error::{Result, ensure_any};
 use serde::{Deserialize, Serialize};
 
@@ -45,45 +45,79 @@ pub struct DnsResponse {
 }
 
 impl DnsResponse {
-    /// Create a new JSON response from a DNS message
-    pub fn from_message(message: proto::op::Message) -> Result<Self> {
-        ensure_any!(
-            message.message_type() == proto::op::MessageType::Response,
-            "Expected message type to be response"
-        );
+    /// Create a new JSON response from raw DNS message bytes
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let message = Message::from_octets(bytes.to_vec())
+            .map_err(|_| n0_error::anyerr!("invalid DNS message"))?;
 
-        ensure_any!(
-            message.query_count() == message.queries().len() as u16,
-            "Query count mismatch"
-        );
+        let header = message.header();
 
-        ensure_any!(
-            message.answer_count() == message.answers().len() as u16,
-            "Answer count mismatch"
-        );
+        ensure_any!(header.qr(), "Expected message to be a response");
 
-        let status: u32 =
-            <u16 as From<proto::op::ResponseCode>>::from(message.response_code()) as u32;
+        let status = header.rcode().to_int() as u32;
 
         let question: Vec<_> = message
-            .queries()
-            .iter()
-            .map(DohQuestionJson::from_query)
+            .question()
+            .filter_map(|q| q.ok())
+            .map(|q| DohQuestionJson {
+                // domain crate's Display omits the trailing dot; DNS JSON format requires it
+                name: format!("{}.", q.qname()),
+                question_type: q.qtype().to_int(),
+            })
             .collect();
 
-        let answer: Vec<_> = message
-            .answers()
-            .iter()
-            .map(DohRecordJson::from_record)
-            .collect::<Result<_>>()?;
+        let answer_section = message
+            .answer()
+            .map_err(|e| n0_error::anyerr!("invalid answer section: {e}"))?;
+
+        let mut answer = Vec::new();
+        for record in answer_section {
+            if let Ok(record) = record {
+                let rtype = record.rtype();
+                let owner = format!("{}.", record.owner());
+                let ttl = record.ttl().as_secs() as u32;
+
+                let data =
+                    if rtype == Rtype::TXT {
+                        // For TXT records, extract raw content without zone-file quoting
+                        if let Ok(Some(txt_record)) =
+                            record.to_record::<domain::rdata::Txt<&[u8]>>()
+                        {
+                            let mut bytes = Vec::new();
+                            for cs in txt_record.data().iter() {
+                                bytes.extend_from_slice(cs.as_ref());
+                            }
+                            String::from_utf8_lossy(&bytes).into_owned()
+                        } else {
+                            continue;
+                        }
+                    } else if let Ok(any_record) =
+                        record.to_any_record::<domain::rdata::AllRecordData<
+                            &[u8],
+                            domain::base::name::ParsedName<&[u8]>,
+                        >>()
+                    {
+                        any_record.data().to_string()
+                    } else {
+                        continue;
+                    };
+
+                answer.push(DohRecordJson {
+                    name: owner,
+                    record_type: rtype.to_int(),
+                    ttl,
+                    data,
+                });
+            }
+        }
 
         Ok(DnsResponse {
             status,
-            tc: message.truncated(),
-            rd: message.recursion_desired(),
-            ra: message.recursion_available(),
-            ad: message.authentic_data(),
-            cd: message.checking_disabled(),
+            tc: header.tc(),
+            rd: header.rd(),
+            ra: header.ra(),
+            ad: header.ad(),
+            cd: header.cd(),
             question,
             answer,
             comment: None,
@@ -102,16 +136,6 @@ pub struct DohQuestionJson {
     pub question_type: u16,
 }
 
-impl DohQuestionJson {
-    /// Create a new JSON question from a DNS query
-    pub fn from_query(query: &proto::op::Query) -> Self {
-        Self {
-            name: query.name().to_string(),
-            question_type: query.query_type().into(),
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 /// JSON representation of a DNS record
 pub struct DohRecordJson {
@@ -125,16 +149,4 @@ pub struct DohRecordJson {
     pub ttl: u32,
     /// Record data
     pub data: String,
-}
-
-impl DohRecordJson {
-    /// Create a new JSON record from a DNS record
-    pub fn from_record(record: &proto::rr::Record) -> Result<Self> {
-        Ok(Self {
-            name: record.name().to_string(),
-            record_type: record.record_type().into(),
-            ttl: record.ttl(),
-            data: record.data().to_string(),
-        })
-    }
 }
