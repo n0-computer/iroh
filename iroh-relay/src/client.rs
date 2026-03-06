@@ -151,8 +151,6 @@ pub struct ClientBuilder {
     dns_resolver: DnsResolver,
     /// Cache for public keys of remote endpoints.
     key_cache: KeyCache,
-    /// The rustls crypto provider backend
-    crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
 }
 
 impl ClientBuilder {
@@ -171,12 +169,6 @@ impl ClientBuilder {
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
-            #[cfg(feature = "ring")]
-            crypto_provider: Some(Arc::new(rustls::crypto::ring::default_provider())),
-            #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-            crypto_provider: Some(Arc::new(rustls::crypto::aws_lc_rs::default_provider())),
-            #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
-            crypto_provider: None,
         }
     }
 
@@ -216,7 +208,6 @@ impl ClientBuilder {
     #[cfg(not(wasm_browser))]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
         use http::header::SEC_WEBSOCKET_PROTOCOL;
-        use n0_error::bail;
         use tls::MaybeTlsStreamBuilder;
 
         use crate::{
@@ -241,15 +232,18 @@ impl ClientBuilder {
                 })
             })?;
 
-        let Some(crypto_provider) = self.crypto_provider.clone() else {
-            bail!(ConnectError::MissingCryptoProvider);
-        };
-
         debug!(%dial_url, "Dialing relay by websocket");
 
         let tls_config = match self.tls_config.clone() {
             Some(config) => config,
-            None => CaRootsConfig::default().client_config(crypto_provider)?,
+            #[cfg(feature = "ring")]
+            None => CaRootsConfig::default()
+                .client_config(Arc::new(rustls::crypto::ring::default_provider()))?,
+            #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+            None => CaRootsConfig::default()
+                .client_config(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))?,
+            #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+            None => n0_error::bail!(ConnectError::MissingCryptoProvider),
         };
 
         #[allow(unused_mut)]
