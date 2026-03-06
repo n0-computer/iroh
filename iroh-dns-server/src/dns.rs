@@ -374,7 +374,7 @@ impl DnsHandler {
         // Check if this is a query for an origin itself (static records)
         for origin in &self.origins {
             if qname_normalized.eq_ignore_ascii_case(origin)
-                || (origin == "" && (qname == "." || qname.is_empty()))
+                || (origin.is_empty() && (qname == "." || qname.is_empty()))
             {
                 return self.resolve_static(qname, qtype);
             }
@@ -477,11 +477,7 @@ impl DnsHandler {
             return None;
         } else {
             let suffix = format!(".{origin}");
-            if let Some(prefix) = strip_suffix_ignore_case(qname_normalized, &suffix) {
-                prefix
-            } else {
-                return None;
-            }
+            strip_suffix_ignore_case(qname_normalized, &suffix)?
         };
 
         // Parse the z32 pubkey label (last label before origin)

@@ -41,7 +41,7 @@ pub async fn get(
             answer
                 .into_iter()
                 .filter_map(|r| r.ok())
-                .map(|r| r.ttl().as_secs() as u32)
+                .map(|r| r.ttl().as_secs())
                 .min()
         } else {
             None

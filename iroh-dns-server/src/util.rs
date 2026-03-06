@@ -157,7 +157,7 @@ pub fn signed_packet_to_zone(signed_packet: &SignedPacket) -> Result<PkarrZone, 
 
         let owner = record.owner().to_string();
         let name_without_zone = strip_zone_suffix(&owner, &pubkey_z32);
-        let ttl = record.ttl().as_secs() as u32;
+        let ttl = record.ttl().as_secs();
 
         let data = if rtype == Rtype::TXT {
             // For TXT records, extract raw content without zone-file quoting.

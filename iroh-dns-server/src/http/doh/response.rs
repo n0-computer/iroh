@@ -71,44 +71,41 @@ impl DnsResponse {
             .map_err(|e| n0_error::anyerr!("invalid answer section: {e}"))?;
 
         let mut answer = Vec::new();
-        for record in answer_section {
-            if let Ok(record) = record {
-                let rtype = record.rtype();
-                let owner = format!("{}.", record.owner());
-                let ttl = record.ttl().as_secs() as u32;
+        for record in answer_section.flatten() {
+            let rtype = record.rtype();
+            let owner = format!("{}.", record.owner());
+            let ttl = record.ttl().as_secs();
 
-                let data =
-                    if rtype == Rtype::TXT {
-                        // For TXT records, extract raw content without zone-file quoting
-                        if let Ok(Some(txt_record)) =
-                            record.to_record::<domain::rdata::Txt<&[u8]>>()
-                        {
-                            let mut bytes = Vec::new();
-                            for cs in txt_record.data().iter() {
-                                bytes.extend_from_slice(cs.as_ref());
-                            }
-                            String::from_utf8_lossy(&bytes).into_owned()
-                        } else {
-                            continue;
-                        }
-                    } else if let Ok(any_record) =
-                        record.to_any_record::<domain::rdata::AllRecordData<
-                            &[u8],
-                            domain::base::name::ParsedName<&[u8]>,
-                        >>()
-                    {
-                        any_record.data().to_string()
-                    } else {
-                        continue;
-                    };
+            let data = if rtype == Rtype::TXT {
+                // For TXT records, extract raw content without zone-file quoting
+                if let Ok(Some(txt_record)) =
+                    record.to_record::<domain::rdata::Txt<&[u8]>>()
+                {
+                    let mut bytes = Vec::new();
+                    for cs in txt_record.data().iter() {
+                        bytes.extend_from_slice(cs.as_ref());
+                    }
+                    String::from_utf8_lossy(&bytes).into_owned()
+                } else {
+                    continue;
+                }
+            } else if let Ok(any_record) =
+                record.to_any_record::<domain::rdata::AllRecordData<
+                    &[u8],
+                    domain::base::name::ParsedName<&[u8]>,
+                >>()
+            {
+                any_record.data().to_string()
+            } else {
+                continue;
+            };
 
-                answer.push(DohRecordJson {
-                    name: owner,
-                    record_type: rtype.to_int(),
-                    ttl,
-                    data,
-                });
-            }
+            answer.push(DohRecordJson {
+                name: owner,
+                record_type: rtype.to_int(),
+                ttl,
+                data,
+            });
         }
 
         Ok(DnsResponse {
