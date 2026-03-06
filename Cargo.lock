@@ -2109,7 +2109,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-rustls",
- "tokio-rustls-acme",
+ "tokio-rustls-acme 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-stream",
  "tokio-util",
  "toml",
@@ -2205,7 +2205,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls",
- "tokio-rustls-acme",
+ "tokio-rustls-acme 0.9.0",
  "tokio-util",
  "tokio-websockets",
  "toml",
@@ -4428,6 +4428,32 @@ checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
  "rustls",
  "tokio",
+]
+
+[[package]]
+name = "tokio-rustls-acme"
+version = "0.9.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "futures",
+ "log",
+ "num-bigint",
+ "pem",
+ "proc-macro2",
+ "rcgen",
+ "reqwest",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "webpki-roots",
+ "x509-parser",
 ]
 
 [[package]]

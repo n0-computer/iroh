@@ -332,6 +332,10 @@ mod cfg_defaults {
         pub(crate) fn dangerous_http_only() -> bool {
             false
         }
+
+        pub(crate) fn preferred_chain() -> Option<String> {
+            Some("ISRG Root X2".to_string())
+        }
     }
 }
 
@@ -389,6 +393,17 @@ struct TlsConfig {
     ///
     /// Used when `cert_mode` is `LetsEncrypt`.
     contact: Option<String>,
+    /// Preferred certificate chain issuer name.
+    ///
+    /// When set, the ACME client will select an alternate certificate chain
+    /// whose topmost issuer contains this string. For example, set to
+    /// `"ISRG Root X2"` to get Let's Encrypt's ECDSA-only chain (no RSA).
+    ///
+    /// Only used when `cert_mode` is `LetsEncrypt`.
+    ///
+    /// Default is `"ISRG Root X2"` (ECDSA-only chain, no RSA).
+    #[serde(default = "cfg_defaults::tls_config::preferred_chain")]
+    preferred_chain: Option<String>,
     /// **This field should never be manually set**
     ///
     /// When `true`, it will force the relay to ignore binding to https. It is only
@@ -566,10 +581,13 @@ async fn maybe_load_tls(
                 .contact
                 .clone()
                 .std_context("LetsEncrypt needs a contact email")?;
-            let config = AcmeConfig::new(vec![hostname.clone()])
+            let mut config = AcmeConfig::new(vec![hostname.clone()])
                 .contact([format!("mailto:{contact}")])
                 .cache_option(Some(DirCache::new(tls.cert_dir())))
                 .directory_lets_encrypt(tls.prod_tls);
+            if let Some(preferred) = &tls.preferred_chain {
+                config = config.preferred_chain(preferred);
+            }
             let state = config.state();
             let resolver = state.resolver().clone();
             let server_config = server_config.with_cert_resolver(resolver);
