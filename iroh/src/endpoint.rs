@@ -2182,9 +2182,12 @@ mod tests {
                 }
             }
             info!("Have direct connection");
-            // Validate holepunch metrics.
-            assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
-            assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
+            #[cfg(feature = "metrics")]
+            {
+                // Validate holepunch metrics.
+                assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
+                assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
+            }
 
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
@@ -3518,9 +3521,12 @@ mod tests {
         assert!(ep.dns_resolver().is_err());
         assert!(ep.address_lookup().is_err());
 
-        // this should work
-        let metrics = ep.metrics();
-        info!("Metrics: {metrics:?}");
+        #[cfg(feature = "metrics")]
+        {
+            // this should work
+            let metrics = ep.metrics();
+            info!("Metrics: {metrics:?}");
+        }
 
         // this should return none
         assert!(ep.remote_info(ep_id).await.is_none());
