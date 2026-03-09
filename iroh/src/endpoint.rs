@@ -87,9 +87,9 @@ pub use self::{
     quic::{
         AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
-        ControllerMetrics, CryptoError, Dir, ExportKeyingMaterialError, FrameStats, FrameType,
-        HandshakeTokenKey, HeaderKey, IdleTimeout, Keys, MtuDiscoveryConfig, OpenBi, OpenUni,
-        PacketKey, PathId, PathStats, QuicConnectError, QuicTransportConfig,
+        ControllerMetrics, CryptoError, DecryptedInitial, Dir, ExportKeyingMaterialError,
+        FrameStats, FrameType, HandshakeTokenKey, HeaderKey, IdleTimeout, Keys, MtuDiscoveryConfig,
+        OpenBi, OpenUni, PacketKey, PathId, PathStats, QuicConnectError, QuicTransportConfig,
         QuicTransportConfigBuilder, ReadDatagram, ReadError, ReadExactError, ReadToEndError,
         RecvStream, ResetError, RttEstimator, SendDatagram, SendDatagramError, SendStream,
         ServerConfig, ServerConfigBuilder, Side, StoppedError, StreamId, TimeSource, TokenLog,

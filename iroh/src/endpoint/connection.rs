@@ -34,6 +34,7 @@ use pin_project::pin_project;
 use quinn::WeakConnectionHandle;
 use tracing::warn;
 
+use super::quic::DecryptedInitial;
 use crate::{
     Endpoint,
     endpoint::{
@@ -203,6 +204,14 @@ impl Incoming {
     /// traffic sent to `self.remote_addr()`.
     pub fn remote_addr_validated(&self) -> bool {
         self.inner.remote_address_validated()
+    }
+
+    /// Decrypt the Initial packet payload
+    ///
+    /// This clones and decrypts the packet payload (~1200 bytes).
+    /// Can be used to extract information from the TLS ClientHello without completing the handshake.
+    pub fn decrypt(&self) -> Option<DecryptedInitial> {
+        self.inner.decrypt()
     }
 }
 

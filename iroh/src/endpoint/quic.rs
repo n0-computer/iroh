@@ -52,6 +52,7 @@ pub use quinn_proto::{
     Chunk,                            // quinn::RecvStream
     ConnectError as QuicConnectError, // iroh::endpoint::ConnectWithOptsError
     ConnectionClose,                  // quinn::ConnectionError
+    DecryptedInitial,                 // iroh::endpoint::connection::Incoming
     FrameStats,                       // quinn::ConnectionStats
     FrameType,                        // quinn_proto::TransportError
     PathId,                           // quinn_proto::crypto::PacketKey
