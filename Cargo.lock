@@ -2149,6 +2149,7 @@ dependencies = [
  "pin-project",
  "pkarr",
  "pkcs8",
+ "portable-atomic",
  "portmapper",
  "postcard",
  "pretty_assertions",
