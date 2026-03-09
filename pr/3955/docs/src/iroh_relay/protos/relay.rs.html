@@ -792,7 +792,7 @@
 <a href=#792 id=792 data-nosnippet>792</a>            </span>})
 <a href=#793 id=793 data-nosnippet>793</a>            .prop_map(|problem| RelayToClientMsg::Health { problem });
 <a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">let </span>health = Just(HealthStatus::SameEndpointIdConnected)
-<a href=#795 id=795 data-nosnippet>795</a>            .prop_map(|status| RelayToClientMsg::Status(status));
+<a href=#795 id=795 data-nosnippet>795</a>            .prop_map(RelayToClientMsg::Status);
 <a href=#796 id=796 data-nosnippet>796</a>        <span class="kw">let </span>restarting = (any::&lt;u32&gt;(), any::&lt;u32&gt;()).prop_map(|(reconnect_in, try_for)| {
 <a href=#797 id=797 data-nosnippet>797</a>            RelayToClientMsg::Restarting {
 <a href=#798 id=798 data-nosnippet>798</a>                reconnect_in: Duration::from_millis(reconnect_in.into()),
