@@ -69,7 +69,6 @@ pub use quinn_proto::{
         ControllerMetrics, // quinn_proto::congestion::Controller
     },
     crypto::{
-        AeadKey,                   // quinn::HandshakeTokenKey
         CryptoError, // quinn_proto::crypto::CryptoError, quinn_proto::crypto::PacketKey
         ExportKeyingMaterialError, // iroh::endpoint::Connection
         HandshakeTokenKey, // iroh::endpoint::quic::ServerConfig
