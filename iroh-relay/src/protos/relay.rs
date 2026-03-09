@@ -792,7 +792,7 @@ mod proptests {
             })
             .prop_map(|problem| RelayToClientMsg::Health { problem });
         let health = Just(HealthStatus::SameEndpointIdConnected)
-            .prop_map(|status| RelayToClientMsg::Status(status));
+            .prop_map(RelayToClientMsg::Status);
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),
