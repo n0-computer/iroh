@@ -37,9 +37,9 @@ papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
 pkarr = { version = "5", default-features = false }
-quinn = { package = "noq", version = "0.16.1", default-features = false, features = ["rustls-ring"] }
-quinn-proto = { package = "noq-proto", version = "0.15.1" }
-quinn-udp = { package = "noq-udp", version = "0.8" }
+noq = { version = "0.17.0", default-features = false, features = ["rustls-ring"] }
+noq-proto = "0.16"
+noq-udp = "0.9"
 rand = "0.9.2"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
@@ -82,7 +82,7 @@ hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.40.0" }
 portmapper = { version = "0.14", default-features = false }
-quinn = { package = "noq", version = "0.16.1", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+noq = { version = "0.17.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -151,9 +151,9 @@ address-lookup-mdns = ["dep:swarm-discovery"]
 address-lookup-pkarr-dht = ["pkarr/dht", "pkarr/relays"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["iroh-relay/platform-verifier"]
-qlog = ["quinn/qlog"]
+qlog = ["noq/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
-fast-apple-datapath = ["quinn/fast-apple-datapath"]
+fast-apple-datapath = ["noq/fast-apple-datapath"]
 # Unstable: Custom transport API (may change without notice)
 unstable-custom-transports = []
 

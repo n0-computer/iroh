@@ -1,6 +1,6 @@
 //! The various mapped addresses we use.
 
-//! We use non-IP transports to carry datagrams.  Yet Quinn needs to address those
+//! We use non-IP transports to carry datagrams.  Yet Noq needs to address those
 //! transports using IPv6 addresses.  These defines mappings of several IPv6 Unique Local
 //! Address ranges we use to keep track of the various "fake" address types we use.
 
@@ -74,14 +74,14 @@ pub(crate) trait MappedAddr {
     ///
     /// This socket address does not have a routable IP address.  It uses a fake but
     /// consistent port number, since the port does not play a role in the addressing.  This
-    /// socket address is only to be used to pass into Quinn.
+    /// socket address is only to be used to pass into Noq.
     fn private_socket_addr(&self) -> SocketAddr;
 }
 
 /// An enum encompassing all the mapped and unmapped addresses.
 ///
 /// This is essentially a slightly-stronger typed version of the IPv6 mapped addresses that
-/// we use on the Quinn side.  It categorises the addressed in what kind of mapped or
+/// we use on the Noq side.  It categorises the addressed in what kind of mapped or
 /// unmapped addresses they are.
 ///
 /// It does not guarantee that a mapped address exists in the mapping.  Or that a particular
@@ -120,7 +120,7 @@ impl From<SocketAddr> for MultipathMappedAddr {
 
 /// An address used to address a endpoint on any or all paths.
 ///
-/// This is only used for initially connecting to a remote endpoint.  We instruct Quinn to
+/// This is only used for initially connecting to a remote endpoint.  We instruct Noq to
 /// send to this address, and duplicate all packets for this address to send on all paths we
 /// might want to send the initial on:
 ///
@@ -130,7 +130,7 @@ impl From<SocketAddr> for MultipathMappedAddr {
 /// - If there already is an active connection to this endpoint we now which path to use.
 ///
 /// It is but a newtype around an IPv6 Unique Local Addr.  And in our QUIC-facing socket
-/// APIs like [`quinn::AsyncUdpSocket`] it comes in as the inner [`Ipv6Addr`], in those
+/// APIs like [`noq::AsyncUdpSocket`] it comes in as the inner [`Ipv6Addr`], in those
 /// interfaces we have to be careful to do the conversion to this type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct EndpointIdMappedAddr(Ipv6Addr);
@@ -156,7 +156,7 @@ impl MappedAddr for EndpointIdMappedAddr {
     /// This socket address does not have a routable IP address and port.
     ///
     /// This uses a made-up port number, since the port does not play a role in the
-    /// addressing.  This socket address is only to be used to pass into Quinn.
+    /// addressing.  This socket address is only to be used to pass into Noq.
     fn private_socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)
     }
@@ -191,7 +191,7 @@ pub(crate) struct EndpointIdMappedAddrError;
 /// An Ipv6 ULA address, identifying a relay path for a [`crate::EndpointId`].
 ///
 /// Since iroh endpoint are reachable via a relay server we have a network path indicated by
-/// the `(EndpointId, RelayUrl)`.  However Quinn can only handle socket addresses, so we use
+/// the `(EndpointId, RelayUrl)`.  However Noq can only handle socket addresses, so we use
 /// IPv6 addresses in a private IPv6 Unique Local Address range, which map to a unique
 /// `(EndointId, RelayUrl)` pair.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -219,7 +219,7 @@ impl MappedAddr for RelayMappedAddr {
     /// This socket address does not have a routable IP address and port.
     ///
     /// This uses a made-up port number, since the port does not play a role in the
-    /// addressing.  This socket address is only to be used to pass into Quinn.
+    /// addressing.  This socket address is only to be used to pass into Noq.
     fn private_socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)
     }
@@ -253,7 +253,7 @@ impl std::fmt::Display for RelayMappedAddr {
 
 /// An Ipv6 ULA address, identifying a custom transport path.
 ///
-/// Custom transports allow user-defined transport mechanisms. However Quinn can only handle
+/// Custom transports allow user-defined transport mechanisms. However Noq can only handle
 /// socket addresses, so we use IPv6 addresses in a private IPv6 Unique Local Address range,
 /// which map to a unique [`iroh_base::CustomAddr`].
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -281,7 +281,7 @@ impl MappedAddr for CustomMappedAddr {
     /// This socket address does not have a routable IP address and port.
     ///
     /// This uses a made-up port number, since the port does not play a role in the
-    /// addressing.  This socket address is only to be used to pass into Quinn.
+    /// addressing.  This socket address is only to be used to pass into Noq.
     fn private_socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)
     }

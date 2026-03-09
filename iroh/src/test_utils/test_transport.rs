@@ -263,7 +263,7 @@ impl CustomEndpoint for TestTransport {
         &mut self,
         cx: &mut std::task::Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         let n = bufs.len();
