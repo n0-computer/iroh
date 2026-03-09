@@ -36,7 +36,7 @@ netwatch = { version = "0.14" }
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-pkarr = { version = "5", default-features = false, features = ["relays"] }
+pkarr = { version = "5", default-features = false }
 quinn = { package = "noq", version = "0.16.1", default-features = false, features = ["rustls-ring"] }
 quinn-proto = { package = "noq-proto", version = "0.15.1" }
 quinn-udp = { package = "noq-udp", version = "0.8" }
