@@ -168,14 +168,59 @@ pub trait AddressLookupBuilder: Send + Sync + std::fmt::Debug + 'static {
     ) -> Result<impl AddressLookup, AddressLookupBuilderError>;
 
     /// Sets a filter to control which addresses are published by this service
-    ///           
+    ///
     /// The filter receives the full set of transport addresses and returns them
     /// as an ordered [`Vec`], allowing both filtering (by omitting addresses) and
     /// prioritization (by controlling output order). The service may apply
     /// additional filtering on top based on its own constraints.
-    fn with_addr_filter(self, filter: AddrFilter) -> Self
+    fn with_addr_filter(self, filter: AddrFilter) -> FilteredBuilder<Self>
     where
-        Self: Sized;
+        Self: Sized,
+    {
+        FilteredBuilder {
+            inner: self,
+            filter,
+        }
+    }
+}
+
+/// Returned from [`AddressLookupBuilder::with_addr_filter`].
+#[derive(Debug)]
+pub struct FilteredBuilder<T> {
+    inner: T,
+    filter: AddrFilter,
+}
+
+impl<T: AddressLookupBuilder> AddressLookupBuilder for FilteredBuilder<T> {
+    fn into_address_lookup(
+        self,
+        endpoint: &Endpoint,
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
+        let inner = self.inner.into_address_lookup(endpoint)?;
+        Ok(FilteredAddressLookup {
+            inner,
+            filter: self.filter,
+        })
+    }
+}
+
+/// Returned from [`FilteredBuilder::into_address_lookup`].
+#[derive(Debug)]
+pub struct FilteredAddressLookup<T> {
+    inner: T,
+    filter: AddrFilter,
+}
+
+impl<T: AddressLookup> AddressLookup for FilteredAddressLookup<T> {
+    fn publish(&self, data: &EndpointData) {
+        let addrs = data.filtered_addrs(&self.filter);
+        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
+        self.inner.publish(&data)
+    }
+
+    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
+        self.inner.resolve(endpoint_id)
+    }
 }
 
 /// Blanket no-op impl of `AddressLookupBuilder` for `T: AddressLookup`.
@@ -185,13 +230,6 @@ impl<T: AddressLookup> AddressLookupBuilder for T {
         _endpoint: &Endpoint,
     ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         Ok(self)
-    }
-
-    fn with_addr_filter(self, _filter: AddrFilter) -> Self
-    where
-        Self: Sized,
-    {
-        self
     }
 }
 
