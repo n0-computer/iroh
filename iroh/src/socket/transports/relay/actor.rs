@@ -692,7 +692,7 @@ impl ActiveRelayActor {
             RelayToClientMsg::Health { problem } => {
                 warn!("Relay server reports problem: {problem}");
             }
-            frame @ _ => {
+            frame => {
                 trace!("Ignoring {frame}")
             }
         }
