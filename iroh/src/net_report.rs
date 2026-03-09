@@ -151,7 +151,7 @@ impl QadConns {
         {
             // grab latest rtt
 
-            use quinn_proto::PathId;
+            use noq_proto::PathId;
             if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
                 r.latency = latency;
             }
@@ -166,7 +166,7 @@ impl QadConns {
         {
             // grab latest rtt
 
-            use quinn_proto::PathId;
+            use noq_proto::PathId;
             if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
                 r.latency = latency;
             }
@@ -198,7 +198,7 @@ impl QadConns {
 #[cfg(not(wasm_browser))]
 #[derive(Debug)]
 struct QadConn {
-    conn: quinn::Connection,
+    conn: noq::Connection,
     observer: Watchable<Option<QadProbeReport>>,
     _handle: AbortOnDropHandle<Option<()>>,
 }
@@ -799,7 +799,7 @@ async fn run_probe_v4(
     dns_resolver: DnsResolver,
     shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-    use quinn_proto::PathId;
+    use noq_proto::PathId;
 
     let relay_addr = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay)
         .await
@@ -873,7 +873,7 @@ async fn run_probe_v6(
     dns_resolver: DnsResolver,
     shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-    use quinn_proto::PathId;
+    use noq_proto::PathId;
 
     let relay_addr = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay)
         .await
@@ -998,8 +998,7 @@ mod tests {
     async fn test_basic() -> Result<()> {
         let (server, relay) = test_utils::relay().await;
         let client_config = iroh_relay::client::make_dangerous_client_config();
-        let ep =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
+        let ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
         let quic_addr_disc = QuicConfig {
             ep: ep.clone(),
             client_config,
