@@ -36,7 +36,7 @@ netwatch = { version = "0.14" }
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-pkarr = { version = "5", default-features = false, features = ["relays"] }
+pkarr = { version = "5", default-features = false }
 quinn = { package = "noq", version = "0.16.1", default-features = false, features = ["rustls-ring"] }
 quinn-proto = { package = "noq-proto", version = "0.15.1" }
 quinn-udp = { package = "noq-udp", version = "0.8" }
@@ -148,7 +148,7 @@ default = ["metrics", "fast-apple-datapath"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 address-lookup-mdns = ["dep:swarm-discovery"]
-address-lookup-pkarr-dht = ["pkarr/dht"]
+address-lookup-pkarr-dht = ["pkarr/dht", "pkarr/relays"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["iroh-relay/platform-verifier"]
 qlog = ["quinn/qlog"]
