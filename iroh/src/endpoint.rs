@@ -23,8 +23,15 @@ use n0_watcher::Watcher;
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
-use tracing::{debug, instrument, trace, warn};
+use tracing::{Instrument, Span, debug, info_span, instrument, warn};
 use url::Url;
+
+/// Types for defining custom transports
+pub mod transports {
+    #[cfg(feature = "unstable-custom-transports")]
+    pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
+    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias};
+}
 
 use self::hooks::EndpointHooksList;
 pub use super::socket::{
@@ -38,6 +45,8 @@ pub use super::socket::{
 use crate::address_lookup::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
+#[cfg(feature = "unstable-custom-transports")]
+use crate::endpoint::transports::CustomTransport;
 use crate::{
     NetReport,
     address_lookup::{
@@ -111,6 +120,7 @@ pub struct Builder {
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
+    transport_bias: socket::transports::TransportBiasMap,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
 }
 
@@ -176,6 +186,7 @@ impl Builder {
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
+            transport_bias: Default::default(),
             #[cfg(feature = "ring")]
             crypto_provider: Some(Arc::new(rustls::crypto::ring::default_provider())),
             #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
@@ -201,6 +212,9 @@ impl Builder {
             RustlsTokenKey::new(&mut rand::rng(), &crypto_provider)
                 .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?,
         );
+
+        let span = info_span!("endpoint", id = %secret_key.public().fmt_short());
+        let _guard = span.enter();
 
         let static_config = StaticConfig {
             transport_config: self.transport_config.clone(),
@@ -236,12 +250,18 @@ impl Builder {
             tls_config,
             metrics,
             hooks: self.hooks,
+            transport_bias: self.transport_bias,
             static_config,
         };
 
-        let inner = socket::Socket::spawn(sock_opts).await?;
-        trace!("created socket");
-        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
+        let inner = socket::EndpointInner::bind(sock_opts)
+            .instrument(Span::current())
+            .await?;
+        debug!(
+            id = %inner.static_config.tls_config.secret_key.public(),
+            iroh_version = %env!("CARGO_PKG_VERSION"),
+            "iroh endpoint bound"
+        );
 
         let ep = Endpoint {
             inner: Arc::new(inner),
@@ -680,6 +700,42 @@ impl Builder {
         self.hooks.push(hooks);
         self
     }
+
+    /// Adds a custom transport
+    #[cfg(feature = "unstable-custom-transports")]
+    pub fn add_custom_transport(mut self, factory: Arc<dyn CustomTransport>) -> Self {
+        self.transports.push(TransportConfig::Custom(factory));
+        self
+    }
+
+    /// Sets the transport bias for a specific address kind.
+    ///
+    /// Transport bias controls how different transport types are prioritized during
+    /// path selection. By default:
+    /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
+    /// - Relay is a backup transport (only used when no primary transport is available)
+    ///
+    /// Use this to customize the behavior, for example to add bias for custom transports.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::time::Duration;
+    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias}};
+    ///
+    /// let endpoint = Builder::new(SomePreset)
+    ///     .transport_bias(AddrKind::Custom(42), TransportBias::primary().with_rtt_advantage(Duration::from_millis(10)))
+    ///     .bind()
+    ///     .await?;
+    /// ```
+    pub fn transport_bias(
+        mut self,
+        kind: transports::AddrKind,
+        bias: transports::TransportBias,
+    ) -> Self {
+        self.transport_bias = self.transport_bias.with_bias(kind, bias);
+        self
+    }
 }
 
 #[allow(missing_docs)]
@@ -895,7 +951,7 @@ impl Endpoint {
     #[instrument(name = "connect", skip_all, fields(
         me = %self.id().fmt_short(),
         remote = tracing::field::Empty,
-        alpn = String::from_utf8_lossy(alpn).to_string(),
+        alpn = %String::from_utf8_lossy(alpn).to_string(),
     ))]
     pub async fn connect_with_opts(
         &self,
@@ -906,21 +962,22 @@ impl Endpoint {
         if self.is_closed() {
             return Err(e!(ConnectWithOptsError::EndpointClosed));
         }
+
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
+        let endpoint_id = endpoint_addr.id;
+
+        Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
+
         if let BeforeConnectOutcome::Reject =
             self.inner.hooks.before_connect(&endpoint_addr, alpn).await
         {
             return Err(e!(ConnectWithOptsError::LocallyRejected));
         }
-        let endpoint_id = endpoint_addr.id;
-
-        tracing::Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
 
         // Connecting to ourselves is not supported.
         ensure!(endpoint_id != self.id(), ConnectWithOptsError::SelfConnect);
 
-        trace!(
-            dst_endpoint_id = %endpoint_id.fmt_short(),
+        debug!(
             relay_url = ?endpoint_addr.relay_urls().next().cloned(),
             ip_addresses = ?endpoint_addr.ip_addrs().cloned().collect::<Vec<_>>(),
             "connecting",
@@ -2160,11 +2217,12 @@ mod tests {
                 }
             }
             info!("Have direct connection");
-            // Validate holepunch metrics.
             #[cfg(feature = "metrics")]
-            assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
-            #[cfg(feature = "metrics")]
-            assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
+            {
+                // Validate holepunch metrics.
+                assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
+                assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
+            }
 
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
@@ -3370,7 +3428,8 @@ mod tests {
         // so we resort to log assertions.
         // TODO(Frando): Replace once we add a proper API for this.
         let expected_log_line = format!(
-            "ep2:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected"
+            "ep2:endpoint{{id={}}}:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected",
+            ep2.id().fmt_short()
         );
         tokio::time::timeout(Duration::from_secs(5), async {
             while !logs_contain(&expected_log_line) {

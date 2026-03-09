@@ -279,7 +279,7 @@ impl SecretKey {
     /// Generate a new [`SecretKey`] with a randomness generator.
     ///
     /// ```rust
-    /// // use the OsRng option for OS depedndent most secure RNG.
+    /// // use the OsRng option for OS dependent most secure RNG.
     /// let _key = iroh_base::SecretKey::generate(&mut rand::rng());
     /// ```
     pub fn generate<R: CryptoRng + ?Sized>(csprng: &mut R) -> Self {

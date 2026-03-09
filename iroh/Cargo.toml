@@ -37,6 +37,7 @@ n0-watcher = "0.6"
 netwatch = { version = "0.14" }
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
+portable-atomic = "1"
 pkarr = { version = "5", default-features = false }
 quinn = { package = "noq", version = "0.16.1", default-features = false, features = ["rustls"] }
 quinn-proto = { package = "noq-proto", version = "0.15.1", default-features = false }
@@ -89,8 +90,6 @@ tokio = { version = "1", features = [
     "net",
     "fs",
     "io-std",
-    "signal",
-    "process",
 ] }
 
 # wasm-in-browser dependencies
@@ -148,7 +147,7 @@ default = ["metrics", "fast-apple-datapath", "ring"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 address-lookup-mdns = ["dep:swarm-discovery"]
-address-lookup-pkarr-dht = ["pkarr/dht"]
+address-lookup-pkarr-dht = ["pkarr/dht", "pkarr/relays"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["iroh-relay/platform-verifier"]
 qlog = ["quinn/qlog"]
@@ -158,6 +157,8 @@ fast-apple-datapath = ["quinn/fast-apple-datapath"]
 ring = ["quinn/ring", "iroh-relay/ring", "webpki/ring"]
 # Use aws-lc-rs as the crypto backend, unless `ring` is also enabled.
 aws-lc-rs = ["quinn/aws-lc-rs", "iroh-relay/aws-lc-rs", "webpki/aws-lc-rs"]
+# Unstable: Custom transport API (may change without notice)
+unstable-custom-transports = []
 
 [package.metadata.docs.rs]
 all-features = true
@@ -174,6 +175,10 @@ required-features = []
 [[example]]
 name = "connect"
 required-features = []
+
+[[example]]
+name = "custom-transport"
+required-features = ["test-utils", "unstable-custom-transports"]
 
 [[example]]
 name = "listen-unreliable"

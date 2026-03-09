@@ -729,6 +729,9 @@ impl Inner {
     ) -> Result<(), AcceptError> {
         trace!("accept: start");
 
+        // Set the socket to NO_DELAY.
+        io.disable_nagle();
+
         let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone())
             .map_err(|err| e!(AcceptError::RateLimitingMisconfigured, err))?;
 

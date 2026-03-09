@@ -66,6 +66,8 @@ pub enum IncomingAddr {
         /// The endpoint ID of the remote peer.
         endpoint_id: EndpointId,
     },
+    /// A connection via a custom transport.
+    Custom(iroh_base::CustomAddr),
 }
 
 impl From<IncomingAddr> for iroh_base::TransportAddr {
@@ -73,6 +75,7 @@ impl From<IncomingAddr> for iroh_base::TransportAddr {
         match addr {
             IncomingAddr::Ip(addr) => Self::Ip(addr),
             IncomingAddr::Relay { url, .. } => Self::Relay(url),
+            IncomingAddr::Custom(addr) => Self::Custom(addr),
         }
     }
 }
@@ -84,6 +87,7 @@ impl From<crate::socket::transports::Addr> for IncomingAddr {
             crate::socket::transports::Addr::Relay(url, endpoint_id) => {
                 Self::Relay { url, endpoint_id }
             }
+            crate::socket::transports::Addr::Custom(addr) => Self::Custom(addr),
         }
     }
 }

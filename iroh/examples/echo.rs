@@ -21,6 +21,7 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let router = start_accept_side().await?;
 
     // wait for the endpoint to be online
