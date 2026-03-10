@@ -1,5 +1,5 @@
 use ctutils::CtEq;
-use quinn_proto::crypto;
+use noq_proto::crypto;
 use rand::Rng;
 use rustls::crypto::cipher::{
     AeadKey, InboundOpaqueMessage, Iv, NONCE_LEN, OutboundPlainMessage, Tls13AeadAlgorithm,
@@ -103,7 +103,7 @@ impl Blake3HmacKey {
     }
 }
 
-impl quinn::crypto::HmacKey for Blake3HmacKey {
+impl crypto::HmacKey for Blake3HmacKey {
     fn sign(&self, data: &[u8], signature_out: &mut [u8]) {
         signature_out.copy_from_slice(blake3::keyed_hash(&self.0, data).as_slice());
     }
@@ -112,14 +112,14 @@ impl quinn::crypto::HmacKey for Blake3HmacKey {
         blake3::OUT_LEN // 32 bytes
     }
 
-    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), quinn::crypto::CryptoError> {
+    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), crypto::CryptoError> {
         let reference = blake3::keyed_hash(&self.0, data);
         // to_bool is fine here, because it's the last thing we do to
         // distinguish success or failure (see to_bool documentation)
         if signature.ct_eq(reference.as_slice()).to_bool() {
             Ok(())
         } else {
-            Err(quinn::crypto::CryptoError)
+            Err(crypto::CryptoError)
         }
     }
 }

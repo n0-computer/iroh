@@ -47,6 +47,7 @@ use crate::address_lookup::PkarrResolver;
 use crate::dns::DnsResolver;
 #[cfg(feature = "unstable-custom-transports")]
 use crate::endpoint::transports::CustomTransport;
+pub use crate::tls::TlsConfigError;
 use crate::{
     NetReport,
     address_lookup::{
@@ -216,13 +217,18 @@ impl Builder {
         let span = info_span!("endpoint", id = %secret_key.public().fmt_short());
         let _guard = span.enter();
 
+        let tls_config = tls::TlsConfig::new(
+            secret_key.clone(),
+            self.max_tls_tickets,
+            crypto_provider.clone(),
+        );
         let static_config = StaticConfig {
+            quic_config: tls_config
+                .make_server_config(self.keylog)
+                // TODO(matheus23): Maybe don't swallow the tls::TlsConfigError?
+                .map_err(|_| e!(BindError::InvalidCryptoProvider))?,
+            tls_config,
             transport_config: self.transport_config.clone(),
-            tls_config: tls::TlsConfig::new(
-                secret_key.clone(),
-                self.max_tls_tickets,
-                crypto_provider.clone(),
-            ),
             token_key,
             keylog: self.keylog,
         };
@@ -799,6 +805,8 @@ pub enum ConnectWithOptsError {
     LocallyRejected,
     #[error("Endpoint is closed")]
     EndpointClosed,
+    #[error("Incompatible TLS configuration")]
+    TlsConfigError { source: TlsConfigError },
 }
 
 #[allow(missing_docs)]
@@ -1000,7 +1008,7 @@ impl Endpoint {
                 .inner
                 .static_config
                 .tls_config
-                .make_client_config(alpn_protocols, self.inner.static_config.keylog);
+                .make_client_config(alpn_protocols, self.inner.static_config.keylog)?;
             let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
             client_config.transport_config(transport_config.clone());
             client_config

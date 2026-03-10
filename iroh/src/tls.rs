@@ -76,10 +76,9 @@ impl TlsConfig {
         &self,
         alpn_protocols: Vec<Vec<u8>>,
         keylog: bool,
-    ) -> QuicClientConfig {
+    ) -> Result<QuicClientConfig, TlsConfigError> {
         let mut crypto = rustls::ClientConfig::builder_with_provider(self.crypto_provider.clone())
-            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-            .expect("version supported by ring") // TODO(matheus23): This is no longer a fixed config
+            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)?
             .dangerous()
             .with_custom_certificate_verifier(self.server_verifier.clone())
             .with_client_cert_resolver(self.cert_resolver.clone());
@@ -94,9 +93,8 @@ impl TlsConfig {
             crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         }
 
-        crypto
-            .try_into()
-            .expect("expected to have a TLS1.3-compatible crypto provider set (hardcoded)")
+        let quic = QuicClientConfig::try_from(crypto)?;
+        Ok(quic)
     }
 
     /// Create a TLS server configuration.
@@ -106,15 +104,12 @@ impl TlsConfig {
     /// debugging purposes.
     pub(crate) fn make_server_config(
         &self,
-        alpn_protocols: Vec<Vec<u8>>,
         keylog: bool,
-    ) -> QuicServerConfig {
+    ) -> Result<QuicServerConfig, TlsConfigError> {
         let mut crypto = rustls::ServerConfig::builder_with_provider(self.crypto_provider.clone())
-            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-            .expect("fixed config") // TODO(matheus23): This is no longer a fixed config
+            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)?
             .with_client_cert_verifier(self.client_verifier.clone())
             .with_cert_resolver(self.cert_resolver.clone());
-        crypto.alpn_protocols = alpn_protocols;
         if keylog {
             warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
             crypto.key_log = Arc::new(rustls::KeyLogFile::new());
@@ -123,8 +118,25 @@ impl TlsConfig {
         // must be u32::MAX or 0 (the default). Any other value panics with QUIC
         // This is specified in RFC 9001: https://www.rfc-editor.org/rfc/rfc9001#section-4.6.1
         crypto.max_early_data_size = u32::MAX;
-        crypto
-            .try_into()
-            .expect("expected to have a TLS1.3-compatible crypto provider set (hardcoded)")
+        let quic = QuicServerConfig::try_from(crypto)?;
+        Ok(quic)
     }
+}
+
+#[allow(missing_docs)]
+#[n0_error::stack_error(derive, add_meta, from_sources)]
+#[non_exhaustive]
+pub enum TlsConfigError {
+    #[error(
+        "The configured crypto provider is missing support for TLS13_AES_128_GCM_SHA256, which is required for QUIC initial packets."
+    )]
+    CryptoProviderNoInitialCipherSuite {
+        #[error(std_err)]
+        source: noq::crypto::rustls::NoInitialCipherSuite,
+    },
+    #[error("The configured crypto provider is incompatible with iroh and QUIC encryption")]
+    CryptoProviderIncompatible {
+        #[error(std_err)]
+        source: rustls::Error,
+    },
 }
