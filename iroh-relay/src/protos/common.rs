@@ -5,7 +5,7 @@
 
 use bytes::{Buf, BufMut};
 use n0_error::{e, stack_error};
-use quinn_proto::{
+use noq_proto::{
     VarInt,
     coding::{Decodable, Encodable, UnexpectedEnd},
 };

@@ -46,8 +46,8 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
-quinn = { package = "noq", version = "0.16.1", default-features = false, features = ["rustls"] }
-quinn-proto = { package = "noq-proto", version = "0.15.1", default-features = false }
+noq = { version = "0.17.0", default-features = false, features = ["rustls"] }
+noq-proto = { version = "0.16.0", default-features = false }
 rand = "0.9.2"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
 rustls = { version = "0.23.33", default-features = false }
@@ -149,8 +149,8 @@ server = [
     "dep:toml",
     "dep:serde_json",
     "dep:tracing-subscriber",
-    "quinn/platform-verifier",
-    "quinn/runtime-tokio",
+    "noq/platform-verifier",
+    "noq/runtime-tokio",
     "iroh-metrics/service",
     "ring"
 ]

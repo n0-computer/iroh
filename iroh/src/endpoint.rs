@@ -786,7 +786,7 @@ pub enum ConnectWithOptsError {
     #[error("No addressing information available")]
     NoAddress { source: AddressLookupError },
     #[error("Unable to connect to remote")]
-    Quinn {
+    Noq {
         #[error(std_err)]
         source: QuicConnectError,
     },
@@ -858,7 +858,7 @@ impl Endpoint {
         }
         let server_config = self.inner.static_config.create_server_config(alpns);
         self.inner
-            .quinn_endpoint()
+            .noq_endpoint()
             .set_server_config(Some(server_config));
     }
 
@@ -990,7 +990,7 @@ impl Endpoint {
             .map(|cfg| cfg.to_inner_arc())
             .unwrap_or(self.inner.static_config.transport_config.to_inner_arc());
 
-        // Start connecting via quinn. This will time out after 10 seconds if no reachable
+        // Start connecting via noq. This will time out after 10 seconds if no reachable
         // address is available.
 
         let client_config = {
@@ -1001,7 +1001,7 @@ impl Endpoint {
                 .static_config
                 .tls_config
                 .make_client_config(alpn_protocols, self.inner.static_config.keylog);
-            let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
+            let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
             client_config.transport_config(transport_config.clone());
             client_config
         };
@@ -1010,7 +1010,7 @@ impl Endpoint {
         let server_name = &tls::name::encode(endpoint_id);
         let connect =
             self.inner
-                .quinn_endpoint()
+                .noq_endpoint()
                 .connect_with(client_config, dest_addr, server_name)?;
 
         Ok(Connecting::new(connect, self.clone(), endpoint_id))
@@ -1026,7 +1026,7 @@ impl Endpoint {
     /// [`Endpoint::close`].
     pub fn accept(&self) -> Accept<'_> {
         Accept {
-            inner: self.inner.quinn_endpoint().accept(),
+            inner: self.inner.noq_endpoint().accept(),
             ep: self.clone(),
         }
     }
@@ -1802,7 +1802,7 @@ mod tests {
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use quinn::PathStats;
+    use noq::PathStats;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use tokio::sync::oneshot;
@@ -1878,7 +1878,7 @@ mod tests {
                 let res = stream.read_to_end(10).await;
                 assert_eq!(
                     res.unwrap_err(),
-                    quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(
+                    noq::ReadToEndError::Read(noq::ReadError::ConnectionLost(
                         ConnectionError::LocallyClosed
                     ))
                 );

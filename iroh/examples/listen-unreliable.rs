@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
         );
         // spawn a task to handle reading and writing off of the connection
         tokio::spawn(async move {
-            // use the `quinn` API to read a datagram off the connection, and send a datagra, in return
+            // use the `noq` API to read a datagram off the connection, and send a datagra, in return
             while let Ok(message) = conn.read_datagram().await {
                 let message = String::from_utf8(message.into()).anyerr()?;
                 println!("received: {message}");
