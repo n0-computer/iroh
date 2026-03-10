@@ -61,7 +61,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     time::timeout,
 };
-use tracing::{Instrument, Span, debug, info, info_span, instrument, warn};
+use tracing::{Instrument, Span, debug, error, info, info_span, instrument, warn};
 use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -267,7 +267,7 @@ impl Request {
     }
 }
 
-#[derive(Debug, clap::Parser, Serialize)]
+#[derive(Debug, Clone, clap::Parser, Serialize)]
 #[serde(tag = "kind")]
 struct EndpointArgs {
     /// Set the environment for relay, pkarr, and DNS servers.
@@ -391,34 +391,53 @@ async fn main() -> Result<()> {
 
     // Determine file logging path and init tracing subscriber.
     let log = log.init(&command, secret_key.public())?;
+    let endpoint_args = match &command {
+        Commands::Provide { endpoint_args } => endpoint_args,
+        Commands::Fetch { endpoint_args, .. } => endpoint_args,
+    };
+    output.emit_if_json(&endpoint_args);
+    let endpoint = endpoint_args
+        .clone()
+        .bind_endpoint(secret_key, output, log.as_ref())
+        .await?;
 
-    match command {
-        Commands::Provide { endpoint_args } => {
-            output.emit_if_json(&endpoint_args);
-            let endpoint = endpoint_args
-                .bind_endpoint(secret_key, output, log.as_ref())
-                .await?;
-            provide(endpoint, output).await?
+    match run_command(command, &endpoint, output).await {
+        Ok(()) => (),
+        Err(err) => {
+            error!(?err, "run_command failed");
+            eprintln!("{err:#}");
         }
+    }
+
+    close_endpoint_with_timeout(&endpoint, output).await;
+
+    if let Some(log) = log {
+        output.emit(LogsSaved {
+            path: log.dir.clone(),
+        });
+    }
+
+    Ok(())
+}
+
+async fn run_command(command: Commands, endpoint: &Endpoint, output: Output) -> Result<()> {
+    match command {
+        Commands::Provide { endpoint_args: _ } => provide(endpoint, output).await?,
         Commands::Fetch {
             remote_id,
             remote_relay_url,
             remote_direct_address,
-            endpoint_args,
+            endpoint_args: _,
             mode,
             size,
             duration,
         } => {
-            output.emit_if_json(&endpoint_args);
             let length = match (size, duration) {
                 (Some(size), None) => Length::Size(size),
                 (None, Some(duration)) => Length::Duration(Duration::from_secs(duration)),
                 (None, None) => Length::Duration(Duration::from_secs(10)),
                 (Some(_), Some(_)) => unreachable!("--size and --duration args are conflicting"),
             };
-            let endpoint = endpoint_args
-                .bind_endpoint(secret_key, output, log.as_ref())
-                .await?;
             let addrs = remote_relay_url
                 .into_iter()
                 .map(TransportAddr::Relay)
@@ -427,13 +446,6 @@ async fn main() -> Result<()> {
             fetch(endpoint, remote_addr, length, mode, output).await?
         }
     }
-
-    if let Some(log) = log {
-        output.emit(LogsSaved {
-            path: log.dir.clone(),
-        });
-    }
-
     Ok(())
 }
 
@@ -570,7 +582,7 @@ impl EndpointArgs {
     }
 }
 
-async fn provide(endpoint: Endpoint, output: Output) -> Result<()> {
+async fn provide(endpoint: &Endpoint, output: Output) -> Result<()> {
     for id in 0.. {
         // Accept incoming connections until Ctrl-C is pressed.
         let incoming = tokio::select! {
@@ -602,8 +614,6 @@ async fn provide(endpoint: Endpoint, output: Output) -> Result<()> {
             .instrument(info_span!("accept", id, remote = tracing::field::Empty)),
         );
     }
-
-    close_endpoint_with_timeout(&endpoint, output).await;
 
     Ok(())
 }
@@ -672,7 +682,7 @@ async fn handle_request(
 }
 
 async fn fetch(
-    endpoint: Endpoint,
+    endpoint: &Endpoint,
     remote_addr: EndpointAddr,
     length: Length,
     mode: Mode,
@@ -733,7 +743,6 @@ async fn fetch(
         duration: start.elapsed(),
     });
 
-    close_endpoint_with_timeout(&endpoint, output).await;
     output.emit(PathStats::from_watcher(watcher));
 
     res
