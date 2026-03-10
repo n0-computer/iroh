@@ -999,6 +999,7 @@ impl Output {
     }
 
     fn emit_with_remote(&self, remote: EndpointId, event: impl Serialize + fmt::Display) {
+        info!(remote=%remote.fmt_short(), "{event}");
         match self.mode {
             OutputMode::Text => println!(
                 "{} {event} {}",
@@ -1328,7 +1329,7 @@ pub fn init_tracing(path: Option<&Path>) {
     if let Some(path) = path {
         let file = File::create(path).expect("failed to create trace log file");
         let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("iroh=trace,transfer=trace"));
+            .unwrap_or_else(|_| EnvFilter::new("iroh=trace,transfer=trace,noq=trace"));
         let layer = fmt::layer().with_writer(file).with_filter(filter);
         registry().with(layer).init()
     } else {
