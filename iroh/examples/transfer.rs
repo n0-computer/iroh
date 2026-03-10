@@ -988,6 +988,7 @@ impl Output {
     }
 
     fn emit(&self, event: impl Serialize + fmt::Display) {
+        info!("{event}");
         match self.mode {
             OutputMode::Text => println!("{event} {}", self.time()),
             OutputMode::Json => println!(
