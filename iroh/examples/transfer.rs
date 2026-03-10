@@ -691,6 +691,7 @@ async fn fetch(
     // Attempt to connect, over the given ALPN. Returns a connection.
     let start = Instant::now();
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
+    let conn_info = conn.to_info();
     let remote_id = conn.remote_id();
     output.emit(Connected {
         remote_id,
@@ -743,6 +744,9 @@ async fn fetch(
         duration: start.elapsed(),
     });
 
+    // stats are collected by the paths watcher. this just works around our miserable api to
+    // give us a reliable way to tell us when the stats will stop changing or something.
+    conn_info.closed().await;
     output.emit(PathStats::from_watcher(watcher));
 
     res
