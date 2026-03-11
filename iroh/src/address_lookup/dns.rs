@@ -17,10 +17,8 @@ use crate::{
 
 /// Delays after which additional DNS lookup calls are issued.
 ///
-/// Each query has its own timeout, which is 3s (see [`DNS_TIMEOUT`]).
-/// This means that a lookup will finally abort after 6 seconds.
-///
-/// [`DNS_TIMEOUT`]: iroh_relay::defaults::timeouts::DNS_TIMEOUT
+/// Each query has its own timeout of 3s. This means that a lookup will finally
+/// abort after 6 seconds.
 pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300, 600, 1000, 2000, 3000];
 
 /// DNS endpoint discovery
@@ -121,7 +119,8 @@ impl AddressLookup for DnsAddressLookup {
     ) -> Option<BoxStream<Result<AddressLookupItem, AddressLookupError>>> {
         let resolver = self.dns_resolver.clone();
         let origin_domain = self.origin_domain.clone();
-        let span = debug_span!("DnsAddressLookup", id=%endpoint_id.fmt_short(), %origin_domain);
+        let span =
+            debug_span!("DnsAddressLookup", lookup_id=%endpoint_id.fmt_short(), %origin_domain);
         let fut = async move {
             trace!("starting DNS lookup");
             let endpoint_info = resolver
