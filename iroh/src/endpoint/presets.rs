@@ -17,7 +17,7 @@
 
 use crate::{
     RelayMode,
-    address_lookup::{AddrFilter, AddressLookupBuilder, PkarrPublisher},
+    address_lookup::{AddrFilter, PkarrPublisher},
     endpoint::{Builder, default_relay_mode},
 };
 
@@ -54,23 +54,20 @@ pub struct N0;
 
 impl Preset for N0 {
     fn apply(self, mut builder: Builder) -> Builder {
-        let filter = AddrFilter::relay_only();
-        builder = builder.address_lookup(PkarrPublisher::n0_dns().with_addr_filter(filter.clone()));
+        builder = builder.addr_filter(AddrFilter::relay_only());
+        builder = builder.address_lookup(PkarrPublisher::n0_dns());
 
         // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
         #[cfg(wasm_browser)]
         {
             use crate::address_lookup::PkarrResolver;
 
-            builder =
-                builder.address_lookup(PkarrResolver::n0_dns().with_addr_filter(filter.clone()));
+            builder = builder.address_lookup(PkarrResolver::n0_dns());
         }
         // Resolve using DNS queries outside browsers.
         #[cfg(not(wasm_browser))]
         {
-            builder = builder.address_lookup(
-                crate::address_lookup::DnsAddressLookup::n0_dns().with_addr_filter(filter.clone()),
-            );
+            builder = builder.address_lookup(crate::address_lookup::DnsAddressLookup::n0_dns());
         }
 
         builder = builder.relay_mode(default_relay_mode());
@@ -107,22 +104,19 @@ pub struct N0DisableRelay;
 
 impl Preset for N0DisableRelay {
     fn apply(self, mut builder: Builder) -> Builder {
-        let filter = AddrFilter::ip_only();
-        builder = builder.address_lookup(PkarrPublisher::n0_dns().with_addr_filter(filter.clone()));
+        builder = builder.addr_filter(AddrFilter::ip_only());
+        builder = builder.address_lookup(PkarrPublisher::n0_dns());
         // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
         #[cfg(wasm_browser)]
         {
             use crate::address_lookup::PkarrResolver;
 
-            builder =
-                builder.address_lookup(PkarrResolver::n0_dns().with_addr_filter(filter.clone()));
+            builder = builder.address_lookup(PkarrResolver::n0_dns());
         }
         // Resolve using DNS queries outside browsers.
         #[cfg(not(wasm_browser))]
         {
-            builder = builder.address_lookup(
-                crate::address_lookup::DnsAddressLookup::n0_dns().with_addr_filter(filter.clone()),
-            );
+            builder = builder.address_lookup(crate::address_lookup::DnsAddressLookup::n0_dns());
         }
 
         builder = builder.relay_mode(RelayMode::Disabled);

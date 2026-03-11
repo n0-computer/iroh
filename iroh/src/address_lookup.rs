@@ -71,12 +71,13 @@
 //! ```no_run
 //! use iroh::{
 //!     Endpoint, SecretKey,
-//!     address_lookup::{self, PkarrPublisher},
+//!     address_lookup::{self, AddrFilter, PkarrPublisher},
 //!     endpoint::RelayMode,
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
+//!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
 //!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
 //!     .bind()
@@ -91,13 +92,14 @@
 //! #[cfg(feature = "address-lookup-mdns")]
 //! # {
 //! # use iroh::{
-//! #    address_lookup::{self, PkarrPublisher},
+//! #    address_lookup::{self, AddrFilter, PkarrPublisher},
 //! #    endpoint::RelayMode,
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
+//!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
 //!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
 //!     .address_lookup(address_lookup::MdnsAddressLookup::builder())

@@ -53,7 +53,7 @@ use crate::endpoint::transports::CustomTransport;
 use crate::{
     NetReport,
     address_lookup::{
-        AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
+        AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
         Error as AddressLookupError, UserData,
     },
     endpoint::presets::Preset,
@@ -116,6 +116,9 @@ pub struct Builder {
     keylog: bool,
     address_lookup: Vec<Box<dyn DynAddressLookupBuilder>>,
     address_lookup_user_data: Option<UserData>,
+    /// Default address filter applied to all address lookup services added via
+    /// [`Builder::address_lookup`].
+    addr_filter: Option<AddrFilter>,
     proxy_url: Option<Url>,
     ca_roots_config: Option<CaRootsConfig>,
     #[cfg(not(wasm_browser))]
@@ -181,6 +184,7 @@ impl Builder {
             keylog: Default::default(),
             address_lookup: Default::default(),
             address_lookup_user_data: Default::default(),
+            addr_filter: None,
             proxy_url: None,
             ca_roots_config: None,
             #[cfg(not(wasm_browser))]
@@ -549,7 +553,26 @@ impl Builder {
     ///
     /// See the documentation of the [`crate::address_lookup::AddressLookup`] trait for details.
     pub fn address_lookup(mut self, address_lookup: impl AddressLookupBuilder) -> Self {
-        self.address_lookup.push(Box::new(address_lookup));
+        if let Some(filter) = self.addr_filter.clone() {
+            self.address_lookup
+                .push(Box::new(address_lookup.with_addr_filter(filter)));
+        } else {
+            self.address_lookup.push(Box::new(address_lookup));
+        }
+        self
+    }
+
+    /// Sets the default address filter for all address lookup services added to this builder.
+    ///
+    /// When set, every address lookup service added via [`Self::address_lookup`] will
+    /// automatically be wrapped with this filter.
+    ///
+    /// This can be set by presets like [`presets::N0`] to [`AddrFilter::relay_only`].
+    /// Individual services can still override this by calling
+    /// [`AddressLookupBuilder::with_addr_filter`] before passing to [`Self::address_lookup`],
+    /// in which case both filters will be applied (the builder's default filter is applied after).
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
+        self.addr_filter = Some(filter);
         self
     }
 
