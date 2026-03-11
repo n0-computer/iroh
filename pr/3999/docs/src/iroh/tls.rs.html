@@ -107,10 +107,10 @@
 <a href=#107 id=107 data-nosnippet>107</a>            .expect(<span class="string">"no default crypto provider installed"</span>)
 <a href=#108 id=108 data-nosnippet>108</a>            .clone();
 <a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">let </span><span class="kw-2">mut </span>crypto = rustls::ServerConfig::builder_with_provider(provider)
-<a href=#110 id=110 data-nosnippet>110</a>        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-<a href=#111 id=111 data-nosnippet>111</a>        .expect(<span class="string">"fixed config"</span>)
-<a href=#112 id=112 data-nosnippet>112</a>        .with_client_cert_verifier(<span class="self">self</span>.client_verifier.clone())
-<a href=#113 id=113 data-nosnippet>113</a>        .with_cert_resolver(<span class="self">self</span>.cert_resolver.clone());
+<a href=#110 id=110 data-nosnippet>110</a>            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+<a href=#111 id=111 data-nosnippet>111</a>            .expect(<span class="string">"fixed config"</span>)
+<a href=#112 id=112 data-nosnippet>112</a>            .with_client_cert_verifier(<span class="self">self</span>.client_verifier.clone())
+<a href=#113 id=113 data-nosnippet>113</a>            .with_cert_resolver(<span class="self">self</span>.cert_resolver.clone());
 <a href=#114 id=114 data-nosnippet>114</a>        crypto.alpn_protocols = alpn_protocols;
 <a href=#115 id=115 data-nosnippet>115</a>        <span class="kw">if </span>keylog {
 <a href=#116 id=116 data-nosnippet>116</a>            <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
