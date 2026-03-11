@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DNS_TIMEOUT","SERVER_WRITE_TIMEOUT"]};
+window.SIDEBAR_ITEMS = {"constant":["SERVER_WRITE_TIMEOUT"]};
