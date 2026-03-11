@@ -744,8 +744,9 @@ async fn fetch(
         duration: start.elapsed(),
     });
 
-    // stats are collected by the paths watcher. this just works around our miserable api to
-    // give us a reliable way to tell us when the stats will stop changing or something.
+    // Stats are collected by the paths watcher, so we do not look at the stats returned by
+    // this call. It is however the only API we currently have to tell us when the
+    // connection is drained and the stats will no longer change.
     conn_info.closed().await;
     output.emit(PathStats::from_watcher(watcher));
 
