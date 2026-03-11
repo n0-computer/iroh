@@ -71,7 +71,7 @@ use pkarr::{
     SignedPacket,
     errors::{PublicKeyError, SignedPacketVerifyError},
 };
-use tracing::{Instrument, debug, error_span, warn};
+use tracing::{Instrument, debug, error_span, trace, warn};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -390,7 +390,7 @@ impl PublisherService {
                             "Failed to publish to pkarr",
                         );
                     }
-                    _ => {
+                    Ok(()) => {
                         failed_attempts = 0;
                         // Republish after fixed interval
                         republish
@@ -414,12 +414,17 @@ impl PublisherService {
         debug!(
             data = ?info.data,
             pkarr_relay = %self.pkarr_client.pkarr_relay_url,
-            "Publish endpoint info to pkarr"
+            "Publishing endpoint info to pkarr"
         );
         let signed_packet = info
             .to_pkarr_signed_packet(&self.secret_key, self.ttl)
             .map_err(|err| e!(PkarrError::Encoding, err))?;
         self.pkarr_client.publish(&signed_packet).await?;
+        trace!(
+            data = ?info.data,
+            pkarr_relay = %self.pkarr_client.pkarr_relay_url,
+            "Published endpoint info to pkarr"
+        );
         Ok(())
     }
 }

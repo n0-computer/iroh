@@ -36,9 +36,9 @@ use crate::{
 };
 
 /// The n0 address lookup DNS origin, for production.
-pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link";
+pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link.";
 /// The n0 address lookup DNS origin, for testing.
-pub const N0_DNS_ENDPOINT_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
+pub const N0_DNS_ENDPOINT_ORIGIN_STAGING: &str = "staging-dns.iroh.link.";
 
 /// Percent of total delay to jitter. 20 means +/- 20% of delay.
 const MAX_JITTER_PERCENT: u64 = 20;
@@ -583,6 +583,7 @@ impl HickoryResolver {
 
         // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
         options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
+        options.negative_max_ttl = Some(Duration::ZERO);
 
         let mut hickory_builder =
             TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
