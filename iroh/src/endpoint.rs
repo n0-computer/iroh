@@ -255,11 +255,13 @@ impl Builder {
         };
 
         // Add Address Lookup mechanisms
+        let address_lookup = ep.address_lookup().expect("just created the endpoint");
+        if let Some(filter) = self.addr_filter {
+            address_lookup.set_addr_filter(filter);
+        }
         for create_service in self.address_lookup {
             let service = create_service.into_address_lookup(&ep)?;
-            ep.address_lookup()
-                .expect("just created the endpoint")
-                .add_boxed(service);
+            address_lookup.add_boxed(service);
         }
 
         Ok(ep)
@@ -553,26 +555,28 @@ impl Builder {
     ///
     /// See the documentation of the [`crate::address_lookup::AddressLookup`] trait for details.
     pub fn address_lookup(mut self, address_lookup: impl AddressLookupBuilder) -> Self {
-        if let Some(filter) = self.addr_filter.clone() {
-            self.address_lookup
-                .push(Box::new(address_lookup.with_addr_filter(filter)));
-        } else {
-            self.address_lookup.push(Box::new(address_lookup));
-        }
+        self.address_lookup.push(Box::new(address_lookup));
         self
     }
 
-    /// Sets the default address filter for all address lookup services added to this builder.
+    /// Sets the address filter applied to all address data before publishing.
     ///
-    /// When set, every address lookup service added via [`Self::address_lookup`] will
-    /// automatically be wrapped with this filter.
+    /// This filter is applied once, at the [`ConcurrentAddressLookup`] level, before
+    /// distributing data to any individual address lookup service. This ensures
+    /// consistent filtering regardless of how the services configured.
     ///
-    /// This can be set by presets like [`presets::N0`] to [`AddrFilter::relay_only`].
-    /// Individual services can still override this by calling
-    /// [`AddressLookupBuilder::with_addr_filter`] before passing to [`Self::address_lookup`],
-    /// in which case both filters will be applied (the builder's default filter is applied after).
+    /// [`ConcurrentAddressLookup`]: crate::address_lookup::ConcurrentAddressLookup
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
         self.addr_filter = Some(filter);
+        self
+    }
+
+    /// Clears the address filter, allowing all addresses to be published.
+    ///
+    /// This removes any filter previously set via [`Self::addr_filter`], including
+    /// filters set by presets.
+    pub fn clear_addr_filter(mut self) -> Self {
+        self.addr_filter = None;
         self
     }
 

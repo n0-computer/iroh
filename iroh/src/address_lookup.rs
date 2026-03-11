@@ -122,7 +122,10 @@
 //! [`address_lookup::MdnsAddressLookup`]: crate::address_lookup::MdnsAddressLookup
 //! [`MemoryLookup`]: memory::MemoryLookup
 
-use std::sync::{Arc, RwLock};
+use std::{
+    borrow::Cow,
+    sync::{Arc, RwLock},
+};
 
 use iroh_base::{EndpointAddr, EndpointId};
 pub use iroh_relay::endpoint_info::AddrFilter;
@@ -483,6 +486,8 @@ pub struct ConcurrentAddressLookup {
     services: Arc<RwLock<Vec<Box<dyn AddressLookup>>>>,
     /// The data last published, used to publish when adding a new service.
     last_data: Arc<RwLock<Option<EndpointData>>>,
+    /// Optional filter applied to all data before publishing to any service.
+    addr_filter: Arc<RwLock<Option<AddrFilter>>>,
 }
 
 impl ConcurrentAddressLookup {
@@ -496,7 +501,17 @@ impl ConcurrentAddressLookup {
         Self {
             services: Arc::new(RwLock::new(services)),
             last_data: Default::default(),
+            addr_filter: Default::default(),
         }
+    }
+
+    /// Sets the address filter applied before publishing to any service.
+    ///
+    /// When set, all address data is filtered once before being distributed
+    /// to the individual address lookup services. This ensures consistent
+    /// filtering regardless of how many services are configured.
+    pub fn set_addr_filter(&self, filter: AddrFilter) {
+        *self.addr_filter.write().expect("poisoned") = Some(filter);
     }
 
     /// Adds an [`AddressLookup`] service.
@@ -545,21 +560,29 @@ where
         Self {
             services: Arc::new(RwLock::new(services)),
             last_data: Default::default(),
+            addr_filter: Default::default(),
         }
     }
 }
 
 impl AddressLookup for ConcurrentAddressLookup {
     fn publish(&self, data: &EndpointData) {
+        let data = match &*self.addr_filter.read().expect("poisoned") {
+            Some(filter) => {
+                let addrs = data.filtered_addrs(filter);
+                Cow::Owned(EndpointData::new(addrs).with_user_data(data.user_data().cloned()))
+            }
+            None => Cow::Borrowed(data),
+        };
         let services = self.services.read().expect("poisoned");
         for service in &*services {
-            service.publish(data);
+            service.publish(&data);
         }
 
         self.last_data
             .write()
             .expect("poisoned")
-            .replace(data.clone());
+            .replace(data.into_owned());
     }
 
     fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
@@ -854,6 +877,47 @@ mod tests {
         );
         let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
         Ok(())
+    }
+
+    #[test]
+    fn concurrent_address_lookup_addr_filter() {
+        use iroh_base::RelayUrl;
+
+        // Create a service that records what it receives.
+        #[derive(Debug, Clone, Default)]
+        struct RecordingLookup {
+            published: Arc<Mutex<Vec<EndpointData>>>,
+        }
+        impl AddressLookup for RecordingLookup {
+            fn publish(&self, data: &EndpointData) {
+                self.published.lock().unwrap().push(data.clone());
+            }
+            fn resolve(&self, _endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
+                None
+            }
+        }
+
+        let recorder = RecordingLookup::default();
+        let lookup = ConcurrentAddressLookup::empty();
+        lookup.set_addr_filter(AddrFilter::relay_only());
+        lookup.add(recorder.clone());
+
+        let relay_url: RelayUrl = "https://relay.example.com".parse().unwrap();
+        let ip_addr: SocketAddr = "1.2.3.4:1234".parse().unwrap();
+        let data = EndpointData::new([
+            TransportAddr::Relay(relay_url.clone()),
+            TransportAddr::Ip(ip_addr),
+        ]);
+        lookup.publish(&data);
+
+        let published = recorder.published.lock().unwrap();
+        assert_eq!(published.len(), 1);
+        let addrs: Vec<_> = published[0].addrs().cloned().collect();
+        assert_eq!(addrs, vec![TransportAddr::Relay(relay_url)]);
+        assert!(
+            !addrs.contains(&TransportAddr::Ip(ip_addr)),
+            "IP address should have been filtered out"
+        );
     }
 
     async fn new_endpoint<R: CryptoRng, D: AddressLookup + 'static, F: FnOnce(&Endpoint) -> D>(
