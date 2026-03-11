@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>iroh_metrics::MetricsGroupSet;
 <a href=#5 id=5 data-nosnippet>5</a><span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
 <a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">pub use </span>iroh_relay::server::Metrics <span class="kw">as </span>RelayMetrics;
-<a href=#7 id=7 data-nosnippet>7</a><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#7 id=7 data-nosnippet>7</a><span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#8 id=8 data-nosnippet>8</a></span><span class="kw">pub use </span>portmapper::Metrics <span class="kw">as </span>PortmapMetrics;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#10 id=10 data-nosnippet>10</a>
@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a>    <span class="doccomment">/// Metrics collected by net reports.
 <a href=#23 id=23 data-nosnippet>23</a>    </span><span class="kw">pub </span>net_report: Arc&lt;NetReportMetrics&gt;,
 <a href=#24 id=24 data-nosnippet>24</a>    <span class="doccomment">/// Metrics collected by the portmapper service.
-<a href=#25 id=25 data-nosnippet>25</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#25 id=25 data-nosnippet>25</a>    </span><span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#26 id=26 data-nosnippet>26</a>    </span><span class="kw">pub </span>portmapper: Arc&lt;PortmapMetrics&gt;,
 <a href=#27 id=27 data-nosnippet>27</a>}
 <a href=#28 id=28 data-nosnippet>28</a>

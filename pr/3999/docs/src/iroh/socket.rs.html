@@ -601,7 +601,7 @@
 <a href=#601 id=601 data-nosnippet>601</a>    <span class="doccomment">/// If set, start a new update as soon as the current one is finished.
 <a href=#602 id=602 data-nosnippet>602</a>    </span>want_update: <span class="prelude-ty">Option</span>&lt;UpdateReason&gt;,
 <a href=#603 id=603 data-nosnippet>603</a>    sock: Arc&lt;Socket&gt;,
-<a href=#604 id=604 data-nosnippet>604</a>    <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#604 id=604 data-nosnippet>604</a>    <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#605 id=605 data-nosnippet>605</a>    </span>port_mapper: portmapper::Client,
 <a href=#606 id=606 data-nosnippet>606</a>    <span class="doccomment">/// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
 <a href=#607 id=607 data-nosnippet>607</a>    </span>net_reporter: Arc&lt;AsyncMutex&lt;net_report::Client&gt;&gt;,
@@ -632,7 +632,7 @@
 <a href=#632 id=632 data-nosnippet>632</a><span class="kw">impl </span>DirectAddrUpdateState {
 <a href=#633 id=633 data-nosnippet>633</a>    <span class="kw">fn </span>new(
 <a href=#634 id=634 data-nosnippet>634</a>        sock: Arc&lt;Socket&gt;,
-<a href=#635 id=635 data-nosnippet>635</a>        <span class="attr">#[cfg(not(wasm_browser))] </span>port_mapper: portmapper::Client,
+<a href=#635 id=635 data-nosnippet>635</a>        <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))] </span>port_mapper: portmapper::Client,
 <a href=#636 id=636 data-nosnippet>636</a>        net_reporter: Arc&lt;AsyncMutex&lt;net_report::Client&gt;&gt;,
 <a href=#637 id=637 data-nosnippet>637</a>        relay_map: RelayMap,
 <a href=#638 id=638 data-nosnippet>638</a>        run_done: mpsc::Sender&lt;()&gt;,
@@ -640,7 +640,7 @@
 <a href=#640 id=640 data-nosnippet>640</a>    ) -&gt; <span class="self">Self </span>{
 <a href=#641 id=641 data-nosnippet>641</a>        DirectAddrUpdateState {
 <a href=#642 id=642 data-nosnippet>642</a>            want_update: Default::default(),
-<a href=#643 id=643 data-nosnippet>643</a>            <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#643 id=643 data-nosnippet>643</a>            <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#644 id=644 data-nosnippet>644</a>            </span>port_mapper,
 <a href=#645 id=645 data-nosnippet>645</a>            net_reporter,
 <a href=#646 id=646 data-nosnippet>646</a>            sock,
@@ -690,7 +690,7 @@
 <a href=#690 id=690 data-nosnippet>690</a>        </span><span class="kw">if </span><span class="self">self</span>.shutdown_token.is_cancelled() {
 <a href=#691 id=691 data-nosnippet>691</a>            <span class="macro">debug!</span>(<span class="string">"skipping net_report, socket is shutting down"</span>);
 <a href=#692 id=692 data-nosnippet>692</a>            <span class="comment">// deactivate portmapper
-<a href=#693 id=693 data-nosnippet>693</a>            </span><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#693 id=693 data-nosnippet>693</a>            </span><span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#694 id=694 data-nosnippet>694</a>            </span><span class="self">self</span>.port_mapper.deactivate();
 <a href=#695 id=695 data-nosnippet>695</a>            <span class="kw">return</span>;
 <a href=#696 id=696 data-nosnippet>696</a>        }
@@ -700,7 +700,7 @@
 <a href=#700 id=700 data-nosnippet>700</a>            <span class="kw">return</span>;
 <a href=#701 id=701 data-nosnippet>701</a>        }
 <a href=#702 id=702 data-nosnippet>702</a>
-<a href=#703 id=703 data-nosnippet>703</a>        <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#704 id=704 data-nosnippet>704</a>        </span><span class="self">self</span>.port_mapper.procure_mapping();
 <a href=#705 id=705 data-nosnippet>705</a>
 <a href=#706 id=706 data-nosnippet>706</a>        <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
@@ -785,7 +785,7 @@
 <a href=#785 id=785 data-nosnippet>785</a>        } = opts;
 <a href=#786 id=786 data-nosnippet>786</a>
 <a href=#787 id=787 data-nosnippet>787</a>        <span class="kw">let </span>address_lookup = address_lookup::ConcurrentAddressLookup::default();
-<a href=#788 id=788 data-nosnippet>788</a>        <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#788 id=788 data-nosnippet>788</a>        <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#789 id=789 data-nosnippet>789</a>        </span><span class="kw">let </span>port_mapper =
 <a href=#790 id=790 data-nosnippet>790</a>            portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
 <a href=#791 id=791 data-nosnippet>791</a>
@@ -837,7 +837,7 @@
 <a href=#837 id=837 data-nosnippet>837</a>        )
 <a href=#838 id=838 data-nosnippet>838</a>        .map_err(|err| <span class="macro">e!</span>(BindError::Sockets, err))<span class="question-mark">?</span>;
 <a href=#839 id=839 data-nosnippet>839</a>
-<a href=#840 id=840 data-nosnippet>840</a>        <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#840 id=840 data-nosnippet>840</a>        <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#841 id=841 data-nosnippet>841</a>        </span>{
 <a href=#842 id=842 data-nosnippet>842</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(v4_port) = transports.local_addrs().into_iter().find_map(|t| {
 <a href=#843 id=843 data-nosnippet>843</a>                <span class="kw">if let </span>transports::Addr::Ip(SocketAddr::V4(addr)) = t {
@@ -958,7 +958,7 @@
 <a href=#958 id=958 data-nosnippet>958</a>        <span class="kw">let </span>(direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(<span class="number">8</span>);
 <a href=#959 id=959 data-nosnippet>959</a>        <span class="kw">let </span>direct_addr_update_state = DirectAddrUpdateState::new(
 <a href=#960 id=960 data-nosnippet>960</a>            sock.clone(),
-<a href=#961 id=961 data-nosnippet>961</a>            <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#961 id=961 data-nosnippet>961</a>            <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#962 id=962 data-nosnippet>962</a>            </span>port_mapper,
 <a href=#963 id=963 data-nosnippet>963</a>            Arc::new(AsyncMutex::new(net_reporter)),
 <a href=#964 id=964 data-nosnippet>964</a>            relay_map,
@@ -1282,14 +1282,14 @@
 <a href=#1282 id=1282 data-nosnippet>1282</a>        <span class="comment">// Setup network monitoring
 <a href=#1283 id=1283 data-nosnippet>1283</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>current_netmon_state = <span class="self">self</span>.local_interfaces_watcher.get();
 <a href=#1284 id=1284 data-nosnippet>1284</a>
-<a href=#1285 id=1285 data-nosnippet>1285</a>        <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#1285 id=1285 data-nosnippet>1285</a>        <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#1286 id=1286 data-nosnippet>1286</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher = <span class="self">self
 <a href=#1287 id=1287 data-nosnippet>1287</a>            </span>.direct_addr_update_state
 <a href=#1288 id=1288 data-nosnippet>1288</a>            .port_mapper
 <a href=#1289 id=1289 data-nosnippet>1289</a>            .watch_external_address();
 <a href=#1290 id=1290 data-nosnippet>1290</a>
 <a href=#1291 id=1291 data-nosnippet>1291</a>        <span class="kw">let </span><span class="kw-2">mut </span>receiver_closed = <span class="bool-val">false</span>;
-<a href=#1292 id=1292 data-nosnippet>1292</a>        <span class="attr">#[cfg_attr(wasm_browser, allow(unused_mut))]
+<a href=#1292 id=1292 data-nosnippet>1292</a>        <span class="attr">#[cfg_attr(any(wasm_browser, not(feature = <span class="string">"portmapper"</span>)), allow(unused_mut))]
 <a href=#1293 id=1293 data-nosnippet>1293</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher_closed = <span class="bool-val">false</span>;
 <a href=#1294 id=1294 data-nosnippet>1294</a>
 <a href=#1295 id=1295 data-nosnippet>1295</a>        <span class="kw">let </span><span class="kw-2">mut </span>net_report_watcher = <span class="self">self</span>.sock.net_report.watch();
@@ -1299,9 +1299,9 @@
 <a href=#1299 id=1299 data-nosnippet>1299</a>
 <a href=#1300 id=1300 data-nosnippet>1300</a>        <span class="kw">while </span>!shutdown_token.is_cancelled() {
 <a href=#1301 id=1301 data-nosnippet>1301</a>            <span class="self">self</span>.sock.metrics.socket.actor_tick_main.inc();
-<a href=#1302 id=1302 data-nosnippet>1302</a>            <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#1302 id=1302 data-nosnippet>1302</a>            <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#1303 id=1303 data-nosnippet>1303</a>            </span><span class="kw">let </span>portmap_watcher_changed = portmap_watcher.changed();
-<a href=#1304 id=1304 data-nosnippet>1304</a>            <span class="attr">#[cfg(wasm_browser)]
+<a href=#1304 id=1304 data-nosnippet>1304</a>            <span class="attr">#[cfg(any(wasm_browser, not(feature = <span class="string">"portmapper"</span>)))]
 <a href=#1305 id=1305 data-nosnippet>1305</a>            </span><span class="kw">let </span>portmap_watcher_changed = n0_future::future::pending::&lt;<span class="prelude-ty">Result</span>&lt;(), tokio::sync::watch::error::RecvError&gt;&gt;();
 <a href=#1306 id=1306 data-nosnippet>1306</a>
 <a href=#1307 id=1307 data-nosnippet>1307</a>            <span class="macro">tokio::select!</span> {
@@ -1367,7 +1367,7 @@
 <a href=#1367 id=1367 data-nosnippet>1367</a>                    }
 <a href=#1368 id=1368 data-nosnippet>1368</a>                }
 <a href=#1369 id=1369 data-nosnippet>1369</a>                change = portmap_watcher_changed, <span class="kw">if </span>!portmap_watcher_closed =&gt; {
-<a href=#1370 id=1370 data-nosnippet>1370</a>                    <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#1370 id=1370 data-nosnippet>1370</a>                    <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#1371 id=1371 data-nosnippet>1371</a>                    </span>{
 <a href=#1372 id=1372 data-nosnippet>1372</a>                        <span class="kw">if </span>change.is_err() {
 <a href=#1373 id=1373 data-nosnippet>1373</a>                            <span class="macro">trace!</span>(<span class="string">"tick: portmap watcher closed"</span>);
@@ -1383,7 +1383,7 @@
 <a href=#1383 id=1383 data-nosnippet>1383</a>                        <span class="macro">debug!</span>(<span class="string">"external address updated: {new_external_address:?}"</span>);
 <a href=#1384 id=1384 data-nosnippet>1384</a>                        <span class="self">self</span>.re_stun(UpdateReason::PortmapUpdated);
 <a href=#1385 id=1385 data-nosnippet>1385</a>                    }
-<a href=#1386 id=1386 data-nosnippet>1386</a>                    <span class="attr">#[cfg(wasm_browser)]
+<a href=#1386 id=1386 data-nosnippet>1386</a>                    <span class="attr">#[cfg(any(wasm_browser, not(feature = <span class="string">"portmapper"</span>)))]
 <a href=#1387 id=1387 data-nosnippet>1387</a>                    </span><span class="kw">let </span>_unused = change;
 <a href=#1388 id=1388 data-nosnippet>1388</a>                },
 <a href=#1389 id=1389 data-nosnippet>1389</a>                state = <span class="self">self</span>.local_interfaces_watcher.updated() =&gt; {
@@ -1486,7 +1486,7 @@
 <a href=#1486 id=1486 data-nosnippet>1486</a>    /// - The local interfaces IP addresses.
 <a href=#1487 id=1487 data-nosnippet>1487</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#1488 id=1488 data-nosnippet>1488</a>    </span><span class="kw">fn </span>update_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, net_report_report: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>net_report::Report&gt;) {
-<a href=#1489 id=1489 data-nosnippet>1489</a>        <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#1489 id=1489 data-nosnippet>1489</a>        <span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#1490 id=1490 data-nosnippet>1490</a>        </span><span class="kw">let </span>portmap_watcher = <span class="self">self
 <a href=#1491 id=1491 data-nosnippet>1491</a>            </span>.direct_addr_update_state
 <a href=#1492 id=1492 data-nosnippet>1492</a>            .port_mapper
@@ -1498,7 +1498,7 @@
 <a href=#1498 id=1498 data-nosnippet>1498</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>addrs: BTreeMap&lt;SocketAddr, DirectAddrType&gt; = BTreeMap::new();
 <a href=#1499 id=1499 data-nosnippet>1499</a>
 <a href=#1500 id=1500 data-nosnippet>1500</a>        <span class="comment">// First add PortMapper provided addresses.
-<a href=#1501 id=1501 data-nosnippet>1501</a>        </span><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#1501 id=1501 data-nosnippet>1501</a>        </span><span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#1502 id=1502 data-nosnippet>1502</a>        </span>{
 <a href=#1503 id=1503 data-nosnippet>1503</a>            <span class="kw">let </span>maybe_port_mapped = <span class="kw-2">*</span>portmap_watcher.borrow();
 <a href=#1504 id=1504 data-nosnippet>1504</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
