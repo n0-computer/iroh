@@ -885,6 +885,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_root_handler() {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .ok();
+
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
@@ -898,6 +902,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_captive_portal_service() {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .ok();
+
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";

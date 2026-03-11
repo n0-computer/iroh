@@ -152,21 +152,23 @@ server = [
     "noq/platform-verifier",
     "noq/runtime-tokio",
     "iroh-metrics/service",
-    "ring"
+    "ring",
 ]
 metrics = ["iroh-metrics/metrics"]
 test-utils = []
 ring = [
+    "noq/ring",
     "rustls/ring",
     "tokio-rustls/ring",
     "tokio-websockets/ring",
-    "hickory-resolver/https-ring"
+    "hickory-resolver/https-ring",
 ]
 aws-lc-rs = [
+    "noq/aws-lc-rs",
     "rustls/aws-lc-rs",
     "tokio-rustls/aws-lc-rs",
     "tokio-websockets/aws_lc_rs",
-    "hickory-resolver/https-aws-lc-rs"
+    "hickory-resolver/https-aws-lc-rs",
 ]
 
 [[bin]]

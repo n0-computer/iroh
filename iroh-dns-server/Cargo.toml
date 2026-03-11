@@ -64,8 +64,8 @@ n0-tracing-test = "0.3"
 pkarr = { version = "5", features = ["relays", "dht"], default-features = false }
 rand = "0.9.2"
 rand_chacha = "0.9"
-reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls", "http2"
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider", "http2", "json"
 ] }
 serde_json = "1.0.145"
 tempfile = "3.23.0"

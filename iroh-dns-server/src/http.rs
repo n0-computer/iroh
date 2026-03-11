@@ -317,6 +317,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_doh() -> n0_error::Result {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .ok();
+
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(0);
         let dir = tempfile::tempdir()?;
         let https_config = HttpsConfig {
