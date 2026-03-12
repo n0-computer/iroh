@@ -53,7 +53,7 @@ use crate::endpoint::transports::CustomTransport;
 use crate::{
     NetReport,
     address_lookup::{
-        AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
+        AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
         Error as AddressLookupError, UserData,
     },
     endpoint::presets::Preset,
@@ -98,6 +98,7 @@ pub use self::{
         VarIntBoundsExceeded, WriteError, Written,
     },
 };
+pub use crate::portmapper::PortmapperConfig;
 #[cfg(not(wasm_browser))]
 use crate::socket::transports::IpConfig;
 use crate::socket::transports::TransportConfig;
@@ -116,6 +117,9 @@ pub struct Builder {
     keylog: bool,
     address_lookup: Vec<Box<dyn DynAddressLookupBuilder>>,
     address_lookup_user_data: Option<UserData>,
+    /// Default address filter applied to all address lookup services added via
+    /// [`Builder::address_lookup`].
+    addr_filter: Option<AddrFilter>,
     proxy_url: Option<Url>,
     ca_roots_config: Option<CaRootsConfig>,
     #[cfg(not(wasm_browser))]
@@ -124,6 +128,7 @@ pub struct Builder {
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
     transport_bias: socket::transports::TransportBiasMap,
+    portmapper_config: PortmapperConfig,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -181,6 +186,7 @@ impl Builder {
             keylog: Default::default(),
             address_lookup: Default::default(),
             address_lookup_user_data: Default::default(),
+            addr_filter: None,
             proxy_url: None,
             ca_roots_config: None,
             #[cfg(not(wasm_browser))]
@@ -189,6 +195,7 @@ impl Builder {
             transports,
             hooks: Default::default(),
             transport_bias: Default::default(),
+            portmapper_config: Default::default(),
         }
     }
 
@@ -234,6 +241,7 @@ impl Builder {
             metrics,
             hooks: self.hooks,
             transport_bias: self.transport_bias,
+            portmapper_config: self.portmapper_config,
             static_config,
         };
 
@@ -251,11 +259,13 @@ impl Builder {
         };
 
         // Add Address Lookup mechanisms
+        let address_lookup = ep.address_lookup().expect("just created the endpoint");
+        if let Some(filter) = self.addr_filter {
+            address_lookup.set_addr_filter(filter);
+        }
         for create_service in self.address_lookup {
             let service = create_service.into_address_lookup(&ep)?;
-            ep.address_lookup()
-                .expect("just created the endpoint")
-                .add_boxed(service);
+            address_lookup.add_boxed(service);
         }
 
         Ok(ep)
@@ -553,6 +563,27 @@ impl Builder {
         self
     }
 
+    /// Sets the address filter applied to all address data before publishing.
+    ///
+    /// This filter is applied once, at the [`ConcurrentAddressLookup`] level, before
+    /// distributing data to any individual address lookup service. This ensures
+    /// consistent filtering regardless of how the services configured.
+    ///
+    /// [`ConcurrentAddressLookup`]: crate::address_lookup::ConcurrentAddressLookup
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
+        self.addr_filter = Some(filter);
+        self
+    }
+
+    /// Clears the address filter, allowing all addresses to be published.
+    ///
+    /// This removes any filter previously set via [`Self::addr_filter`], including
+    /// filters set by presets.
+    pub fn clear_addr_filter(mut self) -> Self {
+        self.addr_filter = None;
+        self
+    }
+
     /// Sets the initial user-defined data to be published in Address Lookup's for this node.
     ///
     /// When using Address Lookup's, this string of [`UserData`] will be published together
@@ -663,6 +694,14 @@ impl Builder {
     /// See [`EndpointHooks`] for details on the possible interception points in the connection lifecycle.
     pub fn hooks(mut self, hooks: impl EndpointHooks + 'static) -> Self {
         self.hooks.push(hooks);
+        self
+    }
+
+    /// Configures the portmapper service (UPnP, PCP, NAT-PMP).
+    ///
+    /// Defaults to [`PortmapperConfig::Enabled`].
+    pub fn portmapper_config(mut self, config: PortmapperConfig) -> Self {
+        self.portmapper_config = config;
         self
     }
 

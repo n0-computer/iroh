@@ -58,25 +58,6 @@ mod reportgen;
 
 mod options;
 
-/// We "vendor" what we need of the library in browsers for simplicity.
-///
-/// We could consider making `portmapper` compile to wasm in the future,
-/// but what we need is so little it's likely not worth it.
-#[cfg(wasm_browser)]
-pub(crate) mod portmapper {
-    /// Output of a port mapping probe.
-    #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-    #[display("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
-    pub struct ProbeOutput {
-        /// If UPnP can be considered available.
-        pub upnp: bool,
-        /// If PCP can be considered available.
-        pub pcp: bool,
-        /// If PMP can be considered available.
-        pub nat_pmp: bool,
-    }
-}
-
 pub(crate) use self::reportgen::IfStateDetails;
 #[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
