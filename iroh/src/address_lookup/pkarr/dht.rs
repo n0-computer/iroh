@@ -21,7 +21,7 @@ use crate::{
     Endpoint,
     address_lookup::{
         AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
-        Error as AddressLookupError, FilteredAddressLookup, Item as AddressLookupItem,
+        Error as AddressLookupError, Item as AddressLookupItem,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
     endpoint_info::EndpointInfo,
@@ -71,6 +71,8 @@ struct Inner {
     ttl: u32,
     /// Republish delay for the DHT.
     republish_delay: Duration,
+    /// User supplied filter to filter and reorder addresses for publishing
+    filter: AddrFilter,
 }
 
 impl Inner {
@@ -208,9 +210,7 @@ impl Builder {
     }
 
     /// Builds the address lookup mechanism.
-    pub fn build(
-        self,
-    ) -> Result<FilteredAddressLookup<DhtAddressLookup>, AddressLookupBuilderError> {
+    pub fn build(self) -> Result<DhtAddressLookup, AddressLookupBuilderError> {
         if !(self.dht || self.pkarr_relay.is_some()) {
             return Err(AddressLookupBuilderError::from_err(
                 "pkarr",
@@ -238,15 +238,15 @@ impl Builder {
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         let secret_key = self.secret_key.filter(|_| self.enable_publish);
 
-        let inner = DhtAddressLookup(Arc::new(Inner {
+        Ok(DhtAddressLookup(Arc::new(Inner {
             pkarr,
             ttl,
             relay_url: self.pkarr_relay,
             secret_key,
             republish_delay: self.republish_delay,
             task: Default::default(),
-        }));
-        Ok(FilteredAddressLookup::new(inner, self.addr_filter))
+            filter: self.addr_filter,
+        })))
     }
 }
 
@@ -306,12 +306,16 @@ impl AddressLookup for DhtAddressLookup {
             return;
         };
 
-        if data.addrs().next().is_none() {
+        // apply user-supplied filter
+        let addrs = data.filtered_addrs(&self.0.filter);
+
+        if addrs.is_empty() {
             tracing::debug!("no relay url or direct addresses in endpoint data, not publishing");
             return;
         }
 
         tracing::debug!("publishing {data:?}");
+        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
         let info = EndpointInfo::from_parts(keypair.public(), data.clone());
         let Ok(signed_packet) = info.to_pkarr_signed_packet(keypair, self.0.ttl) else {
             tracing::warn!("failed to create signed packet");

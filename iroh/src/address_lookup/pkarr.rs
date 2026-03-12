@@ -25,9 +25,6 @@
 //! ([`AddrFilter::unfiltered`]). You can override this via
 //! [`PkarrPublisherBuilder::addr_filter`].
 //!
-//! Note that [`PkarrResolver`] and [`address_lookup::DnsAddressLookup`] only resolve and do not publish,
-//! so filtering does not apply to them.
-//!
 //! For address lookup in iroh the pkarr Resource Records contain the addressing information,
 //! providing endpoints which retrieve the pkarr Resource Record with enough detail
 //! to contact the iroh endpoint.
@@ -365,15 +362,15 @@ impl PkarrPublisher {
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_endpoint_data(&self, data: &EndpointData) {
-        let info = EndpointInfo::from_parts(self.endpoint_id, data.clone());
+        let addrs = data.filtered_addrs(&self.addr_filter);
+        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
+        let info = EndpointInfo::from_parts(self.endpoint_id, data);
         self.watchable.set(Some(info)).ok();
     }
 }
 
 impl AddressLookup for PkarrPublisher {
     fn publish(&self, data: &EndpointData) {
-        let addrs = data.filtered_addrs(&self.addr_filter);
-        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
         self.update_endpoint_data(&data);
     }
 }

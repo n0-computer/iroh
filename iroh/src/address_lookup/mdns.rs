@@ -84,7 +84,7 @@ use super::AddressLookupBuilder;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddressLookup, AddressLookupBuilderError, EndpointData, EndpointInfo,
+        AddrFilter, AddressLookup, AddressLookupBuilderError, EndpointData, EndpointInfo,
         Error as AddressLookupError, Item as AddressLookupItem,
     },
 };
@@ -173,6 +173,7 @@ impl Subscribers {
 pub struct MdnsAddressLookupBuilder {
     advertise: bool,
     service_name: String,
+    filter: AddrFilter,
 }
 
 impl MdnsAddressLookupBuilder {
@@ -181,6 +182,7 @@ impl MdnsAddressLookupBuilder {
         Self {
             advertise: true,
             service_name: N0_SERVICE_NAME.to_string(),
+            filter: AddrFilter::default(),
         }
     }
 
@@ -205,6 +207,12 @@ impl MdnsAddressLookupBuilder {
         self
     }
 
+    /// Sets a filter to control which addresses are published by this service.
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
+        self.filter = filter;
+        self
+    }
+
     /// Builds an [`MdnsAddressLookup`] instance with the configured settings.
     ///
     /// Note that this returns [`FilteredAddressLookup`] even if no [`AddrFilter`] is applied.
@@ -220,7 +228,7 @@ impl MdnsAddressLookupBuilder {
         self,
         endpoint_id: EndpointId,
     ) -> Result<MdnsAddressLookup, AddressLookupBuilderError> {
-        MdnsAddressLookup::new(endpoint_id, self.advertise, self.service_name)
+        MdnsAddressLookup::new(endpoint_id, self.advertise, self.service_name, self.filter)
     }
 }
 
@@ -277,6 +285,7 @@ impl MdnsAddressLookup {
         endpoint_id: EndpointId,
         advertise: bool,
         service_name: String,
+        filter: AddrFilter,
     ) -> Result<Self, AddressLookupBuilderError> {
         debug!("Creating new Mdns service");
         let (send, mut recv) = mpsc::channel(64);
@@ -311,6 +320,11 @@ impl MdnsAddressLookup {
                     Ok(Some(data)) = addrs_change.updated() => {
                         tracing::trace!(?data, "Mdns address changed");
                         address_lookup.remove_all();
+
+                        // apply user-supplied filter
+                        let addrs = data.filtered_addrs(&filter);
+                        debug!(addrs = ?addrs, "Applied address filter");
+                        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
 
                         let addrs =
                             MdnsAddressLookup::socketaddrs_to_addrs(data.ip_addrs());
