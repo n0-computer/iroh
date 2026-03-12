@@ -4,25 +4,25 @@
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>iroh_metrics::MetricsGroupSet;
 <a href=#5 id=5 data-nosnippet>5</a><span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
 <a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">pub use </span>iroh_relay::server::Metrics <span class="kw">as </span>RelayMetrics;
-<a href=#7 id=7 data-nosnippet>7</a><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#8 id=8 data-nosnippet>8</a></span><span class="kw">pub use </span>portmapper::Metrics <span class="kw">as </span>PortmapMetrics;
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>serde::{Deserialize, Serialize};
-<a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">pub use crate</span>::{net_report::Metrics <span class="kw">as </span>NetReportMetrics, socket::Metrics <span class="kw">as </span>SocketMetrics};
-<a href=#12 id=12 data-nosnippet>12</a>
-<a href=#13 id=13 data-nosnippet>13</a><span class="doccomment">/// Metrics collected by an [`crate::endpoint::Endpoint`].
-<a href=#14 id=14 data-nosnippet>14</a>///
-<a href=#15 id=15 data-nosnippet>15</a>/// See [`crate::endpoint::Endpoint::metrics`] for details.
-<a href=#16 id=16 data-nosnippet>16</a></span><span class="attr">#[derive(Default, Debug, Clone, Serialize, Deserialize, MetricsGroupSet)]
-<a href=#17 id=17 data-nosnippet>17</a>#[metrics(name = <span class="string">"endpoint"</span>)]
-<a href=#18 id=18 data-nosnippet>18</a>#[non_exhaustive]
-<a href=#19 id=19 data-nosnippet>19</a></span><span class="kw">pub struct </span>EndpointMetrics {
-<a href=#20 id=20 data-nosnippet>20</a>    <span class="doccomment">/// Metrics collected by the endpoint's socket.
-<a href=#21 id=21 data-nosnippet>21</a>    </span><span class="kw">pub </span>socket: Arc&lt;SocketMetrics&gt;,
-<a href=#22 id=22 data-nosnippet>22</a>    <span class="doccomment">/// Metrics collected by net reports.
-<a href=#23 id=23 data-nosnippet>23</a>    </span><span class="kw">pub </span>net_report: Arc&lt;NetReportMetrics&gt;,
-<a href=#24 id=24 data-nosnippet>24</a>    <span class="doccomment">/// Metrics collected by the portmapper service.
-<a href=#25 id=25 data-nosnippet>25</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>serde::{Deserialize, Serialize};
+<a href=#8 id=8 data-nosnippet>8</a>
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">pub use crate</span>::{
+<a href=#10 id=10 data-nosnippet>10</a>    net_report::Metrics <span class="kw">as </span>NetReportMetrics, portmapper::Metrics <span class="kw">as </span>PortmapMetrics,
+<a href=#11 id=11 data-nosnippet>11</a>    socket::Metrics <span class="kw">as </span>SocketMetrics,
+<a href=#12 id=12 data-nosnippet>12</a>};
+<a href=#13 id=13 data-nosnippet>13</a>
+<a href=#14 id=14 data-nosnippet>14</a><span class="doccomment">/// Metrics collected by an [`crate::endpoint::Endpoint`].
+<a href=#15 id=15 data-nosnippet>15</a>///
+<a href=#16 id=16 data-nosnippet>16</a>/// See [`crate::endpoint::Endpoint::metrics`] for details.
+<a href=#17 id=17 data-nosnippet>17</a></span><span class="attr">#[derive(Default, Debug, Clone, Serialize, Deserialize, MetricsGroupSet)]
+<a href=#18 id=18 data-nosnippet>18</a>#[metrics(name = <span class="string">"endpoint"</span>)]
+<a href=#19 id=19 data-nosnippet>19</a>#[non_exhaustive]
+<a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub struct </span>EndpointMetrics {
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="doccomment">/// Metrics collected by the endpoint's socket.
+<a href=#22 id=22 data-nosnippet>22</a>    </span><span class="kw">pub </span>socket: Arc&lt;SocketMetrics&gt;,
+<a href=#23 id=23 data-nosnippet>23</a>    <span class="doccomment">/// Metrics collected by net reports.
+<a href=#24 id=24 data-nosnippet>24</a>    </span><span class="kw">pub </span>net_report: Arc&lt;NetReportMetrics&gt;,
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// Metrics collected by the portmapper service.
 <a href=#26 id=26 data-nosnippet>26</a>    </span><span class="kw">pub </span>portmapper: Arc&lt;PortmapMetrics&gt;,
 <a href=#27 id=27 data-nosnippet>27</a>}
 <a href=#28 id=28 data-nosnippet>28</a>

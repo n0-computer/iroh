@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a>
 <a href=#15 id=15 data-nosnippet>15</a></span><span class="kw">use crate</span>::{
 <a href=#16 id=16 data-nosnippet>16</a>    RelayMode,
-<a href=#17 id=17 data-nosnippet>17</a>    address_lookup::{AddrFilter, AddressLookupBuilder, PkarrPublisher},
+<a href=#17 id=17 data-nosnippet>17</a>    address_lookup::{AddrFilter, PkarrPublisher},
 <a href=#18 id=18 data-nosnippet>18</a>    endpoint::{Builder, default_relay_mode},
 <a href=#19 id=19 data-nosnippet>19</a>};
 <a href=#20 id=20 data-nosnippet>20</a>
@@ -51,79 +51,73 @@
 <a href=#51 id=51 data-nosnippet>51</a>
 <a href=#52 id=52 data-nosnippet>52</a><span class="kw">impl </span>Preset <span class="kw">for </span>N0 {
 <a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">fn </span>apply(<span class="self">self</span>, <span class="kw-2">mut </span>builder: Builder) -&gt; Builder {
-<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">let </span>filter = AddrFilter::relay_only();
-<a href=#55 id=55 data-nosnippet>55</a>        builder = builder.address_lookup(PkarrPublisher::n0_dns().with_addr_filter(filter.clone()));
+<a href=#54 id=54 data-nosnippet>54</a>        builder = builder.addr_filter(AddrFilter::relay_only());
+<a href=#55 id=55 data-nosnippet>55</a>        builder = builder.address_lookup(PkarrPublisher::n0_dns());
 <a href=#56 id=56 data-nosnippet>56</a>
 <a href=#57 id=57 data-nosnippet>57</a>        <span class="comment">// Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
 <a href=#58 id=58 data-nosnippet>58</a>        </span><span class="attr">#[cfg(wasm_browser)]
 <a href=#59 id=59 data-nosnippet>59</a>        </span>{
 <a href=#60 id=60 data-nosnippet>60</a>            <span class="kw">use </span><span class="kw">crate</span>::address_lookup::PkarrResolver;
 <a href=#61 id=61 data-nosnippet>61</a>
-<a href=#62 id=62 data-nosnippet>62</a>            builder =
-<a href=#63 id=63 data-nosnippet>63</a>                builder.address_lookup(PkarrResolver::n0_dns().with_addr_filter(filter.clone()));
-<a href=#64 id=64 data-nosnippet>64</a>        }
-<a href=#65 id=65 data-nosnippet>65</a>        <span class="comment">// Resolve using DNS queries outside browsers.
-<a href=#66 id=66 data-nosnippet>66</a>        </span><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#67 id=67 data-nosnippet>67</a>        </span>{
-<a href=#68 id=68 data-nosnippet>68</a>            builder = builder.address_lookup(
-<a href=#69 id=69 data-nosnippet>69</a>                <span class="kw">crate</span>::address_lookup::DnsAddressLookup::n0_dns().with_addr_filter(filter.clone()),
-<a href=#70 id=70 data-nosnippet>70</a>            );
-<a href=#71 id=71 data-nosnippet>71</a>        }
-<a href=#72 id=72 data-nosnippet>72</a>
-<a href=#73 id=73 data-nosnippet>73</a>        builder = builder.relay_mode(default_relay_mode());
-<a href=#74 id=74 data-nosnippet>74</a>
-<a href=#75 id=75 data-nosnippet>75</a>        builder
-<a href=#76 id=76 data-nosnippet>76</a>    }
-<a href=#77 id=77 data-nosnippet>77</a>}
-<a href=#78 id=78 data-nosnippet>78</a>
-<a href=#79 id=79 data-nosnippet>79</a><span class="doccomment">/// Configures the endpoint to use the n0 defaults, but with relay mode disabled.
-<a href=#80 id=80 data-nosnippet>80</a>///
-<a href=#81 id=81 data-nosnippet>81</a>/// Currently this consists of
-<a href=#82 id=82 data-nosnippet>82</a>/// - setting `RelayMode::Disabled`
-<a href=#83 id=83 data-nosnippet>83</a>/// - the DNS Address Lookup service, that publishes IP addresses rather than
-<a href=#84 id=84 data-nosnippet>84</a>///   relay urls.
+<a href=#62 id=62 data-nosnippet>62</a>            builder = builder.address_lookup(PkarrResolver::n0_dns());
+<a href=#63 id=63 data-nosnippet>63</a>        }
+<a href=#64 id=64 data-nosnippet>64</a>        <span class="comment">// Resolve using DNS queries outside browsers.
+<a href=#65 id=65 data-nosnippet>65</a>        </span><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#66 id=66 data-nosnippet>66</a>        </span>{
+<a href=#67 id=67 data-nosnippet>67</a>            builder = builder.address_lookup(<span class="kw">crate</span>::address_lookup::DnsAddressLookup::n0_dns());
+<a href=#68 id=68 data-nosnippet>68</a>        }
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a>        builder = builder.relay_mode(default_relay_mode());
+<a href=#71 id=71 data-nosnippet>71</a>
+<a href=#72 id=72 data-nosnippet>72</a>        builder
+<a href=#73 id=73 data-nosnippet>73</a>    }
+<a href=#74 id=74 data-nosnippet>74</a>}
+<a href=#75 id=75 data-nosnippet>75</a>
+<a href=#76 id=76 data-nosnippet>76</a><span class="doccomment">/// Configures the endpoint to use the n0 defaults, but with relay mode disabled.
+<a href=#77 id=77 data-nosnippet>77</a>///
+<a href=#78 id=78 data-nosnippet>78</a>/// Currently this consists of
+<a href=#79 id=79 data-nosnippet>79</a>/// - setting `RelayMode::Disabled`
+<a href=#80 id=80 data-nosnippet>80</a>/// - the DNS Address Lookup service, that publishes IP addresses rather than
+<a href=#81 id=81 data-nosnippet>81</a>///   relay urls.
+<a href=#82 id=82 data-nosnippet>82</a>///
+<a href=#83 id=83 data-nosnippet>83</a>/// The default address lookup service publishes to and resolves from the
+<a href=#84 id=84 data-nosnippet>84</a>/// n0.computer dns server `iroh.link`.
 <a href=#85 id=85 data-nosnippet>85</a>///
-<a href=#86 id=86 data-nosnippet>86</a>/// The default address lookup service publishes to and resolves from the
-<a href=#87 id=87 data-nosnippet>87</a>/// n0.computer dns server `iroh.link`.
-<a href=#88 id=88 data-nosnippet>88</a>///
-<a href=#89 id=89 data-nosnippet>89</a>/// This is equivalent to adding both a [`crate::address_lookup::PkarrPublisher`]
-<a href=#90 id=90 data-nosnippet>90</a>/// and a [`crate::address_lookup::DnsAddressLookup`], both configured to use the
-<a href=#91 id=91 data-nosnippet>91</a>/// n0.computer dns server.
-<a href=#92 id=92 data-nosnippet>92</a>///
-<a href=#93 id=93 data-nosnippet>93</a>/// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
-<a href=#94 id=94 data-nosnippet>94</a>/// When in tests, or when the `test-utils` feature is enabled, this will use the
-<a href=#95 id=95 data-nosnippet>95</a>/// [`N0_DNS_PKARR_RELAY_STAGING`].
+<a href=#86 id=86 data-nosnippet>86</a>/// This is equivalent to adding both a [`crate::address_lookup::PkarrPublisher`]
+<a href=#87 id=87 data-nosnippet>87</a>/// and a [`crate::address_lookup::DnsAddressLookup`], both configured to use the
+<a href=#88 id=88 data-nosnippet>88</a>/// n0.computer dns server.
+<a href=#89 id=89 data-nosnippet>89</a>///
+<a href=#90 id=90 data-nosnippet>90</a>/// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
+<a href=#91 id=91 data-nosnippet>91</a>/// When in tests, or when the `test-utils` feature is enabled, this will use the
+<a href=#92 id=92 data-nosnippet>92</a>/// [`N0_DNS_PKARR_RELAY_STAGING`].
+<a href=#93 id=93 data-nosnippet>93</a>///
+<a href=#94 id=94 data-nosnippet>94</a>/// This preset includes an [`AddrFilter`] for the address lookup services that only publishes
+<a href=#95 id=95 data-nosnippet>95</a>/// the endpoint's IP addresses.
 <a href=#96 id=96 data-nosnippet>96</a>///
-<a href=#97 id=97 data-nosnippet>97</a>/// This preset includes an [`AddrFilter`] for the address lookup services that only publishes
-<a href=#98 id=98 data-nosnippet>98</a>/// the endpoint's IP addresses.
-<a href=#99 id=99 data-nosnippet>99</a>///
-<a href=#100 id=100 data-nosnippet>100</a>/// [`N0_DNS_PKARR_RELAY_PROD`]: crate::address_lookup::N0_DNS_PKARR_RELAY_PROD
-<a href=#101 id=101 data-nosnippet>101</a>/// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::address_lookup::N0_DNS_PKARR_RELAY_STAGING
-<a href=#102 id=102 data-nosnippet>102</a></span><span class="attr">#[derive(Debug, Copy, Clone, Default)]
-<a href=#103 id=103 data-nosnippet>103</a></span><span class="kw">pub struct </span>N0DisableRelay;
-<a href=#104 id=104 data-nosnippet>104</a>
-<a href=#105 id=105 data-nosnippet>105</a><span class="kw">impl </span>Preset <span class="kw">for </span>N0DisableRelay {
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">fn </span>apply(<span class="self">self</span>, <span class="kw-2">mut </span>builder: Builder) -&gt; Builder {
-<a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">let </span>filter = AddrFilter::ip_only();
-<a href=#108 id=108 data-nosnippet>108</a>        builder = builder.address_lookup(PkarrPublisher::n0_dns().with_addr_filter(filter.clone()));
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="comment">// Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
-<a href=#110 id=110 data-nosnippet>110</a>        </span><span class="attr">#[cfg(wasm_browser)]
-<a href=#111 id=111 data-nosnippet>111</a>        </span>{
-<a href=#112 id=112 data-nosnippet>112</a>            <span class="kw">use </span><span class="kw">crate</span>::address_lookup::PkarrResolver;
-<a href=#113 id=113 data-nosnippet>113</a>
-<a href=#114 id=114 data-nosnippet>114</a>            builder =
-<a href=#115 id=115 data-nosnippet>115</a>                builder.address_lookup(PkarrResolver::n0_dns().with_addr_filter(filter.clone()));
-<a href=#116 id=116 data-nosnippet>116</a>        }
-<a href=#117 id=117 data-nosnippet>117</a>        <span class="comment">// Resolve using DNS queries outside browsers.
-<a href=#118 id=118 data-nosnippet>118</a>        </span><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#119 id=119 data-nosnippet>119</a>        </span>{
-<a href=#120 id=120 data-nosnippet>120</a>            builder = builder.address_lookup(
-<a href=#121 id=121 data-nosnippet>121</a>                <span class="kw">crate</span>::address_lookup::DnsAddressLookup::n0_dns().with_addr_filter(filter.clone()),
-<a href=#122 id=122 data-nosnippet>122</a>            );
-<a href=#123 id=123 data-nosnippet>123</a>        }
-<a href=#124 id=124 data-nosnippet>124</a>
-<a href=#125 id=125 data-nosnippet>125</a>        builder = builder.relay_mode(RelayMode::Disabled);
-<a href=#126 id=126 data-nosnippet>126</a>
-<a href=#127 id=127 data-nosnippet>127</a>        builder
-<a href=#128 id=128 data-nosnippet>128</a>    }
-<a href=#129 id=129 data-nosnippet>129</a>}</code></pre></div></section></main></body></html>
+<a href=#97 id=97 data-nosnippet>97</a>/// [`N0_DNS_PKARR_RELAY_PROD`]: crate::address_lookup::N0_DNS_PKARR_RELAY_PROD
+<a href=#98 id=98 data-nosnippet>98</a>/// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::address_lookup::N0_DNS_PKARR_RELAY_STAGING
+<a href=#99 id=99 data-nosnippet>99</a></span><span class="attr">#[derive(Debug, Copy, Clone, Default)]
+<a href=#100 id=100 data-nosnippet>100</a></span><span class="kw">pub struct </span>N0DisableRelay;
+<a href=#101 id=101 data-nosnippet>101</a>
+<a href=#102 id=102 data-nosnippet>102</a><span class="kw">impl </span>Preset <span class="kw">for </span>N0DisableRelay {
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">fn </span>apply(<span class="self">self</span>, <span class="kw-2">mut </span>builder: Builder) -&gt; Builder {
+<a href=#104 id=104 data-nosnippet>104</a>        builder = builder.addr_filter(AddrFilter::ip_only());
+<a href=#105 id=105 data-nosnippet>105</a>        builder = builder.address_lookup(PkarrPublisher::n0_dns());
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="comment">// Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
+<a href=#107 id=107 data-nosnippet>107</a>        </span><span class="attr">#[cfg(wasm_browser)]
+<a href=#108 id=108 data-nosnippet>108</a>        </span>{
+<a href=#109 id=109 data-nosnippet>109</a>            <span class="kw">use </span><span class="kw">crate</span>::address_lookup::PkarrResolver;
+<a href=#110 id=110 data-nosnippet>110</a>
+<a href=#111 id=111 data-nosnippet>111</a>            builder = builder.address_lookup(PkarrResolver::n0_dns());
+<a href=#112 id=112 data-nosnippet>112</a>        }
+<a href=#113 id=113 data-nosnippet>113</a>        <span class="comment">// Resolve using DNS queries outside browsers.
+<a href=#114 id=114 data-nosnippet>114</a>        </span><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#115 id=115 data-nosnippet>115</a>        </span>{
+<a href=#116 id=116 data-nosnippet>116</a>            builder = builder.address_lookup(<span class="kw">crate</span>::address_lookup::DnsAddressLookup::n0_dns());
+<a href=#117 id=117 data-nosnippet>117</a>        }
+<a href=#118 id=118 data-nosnippet>118</a>
+<a href=#119 id=119 data-nosnippet>119</a>        builder = builder.relay_mode(RelayMode::Disabled);
+<a href=#120 id=120 data-nosnippet>120</a>
+<a href=#121 id=121 data-nosnippet>121</a>        builder
+<a href=#122 id=122 data-nosnippet>122</a>    }
+<a href=#123 id=123 data-nosnippet>123</a>}</code></pre></div></section></main></body></html>
