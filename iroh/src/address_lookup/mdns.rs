@@ -31,7 +31,7 @@
 //!     endpoint.address_lookup().unwrap().add(mdns.clone());
 //!
 //!     // Subscribe to the mdns discovery events
-//!     let mut events = mdns.as_ref().subscribe().await;
+//!     let mut events = mdns.subscribe().await;
 //!     while let Some(event) = events.next().await {
 //!         match event {
 //!             DiscoveryEvent::Discovered { endpoint_info, .. } => {
