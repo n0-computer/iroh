@@ -82,7 +82,7 @@ use crate::{
     Endpoint,
     address_lookup::{
         AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
-        Error as AddressLookupError, FilteredAddressLookup, Item as AddressLookupItem,
+        Error as AddressLookupError, Item as AddressLookupItem,
     },
     endpoint::force_staging_infra,
     util::reqwest_client_builder,
@@ -235,21 +235,15 @@ impl PkarrPublisherBuilder {
     /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
     ///
     /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
-    pub fn build(
-        self,
-        secret_key: SecretKey,
-        tls_config: rustls::ClientConfig,
-    ) -> FilteredAddressLookup<PkarrPublisher> {
-        FilteredAddressLookup::new(
-            PkarrPublisher::new(
-                secret_key,
-                self.pkarr_relay,
-                self.ttl,
-                self.republish_interval,
-                #[cfg(not(wasm_browser))]
-                self.dns_resolver,
-                tls_config,
-            ),
+    pub fn build(self, secret_key: SecretKey, tls_config: rustls::ClientConfig) -> PkarrPublisher {
+        PkarrPublisher::new(
+            secret_key,
+            self.pkarr_relay,
+            self.ttl,
+            self.republish_interval,
+            #[cfg(not(wasm_browser))]
+            self.dns_resolver,
+            tls_config,
             self.filter,
         )
     }
@@ -288,6 +282,7 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
 pub struct PkarrPublisher {
     endpoint_id: EndpointId,
     watchable: Watchable<Option<EndpointInfo>>,
+    addr_filter: AddrFilter,
     _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
 
@@ -318,6 +313,7 @@ impl PkarrPublisher {
         republish_interval: Duration,
         #[cfg(not(wasm_browser))] dns_resolver: Option<DnsResolver>,
         tls_config: rustls::ClientConfig,
+        addr_filter: AddrFilter,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let endpoint_id = secret_key.public();
@@ -346,6 +342,7 @@ impl PkarrPublisher {
         Self {
             watchable,
             endpoint_id,
+            addr_filter,
             _drop_guard: Arc::new(AbortOnDropHandle::new(join_handle)),
         }
     }
@@ -375,7 +372,9 @@ impl PkarrPublisher {
 
 impl AddressLookup for PkarrPublisher {
     fn publish(&self, data: &EndpointData) {
-        self.update_endpoint_data(data);
+        let addrs = data.filtered_addrs(&self.addr_filter);
+        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
+        self.update_endpoint_data(&data);
     }
 }
 
