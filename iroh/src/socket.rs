@@ -1139,6 +1139,13 @@ impl EndpointInner {
         res
     }
 
+    pub(crate) fn relays<T>(&self) -> T
+    where
+        T: FromIterator<Arc<RelayConfig>>,
+    {
+        self.relay_map.relays()
+    }
+
     /// Call to notify the system of potential network changes.
     pub(crate) async fn network_change(&self) {
         self.actor_sender
