@@ -13,6 +13,8 @@
 
 use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
+#[cfg(not(wasm_browser))]
+use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{
     RelayConfig, RelayMap,
@@ -22,8 +24,6 @@ use iroh_relay::{
 use n0_error::bail;
 use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
-#[cfg(not(wasm_browser))]
-use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
 use tracing::{Instrument, Span, debug, info_span, instrument, warn};

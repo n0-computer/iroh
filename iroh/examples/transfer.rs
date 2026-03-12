@@ -37,6 +37,7 @@ use console::Style;
 use data_encoding::HEXLOWER;
 use derive_more::{Display, From};
 use indicatif::HumanBytes;
+use ipnet::{Ipv4Net, Ipv6Net};
 #[cfg(feature = "qlog")]
 use iroh::endpoint::QuicTransportConfig;
 use iroh::{
@@ -55,7 +56,6 @@ use iroh::{
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{stream::StreamExt, task::AbortOnDropHandle};
-use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::{
