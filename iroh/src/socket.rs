@@ -149,6 +149,7 @@ pub(crate) struct Options {
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
     pub(crate) transport_bias: TransportBiasMap,
+    pub(crate) portmapper_config: portmapper::PortmapperConfig,
 
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
@@ -775,11 +776,12 @@ impl EndpointInner {
             metrics,
             hooks,
             transport_bias,
+            portmapper_config,
             static_config,
         } = opts;
 
         let address_lookup = address_lookup::ConcurrentAddressLookup::default();
-        let port_mapper = portmapper::create_client(&metrics);
+        let port_mapper = portmapper::create_client(&metrics, &portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs
             .iter()
@@ -1776,6 +1778,7 @@ mod tests {
             metrics: Default::default(),
             hooks: Default::default(),
             transport_bias: Default::default(),
+            portmapper_config: Default::default(),
             static_config,
         }
     }
@@ -2174,6 +2177,7 @@ mod tests {
             metrics: Default::default(),
             hooks: Default::default(),
             transport_bias: Default::default(),
+            portmapper_config: Default::default(),
             static_config,
         };
         let sock = EndpointInner::bind(opts).await?;

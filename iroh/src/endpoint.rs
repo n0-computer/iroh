@@ -98,6 +98,7 @@ pub use self::{
         VarIntBoundsExceeded, WriteError, Written,
     },
 };
+pub use crate::portmapper::PortmapperConfig;
 #[cfg(not(wasm_browser))]
 use crate::socket::transports::IpConfig;
 use crate::socket::transports::TransportConfig;
@@ -124,6 +125,7 @@ pub struct Builder {
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
     transport_bias: socket::transports::TransportBiasMap,
+    portmapper_config: PortmapperConfig,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -189,6 +191,7 @@ impl Builder {
             transports,
             hooks: Default::default(),
             transport_bias: Default::default(),
+            portmapper_config: Default::default(),
         }
     }
 
@@ -234,6 +237,7 @@ impl Builder {
             metrics,
             hooks: self.hooks,
             transport_bias: self.transport_bias,
+            portmapper_config: self.portmapper_config,
             static_config,
         };
 
@@ -663,6 +667,14 @@ impl Builder {
     /// See [`EndpointHooks`] for details on the possible interception points in the connection lifecycle.
     pub fn hooks(mut self, hooks: impl EndpointHooks + 'static) -> Self {
         self.hooks.push(hooks);
+        self
+    }
+
+    /// Configures the portmapper service (UPnP, PCP, NAT-PMP).
+    ///
+    /// Defaults to [`PortmapperConfig::Enabled`].
+    pub fn portmapper_config(mut self, config: PortmapperConfig) -> Self {
+        self.portmapper_config = config;
         self
     }
 

@@ -6,9 +6,10 @@ use iroh_metrics::MetricsGroupSet;
 pub use iroh_relay::server::Metrics as RelayMetrics;
 use serde::{Deserialize, Serialize};
 
-#[cfg(all(not(wasm_browser), feature = "portmapper"))]
-pub use crate::portmapper::Metrics as PortmapMetrics;
-pub use crate::{net_report::Metrics as NetReportMetrics, socket::Metrics as SocketMetrics};
+pub use crate::{
+    net_report::Metrics as NetReportMetrics, portmapper::Metrics as PortmapMetrics,
+    socket::Metrics as SocketMetrics,
+};
 
 /// Metrics collected by an [`crate::endpoint::Endpoint`].
 ///
@@ -22,7 +23,6 @@ pub struct EndpointMetrics {
     /// Metrics collected by net reports.
     pub net_report: Arc<NetReportMetrics>,
     /// Metrics collected by the portmapper service.
-    #[cfg(all(not(wasm_browser), feature = "portmapper"))]
     pub portmapper: Arc<PortmapMetrics>,
 }
 
