@@ -711,7 +711,7 @@ impl Builder {
     /// - TLS for encryption and authentication of iroh connections themselves, but also
     /// - HTTPS connections to relays
     /// - Pkarr relay publishing HTTPS connections
-    /// - and any other Address Lookup services that decide to use [`Endpoint::crypto_provider`].
+    /// - and any other Address Lookup services that decide to use [`Endpoint::tls_config`].
     ///
     /// The two most common crypto providers in use today are `ring` as well as `aws-lc-rs`.
     ///
