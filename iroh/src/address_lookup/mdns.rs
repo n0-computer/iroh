@@ -84,8 +84,8 @@ use super::AddressLookupBuilder;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddrFilter, AddressLookup, AddressLookupBuilderError, EndpointData, EndpointInfo,
-        Error as AddressLookupError, FilteredAddressLookup, Item as AddressLookupItem,
+        AddressLookup, AddressLookupBuilderError, EndpointData, EndpointInfo,
+        Error as AddressLookupError, Item as AddressLookupItem,
     },
 };
 
@@ -173,7 +173,6 @@ impl Subscribers {
 pub struct MdnsAddressLookupBuilder {
     advertise: bool,
     service_name: String,
-    addr_filter: Option<AddrFilter>,
 }
 
 impl MdnsAddressLookupBuilder {
@@ -182,7 +181,6 @@ impl MdnsAddressLookupBuilder {
         Self {
             advertise: true,
             service_name: N0_SERVICE_NAME.to_string(),
-            addr_filter: None,
         }
     }
 
@@ -207,16 +205,6 @@ impl MdnsAddressLookupBuilder {
         self
     }
 
-    /// Sets the address filter to control which addresses are published via mDNS.
-    ///
-    /// By default (when not called), [`AddrFilter::unfiltered`] is used, publishing
-    /// all addresses. This is usually appropriate for mDNS since it only operates
-    /// on the local network.
-    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
-        self.addr_filter = Some(filter);
-        self
-    }
-
     /// Builds an [`MdnsAddressLookup`] instance with the configured settings.
     ///
     /// Note that this returns [`FilteredAddressLookup`] even if no [`AddrFilter`] is applied.
@@ -231,10 +219,8 @@ impl MdnsAddressLookupBuilder {
     pub fn build(
         self,
         endpoint_id: EndpointId,
-    ) -> Result<FilteredAddressLookup<MdnsAddressLookup>, AddressLookupBuilderError> {
-        let filter = self.addr_filter.unwrap_or_else(AddrFilter::unfiltered);
-        let inner = MdnsAddressLookup::new(endpoint_id, self.advertise, self.service_name)?;
-        Ok(FilteredAddressLookup::new(inner, filter))
+    ) -> Result<MdnsAddressLookup, AddressLookupBuilderError> {
+        MdnsAddressLookup::new(endpoint_id, self.advertise, self.service_name)
     }
 }
 
@@ -638,7 +624,6 @@ mod tests {
 
             // resolve twice to ensure we can create separate streams for the same endpoint_id
             let mut s1 = address_lookup_a
-                .as_ref()
                 .subscribe()
                 .await
                 .filter(|event| match event {
@@ -648,7 +633,6 @@ mod tests {
                     _ => false,
                 });
             let mut s2 = address_lookup_a
-                .as_ref()
                 .subscribe()
                 .await
                 .filter(|event| match event {
@@ -700,7 +684,7 @@ mod tests {
                     .with_user_data(Some("".parse()?));
             address_lookup_b.publish(&endpoint_data);
 
-            let mut s1 = address_lookup_a.as_ref().subscribe().await;
+            let mut s1 = address_lookup_a.subscribe().await;
             tracing::debug!(?endpoint_id_b, "Discovering endpoint id b");
 
             // Wait for the specific endpoint to be discovered
@@ -768,7 +752,7 @@ mod tests {
                 address_lookup_list.push(address_lookup);
             }
 
-            let mut events = address_lookup.as_ref().subscribe().await;
+            let mut events = address_lookup.subscribe().await;
 
             let test = async move {
                 let mut got_ids = BTreeSet::new();
@@ -905,16 +889,12 @@ mod tests {
                     .with_relay_url(Some(relay_url.clone()));
 
             // Subscribe to discovery events filtered for endpoint B
-            let mut events = mdns_a
-                .as_ref()
-                .subscribe()
-                .await
-                .filter(|event| match event {
-                    DiscoveryEvent::Discovered { endpoint_info, .. } => {
-                        endpoint_info.endpoint_id == endpoint_id_b
-                    }
-                    _ => false,
-                });
+            let mut events = mdns_a.subscribe().await.filter(|event| match event {
+                DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                    endpoint_info.endpoint_id == endpoint_id_b
+                }
+                _ => false,
+            });
 
             // Publish mdns_b's address with relay URL
             mdns_b.publish(&endpoint_data);
@@ -940,7 +920,7 @@ mod tests {
         fn make_address_lookup<R: CryptoRng + ?Sized>(
             rng: &mut R,
             advertise: bool,
-        ) -> Result<(PublicKey, FilteredAddressLookup<MdnsAddressLookup>)> {
+        ) -> Result<(PublicKey, MdnsAddressLookup)> {
             let endpoint_id = SecretKey::generate(rng).public();
             Ok((
                 endpoint_id,
