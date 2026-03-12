@@ -763,6 +763,11 @@ pub enum BindError {
     },
     #[error("Missing or incompatible rustls crypto provider configured")]
     InvalidCryptoProvider,
+    #[error("Error constructing TLS configuration")]
+    TlsConfigError {
+        #[error(from)]
+        source: tls::TlsConfigError,
+    },
 }
 
 impl EndpointInner {

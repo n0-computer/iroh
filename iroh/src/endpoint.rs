@@ -230,10 +230,7 @@ impl Builder {
             crypto_provider.clone(),
         );
         let static_config = StaticConfig {
-            quic_config: tls_config
-                .make_server_config(self.keylog)
-                // TODO(matheus23): Maybe don't swallow the tls::TlsConfigError?
-                .map_err(|_| e!(BindError::InvalidCryptoProvider))?,
+            quic_config: tls_config.make_server_config(self.keylog)?,
             tls_config,
             transport_config: self.transport_config.clone(),
             token_key,
