@@ -95,6 +95,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         println!("\nMetrics:");
         collect_and_print("SocketMetrics", &*endpoint_metrics.socket);
         collect_and_print("NetReportMetrics", &*endpoint_metrics.net_report);
+        #[cfg(all(not(wasm_browser), feature = "portmapper"))]
         collect_and_print("PortmapMetrics", &*endpoint_metrics.portmapper);
         #[cfg(feature = "local-relay")]
         if let Some(relay_server) = relay_server.as_ref() {

@@ -27,9 +27,6 @@ mod stub {
 
     use tokio::sync::watch;
 
-    #[derive(Default)]
-    pub(crate) struct Config;
-
     /// No-op portmapper client used when the `portmapper` feature is disabled.
     #[derive(Debug)]
     pub(crate) struct Client {
