@@ -1071,7 +1071,7 @@
 <a href=#1071 id=1071 data-nosnippet>1071</a>            .expect(<span class="string">"infallible"</span>);
 <a href=#1072 id=1072 data-nosnippet>1072</a>        <span class="kw">let </span>resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
 <a href=#1073 id=1073 data-nosnippet>1073</a>        <span class="kw">let </span>publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
-<a href=#1074 id=1074 data-nosnippet>1074</a>            .build(secret_key, tls_config);
+<a href=#1074 id=1074 data-nosnippet>1074</a>            .build(secret_key, tls_config, <span class="bool-val">true</span>);
 <a href=#1075 id=1075 data-nosnippet>1075</a>        <span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse().unwrap();
 <a href=#1076 id=1076 data-nosnippet>1076</a>        <span class="kw">let </span>data = EndpointData::new(relay_url.clone()).with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
 <a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="comment">// does not block, update happens in background task
