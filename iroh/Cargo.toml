@@ -130,6 +130,7 @@ n0-tracing-test = "0.3"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
+    "json",
 ] }
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
@@ -143,8 +144,8 @@ wasm-bindgen-test = "0.3.62"
 
 # patchbay netsim test dependencies (linux only)
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-ctor = "0.2"
-patchbay = { git = "https://github.com/n0-computer/patchbay", branch = "main" }
+ctor = "0.6"
+patchbay = "0.1"
 testdir = "0.9"
 
 [build-dependencies]
