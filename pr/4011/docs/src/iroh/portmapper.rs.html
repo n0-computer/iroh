@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a></span><span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#7 id=7 data-nosnippet>7</a></span><span class="kw">pub use </span>::portmapper::Metrics;
 <a href=#8 id=8 data-nosnippet>8</a><span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
-<a href=#9 id=9 data-nosnippet>9</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>::portmapper::{Client, Config};
+<a href=#9 id=9 data-nosnippet>9</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>::portmapper::Client;
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>))]
 <a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_client(metrics: <span class="kw-2">&amp;</span><span class="kw">crate</span>::metrics::EndpointMetrics) -&gt; Client {
@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a>}
 <a href=#15 id=15 data-nosnippet>15</a>
 <a href=#16 id=16 data-nosnippet>16</a><span class="attr">#[cfg(not(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>)))]
-<a href=#17 id=17 data-nosnippet>17</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>stub::{Client, Config};
+<a href=#17 id=17 data-nosnippet>17</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>stub::Client;
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="attr">#[cfg(not(all(not(wasm_browser), feature = <span class="string">"portmapper"</span>)))]
 <a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_client(_metrics: <span class="kw-2">&amp;</span><span class="kw">crate</span>::metrics::EndpointMetrics) -&gt; Client {
