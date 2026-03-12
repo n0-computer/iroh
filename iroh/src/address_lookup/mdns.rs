@@ -215,10 +215,6 @@ impl MdnsAddressLookupBuilder {
 
     /// Builds an [`MdnsAddressLookup`] instance with the configured settings.
     ///
-    /// Note that this returns [`FilteredAddressLookup`] even if no [`AddrFilter`] is applied.
-    /// To access [`MdnsAddressLookup::subscribe`], use [`AsRef::as_ref`] to
-    /// access the [`MdnsAddressLookup`] directly.
-    ///
     /// # Errors
     /// Returns an error if the network does not allow ipv4 OR ipv6.
     ///

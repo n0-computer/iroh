@@ -371,7 +371,7 @@ impl PkarrPublisher {
 
 impl AddressLookup for PkarrPublisher {
     fn publish(&self, data: &EndpointData) {
-        self.update_endpoint_data(&data);
+        self.update_endpoint_data(data);
     }
 }
 
