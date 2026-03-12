@@ -225,6 +225,11 @@ impl<T> FilteredAddressLookup<T> {
     pub fn new(inner: T, filter: AddrFilter) -> Self {
         Self { inner, filter }
     }
+
+    /// Removes the filter wrapper and returns the inner address lookup.
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
 }
 
 impl<T> AsRef<T> for FilteredAddressLookup<T> {
