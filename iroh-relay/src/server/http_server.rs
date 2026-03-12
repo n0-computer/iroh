@@ -164,7 +164,9 @@ impl ServerHandle {
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Set ring as the process-level default crypto provider
-/// rustls::crypto::ring::default_provider().install_default().ok();
+/// rustls::crypto::ring::default_provider()
+///     .install_default()
+///     .ok();
 /// // Generate a self-signed certificate for testing
 /// let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
 /// let cert_der = cert.cert.der().to_vec();
@@ -211,7 +213,9 @@ impl TlsConfig {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// // Set ring as the process-level default crypto provider
-    /// rustls::crypto::ring::default_provider().install_default().ok();
+    /// rustls::crypto::ring::default_provider()
+    ///     .install_default()
+    ///     .ok();
     /// // Generate a self-signed certificate for testing
     /// let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     /// let cert_der = cert.cert.der().to_vec();
