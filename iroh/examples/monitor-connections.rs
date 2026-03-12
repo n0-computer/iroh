@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use iroh::{
-    Endpoint, RelayMode, Watcher,
+    Endpoint, Watcher,
     endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks},
 };
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
@@ -23,7 +23,7 @@ async fn main() -> Result {
         .init();
 
     let monitor = Monitor::new();
-    let server = Endpoint::empty_builder(RelayMode::Disabled)
+    let server = Endpoint::empty_builder()
         .alpns(vec![ALPN.to_vec()])
         .hooks(monitor.clone())
         .bind()
@@ -35,7 +35,7 @@ async fn main() -> Result {
 
     let client_task = tokio::spawn(
         async move {
-            let client = Endpoint::empty_builder(RelayMode::Disabled)
+            let client = Endpoint::empty_builder()
                 .bind()
                 .instrument(info_span!("client"))
                 .await?;

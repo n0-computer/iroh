@@ -4,14 +4,14 @@
 //!
 //! ```no_run
 //! # use iroh::{
-//! #     endpoint::{Connection, BindError},
+//! #     endpoint::{Connection, BindError, presets},
 //! #     protocol::{AcceptError, ProtocolHandler, Router},
 //! #     Endpoint,
 //! #     EndpointAddr
 //! # };
 //! #
 //! # async fn test_compile() -> Result<(), BindError> {
-//! let endpoint = Endpoint::bind().await?;
+//! let endpoint = Endpoint::bind(presets::N0).await?;
 //!
 //! let router = Router::builder(endpoint).accept(b"/my/alpn", Echo).spawn();
 //! # Ok(())
@@ -71,10 +71,10 @@ use crate::{
 /// ```no_run
 /// # use std::sync::Arc;
 /// # use n0_error::StdResultExt;
-/// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, EndpointAddr};
+/// # use iroh::{endpoint::{Connecting, presets}, protocol::{ProtocolHandler, Router}, Endpoint, EndpointAddr};
 /// #
 /// # async fn test_compile() -> n0_error::Result<()> {
-/// let endpoint = Endpoint::bind().await?;
+/// let endpoint = Endpoint::bind(presets::N0).await?;
 ///
 /// let router = Router::builder(endpoint)
 ///     // .accept(&ALPN, <something>)
@@ -609,17 +609,14 @@ mod tests {
     use n0_error::{Result, StdResultExt};
 
     use super::*;
-    use crate::{
-        RelayMode,
-        endpoint::{
-            ApplicationClose, BeforeConnectOutcome, ConnectError, ConnectWithOptsError,
-            ConnectionError, EndpointHooks,
-        },
+    use crate::endpoint::{
+        ApplicationClose, BeforeConnectOutcome, ConnectError, ConnectWithOptsError,
+        ConnectionError, EndpointHooks,
     };
 
     #[tokio::test]
     async fn test_shutdown() -> Result {
-        let endpoint = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let endpoint = Endpoint::empty_builder().bind().await?;
         let router = Router::builder(endpoint.clone()).spawn();
 
         assert!(!router.is_shutdown());
@@ -657,14 +654,14 @@ mod tests {
     #[tokio::test]
     async fn test_limiter_router() -> Result {
         // tracing_subscriber::fmt::try_init().ok();
-        let e1 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let e1 = Endpoint::empty_builder().bind().await?;
         // deny all access
         let proto = AccessLimit::new(Echo, |_endpoint_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
         let addr1 = r1.endpoint().addr();
         dbg!(&addr1);
-        let e2 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let e2 = Endpoint::empty_builder().bind().await?;
 
         println!("connecting");
         let conn = e2.connect(addr1, ECHO_ALPN).await?;
@@ -697,16 +694,13 @@ mod tests {
             }
         }
 
-        let e1 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let e1 = Endpoint::empty_builder().bind().await?;
 
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, Echo).spawn();
 
         let addr1 = r1.endpoint().addr();
         dbg!(&addr1);
-        let e2 = Endpoint::empty_builder(RelayMode::Disabled)
-            .hooks(LimitHook)
-            .bind()
-            .await?;
+        let e2 = Endpoint::empty_builder().hooks(LimitHook).bind().await?;
 
         println!("connecting");
         let conn_err = e2.connect(addr1, ECHO_ALPN).await.unwrap_err();
@@ -750,7 +744,7 @@ mod tests {
         }
 
         eprintln!("creating ep1");
-        let endpoint = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let endpoint = Endpoint::empty_builder().bind().await?;
         let router = Router::builder(endpoint)
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
@@ -758,7 +752,7 @@ mod tests {
         let addr = router.endpoint().addr();
 
         eprintln!("creating ep2");
-        let endpoint2 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let endpoint2 = Endpoint::empty_builder().bind().await?;
         eprintln!("connecting to {addr:?}");
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 

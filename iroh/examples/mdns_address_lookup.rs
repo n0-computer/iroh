@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use iroh::{
-    Endpoint, EndpointId, RelayMode,
+    Endpoint, EndpointId,
     address_lookup::{self, AddrFilter},
     endpoint_info::UserData,
 };
@@ -19,7 +19,7 @@ use tokio::task::JoinSet;
 /// Uses `empty_builder` with relay disabled and an IP-only address filter,
 /// since mDNS discovers endpoints on the local network via IP addresses.
 async fn bind_mdns_endpoint() -> std::result::Result<Endpoint, iroh::endpoint::BindError> {
-    Endpoint::empty_builder(RelayMode::Disabled)
+    Endpoint::empty_builder()
         .addr_filter(AddrFilter::ip_only())
         .bind()
         .await

@@ -158,27 +158,25 @@ impl Builder {
     /// Creates a new [`Builder`] using the given [`Preset`].
     ///
     /// See [`presets`] for more.
-    pub fn new<P: Preset>(preset: P) -> Self {
-        Self::empty(RelayMode::Disabled).preset(preset)
+    pub fn new(preset: impl Preset) -> Self {
+        Self::empty().preset(preset)
     }
 
     /// Applies the given [`Preset`].
-    pub fn preset<P: Preset>(mut self, preset: P) -> Self {
+    pub fn preset(mut self, preset: impl Preset) -> Self {
         self = preset.apply(self);
         self
     }
 
-    /// Creates an empty builder with no address lookup  services.
-    pub fn empty(relay_mode: RelayMode) -> Self {
-        let mut transports = vec![
+    /// Creates an empty builder with no address lookup services, and `RelayMode::Disabled`.
+    pub fn empty() -> Self {
+        let transports = vec![
             #[cfg(not(wasm_browser))]
             TransportConfig::default_ipv4(),
             #[cfg(not(wasm_browser))]
             TransportConfig::default_ipv6(),
         ];
-        if let Some(relay) = relay_mode.into() {
-            transports.push(relay);
-        }
+
         Self {
             secret_key: Default::default(),
             alpn_protocols: Default::default(),
@@ -311,8 +309,8 @@ impl Builder {
     /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
-    /// # use iroh::Endpoint;
-    /// let endpoint = Endpoint::builder()
+    /// # use iroh::{Endpoint, endpoint::presets};
+    /// let endpoint = Endpoint::builder(presets::N0)
     ///     .clear_ip_transports()
     ///     .bind_addr("127.0.0.1:0")?
     ///     .bind_addr("[::1]:0")?
@@ -388,8 +386,8 @@ impl Builder {
     /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
-    /// # use iroh::{Endpoint, endpoint::BindOpts};
-    /// let endpoint = Endpoint::builder()
+    /// # use iroh::{Endpoint, endpoint::{BindOpts, presets}};
+    /// let endpoint = Endpoint::builder(presets::N0)
     ///     .clear_ip_transports()
     ///     .bind_addr_with_opts("127.0.0.1:0", BindOpts::default().set_prefix_len(24))?
     ///     .bind_addr_with_opts("[::1]:0", BindOpts::default().set_prefix_len(48))?
@@ -827,25 +825,21 @@ impl Endpoint {
 
     // # Methods relating to construction.
 
-    /// Returns the builder for an [`Endpoint`], with a production configuration.
-    ///
-    /// This uses the [`presets::N0`] as the configuration.
-    pub fn builder() -> Builder {
-        Builder::new(presets::N0)
+    /// Returns the builder for an [`Endpoint`], with the given [`Preset`] configuration.
+    pub fn builder(preset: impl Preset) -> Builder {
+        Builder::new(preset)
     }
 
     /// Returns the builder for an [`Endpoint`], with an empty configuration.
     ///
     /// See [`Builder::empty`] for details.
-    pub fn empty_builder(relay_mode: RelayMode) -> Builder {
-        Builder::empty(relay_mode)
+    pub fn empty_builder() -> Builder {
+        Builder::empty()
     }
 
-    /// Constructs a default [`Endpoint`] and binds it immediately.
-    ///
-    /// Uses the [`presets::N0`] as configuration.
-    pub async fn bind() -> Result<Self, BindError> {
-        Self::builder().bind().await
+    /// Constructs a default [`Endpoint`] and binds it immediately using the provided [`Preset`].
+    pub async fn bind(preset: impl Preset) -> Result<Self, BindError> {
+        Self::builder(preset).bind().await
     }
 
     /// Sets the list of accepted ALPN protocols.
@@ -1072,9 +1066,9 @@ impl Endpoint {
     ///
     /// ```no_run
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// use iroh::{Endpoint, Watcher};
+    /// use iroh::{Endpoint, Watcher, endpoint::presets};
     ///
-    /// let endpoint = Endpoint::builder()
+    /// let endpoint = Endpoint::builder(presets::N0)
     ///     .alpns(vec![b"my-alpn".to_vec()])
     ///     .bind()
     ///     .await?;
@@ -1106,11 +1100,11 @@ impl Endpoint {
     /// that loops over a watcher stream once the endpoint stops, combine with [`Self::closed`]:
     ///
     /// ```
-    /// # use iroh::{Watcher, Endpoint};
+    /// # use iroh::{Watcher, Endpoint, endpoint::presets};
     /// # use n0_future::StreamExt;
     /// # use tracing::info;
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// let endpoint = Endpoint::bind().await?;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// // We want to watch address changes in a different task, and stop our task
     /// // once the endpoint stops.
     /// let mut addr_stream = endpoint.watch_addr().stream();
@@ -1242,11 +1236,11 @@ impl Endpoint {
     ///
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{Endpoint, Watcher as _};
+    /// use iroh::{Endpoint, Watcher as _, endpoint::presets};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let ep = Endpoint::bind().await.unwrap();
+    /// let ep = Endpoint::bind(presets::N0).await.unwrap();
     /// let _report = ep.net_report().initialized().await;
     /// # });
     /// ```
@@ -1333,9 +1327,9 @@ impl Endpoint {
     /// You can access individual metrics directly by using the public fields:
     /// ```rust
     /// # use std::collections::BTreeMap;
-    /// # use iroh::endpoint::Endpoint;
+    /// # use iroh::endpoint::{Endpoint, presets};
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// let endpoint = Endpoint::bind().await?;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// assert_eq!(endpoint.metrics().socket.recv_datagrams.get(), 0);
     /// # Ok(())
     /// # }
@@ -1351,9 +1345,9 @@ impl Endpoint {
     /// ```rust
     /// # use std::collections::BTreeMap;
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
-    /// # use iroh::endpoint::Endpoint;
+    /// # use iroh::endpoint::{Endpoint, presets};
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// let endpoint = Endpoint::bind().await?;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
     ///     .iter()
@@ -1374,9 +1368,9 @@ impl Endpoint {
     /// [`encode_openmetrics_to_string`]:
     /// ```rust
     /// # use iroh_metrics::{Registry, MetricsSource};
-    /// # use iroh::endpoint::Endpoint;
+    /// # use iroh::endpoint::{Endpoint, presets};
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// let endpoint = Endpoint::bind().await?;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
     /// let s = registry.encode_openmetrics_to_string()?;
@@ -1397,7 +1391,7 @@ impl Endpoint {
     /// ```no_run
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
-    /// # use iroh::endpoint::Endpoint;
+    /// # use iroh::endpoint::{Endpoint, presets};
     /// # use n0_error::{StackResultExt, StdResultExt};
     /// # async fn wrapper() -> n0_error::Result<()> {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
@@ -1413,7 +1407,7 @@ impl Endpoint {
     /// });
     ///
     /// // Spawn an endpoint and add the metrics to the registry.
-    /// let endpoint = Endpoint::bind().await?;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// registry.write().unwrap().register_all(endpoint.metrics());
     ///
     /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
@@ -1552,9 +1546,9 @@ impl Endpoint {
     /// To run a task and stop it once the endpoint closes, you can use
     /// [`EndpointClosed::run_until`]:
     /// ```
-    /// # use iroh::endpoint::Endpoint;
+    /// # use iroh::endpoint::{Endpoint, presets};
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// let endpoint = Endpoint::bind().await?;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// tokio::spawn(endpoint.closed().run_until(async move {
     ///     // the future will be aborted once the endpoint closes.
     /// }));
@@ -1818,7 +1812,7 @@ mod tests {
         address_lookup::memory::MemoryLookup,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectError, ConnectOptions,
-            ConnectWithOptsError, Connection, ConnectionError, PathWatcher,
+            ConnectWithOptsError, Connection, ConnectionError, PathWatcher, presets,
         },
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
@@ -1829,7 +1823,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_connect_self() -> Result {
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::empty_builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await
@@ -1854,7 +1848,8 @@ mod tests {
         let qlog = QlogFileGroup::from_env("endpoint_connect_close");
 
         // Wait for the endpoint to be started to make sure it's up before clients try to connect
-        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let ep = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(server_secret_key)
             .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -1896,7 +1891,8 @@ mod tests {
 
         let client = tokio::spawn(
             async move {
-                let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+                let ep = Endpoint::empty_builder()
+                    .relay_mode(RelayMode::Custom(relay_map))
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .ca_roots_config(CaRootsConfig::insecure_skip_verify())
                     .transport_config(qlog.create("client")?)
@@ -1957,7 +1953,8 @@ mod tests {
         let server_endpoint_id = server_secret_key.public();
 
         // Make sure the server is bound before having clients connect to it:
-        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let ep = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(server_secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2021,7 +2018,8 @@ mod tests {
                 let round_start = Instant::now();
                 info!("[client] round {i}");
                 let client_secret_key = SecretKey::generate(&mut rng);
-                let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+                let ep = Endpoint::empty_builder()
+                    .relay_mode(RelayMode::Custom(relay_map.clone()))
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .ca_roots_config(CaRootsConfig::insecure_skip_verify())
                     .secret_key(client_secret_key)
@@ -2074,11 +2072,13 @@ mod tests {
     #[traced_test]
     async fn endpoint_send_relay() -> Result {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
-        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let client = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
-        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+        let server = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2127,7 +2127,7 @@ mod tests {
         let ep1 = {
             let span = info_span!("server");
             let _guard = span.enter();
-            Endpoint::builder()
+            Endpoint::builder(presets::N0)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .relay_mode(RelayMode::Disabled)
                 .bind()
@@ -2136,7 +2136,7 @@ mod tests {
         let ep2 = {
             let span = info_span!("client");
             let _guard = span.enter();
-            Endpoint::builder()
+            Endpoint::builder(presets::N0)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .relay_mode(RelayMode::Disabled)
                 .bind()
@@ -2197,7 +2197,7 @@ mod tests {
         ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             let secret = SecretKey::generate(&mut rng);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .ca_roots_config(CaRootsConfig::insecure_skip_verify())
@@ -2244,7 +2244,7 @@ mod tests {
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
             let secret = SecretKey::generate(&mut rng);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .ca_roots_config(CaRootsConfig::insecure_skip_verify())
@@ -2302,7 +2302,7 @@ mod tests {
         ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             let secret = SecretKey::generate(&mut rng);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .ca_roots_config(CaRootsConfig::insecure_skip_verify())
@@ -2345,7 +2345,7 @@ mod tests {
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
             let secret = SecretKey::generate(&mut rng);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .ca_roots_config(CaRootsConfig::insecure_skip_verify())
@@ -2401,7 +2401,7 @@ mod tests {
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
         ) -> Result<()> {
             let secret = SecretKey::from([0u8; 32]);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .ca_roots_config(CaRootsConfig::insecure_skip_verify())
@@ -2450,7 +2450,7 @@ mod tests {
             node_addr_tx: oneshot::Sender<EndpointAddr>,
         ) -> Result<ConnectionError> {
             let secret = SecretKey::from([1u8; 32]);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .ca_roots_config(CaRootsConfig::insecure_skip_verify())
@@ -2506,11 +2506,13 @@ mod tests {
     #[traced_test]
     async fn endpoint_relay_map_change() -> Result {
         let (relay_map, relay_url, _guard1) = run_relay_server().await?;
-        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let client = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
-        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+        let server = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2615,13 +2617,13 @@ mod tests {
     #[traced_test]
     async fn endpoint_bidi_send_recv() -> Result {
         let disco = MemoryLookup::new();
-        let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep1 = Endpoint::empty_builder()
             .address_lookup(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
 
-        let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep2 = Endpoint::empty_builder()
             .address_lookup(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2714,7 +2716,8 @@ mod tests {
     async fn test_direct_addresses_no_qad_relay() -> Result {
         let (relay_map, _, _guard) = run_relay_server_with(false).await.unwrap();
 
-        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+        let ep = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map))
             .alpns(vec![TEST_ALPN.to_vec()])
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
@@ -2729,8 +2732,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn graceful_close() -> Result {
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server = Endpoint::empty_builder(RelayMode::Disabled)
+        let client = Endpoint::empty_builder().bind().await?;
+        let server = Endpoint::empty_builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2772,12 +2775,12 @@ mod tests {
         use iroh_metrics::Registry;
 
         let secret_key = SecretKey::from_bytes(&[0u8; 32]);
-        let client = Endpoint::empty_builder(RelayMode::Disabled)
+        let client = Endpoint::empty_builder()
             .secret_key(secret_key)
             .bind()
             .await?;
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let server = Endpoint::empty_builder(RelayMode::Disabled)
+        let server = Endpoint::empty_builder()
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2834,11 +2837,8 @@ mod tests {
         primary_connect_alpn: &[u8],
         secondary_connect_alpns: Vec<Vec<u8>>,
     ) -> Result<Vec<u8>> {
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server = Endpoint::empty_builder(RelayMode::Disabled)
-            .alpns(accept_alpns)
-            .bind()
-            .await?;
+        let client = Endpoint::empty_builder().bind().await?;
+        let server = Endpoint::empty_builder().alpns(accept_alpns).bind().await?;
         let server_addr = server.addr();
         let server_task = tokio::spawn({
             let server = server.clone();
@@ -2924,7 +2924,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn watch_net_report() -> Result {
-        let endpoint = Endpoint::empty_builder(RelayMode::Staging).bind().await?;
+        let endpoint = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Staging)
+            .bind()
+            .await?;
 
         // can get a first report
         endpoint.net_report().updated().await.anyerr()?;
@@ -2955,10 +2958,7 @@ mod tests {
         }
 
         async fn noop_server() -> Result<(Router, EndpointAddr)> {
-            let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-                .bind()
-                .await
-                .anyerr()?;
+            let endpoint = Endpoint::empty_builder().bind().await.anyerr()?;
             let addr = endpoint.addr();
             let router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
             Ok((router, addr))
@@ -2979,7 +2979,7 @@ mod tests {
             .collect::<Vec<_>>();
         let ids = addrs.iter().map(|addr| addr.id).collect::<Vec<_>>();
         let address_lookup = MemoryLookup::from_endpoint_info(addrs);
-        let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
+        let endpoint = Endpoint::empty_builder()
             .address_lookup(address_lookup)
             .bind()
             .await
@@ -3007,17 +3007,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_custom_relay() -> Result {
-        let _ep = Endpoint::empty_builder(RelayMode::custom([RelayUrl::from_str(
-            "https://use1-1.relay.n0.iroh-canary.iroh.link.",
-        )?]))
-        .bind()
-        .await?;
+        let _ep = Endpoint::empty_builder()
+            .relay_mode(RelayMode::custom([RelayUrl::from_str(
+                "https://use1-1.relay.n0.iroh-canary.iroh.link.",
+            )?]))
+            .bind()
+            .await?;
 
         let relays = RelayMap::try_from_iter([
             "https://use1-1.relay.n0.iroh.iroh.link/",
             "https://euc1-1.relay.n0.iroh.iroh.link/",
         ])?;
-        let _ep = Endpoint::empty_builder(RelayMode::Custom(relays))
+        let _ep = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relays))
             .bind()
             .await?;
 
@@ -3028,7 +3030,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_bind_addr_clear() -> Result {
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::empty_builder()
             .clear_ip_transports()
             .bind_addr((Ipv4Addr::LOCALHOST, 0))?
             .bind()
@@ -3047,7 +3049,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_bind_addr_no_clear() -> Result {
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::empty_builder()
             .bind_addr((Ipv4Addr::LOCALHOST, 0))?
             .bind()
             .await?;
@@ -3072,7 +3074,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_bind_addr_default() -> Result {
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::empty_builder()
             .bind_addr_with_opts(
                 (Ipv4Addr::LOCALHOST, 0),
                 BindOpts::default().set_is_default_route(true),
@@ -3101,7 +3103,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_bind_addr_nonzero_prefix() -> Result {
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::empty_builder()
             .bind_addr_with_opts(
                 (Ipv4Addr::LOCALHOST, 0),
                 BindOpts::default().set_prefix_len(32),
@@ -3137,7 +3139,7 @@ mod tests {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
-        let res = Endpoint::empty_builder(RelayMode::Disabled)
+        let res = Endpoint::empty_builder()
             .clear_ip_transports()
             .bind_addr((Ipv4Addr::LOCALHOST, port))?
             .bind()
@@ -3163,7 +3165,7 @@ mod tests {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::empty_builder()
             .bind_addr_with_opts(
                 (Ipv4Addr::LOCALHOST, port),
                 BindOpts::default()
@@ -3193,7 +3195,7 @@ mod tests {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::empty_builder()
             .bind_addr_with_opts(
                 (Ipv4Addr::LOCALHOST, port),
                 BindOpts::default().set_is_required(false),
@@ -3217,7 +3219,7 @@ mod tests {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
-        let res = Endpoint::empty_builder(RelayMode::Disabled)
+        let res = Endpoint::empty_builder()
             .clear_ip_transports()
             .bind_addr_with_opts(
                 (Ipv4Addr::LOCALHOST, port),
@@ -3241,7 +3243,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_bind_addr_prefix_len_0_not_default() -> Result {
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::empty_builder()
             .bind_addr_with_opts(
                 (Ipv4Addr::LOCALHOST, 0),
                 BindOpts::default().set_is_default_route(false),
@@ -3293,12 +3295,14 @@ mod tests {
                 .collect()
         }
 
-        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let client = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .transport_config(qlog.create("client")?)
             .bind()
             .await?;
-        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+        let server = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -3375,7 +3379,8 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
         let secret_key = SecretKey::generate(&mut rng);
 
-        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let client = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .instrument(error_span!("ep-client"))
@@ -3384,7 +3389,8 @@ mod tests {
         info!("client {}", client.id());
 
         // bind ep1 and wait until connected to relay.
-        let ep1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let ep1 = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(secret_key.clone())
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -3413,7 +3419,8 @@ mod tests {
         info!("client connected to ep1");
 
         // now start second endpoint with same secret key
-        let ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+        let ep2 = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map))
             .secret_key(secret_key.clone())
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -3498,7 +3505,7 @@ mod tests {
         // call endpoint.close
         // ensure methods behave in the expected way
         info!("Creating endpoint");
-        let ep = Endpoint::builder().bind().await?;
+        let ep = Endpoint::builder(presets::N0).bind().await?;
         let closed = ep.closed();
         info!("Closing endpoint");
         let now = Instant::now();
@@ -3598,7 +3605,7 @@ mod tests {
     #[traced_test]
     async fn test_closed_endpoint_unpolled_accept_fut() -> Result {
         info!("Creating endpoint");
-        let ep = Endpoint::builder().bind().await?;
+        let ep = Endpoint::builder(presets::N0).bind().await?;
 
         info!("Get accept future");
         let accept_fut = ep.accept();
@@ -3620,7 +3627,7 @@ mod tests {
     #[traced_test]
     async fn test_closed_endpoint_polled_accept_fut() -> Result {
         info!("Creating endpoint");
-        let ep = Endpoint::builder().bind().await?;
+        let ep = Endpoint::builder(presets::N0).bind().await?;
 
         info!("Run an accept task");
         let ep2 = ep.clone();

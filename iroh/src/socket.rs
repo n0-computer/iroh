@@ -1740,7 +1740,7 @@ mod tests {
 
     use super::Options;
     use crate::{
-        Endpoint, RelayMode, SecretKey,
+        Endpoint, SecretKey,
         address_lookup::memory::MemoryLookup,
         dns::DnsResolver,
         endpoint::QuicTransportConfig,
@@ -1939,13 +1939,13 @@ mod tests {
     /// the endpoints rebind.
     async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
         let address_lookup = MemoryLookup::new();
-        let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep1 = Endpoint::empty_builder()
             .alpns(vec![ALPN.to_vec()])
             .address_lookup(address_lookup.clone())
             .bind()
             .await
             .unwrap();
-        let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep2 = Endpoint::empty_builder()
             .alpns(vec![ALPN.to_vec()])
             .address_lookup(address_lookup.clone())
             .bind()

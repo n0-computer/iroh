@@ -8,11 +8,11 @@
 //! another endpoint:
 //!
 //! ```no_run
-//! # use iroh::{Endpoint, EndpointAddr};
+//! # use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! # use n0_error::{StackResultExt, StdResultExt};
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let addr: EndpointAddr = todo!();
-//! let ep = Endpoint::bind().await?;
+//! let ep = Endpoint::bind(presets::N0).await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
 //! let mut send_stream = conn.open_uni().await.std_context("unable to open uni")?;
 //! send_stream
@@ -26,10 +26,10 @@
 //! The other endpoint can accept incoming connections using the [`Endpoint`] as well:
 //!
 //! ```no_run
-//! # use iroh::{Endpoint, EndpointAddr};
+//! # use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! # use n0_error::{StackResultExt, StdResultExt};
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::builder()
+//! let ep = Endpoint::builder(presets::N0)
 //!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
 //!     .await?;
@@ -170,12 +170,12 @@
 //! The central struct is the [`Endpoint`], which allows you to connect to other endpoints:
 //!
 //! ```no_run
-//! use iroh::{Endpoint, EndpointAddr};
+//! use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! use n0_error::{Result, StackResultExt, StdResultExt};
 //!
 //! async fn connect(addr: EndpointAddr) -> Result<()> {
 //!     // The Endpoint is the central object that manages an iroh node.
-//!     let ep = Endpoint::bind().await?;
+//!     let ep = Endpoint::bind(presets::N0).await?;
 //!
 //!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
 //!     let conn = ep.connect(addr, b"hello-world").await?;
@@ -195,13 +195,13 @@
 //! Every [`Endpoint`] can also accept connections:
 //!
 //! ```no_run
-//! use iroh::{Endpoint, EndpointAddr};
+//! use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! use n0_error::{Result, StackResultExt, StdResultExt};
 //! use n0_future::StreamExt;
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.
-//!     let ep = Endpoint::builder()
+//!     let ep = Endpoint::builder(presets::N0)
 //!         .alpns(vec![b"hello-world".to_vec()])
 //!         .bind()
 //!         .await?;

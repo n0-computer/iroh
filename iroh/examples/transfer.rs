@@ -457,14 +457,14 @@ impl EndpointArgs {
         output: Output,
         log: Option<&LogSettings>,
     ) -> Result<Endpoint> {
-        let relay_mode = if self.no_relay {
-            RelayMode::Disabled
+        let mut builder = Endpoint::empty_builder();
+        if self.no_relay {
+            // nothing to do
         } else if !self.relay_url.is_empty() {
-            RelayMode::Custom(RelayMap::from_iter(self.relay_url))
+            builder = builder.relay_mode(RelayMode::Custom(RelayMap::from_iter(self.relay_url)));
         } else {
-            self.env.relay_mode()
+            builder = builder.relay_mode(self.env.relay_mode());
         };
-        let mut builder = Endpoint::empty_builder(relay_mode);
         builder = builder.secret_key(secret_key);
         if self.no_relay {
             builder = builder.addr_filter(AddrFilter::ip_only());

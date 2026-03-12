@@ -76,7 +76,7 @@
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::empty_builder(RelayMode::Default)
+//! let ep = Endpoint::empty_builder()
 //!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
 //!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
@@ -614,7 +614,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        Endpoint, RelayMode,
+        Endpoint,
         endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig},
     };
 
@@ -939,7 +939,7 @@ mod tests {
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let secret = SecretKey::generate(rng);
 
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::empty_builder()
             .secret_key(secret)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -1108,7 +1108,8 @@ mod test_dns_pkarr {
         dns_pkarr_server: &DnsPkarrServer,
     ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
         let secret_key = SecretKey::generate(rng);
-        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let ep = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
