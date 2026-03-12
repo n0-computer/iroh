@@ -213,7 +213,6 @@ impl ClientBuilder {
         use crate::{
             http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION},
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
-            tls::CaRootsConfig,
         };
 
         let mut dial_url = (*self.url).clone();
@@ -237,10 +236,10 @@ impl ClientBuilder {
         let tls_config = match self.tls_config.clone() {
             Some(config) => config,
             #[cfg(feature = "ring")]
-            None => CaRootsConfig::default()
+            None => crate::tls::CaRootsConfig::default()
                 .client_config(Arc::new(rustls::crypto::ring::default_provider()))?,
             #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-            None => CaRootsConfig::default()
+            None => crate::tls::CaRootsConfig::default()
                 .client_config(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))?,
             #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
             None => n0_error::bail!(ConnectError::MissingCryptoProvider),
