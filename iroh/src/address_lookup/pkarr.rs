@@ -56,7 +56,7 @@
 //! [`AddrFilter`]: crate::address_lookup::AddrFilter
 //! [`AddrLookupBuilder::with_addr_filter`]: crate::address_lookup::AddressLookupBuilder::with_addr_filter
 
-use std::sync::Arc;
+use std::{ops::Not, sync::Arc};
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointInfo};
@@ -229,7 +229,15 @@ impl PkarrPublisherBuilder {
         self,
         secret_key: SecretKey,
         tls_config: rustls::ClientConfig,
+        relays_enabled: bool,
     ) -> FilteredAddressLookup<PkarrPublisher> {
+        let filter = self.filter.unwrap_or_else(|| {
+            if relays_enabled {
+                AddrFilter::relay_only()
+            } else {
+                AddrFilter::unfiltered()
+            }
+        });
         FilteredAddressLookup::new(
             PkarrPublisher::new(
                 secret_key,
@@ -240,7 +248,7 @@ impl PkarrPublisherBuilder {
                 self.dns_resolver,
                 tls_config,
             ),
-            self.filter.unwrap_or_else(|| AddrFilter::relay_only()),
+            filter,
         )
     }
 }
@@ -255,7 +263,8 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
         }
         let tls_config = endpoint.tls_config().clone();
-        Ok(self.build(endpoint.secret_key().clone(), tls_config))
+        let relays_enabled = endpoint.relays::<Vec<_>>().is_empty().not();
+        Ok(self.build(endpoint.secret_key().clone(), tls_config, relays_enabled))
     }
 }
 

@@ -1071,7 +1071,7 @@ mod test_dns_pkarr {
             .expect("infallible");
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
-            .build(secret_key, tls_config);
+            .build(secret_key, tls_config, true);
         let user_data: UserData = "foobar".parse().unwrap();
         let data = EndpointData::new(relay_url.clone()).with_user_data(Some(user_data.clone()));
         // does not block, update happens in background task
