@@ -208,10 +208,6 @@ impl Builder {
     }
 
     /// Builds the address lookup mechanism.
-    ///
-    /// `relays_enabled` determines the default address filter when none was set via
-    /// [`Builder::addr_filter`]: when `true`, [`AddrFilter::relay_only`] is used;
-    /// when `false`, [`AddrFilter::unfiltered`] is used.
     pub fn build(
         self,
     ) -> Result<FilteredAddressLookup<DhtAddressLookup>, AddressLookupBuilderError> {

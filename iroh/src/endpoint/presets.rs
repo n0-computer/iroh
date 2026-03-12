@@ -58,15 +58,12 @@ impl Preset for N0 {
         {
             use crate::address_lookup::PkarrResolver;
 
-            builder =
-                builder.address_lookup(PkarrResolver::n0_dns().with_addr_filter(filter.clone()));
+            builder = builder.address_lookup(PkarrResolver::n0_dns());
         }
         // Resolve using DNS queries outside browsers.
         #[cfg(not(wasm_browser))]
         {
-            builder = builder.address_lookup(
-                crate::address_lookup::DnsAddressLookup::n0_dns().with_addr_filter(filter.clone()),
-            );
+            builder = builder.address_lookup(crate::address_lookup::DnsAddressLookup::n0_dns());
         }
 
         builder = builder.relay_mode(default_relay_mode());
@@ -106,15 +103,12 @@ impl Preset for N0DisableRelay {
         {
             use crate::address_lookup::PkarrResolver;
 
-            builder =
-                builder.address_lookup(PkarrResolver::n0_dns().with_addr_filter(filter.clone()));
+            builder = builder.address_lookup(PkarrResolver::n0_dns());
         }
         // Resolve using DNS queries outside browsers.
         #[cfg(not(wasm_browser))]
         {
-            builder = builder.address_lookup(
-                crate::address_lookup::DnsAddressLookup::n0_dns().with_addr_filter(filter.clone()),
-            );
+            builder = builder.address_lookup(crate::address_lookup::DnsAddressLookup::n0_dns());
         }
 
         builder = builder.relay_mode(RelayMode::Disabled);
