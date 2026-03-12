@@ -211,6 +211,23 @@ pub struct FilteredAddressLookup<T> {
     filter: AddrFilter,
 }
 
+impl<T> FilteredAddressLookup<T> {
+    /// Wraps an address lookup with an address filter.
+    ///
+    /// The filter allows you to specify which addresses the address
+    /// lookup service will publish.
+    /// See also [`FilteredBuilder::with_addr_filter`].
+    pub fn new(inner: T, filter: AddrFilter) -> Self {
+        Self { inner, filter }
+    }
+}
+
+impl<T> AsRef<T> for FilteredAddressLookup<T> {
+    fn as_ref(&self) -> &T {
+        &self.inner
+    }
+}
+
 impl<T: AddressLookup> AddressLookup for FilteredAddressLookup<T> {
     fn publish(&self, data: &EndpointData) {
         let addrs = data.filtered_addrs(&self.filter);
@@ -992,7 +1009,7 @@ mod test_dns_pkarr {
         let user_data: UserData = "foobar".parse().unwrap();
         let data = EndpointData::new(relay_url.clone()).with_user_data(Some(user_data.clone()));
         // does not block, update happens in background task
-        publisher.update_endpoint_data(&data);
+        publisher.as_ref().update_endpoint_data(&data);
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
             .on_endpoint(&endpoint_id, PUBLISH_TIMEOUT)
