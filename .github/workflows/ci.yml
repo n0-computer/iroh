@@ -308,6 +308,25 @@ jobs:
       - name: clippy check (default features)
         run: cargo clippy --workspace --all-targets --lib --bins --tests --benches --examples
 
+  check_optional_deps:
+    timeout-minutes: 10
+    name: Check optional deps are absent without features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify optional deps are absent without features
+        run: |
+          tree=$(cargo tree -p iroh --no-default-features --edges normal)
+          fail=0
+          for dep in portmapper igd-next swarm-discovery; do
+            if echo "$tree" | grep -q "$dep"; then
+              echo "ERROR: $dep should not be in the dependency tree without its feature"
+              fail=1
+            fi
+          done
+          exit $fail
+
   msrv:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
