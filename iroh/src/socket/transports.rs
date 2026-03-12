@@ -104,7 +104,7 @@ impl TransportConfig {
     pub(crate) fn default_ipv4() -> Self {
         use std::net::Ipv4Addr;
 
-        use netdev::ipnet::Ipv4Net;
+        use ipnet::Ipv4Net;
 
         Self::Ip {
             config: ip::Config::V4 {
@@ -120,7 +120,7 @@ impl TransportConfig {
     /// Configures a default IPv6 transport, listening on `[::]:0`.
     #[cfg(not(wasm_browser))]
     pub(crate) fn default_ipv6() -> Self {
-        use netdev::ipnet::Ipv6Net;
+        use ipnet::Ipv6Net;
 
         Self::Ip {
             config: ip::Config::V6 {
