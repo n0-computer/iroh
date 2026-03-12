@@ -200,10 +200,10 @@ jobs:
         run: cargo build --target wasm32-unknown-unknown -p iroh-base --all-features
 
       - name: wasm32 build (iroh-relay)
-        run: cargo build --target wasm32-unknown-unknown -p iroh-relay --no-default-features
+        run: cargo build --target wasm32-unknown-unknown -p iroh-relay
 
       - name: wasm32 build (iroh)
-        run: cargo build --target wasm32-unknown-unknown -p iroh --no-default-features
+        run: cargo build --target wasm32-unknown-unknown -p iroh
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
@@ -216,7 +216,7 @@ jobs:
           ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh.wasm | grep 'import "env"'
 
       - name: Run integration test in wasm
-        run: cargo test -p iroh --test integration --target=wasm32-unknown-unknown --no-default-features
+        run: cargo test -p iroh --test integration --target=wasm32-unknown-unknown
 
   check_semver:
     runs-on: ubuntu-latest
