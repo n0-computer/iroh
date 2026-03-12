@@ -319,7 +319,7 @@ jobs:
         run: |
           tree=$(cargo tree -p iroh --no-default-features --edges normal)
           fail=0
-          for dep in portmapper igd-next swarm-discovery; do
+          for dep in portmapper igd-next swarm-discovery ring aws-lc-rs; do
             if echo "$tree" | grep -q "$dep"; then
               echo "ERROR: $dep should not be in the dependency tree without its feature"
               fail=1
