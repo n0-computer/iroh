@@ -17,7 +17,7 @@
 
 use crate::{
     RelayMode,
-    address_lookup::{AddrFilter, AddressLookupBuilder, PkarrPublisher},
+    address_lookup::PkarrPublisher,
     endpoint::{Builder, default_relay_mode},
 };
 
@@ -44,9 +44,6 @@ pub trait Preset {
 /// When in tests, or when the `test-utils` feature is enabled, this will use the
 /// [`N0_DNS_PKARR_RELAY_STAGING`].
 ///
-/// This preset includes an [`AddrFilter`] for the address lookup services that only publishes
-/// the endpoint's relay address, by default.
-///
 /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::address_lookup::N0_DNS_PKARR_RELAY_PROD
 /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::address_lookup::N0_DNS_PKARR_RELAY_STAGING
 #[derive(Debug, Copy, Clone, Default)]
@@ -54,8 +51,7 @@ pub struct N0;
 
 impl Preset for N0 {
     fn apply(self, mut builder: Builder) -> Builder {
-        let filter = AddrFilter::relay_only();
-        builder = builder.address_lookup(PkarrPublisher::n0_dns().with_addr_filter(filter.clone()));
+        builder = builder.address_lookup(PkarrPublisher::n0_dns());
 
         // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
         #[cfg(wasm_browser)]
@@ -97,9 +93,6 @@ impl Preset for N0 {
 /// When in tests, or when the `test-utils` feature is enabled, this will use the
 /// [`N0_DNS_PKARR_RELAY_STAGING`].
 ///
-/// This preset includes an [`AddrFilter`] for the address lookup services that only publishes
-/// the endpoint's IP addresses.
-///
 /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::address_lookup::N0_DNS_PKARR_RELAY_PROD
 /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::address_lookup::N0_DNS_PKARR_RELAY_STAGING
 #[derive(Debug, Copy, Clone, Default)]
@@ -107,8 +100,7 @@ pub struct N0DisableRelay;
 
 impl Preset for N0DisableRelay {
     fn apply(self, mut builder: Builder) -> Builder {
-        let filter = AddrFilter::ip_only();
-        builder = builder.address_lookup(PkarrPublisher::n0_dns().with_addr_filter(filter.clone()));
+        builder = builder.address_lookup(PkarrPublisher::n0_dns());
         // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
         #[cfg(wasm_browser)]
         {
