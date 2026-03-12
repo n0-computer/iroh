@@ -1044,7 +1044,7 @@
 <a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse().unwrap();
 <a href=#1045 id=1045 data-nosnippet>1045</a>        <span class="kw">let </span>data = EndpointData::new(relay_url.clone()).with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
 <a href=#1046 id=1046 data-nosnippet>1046</a>        <span class="comment">// does not block, update happens in background task
-<a href=#1047 id=1047 data-nosnippet>1047</a>        </span>publisher.as_ref().update_endpoint_data(<span class="kw-2">&amp;</span>data);
+<a href=#1047 id=1047 data-nosnippet>1047</a>        </span>publisher.update_endpoint_data(<span class="kw-2">&amp;</span>data);
 <a href=#1048 id=1048 data-nosnippet>1048</a>        <span class="comment">// wait until our shared state received the update from pkarr publishing
 <a href=#1049 id=1049 data-nosnippet>1049</a>        </span>dns_pkarr_server
 <a href=#1050 id=1050 data-nosnippet>1050</a>            .on_endpoint(<span class="kw-2">&amp;</span>endpoint_id, PUBLISH_TIMEOUT)
