@@ -59,7 +59,7 @@
 use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
-use iroh_relay::endpoint_info::{EncodingError, EndpointInfo};
+use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointInfo};
 use n0_error::{e, stack_error};
 use n0_future::{
     boxed::BoxStream,
@@ -80,7 +80,7 @@ use crate::{
     Endpoint,
     address_lookup::{
         AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
-        Error as AddressLookupError, Item as AddressLookupItem,
+        Error as AddressLookupError, FilteredAddressLookup, Item as AddressLookupItem,
     },
     endpoint::force_staging_infra,
     util::reqwest_client_builder,
@@ -164,6 +164,7 @@ pub struct PkarrPublisherBuilder {
     pkarr_relay: Url,
     ttl: u32,
     republish_interval: Duration,
+    filter: Option<AddrFilter>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
 }
@@ -175,6 +176,7 @@ impl PkarrPublisherBuilder {
             pkarr_relay,
             ttl: DEFAULT_PKARR_TTL,
             republish_interval: DEFAULT_REPUBLISH_INTERVAL,
+            filter: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
         }
@@ -214,18 +216,31 @@ impl PkarrPublisherBuilder {
         self
     }
 
+    /// Sets the address filtering that determines which addresses get published.
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
+        self.filter = Some(filter);
+        self
+    }
+
     /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
     ///
     /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
-    pub fn build(self, secret_key: SecretKey, tls_config: rustls::ClientConfig) -> PkarrPublisher {
-        PkarrPublisher::new(
-            secret_key,
-            self.pkarr_relay,
-            self.ttl,
-            self.republish_interval,
-            #[cfg(not(wasm_browser))]
-            self.dns_resolver,
-            tls_config,
+    pub fn build(
+        self,
+        secret_key: SecretKey,
+        tls_config: rustls::ClientConfig,
+    ) -> FilteredAddressLookup<PkarrPublisher> {
+        FilteredAddressLookup::new(
+            PkarrPublisher::new(
+                secret_key,
+                self.pkarr_relay,
+                self.ttl,
+                self.republish_interval,
+                #[cfg(not(wasm_browser))]
+                self.dns_resolver,
+                tls_config,
+            ),
+            self.filter.unwrap_or_else(|| AddrFilter::relay_only()),
         )
     }
 }
