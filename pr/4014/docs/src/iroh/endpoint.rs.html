@@ -168,7 +168,7 @@
 <a href=#168 id=168 data-nosnippet>168</a>        <span class="self">self
 <a href=#169 id=169 data-nosnippet>169</a>    </span>}
 <a href=#170 id=170 data-nosnippet>170</a>
-<a href=#171 id=171 data-nosnippet>171</a>    <span class="doccomment">/// Creates an empty builder with no address lookup services, and `RelayMode::Disabled`.
+<a href=#171 id=171 data-nosnippet>171</a>    <span class="doccomment">/// Creates an empty builder with no address lookup services, and [`RelayMode::Disabled`].
 <a href=#172 id=172 data-nosnippet>172</a>    </span><span class="kw">pub fn </span>empty() -&gt; <span class="self">Self </span>{
 <a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">let </span>transports = <span class="macro">vec!</span>[
 <a href=#174 id=174 data-nosnippet>174</a>            <span class="attr">#[cfg(not(wasm_browser))]
@@ -837,7 +837,7 @@
 <a href=#837 id=837 data-nosnippet>837</a>        Builder::empty()
 <a href=#838 id=838 data-nosnippet>838</a>    }
 <a href=#839 id=839 data-nosnippet>839</a>
-<a href=#840 id=840 data-nosnippet>840</a>    <span class="doccomment">/// Constructs a default [`Endpoint`] and binds it immediately using the provided [`Preset`].
+<a href=#840 id=840 data-nosnippet>840</a>    <span class="doccomment">/// Constructs a default [`Endpoint`] using the provided [`Preset`] and binds it immediately.
 <a href=#841 id=841 data-nosnippet>841</a>    </span><span class="kw">pub async fn </span>bind(preset: <span class="kw">impl </span>Preset) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, BindError&gt; {
 <a href=#842 id=842 data-nosnippet>842</a>        <span class="self">Self</span>::builder(preset).bind().<span class="kw">await
 <a href=#843 id=843 data-nosnippet>843</a>    </span>}
