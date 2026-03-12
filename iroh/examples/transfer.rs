@@ -43,6 +43,7 @@ use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     Watcher,
     address_lookup::{
+        AddrFilter,
         dns::DnsAddressLookup,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
@@ -465,6 +466,11 @@ impl EndpointArgs {
         };
         let mut builder = Endpoint::empty_builder(relay_mode);
         builder = builder.secret_key(secret_key);
+        if self.no_relay {
+            builder = builder.addr_filter(AddrFilter::ip_only());
+        } else {
+            builder = builder.addr_filter(AddrFilter::relay_only());
+        }
 
         if Env::Dev == self.env {
             #[cfg(feature = "test-utils")]
