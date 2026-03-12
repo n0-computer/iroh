@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
 
     let ud = user_data.clone();
     let address_lookup_stream_task = tokio::spawn(async move {
-        let mut address_lookup_stream = mdns.subscribe().await;
+        let mut address_lookup_stream = mdns.as_ref().subscribe().await;
         let mut discovered_endpoints: Vec<EndpointId> = vec![];
         while let Some(event) = address_lookup_stream.next().await {
             match event {
