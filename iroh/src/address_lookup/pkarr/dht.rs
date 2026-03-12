@@ -5,10 +5,7 @@
 //! overview of pkarr.
 //!
 //! [pkarr module]: super
-use std::{
-    ops::Not,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use iroh_base::{EndpointId, SecretKey};
 use n0_future::{
@@ -119,7 +116,7 @@ pub struct Builder {
     dht: bool,
     republish_delay: Duration,
     enable_publish: bool,
-    addr_filter: Option<AddrFilter>,
+    addr_filter: AddrFilter,
 }
 
 impl Default for Builder {
@@ -132,7 +129,7 @@ impl Default for Builder {
             dht: true,
             republish_delay: REPUBLISH_DELAY,
             enable_publish: true,
-            addr_filter: None,
+            addr_filter: AddrFilter::relay_only(),
         }
     }
 }
@@ -197,11 +194,16 @@ impl Builder {
 
     /// Sets the address filter to control which addresses are published to the DHT.
     ///
-    /// By default (when not called), [`AddrFilter::relay_only`] is used when relays are
-    /// enabled, or [`AddrFilter::unfiltered`] when relays are disabled. This avoids
-    /// leaking IP addresses to the public DHT when a relay is available.
+    /// By default [`AddrFilter::relay_only`] is used. This avoids leaking IP addresses
+    /// to the public DHT.
+    ///
+    /// It can be useful to override this with [`AddrFilter::unfiltered`], if this is
+    /// not a concern, e.g. when this endpoint runs on a machine with public IP
+    /// addresses and without a firewall. In such cases connecting to this endpoint
+    /// with just an [`EndpointId`] and DHT lookup can become faster and potentially
+    /// even bypass a relay connection entirely.
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
-        self.addr_filter = Some(filter);
+        self.addr_filter = filter;
         self
     }
 
@@ -212,15 +214,7 @@ impl Builder {
     /// when `false`, [`AddrFilter::unfiltered`] is used.
     pub fn build(
         self,
-        relays_enabled: bool,
     ) -> Result<FilteredAddressLookup<DhtAddressLookup>, AddressLookupBuilderError> {
-        let filter = self.addr_filter.unwrap_or_else(|| {
-            if relays_enabled {
-                AddrFilter::relay_only()
-            } else {
-                AddrFilter::unfiltered()
-            }
-        });
         if !(self.dht || self.pkarr_relay.is_some()) {
             return Err(AddressLookupBuilderError::from_err(
                 "pkarr",
@@ -256,7 +250,7 @@ impl Builder {
             republish_delay: self.republish_delay,
             task: Default::default(),
         }));
-        Ok(FilteredAddressLookup::new(inner, filter))
+        Ok(FilteredAddressLookup::new(inner, self.addr_filter))
     }
 }
 
@@ -265,9 +259,7 @@ impl AddressLookupBuilder for Builder {
         self,
         endpoint: &Endpoint,
     ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
-        let relays_enabled = endpoint.relays::<Vec<_>>().is_empty().not();
-        self.secret_key(endpoint.secret_key().clone())
-            .build(relays_enabled)
+        self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
 
@@ -375,7 +367,8 @@ mod tests {
         let address_lookup = DhtAddressLookup::builder()
             .secret_key(secret.clone())
             .client(client)
-            .build(false)?;
+            .addr_filter(AddrFilter::unfiltered())
+            .build()?;
 
         let relay_url: RelayUrl = Url::parse("https://example.com").anyerr()?.into();
 

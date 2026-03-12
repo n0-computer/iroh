@@ -58,7 +58,7 @@
 //! [`AddrFilter::unfiltered`]: crate::address_lookup::AddrFilter::unfiltered
 //! [`PkarrPublisherBuilder::addr_filter`]: PkarrPublisherBuilder::addr_filter
 
-use std::{ops::Not, sync::Arc};
+use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointInfo};
@@ -166,7 +166,7 @@ pub struct PkarrPublisherBuilder {
     pkarr_relay: Url,
     ttl: u32,
     republish_interval: Duration,
-    filter: Option<AddrFilter>,
+    filter: AddrFilter,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
 }
@@ -178,7 +178,7 @@ impl PkarrPublisherBuilder {
             pkarr_relay,
             ttl: DEFAULT_PKARR_TTL,
             republish_interval: DEFAULT_REPUBLISH_INTERVAL,
-            filter: None,
+            filter: AddrFilter::relay_only(),
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
         }
@@ -220,11 +220,15 @@ impl PkarrPublisherBuilder {
 
     /// Sets the address filter to control which addresses are published to the pkarr server.
     ///
-    /// By default (when not called), [`AddrFilter::relay_only`] is used when relays are
-    /// enabled, or [`AddrFilter::unfiltered`] when relays are disabled. This avoids
-    /// leaking IP addresses to the public pkarr server when the endpoint is configured with relays.
+    /// By default [`AddrFilter::relay_only`] is used. This avoids leaking IP addresses to the
+    /// public pkarr server.
+    ///
+    /// However, enabling IP address publishing can be useful, e.g. when iroh runs on a machine
+    /// connected to the internet via public IP addresses without a firewall.
+    /// In such cases, publishing them can make dialing such endpoints via DNS or PKARR lookup
+    /// faster, potentially skipping a relay connection altogether.
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
-        self.filter = Some(filter);
+        self.filter = filter;
         self
     }
 
@@ -235,15 +239,7 @@ impl PkarrPublisherBuilder {
         self,
         secret_key: SecretKey,
         tls_config: rustls::ClientConfig,
-        relays_enabled: bool,
     ) -> FilteredAddressLookup<PkarrPublisher> {
-        let filter = self.filter.unwrap_or_else(|| {
-            if relays_enabled {
-                AddrFilter::relay_only()
-            } else {
-                AddrFilter::unfiltered()
-            }
-        });
         FilteredAddressLookup::new(
             PkarrPublisher::new(
                 secret_key,
@@ -254,7 +250,7 @@ impl PkarrPublisherBuilder {
                 self.dns_resolver,
                 tls_config,
             ),
-            filter,
+            self.filter,
         )
     }
 }
@@ -269,8 +265,7 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
         }
         let tls_config = endpoint.tls_config().clone();
-        let relays_enabled = endpoint.relays::<Vec<_>>().is_empty().not();
-        Ok(self.build(endpoint.secret_key().clone(), tls_config, relays_enabled))
+        Ok(self.build(endpoint.secret_key().clone(), tls_config))
     }
 }
 

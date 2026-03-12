@@ -853,14 +853,6 @@ impl Endpoint {
         self.inner.remove_relay(relay).await
     }
 
-    /// Returns the current set of configured relays.
-    pub fn relays<T>(&self) -> T
-    where
-        T: FromIterator<Arc<RelayConfig>>,
-    {
-        self.inner.relays()
-    }
-
     // # Methods for establishing connectivity.
 
     /// Connects to a remote [`Endpoint`].
