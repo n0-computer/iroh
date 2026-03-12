@@ -4,7 +4,7 @@ use std::sync::Arc;
 use iroh_metrics::MetricsGroupSet;
 #[cfg(feature = "test-utils")]
 pub use iroh_relay::server::Metrics as RelayMetrics;
-#[cfg(all(not(wasm_browser), feature = "portmapper"))]
+#[cfg(portmapper)]
 pub use portmapper::Metrics as PortmapMetrics;
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +22,7 @@ pub struct EndpointMetrics {
     /// Metrics collected by net reports.
     pub net_report: Arc<NetReportMetrics>,
     /// Metrics collected by the portmapper service.
-    #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+    #[cfg(portmapper)]
     pub portmapper: Arc<PortmapMetrics>,
 }
 

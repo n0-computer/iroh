@@ -5,5 +5,6 @@ fn main() {
     cfg_aliases! {
         // Convenience aliases
         wasm_browser: { all(target_family = "wasm", target_os = "unknown") },
+        portmapper: { all(not(all(target_family = "wasm", target_os = "unknown")), feature = "portmapper") },
     }
 }

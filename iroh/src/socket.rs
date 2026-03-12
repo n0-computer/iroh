@@ -600,7 +600,7 @@ struct DirectAddrUpdateState {
     /// If set, start a new update as soon as the current one is finished.
     want_update: Option<UpdateReason>,
     sock: Arc<Socket>,
-    #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+    #[cfg(portmapper)]
     port_mapper: portmapper::Client,
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     net_reporter: Arc<AsyncMutex<net_report::Client>>,
@@ -630,7 +630,7 @@ impl UpdateReason {
 impl DirectAddrUpdateState {
     fn new(
         sock: Arc<Socket>,
-        #[cfg(all(not(wasm_browser), feature = "portmapper"))] port_mapper: portmapper::Client,
+        #[cfg(portmapper)] port_mapper: portmapper::Client,
         net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
         run_done: mpsc::Sender<()>,
@@ -638,7 +638,7 @@ impl DirectAddrUpdateState {
     ) -> Self {
         DirectAddrUpdateState {
             want_update: Default::default(),
-            #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+            #[cfg(portmapper)]
             port_mapper,
             net_reporter,
             sock,
@@ -688,7 +688,7 @@ impl DirectAddrUpdateState {
         if self.shutdown_token.is_cancelled() {
             debug!("skipping net_report, socket is shutting down");
             // deactivate portmapper
-            #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+            #[cfg(portmapper)]
             self.port_mapper.deactivate();
             return;
         }
@@ -698,7 +698,7 @@ impl DirectAddrUpdateState {
             return;
         }
 
-        #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+        #[cfg(portmapper)]
         self.port_mapper.procure_mapping();
 
         debug!("requesting net_report report");
@@ -782,7 +782,7 @@ impl EndpointInner {
         } = opts;
 
         let address_lookup = address_lookup::ConcurrentAddressLookup::default();
-        #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+        #[cfg(portmapper)]
         let port_mapper =
             portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
 
@@ -833,7 +833,7 @@ impl EndpointInner {
         )
         .map_err(|err| e!(BindError::Sockets, err))?;
 
-        #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+        #[cfg(portmapper)]
         {
             if let Some(v4_port) = transports.local_addrs().into_iter().find_map(|t| {
                 if let transports::Addr::Ip(SocketAddr::V4(addr)) = t {
@@ -954,7 +954,7 @@ impl EndpointInner {
         let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
         let direct_addr_update_state = DirectAddrUpdateState::new(
             sock.clone(),
-            #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+            #[cfg(portmapper)]
             port_mapper,
             Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
@@ -1278,14 +1278,14 @@ impl Actor {
         // Setup network monitoring
         let mut current_netmon_state = self.local_interfaces_watcher.get();
 
-        #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+        #[cfg(portmapper)]
         let mut portmap_watcher = self
             .direct_addr_update_state
             .port_mapper
             .watch_external_address();
 
         let mut receiver_closed = false;
-        #[cfg_attr(not(all(not(wasm_browser), feature = "portmapper")), allow(unused_mut))]
+        #[cfg_attr(not(portmapper), allow(unused_mut))]
         let mut portmap_watcher_closed = false;
 
         let mut net_report_watcher = self.sock.net_report.watch();
@@ -1295,9 +1295,9 @@ impl Actor {
 
         while !shutdown_token.is_cancelled() {
             self.sock.metrics.socket.actor_tick_main.inc();
-            #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+            #[cfg(portmapper)]
             let portmap_watcher_changed = portmap_watcher.changed();
-            #[cfg(not(all(not(wasm_browser), feature = "portmapper")))]
+            #[cfg(not(portmapper))]
             let portmap_watcher_changed = n0_future::future::pending();
 
             tokio::select! {
@@ -1363,7 +1363,7 @@ impl Actor {
                     }
                 }
                 change = portmap_watcher_changed, if !portmap_watcher_closed => {
-                    #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+                    #[cfg(portmapper)]
                     {
                         if change.is_err() {
                             trace!("tick: portmap watcher closed");
@@ -1379,7 +1379,7 @@ impl Actor {
                         debug!("external address updated: {new_external_address:?}");
                         self.re_stun(UpdateReason::PortmapUpdated);
                     }
-                    #[cfg(not(all(not(wasm_browser), feature = "portmapper")))]
+                    #[cfg(not(portmapper))]
                     let _unused_in_browsers = change;
                 },
                 state = self.local_interfaces_watcher.updated() => {
@@ -1488,7 +1488,7 @@ impl Actor {
         let mut addrs: BTreeMap<SocketAddr, DirectAddrType> = BTreeMap::new();
 
         // First add PortMapper provided addresses.
-        #[cfg(feature = "portmapper")]
+        #[cfg(portmapper)]
         {
             let portmap_watcher = self
                 .direct_addr_update_state
