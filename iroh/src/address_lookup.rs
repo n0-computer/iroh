@@ -675,7 +675,7 @@ mod tests {
                 let port: u16 = rand::rng().random_range(10_000..20_000);
                 // "240.0.0.0/4" is reserved and unreachable
                 let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                let data = EndpointData::new([TransportAddr::Ip(addr)]);
+                let data = EndpointData::from_iter([TransportAddr::Ip(addr)]);
                 Some((data, ts))
             } else {
                 self.shared
@@ -904,7 +904,7 @@ mod tests {
 
         let relay_url: RelayUrl = "https://relay.example.com".parse().unwrap();
         let ip_addr: SocketAddr = "1.2.3.4:1234".parse().unwrap();
-        let data = EndpointData::new([
+        let data = EndpointData::from_iter([
             TransportAddr::Relay(relay_url.clone()),
             TransportAddr::Ip(ip_addr),
         ]);
@@ -1056,7 +1056,8 @@ mod test_dns_pkarr {
         let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
             .build(secret_key, tls_config);
         let user_data: UserData = "foobar".parse().unwrap();
-        let data = EndpointData::new(relay_url.clone()).with_user_data(Some(user_data.clone()));
+        let data =
+            EndpointData::from_iter(relay_url.clone()).with_user_data(Some(user_data.clone()));
         // does not block, update happens in background task
         publisher.update_endpoint_data(&data);
         // wait until our shared state received the update from pkarr publishing

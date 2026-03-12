@@ -615,7 +615,7 @@ mod tests {
             // make addr info for discoverer b
             let user_data: UserData = "foobar".parse()?;
             let endpoint_data =
-                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
+                EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
                     .with_user_data(Some(user_data.clone()));
 
             // resolve twice to ensure we can create separate streams for the same endpoint_id
@@ -676,7 +676,7 @@ mod tests {
 
             // publish address_lookup_b's address
             let endpoint_data =
-                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
+                EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
                     .with_user_data(Some("".parse()?));
             address_lookup_b.publish(&endpoint_data);
 
@@ -735,7 +735,7 @@ mod tests {
 
             let (_, address_lookup) = make_address_lookup(&mut rng, false)?;
             let endpoint_data =
-                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
+                EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
 
             for i in 0..num_endpoints {
                 let (endpoint_id, address_lookup) = make_address_lookup(&mut rng, true)?;
@@ -785,11 +785,11 @@ mod tests {
 
             let (endpoint_id_c, address_lookup_c) = make_address_lookup(&mut rng, true)?;
             let endpoint_data_c =
-                EndpointData::new([TransportAddr::Ip("0.0.0.0:22222".parse().unwrap())]);
+                EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:22222".parse().unwrap())]);
             address_lookup_c.publish(&endpoint_data_c);
 
             let endpoint_data_b =
-                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
+                EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
             address_lookup_b.publish(&endpoint_data_b);
 
             let mut stream_c = address_lookup_a.resolve(endpoint_id_c).unwrap();
@@ -834,15 +834,15 @@ mod tests {
                 .build(id_c)?;
 
             let endpoint_data_a =
-                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
+                EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
             address_lookup_a.publish(&endpoint_data_a);
 
             let endpoint_data_b =
-                EndpointData::new([TransportAddr::Ip("0.0.0.0:22222".parse().unwrap())]);
+                EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:22222".parse().unwrap())]);
             address_lookup_b.publish(&endpoint_data_b);
 
             let endpoint_data_c =
-                EndpointData::new([TransportAddr::Ip("0.0.0.0:33333".parse().unwrap())]);
+                EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:33333".parse().unwrap())]);
             address_lookup_c.publish(&endpoint_data_c);
 
             let mut stream_a = address_lookup_a.resolve(id_b).unwrap();
@@ -881,7 +881,7 @@ mod tests {
             let (endpoint_id_b, mdns_b) = make_address_lookup(&mut rng, true)?;
             let relay_url: iroh_base::RelayUrl = "https://relay.example.com".parse().unwrap();
             let endpoint_data =
-                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
+                EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
                     .with_relay_url(Some(relay_url.clone()));
 
             // Subscribe to discovery events filtered for endpoint B

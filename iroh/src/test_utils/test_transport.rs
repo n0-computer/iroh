@@ -147,7 +147,7 @@ impl AddressLookup for TestAddrLookup {
             Some(Box::pin(n0_future::stream::once(Ok(Item::new(
                 EndpointInfo {
                     endpoint_id,
-                    data: EndpointData::new([TransportAddr::Custom(CustomAddr::from_parts(
+                    data: EndpointData::from_iter([TransportAddr::Custom(CustomAddr::from_parts(
                         TEST_TRANSPORT_ID,
                         endpoint_id.as_bytes(),
                     ))]),
