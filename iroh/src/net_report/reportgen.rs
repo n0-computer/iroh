@@ -115,6 +115,7 @@ impl Client {
     ///
     /// The actor starts running immediately and only generates a single report, after which
     /// it shuts down.  Dropping this handle will abort the actor.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         last_report: Option<Report>,
         relay_map: RelayMap,
