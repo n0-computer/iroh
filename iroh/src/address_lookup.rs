@@ -184,20 +184,13 @@ pub struct FilteredAddressLookup<T> {
 impl<T> FilteredAddressLookup<T> {
     /// Wraps an address lookup with an address filter.
     ///
-    /// The filter allows you to specify which addresses the address
+    /// The filter allows to specify which addresses the address
     /// lookup service will publish.
     pub fn new(inner: T, filter: AddrFilter) -> Self {
         Self { inner, filter }
     }
 
     /// Removes the filter wrapper and returns the inner address lookup.
-    pub fn into_inner(self) -> T {
-        self.inner
-    }
-}
-
-impl<T> FilteredAddressLookup<T> {
-    /// Returns the inner address lookup, discarding the filter.
     pub fn into_inner(self) -> T {
         self.inner
     }
