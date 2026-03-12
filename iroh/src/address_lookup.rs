@@ -98,7 +98,8 @@
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::empty_builder(RelayMode::Default)
+//! let ep = Endpoint::empty_builder()
+//!     .relay_mode(RelayMode::Default)
 //!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
 //!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
