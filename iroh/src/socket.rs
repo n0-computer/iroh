@@ -37,7 +37,10 @@ use n0_watcher::{self, Watchable, Watcher};
 #[cfg(not(wasm_browser))]
 use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
-use noq::{WeakConnectionHandle, crypto::rustls::QuicServerConfig};
+use noq::{
+    WeakConnectionHandle,
+    crypto::rustls::{QuicClientConfig, QuicServerConfig},
+};
 use rand::Rng;
 use tokio::sync::{
     Mutex as AsyncMutex,
@@ -194,11 +197,12 @@ impl Drop for EndpointInner {
 pub(crate) struct StaticConfig {
     pub(crate) tls_config: tls::TlsConfig,
     #[debug("QuicServerConifg")]
-    pub(crate) quic_config: QuicServerConfig,
+    pub(crate) server_config: QuicServerConfig,
+    #[debug("QuicClientConfig")]
+    pub(crate) client_config: QuicClientConfig,
     #[debug("Arc<RustlsTokenKey>")]
     pub(crate) token_key: Arc<RustlsTokenKey>,
     pub(crate) transport_config: QuicTransportConfig,
-    pub(crate) keylog: bool,
 }
 
 impl StaticConfig {
@@ -207,11 +211,24 @@ impl StaticConfig {
         &self,
         alpn_protocols: Vec<Vec<u8>>,
     ) -> noq_proto::ServerConfig {
-        let mut quic_server_config = self.quic_config.clone();
+        let mut quic_server_config = self.server_config.clone();
         quic_server_config.set_alpn_protocols(alpn_protocols);
         let mut inner =
             noq::ServerConfig::new(Arc::new(quic_server_config), self.token_key.clone());
         inner.transport_config(self.transport_config.to_inner_arc());
+        inner
+    }
+
+    /// Create a [`noq_proto::ClientConfig`] with the specified ALPN protocols.
+    pub(crate) fn create_client_config(
+        &self,
+        alpn_protocols: Vec<Vec<u8>>,
+        transport_config: Arc<noq::TransportConfig>,
+    ) -> noq_proto::ClientConfig {
+        let mut quic_client_config = self.client_config.clone();
+        quic_client_config.set_alpn_protocols(alpn_protocols);
+        let mut inner = noq::ClientConfig::new(Arc::new(quic_client_config));
+        inner.transport_config(transport_config);
         inner
     }
 }
@@ -1777,11 +1794,11 @@ mod tests {
             crypto_provider.clone(),
         );
         let static_config = StaticConfig {
-            quic_config: tls_config.make_server_config(false).unwrap(),
+            server_config: tls_config.make_server_config(false).unwrap(),
+            client_config: tls_config.make_client_config(false).unwrap(),
             tls_config,
             token_key: Arc::new(RustlsTokenKey::new(rng, &crypto_provider).unwrap()),
             transport_config: QuicTransportConfig::default(),
-            keylog: false,
         };
         let server_config = static_config.create_server_config(vec![]);
         Options {
@@ -2184,11 +2201,11 @@ mod tests {
         );
         let keylog = true;
         let static_config = StaticConfig {
-            quic_config: tls_config.make_server_config(keylog).unwrap(),
+            server_config: tls_config.make_server_config(keylog).unwrap(),
+            client_config: tls_config.make_client_config(keylog).unwrap(),
             tls_config,
             token_key: Arc::new(RustlsTokenKey::new(&mut rand::rng(), &crypto_provider).unwrap()),
             transport_config: QuicTransportConfig::default(),
-            keylog,
         };
         let server_config = static_config.create_server_config(vec![ALPN.to_vec()]);
 
@@ -2253,13 +2270,13 @@ mod tests {
         endpoint_id: EndpointId,
         transport_config: Arc<noq::TransportConfig>,
     ) -> Result<noq::Connection> {
-        let alpns = vec![ALPN.to_vec()];
-        let quic_client_config = tls::TlsConfig::new(
+        let mut quic_client_config = tls::TlsConfig::new(
             ep_secret_key.clone(),
             DEFAULT_MAX_TLS_TICKETS,
             default_provider(),
         )
-        .make_client_config(alpns, true)?;
+        .make_client_config(true)?;
+        quic_client_config.set_alpn_protocols(vec![ALPN.to_vec()]);
         let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep

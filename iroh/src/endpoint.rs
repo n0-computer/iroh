@@ -230,11 +230,11 @@ impl Builder {
             crypto_provider.clone(),
         );
         let static_config = StaticConfig {
-            quic_config: tls_config.make_server_config(self.keylog)?,
+            server_config: tls_config.make_server_config(self.keylog)?,
+            client_config: tls_config.make_client_config(self.keylog)?,
             tls_config,
             transport_config: self.transport_config.clone(),
             token_key,
-            keylog: self.keylog,
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
@@ -841,8 +841,6 @@ pub enum ConnectWithOptsError {
     LocallyRejected,
     #[error("Endpoint is closed")]
     EndpointClosed,
-    #[error("Incompatible TLS configuration")]
-    TlsConfigError { source: TlsConfigError },
 }
 
 #[allow(missing_docs)]
@@ -1037,18 +1035,12 @@ impl Endpoint {
         // Start connecting via noq. This will time out after 10 seconds if no reachable
         // address is available.
 
-        let client_config = {
-            let mut alpn_protocols = vec![alpn.to_vec()];
-            alpn_protocols.extend(options.additional_alpns);
-            let quic_client_config = self
-                .inner
-                .static_config
-                .tls_config
-                .make_client_config(alpn_protocols, self.inner.static_config.keylog)?;
-            let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
-            client_config.transport_config(transport_config.clone());
-            client_config
-        };
+        let mut alpn_protocols = vec![alpn.to_vec()];
+        alpn_protocols.extend(options.additional_alpns);
+        let client_config = self
+            .inner
+            .static_config
+            .create_client_config(alpn_protocols, transport_config.clone());
 
         let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(endpoint_id);

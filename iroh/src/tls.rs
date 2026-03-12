@@ -74,7 +74,6 @@ impl TlsConfig {
     /// debugging purposes.
     pub(crate) fn make_client_config(
         &self,
-        alpn_protocols: Vec<Vec<u8>>,
         keylog: bool,
     ) -> Result<QuicClientConfig, TlsConfigError> {
         let mut crypto = rustls::ClientConfig::builder_with_provider(self.crypto_provider.clone())
@@ -82,7 +81,6 @@ impl TlsConfig {
             .dangerous()
             .with_custom_certificate_verifier(self.server_verifier.clone())
             .with_client_cert_resolver(self.cert_resolver.clone());
-        crypto.alpn_protocols = alpn_protocols;
 
         // TODO: enable/disable 0-RTT/storing tickets
         crypto.resumption = rustls::client::Resumption::store(self.session_store.clone());
