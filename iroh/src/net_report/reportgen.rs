@@ -49,8 +49,6 @@ use url::Host;
 
 #[cfg(not(wasm_browser))]
 use super::defaults::timeouts::DNS_TIMEOUT;
-#[cfg(wasm_browser)]
-use super::portmapper; // We stub the library
 use super::{
     Report,
     probes::{Probe, ProbePlan},

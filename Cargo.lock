@@ -2103,7 +2103,6 @@ dependencies = [
  "getrandom 0.3.4",
  "hickory-resolver",
  "http",
- "igd-next",
  "indicatif",
  "iroh-base",
  "iroh-metrics",

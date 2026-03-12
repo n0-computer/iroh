@@ -62,7 +62,7 @@ mod options;
 ///
 /// We could consider making `portmapper` compile to wasm in the future,
 /// but what we need is so little it's likely not worth it.
-#[cfg(wasm_browser)]
+#[cfg(not(all(not(wasm_browser), feature = "portmapper")))]
 pub(crate) mod portmapper {
     /// Output of a port mapping probe.
     #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]

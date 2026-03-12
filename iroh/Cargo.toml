@@ -79,9 +79,8 @@ sync_wrapper = { version = "1.0.2", features = ["futures"] }
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = "0.25.1"
-igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.40.0" }
-portmapper = { version = "0.15", default-features = false }
+portmapper = { version = "0.15", optional = true, default-features = false }
 noq = { version = "0.17.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
@@ -144,8 +143,9 @@ wasm-bindgen-test = "0.3.62"
 cfg_aliases = { version = "0.2.1" }
 
 [features]
-default = ["metrics", "fast-apple-datapath"]
-metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper/metrics"]
+default = ["metrics", "fast-apple-datapath", "portmapper"]
+portmapper = ["dep:portmapper"]
+metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper?/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 address-lookup-mdns = ["dep:swarm-discovery"]
 address-lookup-pkarr-dht = ["pkarr/dht", "pkarr/relays"]
