@@ -19,11 +19,11 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
-//! [`PkarrPublisher`] publishes all addresses it receives by default, with no internal limiting.
-//! You can supply an [`AddrFilter`] via [`AddrLookupBuilder::with_addr_filter`] to limit the kinds
-//! and number of addresses that get published. When the [`PkarrPublisher`] is added via the
-//! [`N0` preset], a filter to publish only relay addresses is applied. If you add the publisher
-//! directly to an endpoint, you might want to do the same to not leak IP addresses publicly.
+//! [`PkarrPublisher`] filters published addresses based on the endpoint's relay configuration
+//! by default: when relays are enabled, only relay addresses are published
+//! ([`AddrFilter::relay_only`]); when relays are disabled, all addresses are published
+//! ([`AddrFilter::unfiltered`]). You can override this via
+//! [`PkarrPublisherBuilder::addr_filter`].
 //!
 //! Note that [`PkarrResolver`] and [`address_lookup::DnsAddressLookup`] only resolve and do not publish,
 //! so filtering does not apply to them.
@@ -54,7 +54,9 @@
 //! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
 //! [`N0` preset]: crate::endpoint::presets::N0
 //! [`AddrFilter`]: crate::address_lookup::AddrFilter
-//! [`AddrLookupBuilder::with_addr_filter`]: crate::address_lookup::AddressLookupBuilder::with_addr_filter
+//! [`AddrFilter::relay_only`]: crate::address_lookup::AddrFilter::relay_only
+//! [`AddrFilter::unfiltered`]: crate::address_lookup::AddrFilter::unfiltered
+//! [`PkarrPublisherBuilder::addr_filter`]: PkarrPublisherBuilder::addr_filter
 
 use std::{ops::Not, sync::Arc};
 
@@ -216,7 +218,11 @@ impl PkarrPublisherBuilder {
         self
     }
 
-    /// Sets the address filtering that determines which addresses get published.
+    /// Sets the address filter to control which addresses are published to the pkarr server.
+    ///
+    /// By default (when not called), [`AddrFilter::relay_only`] is used when relays are
+    /// enabled, or [`AddrFilter::unfiltered`] when relays are disabled. This avoids
+    /// leaking IP addresses to the public pkarr server when the endpoint is configured with relays.
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
         self.filter = Some(filter);
         self
