@@ -205,9 +205,14 @@ impl<T> AsRef<T> for FilteredAddressLookup<T> {
 
 impl<T: AddressLookup> AddressLookup for FilteredAddressLookup<T> {
     fn publish(&self, data: &EndpointData) {
-        let addrs = data.filtered_addrs(&self.filter);
-        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
-        self.inner.publish(&data)
+        match data.filtered_addrs(&self.filter) {
+            // addrs unchanged
+            Cow::Borrowed(_) => self.inner.publish(data),
+            Cow::Owned(addrs) => {
+                let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
+                self.inner.publish(&data);
+            }
+        }
     }
 
     fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
@@ -555,10 +560,12 @@ where
 impl AddressLookup for ConcurrentAddressLookup {
     fn publish(&self, data: &EndpointData) {
         let data = match &*self.addr_filter.read().expect("poisoned") {
-            Some(filter) => {
-                let addrs = data.filtered_addrs(filter);
-                Cow::Owned(EndpointData::new(addrs).with_user_data(data.user_data().cloned()))
-            }
+            Some(filter) => match data.filtered_addrs(filter) {
+                Cow::Borrowed(_) => Cow::Borrowed(data),
+                Cow::Owned(addrs) => {
+                    Cow::Owned(EndpointData::new(addrs).with_user_data(data.user_data().cloned()))
+                }
+            },
             None => Cow::Borrowed(data),
         };
         let services = self.services.read().expect("poisoned");

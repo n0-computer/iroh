@@ -33,6 +33,7 @@
 //! [`N0_DNS_ENDPOINT_ORIGIN_STAGING`]: crate::dns::N0_DNS_ENDPOINT_ORIGIN_STAGING
 
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     fmt::{self, Display},
     hash::Hash,
@@ -215,7 +216,7 @@ impl EndpointData {
     /// Apply the given filter to the current addresses.
     ///
     /// Returns a vec to allow re-ordering of addresses.
-    pub fn filtered_addrs(&self, filter: &AddrFilter) -> BTreeSet<TransportAddr> {
+    pub fn filtered_addrs(&self, filter: &AddrFilter) -> Cow<'_, BTreeSet<TransportAddr>> {
         filter.apply(&self.addrs)
     }
 }
@@ -228,7 +229,7 @@ impl FromIterator<TransportAddr> for EndpointData {
 
 /// The function type inside [`AddrFilter`].
 type AddrFilterFn =
-    dyn Fn(&BTreeSet<TransportAddr>) -> BTreeSet<TransportAddr> + Send + Sync + 'static;
+    dyn Fn(&BTreeSet<TransportAddr>) -> Cow<'_, BTreeSet<TransportAddr>> + Send + Sync + 'static;
 
 /// A filter and/or reordering function applied to transport addresses,
 /// typically used by AddressLookup services in iroh before publishing.
@@ -256,7 +257,7 @@ impl std::fmt::Debug for AddrFilter {
 impl AddrFilter {
     /// Create a new [`AddrFilter`]
     pub fn new(
-        f: impl Fn(&BTreeSet<TransportAddr>) -> BTreeSet<TransportAddr> + Send + Sync + 'static,
+        f: impl Fn(&BTreeSet<TransportAddr>) -> Cow<'_, BTreeSet<TransportAddr>> + Send + Sync + 'static,
     ) -> Self {
         Self(Some(Arc::new(f)))
     }
@@ -268,19 +269,22 @@ impl AddrFilter {
 
     /// Only keep relay addresses.
     pub fn relay_only() -> Self {
-        Self::new(|addrs| addrs.iter().filter(|a| a.is_relay()).cloned().collect())
+        Self::new(|addrs| Cow::Owned(addrs.iter().filter(|a| a.is_relay()).cloned().collect()))
     }
 
     /// Only keep direct IP addresses.
     pub fn ip_only() -> Self {
-        Self::new(|addrs| addrs.iter().filter(|a| !a.is_relay()).cloned().collect())
+        Self::new(|addrs| Cow::Owned(addrs.iter().filter(|a| !a.is_relay()).cloned().collect()))
     }
 
     /// Apply the address filter function to a set of addresses.
-    pub fn apply(&self, addrs: &BTreeSet<TransportAddr>) -> BTreeSet<TransportAddr> {
+    pub fn apply<'a>(
+        &self,
+        addrs: &'a BTreeSet<TransportAddr>,
+    ) -> Cow<'a, BTreeSet<TransportAddr>> {
         match &self.0 {
             Some(f) => f(addrs),
-            None => addrs.clone(),
+            None => Cow::Borrowed(addrs),
         }
     }
 }
