@@ -168,7 +168,7 @@ impl Builder {
         self
     }
 
-    /// Creates an empty builder with no address lookup services, and `RelayMode::Disabled`.
+    /// Creates an empty builder with no address lookup services, and [`RelayMode::Disabled`].
     pub fn empty() -> Self {
         let transports = vec![
             #[cfg(not(wasm_browser))]
@@ -837,7 +837,7 @@ impl Endpoint {
         Builder::empty()
     }
 
-    /// Constructs a default [`Endpoint`] and binds it immediately using the provided [`Preset`].
+    /// Constructs a default [`Endpoint`] using the provided [`Preset`] and binds it immediately.
     pub async fn bind(preset: impl Preset) -> Result<Self, BindError> {
         Self::builder(preset).bind().await
     }
