@@ -163,6 +163,8 @@ impl ServerHandle {
 /// use webpki_types::{CertificateDer, PrivateKeyDer};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// // Set ring as the process-level default crypto provider
+/// rustls::crypto::ring::default_provider().install_default().ok();
 /// // Generate a self-signed certificate for testing
 /// let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
 /// let cert_der = cert.cert.der().to_vec();
@@ -208,6 +210,8 @@ impl TlsConfig {
     /// use webpki_types::{CertificateDer, PrivateKeyDer};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Set ring as the process-level default crypto provider
+    /// rustls::crypto::ring::default_provider().install_default().ok();
     /// // Generate a self-signed certificate for testing
     /// let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     /// let cert_der = cert.cert.der().to_vec();
