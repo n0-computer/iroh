@@ -83,7 +83,6 @@ use crate::{
         Error as AddressLookupError, Item as AddressLookupItem,
     },
     endpoint::force_staging_infra,
-    util::reqwest_client_builder,
 };
 
 #[cfg(feature = "address-lookup-pkarr-dht")]
@@ -108,14 +107,14 @@ pub enum PkarrError {
     #[error("Error sending http request")]
     HttpSend {
         #[error(std_err)]
-        source: reqwest::Error,
+        source: std::io::Error,
     },
     #[error("Error resolving http request")]
-    HttpRequest { status: reqwest::StatusCode },
+    HttpRequest { status: http::StatusCode },
     #[error("Http payload error")]
     HttpPayload {
         #[error(std_err)]
-        source: reqwest::Error,
+        source: std::io::Error,
     },
     #[error("EncodingError")]
     Encoding { source: EncodingError },
@@ -548,8 +547,10 @@ impl AddressLookup for PkarrResolver {
 /// [pkarr]: https://pkarr.org
 #[derive(Debug, Clone)]
 pub struct PkarrRelayClient {
-    http_client: reqwest::Client,
     pkarr_relay_url: Url,
+    tls_config: rustls::ClientConfig,
+    #[cfg(not(wasm_browser))]
+    dns_resolver: Option<DnsResolver>,
 }
 
 /// A builder for the [`PkarrRelayClient`]
@@ -580,19 +581,11 @@ impl PkarrRelayClientBuilder {
 
     /// Build a [`PkarrRelayClient`].
     pub fn build(self) -> PkarrRelayClient {
-        let mut http_client = reqwest_client_builder(Some(self.tls_config));
-
-        #[cfg(not(wasm_browser))]
-        if let Some(dns_resolver) = self.dns_relay_resolver {
-            http_client = http_client.dns_resolver(Arc::new(dns_resolver));
-        };
-
-        let http_client = http_client
-            .build()
-            .expect("failed to create request client");
         PkarrRelayClient {
-            http_client,
             pkarr_relay_url: self.pkarr_relay_url,
+            tls_config: self.tls_config,
+            #[cfg(not(wasm_browser))]
+            dns_resolver: self.dns_relay_resolver,
         }
     }
 }
@@ -604,10 +597,10 @@ impl PkarrRelayClient {
     /// adding custom settings.
     pub fn new(pkarr_relay_url: Url, tls_config: rustls::ClientConfig) -> Self {
         Self {
-            http_client: reqwest_client_builder(Some(tls_config))
-                .build()
-                .expect("failed to create request client"),
             pkarr_relay_url,
+            tls_config,
+            #[cfg(not(wasm_browser))]
+            dns_resolver: None,
         }
     }
 
@@ -619,12 +612,115 @@ impl PkarrRelayClient {
         PkarrRelayClientBuilder::new(pkarr_relay_url, tls_config)
     }
 
+    /// Make an HTTPS request and return the response status and body.
+    #[cfg(not(wasm_browser))]
+    async fn request(
+        &self,
+        method: hyper::Method,
+        url: &Url,
+        body: Option<bytes::Bytes>,
+    ) -> Result<(http::StatusCode, bytes::Bytes), PkarrError> {
+        use http_body_util::{BodyExt, Empty, Full};
+        use hyper_util::rt::TokioIo;
+
+        let host_name = url.host_str().unwrap_or_default();
+        let port = url.port().unwrap_or(443);
+
+        let io_err = |msg: &str| std::io::Error::other(msg.to_string());
+
+        // Resolve address.
+        let addr = match url.host() {
+            Some(url::Host::Domain(domain)) => {
+                if let Some(ref resolver) = self.dns_resolver {
+                    let addrs: Vec<_> = resolver
+                        .lookup_ipv4_ipv6(domain, Duration::from_secs(5))
+                        .await
+                        .map_err(|err| e!(PkarrError::HttpSend { source: std::io::Error::other(err) }))?
+                        .collect();
+                    if addrs.is_empty() {
+                        return Err(e!(PkarrError::HttpSend { source: io_err("no addresses resolved") }));
+                    }
+                    std::net::SocketAddr::new(addrs[0], port)
+                } else {
+                    // Fall back to system resolver.
+                    use std::net::ToSocketAddrs;
+                    let addr_str = format!("{domain}:{port}");
+                    addr_str
+                        .to_socket_addrs()
+                        .map_err(|err| e!(PkarrError::HttpSend { source: err }))?
+                        .next()
+                        .ok_or_else(|| e!(PkarrError::HttpSend { source: io_err("no addresses resolved") }))?
+                }
+            }
+            Some(url::Host::Ipv4(ip)) => std::net::SocketAddr::new(ip.into(), port),
+            Some(url::Host::Ipv6(ip)) => std::net::SocketAddr::new(ip.into(), port),
+            None => {
+                return Err(e!(PkarrError::HttpSend { source: io_err("no host in URL") }));
+            }
+        };
+
+        // TCP + TLS.
+        let tcp_stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .map_err(|err| e!(PkarrError::HttpSend { source: err }))?;
+
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(self.tls_config.clone()));
+        let server_name = rustls::pki_types::ServerName::try_from(host_name.to_owned())
+            .map_err(|e| e!(PkarrError::HttpSend {
+                source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
+            }))?;
+        let tls_stream = connector
+            .connect(server_name, tcp_stream)
+            .await
+            .map_err(|err| e!(PkarrError::HttpSend { source: err }))?;
+
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls_stream))
+            .await
+            .map_err(|err| e!(PkarrError::HttpSend { source: std::io::Error::other(err) }))?;
+
+        tokio::spawn(async move {
+            if let Err(err) = conn.await {
+                tracing::debug!("pkarr connection error: {err:#}");
+            }
+        });
+
+        let req = if let Some(body) = body {
+            hyper::Request::builder()
+                .method(method)
+                .uri(url.path())
+                .header(hyper::header::HOST, host_name)
+                .body(Full::new(body).map_err(|e| match e {}).boxed())
+                .expect("valid request")
+        } else {
+            hyper::Request::builder()
+                .method(method)
+                .uri(url.path())
+                .header(hyper::header::HOST, host_name)
+                .body(Empty::<bytes::Bytes>::new().map_err(|e| match e {}).boxed())
+                .expect("valid request")
+        };
+
+        let response = sender
+            .send_request(req)
+            .await
+            .map_err(|err| e!(PkarrError::HttpSend { source: std::io::Error::other(err) }))?;
+
+        let status = response.status();
+        let body_bytes = response
+            .into_body()
+            .collect()
+            .await
+            .map_err(|err| e!(PkarrError::HttpPayload { source: std::io::Error::other(err) }))?
+            .to_bytes();
+
+        Ok((status, body_bytes))
+    }
+
     /// Resolves a [`SignedPacket`] for the given [`EndpointId`].
     pub async fn resolve(
         &self,
         endpoint_id: EndpointId,
     ) -> Result<SignedPacket, AddressLookupError> {
-        // We map the error to string, as in browsers the error is !Send
         let public_key = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
             .map_err(|err| e!(PkarrError::PublicKey, err))?;
 
@@ -637,25 +733,31 @@ impl PkarrRelayClient {
             })?
             .push(&public_key.to_z32());
 
-        let response = self
-            .http_client
-            .get(url)
-            .send()
-            .await
-            .map_err(|err| e!(PkarrError::HttpSend, err))?;
+        #[cfg(not(wasm_browser))]
+        let (status, payload) = self.request(hyper::Method::GET, &url, None).await?;
 
-        if !response.status().is_success() {
-            return Err(e!(PkarrError::HttpRequest {
-                status: response.status()
-            })
-            .into());
+        #[cfg(wasm_browser)]
+        let (status, payload) = {
+            let client = crate::util::reqwest_client_builder(None)
+                .build()
+                .expect("failed to create request client");
+            let response = client
+                .get(url.as_str())
+                .send()
+                .await
+                .map_err(|err| e!(PkarrError::HttpSend { source: std::io::Error::other(err) }))?;
+            let status = response.status();
+            let payload = response
+                .bytes()
+                .await
+                .map_err(|err| e!(PkarrError::HttpPayload { source: std::io::Error::other(err) }))?;
+            (status, payload)
+        };
+
+        if !status.is_success() {
+            return Err(e!(PkarrError::HttpRequest { status }).into());
         }
 
-        let payload = response
-            .bytes()
-            .await
-            .map_err(|source| e!(PkarrError::HttpPayload { source }))?;
-        // We map the error to string, as in browsers the error is !Send
         let packet = SignedPacket::from_relay_payload(&public_key, &payload)
             .map_err(|err| e!(PkarrError::Verify, err))?;
         Ok(packet)
@@ -672,18 +774,31 @@ impl PkarrRelayClient {
             })?
             .push(&signed_packet.public_key().to_z32());
 
-        let response = self
-            .http_client
-            .put(url)
-            .body(signed_packet.to_relay_payload())
-            .send()
-            .await
-            .map_err(|source| e!(PkarrError::HttpSend { source }))?;
+        #[cfg(not(wasm_browser))]
+        let (status, _) = self
+            .request(
+                hyper::Method::PUT,
+                &url,
+                Some(signed_packet.to_relay_payload()),
+            )
+            .await?;
 
-        if !response.status().is_success() {
-            return Err(e!(PkarrError::HttpRequest {
-                status: response.status()
-            }));
+        #[cfg(wasm_browser)]
+        let status = {
+            let client = crate::util::reqwest_client_builder(None)
+                .build()
+                .expect("failed to create request client");
+            let response = client
+                .put(url.as_str())
+                .body(signed_packet.to_relay_payload())
+                .send()
+                .await
+                .map_err(|source| e!(PkarrError::HttpSend { source: std::io::Error::other(source) }))?;
+            response.status()
+        };
+
+        if !status.is_success() {
+            return Err(e!(PkarrError::HttpRequest { status }));
         }
 
         Ok(())
