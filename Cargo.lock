@@ -2888,7 +2888,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "0.17.0"
-source = "git+https://github.com/n0-computer/noq?branch=matheus23%2Fset-alpns#2ff2e7bf521849fdf2175c15d89b8bc29a3f3b67"
+source = "git+https://github.com/n0-computer/noq?branch=main#8adda44486fdf33f08ae7481b2c3b3a4db587548"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2897,7 +2897,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -2908,7 +2908,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "0.16.0"
-source = "git+https://github.com/n0-computer/noq?branch=matheus23%2Fset-alpns#2ff2e7bf521849fdf2175c15d89b8bc29a3f3b67"
+source = "git+https://github.com/n0-computer/noq?branch=main#8adda44486fdf33f08ae7481b2c3b3a4db587548"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -2937,11 +2937,11 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "0.9.0"
-source = "git+https://github.com/n0-computer/noq?branch=matheus23%2Fset-alpns#2ff2e7bf521849fdf2175c15d89b8bc29a3f3b67"
+source = "git+https://github.com/n0-computer/noq?branch=main#8adda44486fdf33f08ae7481b2c3b3a4db587548"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
