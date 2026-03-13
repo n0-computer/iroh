@@ -3,8 +3,8 @@ use std::task::Poll;
 use iroh_base::TransportAddr;
 use n0_future::time::Duration;
 use n0_watcher::{Watchable, Watcher};
-use quinn::WeakPathHandle;
-use quinn_proto::PathId;
+use noq::WeakPathHandle;
+use noq_proto::PathId;
 use smallvec::SmallVec;
 
 use crate::{endpoint::PathStats, socket::transports};
@@ -194,7 +194,7 @@ pub struct PathInfo {
 }
 
 impl PathInfo {
-    fn new(conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) -> Option<Self> {
+    fn new(conn: &noq::Connection, id: PathId, remote_addr: TransportAddr) -> Option<Self> {
         let path = conn.path(id)?;
         Some(PathInfo {
             path: path.weak_handle(),
@@ -302,7 +302,7 @@ impl PathWatchable {
     }
 
     /// Inserts a new path.
-    pub(super) fn insert(&self, conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) {
+    pub(super) fn insert(&self, conn: &noq::Connection, id: PathId, remote_addr: TransportAddr) {
         if let Some(data) = PathInfo::new(conn, id, remote_addr) {
             self.update(move |list| list.0.push(data));
         }

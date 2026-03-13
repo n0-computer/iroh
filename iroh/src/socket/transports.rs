@@ -13,7 +13,7 @@ use bytes::Bytes;
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
-use quinn_proto::PathStatus;
+use noq_proto::PathStatus;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use rustc_hash::FxHashMap;
 use tokio_util::sync::CancellationToken;
@@ -45,7 +45,7 @@ pub(crate) struct Transports {
 
     poll_recv_counter: usize,
     /// Cache for source addrs, to speed up access
-    source_addrs: [Addr; quinn_udp::BATCH_SIZE],
+    source_addrs: [Addr; noq_udp::BATCH_SIZE],
 }
 
 /// Combined watcher type for all ip transports
@@ -104,7 +104,7 @@ impl TransportConfig {
     pub(crate) fn default_ipv4() -> Self {
         use std::net::Ipv4Addr;
 
-        use netdev::ipnet::Ipv4Net;
+        use ipnet::Ipv4Net;
 
         Self::Ip {
             config: ip::Config::V4 {
@@ -120,7 +120,7 @@ impl TransportConfig {
     /// Configures a default IPv6 transport, listening on `[::]:0`.
     #[cfg(not(wasm_browser))]
     pub(crate) fn default_ipv6() -> Self {
-        use netdev::ipnet::Ipv6Net;
+        use ipnet::Ipv6Net;
 
         Self::Ip {
             config: ip::Config::V6 {
@@ -238,11 +238,11 @@ impl Transports {
         &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
         sock: &Socket,
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        debug_assert!(bufs.len() <= quinn_udp::BATCH_SIZE, "too many buffers");
+        debug_assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
         if sock.is_closing() {
             return Poll::Pending;
         }
@@ -261,7 +261,7 @@ impl Transports {
         &mut self,
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
@@ -370,7 +370,7 @@ impl Transports {
     #[cfg(not(wasm_browser))]
     pub(crate) fn max_receive_segments(&self) -> NonZeroUsize {
         // `max_receive_segments` controls the size of the `RecvMeta` buffer
-        // that quinn creates. Having buffers slightly bigger than necessary
+        // that noq creates. Having buffers slightly bigger than necessary
         // isn't terrible, and makes sure a single socket can read the maximum
         // amount with a single poll. We considered adding these numbers instead,
         // but we never get data from both sockets at the same time in `poll_recv`
@@ -474,7 +474,7 @@ impl NetworkChangeSender {
 /// An outgoing packet
 #[derive(Debug, Clone)]
 pub struct Transmit<'a> {
-    pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
+    pub(crate) ecn: Option<noq_udp::EcnCodepoint>,
     /// Packet contents
     pub contents: &'a [u8],
     /// Optional segment size for GSO
@@ -493,13 +493,13 @@ impl<'a> Transmit<'a> {
 /// An outgoing packet that can be sent across channels.
 #[derive(Debug, Clone)]
 pub(crate) struct OwnedTransmit {
-    pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
+    pub(crate) ecn: Option<noq_udp::EcnCodepoint>,
     pub(crate) contents: Bytes,
     pub(crate) segment_size: Option<usize>,
 }
 
-impl From<&quinn_udp::Transmit<'_>> for OwnedTransmit {
-    fn from(source: &quinn_udp::Transmit<'_>) -> Self {
+impl From<&noq_udp::Transmit<'_>> for OwnedTransmit {
+    fn from(source: &noq_udp::Transmit<'_>) -> Self {
         Self {
             ecn: source.ecn,
             contents: Bytes::copy_from_slice(source.contents),
@@ -913,7 +913,7 @@ impl TransportsSender {
 
 /// A [`Transports`] that works with [`MultipathMappedAddr`]s and their IPv6 representation.
 ///
-/// The [`MultipathMappedAddr`]s have an IPv6 representation that Quinn uses.  This struct
+/// The [`MultipathMappedAddr`]s have an IPv6 representation that Noq uses.  This struct
 /// knows about these and maps them back to the transport [`Addr`]s used by the wrapped
 /// [`Transports`].
 #[derive(Debug)]
@@ -928,8 +928,8 @@ impl Transport {
     }
 }
 
-impl quinn::AsyncUdpSocket for Transport {
-    fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
+impl noq::AsyncUdpSocket for Transport {
+    fn create_sender(&self) -> Pin<Box<dyn noq::UdpSender>> {
         Box::pin(Sender {
             sock: self.sock.clone(),
             sender: self.transports.create_sender(),
@@ -940,7 +940,7 @@ impl quinn::AsyncUdpSocket for Transport {
         &mut self,
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
-        meta: &mut [quinn_udp::RecvMeta],
+        meta: &mut [noq_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         self.transports.poll_recv(cx, bufs, meta, &self.sock)
     }
@@ -1014,12 +1014,12 @@ pub(crate) struct Sender {
 }
 
 impl Sender {
-    /// Extracts the right [`Addr`] from the [`quinn_udp::Transmit`].
+    /// Extracts the right [`Addr`] from the [`noq_udp::Transmit`].
     ///
-    /// Because Quinn does only know about IP transports we map other transports to private
+    /// Because Noq does only know about IP transports we map other transports to private
     /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the
     /// transmit's destination.
-    fn mapped_addr(&self, transmit: &quinn_udp::Transmit) -> io::Result<MultipathMappedAddr> {
+    fn mapped_addr(&self, transmit: &noq_udp::Transmit) -> io::Result<MultipathMappedAddr> {
         if self.sock.is_closed() {
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
@@ -1031,19 +1031,19 @@ impl Sender {
     }
 }
 
-impl quinn::UdpSender for Sender {
+impl noq::UdpSender for Sender {
     fn poll_send(
         self: Pin<&mut Self>,
-        quinn_transmit: &quinn_udp::Transmit,
+        noq_transmit: &noq_udp::Transmit,
         cx: &mut Context,
     ) -> Poll<io::Result<()>> {
-        // On errors this methods prefers returning Ok(()) to Quinn.  Returning an error
+        // On errors this methods prefers returning Ok(()) to Noq.  Returning an error
         // should only happen if the error is permanent and fatal and it will never be
-        // possible to send anything again.  Doing so kills the Quinn EndpointDriver.  Most
+        // possible to send anything again.  Doing so kills the Noq EndpointDriver.  Most
         // send errors are intermittent errors, returning Ok(()) in those cases will mean
-        // Quinn eventually considers the packets that had send errors as lost and will try
+        // Noq eventually considers the packets that had send errors as lost and will try
         // and re-send them.
-        let mapped_addr = self.mapped_addr(quinn_transmit)?;
+        let mapped_addr = self.mapped_addr(noq_transmit)?;
 
         let transport_addr = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
@@ -1053,10 +1053,10 @@ impl quinn::UdpSender for Sender {
                     return Poll::Ready(Ok(()));
                 };
 
-                // Note we drop the src_ip set in the Quinn Transmit.  This is only the
+                // Note we drop the src_ip set in the Noq Transmit.  This is only the
                 // Initial packet we are sending, so we do not yet have an src address we
                 // need to respond from.
-                if let Some(src_ip) = quinn_transmit.src_ip {
+                if let Some(src_ip) = noq_transmit.src_ip {
                     warn!(dst = ?mapped_addr, ?src_ip, dst_endpoint = %endpoint_id.fmt_short(),
                         "oops, flub didn't think this would happen");
                 }
@@ -1065,7 +1065,7 @@ impl quinn::UdpSender for Sender {
                     endpoint_id,
                     super::RemoteStateMessage::SendDatagram(
                         Box::new(self.sender.clone()),
-                        OwnedTransmit::from(quinn_transmit),
+                        OwnedTransmit::from(noq_transmit),
                     ),
                 ) {
                     Ok(()) => {
@@ -1074,7 +1074,7 @@ impl quinn::UdpSender for Sender {
                     }
                     Err(msg) => {
                         // We do not want to block the next send which might be on a
-                        // different transport.  Instead we let Quinn handle this as
+                        // different transport.  Instead we let Noq handle this as
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
                         debug!(
@@ -1124,15 +1124,15 @@ impl quinn::UdpSender for Sender {
         };
 
         let transmit = Transmit {
-            ecn: quinn_transmit.ecn,
-            contents: quinn_transmit.contents,
-            segment_size: quinn_transmit.segment_size,
+            ecn: noq_transmit.ecn,
+            contents: noq_transmit.contents,
+            segment_size: noq_transmit.segment_size,
         };
         let this = self.project();
 
         match this
             .sender
-            .poll_send(cx, &transport_addr, quinn_transmit.src_ip, &transmit)
+            .poll_send(cx, &transport_addr, noq_transmit.src_ip, &transmit)
         {
             Poll::Ready(Ok(())) => {
                 trace!(
@@ -1149,7 +1149,7 @@ impl quinn::UdpSender for Sender {
             }
             Poll::Pending => {
                 // We do not want to block the next send which might be on a
-                // different transport.  Instead we let Quinn handle this as a lost
+                // different transport.  Instead we let Noq handle this as a lost
                 // datagram.
                 // TODO: Revisit this: we might want to do something better.
                 trace!(dst=?transport_addr, "transport pending, dropped transmit");

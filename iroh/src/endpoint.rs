@@ -13,6 +13,8 @@
 
 use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
+#[cfg(not(wasm_browser))]
+use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{
     RelayConfig, RelayMap,
@@ -22,8 +24,6 @@ use iroh_relay::{
 use n0_error::bail;
 use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
-#[cfg(not(wasm_browser))]
-use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
 use tracing::{Instrument, Span, debug, info_span, instrument, warn};
@@ -53,7 +53,7 @@ use crate::endpoint::transports::CustomTransport;
 use crate::{
     NetReport,
     address_lookup::{
-        AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
+        AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
         Error as AddressLookupError, UserData,
     },
     endpoint::presets::Preset,
@@ -85,7 +85,7 @@ pub use self::{
         RemoteEndpointIdError, RetryError, ZeroRttStatus,
     },
     quic::{
-        AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
+        AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
         ControllerMetrics, CryptoError, Dir, ExportKeyingMaterialError, FrameStats, FrameType,
         HandshakeTokenKey, HeaderKey, IdleTimeout, Keys, MtuDiscoveryConfig, OpenBi, OpenUni,
@@ -98,6 +98,7 @@ pub use self::{
         VarIntBoundsExceeded, WriteError, Written,
     },
 };
+pub use crate::portmapper::PortmapperConfig;
 #[cfg(not(wasm_browser))]
 use crate::socket::transports::IpConfig;
 use crate::socket::transports::TransportConfig;
@@ -116,6 +117,9 @@ pub struct Builder {
     keylog: bool,
     address_lookup: Vec<Box<dyn DynAddressLookupBuilder>>,
     address_lookup_user_data: Option<UserData>,
+    /// Default address filter applied to all address lookup services added via
+    /// [`Builder::address_lookup`].
+    addr_filter: Option<AddrFilter>,
     proxy_url: Option<Url>,
     ca_roots_config: Option<CaRootsConfig>,
     #[cfg(not(wasm_browser))]
@@ -124,6 +128,7 @@ pub struct Builder {
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
     transport_bias: socket::transports::TransportBiasMap,
+    portmapper_config: PortmapperConfig,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -181,6 +186,7 @@ impl Builder {
             keylog: Default::default(),
             address_lookup: Default::default(),
             address_lookup_user_data: Default::default(),
+            addr_filter: None,
             proxy_url: None,
             ca_roots_config: None,
             #[cfg(not(wasm_browser))]
@@ -189,6 +195,7 @@ impl Builder {
             transports,
             hooks: Default::default(),
             transport_bias: Default::default(),
+            portmapper_config: Default::default(),
         }
     }
 
@@ -234,6 +241,7 @@ impl Builder {
             metrics,
             hooks: self.hooks,
             transport_bias: self.transport_bias,
+            portmapper_config: self.portmapper_config,
             static_config,
         };
 
@@ -251,11 +259,13 @@ impl Builder {
         };
 
         // Add Address Lookup mechanisms
+        let address_lookup = ep.address_lookup().expect("just created the endpoint");
+        if let Some(filter) = self.addr_filter {
+            address_lookup.set_addr_filter(filter);
+        }
         for create_service in self.address_lookup {
             let service = create_service.into_address_lookup(&ep)?;
-            ep.address_lookup()
-                .expect("just created the endpoint")
-                .add_boxed(service);
+            address_lookup.add_boxed(service);
         }
 
         Ok(ep)
@@ -553,6 +563,27 @@ impl Builder {
         self
     }
 
+    /// Sets the address filter applied to all address data before publishing.
+    ///
+    /// This filter is applied once, at the [`ConcurrentAddressLookup`] level, before
+    /// distributing data to any individual address lookup service. This ensures
+    /// consistent filtering regardless of how the services configured.
+    ///
+    /// [`ConcurrentAddressLookup`]: crate::address_lookup::ConcurrentAddressLookup
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
+        self.addr_filter = Some(filter);
+        self
+    }
+
+    /// Clears the address filter, allowing all addresses to be published.
+    ///
+    /// This removes any filter previously set via [`Self::addr_filter`], including
+    /// filters set by presets.
+    pub fn clear_addr_filter(mut self) -> Self {
+        self.addr_filter = None;
+        self
+    }
+
     /// Sets the initial user-defined data to be published in Address Lookup's for this node.
     ///
     /// When using Address Lookup's, this string of [`UserData`] will be published together
@@ -666,6 +697,14 @@ impl Builder {
         self
     }
 
+    /// Configures the portmapper service (UPnP, PCP, NAT-PMP).
+    ///
+    /// Defaults to [`PortmapperConfig::Enabled`].
+    pub fn portmapper_config(mut self, config: PortmapperConfig) -> Self {
+        self.portmapper_config = config;
+        self
+    }
+
     /// Adds a custom transport
     #[cfg(feature = "unstable-custom-transports")]
     pub fn add_custom_transport(mut self, factory: Arc<dyn CustomTransport>) -> Self {
@@ -751,7 +790,7 @@ pub enum ConnectWithOptsError {
     #[error("No addressing information available")]
     NoAddress { source: AddressLookupError },
     #[error("Unable to connect to remote")]
-    Quinn {
+    Noq {
         #[error(std_err)]
         source: QuicConnectError,
     },
@@ -823,7 +862,7 @@ impl Endpoint {
         }
         let server_config = self.inner.static_config.create_server_config(alpns);
         self.inner
-            .quinn_endpoint()
+            .noq_endpoint()
             .set_server_config(Some(server_config));
     }
 
@@ -955,7 +994,7 @@ impl Endpoint {
             .map(|cfg| cfg.to_inner_arc())
             .unwrap_or(self.inner.static_config.transport_config.to_inner_arc());
 
-        // Start connecting via quinn. This will time out after 10 seconds if no reachable
+        // Start connecting via noq. This will time out after 10 seconds if no reachable
         // address is available.
 
         let client_config = {
@@ -966,7 +1005,7 @@ impl Endpoint {
                 .static_config
                 .tls_config
                 .make_client_config(alpn_protocols, self.inner.static_config.keylog);
-            let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
+            let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
             client_config.transport_config(transport_config.clone());
             client_config
         };
@@ -975,7 +1014,7 @@ impl Endpoint {
         let server_name = &tls::name::encode(endpoint_id);
         let connect =
             self.inner
-                .quinn_endpoint()
+                .noq_endpoint()
                 .connect_with(client_config, dest_addr, server_name)?;
 
         Ok(Connecting::new(connect, self.clone(), endpoint_id))
@@ -991,7 +1030,7 @@ impl Endpoint {
     /// [`Endpoint::close`].
     pub fn accept(&self) -> Accept<'_> {
         Accept {
-            inner: self.inner.quinn_endpoint().accept(),
+            inner: self.inner.noq_endpoint().accept(),
             ep: self.clone(),
         }
     }
@@ -1767,7 +1806,7 @@ mod tests {
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use quinn::PathStats;
+    use noq::PathStats;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use tokio::sync::oneshot;
@@ -1843,7 +1882,7 @@ mod tests {
                 let res = stream.read_to_end(10).await;
                 assert_eq!(
                     res.unwrap_err(),
-                    quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(
+                    noq::ReadToEndError::Read(noq::ReadError::ConnectionLost(
                         ConnectionError::LocallyClosed
                     ))
                 );
@@ -2182,9 +2221,12 @@ mod tests {
                 }
             }
             info!("Have direct connection");
-            // Validate holepunch metrics.
-            assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
-            assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
+            #[cfg(feature = "metrics")]
+            {
+                // Validate holepunch metrics.
+                assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
+                assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
+            }
 
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
@@ -3518,9 +3560,12 @@ mod tests {
         assert!(ep.dns_resolver().is_err());
         assert!(ep.address_lookup().is_err());
 
-        // this should work
-        let metrics = ep.metrics();
-        info!("Metrics: {metrics:?}");
+        #[cfg(feature = "metrics")]
+        {
+            // this should work
+            let metrics = ep.metrics();
+            info!("Metrics: {metrics:?}");
+        }
 
         // this should return none
         assert!(ep.remote_info(ep_id).await.is_none());

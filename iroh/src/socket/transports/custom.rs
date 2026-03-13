@@ -39,7 +39,7 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
     /// This will be called with `bufs`, `metas` and `source_addrs` of the same length.
     /// It is acceptable to panic if this is not the case.
     ///
-    /// The maximum length of the slices is [`quinn_udp::BATCH_SIZE`].
+    /// The maximum length of the slices is [`noq_udp::BATCH_SIZE`].
     /// It is acceptable to panic if this is exceeded.
     ///
     /// On success, all three slices must be filled up to the returned length,
@@ -50,13 +50,13 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
         &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>>;
 
     /// Maximum number of segments to transmit (GSO).
     ///
-    /// This controls how many datagrams Quinn will batch into a single transmit.
+    /// This controls how many datagrams Noq will batch into a single transmit.
     /// The default is 1 (no batching). Custom transports that support batching
     /// can override this to allow more efficient transmission.
     fn max_transmit_segments(&self) -> NonZeroUsize {

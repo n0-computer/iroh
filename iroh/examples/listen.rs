@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
         // spawn a task to handle reading and writing off of the connection
         tokio::spawn(async move {
             // accept a bi-directional QUIC connection
-            // use the `quinn` APIs to send and recv content
+            // use the `noq` APIs to send and recv content
             let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
             debug!("accepted bi stream, waiting for data...");
             let message = recv.read_to_end(100).await.anyerr()?;

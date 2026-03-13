@@ -256,6 +256,7 @@
 mod socket;
 pub mod tls;
 
+pub(crate) mod portmapper;
 pub(crate) mod runtime;
 pub(crate) mod util;
 

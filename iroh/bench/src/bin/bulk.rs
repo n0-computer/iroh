@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use clap::Parser;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-use iroh_bench::quinn;
+use iroh_bench::noq;
 use iroh_bench::{Commands, Opt, configure_tracing_subscriber, iroh, rt, s2n};
 #[cfg(feature = "metrics")]
 use iroh_metrics::{MetricValue, MetricsGroup};
@@ -20,8 +20,8 @@ fn main() {
             }
         }
         #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-        Commands::Quinn(opt) => {
-            if let Err(e) = run_quinn(opt) {
+        Commands::Noq(opt) => {
+            if let Err(e) = run_noq(opt) {
                 eprintln!("failed: {e:#}");
             }
         }
@@ -108,7 +108,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
 }
 
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-pub fn run_quinn(opt: Opt) -> Result<()> {
+pub fn run_noq(opt: Opt) -> Result<()> {
     use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 
     let server_span = tracing::error_span!("server");
@@ -119,12 +119,12 @@ pub fn run_quinn(opt: Opt) -> Result<()> {
 
     let (server_addr, endpoint) = {
         let _guard = server_span.enter();
-        quinn::server_endpoint(&runtime, cert.clone(), key.into(), &opt)
+        noq::server_endpoint(&runtime, cert.clone(), key.into(), &opt)
     };
 
     let server_thread = std::thread::spawn(move || {
         let _guard = server_span.entered();
-        if let Err(e) = runtime.block_on(quinn::server(endpoint, opt)) {
+        if let Err(e) = runtime.block_on(noq::server(endpoint, opt)) {
             eprintln!("server failed: {e:#}");
         }
     });
@@ -135,7 +135,7 @@ pub fn run_quinn(opt: Opt) -> Result<()> {
         handles.push(std::thread::spawn(move || {
             let _guard = tracing::error_span!("client", id).entered();
             let runtime = rt();
-            match runtime.block_on(quinn::client(server_addr, cert, opt)) {
+            match runtime.block_on(noq::client(server_addr, cert, opt)) {
                 Ok(stats) => Ok(stats),
                 Err(e) => {
                     eprintln!("client failed: {e:#}");

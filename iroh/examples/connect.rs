@@ -76,11 +76,11 @@ async fn main() -> Result<()> {
     let addr = EndpointAddr::from_parts(args.endpoint_id, addrs);
 
     // Attempt to connect, over the given ALPN.
-    // Returns a Quinn connection.
+    // Returns a Noq connection.
     let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
     info!("connected");
 
-    // Use the Quinn API to send and recv content.
+    // Use the Noq API to send and recv content.
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
 
     let message = format!("{me} is saying 'hello!'");
