@@ -71,6 +71,7 @@ impl<T: Future> Future for MaybeFuture<T> {
 
 /// Creates a reqwest client builder that always uses the rustls backend, unless we
 /// are in a browser context, where that is not supported.
+#[cfg(wasm_browser)]
 pub(crate) fn reqwest_client_builder(
     tls_client_config: Option<rustls::ClientConfig>,
 ) -> reqwest::ClientBuilder {
