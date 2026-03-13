@@ -2185,6 +2185,7 @@ dependencies = [
  "sync_wrapper",
  "time",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tokio-util",
  "tracing",

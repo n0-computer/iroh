@@ -36,8 +36,9 @@ use iroh_relay::{
 use n0_error::{e, stack_error};
 #[cfg(wasm_browser)]
 use n0_future::future::Pending;
+#[cfg(wasm_browser)]
+use n0_future::StreamExt as _;
 use n0_future::{
-    StreamExt as _,
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration, Instant},
 };
@@ -55,11 +56,8 @@ use super::{
 };
 #[cfg(not(wasm_browser))]
 use crate::address_lookup::DNS_STAGGERING_MS;
-use crate::{
-    net_report::defaults::timeouts::{
-        CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
-    },
-    util::reqwest_client_builder,
+use crate::net_report::defaults::timeouts::{
+    CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
 };
 
 /// Holds the state for a single report generation.
@@ -506,15 +504,16 @@ impl Probe {
 
         let report = match self {
             Probe::Https => {
-                match run_https_probe(
-                    #[cfg(not(wasm_browser))]
+                #[cfg(not(wasm_browser))]
+                let res = run_https_probe(
                     &socket_state.dns_resolver,
                     relay.url.clone(),
-                    #[cfg(not(wasm_browser))]
                     tls_config,
                 )
-                .await
-                {
+                .await;
+                #[cfg(wasm_browser)]
+                let res = run_https_probe(relay.url.clone()).await;
+                match res {
                     Ok(report) => Ok(ProbeReport::Https(report)),
                     Err(err) => Err(e!(ProbeError::Https, err)),
                 }
@@ -794,11 +793,25 @@ pub(super) enum MeasureHttpsLatencyError {
         #[error(from)]
         source: StaggeredError<DnsError>,
     },
+    #[cfg(not(wasm_browser))]
+    #[error("TCP/TLS connection failed")]
+    Connect {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
+    #[cfg(not(wasm_browser))]
+    #[error("HTTP request failed")]
+    HttpRequest {
+        #[error(std_err)]
+        source: hyper::Error,
+    },
+    #[cfg(wasm_browser)]
     #[error("Creating HTTP client failed")]
     CreateReqwestClient {
         #[error(std_err)]
         source: reqwest::Error,
     },
+    #[cfg(wasm_browser)]
     #[error("HTTP request failed")]
     HttpRequest {
         #[error(std_err)]
@@ -810,47 +823,117 @@ pub(super) enum MeasureHttpsLatencyError {
 
 /// Executes an HTTPS probe.
 ///
+/// Measures relay latency by making an HTTPS GET to the relay's probe endpoint.
+#[cfg(not(wasm_browser))]
+async fn run_https_probe(
+    dns_resolver: &DnsResolver,
+    relay: RelayUrl,
+    tls_config: rustls::ClientConfig,
+) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
+    use http_body_util::BodyExt;
+    use hyper_util::rt::TokioIo;
+
+    trace!("HTTPS probe start");
+    let url = relay.join(RELAY_PROBE_PATH)?;
+    let host_name = url.host_str().unwrap_or_default();
+    let port = url.port().unwrap_or(443);
+
+    // Resolve the address — use our own DNS resolver for domains, direct for IPs.
+    let addr = match url.host() {
+        Some(Host::Domain(domain)) => {
+            let addrs: Vec<_> = dns_resolver
+                .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                .await?
+                .collect();
+            trace!(?addrs, "resolved addrs");
+            if addrs.is_empty() {
+                return Err(e!(MeasureHttpsLatencyError::Connect,
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "no addresses resolved")));
+            }
+            SocketAddr::new(addrs[0], port)
+        }
+        Some(Host::Ipv4(ip)) => SocketAddr::new(ip.into(), port),
+        Some(Host::Ipv6(ip)) => SocketAddr::new(ip.into(), port),
+        None => {
+            return Err(e!(MeasureHttpsLatencyError::Connect,
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "no host in relay URL")));
+        }
+    };
+
+    // TCP + TLS connection.
+    let tcp_stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .map_err(|err| e!(MeasureHttpsLatencyError::Connect, err))?;
+
+    let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(tls_config));
+    let server_name = rustls::pki_types::ServerName::try_from(host_name.to_owned())
+        .map_err(|e| e!(MeasureHttpsLatencyError::Connect,
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, e)))?;
+    let tls_stream = connector
+        .connect(server_name, tcp_stream)
+        .await
+        .map_err(|err| e!(MeasureHttpsLatencyError::Connect, err))?;
+
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls_stream))
+        .await
+        .map_err(|err| e!(MeasureHttpsLatencyError::HttpRequest, err))?;
+
+    tokio::spawn(async move {
+        if let Err(err) = conn.await {
+            debug!("HTTPS probe connection error: {err:#}");
+        }
+    });
+
+    let start = Instant::now();
+    let req = hyper::Request::builder()
+        .method(hyper::Method::GET)
+        .uri(url.path())
+        .header(hyper::header::HOST, host_name)
+        .body(http_body_util::Empty::<bytes::Bytes>::new())
+        .expect("valid request");
+
+    let response = sender
+        .send_request(req)
+        .await
+        .map_err(|err| e!(MeasureHttpsLatencyError::HttpRequest, err))?;
+    let latency = start.elapsed();
+
+    if response.status().is_success() {
+        // Drain the response body to be nice to the server, up to a limit.
+        const MAX_BODY_SIZE: usize = 8 << 10; // 8 KiB
+        let mut body = response.into_body();
+        let mut body_size = 0;
+        while let Some(frame) = body.frame().await {
+            if let Ok(frame) = frame && let Some(data) = frame.data_ref() {
+                body_size += data.len();
+                if body_size >= MAX_BODY_SIZE {
+                    break;
+                }
+            }
+        }
+        Ok(HttpsProbeReport { relay, latency })
+    } else {
+        Err(e!(MeasureHttpsLatencyError::InvalidResponse {
+            status: response.status()
+        }))
+    }
+}
+
+/// Executes an HTTPS probe.
+///
 /// If `certs` is provided they will be added to the trusted root certificates, allowing the
 /// use of self-signed certificates for servers.  Currently this is used for testing.
+#[cfg(wasm_browser)]
 #[allow(clippy::unused_async)]
 async fn run_https_probe(
-    #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
     relay: RelayUrl,
-    #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
+    use crate::util::reqwest_client_builder;
+
     trace!("HTTPS probe start");
     let url = relay.join(RELAY_PROBE_PATH)?;
 
-    // This should also use same connection establishment as relay client itself, which
-    // needs to be more configurable so users can do more crazy things:
-    // https://github.com/n0-computer/iroh/issues/2901
-    #[cfg(not(wasm_browser))]
-    let mut builder = reqwest_client_builder(Some(tls_config));
-    #[cfg(wasm_browser)]
-    let mut builder = reqwest_client_builder(None);
-
-    #[cfg(not(wasm_browser))]
-    {
-        builder = builder.redirect(reqwest::redirect::Policy::none());
-    }
-
-    #[cfg(not(wasm_browser))]
-    if let Some(Host::Domain(domain)) = url.host() {
-        // Use our own resolver rather than getaddrinfo
-        //
-        // Be careful, a non-zero port will override the port in the URI.
-        //
-        // The relay Client uses `.lookup_ipv4_ipv6` to connect, so use the same function
-        // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
-        // IPv6 though.  But our resolver does not have a function for that yet.
-        let addrs: Vec<_> = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
-            .await?
-            .map(|ipaddr| SocketAddr::new(ipaddr, 0))
-            .collect();
-        trace!(?addrs, "resolved addrs");
-        builder = builder.resolve_to_addrs(domain, &addrs);
-    }
+    let builder = reqwest_client_builder(None);
 
     let client = builder
         .build()
@@ -898,7 +981,9 @@ mod tests {
     use super::{super::test_utils, *};
 
     #[tokio::test]
+    #[cfg(feature = "ring")]
     async fn test_measure_https_latency() -> Result {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let (_server, relay) = test_utils::relay().await;
         let dns_resolver = DnsResolver::new();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
