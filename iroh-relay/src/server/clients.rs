@@ -17,7 +17,10 @@ use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
 use crate::{
-    protos::{relay::Datagrams, streams::BytesStreamSink},
+    protos::{
+        relay::{Datagrams, HealthStatus},
+        streams::BytesStreamSink,
+    },
     server::{client::SendError, metrics::Metrics},
 };
 
@@ -88,7 +91,7 @@ impl Clients {
                     "multiple connections found, deactivating old connection",
                 );
                 old_client
-                    .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string())
+                    .try_send_health(HealthStatus::SameEndpointIdConnected)
                     .ok();
                 state.inactive.push(old_client);
             }
@@ -122,6 +125,8 @@ impl Clients {
                 if let Some(last_inactive_client) = state.inactive.pop() {
                     // There is an inactive client, promote to active again.
                     state.active = last_inactive_client;
+                    // Inform the old client that it is healthy again.
+                    state.active.try_send_health(HealthStatus::Healthy).ok();
                     // Don't remove the entry from client map.
                     false
                 } else {
@@ -255,6 +260,7 @@ mod tests {
                 stream: ServerRelayedStream::test(server),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
+                protocol_version: Default::default(),
             },
             Conn::test(client),
         )
@@ -343,7 +349,11 @@ mod tests {
         assert!(a2_conn_id != a1_conn_id);
 
         // a1 is marked inactive and should receive a health frame
-        let _frame = recv_frame(FrameType::Health, &mut a1_rw).await?;
+        let frame = recv_frame(FrameType::Status, &mut a1_rw).await?;
+        assert_eq!(
+            frame,
+            RelayToClientMsg::Status(HealthStatus::SameEndpointIdConnected)
+        );
 
         // send packet and verify it is send to a2
         clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
@@ -378,8 +388,14 @@ mod tests {
         .await
         .std_context("timeout")?;
 
-        // a1 should be marked active again now, and receive sent messages
+        // a1 should be marked active again now
         assert_eq!(clients.active_connection_id(a_key), Some(a1_conn_id));
+
+        // a1 is marked active again and should receive a health frame
+        let frame = recv_frame(FrameType::Status, &mut a1_rw).await?;
+        assert_eq!(frame, RelayToClientMsg::Status(HealthStatus::Healthy));
+
+        // a1 should receive packets
         clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
         let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a1_rw).await?;
         assert_eq!(
