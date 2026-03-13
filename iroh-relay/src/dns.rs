@@ -592,8 +592,11 @@ impl Resolver for HickoryResolver {
         let resolver = self.resolver.clone();
         Box::pin(async move {
             let lookup = resolver.txt_lookup(host).await?;
-            let iter: BoxIter<TxtRecordData> =
-                Box::new(lookup.into_iter().map(|txt| TxtRecordData::from_iter(txt.iter().cloned())));
+            let iter: BoxIter<TxtRecordData> = Box::new(
+                lookup
+                    .into_iter()
+                    .map(|txt| TxtRecordData::from_iter(txt.iter().cloned())),
+            );
             Ok(iter)
         })
     }
