@@ -77,6 +77,7 @@ jobs:
         run: cross build --all --target ${{ matrix.target }}
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+          RUSTFLAGS: "--cfg iroh_skip_netsim" # skip patchbay netsim tests
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
   android_build:
@@ -165,6 +166,7 @@ jobs:
         run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
+          RUSTFLAGS: "--cfg iroh_skip_netsim" # skip patchbay netsim tests
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
   wasm_test:
