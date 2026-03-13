@@ -9,7 +9,7 @@ use n0_error::{Result, StdResultExt, ensure_any};
 use n0_future::task::AbortOnDropHandle;
 use patchbay::{Device, IpSupport, Lab, LabOpts, OutDir};
 use tokio::sync::oneshot;
-use tracing::{Instrument, debug, error_span, info};
+use tracing::{Instrument, debug, error_span};
 
 use self::relay::run_relay_server;
 
