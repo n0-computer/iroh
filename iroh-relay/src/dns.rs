@@ -160,8 +160,12 @@ impl DnsProtocol {
         match self {
             DnsProtocol::Udp => Protocol::Udp,
             DnsProtocol::Tcp => Protocol::Tcp,
-            DnsProtocol::Tls => Protocol::Tls,
-            DnsProtocol::Https => Protocol::Https,
+            DnsProtocol::Tls => {
+                panic!("DNS over TLS requires the tls-ring or tls-aws-lc-rs hickory feature")
+            }
+            DnsProtocol::Https => {
+                panic!("DNS over HTTPS requires the https-ring or https-aws-lc-rs hickory feature")
+            }
         }
     }
 }
@@ -471,6 +475,7 @@ impl Default for DnsResolver {
     }
 }
 
+#[cfg(feature = "reqwest")]
 impl reqwest::dns::Resolve for DnsResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let this = self.clone();
@@ -517,8 +522,12 @@ impl HickoryResolver {
             (ResolverConfig::new(), ResolverOpts::default())
         };
 
-        if let Some(client_config) = builder.tls_client_config.clone() {
-            options.tls_config = client_config;
+        if let Some(_client_config) = builder.tls_client_config.clone() {
+            // tls_config field only exists when hickory has TLS support (via the ring feature)
+            #[cfg(feature = "ring")]
+            {
+                options.tls_config = _client_config;
+            }
         }
 
         for (addr, proto) in builder.nameservers.iter() {

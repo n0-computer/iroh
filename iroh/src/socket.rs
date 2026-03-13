@@ -204,7 +204,7 @@ impl StaticConfig {
         let quic_server_config = self
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
-        let mut inner = noq::ServerConfig::with_crypto(Arc::new(quic_server_config));
+        let mut inner = crate::quic_crypto::server_config_with_crypto(Arc::new(quic_server_config));
         inner.transport_config(self.transport_config.to_inner_arc());
         inner
     }
@@ -894,7 +894,7 @@ impl EndpointInner {
             span: span.clone(),
         });
 
-        let mut endpoint_config = noq::EndpointConfig::default();
+        let mut endpoint_config = crate::quic_crypto::default_endpoint_config();
         // Setting this to false means that noq will ignore packets that have the QUIC fixed bit
         // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
         // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight

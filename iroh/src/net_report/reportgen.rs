@@ -573,9 +573,6 @@ async fn check_captive_portal(
 ) -> Result<bool, CaptivePortalError> {
     // If we have a preferred relay and we can use it for non-QAD requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
-
-    use crate::util::reqwest_client_builder;
-
     let preferred_relay = preferred_relay.and_then(|url| dm.get(&url).map(|_| url));
 
     let url = match preferred_relay {

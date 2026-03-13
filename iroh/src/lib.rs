@@ -253,6 +253,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
+mod quic_crypto;
 mod socket;
 pub mod tls;
 
