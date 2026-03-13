@@ -40,7 +40,7 @@ enum Mode {
     /// INSECURE: Do not verify server certificates at all.
     ///
     /// May only be used in tests or local development setups.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(any(test, feature = "test-utils", target_os = "espidf"))]
     InsecureSkipVerify,
 }
 
@@ -81,7 +81,7 @@ impl CaRootsConfig {
     /// INSECURE: Do not verify server certificates at all.
     ///
     /// May only be used in tests or local development setups.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(any(test, feature = "test-utils", target_os = "espidf"))]
     pub fn insecure_skip_verify() -> Self {
         Self {
             mode: Mode::InsecureSkipVerify,
@@ -140,7 +140,7 @@ impl CaRootsConfig {
                     .build()
                     .map_err(io::Error::other)?
             }
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(any(test, feature = "test-utils", target_os = "espidf"))]
             Mode::InsecureSkipVerify => Arc::new(self::no_cert_verifier::NoCertVerifier),
         })
     }
@@ -160,12 +160,17 @@ impl CaRootsConfig {
 
 /// Returns iroh's default crypto provider.
 ///
-/// Currently, this is [`rustls::crypto::ring`].
+/// Uses the installed default provider, or panics if none is installed.
+/// Call `CryptoProvider::install_default()` before using this function.
 pub fn default_provider() -> Arc<CryptoProvider> {
-    Arc::new(rustls::crypto::ring::default_provider())
+    CryptoProvider::get_default()
+        .expect(
+            "no default crypto provider installed; call CryptoProvider::install_default() first",
+        )
+        .clone()
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(any(test, feature = "test-utils", target_os = "espidf"))]
 mod no_cert_verifier {
     use rustls::{
         client::danger::{ServerCertVerified, ServerCertVerifier},
