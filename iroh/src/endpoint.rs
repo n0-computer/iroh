@@ -16,10 +16,7 @@ use std::{net::SocketAddr, pin::Pin, sync::Arc};
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-use iroh_relay::{
-    RelayConfig, RelayMap,
-    tls::{CaRootsConfig, default_provider},
-};
+use iroh_relay::{RelayConfig, RelayMap, tls::CaRootsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
 use n0_error::{e, ensure, stack_error};
@@ -50,6 +47,7 @@ use crate::address_lookup::PkarrResolver;
 use crate::dns::DnsResolver;
 #[cfg(feature = "unstable-custom-transports")]
 use crate::endpoint::transports::CustomTransport;
+pub use crate::tls::TlsConfigError;
 use crate::{
     NetReport,
     address_lookup::{
@@ -61,7 +59,7 @@ use crate::{
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
     },
-    tls::{self, DEFAULT_MAX_TLS_TICKETS},
+    tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
 
 #[cfg(not(wasm_browser))]
@@ -129,6 +127,7 @@ pub struct Builder {
     hooks: EndpointHooksList,
     transport_bias: socket::transports::TransportBiasMap,
     portmapper_config: PortmapperConfig,
+    crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -196,6 +195,12 @@ impl Builder {
             hooks: Default::default(),
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
+            #[cfg(feature = "ring")]
+            crypto_provider: Some(Arc::new(rustls::crypto::ring::default_provider())),
+            #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+            crypto_provider: Some(Arc::new(rustls::crypto::aws_lc_rs::default_provider())),
+            #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+            crypto_provider: None,
         }
     }
 
@@ -203,18 +208,33 @@ impl Builder {
 
     /// Binds the endpoint.
     pub async fn bind(self) -> Result<Endpoint, BindError> {
-        let mut rng = rand::rng();
         let secret_key = self
             .secret_key
-            .unwrap_or_else(move || SecretKey::generate(&mut rng));
+            .unwrap_or_else(|| SecretKey::generate(&mut rand::rng()));
+
+        let crypto_provider = self
+            .crypto_provider
+            .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?;
+
+        let token_key = Arc::new(
+            RustlsTokenKey::new(&mut rand::rng(), &crypto_provider)
+                .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?,
+        );
 
         let span = info_span!("endpoint", id = %secret_key.public().fmt_short());
         let _guard = span.enter();
 
+        let tls_config = tls::TlsConfig::new(
+            secret_key.clone(),
+            self.max_tls_tickets,
+            crypto_provider.clone(),
+        );
         let static_config = StaticConfig {
+            server_config: tls_config.make_server_config(self.keylog)?,
+            client_config: tls_config.make_client_config(self.keylog)?,
+            tls_config,
             transport_config: self.transport_config.clone(),
-            tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
-            keylog: self.keylog,
+            token_key,
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
@@ -226,7 +246,7 @@ impl Builder {
         let tls_config = self
             .ca_roots_config
             .unwrap_or_default()
-            .client_config(default_provider())
+            .client_config(crypto_provider)
             .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
 
         let sock_opts = socket::Options {
@@ -682,6 +702,24 @@ impl Builder {
         self
     }
 
+    /// Specify the rustls cryptography to use for all TLS operations.
+    ///
+    /// This includes
+    /// - TLS for encryption and authentication of iroh connections themselves, but also
+    /// - HTTPS connections to relays
+    /// - Pkarr relay publishing HTTPS connections
+    /// - and any other Address Lookup services that decide to use [`Endpoint::tls_config`].
+    ///
+    /// The two most common crypto providers in use today are `ring` as well as `aws-lc-rs`.
+    ///
+    /// If either the `ring` or `aws-lc-rs` feature is set in iroh, this function doesn't need to be called.
+    ///
+    /// If none of these features are set, then calling this function in the builder is mandatory.
+    pub fn crypto_provider(mut self, crypto_provider: Arc<rustls::crypto::CryptoProvider>) -> Self {
+        self.crypto_provider = Some(crypto_provider);
+        self
+    }
+
     /// Install hooks onto the endpoint.
     ///
     /// Endpoint hooks intercept the connection establishment process of an [`Endpoint`].
@@ -997,18 +1035,12 @@ impl Endpoint {
         // Start connecting via noq. This will time out after 10 seconds if no reachable
         // address is available.
 
-        let client_config = {
-            let mut alpn_protocols = vec![alpn.to_vec()];
-            alpn_protocols.extend(options.additional_alpns);
-            let quic_client_config = self
-                .inner
-                .static_config
-                .tls_config
-                .make_client_config(alpn_protocols, self.inner.static_config.keylog);
-            let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
-            client_config.transport_config(transport_config.clone());
-            client_config
-        };
+        let mut alpn_protocols = vec![alpn.to_vec()];
+        alpn_protocols.extend(options.additional_alpns);
+        let client_config = self
+            .inner
+            .static_config
+            .create_client_config(alpn_protocols, transport_config.clone());
 
         let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(endpoint_id);

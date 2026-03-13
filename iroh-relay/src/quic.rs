@@ -459,9 +459,12 @@ mod tests {
     /// In this case we don't simulate it via synthetically high RTT, but by dropping
     /// all packets on the server-side for 2 seconds.
     #[tokio::test]
-    // #[traced_test]
+    #[traced_test]
     async fn test_qad_connect_delayed() -> Result {
-        tracing_subscriber::fmt::try_init().ok();
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .ok();
+
         // Create a socket for our QAD server.  We need the socket separately because we
         // need to pop off messages before we attach it to the Noq Endpoint.
         let socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))

@@ -86,6 +86,10 @@ pub enum ConnectError {
         #[error(std_err)]
         source: std::io::Error,
     },
+    #[error(
+        "No rustls crypto provider configured while both ring and aws-lc-rs feature flags are disabled"
+    )]
+    MissingCryptoProvider,
     #[cfg(wasm_browser)]
     #[error("The relay protocol is not available in browsers")]
     RelayProtoNotAvailable {},
@@ -209,7 +213,6 @@ impl ClientBuilder {
         use crate::{
             http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION},
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
-            tls::{CaRootsConfig, default_provider},
         };
 
         let mut dial_url = (*self.url).clone();
@@ -232,7 +235,14 @@ impl ClientBuilder {
 
         let tls_config = match self.tls_config.clone() {
             Some(config) => config,
-            None => CaRootsConfig::default().client_config(default_provider())?,
+            #[cfg(feature = "ring")]
+            None => crate::tls::CaRootsConfig::default()
+                .client_config(Arc::new(rustls::crypto::ring::default_provider()))?,
+            #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+            None => crate::tls::CaRootsConfig::default()
+                .client_config(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))?,
+            #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+            None => n0_error::bail!(ConnectError::MissingCryptoProvider),
         };
 
         #[allow(unused_mut)]

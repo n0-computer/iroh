@@ -123,7 +123,6 @@ impl CaRootsConfig {
                 let verifier = rustls_platform_verifier::Verifier::new(crypto_provider);
                 Arc::new(verifier.map_err(io::Error::other)?)
             }
-
             Mode::EmbeddedWebPki => {
                 let mut root_store = rustls::RootCertStore {
                     roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
@@ -141,7 +140,9 @@ impl CaRootsConfig {
                     .map_err(io::Error::other)?
             }
             #[cfg(any(test, feature = "test-utils"))]
-            Mode::InsecureSkipVerify => Arc::new(self::no_cert_verifier::NoCertVerifier),
+            Mode::InsecureSkipVerify => {
+                Arc::new(self::no_cert_verifier::NoCertVerifier { crypto_provider })
+            }
         })
     }
 
@@ -158,23 +159,37 @@ impl CaRootsConfig {
     }
 }
 
-/// Returns iroh's default crypto provider.
+/// Returns the default crypto provider, if enabled via a feature flag.
 ///
-/// Currently, this is [`rustls::crypto::ring`].
+/// Prefers to ring over aws-lc-rs if both are enabled.
+#[cfg(feature = "ring")]
 pub fn default_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
+/// Returns the default crypto provider, if enabled via a feature flag.
+///
+/// Prefers to ring over aws-lc-rs if both are enabled.
+#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+pub fn default_provider() -> Arc<CryptoProvider> {
+    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+}
+
 #[cfg(any(test, feature = "test-utils"))]
 mod no_cert_verifier {
+    use std::sync::Arc;
+
     use rustls::{
         client::danger::{ServerCertVerified, ServerCertVerifier},
+        crypto::CryptoProvider,
         pki_types::{CertificateDer, ServerName},
     };
 
     /// Used to allow self signed certificates in tests
     #[derive(Debug)]
-    pub(super) struct NoCertVerifier;
+    pub(super) struct NoCertVerifier {
+        pub(super) crypto_provider: Arc<CryptoProvider>,
+    }
 
     impl ServerCertVerifier for NoCertVerifier {
         fn verify_server_cert(
@@ -206,7 +221,7 @@ mod no_cert_verifier {
         }
 
         fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-            super::default_provider()
+            self.crypto_provider
                 .signature_verification_algorithms
                 .supported_schemes()
         }
