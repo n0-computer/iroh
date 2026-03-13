@@ -11,7 +11,7 @@ use iroh_base::SecretKey;
 use noq::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use tracing::warn;
 
-use self::resolver::ResolveRawPublicKeyCert;
+use self::resolver::AlwaysResolvesCert;
 
 pub(crate) mod name;
 mod resolver;
@@ -39,7 +39,7 @@ pub(crate) const DEFAULT_MAX_TLS_TICKETS: usize = 8 * 32;
 #[derive(Debug)]
 pub(crate) struct TlsConfig {
     pub(crate) secret_key: SecretKey,
-    cert_resolver: Arc<ResolveRawPublicKeyCert>,
+    cert_resolver: Arc<AlwaysResolvesCert>,
     server_verifier: Arc<verifier::ServerCertificateVerifier>,
     client_verifier: Arc<verifier::ClientCertificateVerifier>,
     session_store: Arc<dyn rustls::client::ClientSessionStore>,
@@ -47,14 +47,17 @@ pub(crate) struct TlsConfig {
 
 impl TlsConfig {
     pub(crate) fn new(secret_key: SecretKey, max_tls_tickets: usize) -> Self {
+        let cert_resolver = Arc::new(
+            AlwaysResolvesCert::new(&secret_key).expect("Client cert key DER is valid; qed"),
+        );
         Self {
-            cert_resolver: Arc::new(ResolveRawPublicKeyCert::new(&secret_key)),
+            secret_key,
+            cert_resolver,
             server_verifier: Arc::new(verifier::ServerCertificateVerifier),
             client_verifier: Arc::new(verifier::ClientCertificateVerifier),
             session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
                 max_tls_tickets,
             )),
-            secret_key,
         }
     }
 
@@ -100,13 +103,14 @@ impl TlsConfig {
         alpn_protocols: Vec<Vec<u8>>,
         keylog: bool,
     ) -> QuicServerConfig {
-        let mut crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-        .expect("fixed config")
-        .with_client_cert_verifier(self.client_verifier.clone())
-        .with_cert_resolver(self.cert_resolver.clone());
+        let provider = rustls::crypto::CryptoProvider::get_default()
+            .expect("no default crypto provider installed")
+            .clone();
+        let mut crypto = rustls::ServerConfig::builder_with_provider(provider)
+            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+            .expect("fixed config")
+            .with_client_cert_verifier(self.client_verifier.clone())
+            .with_cert_resolver(self.cert_resolver.clone());
         crypto.alpn_protocols = alpn_protocols;
         if keylog {
             warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");

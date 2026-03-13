@@ -13,39 +13,16 @@ use rustls::{
     pki_types::CertificateDer as Certificate,
     server::danger::{ClientCertVerified, ClientCertVerifier},
 };
-use webpki::ring as webpki_algs;
 use webpki_types::SubjectPublicKeyInfoDer;
 
 /// The only TLS version we support is 1.3
 pub(super) static PROTOCOL_VERSIONS: &[&SupportedProtocolVersion] = &[&rustls::version::TLS13];
 
-static SUPPORTED_SIG_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms {
-    all: &[
-        webpki_algs::ECDSA_P256_SHA256,
-        webpki_algs::ECDSA_P256_SHA384,
-        webpki_algs::ECDSA_P384_SHA256,
-        webpki_algs::ECDSA_P384_SHA384,
-        webpki_algs::ED25519,
-    ],
-    mapping: &[
-        // Note: for TLS1.2 the curve is not fixed by SignatureScheme. For TLS1.3 it is.
-        (
-            SignatureScheme::ECDSA_NISTP384_SHA384,
-            &[
-                webpki_algs::ECDSA_P384_SHA384,
-                webpki_algs::ECDSA_P256_SHA384,
-            ],
-        ),
-        (
-            SignatureScheme::ECDSA_NISTP256_SHA256,
-            &[
-                webpki_algs::ECDSA_P256_SHA256,
-                webpki_algs::ECDSA_P384_SHA256,
-            ],
-        ),
-        (SignatureScheme::ED25519, &[webpki_algs::ED25519]),
-    ],
-};
+fn supported_sig_algs() -> WebPkiSupportedAlgorithms {
+    rustls::crypto::CryptoProvider::get_default()
+        .expect("no default crypto provider installed")
+        .signature_verification_algorithms
+}
 
 /// Implementation of the `rustls` certificate verification traits
 ///
@@ -123,12 +100,12 @@ impl ServerCertVerifier for ServerCertificateVerifier {
             message,
             &SubjectPublicKeyInfoDer::from(cert.as_ref()),
             dss,
-            &SUPPORTED_SIG_ALGS,
+            &supported_sig_algs(),
         )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        SUPPORTED_SIG_ALGS.supported_schemes()
+        supported_sig_algs().supported_schemes()
     }
 
     fn requires_raw_public_keys(&self) -> bool {
@@ -186,12 +163,12 @@ impl ClientCertVerifier for ClientCertificateVerifier {
             message,
             &SubjectPublicKeyInfoDer::from(cert.as_ref()),
             dss,
-            &SUPPORTED_SIG_ALGS,
+            &supported_sig_algs(),
         )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        SUPPORTED_SIG_ALGS.supported_schemes()
+        supported_sig_algs().supported_schemes()
     }
 
     fn root_hint_subjects(&self) -> &[DistinguishedName] {
