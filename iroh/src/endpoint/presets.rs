@@ -6,10 +6,7 @@
 //! # async fn wrapper() -> n0_error::Result {
 //! use iroh::{Endpoint, RelayMode, Watcher, endpoint::presets};
 //!
-//! let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-//!     .preset(presets::N0)
-//!     .bind()
-//!     .await?;
+//! let endpoint = Endpoint::builder(presets::N0).bind().await?;
 //! # let _ = endpoint;
 //! # Ok(())
 //! # }

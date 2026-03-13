@@ -21,10 +21,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let recent = Duration::from_secs(600); // 10 minutes in seconds
-//!     let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-//!         .bind()
-//!         .await
-//!         .unwrap();
+//!     let endpoint = Endpoint::empty_builder().bind().await.unwrap();
 //!
 //!     // Register the Address Lookupwith the endpoint
 //!     let mdns = MdnsAddressLookup::builder().build(endpoint.id()).unwrap();

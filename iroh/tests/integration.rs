@@ -12,6 +12,7 @@
 use iroh::{
     Endpoint, RelayMode,
     address_lookup::{AddressLookup, pkarr::PkarrResolver},
+    endpoint::presets,
 };
 use n0_error::{Result, StdResultExt};
 use n0_future::{
@@ -35,12 +36,12 @@ const ECHO_ALPN: &[u8] = b"echo";
 async fn simple_endpoint_id_based_connection_transfer() -> Result {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     setup_logging();
-    let client = Endpoint::builder()
+    let client = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Staging)
         .bind()
         .await?;
     tracing::info!("started client, id {}", client.id().fmt_short());
-    let server = Endpoint::builder()
+    let server = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Staging)
         .alpns(vec![ECHO_ALPN.to_vec()])
         .bind()

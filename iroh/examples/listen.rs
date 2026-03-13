@@ -5,7 +5,10 @@
 //!     $ cargo run --example listen
 use std::time::Duration;
 
-use iroh::{Endpoint, RelayMode, SecretKey, endpoint::ConnectionError};
+use iroh::{
+    Endpoint, RelayMode, SecretKey,
+    endpoint::{ConnectionError, presets},
+};
 use n0_error::{Result, StdResultExt};
 use tracing::{debug, info, warn};
 
@@ -20,7 +23,7 @@ async fn main() -> Result<()> {
     println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as endpoint identifiers, uses QUIC for directly connecting to other endpoints, and uses the relay protocol and relay servers to holepunch direct connections between endpoints when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         // The secret key is used to authenticate with other endpoints. The PublicKey portion of this secret key is how we identify endpoints, often referred to as the `endpoint_id` in our codebase.
         .secret_key(secret_key)
         // set the ALPN protocols this endpoint will accept on incoming connections
