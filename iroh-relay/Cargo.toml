@@ -88,7 +88,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "0.25.1", features = ["tokio", "system-config"] }
+simple-dns = "0.9.3"
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -99,6 +99,10 @@ tokio = { version = "1", features = [
     "io-std",
 ] }
 tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "getrandom", "rand", "client", "sha1_smol"] }
+
+# Windows-only dependencies
+[target.'cfg(windows)'.dependencies]
+ipconfig = "0.3"
 
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
