@@ -190,7 +190,7 @@ pub(crate) mod dns_server {
         net::{Ipv4Addr, SocketAddr},
     };
 
-    use hickory_resolver::proto::{
+    use hickory_proto::{
         op::{Message, header::MessageType},
         serialize::binary::BinDecodable,
     };
@@ -449,8 +449,8 @@ pub(crate) mod pkarr_dns_state {
 
         pub fn resolve_dns(
             &self,
-            query: &hickory_resolver::proto::op::Message,
-            reply: &mut hickory_resolver::proto::op::Message,
+            query: &hickory_proto::op::Message,
+            reply: &mut hickory_proto::op::Message,
             ttl: u32,
         ) -> std::io::Result<()> {
             for query in query.queries() {
@@ -479,8 +479,8 @@ pub(crate) mod pkarr_dns_state {
     impl QueryHandler for State {
         fn resolve(
             &self,
-            query: &hickory_resolver::proto::op::Message,
-            reply: &mut hickory_resolver::proto::op::Message,
+            query: &hickory_proto::op::Message,
+            reply: &mut hickory_proto::op::Message,
         ) -> impl Future<Output = std::io::Result<()>> + Send {
             const TTL: u32 = 30;
             let res = self.resolve_dns(query, reply, TTL);
@@ -511,7 +511,7 @@ pub(crate) mod pkarr_dns_state {
         endpoint_info: &EndpointInfo,
         origin: &str,
         ttl: u32,
-    ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static {
+    ) -> impl Iterator<Item = hickory_proto::rr::Record> + 'static {
         let txt_strings = endpoint_info.to_txt_strings();
         let records = to_hickory_records(txt_strings, endpoint_info.endpoint_id, origin, ttl);
         records.collect::<Vec<_>>().into_iter()
@@ -523,8 +523,8 @@ pub(crate) mod pkarr_dns_state {
         endpoint_id: EndpointId,
         origin: &str,
         ttl: u32,
-    ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_ {
-        use hickory_resolver::proto::rr;
+    ) -> impl Iterator<Item = hickory_proto::rr::Record> + '_ {
+        use hickory_proto::rr;
         let name = format!("{IROH_TXT_NAME}.{}.{origin}", endpoint_id.to_z32());
         let name = rr::Name::from_utf8(name).expect("invalid name");
         txt_strings.into_iter().map(move |s| {

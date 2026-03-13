@@ -2101,7 +2101,7 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.3.4",
- "hickory-resolver",
+ "hickory-proto",
  "http",
  "indicatif",
  "ipnet",
