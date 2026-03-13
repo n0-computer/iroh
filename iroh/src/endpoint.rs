@@ -221,7 +221,12 @@ impl Builder {
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
         #[cfg(not(wasm_browser))]
-        let dns_resolver = self.dns_resolver.unwrap_or_default();
+        let dns_resolver = {
+            #[cfg(feature = "dns_hickory")]
+            { self.dns_resolver.unwrap_or_default() }
+            #[cfg(not(feature = "dns_hickory"))]
+            { self.dns_resolver.expect("dns_resolver is required when the dns_hickory feature is disabled. Use Builder::dns_resolver() to provide one.") }
+        };
 
         let metrics = EndpointMetrics::default();
 

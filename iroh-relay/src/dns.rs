@@ -9,10 +9,13 @@
 use std::{
     fmt,
     future::Future,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::Arc,
 };
+#[cfg(feature = "dns_hickory")]
+use std::net::SocketAddr;
 
+#[cfg(feature = "dns_hickory")]
 use hickory_resolver::{
     TokioResolver,
     config::{ResolverConfig, ResolverOpts},
@@ -25,8 +28,10 @@ use n0_future::{
     boxed::BoxFuture,
     time::{self, Duration},
 };
+#[cfg(feature = "dns_hickory")]
 use rustls::ClientConfig;
 use tokio::sync::RwLock;
+#[cfg(feature = "dns_hickory")]
 use tracing::debug;
 use url::Url;
 
@@ -85,6 +90,7 @@ pub enum DnsError {
     },
     #[error("missing host")]
     MissingHost {},
+    #[cfg(feature = "dns_hickory")]
     #[error(transparent)]
     Resolve {
         source: hickory_resolver::ResolveError,
@@ -120,6 +126,7 @@ impl<E: StackError + 'static> StaggeredError<E> {
 }
 
 /// Builder for [`DnsResolver`].
+#[cfg(feature = "dns_hickory")]
 #[derive(Debug, Clone, Default)]
 pub struct Builder {
     use_system_defaults: bool,
@@ -128,6 +135,7 @@ pub struct Builder {
 }
 
 /// Protocols over which DNS records can be resolved.
+#[cfg(feature = "dns_hickory")]
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum DnsProtocol {
@@ -154,6 +162,7 @@ pub enum DnsProtocol {
     Https,
 }
 
+#[cfg(feature = "dns_hickory")]
 impl DnsProtocol {
     fn to_hickory(self) -> hickory_resolver::proto::xfer::Protocol {
         use hickory_resolver::proto::xfer::Protocol;
@@ -170,6 +179,7 @@ impl DnsProtocol {
     }
 }
 
+#[cfg(feature = "dns_hickory")]
 impl Builder {
     /// Makes the builder respect the host system's DNS configuration.
     ///
@@ -223,11 +233,13 @@ impl DnsResolver {
     /// We first try to read the system's resolver from `/etc/resolv.conf`.
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
+    #[cfg(feature = "dns_hickory")]
     pub fn new() -> Self {
         Builder::default().with_system_defaults().build()
     }
 
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
+    #[cfg(feature = "dns_hickory")]
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         Builder::default()
             .with_nameserver(nameserver, DnsProtocol::Udp)
@@ -235,6 +247,7 @@ impl DnsResolver {
     }
 
     /// Creates a builder to construct a DNS resolver with custom options.
+    #[cfg(feature = "dns_hickory")]
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -469,6 +482,7 @@ impl DnsResolver {
     }
 }
 
+#[cfg(feature = "dns_hickory")]
 impl Default for DnsResolver {
     fn default() -> Self {
         Self::new()
@@ -497,12 +511,14 @@ impl reqwest::dns::Resolve for DnsResolver {
     }
 }
 
+#[cfg(feature = "dns_hickory")]
 #[derive(Debug)]
 struct HickoryResolver {
     resolver: TokioResolver,
     builder: Builder,
 }
 
+#[cfg(feature = "dns_hickory")]
 impl HickoryResolver {
     fn new(builder: Builder) -> Self {
         let resolver = Self::build_resolver(&builder);
@@ -567,6 +583,7 @@ impl HickoryResolver {
     }
 }
 
+#[cfg(feature = "dns_hickory")]
 impl Resolver for HickoryResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let resolver = self.resolver.clone();
@@ -650,6 +667,7 @@ impl From<Vec<Box<[u8]>>> for TxtRecordData {
     }
 }
 
+#[cfg(feature = "dns_hickory")]
 /// Deprecated IPv6 site-local anycast addresses still configured by windows.
 ///
 /// Windows still configures these site-local addresses as soon even as an IPv6 loopback
