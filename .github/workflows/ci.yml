@@ -317,11 +317,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify optional deps are absent without features
         run: |
-          tree=$(cargo tree -p iroh --no-default-features --edges normal)
           fail=0
           for dep in portmapper igd-next swarm-discovery ring aws-lc-rs; do
-            if echo "$tree" | grep -q "$dep"; then
+            output=$(cargo tree -p iroh --no-default-features --edges normal -i "$dep" 2>&1)
+            if ! echo "$output" | grep -qE "(warning: nothing to print\.|did not match any packages)"; then
               echo "ERROR: $dep should not be in the dependency tree without its feature"
+              echo "$output"
               fail=1
             fi
           done
