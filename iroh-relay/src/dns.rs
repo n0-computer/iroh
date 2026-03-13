@@ -567,6 +567,8 @@ impl HickoryResolver {
     }
 }
 
+
+
 impl Resolver for HickoryResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let resolver = self.resolver.clone();
@@ -590,11 +592,8 @@ impl Resolver for HickoryResolver {
         let resolver = self.resolver.clone();
         Box::pin(async move {
             let lookup = resolver.txt_lookup(host).await?;
-            let iter: BoxIter<TxtRecordData> = Box::new(
-                lookup
-                    .into_iter()
-                    .map(|txt| TxtRecordData::from_iter(txt.iter().cloned())),
-            );
+            let iter: BoxIter<TxtRecordData> =
+                Box::new(lookup.into_iter().map(|txt| TxtRecordData::from_iter(txt.iter().cloned())));
             Ok(iter)
         })
     }
