@@ -84,6 +84,9 @@ sync_wrapper = { version = "1.0.2", features = ["futures"] }
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = "0.25.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1.1", features = ["tokio", "client", "client-legacy", "http1"] }
+http-body-util = "0.1"
 portmapper = { version = "0.15", optional = true, default-features = false }
 noq = { version = "0.17.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [

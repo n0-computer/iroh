@@ -293,8 +293,6 @@ impl Actor {
             let dns_resolver = self.socket_state.dns_resolver.clone();
             let dm = self.relay_map.clone();
             let token = token.clone();
-            #[cfg(not(wasm_browser))]
-            let tls_config = self.tls_config.clone();
             tasks.spawn(
                 async move {
                     let res = token
@@ -307,7 +305,6 @@ impl Actor {
                                     &dns_resolver,
                                     &dm,
                                     preferred_relay,
-                                    tls_config,
                                 ),
                             )
                             .await
@@ -316,15 +313,7 @@ impl Actor {
                     let res = match res {
                         Some(Ok(Ok(found))) => Some(found),
                         Some(Ok(Err(err))) => {
-                            match err {
-                                CaptivePortalError::CreateReqwestClient { source, .. }
-                                | CaptivePortalError::HttpRequest { source, .. }
-                                    if source.is_connect() =>
-                                {
-                                    debug!("check_captive_portal failed: {source:#}");
-                                }
-                                err => warn!("check_captive_portal error: {err:#}"),
-                            }
+                            warn!("check_captive_portal error: {err:#}");
                             None
                         }
                         Some(Err(time::Elapsed { .. })) => {
@@ -547,15 +536,15 @@ enum CaptivePortalError {
         #[error(from)]
         source: StaggeredError<DnsError>,
     },
-    #[error("Creating HTTP client failed")]
-    CreateReqwestClient {
+    #[error("TCP connection failed")]
+    Connect {
         #[error(std_err)]
-        source: reqwest::Error,
+        source: std::io::Error,
     },
     #[error("HTTP request failed")]
     HttpRequest {
         #[error(std_err)]
-        source: reqwest::Error,
+        source: hyper::Error,
     },
 }
 
@@ -569,8 +558,11 @@ async fn check_captive_portal(
     dns_resolver: &DnsResolver,
     dm: &RelayMap,
     preferred_relay: Option<RelayUrl>,
-    tls_config: rustls::ClientConfig,
 ) -> Result<bool, CaptivePortalError> {
+    use http_body_util::Empty;
+    use hyper::body::Bytes;
+    use hyper_util::rt::TokioIo;
+
     // If we have a preferred relay and we can use it for non-QAD requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
     let preferred_relay = preferred_relay.and_then(|url| dm.get(&url).map(|_| url));
@@ -589,38 +581,51 @@ async fn check_captive_portal(
         }
     };
 
-    let mut builder =
-        reqwest_client_builder(Some(tls_config)).redirect(reqwest::redirect::Policy::none());
+    let host_name = url.host_str().unwrap_or_default();
 
-    if let Some(Host::Domain(domain)) = url.host() {
-        // Use our own resolver rather than getaddrinfo
-        //
-        // Be careful, a non-zero port will override the port in the URI.
-        //
-        // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
-        // them.  But our resolver doesn't support that yet.
+    // Resolve the relay hostname using our own resolver.
+    let addr = if let Some(Host::Domain(domain)) = url.host() {
         let addrs: Vec<_> = dns_resolver
             .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
             .await?
-            .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
-        builder = builder.resolve_to_addrs(domain, &addrs);
-    }
-    let client = builder
-        .build()
-        .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?;
+        if addrs.is_empty() {
+            trace!("No addresses resolved for captive portal check");
+            return Ok(false);
+        }
+        SocketAddr::new(addrs[0], 80)
+    } else {
+        trace!("No domain host for captive portal check");
+        return Ok(false);
+    };
 
-    // Note: the set of valid characters in a challenge and the total
-    // length is limited; see is_challenge_char in bin/iroh-relay for more
-    // details.
+    // Plain HTTP — captive portals intercept unencrypted requests.
+    let stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .map_err(|err| e!(CaptivePortalError::Connect, err))?;
 
-    let host_name = url.host_str().unwrap_or_default();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .map_err(|err| e!(CaptivePortalError::HttpRequest, err))?;
+
+    // Drive the connection in the background.
+    tokio::spawn(async move {
+        if let Err(err) = conn.await {
+            debug!("captive portal connection error: {err:#}");
+        }
+    });
+
     let challenge = format!("ts_{host_name}");
-    let portal_url = format!("http://{host_name}/generate_204");
-    let res = client
-        .request(reqwest::Method::GET, portal_url)
+    let req = hyper::Request::builder()
+        .method(hyper::Method::GET)
+        .uri("/generate_204")
+        .header(hyper::header::HOST, host_name)
         .header("X-Iroh-Challenge", &challenge)
-        .send()
+        .body(Empty::<Bytes>::new())
+        .expect("valid request");
+
+    let res = sender
+        .send_request(req)
         .await
         .map_err(|err| e!(CaptivePortalError::HttpRequest, err))?;
 
@@ -628,16 +633,14 @@ async fn check_captive_portal(
     let is_valid_response = res
         .headers()
         .get("X-Iroh-Response")
-        .map(|s| s.to_str().unwrap_or_default())
+        .and_then(|s| s.to_str().ok())
         == Some(&expected_response);
 
     trace!(
-        "check_captive_portal url={} status_code={} valid_response={}",
-        res.url(),
+        "check_captive_portal host={host_name} status={} valid={is_valid_response}",
         res.status(),
-        is_valid_response,
     );
-    let has_captive = res.status() != 204 || !is_valid_response;
+    let has_captive = res.status() != StatusCode::NO_CONTENT || !is_valid_response;
 
     Ok(has_captive)
 }
