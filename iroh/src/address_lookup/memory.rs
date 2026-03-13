@@ -33,7 +33,6 @@ use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 ///
 /// This is where the [`MemoryLookup`] is useful: it allows applications to add and
 /// retract endpoint addressing information that is otherwise out-of-band to iroh.
-///
 #[cfg_attr(
     any(feature = "ring", feature = "aws-lc-rs"), // Endpoint::bind needs a crypto provider
     doc = r##"
@@ -116,38 +115,36 @@ impl MemoryLookup {
     }
 
     /// Creates a Memory Lookup instance from endpoint addresses.
-    ///
     #[cfg_attr(
         any(feature = "ring", feature = "aws-lc-rs"), // Endpoint::bind needs a crypto provider
         doc = r##"
-    # Examples
-    
-    ```rust
-    use std::{net::SocketAddr, str::FromStr};
-    
-    use iroh::{Endpoint, EndpointAddr, address_lookup::memory::MemoryLookup};
-    
-    # fn get_addrs() -> Vec<EndpointAddr> {
-    #     Vec::new()
-    # }
-    # #[tokio::main]
-    # async fn main() -> n0_error::Result<()> {
-    // get addrs from somewhere
-    let addrs = get_addrs();
-    
-    // create a MemoryLookup from the list of addrs.
-    let address_lookup = MemoryLookup::from_endpoint_info(addrs);
-    // create an endpoint with the memory lookup address_lookup
-    let endpoint = Endpoint::builder()
-        .address_lookup(address_lookup)
-        .bind()
-        .await?;
-    # Ok(())
-    # }
-    # #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
-    # fn main() {}
-    ```"##
-    )]
+# Examples
+
+```rust
+use std::{net::SocketAddr, str::FromStr};
+
+use iroh::{Endpoint, EndpointAddr, address_lookup::memory::MemoryLookup};
+
+# fn get_addrs() -> Vec<EndpointAddr> {
+#     Vec::new()
+# }
+# #[tokio::main]
+# async fn main() -> n0_error::Result<()> {
+// get addrs from somewhere
+let addrs = get_addrs();
+
+// create a MemoryLookup from the list of addrs.
+let address_lookup = MemoryLookup::from_endpoint_info(addrs);
+// create an endpoint with the memory lookup address_lookup
+let endpoint = Endpoint::builder()
+    .address_lookup(address_lookup)
+    .bind()
+    .await?;
+# Ok(())
+# }
+# #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+# fn main() {}
+```"##)]
     pub fn from_endpoint_info(infos: impl IntoIterator<Item = impl Into<EndpointInfo>>) -> Self {
         let res = Self::default();
         for info in infos {
