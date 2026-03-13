@@ -94,7 +94,7 @@ tracing-subscriber = { version = "0.3", features = [
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "0.25.1", features = ["tokio"] }
+hickory-resolver = { version = "0.25.1", features = ["tokio"], optional = true }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -134,8 +134,9 @@ cfg_aliases = "0.2.1"
 vergen-gitcl = "1.0.8"
 
 [features]
-default = ["metrics", "reqwest", "ring"]
-ring = ["noq/ring", "noq-proto/ring", "hickory-resolver/https-ring"]
+default = ["metrics", "reqwest", "ring", "dns_hickory"]
+dns_hickory = ["dep:hickory-resolver"]
+ring = ["noq/ring", "noq-proto/ring", "hickory-resolver?/https-ring"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["dep:rustls-platform-verifier"]
 # reqwest HTTP client support (for DnsResolver impl)

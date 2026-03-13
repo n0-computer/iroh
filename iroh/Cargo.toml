@@ -79,7 +79,7 @@ sync_wrapper = { version = "1.0.2", features = ["futures"] }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = "0.25.1"
+hickory-resolver = { version = "0.25.1", optional = true }
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.1", features = ["tokio"] }
 http-body-util = "0.1"
@@ -151,12 +151,13 @@ wasm-bindgen-test = "0.3.62"
 cfg_aliases = { version = "0.2.1" }
 
 [features]
-default = ["ring", "metrics", "fast-apple-datapath", "portmapper"]
+default = ["ring", "metrics", "fast-apple-datapath", "portmapper", "dns_hickory"]
+dns_hickory = ["dep:hickory-resolver", "iroh-relay/dns_hickory"]
 portmapper = ["dep:portmapper"]
 ring = ["noq/ring", "noq-proto/ring", "rustls/ring"]
 signals = ["tokio/signal", "tokio/process"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper?/metrics"]
-test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
+test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum", "dns_hickory"]
 address-lookup-mdns = ["dep:swarm-discovery"]
 address-lookup-pkarr-dht = ["pkarr/dht", "pkarr/relays"]
 # Enables fetching TLS trust anchors from the operating system
