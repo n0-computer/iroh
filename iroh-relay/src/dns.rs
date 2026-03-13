@@ -6,6 +6,17 @@
 //! See the [`endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
+#[cfg(not(wasm_browser))]
+mod cache;
+#[cfg(not(wasm_browser))]
+mod query;
+#[cfg(not(wasm_browser))]
+mod resolver;
+#[cfg(not(wasm_browser))]
+mod system_config;
+#[cfg(not(wasm_browser))]
+mod transport;
+
 use std::{
     fmt,
     future::Future,
@@ -13,11 +24,6 @@ use std::{
     sync::Arc,
 };
 
-use hickory_resolver::{
-    TokioResolver,
-    config::{ResolverConfig, ResolverOpts},
-    name_server::TokioConnectionProvider,
-};
 use iroh_base::EndpointId;
 use n0_error::{StackError, e, stack_error};
 use n0_future::{
@@ -27,9 +33,10 @@ use n0_future::{
 };
 use rustls::ClientConfig;
 use tokio::sync::RwLock;
-use tracing::debug;
 use url::Url;
 
+#[cfg(not(wasm_browser))]
+use self::resolver::SimpleDnsResolver;
 use crate::{
     defaults::timeouts::DNS_TIMEOUT,
     endpoint_info::{self, EndpointInfo, ParseError},
@@ -85,10 +92,21 @@ pub enum DnsError {
     },
     #[error("missing host")]
     MissingHost {},
-    #[error(transparent)]
-    Resolve {
-        source: hickory_resolver::ResolveError,
+    #[cfg(not(wasm_browser))]
+    #[error("invalid DNS packet")]
+    InvalidPacket {
+        #[error(std_err)]
+        source: simple_dns::SimpleDnsError,
     },
+    #[error("DNS transport error")]
+    Transport { source: std::io::Error },
+    #[error("DNS-over-HTTPS transport error")]
+    HttpTransport {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
+    #[error("DNS server returned error: {rcode}")]
+    ServerError { rcode: String },
     #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
 }
@@ -154,18 +172,6 @@ pub enum DnsProtocol {
     Https,
 }
 
-impl DnsProtocol {
-    fn to_hickory(self) -> hickory_resolver::proto::xfer::Protocol {
-        use hickory_resolver::proto::xfer::Protocol;
-        match self {
-            DnsProtocol::Udp => Protocol::Udp,
-            DnsProtocol::Tcp => Protocol::Tcp,
-            DnsProtocol::Tls => Protocol::Tls,
-            DnsProtocol::Https => Protocol::Https,
-        }
-    }
-}
-
 impl Builder {
     /// Makes the builder respect the host system's DNS configuration.
     ///
@@ -200,8 +206,8 @@ impl Builder {
 
     /// Builds the DNS resolver.
     pub fn build(self) -> DnsResolver {
-        let resolver = HickoryResolver::new(self);
-        DnsResolver(DnsResolverInner::Hickory(Arc::new(RwLock::new(resolver))))
+        let resolver = SimpleDnsResolver::new(self);
+        DnsResolver(DnsResolverInner::Simple(Arc::new(RwLock::new(resolver))))
     }
 }
 
@@ -490,13 +496,13 @@ impl reqwest::dns::Resolve for DnsResolver {
     }
 }
 
-/// Wrapper enum that contains either a hickory resolver or a custom resolver.
+/// Wrapper enum that contains either the built-in simple-dns resolver or a custom resolver.
 ///
 /// We do this to save the cost of boxing the futures and iterators when using
-/// default hickory resolver.
+/// the built-in resolver.
 #[derive(Debug, Clone)]
 enum DnsResolverInner {
-    Hickory(Arc<RwLock<HickoryResolver>>),
+    Simple(Arc<RwLock<SimpleDnsResolver>>),
     Custom(Arc<RwLock<dyn Resolver>>),
 }
 
@@ -506,7 +512,7 @@ impl DnsResolverInner {
         host: String,
     ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
         Ok(match self {
-            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_ipv4(host).await?),
+            Self::Simple(resolver) => Either::Left(resolver.read().await.lookup_ipv4(host).await?),
             Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_ipv4(host).await?),
         })
     }
@@ -516,7 +522,7 @@ impl DnsResolverInner {
         host: String,
     ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
         Ok(match self {
-            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_ipv6(host).await?),
+            Self::Simple(resolver) => Either::Left(resolver.read().await.lookup_ipv6(host).await?),
             Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_ipv6(host).await?),
         })
     }
@@ -526,136 +532,23 @@ impl DnsResolverInner {
         host: String,
     ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
         Ok(match self {
-            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_txt(host).await?),
+            Self::Simple(resolver) => Either::Left(resolver.read().await.lookup_txt(host).await?),
             Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_txt(host).await?),
         })
     }
 
     async fn clear_cache(&self) {
         match self {
-            Self::Hickory(resolver) => resolver.read().await.clear_cache(),
+            Self::Simple(resolver) => resolver.read().await.clear_cache(),
             Self::Custom(resolver) => resolver.read().await.clear_cache(),
         }
     }
 
     async fn reset(&self) {
         match self {
-            Self::Hickory(resolver) => resolver.write().await.reset(),
+            Self::Simple(resolver) => resolver.write().await.reset(),
             Self::Custom(resolver) => resolver.write().await.reset(),
         }
-    }
-}
-
-#[derive(Debug)]
-struct HickoryResolver {
-    resolver: TokioResolver,
-    builder: Builder,
-}
-
-impl HickoryResolver {
-    fn new(builder: Builder) -> Self {
-        let resolver = Self::build_resolver(&builder);
-        Self { resolver, builder }
-    }
-
-    fn build_resolver(builder: &Builder) -> TokioResolver {
-        let (mut config, mut options) = if builder.use_system_defaults {
-            match Self::system_config() {
-                Ok((config, options)) => (config, options),
-                Err(error) => {
-                    debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
-                    (ResolverConfig::google(), ResolverOpts::default())
-                }
-            }
-        } else {
-            (ResolverConfig::new(), ResolverOpts::default())
-        };
-
-        if let Some(client_config) = builder.tls_client_config.clone() {
-            options.tls_config = client_config;
-        }
-
-        for (addr, proto) in builder.nameservers.iter() {
-            let nameserver =
-                hickory_resolver::config::NameServerConfig::new(*addr, proto.to_hickory());
-            config.add_name_server(nameserver);
-        }
-
-        // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
-        options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
-        options.negative_max_ttl = Some(Duration::ZERO);
-
-        let mut hickory_builder =
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
-        *hickory_builder.options_mut() = options;
-        hickory_builder.build()
-    }
-
-    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::ResolveError> {
-        let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
-
-        // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
-        // there is no easy way to do this.
-        let mut config = hickory_resolver::config::ResolverConfig::new();
-        if let Some(name) = system_config.domain() {
-            config.set_domain(name.clone());
-        }
-        for name in system_config.search() {
-            config.add_search(name.clone());
-        }
-        for nameserver_cfg in system_config.name_servers() {
-            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.socket_addr.ip()) {
-                config.add_name_server(nameserver_cfg.clone());
-            }
-        }
-        Ok((config, options))
-    }
-
-    async fn lookup_ipv4(
-        &self,
-        host: String,
-    ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
-        Ok(self
-            .resolver
-            .ipv4_lookup(host)
-            .await?
-            .into_iter()
-            .map(Ipv4Addr::from))
-    }
-
-    /// Looks up an IPv6 address.
-    async fn lookup_ipv6(
-        &self,
-        host: String,
-    ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
-        Ok(self
-            .resolver
-            .ipv6_lookup(host)
-            .await?
-            .into_iter()
-            .map(Ipv6Addr::from))
-    }
-
-    /// Looks up TXT records.
-    async fn lookup_txt(
-        &self,
-        host: String,
-    ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
-        Ok(self
-            .resolver
-            .txt_lookup(host)
-            .await?
-            .into_iter()
-            .map(|txt| TxtRecordData::from_iter(txt.iter().cloned())))
-    }
-
-    /// Clears the internal cache.
-    fn clear_cache(&self) {
-        self.resolver.clear_cache()
-    }
-
-    fn reset(&mut self) {
-        self.resolver = Self::build_resolver(&self.builder);
     }
 }
 
@@ -717,20 +610,6 @@ impl<T, A: Iterator<Item = T>, B: Iterator<Item = T>> Iterator for Either<A, B> 
         }
     }
 }
-
-/// Deprecated IPv6 site-local anycast addresses still configured by windows.
-///
-/// Windows still configures these site-local addresses as soon even as an IPv6 loopback
-/// interface is configured.  We do not want to use these DNS servers, the chances of them
-/// being usable are almost always close to zero, while the chance of DNS configuration
-/// **only** relying on these servers and not also being configured normally are also almost
-/// zero.  The chance of the DNS resolver accidentally trying one of these and taking a
-/// bunch of timeouts to figure out they're no good are on the other hand very high.
-const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
-    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 1)),
-    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 2)),
-    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 3)),
-];
 
 /// Helper enum to give a unified type to the iterators of [`DnsResolver::lookup_ipv4_ipv6`].
 enum LookupIter<A, B> {
