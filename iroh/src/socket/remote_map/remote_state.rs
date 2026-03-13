@@ -568,6 +568,7 @@ impl RemoteStateActor {
             self.trigger_holepunching();
         }
     }
+
     fn handle_connection_close(&mut self, conn_id: ConnId, reason: ConnectionError) {
         event!(
             target: "iroh::_events::conn::closed",
