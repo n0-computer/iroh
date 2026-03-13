@@ -15,7 +15,7 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use noq::WeakConnectionHandle;
+use noq::{ConnectionError, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use sync_wrapper::SyncStream;
@@ -308,8 +308,8 @@ impl RemoteStateActor {
                     trace!(?id, ?evt, "remote addrs updated, triggering holepunching");
                     self.trigger_holepunching();
                 }
-                Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
-                    self.handle_connection_close(conn_id);
+                Some((conn_id, reason)) = self.connections_close.next(), if !self.connections_close.is_empty() => {
+                    self.handle_connection_close(conn_id, reason);
                 }
                 res = self.local_direct_addrs.updated() => {
                     if let Err(n0_watcher::Disconnected) = res {
@@ -568,7 +568,14 @@ impl RemoteStateActor {
             self.trigger_holepunching();
         }
     }
-    fn handle_connection_close(&mut self, conn_id: ConnId) {
+    fn handle_connection_close(&mut self, conn_id: ConnId, reason: ConnectionError) {
+        event!(
+            target: "iroh::_events::conn::closed",
+            Level::DEBUG,
+            %conn_id,
+            remote_id = %self.endpoint_id.fmt_short(),
+            ?reason,
+        );
         if self.connections.remove(&conn_id).is_some() {
             self.metrics.num_conns_closed.inc();
         }
@@ -1331,11 +1338,11 @@ impl OnClosed {
 }
 
 impl Future for OnClosed {
-    type Output = ConnId;
+    type Output = (ConnId, ConnectionError);
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let (_close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
-        Poll::Ready(self.conn_id)
+        let (close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
+        Poll::Ready((self.conn_id, close_reason))
     }
 }
 
