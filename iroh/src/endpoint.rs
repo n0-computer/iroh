@@ -98,10 +98,10 @@ pub use self::{
         VarIntBoundsExceeded, WriteError, Written,
     },
 };
-pub use crate::portmapper::PortmapperConfig;
 #[cfg(not(wasm_browser))]
 use crate::socket::transports::IpConfig;
 use crate::socket::transports::TransportConfig;
+pub use crate::{net_report::Config as NetReportConfig, portmapper::PortmapperConfig};
 
 /// Builder for [`Endpoint`].
 ///
@@ -129,6 +129,7 @@ pub struct Builder {
     hooks: EndpointHooksList,
     transport_bias: socket::transports::TransportBiasMap,
     portmapper_config: PortmapperConfig,
+    net_report_config: NetReportConfig,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -196,6 +197,7 @@ impl Builder {
             hooks: Default::default(),
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
+            net_report_config: Default::default(),
         }
     }
 
@@ -242,6 +244,7 @@ impl Builder {
             hooks: self.hooks,
             transport_bias: self.transport_bias,
             portmapper_config: self.portmapper_config,
+            net_report_config: self.net_report_config,
             static_config,
         };
 
@@ -702,6 +705,15 @@ impl Builder {
     /// Defaults to [`PortmapperConfig::Enabled`].
     pub fn portmapper_config(mut self, config: PortmapperConfig) -> Self {
         self.portmapper_config = config;
+        self
+    }
+
+    /// Configures the net report service.
+    ///
+    /// Controls which probes (HTTPS latency, captive portal detection) are run.
+    /// Defaults to all probes enabled.
+    pub fn net_report_config(mut self, config: NetReportConfig) -> Self {
+        self.net_report_config = config;
         self
     }
 

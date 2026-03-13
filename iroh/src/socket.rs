@@ -150,6 +150,7 @@ pub(crate) struct Options {
     pub(crate) hooks: EndpointHooksList,
     pub(crate) transport_bias: TransportBiasMap,
     pub(crate) portmapper_config: portmapper::PortmapperConfig,
+    pub(crate) net_report_config: crate::net_report::Config,
 
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
@@ -777,6 +778,7 @@ impl EndpointInner {
             hooks,
             transport_bias,
             portmapper_config,
+            net_report_config,
             static_config,
         } = opts;
 
@@ -931,11 +933,13 @@ impl EndpointInner {
                 ipv4: true,
                 ipv6: has_ipv6_transport,
             });
-            net_report::Options::new(tls_config.clone()).quic_config(qad_config)
+            net_report::Options::new(tls_config.clone())
+                .quic_config(qad_config)
+                .net_report_config(net_report_config)
         };
 
         #[cfg(wasm_browser)]
-        let net_report_config = net_report::Options::default();
+        let net_report_config = net_report::Options::default().net_report_config(net_report_config);
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
@@ -1779,6 +1783,7 @@ mod tests {
             hooks: Default::default(),
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
+            net_report_config: Default::default(),
             static_config,
         }
     }
@@ -2178,6 +2183,7 @@ mod tests {
             hooks: Default::default(),
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
+            net_report_config: Default::default(),
             static_config,
         };
         let sock = EndpointInner::bind(opts).await?;
