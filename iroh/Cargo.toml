@@ -78,7 +78,7 @@ sync_wrapper = { version = "1.0.2", features = ["futures"] }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-proto = "0.25.2"
+simple-dns = "0.9.3"
 portmapper = { version = "0.15", optional = true, default-features = false }
 noq = { version = "0.17.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
