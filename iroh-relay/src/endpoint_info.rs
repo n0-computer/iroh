@@ -33,6 +33,7 @@
 //! [`N0_DNS_ENDPOINT_ORIGIN_STAGING`]: crate::dns::N0_DNS_ENDPOINT_ORIGIN_STAGING
 
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     fmt::{self, Display},
     hash::Hash,
@@ -128,9 +129,9 @@ pub struct EndpointData {
 
 impl EndpointData {
     /// Creates a new [`EndpointData`] with a relay URL and a set of direct addresses.
-    pub fn new(addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
+    pub fn new(addrs: BTreeSet<TransportAddr>) -> Self {
         Self {
-            addrs: addrs.into_iter().collect(),
+            addrs,
             user_data: None,
         }
     }
@@ -215,13 +216,20 @@ impl EndpointData {
     /// Apply the given filter to the current addresses.
     ///
     /// Returns a vec to allow re-ordering of addresses.
-    pub fn filtered_addrs(&self, filter: &AddrFilter) -> Vec<TransportAddr> {
+    pub fn filtered_addrs(&self, filter: &AddrFilter) -> Cow<'_, BTreeSet<TransportAddr>> {
         filter.apply(&self.addrs)
     }
 }
 
+impl FromIterator<TransportAddr> for EndpointData {
+    fn from_iter<T: IntoIterator<Item = TransportAddr>>(iter: T) -> Self {
+        Self::new(iter.into_iter().collect())
+    }
+}
+
 /// The function type inside [`AddrFilter`].
-type AddrFilterFn = dyn Fn(&BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static;
+type AddrFilterFn =
+    dyn Fn(&BTreeSet<TransportAddr>) -> Cow<'_, BTreeSet<TransportAddr>> + Send + Sync + 'static;
 
 /// A filter and/or reordering function applied to transport addresses,
 /// typically used by AddressLookup services in iroh before publishing.
@@ -249,26 +257,29 @@ impl std::fmt::Debug for AddrFilter {
 impl AddrFilter {
     /// Create a new [`AddrFilter`]
     pub fn new(
-        f: impl Fn(&BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static,
+        f: impl Fn(&BTreeSet<TransportAddr>) -> Cow<'_, BTreeSet<TransportAddr>> + Send + Sync + 'static,
     ) -> Self {
         Self(Some(Arc::new(f)))
     }
 
     /// Only keep relay addresses.
     pub fn relay_only() -> Self {
-        Self::new(|addrs| addrs.iter().filter(|a| a.is_relay()).cloned().collect())
+        Self::new(|addrs| Cow::Owned(addrs.iter().filter(|a| a.is_relay()).cloned().collect()))
     }
 
     /// Only keep direct IP addresses.
     pub fn ip_only() -> Self {
-        Self::new(|addrs| addrs.iter().filter(|a| !a.is_relay()).cloned().collect())
+        Self::new(|addrs| Cow::Owned(addrs.iter().filter(|a| !a.is_relay()).cloned().collect()))
     }
 
     /// Apply the address filter function to a set of addresses.
-    pub fn apply(&self, addrs: &BTreeSet<TransportAddr>) -> Vec<TransportAddr> {
+    pub fn apply<'a>(
+        &self,
+        addrs: &'a BTreeSet<TransportAddr>,
+    ) -> Cow<'a, BTreeSet<TransportAddr>> {
         match &self.0 {
             Some(f) => f(addrs),
-            None => addrs.iter().cloned().collect(),
+            None => Cow::Borrowed(addrs),
         }
     }
 }
@@ -749,7 +760,7 @@ mod tests {
 
     #[test]
     fn txt_attr_roundtrip() {
-        let endpoint_data = EndpointData::new([
+        let endpoint_data = EndpointData::from_iter([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
         ])
@@ -767,7 +778,7 @@ mod tests {
     fn signed_packet_roundtrip() {
         let secret_key =
             SecretKey::from_str("vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia").unwrap();
-        let endpoint_data = EndpointData::new([
+        let endpoint_data = EndpointData::from_iter([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
         ])
@@ -787,7 +798,7 @@ mod tests {
         // Tor-like address (larger id, 32 byte pubkey)
         let tor_addr = CustomAddr::from_parts(42, &[0xab; 32]);
 
-        let endpoint_data = EndpointData::new([
+        let endpoint_data = EndpointData::from_iter([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
             TransportAddr::Custom(bt_addr),
@@ -814,7 +825,7 @@ mod tests {
         // Tor-like address (larger id, 32 byte pubkey)
         let tor_addr = CustomAddr::from_parts(42, &[0xab; 32]);
 
-        let endpoint_data = EndpointData::new([
+        let endpoint_data = EndpointData::from_iter([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
             TransportAddr::Custom(bt_addr),
