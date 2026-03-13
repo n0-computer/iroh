@@ -3,8 +3,8 @@
     pub segment_size: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="type" href="https://doc.rust-lang.org/nightly/core/num/nonzero/type.NonZeroU16.html" title="type core::num::nonzero::NonZeroU16">NonZeroU16</a>&gt;,
     pub contents: Bytes,
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>One or multiple datagrams being transferred via the relay.</p>
-<p>This type is modeled after [<code>quinn_proto::Transmit</code>]
-(or even more similarly <code>quinn_udp::Transmit</code>, but we don’t depend on that library here).</p>
+<p>This type is modeled after [<code>noq_proto::Transmit</code>]
+(or even more similarly <code>noq_udp::Transmit</code>, but we don’t depend on that library here).</p>
 </div></details><h2 id="fields" class="fields section-header">Fields<a href="#fields" class="anchor">§</a></h2><span id="structfield.ecn" class="structfield section-header"><a href="#structfield.ecn" class="anchor field">§</a><code>ecn: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;EcnCodepoint&gt;</code></span><div class="docblock"><p>Explicit congestion notification bits</p>
 </div><span id="structfield.segment_size" class="structfield section-header"><a href="#structfield.segment_size" class="anchor field">§</a><code>segment_size: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="type" href="https://doc.rust-lang.org/nightly/core/num/nonzero/type.NonZeroU16.html" title="type core::num::nonzero::NonZeroU16">NonZeroU16</a>&gt;</code></span><div class="docblock"><p>The segment size if this transmission contains multiple datagrams.
 This is <code>None</code> if the transmit only contains a single datagram</p>

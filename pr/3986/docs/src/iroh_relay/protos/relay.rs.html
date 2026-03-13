@@ -132,12 +132,12 @@
 <a href=#132 id=132 data-nosnippet>132</a>
 <a href=#133 id=133 data-nosnippet>133</a><span class="doccomment">/// One or multiple datagrams being transferred via the relay.
 <a href=#134 id=134 data-nosnippet>134</a>///
-<a href=#135 id=135 data-nosnippet>135</a>/// This type is modeled after [`quinn_proto::Transmit`]
-<a href=#136 id=136 data-nosnippet>136</a>/// (or even more similarly `quinn_udp::Transmit`, but we don't depend on that library here).
+<a href=#135 id=135 data-nosnippet>135</a>/// This type is modeled after [`noq_proto::Transmit`]
+<a href=#136 id=136 data-nosnippet>136</a>/// (or even more similarly `noq_udp::Transmit`, but we don't depend on that library here).
 <a href=#137 id=137 data-nosnippet>137</a></span><span class="attr">#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 <a href=#138 id=138 data-nosnippet>138</a></span><span class="kw">pub struct </span>Datagrams {
 <a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Explicit congestion notification bits
-<a href=#140 id=140 data-nosnippet>140</a>    </span><span class="kw">pub </span>ecn: <span class="prelude-ty">Option</span>&lt;quinn_proto::EcnCodepoint&gt;,
+<a href=#140 id=140 data-nosnippet>140</a>    </span><span class="kw">pub </span>ecn: <span class="prelude-ty">Option</span>&lt;noq_proto::EcnCodepoint&gt;,
 <a href=#141 id=141 data-nosnippet>141</a>    <span class="doccomment">/// The segment size if this transmission contains multiple datagrams.
 <a href=#142 id=142 data-nosnippet>142</a>    /// This is `None` if the transmit only contains a single datagram
 <a href=#143 id=143 data-nosnippet>143</a>    </span><span class="kw">pub </span>segment_size: <span class="prelude-ty">Option</span>&lt;NonZeroU16&gt;,
@@ -226,7 +226,7 @@
 <a href=#226 id=226 data-nosnippet>226</a>        }
 <a href=#227 id=227 data-nosnippet>227</a>
 <a href=#228 id=228 data-nosnippet>228</a>        <span class="kw">let </span>ecn_byte = bytes.get_u8();
-<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">let </span>ecn = quinn_proto::EcnCodepoint::from_bits(ecn_byte);
+<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">let </span>ecn = noq_proto::EcnCodepoint::from_bits(ecn_byte);
 <a href=#230 id=230 data-nosnippet>230</a>
 <a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">let </span>segment_size = <span class="kw">if </span>is_batch {
 <a href=#232 id=232 data-nosnippet>232</a>            <span class="kw">let </span>segment_size = bytes.get_u16(); <span class="comment">// length checked above
@@ -551,7 +551,7 @@
 <a href=#551 id=551 data-nosnippet>551</a>                RelayToClientMsg::Datagrams {
 <a href=#552 id=552 data-nosnippet>552</a>                    remote_endpoint_id: client_key.public(),
 <a href=#553 id=553 data-nosnippet>553</a>                    datagrams: Datagrams {
-<a href=#554 id=554 data-nosnippet>554</a>                        ecn: <span class="prelude-val">Some</span>(quinn::EcnCodepoint::Ce),
+<a href=#554 id=554 data-nosnippet>554</a>                        ecn: <span class="prelude-val">Some</span>(noq::EcnCodepoint::Ce),
 <a href=#555 id=555 data-nosnippet>555</a>                        segment_size: NonZeroU16::new(<span class="number">6</span>),
 <a href=#556 id=556 data-nosnippet>556</a>                        contents: <span class="string">"Hello World!"</span>.into(),
 <a href=#557 id=557 data-nosnippet>557</a>                    },
@@ -574,7 +574,7 @@
 <a href=#574 id=574 data-nosnippet>574</a>                RelayToClientMsg::Datagrams {
 <a href=#575 id=575 data-nosnippet>575</a>                    remote_endpoint_id: client_key.public(),
 <a href=#576 id=576 data-nosnippet>576</a>                    datagrams: Datagrams {
-<a href=#577 id=577 data-nosnippet>577</a>                        ecn: <span class="prelude-val">Some</span>(quinn::EcnCodepoint::Ce),
+<a href=#577 id=577 data-nosnippet>577</a>                        ecn: <span class="prelude-val">Some</span>(noq::EcnCodepoint::Ce),
 <a href=#578 id=578 data-nosnippet>578</a>                        segment_size: <span class="prelude-val">None</span>,
 <a href=#579 id=579 data-nosnippet>579</a>                        contents: <span class="string">"Hello World!"</span>.into(),
 <a href=#580 id=580 data-nosnippet>580</a>                    },
@@ -621,7 +621,7 @@
 <a href=#621 id=621 data-nosnippet>621</a>                ClientToRelayMsg::Datagrams {
 <a href=#622 id=622 data-nosnippet>622</a>                    dst_endpoint_id: client_key.public(),
 <a href=#623 id=623 data-nosnippet>623</a>                    datagrams: Datagrams {
-<a href=#624 id=624 data-nosnippet>624</a>                        ecn: <span class="prelude-val">Some</span>(quinn::EcnCodepoint::Ce),
+<a href=#624 id=624 data-nosnippet>624</a>                        ecn: <span class="prelude-val">Some</span>(noq::EcnCodepoint::Ce),
 <a href=#625 id=625 data-nosnippet>625</a>                        segment_size: NonZeroU16::new(<span class="number">6</span>),
 <a href=#626 id=626 data-nosnippet>626</a>                        contents: <span class="string">"Hello World!"</span>.into(),
 <a href=#627 id=627 data-nosnippet>627</a>                    },
@@ -644,7 +644,7 @@
 <a href=#644 id=644 data-nosnippet>644</a>                ClientToRelayMsg::Datagrams {
 <a href=#645 id=645 data-nosnippet>645</a>                    dst_endpoint_id: client_key.public(),
 <a href=#646 id=646 data-nosnippet>646</a>                    datagrams: Datagrams {
-<a href=#647 id=647 data-nosnippet>647</a>                        ecn: <span class="prelude-val">Some</span>(quinn::EcnCodepoint::Ce),
+<a href=#647 id=647 data-nosnippet>647</a>                        ecn: <span class="prelude-val">Some</span>(noq::EcnCodepoint::Ce),
 <a href=#648 id=648 data-nosnippet>648</a>                        segment_size: <span class="prelude-val">None</span>,
 <a href=#649 id=649 data-nosnippet>649</a>                        contents: <span class="string">"Hello World!"</span>.into(),
 <a href=#650 id=650 data-nosnippet>650</a>                    },
@@ -682,11 +682,11 @@
 <a href=#682 id=682 data-nosnippet>682</a>        secret_key().prop_map(|key| key.public())
 <a href=#683 id=683 data-nosnippet>683</a>    }
 <a href=#684 id=684 data-nosnippet>684</a>
-<a href=#685 id=685 data-nosnippet>685</a>    <span class="kw">fn </span>ecn() -&gt; <span class="kw">impl </span>Strategy&lt;Value = <span class="prelude-ty">Option</span>&lt;quinn_proto::EcnCodepoint&gt;&gt; {
+<a href=#685 id=685 data-nosnippet>685</a>    <span class="kw">fn </span>ecn() -&gt; <span class="kw">impl </span>Strategy&lt;Value = <span class="prelude-ty">Option</span>&lt;noq_proto::EcnCodepoint&gt;&gt; {
 <a href=#686 id=686 data-nosnippet>686</a>        (<span class="number">0</span>..=<span class="number">3</span>).prop_map(|n| <span class="kw">match </span>n {
-<a href=#687 id=687 data-nosnippet>687</a>            <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(quinn_proto::EcnCodepoint::Ce),
-<a href=#688 id=688 data-nosnippet>688</a>            <span class="number">2 </span>=&gt; <span class="prelude-val">Some</span>(quinn_proto::EcnCodepoint::Ect0),
-<a href=#689 id=689 data-nosnippet>689</a>            <span class="number">3 </span>=&gt; <span class="prelude-val">Some</span>(quinn_proto::EcnCodepoint::Ect1),
+<a href=#687 id=687 data-nosnippet>687</a>            <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(noq_proto::EcnCodepoint::Ce),
+<a href=#688 id=688 data-nosnippet>688</a>            <span class="number">2 </span>=&gt; <span class="prelude-val">Some</span>(noq_proto::EcnCodepoint::Ect0),
+<a href=#689 id=689 data-nosnippet>689</a>            <span class="number">3 </span>=&gt; <span class="prelude-val">Some</span>(noq_proto::EcnCodepoint::Ect1),
 <a href=#690 id=690 data-nosnippet>690</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
 <a href=#691 id=691 data-nosnippet>691</a>        })
 <a href=#692 id=692 data-nosnippet>692</a>    }

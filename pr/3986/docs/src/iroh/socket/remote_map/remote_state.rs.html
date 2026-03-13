@@ -15,8 +15,8 @@
 <a href=#15 id=15 data-nosnippet>15</a>    time::{<span class="self">self</span>, Duration, Instant},
 <a href=#16 id=16 data-nosnippet>16</a>};
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>n0_watcher::{Watchable, Watcher};
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>quinn::WeakConnectionHandle;
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>quinn_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>noq::WeakConnectionHandle;
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>noq_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>rustc_hash::FxHashMap;
 <a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>sync_wrapper::SyncStream;
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>tokio::sync::{mpsc, oneshot};
@@ -143,13 +143,13 @@
 <a href=#143 id=143 data-nosnippet>143</a>    <span class="doccomment">/// Address lookup service, cloned from the socket.
 <a href=#144 id=144 data-nosnippet>144</a>    </span>address_lookup: ConcurrentAddressLookup,
 <a href=#145 id=145 data-nosnippet>145</a>
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="comment">// Internal state - Quinn Connections we are managing.
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="comment">// Internal state - Noq Connections we are managing.
 <a href=#147 id=147 data-nosnippet>147</a>    //
 <a href=#148 id=148 data-nosnippet>148</a>    </span><span class="doccomment">/// All connections we have to this remote endpoint.
 <a href=#149 id=149 data-nosnippet>149</a>    </span>connections: FxHashMap&lt;ConnId, ConnectionState&gt;,
 <a href=#150 id=150 data-nosnippet>150</a>    <span class="doccomment">/// Notifications when connections are closed.
 <a href=#151 id=151 data-nosnippet>151</a>    </span>connections_close: FuturesUnordered&lt;OnClosed&gt;,
-<a href=#152 id=152 data-nosnippet>152</a>    <span class="doccomment">/// Events emitted by Quinn about path changes, for all paths, all connections.
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="doccomment">/// Events emitted by Noq about path changes, for all paths, all connections.
 <a href=#153 id=153 data-nosnippet>153</a>    </span>path_events: PathEvents,
 <a href=#154 id=154 data-nosnippet>154</a>    <span class="doccomment">/// A stream of events of announced NAT traversal candidate addresses for all connections.
 <a href=#155 id=155 data-nosnippet>155</a>    </span>addr_events: AddrEvents,
@@ -171,7 +171,7 @@
 <a href=#171 id=171 data-nosnippet>171</a>    /// a better path: e.g. when the selected path is a relay path we still need to trigger
 <a href=#172 id=172 data-nosnippet>172</a>    /// holepunching regularly.
 <a href=#173 id=173 data-nosnippet>173</a>    ///
-<a href=#174 id=174 data-nosnippet>174</a>    /// We only select a path once the path is functional in Quinn.
+<a href=#174 id=174 data-nosnippet>174</a>    /// We only select a path once the path is functional in Noq.
 <a href=#175 id=175 data-nosnippet>175</a>    </span>selected_path: Watchable&lt;<span class="prelude-ty">Option</span>&lt;transports::Addr&gt;&gt;,
 <a href=#176 id=176 data-nosnippet>176</a>    <span class="doccomment">/// Time at which we should schedule the next holepunch attempt.
 <a href=#177 id=177 data-nosnippet>177</a>    </span>scheduled_holepunch: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
@@ -552,9 +552,9 @@
 <a href=#552 id=552 data-nosnippet>552</a>    <span class="doccomment">/// Handles [`RemoteStateMessage::NetworkChange`].
 <a href=#553 id=553 data-nosnippet>553</a>    </span><span class="kw">fn </span>handle_msg_network_change(<span class="kw-2">&amp;mut </span><span class="self">self</span>, is_major: bool) {
 <a href=#554 id=554 data-nosnippet>554</a>        <span class="kw">for </span>conn <span class="kw">in </span><span class="self">self</span>.connections.values() {
-<a href=#555 id=555 data-nosnippet>555</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(quinn_conn) = conn.handle.upgrade() {
+<a href=#555 id=555 data-nosnippet>555</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(noq_conn) = conn.handle.upgrade() {
 <a href=#556 id=556 data-nosnippet>556</a>                <span class="kw">for </span>(path_id, addr) <span class="kw">in </span><span class="kw-2">&amp;</span>conn.paths {
-<a href=#557 id=557 data-nosnippet>557</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = quinn_conn.path(<span class="kw-2">*</span>path_id) {
+<a href=#557 id=557 data-nosnippet>557</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = noq_conn.path(<span class="kw-2">*</span>path_id) {
 <a href=#558 id=558 data-nosnippet>558</a>                        <span class="comment">// Ping the current path
 <a href=#559 id=559 data-nosnippet>559</a>                        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = path.ping() {
 <a href=#560 id=560 data-nosnippet>560</a>                            <span class="macro">warn!</span>(%err, %path_id, <span class="question-mark">?</span>addr, <span class="string">"failed to ping path"</span>);
@@ -652,20 +652,20 @@
 <a href=#652 id=652 data-nosnippet>652</a>    ///
 <a href=#653 id=653 data-nosnippet>653</a>    /// `direct addrs` must be a set of addresses extracted from the endpoint's current
 <a href=#654 id=654 data-nosnippet>654</a>    /// [`DirectAddr`]s.
-<a href=#655 id=655 data-nosnippet>655</a>    </span><span class="kw">fn </span>update_qnt_candidates(conn: <span class="kw-2">&amp;</span>quinn::Connection, direct_addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
-<a href=#656 id=656 data-nosnippet>656</a>        <span class="kw">let </span>quinn_candidates = <span class="kw">match </span>conn.get_local_nat_traversal_addresses() {
+<a href=#655 id=655 data-nosnippet>655</a>    </span><span class="kw">fn </span>update_qnt_candidates(conn: <span class="kw-2">&amp;</span>noq::Connection, direct_addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
+<a href=#656 id=656 data-nosnippet>656</a>        <span class="kw">let </span>noq_candidates = <span class="kw">match </span>conn.get_local_nat_traversal_addresses() {
 <a href=#657 id=657 data-nosnippet>657</a>            <span class="prelude-val">Ok</span>(addrs) =&gt; BTreeSet::from_iter(addrs),
 <a href=#658 id=658 data-nosnippet>658</a>            <span class="prelude-val">Err</span>(err) =&gt; {
 <a href=#659 id=659 data-nosnippet>659</a>                <span class="macro">warn!</span>(<span class="string">"failed to get local nat candidates: {err:#}"</span>);
 <a href=#660 id=660 data-nosnippet>660</a>                <span class="kw">return</span>;
 <a href=#661 id=661 data-nosnippet>661</a>            }
 <a href=#662 id=662 data-nosnippet>662</a>        };
-<a href=#663 id=663 data-nosnippet>663</a>        <span class="kw">for </span>addr <span class="kw">in </span>direct_addrs.difference(<span class="kw-2">&amp;</span>quinn_candidates) {
+<a href=#663 id=663 data-nosnippet>663</a>        <span class="kw">for </span>addr <span class="kw">in </span>direct_addrs.difference(<span class="kw-2">&amp;</span>noq_candidates) {
 <a href=#664 id=664 data-nosnippet>664</a>            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.add_nat_traversal_address(<span class="kw-2">*</span>addr) {
 <a href=#665 id=665 data-nosnippet>665</a>                <span class="macro">warn!</span>(<span class="string">"failed adding local addr: {err:#}"</span>,);
 <a href=#666 id=666 data-nosnippet>666</a>            }
 <a href=#667 id=667 data-nosnippet>667</a>        }
-<a href=#668 id=668 data-nosnippet>668</a>        <span class="kw">for </span>addr <span class="kw">in </span>quinn_candidates.difference(direct_addrs) {
+<a href=#668 id=668 data-nosnippet>668</a>        <span class="kw">for </span>addr <span class="kw">in </span>noq_candidates.difference(direct_addrs) {
 <a href=#669 id=669 data-nosnippet>669</a>            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.remove_nat_traversal_address(<span class="kw-2">*</span>addr) {
 <a href=#670 id=670 data-nosnippet>670</a>                <span class="macro">warn!</span>(<span class="string">"failed removing local addr: {err:#}"</span>);
 <a href=#671 id=671 data-nosnippet>671</a>            }
@@ -745,7 +745,7 @@
 <a href=#745 id=745 data-nosnippet>745</a>
 <a href=#746 id=746 data-nosnippet>746</a>    <span class="doccomment">/// Unconditionally perform holepunching.
 <a href=#747 id=747 data-nosnippet>747</a>    </span><span class="attr">#[instrument(skip_all)]
-<a href=#748 id=748 data-nosnippet>748</a>    </span><span class="kw">fn </span>do_holepunching(<span class="kw-2">&amp;mut </span><span class="self">self</span>, conn: quinn::Connection) {
+<a href=#748 id=748 data-nosnippet>748</a>    </span><span class="kw">fn </span>do_holepunching(<span class="kw-2">&amp;mut </span><span class="self">self</span>, conn: noq::Connection) {
 <a href=#749 id=749 data-nosnippet>749</a>        <span class="self">self</span>.metrics.holepunch_attempts.inc();
 <a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">let </span>local_candidates = <span class="self">self
 <a href=#751 id=751 data-nosnippet>751</a>            </span>.local_direct_addrs
@@ -775,7 +775,7 @@
 <a href=#775 id=775 data-nosnippet>775</a>            }
 <a href=#776 id=776 data-nosnippet>776</a>            <span class="prelude-val">Err</span>(err) =&gt; {
 <a href=#777 id=777 data-nosnippet>777</a>                <span class="macro">debug!</span>(<span class="string">"failed to initiate NAT traversal: {err:#}"</span>);
-<a href=#778 id=778 data-nosnippet>778</a>                <span class="kw">use </span>quinn_proto::n0_nat_traversal::Error;
+<a href=#778 id=778 data-nosnippet>778</a>                <span class="kw">use </span>noq_proto::n0_nat_traversal::Error;
 <a href=#779 id=779 data-nosnippet>779</a>                <span class="kw">match </span>err {
 <a href=#780 id=780 data-nosnippet>780</a>                    Error::Closed
 <a href=#781 id=781 data-nosnippet>781</a>                    | Error::TooManyAddresses
@@ -1070,13 +1070,13 @@
 <a href=#1070 id=1070 data-nosnippet>1070</a>                {
 <a href=#1071 id=1071 data-nosnippet>1071</a>                    <span class="macro">trace!</span>(<span class="question-mark">?</span>path_remote, %conn_id, %path_id, <span class="string">"closing direct path"</span>);
 <a href=#1072 id=1072 data-nosnippet>1072</a>                    <span class="kw">match </span>path.close() {
-<a href=#1073 id=1073 data-nosnippet>1073</a>                        <span class="prelude-val">Err</span>(quinn_proto::ClosePathError::MultipathNotNegotiated) =&gt; {
+<a href=#1073 id=1073 data-nosnippet>1073</a>                        <span class="prelude-val">Err</span>(noq_proto::ClosePathError::MultipathNotNegotiated) =&gt; {
 <a href=#1074 id=1074 data-nosnippet>1074</a>                            <span class="macro">error!</span>(<span class="string">"multipath not negotiated"</span>);
 <a href=#1075 id=1075 data-nosnippet>1075</a>                        }
-<a href=#1076 id=1076 data-nosnippet>1076</a>                        <span class="prelude-val">Err</span>(quinn_proto::ClosePathError::LastOpenPath) =&gt; {
+<a href=#1076 id=1076 data-nosnippet>1076</a>                        <span class="prelude-val">Err</span>(noq_proto::ClosePathError::LastOpenPath) =&gt; {
 <a href=#1077 id=1077 data-nosnippet>1077</a>                            <span class="macro">error!</span>(<span class="string">"could not close last open path"</span>);
 <a href=#1078 id=1078 data-nosnippet>1078</a>                        }
-<a href=#1079 id=1079 data-nosnippet>1079</a>                        <span class="prelude-val">Err</span>(quinn_proto::ClosePathError::ClosedPath) =&gt; {
+<a href=#1079 id=1079 data-nosnippet>1079</a>                        <span class="prelude-val">Err</span>(noq_proto::ClosePathError::ClosedPath) =&gt; {
 <a href=#1080 id=1080 data-nosnippet>1080</a>                            <span class="comment">// We already closed this.
 <a href=#1081 id=1081 data-nosnippet>1081</a>                        </span>}
 <a href=#1082 id=1082 data-nosnippet>1082</a>                        <span class="prelude-val">Ok</span>(_fut) =&gt; {
@@ -1238,7 +1238,7 @@
 <a href=#1238 id=1238 data-nosnippet>1238</a>
 <a href=#1239 id=1239 data-nosnippet>1239</a><span class="doccomment">/// Newtype to track Connections.
 <a href=#1240 id=1240 data-nosnippet>1240</a>///
-<a href=#1241 id=1241 data-nosnippet>1241</a>/// The wrapped value is the [`quinn::Connection::stable_id`] value, and is thus only valid
+<a href=#1241 id=1241 data-nosnippet>1241</a>/// The wrapped value is the [`noq::Connection::stable_id`] value, and is thus only valid
 <a href=#1242 id=1242 data-nosnippet>1242</a>/// for active connections.
 <a href=#1243 id=1243 data-nosnippet>1243</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
 <a href=#1244 id=1244 data-nosnippet>1244</a>#[display(<span class="string">"{_0}"</span>)]
@@ -1314,15 +1314,15 @@
 <a href=#1314 id=1314 data-nosnippet>1314</a>
 <a href=#1315 id=1315 data-nosnippet>1315</a><span class="doccomment">/// Future that resolves to the `conn_id` once a connection is closed.
 <a href=#1316 id=1316 data-nosnippet>1316</a>///
-<a href=#1317 id=1317 data-nosnippet>1317</a>/// This uses [`quinn::Connection::on_closed`], which does not keep the connection alive
+<a href=#1317 id=1317 data-nosnippet>1317</a>/// This uses [`noq::Connection::on_closed`], which does not keep the connection alive
 <a href=#1318 id=1318 data-nosnippet>1318</a>/// while awaiting the future.
 <a href=#1319 id=1319 data-nosnippet>1319</a></span><span class="kw">struct </span>OnClosed {
 <a href=#1320 id=1320 data-nosnippet>1320</a>    conn_id: ConnId,
-<a href=#1321 id=1321 data-nosnippet>1321</a>    inner: quinn::OnClosed,
+<a href=#1321 id=1321 data-nosnippet>1321</a>    inner: noq::OnClosed,
 <a href=#1322 id=1322 data-nosnippet>1322</a>}
 <a href=#1323 id=1323 data-nosnippet>1323</a>
 <a href=#1324 id=1324 data-nosnippet>1324</a><span class="kw">impl </span>OnClosed {
-<a href=#1325 id=1325 data-nosnippet>1325</a>    <span class="kw">fn </span>new(conn: <span class="kw-2">&amp;</span>quinn::Connection) -&gt; <span class="self">Self </span>{
+<a href=#1325 id=1325 data-nosnippet>1325</a>    <span class="kw">fn </span>new(conn: <span class="kw-2">&amp;</span>noq::Connection) -&gt; <span class="self">Self </span>{
 <a href=#1326 id=1326 data-nosnippet>1326</a>        <span class="self">Self </span>{
 <a href=#1327 id=1327 data-nosnippet>1327</a>            conn_id: ConnId(conn.stable_id()),
 <a href=#1328 id=1328 data-nosnippet>1328</a>            inner: conn.on_closed(),
