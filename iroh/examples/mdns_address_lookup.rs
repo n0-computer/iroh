@@ -5,32 +5,17 @@
 //! This is an async, non-determinate process, so the number of EndpointIDs discovered each time may be different. If you have other iroh endpoints or iroh endpoints with [`address_lookup::MdnsAddressLookup`] enabled, it may discover those endpoints as well.
 use std::time::Duration;
 
-use iroh::{
-    Endpoint, EndpointId, RelayMode,
-    address_lookup::{self, AddrFilter},
-    endpoint_info::UserData,
-};
+use iroh::{Endpoint, EndpointId, address_lookup, endpoint_info::UserData};
 use n0_error::Result;
 use n0_future::StreamExt;
 use tokio::task::JoinSet;
-
-/// Creates an endpoint configured for local mDNS discovery only.
-///
-/// Uses `empty_builder` with relay disabled and an IP-only address filter,
-/// since mDNS discovers endpoints on the local network via IP addresses.
-async fn bind_mdns_endpoint() -> std::result::Result<Endpoint, iroh::endpoint::BindError> {
-    Endpoint::empty_builder(RelayMode::Disabled)
-        .addr_filter(AddrFilter::ip_only())
-        .bind()
-        .await
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("Discovering Local Endpoints Example!");
 
-    let ep = bind_mdns_endpoint().await?;
+    let ep = Endpoint::bind().await?;
     let endpoint_id = ep.id();
 
     let mdns = address_lookup::MdnsAddressLookup::builder().build(endpoint_id)?;
@@ -79,7 +64,7 @@ async fn main() -> Result<()> {
     for _ in 0..endpoint_count {
         let ud = user_data.clone();
         set.spawn(async move {
-            let ep = bind_mdns_endpoint().await?;
+            let ep = Endpoint::bind().await?;
             ep.address_lookup()?
                 .add(address_lookup::MdnsAddressLookup::builder().build(ep.id())?);
             ep.set_user_data_for_address_lookup(Some(ud));
