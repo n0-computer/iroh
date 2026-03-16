@@ -6,7 +6,7 @@ use std::{
 use bytes::Bytes;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
-    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
+    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream, presets},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
@@ -30,7 +30,7 @@ pub fn server_endpoint(
             .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
 
         #[allow(unused_mut)]
-        let mut builder = Endpoint::builder();
+        let mut builder = Endpoint::builder(presets::N0);
         #[cfg(feature = "local-relay")]
         {
             if relay_url.is_some() {
@@ -91,7 +91,7 @@ pub async fn connect_client(
         .clone()
         .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
     #[allow(unused_mut)]
-    let mut builder = Endpoint::builder();
+    let mut builder = Endpoint::builder(presets::N0);
     #[cfg(feature = "local-relay")]
     {
         if relay_url.is_some() {
