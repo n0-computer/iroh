@@ -324,7 +324,7 @@ mod tests {
     use crate::{
         Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
         endpoint::{
-            Builder, Connection,
+            Builder, Connection, presets,
             transports::{AddrKind, TransportBias},
         },
         protocol::{AcceptError, ProtocolHandler, Router},
@@ -381,7 +381,7 @@ mod tests {
             Some(map) => RelayMode::Custom(map),
             None => RelayMode::Disabled,
         };
-        let mut builder = Endpoint::builder()
+        let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
             .relay_mode(relay_mode)
             .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
