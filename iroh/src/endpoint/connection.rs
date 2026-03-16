@@ -32,7 +32,7 @@ use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use noq::WeakConnectionHandle;
 use pin_project::pin_project;
-use tracing::warn;
+use tracing::{event, warn};
 
 use crate::{
     Endpoint,
@@ -110,10 +110,18 @@ impl Future for Accept<'_> {
         match this.inner.poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(inner)) => Poll::Ready(Some(Incoming {
-                inner,
-                ep: this.ep.clone(),
-            })),
+            Poll::Ready(Some(inner)) => {
+                let incoming = Incoming {
+                    inner,
+                    ep: this.ep.clone(),
+                };
+                event!(
+                    target: "iroh::_events::conn::incoming",
+                    tracing::Level::DEBUG,
+                    remote_addr = ?incoming.remote_addr(),
+                );
+                Poll::Ready(Some(incoming))
+            }
         }
     }
 }
@@ -310,6 +318,15 @@ fn conn_from_noq_conn(
             }
         }
     };
+
+    event!(
+        target: "iroh::_events::conn::connected",
+        tracing::Level::DEBUG,
+        conn_id = conn.stable_id(),
+        side = ?conn.side(),
+        remote_id = %info.endpoint_id.fmt_short(),
+        alpn = %String::from_utf8_lossy(&info.alpn),
+    );
 
     // Register this connection with the socket.
     let fut = ep
@@ -1260,7 +1277,7 @@ mod tests {
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
     async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
-        let server = Endpoint::empty_builder(RelayMode::Disabled)
+        let server = Endpoint::empty_builder()
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -1387,7 +1404,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let client = Endpoint::empty_builder().bind().await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
@@ -1407,7 +1424,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt_non_consecutive() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let client = Endpoint::empty_builder().bind().await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
@@ -1432,7 +1449,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled)
+        let client = Endpoint::empty_builder()
             .bind()
             .instrument(info_span!("client"))
             .await?;
@@ -1471,14 +1488,16 @@ mod tests {
         const ALPN: &[u8] = b"test";
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, _relay_map, _guard) = run_relay_server().await?;
-        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let server = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
 
-        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let client = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()

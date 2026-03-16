@@ -39,16 +39,22 @@ use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 # Examples
 
 ```rust
-use iroh::{Endpoint, EndpointAddr, TransportAddr, address_lookup::memory::MemoryLookup};
+use iroh::{
+    Endpoint, EndpointAddr, TransportAddr, address_lookup::memory::MemoryLookup,
+    endpoint::presets,
+};
 use iroh_base::SecretKey;
+
 # #[tokio::main]
 # async fn main() -> n0_error::Result<()> {
 // Create the Address Lookup and endpoint.
 let address_lookup = MemoryLookup::new();
-let _ep = Endpoint::builder()
+
+let _ep = Endpoint::builder(presets::N0)
     .address_lookup(address_lookup.clone())
     .bind()
     .await?;
+
 // Sometime later add a RelayUrl for our endpoint.
 let id = SecretKey::generate(&mut rand::rng()).public();
 // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
@@ -58,6 +64,7 @@ address_lookup.add_endpoint_info(EndpointAddr {
         .into_iter()
         .collect(),
 });
+
 # Ok(())
 # }
 ```"##
@@ -123,7 +130,7 @@ impl MemoryLookup {
 ```rust
 use std::{net::SocketAddr, str::FromStr};
 
-use iroh::{Endpoint, EndpointAddr, address_lookup::memory::MemoryLookup};
+use iroh::{Endpoint, EndpointAddr, address_lookup::memory::MemoryLookup, endpoint::presets};
 
 # fn get_addrs() -> Vec<EndpointAddr> {
 #     Vec::new()
@@ -136,14 +143,12 @@ let addrs = get_addrs();
 // create a MemoryLookup from the list of addrs.
 let address_lookup = MemoryLookup::from_endpoint_info(addrs);
 // create an endpoint with the memory lookup address_lookup
-let endpoint = Endpoint::builder()
+let endpoint = Endpoint::builder(presets::N0)
     .address_lookup(address_lookup)
     .bind()
     .await?;
 # Ok(())
 # }
-# #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
-# fn main() {}
 ```"##)]
     pub fn from_endpoint_info(infos: impl IntoIterator<Item = impl Into<EndpointInfo>>) -> Self {
         let res = Self::default();
@@ -240,13 +245,13 @@ mod tests {
     use n0_error::{Result, StackResultExt};
 
     use super::*;
-    use crate::{Endpoint, RelayMode};
+    use crate::Endpoint;
 
     #[tokio::test]
     async fn test_basic() -> Result {
         let address_lookup = MemoryLookup::new();
 
-        let _ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let _ep = Endpoint::empty_builder()
             .address_lookup(address_lookup.clone())
             .bind()
             .await?;
