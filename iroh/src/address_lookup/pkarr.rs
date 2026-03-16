@@ -19,11 +19,10 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
-//! [`PkarrPublisher`] filters published addresses based on the endpoint's relay configuration
-//! by default: when relays are enabled, only relay addresses are published
-//! ([`AddrFilter::relay_only`]); when relays are disabled, all addresses are published
-//! ([`AddrFilter::unfiltered`]). You can override this via
-//! [`PkarrPublisherBuilder::addr_filter`].
+//! [`PkarrPublisher`] filters published addresses: only relay addresses are published by default.
+//! To change this behavior, use [`PkarrPublisherBuilder::addr_filter`] and set it to e.g. [`AddrFilter::unfiltered`].
+//! This can be useful to enable publishing IP addresses if the iroh endpoint is reachable via public
+//! IP addresses.
 //!
 //! For address lookup in iroh the pkarr Resource Records contain the addressing information,
 //! providing endpoints which retrieve the pkarr Resource Record with enough detail
@@ -222,7 +221,7 @@ impl PkarrPublisherBuilder {
     ///
     /// However, enabling IP address publishing can be useful, e.g. when iroh runs on a machine
     /// connected to the internet via public IP addresses without a firewall.
-    /// In such cases, publishing them can make dialing such endpoints via DNS or PKARR lookup
+    /// In such cases, publishing them can make dialing such endpoints via DNS or Pkarr lookup
     /// faster, potentially skipping a relay connection altogether.
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
         self.filter = filter;

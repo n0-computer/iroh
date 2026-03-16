@@ -42,10 +42,10 @@ const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 /// be used as both a publisher and resolver.  Calling [`DhtAddressLookup::publish`] will start
 /// a background task that periodically publishes the endpoint address.
 ///
-/// [`DhtAddressLookup`] filters published addresses based on the endpoint's relay
-/// configuration by default: when relays are enabled, only relay addresses are published
-/// ([`AddrFilter::relay_only`]); when relays are disabled, all addresses are published
-/// ([`AddrFilter::unfiltered`]). You can override this via [`Builder::addr_filter`].
+/// [`DhtAddressLookup`] filters published addresses: only relay addresses are published by default.
+/// To change this behavior, use [`Builder::addr_filter`] and set it to e.g. [`AddrFilter::unfiltered`].
+/// This can be useful to enable publishing IP addresses if the iroh endpoint is reachable via public
+/// IP addresses.
 ///
 /// [pkarr module]: super
 /// [`AddrFilter::relay_only`]: crate::address_lookup::AddrFilter::relay_only
