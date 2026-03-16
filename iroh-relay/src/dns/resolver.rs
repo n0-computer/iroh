@@ -7,6 +7,7 @@ use std::{
 };
 
 use n0_error::e;
+use n0_future::time::{self, Duration};
 use rustls::ClientConfig;
 use simple_dns::TYPE;
 use tracing::{debug, trace};
@@ -16,6 +17,11 @@ use super::{
     cache::{CachedRecord, DnsCache, QueryType},
     query, system_config, transport,
 };
+
+/// Per-nameserver timeout. Ensures we move on to the next nameserver
+/// if one is unresponsive, rather than consuming the entire query budget.
+/// Matches hickory-resolver's default of 5 seconds.
+const NAMESERVER_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub(super) struct SimpleDnsResolver {
@@ -81,32 +87,47 @@ impl SimpleDnsResolver {
         let mut last_err = None;
         for (addr, proto) in &self.nameservers {
             trace!(%addr, ?proto, "sending DNS query");
-            let result = match proto {
-                DnsProtocol::Udp => {
-                    let resp = transport::udp_query(*addr, query_bytes).await?;
-                    // Check for truncation, fallback to TCP
-                    if query::is_truncated(&resp) {
-                        debug!(%addr, "UDP response truncated, retrying over TCP");
-                        transport::tcp_query(*addr, query_bytes).await
-                    } else {
-                        Ok(resp)
+            let result = time::timeout(NAMESERVER_TIMEOUT, async {
+                match proto {
+                    DnsProtocol::Udp => {
+                        let resp = transport::udp_query(*addr, query_bytes).await?;
+                        // Check for truncation, fallback to TCP
+                        if query::is_truncated(&resp) {
+                            debug!(%addr, "UDP response truncated, retrying over TCP");
+                            transport::tcp_query(*addr, query_bytes).await
+                        } else {
+                            Ok(resp)
+                        }
+                    }
+                    DnsProtocol::Tcp => transport::tcp_query(*addr, query_bytes).await,
+                    DnsProtocol::Tls => {
+                        let tls_config = self.tls_config.as_ref().ok_or_else(|| {
+                            e!(DnsError::Transport {
+                                source: std::io::Error::new(
+                                    std::io::ErrorKind::InvalidInput,
+                                    "TLS config required for DNS-over-TLS",
+                                ),
+                            })
+                        })?;
+                        transport::tls_query(*addr, query_bytes, tls_config).await
+                    }
+                    DnsProtocol::Https => {
+                        let client = self.get_or_init_https_client().await?;
+                        transport::https_query(*addr, query_bytes, &client).await
                     }
                 }
-                DnsProtocol::Tcp => transport::tcp_query(*addr, query_bytes).await,
-                DnsProtocol::Tls => {
-                    let tls_config = self.tls_config.as_ref().ok_or_else(|| {
-                        e!(DnsError::Transport {
-                            source: std::io::Error::new(
-                                std::io::ErrorKind::InvalidInput,
-                                "TLS config required for DNS-over-TLS",
-                            ),
-                        })
-                    })?;
-                    transport::tls_query(*addr, query_bytes, tls_config).await
-                }
-                DnsProtocol::Https => {
-                    let client = self.get_or_init_https_client().await?;
-                    transport::https_query(*addr, query_bytes, &client).await
+            })
+            .await;
+            let result = match result {
+                Ok(inner) => inner,
+                Err(_elapsed) => {
+                    trace!(%addr, ?proto, "DNS query timed out");
+                    Err(e!(DnsError::Transport {
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "nameserver query timed out",
+                        ),
+                    }))
                 }
             };
             match result {
