@@ -6,7 +6,7 @@ connectivity using <a href="https://en.wikipedia.org/wiki/Hole_punching_(network
 another endpoint:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>addr: EndpointAddr = <span class="macro">todo!</span>();
-<span class="kw">let </span>ep = Endpoint::bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<span class="kw">let </span>ep = Endpoint::bind(presets::N0).<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="kw">let </span>conn = ep.connect(addr, <span class="string">b"my-alpn"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span>.std_context(<span class="string">"unable to open uni"</span>)<span class="question-mark">?</span>;
 send_stream
@@ -15,7 +15,7 @@ send_stream
     </span>.std_context(<span class="string">"unable to write all"</span>)<span class="question-mark">?</span>;</code></pre></div>
 <p>The other endpoint can accept incoming connections using the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> as well:</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>ep = Endpoint::builder()
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>ep = Endpoint::builder(presets::N0)
     .alpns(<span class="macro">vec!</span>[<span class="string">b"my-alpn"</span>.to_vec()])
     .bind()
     .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -127,12 +127,12 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
 <h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
 <p>The central struct is the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>, which allows you to connect to other endpoints:</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, EndpointAddr};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, EndpointAddr, endpoint::presets};
 <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 
 <span class="kw">async fn </span>connect(addr: EndpointAddr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="comment">// The Endpoint is the central object that manages an iroh node.
-    </span><span class="kw">let </span>ep = Endpoint::bind().<span class="kw">await</span><span class="question-mark">?</span>;
+    </span><span class="kw">let </span>ep = Endpoint::bind(presets::N0).<span class="kw">await</span><span class="question-mark">?</span>;
 
     <span class="comment">// Establish a QUIC connection, open a bi-directional stream, exchange messages.
     </span><span class="kw">let </span>conn = ep.connect(addr, <span class="string">b"hello-world"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -149,13 +149,13 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
 }</code></pre></div>
 <p>Every <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> can also accept connections:</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, EndpointAddr};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, EndpointAddr, endpoint::presets};
 <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <span class="kw">use </span>n0_future::StreamExt;
 
 <span class="kw">async fn </span>accept() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="comment">// To accept connections at least one ALPN must be configured.
-    </span><span class="kw">let </span>ep = Endpoint::builder()
+    </span><span class="kw">let </span>ep = Endpoint::builder(presets::N0)
         .alpns(<span class="macro">vec!</span>[<span class="string">b"hello-world"</span>.to_vec()])
         .bind()
         .<span class="kw">await</span><span class="question-mark">?</span>;

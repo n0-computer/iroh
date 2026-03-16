@@ -1740,7 +1740,7 @@
 <a href=#1740 id=1740 data-nosnippet>1740</a>
 <a href=#1741 id=1741 data-nosnippet>1741</a>    <span class="kw">use </span><span class="kw">super</span>::Options;
 <a href=#1742 id=1742 data-nosnippet>1742</a>    <span class="kw">use crate</span>::{
-<a href=#1743 id=1743 data-nosnippet>1743</a>        Endpoint, RelayMode, SecretKey,
+<a href=#1743 id=1743 data-nosnippet>1743</a>        Endpoint, SecretKey,
 <a href=#1744 id=1744 data-nosnippet>1744</a>        address_lookup::memory::MemoryLookup,
 <a href=#1745 id=1745 data-nosnippet>1745</a>        dns::DnsResolver,
 <a href=#1746 id=1746 data-nosnippet>1746</a>        endpoint::QuicTransportConfig,
@@ -1939,13 +1939,13 @@
 <a href=#1939 id=1939 data-nosnippet>1939</a>    /// the endpoints rebind.
 <a href=#1940 id=1940 data-nosnippet>1940</a>    </span><span class="kw">async fn </span>endpoint_pair() -&gt; (AbortOnDropHandle&lt;()&gt;, Endpoint, Endpoint) {
 <a href=#1941 id=1941 data-nosnippet>1941</a>        <span class="kw">let </span>address_lookup = MemoryLookup::new();
-<a href=#1942 id=1942 data-nosnippet>1942</a>        <span class="kw">let </span>ep1 = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#1942 id=1942 data-nosnippet>1942</a>        <span class="kw">let </span>ep1 = Endpoint::empty_builder()
 <a href=#1943 id=1943 data-nosnippet>1943</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
 <a href=#1944 id=1944 data-nosnippet>1944</a>            .address_lookup(address_lookup.clone())
 <a href=#1945 id=1945 data-nosnippet>1945</a>            .bind()
 <a href=#1946 id=1946 data-nosnippet>1946</a>            .<span class="kw">await
 <a href=#1947 id=1947 data-nosnippet>1947</a>            </span>.unwrap();
-<a href=#1948 id=1948 data-nosnippet>1948</a>        <span class="kw">let </span>ep2 = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#1948 id=1948 data-nosnippet>1948</a>        <span class="kw">let </span>ep2 = Endpoint::empty_builder()
 <a href=#1949 id=1949 data-nosnippet>1949</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
 <a href=#1950 id=1950 data-nosnippet>1950</a>            .address_lookup(address_lookup.clone())
 <a href=#1951 id=1951 data-nosnippet>1951</a>            .bind()
