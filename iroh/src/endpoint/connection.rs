@@ -32,7 +32,7 @@ use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use noq::WeakConnectionHandle;
 use pin_project::pin_project;
-use tracing::warn;
+use tracing::{event, warn};
 
 use crate::{
     Endpoint,
@@ -110,10 +110,18 @@ impl Future for Accept<'_> {
         match this.inner.poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(inner)) => Poll::Ready(Some(Incoming {
-                inner,
-                ep: this.ep.clone(),
-            })),
+            Poll::Ready(Some(inner)) => {
+                let incoming = Incoming {
+                    inner,
+                    ep: this.ep.clone(),
+                };
+                event!(
+                    target: "iroh::_events::conn::incoming",
+                    tracing::Level::DEBUG,
+                    remote_addr = ?incoming.remote_addr(),
+                );
+                Poll::Ready(Some(incoming))
+            }
         }
     }
 }
@@ -310,6 +318,15 @@ fn conn_from_noq_conn(
             }
         }
     };
+
+    event!(
+        target: "iroh::_events::conn::connected",
+        tracing::Level::DEBUG,
+        conn_id = conn.stable_id(),
+        side = ?conn.side(),
+        remote_id = %info.endpoint_id.fmt_short(),
+        alpn = %String::from_utf8_lossy(&info.alpn),
+    );
 
     // Register this connection with the socket.
     let fut = ep

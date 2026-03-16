@@ -7,8 +7,8 @@ use std::{
     task::{Context, Poll},
 };
 
+use ipnet::{Ipv4Net, Ipv6Net};
 use n0_watcher::Watchable;
-use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
 use tracing::{debug, info, trace};

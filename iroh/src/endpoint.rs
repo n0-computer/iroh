@@ -13,6 +13,8 @@
 
 use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
+#[cfg(not(wasm_browser))]
+use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{
     RelayConfig, RelayMap,
@@ -22,11 +24,9 @@ use iroh_relay::{
 use n0_error::bail;
 use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
-#[cfg(not(wasm_browser))]
-use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
-use tracing::{Instrument, Span, debug, info_span, instrument, warn};
+use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
 use url::Url;
 
 /// Types for defining custom transports
@@ -974,6 +974,13 @@ impl Endpoint {
 
         // Connecting to ourselves is not supported.
         ensure!(endpoint_id != self.id(), ConnectWithOptsError::SelfConnect);
+
+        event!(
+            target: "iroh::_events::conn::connecting",
+            tracing::Level::DEBUG,
+            remote_id = %endpoint_id.fmt_short(),
+            alpn = %String::from_utf8_lossy(alpn),
+        );
 
         debug!(
             relay_url = ?endpoint_addr.relay_urls().next().cloned(),

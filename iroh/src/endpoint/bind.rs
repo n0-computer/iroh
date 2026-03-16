@@ -243,7 +243,7 @@ pub enum InvalidSocketAddr {
     #[error(transparent)]
     InvalidPrefix {
         #[error(std_err)]
-        source: netdev::ipnet::PrefixLenError,
+        source: ipnet::PrefixLenError,
     },
     #[error(transparent)]
     Infallible {
