@@ -254,6 +254,11 @@ impl AddrFilter {
         Self(Some(Arc::new(f)))
     }
 
+    /// Constructs a filter that doesn't filter addresses and passes all through.
+    pub fn unfiltered() -> Self {
+        Self::new(|addrs| addrs.iter().cloned().collect())
+    }
+
     /// Only keep relay addresses.
     pub fn relay_only() -> Self {
         Self::new(|addrs| addrs.iter().filter(|a| a.is_relay()).cloned().collect())

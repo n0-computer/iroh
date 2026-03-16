@@ -24,9 +24,9 @@
 //! but may only publish a subset of them based on its own constraints.
 //!
 //! To control which addresses are published to a particular service, you can supply an
-//! [`AddrFilter`] when configuring it via [`AddressLookupBuilder::with_addr_filter`].  The filter
+//! [`AddrFilter`] on its builder (e.g. [`PkarrPublisherBuilder::addr_filter`]).  The filter
 //! receives the full set of addresses and returns an ordered [`Vec`], allowing you to both
-//! remove addresses you don't want published and prioritize the ones you do Each service
+//! remove addresses you don't want published and prioritize the ones you do. Each service
 //! may apply additional filtering on top based on its own constraints, but will not publish
 //! addresses outside of what the filter returns.  See each service's documentation for details.
 //!
@@ -118,6 +118,7 @@
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
+//! [`PkarrPublisherBuilder::addr_filter`]: pkarr::PkarrPublisherBuilder::addr_filter
 //! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
 //! [pkarr relay servers]: https://pkarr.org/#servers
 //! [`address_lookup::MdnsAddressLookup`]: crate::address_lookup::MdnsAddressLookup
@@ -165,56 +166,41 @@ pub use pkarr::*;
 ///
 /// [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
 pub trait AddressLookupBuilder: Send + Sync + std::fmt::Debug + 'static {
-    /// Turns this AddressLookup builder into a ready-to-use Address Lookup.
+    /// Turns this builder into a ready-to-use [`AddressLookup`].
     ///
     /// If an error is returned, building the endpoint will fail with this error.
     fn into_address_lookup(
         self,
         endpoint: &Endpoint,
     ) -> Result<impl AddressLookup, AddressLookupBuilderError>;
-
-    /// Sets a filter to control which addresses are published by this service
-    ///
-    /// The filter receives the full set of transport addresses and returns them
-    /// as an ordered [`Vec`], allowing both filtering (by omitting addresses) and
-    /// prioritization (by controlling output order). The service may apply
-    /// additional filtering on top based on its own constraints.
-    fn with_addr_filter(self, filter: AddrFilter) -> FilteredBuilder<Self>
-    where
-        Self: Sized,
-    {
-        FilteredBuilder {
-            inner: self,
-            filter,
-        }
-    }
 }
 
-/// Returned from [`AddressLookupBuilder::with_addr_filter`].
-#[derive(Debug)]
-pub struct FilteredBuilder<T> {
-    inner: T,
-    filter: AddrFilter,
-}
-
-impl<T: AddressLookupBuilder> AddressLookupBuilder for FilteredBuilder<T> {
-    fn into_address_lookup(
-        self,
-        endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
-        let inner = self.inner.into_address_lookup(endpoint)?;
-        Ok(FilteredAddressLookup {
-            inner,
-            filter: self.filter,
-        })
-    }
-}
-
-/// Returned from [`FilteredBuilder::into_address_lookup`].
-#[derive(Debug)]
+/// An [`AddressLookup`] wrapper that filters addresses before publishing.
+#[derive(Debug, Clone)]
 pub struct FilteredAddressLookup<T> {
     inner: T,
     filter: AddrFilter,
+}
+
+impl<T> FilteredAddressLookup<T> {
+    /// Wraps an address lookup with an address filter.
+    ///
+    /// The filter allows to specify which addresses the address
+    /// lookup service will publish.
+    pub fn new(inner: T, filter: AddrFilter) -> Self {
+        Self { inner, filter }
+    }
+
+    /// Removes the filter wrapper and returns the inner address lookup.
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+}
+
+impl<T> AsRef<T> for FilteredAddressLookup<T> {
+    fn as_ref(&self) -> &T {
+        &self.inner
+    }
 }
 
 impl<T: AddressLookup> AddressLookup for FilteredAddressLookup<T> {
