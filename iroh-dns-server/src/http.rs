@@ -317,10 +317,6 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_doh() -> n0_error::Result {
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .ok();
-
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(0);
         let dir = tempfile::tempdir()?;
         let https_config = HttpsConfig {
@@ -511,9 +507,13 @@ mod tests {
         }
 
         pub(super) fn insecure_tls_config() -> ClientConfig {
-            let mut cfg = ClientConfig::builder()
-                .with_root_certificates(RootCertStore::empty())
-                .with_no_client_auth();
+            let mut cfg = ClientConfig::builder_with_provider(Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(RootCertStore::empty())
+            .with_no_client_auth();
             cfg.dangerous()
                 .set_certificate_verifier(Arc::new(NoCertificateVerification::default()));
             cfg

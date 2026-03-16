@@ -779,7 +779,7 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, time::Duration};
+    use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
     use http::StatusCode;
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
@@ -846,6 +846,16 @@ mod tests {
         DnsResolver::new()
     }
 
+    fn ring_config() -> rustls::ClientConfig {
+        rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(rustls::RootCertStore::empty())
+        .with_no_client_auth()
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn test_no_services() {
@@ -885,14 +895,13 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_root_handler() {
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .ok();
-
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
-        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let client = reqwest::Client::builder()
+            .use_preconfigured_tls(ring_config())
+            .build()
+            .unwrap();
         let response = client.get(&url).send().await.unwrap();
         assert_eq!(response.status(), 200);
         let body = response.text().await.unwrap();
@@ -902,15 +911,14 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_captive_portal_service() {
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .ok();
-
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";
 
-        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let client = reqwest::Client::builder()
+            .use_preconfigured_tls(ring_config())
+            .build()
+            .unwrap();
         let response = client
             .get(&url)
             .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
