@@ -46,8 +46,8 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
-quinn = { package = "noq", version = "0.16.1", default-features = false, features = ["rustls-ring"] }
-quinn-proto = { package = "noq-proto", version = "0.15.1" }
+noq = { version = "0.17.0", default-features = false, features = ["rustls-ring"] }
+noq-proto = "0.16.0"
 rand = "0.9.2"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
@@ -87,7 +87,7 @@ tokio-rustls-acme = { version = "0.9", optional = true }
 tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 simdutf8 = { version = "0.1.5", optional = true } # minimal version fix
 sha1 = { version = "0.11.0-rc.2", optional = true }
-toml = { version = "0.9", optional = true }
+toml = { version = "1.0", optional = true }
 serde_json = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
@@ -104,8 +104,6 @@ tokio = { version = "1", features = [
     "net",
     "fs",
     "io-std",
-    "signal",
-    "process",
 ] }
 tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "client"] }
 
@@ -142,6 +140,7 @@ default = ["metrics"]
 platform-verifier = ["dep:rustls-platform-verifier"]
 server = [
     "metrics",
+    "tokio/signal",
     "dep:clap",
     "dep:dashmap",
     "dep:ahash",
@@ -157,8 +156,8 @@ server = [
     "dep:toml",
     "dep:serde_json",
     "dep:tracing-subscriber",
-    "quinn/platform-verifier",
-    "quinn/runtime-tokio",
+    "noq/platform-verifier",
+    "noq/runtime-tokio",
     "iroh-metrics/service",
 ]
 metrics = ["iroh-metrics/metrics"]

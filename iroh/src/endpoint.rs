@@ -13,6 +13,8 @@
 
 use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
+#[cfg(not(wasm_browser))]
+use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{
     RelayConfig, RelayMap,
@@ -22,12 +24,17 @@ use iroh_relay::{
 use n0_error::bail;
 use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
-#[cfg(not(wasm_browser))]
-use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
-use tracing::{debug, instrument, trace, warn};
+use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
 use url::Url;
+
+/// Types for defining custom transports
+pub mod transports {
+    #[cfg(feature = "unstable-custom-transports")]
+    pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
+    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias};
+}
 
 use self::hooks::EndpointHooksList;
 pub use super::socket::{
@@ -41,10 +48,12 @@ pub use super::socket::{
 use crate::address_lookup::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
+#[cfg(feature = "unstable-custom-transports")]
+use crate::endpoint::transports::CustomTransport;
 use crate::{
     NetReport,
     address_lookup::{
-        AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
+        AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
         Error as AddressLookupError, UserData,
     },
     endpoint::presets::Preset,
@@ -76,7 +85,7 @@ pub use self::{
         RemoteEndpointIdError, RetryError, ZeroRttStatus,
     },
     quic::{
-        AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
+        AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
         ControllerMetrics, CryptoError, Dir, ExportKeyingMaterialError, FrameStats, FrameType,
         HandshakeTokenKey, HeaderKey, IdleTimeout, Keys, MtuDiscoveryConfig, OpenBi, OpenUni,
@@ -89,6 +98,7 @@ pub use self::{
         VarIntBoundsExceeded, WriteError, Written,
     },
 };
+pub use crate::portmapper::PortmapperConfig;
 #[cfg(not(wasm_browser))]
 use crate::socket::transports::IpConfig;
 use crate::socket::transports::TransportConfig;
@@ -107,6 +117,9 @@ pub struct Builder {
     keylog: bool,
     address_lookup: Vec<Box<dyn DynAddressLookupBuilder>>,
     address_lookup_user_data: Option<UserData>,
+    /// Default address filter applied to all address lookup services added via
+    /// [`Builder::address_lookup`].
+    addr_filter: Option<AddrFilter>,
     proxy_url: Option<Url>,
     ca_roots_config: Option<CaRootsConfig>,
     #[cfg(not(wasm_browser))]
@@ -114,6 +127,8 @@ pub struct Builder {
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
+    transport_bias: socket::transports::TransportBiasMap,
+    portmapper_config: PortmapperConfig,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -171,6 +186,7 @@ impl Builder {
             keylog: Default::default(),
             address_lookup: Default::default(),
             address_lookup_user_data: Default::default(),
+            addr_filter: None,
             proxy_url: None,
             ca_roots_config: None,
             #[cfg(not(wasm_browser))]
@@ -178,6 +194,8 @@ impl Builder {
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
+            transport_bias: Default::default(),
+            portmapper_config: Default::default(),
         }
     }
 
@@ -189,6 +207,9 @@ impl Builder {
         let secret_key = self
             .secret_key
             .unwrap_or_else(move || SecretKey::generate(&mut rng));
+
+        let span = info_span!("endpoint", id = %secret_key.public().fmt_short());
+        let _guard = span.enter();
 
         let static_config = StaticConfig {
             transport_config: self.transport_config.clone(),
@@ -219,23 +240,32 @@ impl Builder {
             tls_config,
             metrics,
             hooks: self.hooks,
+            transport_bias: self.transport_bias,
+            portmapper_config: self.portmapper_config,
             static_config,
         };
 
-        let inner = socket::Socket::spawn(sock_opts).await?;
-        trace!("created socket");
-        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
+        let inner = socket::EndpointInner::bind(sock_opts)
+            .instrument(Span::current())
+            .await?;
+        debug!(
+            id = %inner.static_config.tls_config.secret_key.public(),
+            iroh_version = %env!("CARGO_PKG_VERSION"),
+            "iroh endpoint bound"
+        );
 
         let ep = Endpoint {
             inner: Arc::new(inner),
         };
 
         // Add Address Lookup mechanisms
+        let address_lookup = ep.address_lookup().expect("just created the endpoint");
+        if let Some(filter) = self.addr_filter {
+            address_lookup.set_addr_filter(filter);
+        }
         for create_service in self.address_lookup {
             let service = create_service.into_address_lookup(&ep)?;
-            ep.address_lookup()
-                .expect("just created the endpoint")
-                .add_boxed(service);
+            address_lookup.add_boxed(service);
         }
 
         Ok(ep)
@@ -533,6 +563,27 @@ impl Builder {
         self
     }
 
+    /// Sets the address filter applied to all address data before publishing.
+    ///
+    /// This filter is applied once, at the [`ConcurrentAddressLookup`] level, before
+    /// distributing data to any individual address lookup service. This ensures
+    /// consistent filtering regardless of how the services configured.
+    ///
+    /// [`ConcurrentAddressLookup`]: crate::address_lookup::ConcurrentAddressLookup
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
+        self.addr_filter = Some(filter);
+        self
+    }
+
+    /// Clears the address filter, allowing all addresses to be published.
+    ///
+    /// This removes any filter previously set via [`Self::addr_filter`], including
+    /// filters set by presets.
+    pub fn clear_addr_filter(mut self) -> Self {
+        self.addr_filter = None;
+        self
+    }
+
     /// Sets the initial user-defined data to be published in Address Lookup's for this node.
     ///
     /// When using Address Lookup's, this string of [`UserData`] will be published together
@@ -645,6 +696,50 @@ impl Builder {
         self.hooks.push(hooks);
         self
     }
+
+    /// Configures the portmapper service (UPnP, PCP, NAT-PMP).
+    ///
+    /// Defaults to [`PortmapperConfig::Enabled`].
+    pub fn portmapper_config(mut self, config: PortmapperConfig) -> Self {
+        self.portmapper_config = config;
+        self
+    }
+
+    /// Adds a custom transport
+    #[cfg(feature = "unstable-custom-transports")]
+    pub fn add_custom_transport(mut self, factory: Arc<dyn CustomTransport>) -> Self {
+        self.transports.push(TransportConfig::Custom(factory));
+        self
+    }
+
+    /// Sets the transport bias for a specific address kind.
+    ///
+    /// Transport bias controls how different transport types are prioritized during
+    /// path selection. By default:
+    /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
+    /// - Relay is a backup transport (only used when no primary transport is available)
+    ///
+    /// Use this to customize the behavior, for example to add bias for custom transports.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::time::Duration;
+    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias}};
+    ///
+    /// let endpoint = Builder::new(SomePreset)
+    ///     .transport_bias(AddrKind::Custom(42), TransportBias::primary().with_rtt_advantage(Duration::from_millis(10)))
+    ///     .bind()
+    ///     .await?;
+    /// ```
+    pub fn transport_bias(
+        mut self,
+        kind: transports::AddrKind,
+        bias: transports::TransportBias,
+    ) -> Self {
+        self.transport_bias = self.transport_bias.with_bias(kind, bias);
+        self
+    }
 }
 
 #[allow(missing_docs)]
@@ -695,7 +790,7 @@ pub enum ConnectWithOptsError {
     #[error("No addressing information available")]
     NoAddress { source: AddressLookupError },
     #[error("Unable to connect to remote")]
-    Quinn {
+    Noq {
         #[error(std_err)]
         source: QuicConnectError,
     },
@@ -767,7 +862,7 @@ impl Endpoint {
         }
         let server_config = self.inner.static_config.create_server_config(alpns);
         self.inner
-            .quinn_endpoint()
+            .noq_endpoint()
             .set_server_config(Some(server_config));
     }
 
@@ -860,7 +955,7 @@ impl Endpoint {
     #[instrument(name = "connect", skip_all, fields(
         me = %self.id().fmt_short(),
         remote = tracing::field::Empty,
-        alpn = String::from_utf8_lossy(alpn).to_string(),
+        alpn = %String::from_utf8_lossy(alpn).to_string(),
     ))]
     pub async fn connect_with_opts(
         &self,
@@ -871,21 +966,29 @@ impl Endpoint {
         if self.is_closed() {
             return Err(e!(ConnectWithOptsError::EndpointClosed));
         }
+
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
+        let endpoint_id = endpoint_addr.id;
+
+        Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
+
         if let BeforeConnectOutcome::Reject =
             self.inner.hooks.before_connect(&endpoint_addr, alpn).await
         {
             return Err(e!(ConnectWithOptsError::LocallyRejected));
         }
-        let endpoint_id = endpoint_addr.id;
-
-        tracing::Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
 
         // Connecting to ourselves is not supported.
         ensure!(endpoint_id != self.id(), ConnectWithOptsError::SelfConnect);
 
-        trace!(
-            dst_endpoint_id = %endpoint_id.fmt_short(),
+        event!(
+            target: "iroh::_events::conn::connecting",
+            tracing::Level::DEBUG,
+            remote_id = %endpoint_id.fmt_short(),
+            alpn = %String::from_utf8_lossy(alpn),
+        );
+
+        debug!(
             relay_url = ?endpoint_addr.relay_urls().next().cloned(),
             ip_addresses = ?endpoint_addr.ip_addrs().cloned().collect::<Vec<_>>(),
             "connecting",
@@ -898,7 +1001,7 @@ impl Endpoint {
             .map(|cfg| cfg.to_inner_arc())
             .unwrap_or(self.inner.static_config.transport_config.to_inner_arc());
 
-        // Start connecting via quinn. This will time out after 10 seconds if no reachable
+        // Start connecting via noq. This will time out after 10 seconds if no reachable
         // address is available.
 
         let client_config = {
@@ -909,7 +1012,7 @@ impl Endpoint {
                 .static_config
                 .tls_config
                 .make_client_config(alpn_protocols, self.inner.static_config.keylog);
-            let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
+            let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
             client_config.transport_config(transport_config.clone());
             client_config
         };
@@ -918,7 +1021,7 @@ impl Endpoint {
         let server_name = &tls::name::encode(endpoint_id);
         let connect =
             self.inner
-                .quinn_endpoint()
+                .noq_endpoint()
                 .connect_with(client_config, dest_addr, server_name)?;
 
         Ok(Connecting::new(connect, self.clone(), endpoint_id))
@@ -934,7 +1037,7 @@ impl Endpoint {
     /// [`Endpoint::close`].
     pub fn accept(&self) -> Accept<'_> {
         Accept {
-            inner: self.inner.quinn_endpoint().accept(),
+            inner: self.inner.noq_endpoint().accept(),
             ep: self.clone(),
         }
     }
@@ -1710,7 +1813,7 @@ mod tests {
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use quinn::PathStats;
+    use noq::PathStats;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use tokio::sync::oneshot;
@@ -1786,7 +1889,7 @@ mod tests {
                 let res = stream.read_to_end(10).await;
                 assert_eq!(
                     res.unwrap_err(),
-                    quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(
+                    noq::ReadToEndError::Read(noq::ReadError::ConnectionLost(
                         ConnectionError::LocallyClosed
                     ))
                 );
@@ -2125,9 +2228,12 @@ mod tests {
                 }
             }
             info!("Have direct connection");
-            // Validate holepunch metrics.
-            assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
-            assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
+            #[cfg(feature = "metrics")]
+            {
+                // Validate holepunch metrics.
+                assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
+                assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
+            }
 
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
@@ -3333,7 +3439,8 @@ mod tests {
         // so we resort to log assertions.
         // TODO(Frando): Replace once we add a proper API for this.
         let expected_log_line = format!(
-            "ep2:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected"
+            "ep2:endpoint{{id={}}}:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected",
+            ep2.id().fmt_short()
         );
         tokio::time::timeout(Duration::from_secs(5), async {
             while !logs_contain(&expected_log_line) {
@@ -3460,9 +3567,12 @@ mod tests {
         assert!(ep.dns_resolver().is_err());
         assert!(ep.address_lookup().is_err());
 
-        // this should work
-        let metrics = ep.metrics();
-        info!("Metrics: {metrics:?}");
+        #[cfg(feature = "metrics")]
+        {
+            // this should work
+            let metrics = ep.metrics();
+            info!("Metrics: {metrics:?}");
+        }
 
         // this should return none
         assert!(ep.remote_info(ep_id).await.is_none());
