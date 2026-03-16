@@ -104,6 +104,17 @@ pub struct Config {
     pub captive_portal_check: bool,
 }
 
+impl Config {
+
+    /// Creates a minimal configuration that disables all optional probes and checks.
+    pub fn minimal() -> Self {
+        Self {
+            https_probes: false,
+            captive_portal_check: false,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
