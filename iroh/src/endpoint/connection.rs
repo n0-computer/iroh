@@ -37,7 +37,7 @@ use crate::{
     Endpoint,
     endpoint::{
         AfterHandshakeOutcome,
-        id::IdFromQuinnConn,
+        id::IdFromQuicConn,
         quic::{
             AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
             ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,

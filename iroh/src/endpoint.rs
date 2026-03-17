@@ -51,7 +51,7 @@ use crate::dns::DnsResolver;
 #[cfg(feature = "unstable-custom-transports")]
 use crate::endpoint::transports::CustomTransport;
 use crate::{
-    IdFromQuinnConn, NetReport,
+    IdFromQuicConn, NetReport,
     address_lookup::{
         AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
         Error as AddressLookupError, UserData,
@@ -128,7 +128,7 @@ pub struct Builder {
     dns_resolver: Option<DnsResolver>,
     transports: Vec<TransportConfig>,
     tls_config_params: Option<EndpointTlsConfigParams>,
-    remote_id_strategy: Box<dyn IdFromQuinnConn>,
+    remote_id_strategy: Box<dyn IdFromQuicConn>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
     transport_bias: socket::transports::TransportBiasMap,
@@ -697,7 +697,7 @@ impl Builder {
     /// By default, this will extract an Ed25519 key from the remote peer's
     /// certificate. Use this configuration option in conjunction with the
     /// tls_config_params option to customize the quic handshake.
-    pub fn remote_id_strategy(mut self, strategy: Box<dyn IdFromQuinnConn>) -> Self {
+    pub fn remote_id_strategy(mut self, strategy: Box<dyn IdFromQuicConn>) -> Self {
         self.remote_id_strategy = strategy;
         self
     }
@@ -1626,7 +1626,7 @@ impl Endpoint {
         Ok(self.inner.clone())
     }
 
-    pub(crate) fn remote_id_strategy(&self) -> &dyn IdFromQuinnConn {
+    pub(crate) fn remote_id_strategy(&self) -> &dyn IdFromQuicConn {
         &*self.inner.static_config.remote_id_strategy
     }
 }

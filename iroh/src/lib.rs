@@ -267,7 +267,7 @@ pub mod metrics;
 mod net_report;
 pub mod protocol;
 
-pub use endpoint::id::IdFromQuinnConn;
+pub use endpoint::id::IdFromQuicConn;
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
     EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,

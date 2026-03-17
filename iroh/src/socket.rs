@@ -58,7 +58,7 @@ use crate::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
 use crate::net_report::QuicConfig;
 use crate::{
-    IdFromQuinnConn,
+    IdFromQuicConn,
     address_lookup::{self, AddressLookup, EndpointData, Error as AddressLookupError, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
@@ -191,7 +191,7 @@ impl Drop for EndpointInner {
 #[derive(Debug)]
 pub(crate) struct StaticConfig {
     pub(crate) tls_config: tls::TlsConfig,
-    pub(crate) remote_id_strategy: Box<dyn IdFromQuinnConn>,
+    pub(crate) remote_id_strategy: Box<dyn IdFromQuicConn>,
     pub(crate) transport_config: QuicTransportConfig,
     pub(crate) keylog: bool,
 }

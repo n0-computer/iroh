@@ -14,7 +14,7 @@ use crate::endpoint::RemoteEndpointIdError;
 ///
 /// See [`RawEd25519Id`] for the default implementation used by standard iroh
 /// endpoints.
-pub trait IdFromQuinnConn: std::fmt::Debug + Send + Sync {
+pub trait IdFromQuicConn: std::fmt::Debug + Send + Sync {
     /// Extract the remote peer's [`EndpointId`] from an established QUIC
     /// connection.
     ///
@@ -27,7 +27,7 @@ pub trait IdFromQuinnConn: std::fmt::Debug + Send + Sync {
     ) -> Result<EndpointId, RemoteEndpointIdError>;
 }
 
-/// Default [`IdFromQuinnConn`] implementation for standard iroh endpoints.
+/// Default [`IdFromQuicConn`] implementation for standard iroh endpoints.
 ///
 /// Expects exactly one certificate entry containing a DER-encoded Ed25519
 /// SPKI (SubjectPublicKeyInfo, per RFC 7250 raw public keys) and converts
@@ -35,7 +35,7 @@ pub trait IdFromQuinnConn: std::fmt::Debug + Send + Sync {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RawEd25519Id;
 
-impl IdFromQuinnConn for RawEd25519Id {
+impl IdFromQuicConn for RawEd25519Id {
     fn remote_id_from_quinn_conn(
         &self,
         conn: &noq::Connection,
