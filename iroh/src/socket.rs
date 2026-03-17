@@ -58,6 +58,7 @@ use crate::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
 use crate::net_report::QuicConfig;
 use crate::{
+    IdFromQuicConn,
     address_lookup::{self, AddressLookup, EndpointData, Error as AddressLookupError, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
@@ -190,6 +191,7 @@ impl Drop for EndpointInner {
 #[derive(Debug)]
 pub(crate) struct StaticConfig {
     pub(crate) tls_config: tls::TlsConfig,
+    pub(crate) remote_id_strategy: Box<dyn IdFromQuicConn>,
     pub(crate) transport_config: QuicTransportConfig,
     pub(crate) keylog: bool,
 }
@@ -1743,7 +1745,7 @@ mod tests {
         Endpoint, SecretKey,
         address_lookup::memory::MemoryLookup,
         dns::DnsResolver,
-        endpoint::QuicTransportConfig,
+        endpoint::{QuicTransportConfig, id::RawEd25519Id},
         socket::{
             EndpointInner, StaticConfig, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
@@ -1756,7 +1758,8 @@ mod tests {
     fn default_options<R: CryptoRng + ?Sized>(rng: &mut R) -> Options {
         let secret_key = SecretKey::generate(rng);
         let static_config = StaticConfig {
-            tls_config: tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            remote_id_strategy: Box::new(RawEd25519Id {}),
+            tls_config: tls::TlsConfig::new_default(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
             transport_config: QuicTransportConfig::default(),
             keylog: false,
         };
@@ -2154,7 +2157,8 @@ mod tests {
     #[instrument(name = "ep", skip_all, fields(me = %secret_key.public().fmt_short()))]
     async fn socket_ep(secret_key: SecretKey) -> Result<EndpointInner> {
         let static_config = StaticConfig {
-            tls_config: tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            tls_config: tls::TlsConfig::new_default(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            remote_id_strategy: Box::new(RawEd25519Id),
             transport_config: QuicTransportConfig::default(),
             keylog: true,
         };
@@ -2223,7 +2227,7 @@ mod tests {
     ) -> Result<noq::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
-            tls::TlsConfig::new(ep_secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
+            tls::TlsConfig::new_default(ep_secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
                 .make_client_config(alpns, true);
         let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
