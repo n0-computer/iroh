@@ -93,9 +93,7 @@ impl TlsConfig {
     }
 
     pub(crate) fn new_default(secret_key: SecretKey, max_tls_tickets: usize) -> Self {
-        let cert_resolver = Arc::new(
-            ResolveRawPublicKeyCert::new(&secret_key).expect("Client cert key DER is valid; qed"),
-        );
+        let cert_resolver = Arc::new(ResolveRawPublicKeyCert::new(&secret_key));
 
         let session_store = rustls::client::ClientSessionMemoryCache::new(max_tls_tickets);
 

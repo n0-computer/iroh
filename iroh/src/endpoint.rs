@@ -193,6 +193,8 @@ impl Builder {
             ca_roots_config: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
+            tls_config_params: None,
+            remote_id_strategy: Box::new(RawEd25519Id {}),
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),

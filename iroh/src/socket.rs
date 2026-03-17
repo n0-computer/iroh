@@ -1750,7 +1750,7 @@ mod tests {
             EndpointInner, StaticConfig, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
         },
-        tls,
+        tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
 
     const ALPN: &[u8] = b"n0/test/1";
@@ -1758,7 +1758,8 @@ mod tests {
     fn default_options<R: CryptoRng + ?Sized>(rng: &mut R) -> Options {
         let secret_key = SecretKey::generate(rng);
         let static_config = StaticConfig {
-            tls_config: tls::TlsConfig::new_default(secret_key.clone()),
+            remote_id_strategy: Box::new(RawEd25519Id {}),
+            tls_config: tls::TlsConfig::new_default(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
             transport_config: QuicTransportConfig::default(),
             keylog: false,
         };
@@ -2156,7 +2157,7 @@ mod tests {
     #[instrument(name = "ep", skip_all, fields(me = %secret_key.public().fmt_short()))]
     async fn socket_ep(secret_key: SecretKey) -> Result<EndpointInner> {
         let static_config = StaticConfig {
-            tls_config: tls::TlsConfig::new_default(secret_key.clone()),
+            tls_config: tls::TlsConfig::new_default(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
             remote_id_strategy: Box::new(RawEd25519Id),
             transport_config: QuicTransportConfig::default(),
             keylog: true,
@@ -2226,7 +2227,8 @@ mod tests {
     ) -> Result<noq::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
-            tls::TlsConfig::new_default(ep_secret_key.clone()).make_client_config(alpns, true);
+            tls::TlsConfig::new_default(ep_secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
+                .make_client_config(alpns, true);
         let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep

@@ -31,7 +31,7 @@ use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use noq::WeakConnectionHandle;
 use pin_project::pin_project;
-use tracing::{event, warn};
+use tracing::event;
 
 use crate::{
     Endpoint,
