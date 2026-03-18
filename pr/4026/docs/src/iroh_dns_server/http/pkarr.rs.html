@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a>};
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>bytes::Bytes;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>http::{StatusCode, header};
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>iroh_relay::pkarr::{SignedPacket, public_key_from_z32};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>iroh_relay::{endpoint_info::EndpointIdExt, pkarr::SignedPacket};
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>tracing::info;
 <a href=#9 id=9 data-nosnippet>9</a>
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span><span class="kw">super</span>::error::AppError;
@@ -15,7 +15,7 @@
 <a href=#15 id=15 data-nosnippet>15</a>    Path(key): Path&lt;String&gt;,
 <a href=#16 id=16 data-nosnippet>16</a>    body: Bytes,
 <a href=#17 id=17 data-nosnippet>17</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>IntoResponse, AppError&gt; {
-<a href=#18 id=18 data-nosnippet>18</a>    <span class="kw">let </span>public_key = public_key_from_z32(<span class="kw-2">&amp;</span>key)
+<a href=#18 id=18 data-nosnippet>18</a>    <span class="kw">let </span>public_key = iroh_base::PublicKey::from_z32(<span class="kw-2">&amp;</span>key)
 <a href=#19 id=19 data-nosnippet>19</a>        .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, <span class="prelude-val">Some</span>(<span class="macro">format!</span>(<span class="string">"invalid key: {e}"</span>))))<span class="question-mark">?</span>;
 <a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">let </span>label = <span class="kw-2">&amp;</span>key[..<span class="number">10</span>.min(key.len())];
 <a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">let </span>signed_packet = SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>body).map_err(|e| {
