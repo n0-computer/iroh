@@ -2776,8 +2776,8 @@ mod tests {
     }
 
     #[cfg(feature = "metrics")]
-    #[tokio::test]
     #[traced_test]
+    #[tokio::test]
     async fn metrics_smoke() -> Result {
         use iroh_metrics::Registry;
 
