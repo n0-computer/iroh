@@ -122,14 +122,16 @@ impl EndpointIdExt for EndpointId {
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct EndpointData {
     /// addresses where this endpoint can be reached.
-    addrs: BTreeSet<TransportAddr>,
+    addrs: Vec<TransportAddr>,
     /// Optional user-defined [`UserData`] for this endpoint.
     user_data: Option<UserData>,
 }
 
 impl EndpointData {
     /// Creates a new [`EndpointData`] with a relay URL and a set of direct addresses.
-    pub fn new(addrs: BTreeSet<TransportAddr>) -> Self {
+    ///
+    /// If the addresses contain duplicate entries, those entries are removed.
+    pub fn new(addrs: Vec<TransportAddr>) -> Self {
         Self {
             addrs,
             user_data: None,
@@ -139,7 +141,7 @@ impl EndpointData {
     /// Sets the relay URL and returns the updated endpoint data.
     pub fn with_relay_url(mut self, relay_url: Option<RelayUrl>) -> Self {
         if let Some(url) = relay_url {
-            self.addrs.insert(TransportAddr::Relay(url));
+            self.addrs.push(TransportAddr::Relay(url));
         }
         self
     }
@@ -147,7 +149,7 @@ impl EndpointData {
     /// Sets the direct addresses and returns the updated endpoint data.
     pub fn with_ip_addrs(mut self, addresses: BTreeSet<SocketAddr>) -> Self {
         for addr in addresses.into_iter() {
-            self.addrs.insert(TransportAddr::Ip(addr));
+            self.addrs.push(TransportAddr::Ip(addr));
         }
         self
     }
@@ -194,7 +196,7 @@ impl EndpointData {
     /// Add addresses to the endpoint data.
     pub fn add_addrs(&mut self, addrs: impl IntoIterator<Item = TransportAddr>) {
         for addr in addrs.into_iter() {
-            self.addrs.insert(addr);
+            self.addrs.push(addr);
         }
     }
 
@@ -216,7 +218,7 @@ impl EndpointData {
     /// Apply the given filter to the current addresses.
     ///
     /// Returns a vec to allow re-ordering of addresses.
-    pub fn filtered_addrs(&self, filter: &AddrFilter) -> Cow<'_, BTreeSet<TransportAddr>> {
+    pub fn filtered_addrs(&self, filter: &AddrFilter) -> Cow<'_, Vec<TransportAddr>> {
         filter.apply(&self.addrs)
     }
 }
@@ -229,7 +231,7 @@ impl FromIterator<TransportAddr> for EndpointData {
 
 /// The function type inside [`AddrFilter`].
 type AddrFilterFn =
-    dyn Fn(&BTreeSet<TransportAddr>) -> Cow<'_, BTreeSet<TransportAddr>> + Send + Sync + 'static;
+    dyn Fn(&Vec<TransportAddr>) -> Cow<'_, Vec<TransportAddr>> + Send + Sync + 'static;
 
 /// A filter and/or reordering function applied to transport addresses,
 /// typically used by AddressLookup services in iroh before publishing.
@@ -257,7 +259,7 @@ impl std::fmt::Debug for AddrFilter {
 impl AddrFilter {
     /// Create a new [`AddrFilter`]
     pub fn new(
-        f: impl Fn(&BTreeSet<TransportAddr>) -> Cow<'_, BTreeSet<TransportAddr>> + Send + Sync + 'static,
+        f: impl Fn(&Vec<TransportAddr>) -> Cow<'_, Vec<TransportAddr>> + Send + Sync + 'static,
     ) -> Self {
         Self(Some(Arc::new(f)))
     }
@@ -278,10 +280,7 @@ impl AddrFilter {
     }
 
     /// Apply the address filter function to a set of addresses.
-    pub fn apply<'a>(
-        &self,
-        addrs: &'a BTreeSet<TransportAddr>,
-    ) -> Cow<'a, BTreeSet<TransportAddr>> {
+    pub fn apply<'a>(&self, addrs: &'a Vec<TransportAddr>) -> Cow<'a, Vec<TransportAddr>> {
         match &self.0 {
             Some(f) => f(addrs),
             None => Cow::Borrowed(addrs),
@@ -292,7 +291,8 @@ impl AddrFilter {
 impl From<EndpointAddr> for EndpointData {
     fn from(endpoint_addr: EndpointAddr) -> Self {
         Self {
-            addrs: endpoint_addr.addrs,
+            // No need to check for duplicates - we already know they can't have duplicates
+            addrs: endpoint_addr.addrs.into_iter().collect(),
             user_data: None,
         }
     }
@@ -459,16 +459,16 @@ impl EndpointInfo {
     pub fn to_endpoint_addr(&self) -> EndpointAddr {
         EndpointAddr {
             id: self.endpoint_id,
-            addrs: self.addrs.clone(),
+            addrs: self.addrs.iter().cloned().collect(),
         }
     }
 
-    /// Converts into a [`EndpointAddr`] without cloning.
+    /// Converts into a [`EndpointAddr`].
     pub fn into_endpoint_addr(self) -> EndpointAddr {
         let Self { endpoint_id, data } = self;
         EndpointAddr {
             id: endpoint_id,
-            addrs: data.addrs,
+            addrs: data.addrs.into_iter().collect(),
         }
     }
 
