@@ -66,7 +66,7 @@ pub enum DecodingError {
     #[error("endpoint id was not encoded in valid z32")]
     InvalidEncodingZ32 {
         #[error(std_err)]
-        source: z32::Z32Error,
+        source: crate::pkarr::SignedPacketVerifyError,
     },
     #[error("length must be 32 bytes, but got {len} byte(s)")]
     InvalidLength { len: usize },
@@ -74,36 +74,6 @@ pub enum DecodingError {
     InvalidKey { source: KeyParsingError },
 }
 
-/// Extension methods for [`EndpointId`] to encode to and decode from [`z32`],
-/// which is the encoding used in [`pkarr`] domain names.
-pub trait EndpointIdExt {
-    /// Encodes a [`EndpointId`] in [`z-base-32`] encoding.
-    ///
-    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-    fn to_z32(&self) -> String;
-
-    /// Parses a [`EndpointId`] from [`z-base-32`] encoding.
-    ///
-    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-    fn from_z32(s: &str) -> Result<EndpointId, DecodingError>;
-}
-
-impl EndpointIdExt for EndpointId {
-    fn to_z32(&self) -> String {
-        z32::encode(self.as_bytes())
-    }
-
-    fn from_z32(s: &str) -> Result<EndpointId, DecodingError> {
-        let bytes =
-            z32::decode(s.as_bytes()).map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
-        let bytes: &[u8; 32] = &bytes
-            .try_into()
-            .map_err(|_| e!(DecodingError::InvalidLength { len: s.len() }))?;
-        let endpoint_id =
-            EndpointId::from_bytes(bytes).map_err(|err| e!(DecodingError::InvalidKey, err))?;
-        Ok(endpoint_id)
-    }
-}
 
 /// Data about an endpoint that may be published to and resolved from discovery services.
 ///
@@ -548,7 +518,8 @@ fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
         }));
     }
     let label = labels.next().expect("checked above");
-    let endpoint_id = EndpointId::from_z32(label)?;
+    let endpoint_id = crate::pkarr::public_key_from_z32(label)
+        .map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
     Ok(endpoint_id)
 }
 
@@ -697,7 +668,7 @@ pub(crate) fn ensure_iroh_txt_label(name: String) -> String {
 
 #[cfg(not(wasm_browser))]
 pub(crate) fn endpoint_domain(endpoint_id: &EndpointId, origin: &str) -> String {
-    format!("{}.{}", EndpointId::to_z32(endpoint_id), origin)
+    format!("{}.{}", crate::pkarr::public_key_to_z32(endpoint_id), origin)
 }
 
 #[cfg(test)]
@@ -718,7 +689,7 @@ mod tests {
     use iroh_base::{EndpointId, SecretKey, TransportAddr};
     use n0_error::{Result, StdResultExt};
 
-    use super::{EndpointData, EndpointIdExt, EndpointInfo};
+    use super::{EndpointData, EndpointInfo};
     use crate::dns::TxtRecordData;
 
     #[test]
@@ -829,15 +800,16 @@ mod tests {
             // Test a record with mismatching record type (A instead of TXT). It should be filtered out.
             Record::from_rdata(name.clone(), 30, RData::A(A::new(127, 0, 0, 1))),
             // Test a record with a mismatching name
-            Record::from_rdata(
+            Record::from_rdata({
+                // Another EndpointId
+                let other_id = EndpointId::from_str(
+                    "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
+                )?;
                 Name::from_utf8(format!(
                     "_iroh.{}.dns.iroh.link.",
-                    EndpointId::from_str(
-                        // Another EndpointId
-                        "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
-                    )?
-                    .to_z32()
+                    crate::pkarr::public_key_to_z32(&other_id)
                 ))
+            }
                 .std_context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![

@@ -19,7 +19,6 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
-base32 = "0.5"
 blake3 = "1.8.2"
 bytes = "1.11"
 data-encoding = "2.6.0"
@@ -73,7 +72,6 @@ tracing = "0.1"
 url = { version = "2.5.3", features = ["serde"] }
 webpki-roots = "1.0.3"
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
-z32 = "1.0.3"
 
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }

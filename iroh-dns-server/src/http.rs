@@ -305,7 +305,6 @@ mod tests {
     use iroh::{
         RelayUrl, SecretKey,
         address_lookup::{EndpointInfo, PkarrRelayClient},
-        endpoint_info::EndpointIdExt,
         tls::{CaRootsConfig, default_provider},
     };
     use n0_error::StdResultExt;
@@ -339,7 +338,7 @@ mod tests {
             let endpoint_info =
                 EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
             (
-                secret_key.public().to_z32(),
+                iroh_relay::pkarr::public_key_to_z32(&secret_key.public()),
                 endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?,
             )
         };

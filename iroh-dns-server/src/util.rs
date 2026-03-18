@@ -24,11 +24,8 @@ pub struct PublicKeyBytes([u8; 32]);
 
 #[stack_error(derive, add_meta, from_sources)]
 pub enum InvalidPublicKeyBytes {
-    #[error(transparent)]
-    Encoding {
-        #[error(std_err)]
-        source: z32::Z32Error,
-    },
+    #[error("invalid z-base-32 encoding")]
+    InvalidEncoding,
     #[error("invalid length, must be 32 bytes")]
     InvalidLength,
 }
@@ -39,14 +36,15 @@ impl PublicKeyBytes {
     }
 
     pub fn from_z32(s: &str) -> Result<Self, InvalidPublicKeyBytes> {
-        let bytes = z32::decode(s.as_bytes())?;
+        let bytes = iroh_relay::pkarr::z32_decode(s)
+            .map_err(|_| e!(InvalidPublicKeyBytes::InvalidEncoding))?;
         let bytes = TryInto::<[u8; 32]>::try_into(&bytes[..])
             .map_err(|_| e!(InvalidPublicKeyBytes::InvalidLength))?;
         Ok(Self(bytes))
     }
 
     pub fn to_z32(self) -> String {
-        z32::encode(&self.0)
+        iroh_relay::pkarr::z32_encode(&self.0)
     }
 
     pub fn to_bytes(self) -> [u8; 32] {

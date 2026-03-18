@@ -366,7 +366,7 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use iroh_base::EndpointId;
-    use iroh_relay::endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME};
+    use iroh_relay::endpoint_info::{EndpointInfo, IROH_TXT_NAME};
     use iroh_relay::pkarr::SignedPacket;
     use tracing::debug;
 
@@ -502,7 +502,7 @@ pub(crate) mod pkarr_dns_state {
             return None;
         }
         let label = labels.next()?;
-        let endpoint_id = EndpointId::from_z32(label).ok()?;
+        let endpoint_id = iroh_relay::pkarr::public_key_from_z32(label).ok()?;
         Some(endpoint_id)
     }
 
@@ -525,7 +525,7 @@ pub(crate) mod pkarr_dns_state {
         ttl: u32,
     ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_ {
         use hickory_resolver::proto::rr;
-        let name = format!("{IROH_TXT_NAME}.{}.{origin}", endpoint_id.to_z32());
+        let name = format!("{IROH_TXT_NAME}.{}.{origin}", iroh_relay::pkarr::public_key_to_z32(&endpoint_id));
         let name = rr::Name::from_utf8(name).expect("invalid name");
         txt_strings.into_iter().map(move |s| {
             let txt = rr::rdata::TXT::new(vec![s]);

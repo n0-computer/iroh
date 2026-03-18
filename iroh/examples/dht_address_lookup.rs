@@ -71,9 +71,7 @@ async fn chat_server(args: Args) -> Result<()> {
         .address_lookup(address_lookup)
         .bind()
         .await?;
-    let zid = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
-        .anyerr()?
-        .to_z32();
+    let zid = iroh_relay::pkarr::public_key_to_z32(&endpoint_id);
     println!("Listening on {endpoint_id}");
     println!("pkarr z32: {zid}");
     println!("see https://app.pkarr.org/?pk={zid}");

@@ -364,12 +364,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base32"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "022dfe9eb35f19ebbcb51e0b40a5ab759f46ad60cadf7297e0bd085afb50e076"
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2236,7 +2230,6 @@ dependencies = [
  "ttl_cache",
  "url",
  "vergen-gitcl",
- "z32",
 ]
 
 [[package]]
@@ -2277,7 +2270,6 @@ name = "iroh-relay"
 version = "0.97.0"
 dependencies = [
  "ahash",
- "base32",
  "blake3",
  "bytes",
  "cfg_aliases",
@@ -2333,7 +2325,6 @@ dependencies = [
  "vergen-gitcl",
  "webpki-roots",
  "ws_stream_wasm",
- "z32",
 ]
 
 [[package]]
@@ -5881,12 +5872,6 @@ dependencies = [
  "syn",
  "synstructure",
 ]
-
-[[package]]
-name = "z32"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2164e798d9e3d84ee2c91139ace54638059a3b23e361f5c11781c2c6459bde0f"
 
 [[package]]
 name = "zerocopy"
