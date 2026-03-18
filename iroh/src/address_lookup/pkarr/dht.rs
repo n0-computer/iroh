@@ -8,21 +8,21 @@
 use std::sync::{Arc, Mutex};
 
 use iroh_base::{EndpointId, SecretKey};
+use iroh_relay::pkarr::{self, SignedPacket};
+use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
 };
-use pkarr::{Client as PkarrClient, SignedPacket};
-use url::Url;
 
 use crate::{
     Endpoint,
     address_lookup::{
         AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
         Error as AddressLookupError, Item as AddressLookupItem,
-        pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
+        pkarr::DEFAULT_PKARR_TTL,
     },
     endpoint_info::EndpointInfo,
 };
@@ -32,6 +32,27 @@ use crate::{
 /// This is only for when the info does not change.  If the info changes, it will be
 /// published immediately.
 const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
+
+/// Convert a [`SignedPacket`] to a mainline [`MutableItem`].
+fn signed_packet_to_mutable_item(packet: &SignedPacket) -> MutableItem {
+    MutableItem::new_signed_unchecked(
+        *packet.public_key().as_bytes(),
+        packet.signature().to_bytes(),
+        packet.encoded_packet(),
+        packet.timestamp() as i64,
+        None,
+    )
+}
+
+/// Convert a mainline [`MutableItem`] to a [`SignedPacket`].
+fn mutable_item_to_signed_packet(item: &MutableItem) -> Option<SignedPacket> {
+    let mut bytes = Vec::with_capacity(104 + item.value().len());
+    bytes.extend_from_slice(item.key());
+    bytes.extend_from_slice(item.signature());
+    bytes.extend_from_slice(&(item.seq() as u64).to_be_bytes());
+    bytes.extend_from_slice(item.value());
+    SignedPacket::from_bytes_unchecked(&bytes).ok()
+}
 
 /// Pkarr Mainline DHT and relay server address lookup.
 ///
@@ -55,8 +76,8 @@ pub struct DhtAddressLookup(Arc<Inner>);
 
 #[derive(derive_more::Debug)]
 struct Inner {
-    /// Pkarr client for interacting with the DHT.
-    pkarr: PkarrClient,
+    /// Mainline DHT node.
+    dht: Dht,
     /// The background task that periodically publishes the endpoint address.
     ///
     /// Due to [`AbortOnDropHandle`], this will be aborted when the Address Lookup is dropped.
@@ -65,8 +86,6 @@ struct Inner {
     ///
     /// If this is None, the endpoint will not publish its address to the DHT.
     secret_key: Option<SecretKey>,
-    /// Optional pkarr relay URL to use.
-    relay_url: Option<Url>,
     /// Time-to-live value for the DNS packets.
     ttl: u32,
     /// Republish delay for the DHT.
@@ -76,28 +95,33 @@ struct Inner {
 }
 
 impl Inner {
-    async fn resolve_pkarr(
+    async fn resolve_dht(
         &self,
-        key: pkarr::PublicKey,
+        public_key: &[u8; 32],
     ) -> Option<Result<AddressLookupItem, AddressLookupError>> {
-        tracing::info!(
-            "resolving {} from relay and DHT {:?}",
-            key.to_z32(),
-            self.relay_url
+        let z32 = pkarr::public_key_to_z32(
+            &iroh_base::PublicKey::try_from(public_key.as_slice()).ok()?,
         );
+        tracing::info!("resolving {z32} from DHT");
 
-        let maybe_packet = self.pkarr.resolve(&key).await;
-        match maybe_packet {
-            Some(signed_packet) => match EndpointInfo::from_pkarr_signed_packet(&signed_packet) {
-                Ok(endpoint_info) => {
-                    tracing::info!("discovered endpoint info {:?}", endpoint_info);
-                    Some(Ok(AddressLookupItem::new(endpoint_info, "pkarr", None)))
+        let maybe_item = self.dht.clone().as_async().get_mutable_most_recent(public_key, None).await;
+        match maybe_item {
+            Some(item) => {
+                let Some(signed_packet) = mutable_item_to_signed_packet(&item) else {
+                    tracing::debug!("failed to parse mutable item as signed packet");
+                    return None;
+                };
+                match EndpointInfo::from_pkarr_signed_packet(&signed_packet) {
+                    Ok(endpoint_info) => {
+                        tracing::info!("discovered endpoint info {:?}", endpoint_info);
+                        Some(Ok(AddressLookupItem::new(endpoint_info, "pkarr", None)))
+                    }
+                    Err(_err) => {
+                        tracing::debug!("failed to parse signed packet as endpoint info");
+                        None
+                    }
                 }
-                Err(_err) => {
-                    tracing::debug!("failed to parse signed packet as endpoint info");
-                    None
-                }
-            },
+            }
             None => {
                 tracing::debug!("no signed packet found");
                 None
@@ -111,11 +135,9 @@ impl Inner {
 /// By default, publishing to the DHT is enabled, and relay publishing is disabled.
 #[derive(Debug)]
 pub struct Builder {
-    client: Option<PkarrClient>,
+    dht_builder: Option<DhtBuilder>,
     secret_key: Option<SecretKey>,
     ttl: Option<u32>,
-    pkarr_relay: Option<Url>,
-    dht: bool,
     republish_delay: Duration,
     enable_publish: bool,
     addr_filter: AddrFilter,
@@ -124,11 +146,9 @@ pub struct Builder {
 impl Default for Builder {
     fn default() -> Self {
         Self {
-            client: None,
+            dht_builder: None,
             secret_key: None,
             ttl: None,
-            pkarr_relay: None,
-            dht: true,
             republish_delay: REPUBLISH_DELAY,
             enable_publish: true,
             addr_filter: AddrFilter::relay_only(),
@@ -137,9 +157,9 @@ impl Default for Builder {
 }
 
 impl Builder {
-    /// Explicitly sets the pkarr client to use.
-    pub fn client(mut self, client: PkarrClient) -> Self {
-        self.client = Some(client);
+    /// Explicitly sets the DHT builder to use.
+    pub fn dht_builder(mut self, builder: DhtBuilder) -> Self {
+        self.dht_builder = Some(builder);
         self
     }
 
@@ -154,31 +174,6 @@ impl Builder {
     /// Sets the time-to-live value for the DNS packets.
     pub fn ttl(mut self, ttl: u32) -> Self {
         self.ttl = Some(ttl);
-        self
-    }
-
-    /// Sets the pkarr relay URL to use.
-    pub fn pkarr_relay(mut self, pkarr_relay: Url) -> Self {
-        self.pkarr_relay = Some(pkarr_relay);
-        self
-    }
-
-    /// Uses the default [number 0] pkarr relay URL.
-    ///
-    /// [number 0]: https://n0.computer
-    pub fn n0_dns_pkarr_relay(mut self) -> Self {
-        let url = if crate::endpoint::force_staging_infra() {
-            N0_DNS_PKARR_RELAY_STAGING
-        } else {
-            N0_DNS_PKARR_RELAY_PROD
-        };
-        self.pkarr_relay = Some(url.parse().expect("valid URL"));
-        self
-    }
-
-    /// Sets whether to publish to the Mainline DHT.
-    pub fn dht(mut self, dht: bool) -> Self {
-        self.dht = dht;
         self
     }
 
@@ -211,37 +206,16 @@ impl Builder {
 
     /// Builds the address lookup mechanism.
     pub fn build(self) -> Result<DhtAddressLookup, AddressLookupBuilderError> {
-        if !(self.dht || self.pkarr_relay.is_some()) {
-            return Err(AddressLookupBuilderError::from_err(
-                "pkarr",
-                std::io::Error::other("at least one of DHT or relay must be enabled"),
-            ));
-        }
-        let pkarr = match self.client {
-            Some(client) => client,
-            None => {
-                let mut builder = PkarrClient::builder();
-                builder.no_default_network();
-                if self.dht {
-                    builder.dht(|x| x);
-                }
-                if let Some(url) = &self.pkarr_relay {
-                    builder
-                        .relays(std::slice::from_ref(url))
-                        .map_err(|e| AddressLookupBuilderError::from_err("pkarr", e))?;
-                }
-                builder
-                    .build()
-                    .map_err(|e| AddressLookupBuilderError::from_err("pkarr", e))?
-            }
-        };
+        let dht_builder = self.dht_builder.unwrap_or_default();
+        let dht = dht_builder
+            .build()
+            .map_err(|e| AddressLookupBuilderError::from_err("pkarr-dht", e))?;
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         let secret_key = self.secret_key.filter(|_| self.enable_publish);
 
         Ok(DhtAddressLookup(Arc::new(Inner {
-            pkarr,
+            dht,
             ttl,
-            relay_url: self.pkarr_relay,
             secret_key,
             republish_delay: self.republish_delay,
             task: Default::default(),
@@ -265,32 +239,19 @@ impl DhtAddressLookup {
         Builder::default()
     }
 
-    /// Periodically publishes the endpoint address to the DHT and/or relay.
-    async fn publish_loop(self, keypair: SecretKey, signed_packet: SignedPacket) {
+    /// Periodically publishes the endpoint address to the DHT.
+    async fn publish_loop(self, public_key_bytes: [u8; 32], item: MutableItem) {
         let this = self;
-        let public_key =
-            pkarr::PublicKey::try_from(keypair.public().as_bytes()).expect("valid public key");
-        let z32 = public_key.to_z32();
+        let z32 = pkarr::public_key_to_z32(
+            &iroh_base::PublicKey::try_from(public_key_bytes.as_slice()).expect("valid key"),
+        );
         loop {
-            // If the task gets aborted while doing this lookup, we have not published yet.
-            let prev_timestamp = this
-                .0
-                .pkarr
-                .resolve_most_recent(&public_key)
-                .await
-                .map(|p| p.timestamp());
-            let res = this.0.pkarr.publish(&signed_packet, prev_timestamp).await;
+            let res = this.0.dht.clone().as_async().put_mutable(item.clone(), None).await;
             match res {
-                Ok(()) => {
-                    tracing::debug!("pkarr publish success. published under {z32}",);
+                Ok(_) => {
+                    tracing::debug!("pkarr publish success. published under {z32}");
                 }
                 Err(e) => {
-                    // we could do a smaller delay here, but in general DHT publish
-                    // not working is due to a network issue, and if the network changes
-                    // the task will be restarted anyway.
-                    //
-                    // Being unable to publish to the DHT is something that is expected
-                    // to happen from time to time, so this does not warrant a error log.
                     tracing::warn!("pkarr publish error: {}", e);
                 }
             }
@@ -321,8 +282,10 @@ impl AddressLookup for DhtAddressLookup {
             tracing::warn!("failed to create signed packet");
             return;
         };
+        let item = signed_packet_to_mutable_item(&signed_packet);
+        let public_key_bytes = *keypair.public().as_bytes();
         let this = self.clone();
-        let curr = task::spawn(this.publish_loop(keypair.clone(), signed_packet));
+        let curr = task::spawn(this.publish_loop(public_key_bytes, item));
         let mut task = self.0.task.lock().expect("poisoned");
         *task = Some(AbortOnDropHandle::new(curr));
     }
@@ -331,12 +294,12 @@ impl AddressLookup for DhtAddressLookup {
         &self,
         endpoint_id: EndpointId,
     ) -> Option<BoxStream<Result<AddressLookupItem, AddressLookupError>>> {
-        let pkarr_public_key =
-            pkarr::PublicKey::try_from(endpoint_id.as_bytes()).expect("valid public key");
-        tracing::info!("resolving {} as {}", endpoint_id, pkarr_public_key.to_z32());
+        let z32 = pkarr::public_key_to_z32(&endpoint_id);
+        tracing::info!("resolving {} as {}", endpoint_id, z32);
         let address_lookup = self.0.clone();
+        let public_key_bytes = *endpoint_id.as_bytes();
         let stream = n0_future::stream::once_future(async move {
-            address_lookup.resolve_pkarr(pkarr_public_key).await
+            address_lookup.resolve_dht(&public_key_bytes).await
         })
         .filter_map(|x| x)
         .boxed();
@@ -351,6 +314,7 @@ mod tests {
     use iroh_base::RelayUrl;
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
+    use url::Url;
 
     use super::*;
 
@@ -359,14 +323,12 @@ mod tests {
     #[traced_test]
     async fn dht_address_lookup_smoke() -> Result {
         let secret = SecretKey::generate(&mut rand::rng());
-        let testnet = pkarr::mainline::Testnet::new_async(3).await.anyerr()?;
-        let client = pkarr::Client::builder()
-            .dht(|builder| builder.bootstrap(&testnet.bootstrap))
-            .build()
-            .anyerr()?;
+        let testnet = Testnet::new_async(3).await.anyerr()?;
+        let mut dht_builder = DhtBuilder::default();
+        dht_builder.bootstrap(&testnet.bootstrap);
         let address_lookup = DhtAddressLookup::builder()
             .secret_key(secret.clone())
-            .client(client)
+            .dht_builder(dht_builder)
             .addr_filter(AddrFilter::unfiltered())
             .build()?;
 

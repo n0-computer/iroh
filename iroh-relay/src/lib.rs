@@ -48,6 +48,7 @@ pub use key_cache::KeyCache;
 #[cfg(not(wasm_browser))]
 pub mod dns;
 pub mod endpoint_info;
+pub mod pkarr;
 
 pub use protos::relay::MAX_PACKET_SIZE;
 

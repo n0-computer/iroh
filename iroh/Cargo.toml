@@ -37,7 +37,7 @@ netwatch = "0.15"
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-pkarr = { version = "5", default-features = false }
+mainline = { version = "6", optional = true }
 noq = { version = "0.17.0", default-features = false, features = ["rustls-ring"] }
 noq-proto = "0.16"
 noq-udp = "0.9"
@@ -148,7 +148,7 @@ portmapper = ["dep:portmapper"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper?/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 address-lookup-mdns = ["dep:swarm-discovery"]
-address-lookup-pkarr-dht = ["pkarr/dht", "pkarr/relays"]
+address-lookup-pkarr-dht = ["dep:mainline"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["iroh-relay/platform-verifier"]
 qlog = ["noq/qlog"]

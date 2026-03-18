@@ -65,10 +65,7 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Disconnected, Watchable, Watcher as _};
-use pkarr::{
-    SignedPacket,
-    errors::{PublicKeyError, SignedPacketVerifyError},
-};
+use iroh_relay::pkarr::{SignedPacket, SignedPacketVerifyError, public_key_to_z32};
 use tracing::{Instrument, debug, error_span, trace, warn};
 use url::Url;
 
@@ -94,7 +91,7 @@ pub enum PkarrError {
     #[error("Invalid public key")]
     PublicKey {
         #[error(std_err)]
-        source: PublicKeyError,
+        source: iroh_base::KeyParsingError,
     },
     #[error("Packet failed to verify")]
     Verify {
@@ -644,9 +641,7 @@ impl PkarrRelayClient {
         &self,
         endpoint_id: EndpointId,
     ) -> Result<SignedPacket, AddressLookupError> {
-        // We map the error to string, as in browsers the error is !Send
-        let public_key = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
-            .map_err(|err| e!(PkarrError::PublicKey, err))?;
+        let public_key = endpoint_id;
 
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
@@ -655,7 +650,7 @@ impl PkarrRelayClient {
                     url: self.pkarr_relay_url.clone().into()
                 })
             })?
-            .push(&public_key.to_z32());
+            .push(&public_key_to_z32(&public_key));
 
         let response = self
             .http_client
@@ -675,7 +670,6 @@ impl PkarrRelayClient {
             .bytes()
             .await
             .map_err(|source| e!(PkarrError::HttpPayload { source }))?;
-        // We map the error to string, as in browsers the error is !Send
         let packet = SignedPacket::from_relay_payload(&public_key, &payload)
             .map_err(|err| e!(PkarrError::Verify, err))?;
         Ok(packet)
@@ -690,7 +684,7 @@ impl PkarrRelayClient {
                     url: self.pkarr_relay_url.clone().into()
                 })
             })?
-            .push(&signed_packet.public_key().to_z32());
+            .push(&public_key_to_z32(&signed_packet.public_key()));
 
         let response = self
             .http_client
