@@ -24,10 +24,10 @@ mainline bootstrap nodes.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.get_signed_packet" class="method"><a class="src rightside" href="../src/iroh_dns_server/store.rs.html#164-166">Source</a><h4 class="code-header">pub async fn <a href="#method.get_signed_packet" class="fn">get_signed_packet</a>(
     &amp;self,
     pubkey: &amp;PublicKeyBytes,
-) -&gt; Result&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../iroh_relay/pkarr/struct.SignedPacket.html" title="struct iroh_relay::pkarr::SignedPacket">SignedPacket</a>&gt;&gt;</h4></section></summary><div class="docblock"><p>Get the latest signed packet for a pubkey.</p>
+) -&gt; Result&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;SignedPacket&gt;&gt;</h4></section></summary><div class="docblock"><p>Get the latest signed packet for a pubkey.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.insert" class="method"><a class="src rightside" href="../src/iroh_dns_server/store.rs.html#174-184">Source</a><h4 class="code-header">pub async fn <a href="#method.insert" class="fn">insert</a>(
     &amp;self,
-    signed_packet: <a class="struct" href="../iroh_relay/pkarr/struct.SignedPacket.html" title="struct iroh_relay::pkarr::SignedPacket">SignedPacket</a>,
+    signed_packet: SignedPacket,
     _source: PacketSource,
 ) -&gt; Result&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>&gt;</h4></section></summary><div class="docblock"><p>Insert a signed packet into the cache and the store.</p>
 <p>Returns whether this produced an update, i.e. whether the packet is the newest for its
