@@ -42,23 +42,16 @@ const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 /// be used as both a publisher and resolver.  Calling [`DhtAddressLookup::publish`] will start
 /// a background task that periodically publishes the endpoint address.
 ///
-/// By default, [`DhtAddressLookup`] will publish all addresses it receives:
-/// direct IP addresses and relay URLs. No internal address limits or truncation
-/// are applied.
+/// [`DhtAddressLookup`] filters published addresses: only relay addresses are published by default.
+/// To change this behavior, use [`Builder::addr_filter`] and set it to e.g. [`AddrFilter::unfiltered`].
+/// This can be useful to enable publishing IP addresses if the iroh endpoint is reachable via public
+/// IP addresses.
 ///
-/// You can supply an [`AddrFilter`] via [`Builder::set_addr_filter`] to
-/// control which addresses are published.
-///
-/// [`AddrFilter`]: crate::address_lookup::AddrFilter
 /// [pkarr module]: super
+/// [`AddrFilter::relay_only`]: crate::address_lookup::AddrFilter::relay_only
+/// [`AddrFilter::unfiltered`]: crate::address_lookup::AddrFilter::unfiltered
 #[derive(Debug, Clone)]
 pub struct DhtAddressLookup(Arc<Inner>);
-
-impl Default for DhtAddressLookup {
-    fn default() -> Self {
-        Self::builder().build().expect("valid builder")
-    }
-}
 
 #[derive(derive_more::Debug)]
 struct Inner {
@@ -125,7 +118,7 @@ pub struct Builder {
     dht: bool,
     republish_delay: Duration,
     enable_publish: bool,
-    filter: AddrFilter,
+    addr_filter: AddrFilter,
 }
 
 impl Default for Builder {
@@ -138,7 +131,7 @@ impl Default for Builder {
             dht: true,
             republish_delay: REPUBLISH_DELAY,
             enable_publish: true,
-            filter: AddrFilter::default(),
+            addr_filter: AddrFilter::relay_only(),
         }
     }
 }
@@ -201,9 +194,18 @@ impl Builder {
         self
     }
 
-    /// Sets a filter to control which addresses are published by this service.
-    pub fn set_addr_filter(mut self, filter: AddrFilter) -> Self {
-        self.filter = filter;
+    /// Sets the address filter to control which addresses are published to the DHT.
+    ///
+    /// By default [`AddrFilter::relay_only`] is used. This avoids leaking IP addresses
+    /// to the public DHT.
+    ///
+    /// It can be useful to override this with [`AddrFilter::unfiltered`], if this is
+    /// not a concern, e.g. when this endpoint runs on a machine with public IP
+    /// addresses and without a firewall. In such cases connecting to this endpoint
+    /// with just an [`EndpointId`] and DHT lookup can become faster and potentially
+    /// even bypass a relay connection entirely.
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
+        self.addr_filter = filter;
         self
     }
 
@@ -243,7 +245,7 @@ impl Builder {
             secret_key,
             republish_delay: self.republish_delay,
             task: Default::default(),
-            filter: self.filter,
+            filter: self.addr_filter,
         })))
     }
 }
@@ -254,10 +256,6 @@ impl AddressLookupBuilder for Builder {
         endpoint: &Endpoint,
     ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         self.secret_key(endpoint.secret_key().clone()).build()
-    }
-
-    fn with_addr_filter(self, filter: AddrFilter) -> Self {
-        self.set_addr_filter(filter)
     }
 }
 
@@ -369,6 +367,7 @@ mod tests {
         let address_lookup = DhtAddressLookup::builder()
             .secret_key(secret.clone())
             .client(client)
+            .addr_filter(AddrFilter::unfiltered())
             .build()?;
 
         let relay_url: RelayUrl = Url::parse("https://example.com").anyerr()?.into();

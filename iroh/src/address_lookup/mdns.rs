@@ -21,10 +21,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let recent = Duration::from_secs(600); // 10 minutes in seconds
-//!     let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-//!         .bind()
-//!         .await
-//!         .unwrap();
+//!     let endpoint = Endpoint::empty_builder().bind().await.unwrap();
 //!
 //!     // Register the Address Lookupwith the endpoint
 //!     let mdns = MdnsAddressLookup::builder().build(endpoint.id()).unwrap();
@@ -47,14 +44,14 @@
 //!
 //! ## Filtering
 //!
-//! By default, [`MdnsAddressLookup`] will attempt to publish all addresses it receives:
+//! By default, [`MdnsAddressLookup`] publishes all addresses it receives:
 //! direct IP addresses and up to one [`RelayUrl`]. The following constraints apply regardless
 //! of any user-supplied filter:
 //!
 //! - Only the first [`RelayUrl`] in the address set is published.
 //! - A [`RelayUrl`] longer than 249 bytes is silently dropped.
 //!
-//! You can supply an [`AddrFilter`] via [`MdnsAddressLookupBuilder::with_addr_filter`] to
+//! You can supply an [`AddrFilter`] via [`MdnsAddressLookupBuilder::addr_filter`] to
 //! control which addresses are published and in what order. The filter is applied before the
 //! constraints above, so for example you can use it to exclude relay URLs entirely or to
 //! prioritize certain addresses.
@@ -208,7 +205,7 @@ impl MdnsAddressLookupBuilder {
     }
 
     /// Sets a filter to control which addresses are published by this service.
-    pub fn set_addr_filter(mut self, filter: AddrFilter) -> Self {
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
         self.filter = filter;
         self
     }
@@ -241,10 +238,6 @@ impl AddressLookupBuilder for MdnsAddressLookupBuilder {
     ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         self.build(endpoint.id())
     }
-
-    fn with_addr_filter(self, filter: AddrFilter) -> Self {
-        self.set_addr_filter(filter)
-    }
 }
 
 /// An event emitted from the [`MdnsAddressLookup`] service.
@@ -266,7 +259,7 @@ pub enum DiscoveryEvent {
 }
 
 impl MdnsAddressLookup {
-    /// Returns a [`MdnsAddressLookupBuilder`] that implements [`Into`].
+    /// Returns a [`MdnsAddressLookupBuilder`] used to construct [`MdnsAddressLookup`].
     pub fn builder() -> MdnsAddressLookupBuilder {
         MdnsAddressLookupBuilder::default()
     }

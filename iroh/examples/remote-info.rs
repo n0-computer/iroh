@@ -7,7 +7,7 @@
 
 use std::time::{Duration, SystemTime};
 
-use iroh::{Endpoint, EndpointAddr};
+use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_future::IterExt;
 use tracing::{Instrument, info, info_span};
@@ -28,7 +28,7 @@ async fn main() -> Result {
     let (hook, remote_map) = RemoteMap::new();
 
     // Bind our endpoint and install the remote map hook.
-    let server = Endpoint::builder()
+    let server = Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
         .hooks(hook)
         .bind()
@@ -133,7 +133,7 @@ fn log_aggregate(remote_map: &RemoteMap) {
 
 async fn run_clients(server_addr: EndpointAddr, count: usize) -> Result {
     std::iter::repeat_with(async || {
-        let client = Endpoint::builder()
+        let client = Endpoint::builder(presets::N0)
             .bind()
             .instrument(info_span!("client"))
             .await?;

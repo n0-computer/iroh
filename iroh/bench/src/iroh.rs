@@ -6,7 +6,7 @@ use std::{
 use bytes::Bytes;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
-    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
+    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream, presets},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
@@ -30,7 +30,7 @@ pub fn server_endpoint(
             .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
 
         #[allow(unused_mut)]
-        let mut builder = Endpoint::builder();
+        let mut builder = Endpoint::builder(presets::N0);
         #[cfg(feature = "local-relay")]
         {
             if relay_url.is_some() {
@@ -91,7 +91,7 @@ pub async fn connect_client(
         .clone()
         .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
     #[allow(unused_mut)]
-    let mut builder = Endpoint::builder();
+    let mut builder = Endpoint::builder(presets::N0);
     #[cfg(feature = "local-relay")]
     {
         if relay_url.is_some() {
@@ -114,7 +114,7 @@ pub async fn connect_client(
     }
 
     // TODO: We don't support passing client transport config currently
-    // let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
+    // let mut client_config = noq::ClientConfig::new(Arc::new(crypto));
     // client_config.transport_config(Arc::new(transport_config(&opt)));
 
     let connection = endpoint
@@ -133,7 +133,7 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuicTransportCo
         .max_concurrent_uni_streams(max_streams.try_into().unwrap())
         .initial_mtu(initial_mtu);
 
-    let mut acks = quinn::AckFrequencyConfig::default();
+    let mut acks = noq::AckFrequencyConfig::default();
     acks.ack_eliciting_threshold(10u32.into());
     builder = builder.ack_frequency_config(Some(acks));
 

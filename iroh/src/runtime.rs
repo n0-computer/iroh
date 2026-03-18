@@ -1,9 +1,7 @@
-use std::{
-    pin::Pin,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::pin::Pin;
 
 use iroh_base::EndpointId;
+use portable_atomic::{AtomicU64, Ordering};
 use tokio_util::sync::CancellationToken;
 #[cfg(not(wasm_browser))]
 use tokio_util::task::TaskTracker;
@@ -66,14 +64,14 @@ impl Runtime {
     pub fn abort(&self) {}
 }
 
-impl quinn::Runtime for Runtime {
+impl noq::Runtime for Runtime {
     #[cfg(not(wasm_browser))]
-    fn new_timer(&self, i: std::time::Instant) -> Pin<Box<dyn quinn::AsyncTimer>> {
-        quinn::TokioRuntime.new_timer(i)
+    fn new_timer(&self, i: std::time::Instant) -> Pin<Box<dyn noq::AsyncTimer>> {
+        noq::TokioRuntime.new_timer(i)
     }
 
     #[cfg(wasm_browser)]
-    fn new_timer(&self, deadline: n0_future::time::Instant) -> Pin<Box<dyn quinn::AsyncTimer>> {
+    fn new_timer(&self, deadline: n0_future::time::Instant) -> Pin<Box<dyn noq::AsyncTimer>> {
         Box::pin(web::Timer(n0_future::time::sleep_until(deadline)))
     }
 
@@ -108,8 +106,8 @@ impl quinn::Runtime for Runtime {
     fn wrap_udp_socket(
         &self,
         t: std::net::UdpSocket,
-    ) -> std::io::Result<Box<dyn quinn::AsyncUdpSocket>> {
-        quinn::TokioRuntime.wrap_udp_socket(t)
+    ) -> std::io::Result<Box<dyn noq::AsyncUdpSocket>> {
+        noq::TokioRuntime.wrap_udp_socket(t)
     }
 }
 
@@ -126,7 +124,7 @@ mod web {
     #[derive(Debug)]
     pub(crate) struct Timer(pub(crate) time::Sleep);
 
-    impl quinn::AsyncTimer for Timer {
+    impl noq::AsyncTimer for Timer {
         fn reset(mut self: Pin<&mut Self>, deadline: time::Instant) {
             Pin::new(&mut self.0).reset(deadline)
         }

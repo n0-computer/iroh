@@ -1,4 +1,4 @@
-//! The [`Connection`] wraps a `quinn::Connection`.
+//! The [`Connection`] wraps a `noq::Connection`.
 //!
 //! The [`Connection`] is how you send data to and receive data from the remote endpoint.
 //!
@@ -30,9 +30,9 @@ use futures_util::{FutureExt, future::Shared};
 use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
+use noq::WeakConnectionHandle;
 use pin_project::pin_project;
-use quinn::WeakConnectionHandle;
-use tracing::warn;
+use tracing::{event, warn};
 
 use crate::{
     Endpoint,
@@ -66,6 +66,8 @@ pub enum IncomingAddr {
         /// The endpoint ID of the remote peer.
         endpoint_id: EndpointId,
     },
+    /// A connection via a custom transport.
+    Custom(iroh_base::CustomAddr),
 }
 
 impl From<IncomingAddr> for iroh_base::TransportAddr {
@@ -73,6 +75,7 @@ impl From<IncomingAddr> for iroh_base::TransportAddr {
         match addr {
             IncomingAddr::Ip(addr) => Self::Ip(addr),
             IncomingAddr::Relay { url, .. } => Self::Relay(url),
+            IncomingAddr::Custom(addr) => Self::Custom(addr),
         }
     }
 }
@@ -84,6 +87,7 @@ impl From<crate::socket::transports::Addr> for IncomingAddr {
             crate::socket::transports::Addr::Relay(url, endpoint_id) => {
                 Self::Relay { url, endpoint_id }
             }
+            crate::socket::transports::Addr::Custom(addr) => Self::Custom(addr),
         }
     }
 }
@@ -93,8 +97,8 @@ impl From<crate::socket::transports::Addr> for IncomingAddr {
 #[pin_project]
 pub struct Accept<'a> {
     #[pin]
-    #[debug("quinn::Accept")]
-    pub(crate) inner: quinn::Accept<'a>,
+    #[debug("noq::Accept")]
+    pub(crate) inner: noq::Accept<'a>,
     pub(crate) ep: Endpoint,
 }
 
@@ -106,10 +110,18 @@ impl Future for Accept<'_> {
         match this.inner.poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(inner)) => Poll::Ready(Some(Incoming {
-                inner,
-                ep: this.ep.clone(),
-            })),
+            Poll::Ready(Some(inner)) => {
+                let incoming = Incoming {
+                    inner,
+                    ep: this.ep.clone(),
+                };
+                event!(
+                    target: "iroh::_events::conn::incoming",
+                    tracing::Level::DEBUG,
+                    remote_addr = ?incoming.remote_addr(),
+                );
+                Poll::Ready(Some(incoming))
+            }
         }
     }
 }
@@ -118,7 +130,7 @@ impl Future for Accept<'_> {
 /// handshake.
 #[derive(Debug)]
 pub struct Incoming {
-    inner: quinn::Incoming,
+    inner: noq::Incoming,
     ep: Endpoint,
 }
 
@@ -208,8 +220,8 @@ impl IntoFuture for Incoming {
 
     fn into_future(self) -> Self::IntoFuture {
         IncomingFuture(Box::pin(async move {
-            let quinn_conn = self.inner.into_future().await?;
-            let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
+            let noq_conn = self.inner.into_future().await?;
+            let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
             Ok(conn)
         }))
     }
@@ -219,7 +231,7 @@ impl IntoFuture for Incoming {
 #[stack_error(derive, add_meta, from_sources)]
 #[error("retry() with validated Incoming")]
 pub struct RetryError {
-    err: quinn::RetryError,
+    err: noq::RetryError,
     ep: Endpoint,
 }
 
@@ -247,17 +259,17 @@ impl Future for IncomingFuture {
 }
 
 /// Extracts the ALPN protocol from the peer's handshake data.
-fn alpn_from_quinn_conn(conn: &quinn::Connection) -> Option<Vec<u8>> {
+fn alpn_from_noq_conn(conn: &noq::Connection) -> Option<Vec<u8>> {
     let data = conn.handshake_data()?;
-    match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
+    match data.downcast::<noq::crypto::rustls::HandshakeData>() {
         Ok(data) => data.protocol,
         Err(_) => None,
     }
 }
 
-async fn alpn_from_quinn_connecting(conn: &mut quinn::Connecting) -> Result<Vec<u8>, AlpnError> {
+async fn alpn_from_noq_connecting(conn: &mut noq::Connecting) -> Result<Vec<u8>, AlpnError> {
     let data = conn.handshake_data().await?;
-    match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
+    match data.downcast::<noq::crypto::rustls::HandshakeData>() {
         Ok(data) => match data.protocol {
             Some(protocol) => Ok(protocol),
             None => Err(e!(AlpnError::Unavailable)),
@@ -277,7 +289,7 @@ pub enum AuthenticationError {
     NoAlpn {},
 }
 
-/// Converts a `quinn::Connection` to a `Connection`.
+/// Converts a `noq::Connection` to a `Connection`.
 ///
 /// Returns an error if there was a connection error, the handshake data has not completed
 /// or if the remote did not set an ALPN.
@@ -287,8 +299,8 @@ pub enum AuthenticationError {
 /// emitted if the endpoint is closing.
 ///
 /// The returned future is `'static`, so it can be stored without being lifetime-bound on `&ep`.
-fn conn_from_quinn_conn(
-    conn: quinn::Connection,
+fn conn_from_noq_conn(
+    conn: noq::Connection,
     ep: &Endpoint,
 ) -> Result<
     impl Future<Output = Result<Connection, ConnectingError>> + Send + 'static,
@@ -306,6 +318,15 @@ fn conn_from_quinn_conn(
             }
         }
     };
+
+    event!(
+        target: "iroh::_events::conn::connected",
+        tracing::Level::DEBUG,
+        conn_id = conn.stable_id(),
+        side = ?conn.side(),
+        remote_id = %info.endpoint_id.fmt_short(),
+        alpn = %String::from_utf8_lossy(&info.alpn),
+    );
 
     // Register this connection with the socket.
     let fut = ep
@@ -332,9 +353,9 @@ fn conn_from_quinn_conn(
     })
 }
 
-fn static_info_from_conn(conn: &quinn::Connection) -> Result<StaticInfo, AuthenticationError> {
-    let endpoint_id = remote_id_from_quinn_conn(conn)?;
-    let alpn = alpn_from_quinn_conn(conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
+fn static_info_from_conn(conn: &noq::Connection) -> Result<StaticInfo, AuthenticationError> {
+    let endpoint_id = remote_id_from_noq_conn(conn)?;
+    let alpn = alpn_from_noq_conn(conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
     Ok(StaticInfo { endpoint_id, alpn })
 }
 
@@ -346,9 +367,7 @@ fn static_info_from_conn(conn: &quinn::Connection) -> Result<StaticInfo, Authent
 /// connection.
 ///
 /// [`PublicKey`]: iroh_base::PublicKey
-fn remote_id_from_quinn_conn(
-    conn: &quinn::Connection,
-) -> Result<EndpointId, RemoteEndpointIdError> {
+fn remote_id_from_noq_conn(conn: &noq::Connection) -> Result<EndpointId, RemoteEndpointIdError> {
     let data = conn.peer_identity();
     match data {
         None => {
@@ -385,7 +404,7 @@ fn remote_id_from_quinn_conn(
 /// This future resolves to a [`Connection`] once the handshake completes.
 #[derive(derive_more::Debug)]
 pub struct Connecting {
-    inner: quinn::Connecting,
+    inner: noq::Connecting,
     /// Future to register the connection with the socket.
     ///
     /// This is set and polled after `inner` completes. We are using an option instead of an enum
@@ -402,7 +421,7 @@ type RegisterWithSocketFut = BoxFuture<Result<Connection, ConnectingError>>;
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
 pub struct Accepting {
-    inner: quinn::Connecting,
+    inner: noq::Connecting,
     /// Future to register the connection with the socket.
     ///
     /// This is set and polled after `inner` completes. We are using an option instead of an enum
@@ -451,7 +470,7 @@ pub enum ConnectingError {
 
 impl Connecting {
     pub(crate) fn new(
-        inner: quinn::Connecting,
+        inner: noq::Connecting,
         ep: Endpoint,
         remote_endpoint_id: EndpointId,
     ) -> Self {
@@ -497,16 +516,16 @@ impl Connecting {
     ///
     /// See also documentation for [`Accepting::into_0rtt`].
     ///
-    /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
+    /// [`RecvStream::is_0rtt`]: noq::RecvStream::is_0rtt
     #[allow(clippy::result_large_err)]
     pub fn into_0rtt(self) -> Result<OutgoingZeroRttConnection, Connecting> {
         match self.inner.into_0rtt() {
-            Ok((quinn_conn, zrtt_accepted)) => {
+            Ok((noq_conn, zrtt_accepted)) => {
                 let accepted: BoxFuture<_> = Box::pin({
-                    let quinn_conn = quinn_conn.clone();
+                    let noq_conn = noq_conn.clone();
                     async move {
                         let accepted = zrtt_accepted.await;
-                        let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
+                        let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
                         Ok(match accepted {
                             true => ZeroRttStatus::Accepted(conn),
                             false => ZeroRttStatus::Rejected(conn),
@@ -515,7 +534,7 @@ impl Connecting {
                 });
                 let accepted = accepted.shared();
                 Ok(Connection {
-                    inner: quinn_conn,
+                    inner: noq_conn,
                     data: OutgoingZeroRttData { accepted },
                 })
             }
@@ -530,7 +549,7 @@ impl Connecting {
 
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub async fn alpn(&mut self) -> Result<Vec<u8>, AlpnError> {
-        alpn_from_quinn_connecting(&mut self.inner).await
+        alpn_from_noq_connecting(&mut self.inner).await
     }
 
     /// Returns the [`EndpointId`] of the endpoint that this connection attempt tries to connect to.
@@ -547,8 +566,8 @@ impl Future for Connecting {
             if let Some(fut) = &mut self.register_with_socket {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
-                let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
-                let fut = conn_from_quinn_conn(quinn_conn, &self.ep)?;
+                let noq_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
+                let fut = conn_from_noq_conn(noq_conn, &self.ep)?;
                 self.register_with_socket = Some(Box::pin(fut.err_into()));
             }
         }
@@ -556,7 +575,7 @@ impl Future for Connecting {
 }
 
 impl Accepting {
-    pub(crate) fn new(inner: quinn::Connecting, ep: Endpoint) -> Self {
+    pub(crate) fn new(inner: noq::Connecting, ep: Endpoint) -> Self {
         Self {
             inner,
             ep,
@@ -592,23 +611,23 @@ impl Accepting {
     ///
     /// [`RecvStream::is_0rtt`]: crate::endpoint::RecvStream::is_0rtt
     pub fn into_0rtt(self) -> IncomingZeroRttConnection {
-        let (quinn_conn, zrtt_accepted) = self
+        let (noq_conn, zrtt_accepted) = self
             .inner
             .into_0rtt()
             .expect("incoming connections can always be converted to 0-RTT");
 
         let accepted: BoxFuture<_> = Box::pin({
-            let quinn_conn = quinn_conn.clone();
+            let noq_conn = noq_conn.clone();
             async move {
                 let _ = zrtt_accepted.await;
-                let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
+                let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
                 Ok(conn)
             }
         });
         let accepted = accepted.shared();
 
         IncomingZeroRttConnection {
-            inner: quinn_conn,
+            inner: noq_conn,
             data: IncomingZeroRttData { accepted },
         }
     }
@@ -627,7 +646,7 @@ impl Accepting {
 
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub async fn alpn(&mut self) -> Result<Vec<u8>, AlpnError> {
-        alpn_from_quinn_connecting(&mut self.inner).await
+        alpn_from_noq_connecting(&mut self.inner).await
     }
 }
 
@@ -639,8 +658,8 @@ impl Future for Accepting {
             if let Some(fut) = &mut self.register_with_socket {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
-                let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
-                match conn_from_quinn_conn(quinn_conn, &self.ep) {
+                let noq_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
+                match conn_from_noq_conn(noq_conn, &self.ep) {
                     Err(err) => return Poll::Ready(Err(err)),
                     Ok(fut) => self.register_with_socket = Some(Box::pin(fut.err_into())),
                 };
@@ -709,7 +728,7 @@ pub type IncomingZeroRttConnection = Connection<IncomingZeroRtt>;
 /// May be cloned to obtain another handle to the same connection.
 #[derive(Debug, Clone)]
 pub struct Connection<State: ConnectionState = HandshakeCompleted> {
-    inner: quinn::Connection,
+    inner: noq::Connection,
     /// State-specific information
     data: State::Data,
 }
@@ -974,7 +993,7 @@ impl<T: ConnectionState> Connection<T> {
     /// default `rustls` session, the return value can be [`downcast`] to a
     /// <code>Vec<[rustls::pki_types::CertificateDer]></code>
     ///
-    /// [`Session`]: quinn_proto::crypto::Session
+    /// [`Session`]: noq_proto::crypto::Session
     /// [`downcast`]: Box::downcast
     #[inline]
     pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
@@ -1017,7 +1036,7 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.set_max_concurrent_uni_streams(count)
     }
 
-    /// See [`quinn_proto::TransportConfig::receive_window`].
+    /// See [`noq_proto::TransportConfig::receive_window`].
     #[inline]
     pub fn set_receive_window(&self, receive_window: VarInt) {
         self.inner.set_receive_window(receive_window)
@@ -1103,7 +1122,7 @@ impl Connection<HandshakeCompleted> {
 impl Connection<IncomingZeroRtt> {
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> Option<Vec<u8>> {
-        alpn_from_quinn_conn(&self.inner)
+        alpn_from_noq_conn(&self.inner)
     }
 
     /// Waits until the full handshake occurs and then returns a [`Connection`].
@@ -1131,14 +1150,14 @@ impl Connection<IncomingZeroRtt> {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
+        remote_id_from_noq_conn(&self.inner)
     }
 }
 
 impl Connection<OutgoingZeroRtt> {
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> Option<Vec<u8>> {
-        alpn_from_quinn_conn(&self.inner)
+        alpn_from_noq_conn(&self.inner)
     }
 
     /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
@@ -1173,7 +1192,7 @@ impl Connection<OutgoingZeroRtt> {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
+        remote_id_from_noq_conn(&self.inner)
     }
 }
 
@@ -1258,7 +1277,7 @@ mod tests {
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
     async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
-        let server = Endpoint::empty_builder(RelayMode::Disabled)
+        let server = Endpoint::empty_builder()
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -1385,7 +1404,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let client = Endpoint::empty_builder().bind().await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
@@ -1405,7 +1424,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt_non_consecutive() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let client = Endpoint::empty_builder().bind().await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
@@ -1430,7 +1449,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled)
+        let client = Endpoint::empty_builder()
             .bind()
             .instrument(info_span!("client"))
             .await?;
@@ -1469,14 +1488,16 @@ mod tests {
         const ALPN: &[u8] = b"test";
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, _relay_map, _guard) = run_relay_server().await?;
-        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let server = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
 
-        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let client = Endpoint::empty_builder()
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
