@@ -6,8 +6,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
 use iroh_relay::pkarr::SignedPacket;
+use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
 use redb::{
     Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition,
     backends::InMemoryBackend,
@@ -194,7 +194,8 @@ impl Actor {
                 trace!("remove {}", key);
                 let updated = match tables.signed_packets.remove(key.as_bytes()).anyerr()? {
                     Some(row) => {
-                        let (packet, _last_seen) = SignedPacket::deserialize(row.value()).anyerr()?;
+                        let (packet, _last_seen) =
+                            SignedPacket::deserialize(row.value()).anyerr()?;
                         tables
                             .update_time
                             .remove(&packet.timestamp().to_be_bytes(), key.as_bytes())
@@ -439,7 +440,11 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
         trace!("evicting packets older than {}", fmt_time(expired));
         // if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
-        for item in snapshot.update_time.range(..expired.to_be_bytes()).anyerr()? {
+        for item in snapshot
+            .update_time
+            .range(..expired.to_be_bytes())
+            .anyerr()?
+        {
             let (time, keys) = match item {
                 Ok(v) => v,
                 Err(e) => {

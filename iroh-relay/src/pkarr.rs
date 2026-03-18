@@ -4,9 +4,10 @@
 //!
 //! [pkarr]: https://pkarr.org
 
-use iroh_base::{PublicKey, SecretKey, Signature};
-use simple_dns::{rdata::RData, Name, Packet, ResourceRecord, CLASS};
 use std::fmt::{self, Debug, Display, Formatter};
+
+use iroh_base::{PublicKey, SecretKey, Signature};
+use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata::RData};
 
 /// Maximum size of the encoded DNS packet within a signed packet.
 const MAX_DNS_PACKET_SIZE: usize = 1000;
@@ -192,12 +193,20 @@ impl SignedPacket {
 
     /// Return the signature.
     pub fn signature(&self) -> Signature {
-        Signature::from_bytes(self.bytes[32..96].try_into().expect("64 bytes for signature"))
+        Signature::from_bytes(
+            self.bytes[32..96]
+                .try_into()
+                .expect("64 bytes for signature"),
+        )
     }
 
     /// Return the timestamp in microseconds since UNIX epoch.
     pub fn timestamp(&self) -> u64 {
-        u64::from_be_bytes(self.bytes[96..104].try_into().expect("8 bytes for timestamp"))
+        u64::from_be_bytes(
+            self.bytes[96..104]
+                .try_into()
+                .expect("8 bytes for timestamp"),
+        )
     }
 
     /// Return the encoded DNS packet bytes.
@@ -292,7 +301,11 @@ impl Debug for SignedPacket {
 
 impl Display for SignedPacket {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        writeln!(f, "SignedPacket ({}):", public_key_to_z32(&self.public_key()))?;
+        writeln!(
+            f,
+            "SignedPacket ({}):",
+            public_key_to_z32(&self.public_key())
+        )?;
         writeln!(f, "  timestamp: {}", &self.timestamp())?;
         for (name, value) in self.all_txt_records() {
             writeln!(f, "  {name} TXT \"{value}\"")?;
@@ -349,7 +362,10 @@ impl fmt::Display for SignedPacketBuildError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::PacketTooLarge(n) => {
-                write!(f, "DNS packet too large: {n} bytes (max {MAX_DNS_PACKET_SIZE})")
+                write!(
+                    f,
+                    "DNS packet too large: {n} bytes (max {MAX_DNS_PACKET_SIZE})"
+                )
             }
             Self::DnsError(e) => write!(f, "{e}"),
         }

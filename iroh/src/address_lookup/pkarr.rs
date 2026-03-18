@@ -57,7 +57,10 @@
 use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
-use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointInfo};
+use iroh_relay::{
+    endpoint_info::{AddrFilter, EncodingError, EndpointInfo},
+    pkarr::{SignedPacket, SignedPacketVerifyError, public_key_to_z32},
+};
 use n0_error::{e, stack_error};
 use n0_future::{
     boxed::BoxStream,
@@ -65,7 +68,6 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Disconnected, Watchable, Watcher as _};
-use iroh_relay::pkarr::{SignedPacket, SignedPacketVerifyError, public_key_to_z32};
 use tracing::{Instrument, debug, error_span, trace, warn};
 use url::Url;
 

@@ -74,7 +74,6 @@ pub enum DecodingError {
     InvalidKey { source: KeyParsingError },
 }
 
-
 /// Data about an endpoint that may be published to and resolved from discovery services.
 ///
 /// This includes an optional [`RelayUrl`], a set of direct addresses, and the optional
@@ -518,8 +517,8 @@ fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
         }));
     }
     let label = labels.next().expect("checked above");
-    let endpoint_id = EndpointId::from_z32(label)
-        .map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
+    let endpoint_id =
+        EndpointId::from_z32(label).map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
     Ok(endpoint_id)
 }
 
@@ -649,9 +648,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         secret_key: &SecretKey,
         ttl: u32,
     ) -> Result<crate::pkarr::SignedPacket, EncodingError> {
-        let signed_packet =
-            crate::pkarr::SignedPacket::from_txt_strings(secret_key, IROH_TXT_NAME, self.to_txt_strings(), ttl)
-                .map_err(|err| e!(EncodingError::FailedBuildingPacket, err))?;
+        let signed_packet = crate::pkarr::SignedPacket::from_txt_strings(
+            secret_key,
+            IROH_TXT_NAME,
+            self.to_txt_strings(),
+            ttl,
+        )
+        .map_err(|err| e!(EncodingError::FailedBuildingPacket, err))?;
         Ok(signed_packet)
     }
 }
@@ -800,16 +803,14 @@ mod tests {
             // Test a record with mismatching record type (A instead of TXT). It should be filtered out.
             Record::from_rdata(name.clone(), 30, RData::A(A::new(127, 0, 0, 1))),
             // Test a record with a mismatching name
-            Record::from_rdata({
-                // Another EndpointId
-                let other_id = EndpointId::from_str(
-                    "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
-                )?;
-                Name::from_utf8(format!(
-                    "_iroh.{}.dns.iroh.link.",
-                    other_id.to_z32()
-                ))
-            }
+            Record::from_rdata(
+                {
+                    // Another EndpointId
+                    let other_id = EndpointId::from_str(
+                        "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e",
+                    )?;
+                    Name::from_utf8(format!("_iroh.{}.dns.iroh.link.", other_id.to_z32()))
+                }
                 .std_context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![

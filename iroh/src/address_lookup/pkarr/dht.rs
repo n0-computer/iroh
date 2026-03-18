@@ -21,8 +21,7 @@ use crate::{
     Endpoint,
     address_lookup::{
         AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
-        Error as AddressLookupError, Item as AddressLookupItem,
-        pkarr::DEFAULT_PKARR_TTL,
+        Error as AddressLookupError, Item as AddressLookupItem, pkarr::DEFAULT_PKARR_TTL,
     },
     endpoint_info::EndpointInfo,
 };
@@ -99,12 +98,16 @@ impl Inner {
         &self,
         public_key: &[u8; 32],
     ) -> Option<Result<AddressLookupItem, AddressLookupError>> {
-        let z32 = pkarr::public_key_to_z32(
-            &iroh_base::PublicKey::try_from(public_key.as_slice()).ok()?,
-        );
+        let z32 =
+            pkarr::public_key_to_z32(&iroh_base::PublicKey::try_from(public_key.as_slice()).ok()?);
         tracing::info!("resolving {z32} from DHT");
 
-        let maybe_item = self.dht.clone().as_async().get_mutable_most_recent(public_key, None).await;
+        let maybe_item = self
+            .dht
+            .clone()
+            .as_async()
+            .get_mutable_most_recent(public_key, None)
+            .await;
         match maybe_item {
             Some(item) => {
                 let Some(signed_packet) = mutable_item_to_signed_packet(&item) else {
@@ -246,7 +249,13 @@ impl DhtAddressLookup {
             &iroh_base::PublicKey::try_from(public_key_bytes.as_slice()).expect("valid key"),
         );
         loop {
-            let res = this.0.dht.clone().as_async().put_mutable(item.clone(), None).await;
+            let res = this
+                .0
+                .dht
+                .clone()
+                .as_async()
+                .put_mutable(item.clone(), None)
+                .await;
             match res {
                 Ok(_) => {
                     tracing::debug!("pkarr publish success. published under {z32}");

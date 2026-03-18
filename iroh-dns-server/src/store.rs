@@ -143,15 +143,15 @@ impl ZoneStore {
                 .as_async()
                 .get_mutable_most_recent(pubkey.as_bytes(), None)
                 .await;
-            if let Some(item) = maybe_item {
-                if let Some(packet) = mutable_item_to_signed_packet(&item) {
-                    debug!("DHT resolve successful {:?}", packet);
-                    return self
-                        .cache
-                        .lock()
-                        .await
-                        .insert_and_resolve_dht(&packet, name, record_type);
-                }
+            if let Some(item) = maybe_item
+                && let Some(packet) = mutable_item_to_signed_packet(&item)
+            {
+                debug!("DHT resolve successful {:?}", packet);
+                return self
+                    .cache
+                    .lock()
+                    .await
+                    .insert_and_resolve_dht(&packet, name, record_type);
             }
             debug!("DHT resolve failed");
         }

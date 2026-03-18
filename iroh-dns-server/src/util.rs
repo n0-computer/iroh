@@ -14,8 +14,8 @@ use hickory_server::proto::{
     },
     serialize::binary::BinDecodable,
 };
-use n0_error::{e, stack_error};
 use iroh_relay::pkarr::SignedPacket;
+use n0_error::{e, stack_error};
 
 #[derive(
     derive_more::From, derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy,
@@ -90,7 +90,7 @@ pub fn signed_packet_to_hickory_message(
     signed_packet: &SignedPacket,
 ) -> Result<Message, ProtoError> {
     let encoded = signed_packet.encoded_packet();
-    let message = Message::from_bytes(&encoded)?;
+    let message = Message::from_bytes(encoded)?;
     Ok(message)
 }
 
@@ -98,7 +98,9 @@ pub fn signed_packet_to_hickory_records_without_origin(
     signed_packet: &SignedPacket,
     filter: impl Fn(&Record) -> bool,
 ) -> Result<(Label, BTreeMap<RrKey, Arc<RecordSet>>), ProtoError> {
-    let common_zone = Label::from_utf8(&iroh_relay::pkarr::public_key_to_z32(&signed_packet.public_key()))?;
+    let common_zone = Label::from_utf8(&iroh_relay::pkarr::public_key_to_z32(
+        &signed_packet.public_key(),
+    ))?;
     let mut message = signed_packet_to_hickory_message(signed_packet)?;
     let answers = message.take_answers();
     let mut output: BTreeMap<RrKey, Arc<RecordSet>> = BTreeMap::new();

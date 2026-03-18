@@ -46,7 +46,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result {
-        use simple_dns::{rdata, Name, Packet, ResourceRecord, CLASS};
+        use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata};
 
         let dir = tempfile::tempdir()?;
         let server = Server::spawn_for_tests(dir.path()).await?;
@@ -290,7 +290,11 @@ mod tests {
             signed_packet.timestamp() as i64,
             None,
         );
-        dht.clone().as_async().put_mutable(item, None).await.anyerr()?;
+        dht.clone()
+            .as_async()
+            .put_mutable(item, None)
+            .await
+            .anyerr()?;
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(server.dns_addr());

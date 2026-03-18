@@ -334,8 +334,7 @@ pub(crate) mod pkarr_relay {
         Path(key): Path<String>,
         body: Bytes,
     ) -> Result<impl IntoResponse, AppError> {
-        let key = iroh_relay::pkarr::public_key_from_z32(&key)
-            .map_err(std::io::Error::other)?;
+        let key = iroh_relay::pkarr::public_key_from_z32(&key).map_err(std::io::Error::other)?;
         let signed_packet = iroh_relay::pkarr::SignedPacket::from_relay_payload(&key, &body)
             .map_err(std::io::Error::other)?;
         let _updated = state.upsert(signed_packet)?;
@@ -366,8 +365,10 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use iroh_base::EndpointId;
-    use iroh_relay::endpoint_info::{EndpointInfo, IROH_TXT_NAME};
-    use iroh_relay::pkarr::SignedPacket;
+    use iroh_relay::{
+        endpoint_info::{EndpointInfo, IROH_TXT_NAME},
+        pkarr::SignedPacket,
+    };
     use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;
@@ -525,7 +526,10 @@ pub(crate) mod pkarr_dns_state {
         ttl: u32,
     ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_ {
         use hickory_resolver::proto::rr;
-        let name = format!("{IROH_TXT_NAME}.{}.{origin}", iroh_relay::pkarr::public_key_to_z32(&endpoint_id));
+        let name = format!(
+            "{IROH_TXT_NAME}.{}.{origin}",
+            iroh_relay::pkarr::public_key_to_z32(&endpoint_id)
+        );
         let name = rr::Name::from_utf8(name).expect("invalid name");
         txt_strings.into_iter().map(move |s| {
             let txt = rr::rdata::TXT::new(vec![s]);
