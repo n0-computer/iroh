@@ -66,12 +66,33 @@ pub enum DecodingError {
     #[error("endpoint id was not encoded in valid z32")]
     InvalidEncodingZ32 {
         #[error(std_err)]
-        source: iroh_base::KeyParsingError,
+        source: crate::pkarr::Z32PublicKeyError,
     },
     #[error("length must be 32 bytes, but got {len} byte(s)")]
     InvalidLength { len: usize },
     #[error("endpoint id is not a valid public key")]
     InvalidKey { source: KeyParsingError },
+}
+
+/// Extension methods for [`EndpointId`] to encode to and decode from z-base-32,
+/// which is the encoding used by [pkarr](https://pkarr.org) domain names.
+pub trait EndpointIdExt {
+    /// Encodes a [`EndpointId`] in [z-base-32](https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt) encoding.
+    fn to_z32(&self) -> String;
+
+    /// Parses a [`EndpointId`] from [z-base-32](https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt) encoding.
+    fn from_z32(s: &str) -> Result<EndpointId, DecodingError>;
+}
+
+impl EndpointIdExt for EndpointId {
+    fn to_z32(&self) -> String {
+        crate::pkarr::public_key_to_z32(self)
+    }
+
+    fn from_z32(s: &str) -> Result<EndpointId, DecodingError> {
+        crate::pkarr::public_key_from_z32(s)
+            .map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))
+    }
 }
 
 /// Data about an endpoint that may be published to and resolved from discovery services.
@@ -517,8 +538,7 @@ fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
         }));
     }
     let label = labels.next().expect("checked above");
-    let endpoint_id =
-        EndpointId::from_z32(label).map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
+    let endpoint_id = <EndpointId as EndpointIdExt>::from_z32(label)?;
     Ok(endpoint_id)
 }
 
@@ -692,7 +712,7 @@ mod tests {
     use iroh_base::{EndpointId, SecretKey, TransportAddr};
     use n0_error::{Result, StdResultExt};
 
-    use super::{EndpointData, EndpointInfo};
+    use super::{EndpointData, EndpointIdExt, EndpointInfo};
     use crate::dns::TxtRecordData;
 
     #[test]

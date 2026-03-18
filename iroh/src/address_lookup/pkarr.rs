@@ -58,8 +58,8 @@ use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
-    endpoint_info::{AddrFilter, EncodingError, EndpointInfo},
-    pkarr::{SignedPacket, SignedPacketVerifyError, public_key_to_z32},
+    endpoint_info::{AddrFilter, EncodingError, EndpointIdExt, EndpointInfo},
+    pkarr::{SignedPacket, SignedPacketVerifyError},
 };
 use n0_error::{e, stack_error};
 use n0_future::{
@@ -229,7 +229,7 @@ impl PkarrPublisherBuilder {
 
     /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
     ///
-    /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
+    /// This publisher will be able to publish [pkarr](https://pkarr.org) records for [`SecretKey`].
     pub fn build(self, secret_key: SecretKey, tls_config: rustls::ClientConfig) -> PkarrPublisher {
         PkarrPublisher::new(
             secret_key,
@@ -300,7 +300,7 @@ impl PkarrPublisher {
     /// Creates a new [`PkarrPublisher`] with a custom TTL and republish intervals.
     ///
     /// This allows creating the publisher with custom time-to-live values of the
-    /// [`pkarr::SignedPacket`]s and well as a custom republish interval.
+    /// [`SignedPacket`](iroh_relay::pkarr::SignedPacket)s as well as a custom republish interval.
     fn new(
         secret_key: SecretKey,
         pkarr_relay: Url,
@@ -562,7 +562,7 @@ impl AddressLookup for PkarrResolver {
     }
 }
 
-/// A [pkarr] client to publish [`pkarr::SignedPacket`]s to a pkarr relay.
+/// A [pkarr](https://pkarr.org) client to publish [`SignedPacket`](iroh_relay::pkarr::SignedPacket)s to a pkarr relay.
 ///
 /// [pkarr]: https://pkarr.org
 #[derive(Debug, Clone)]
@@ -652,7 +652,7 @@ impl PkarrRelayClient {
                     url: self.pkarr_relay_url.clone().into()
                 })
             })?
-            .push(&public_key_to_z32(&public_key));
+            .push(&public_key.to_z32());
 
         let response = self
             .http_client
@@ -686,7 +686,7 @@ impl PkarrRelayClient {
                     url: self.pkarr_relay_url.clone().into()
                 })
             })?
-            .push(&public_key_to_z32(&signed_packet.public_key()));
+            .push(&signed_packet.public_key().to_z32());
 
         let response = self
             .http_client

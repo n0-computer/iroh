@@ -28,7 +28,7 @@ mod tests {
         endpoint_info::EndpointInfo,
         tls::{CaRootsConfig, default_provider},
     };
-    use iroh_relay::pkarr::{self, SignedPacket};
+    use iroh_relay::{endpoint_info::EndpointIdExt, pkarr::SignedPacket};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
     use rand::{CryptoRng, SeedableRng};
@@ -58,7 +58,7 @@ mod tests {
 
         // Build a DNS packet with various record types using simple_dns directly
         let secret_key = SecretKey::generate(&mut rand::rng());
-        let origin = pkarr::public_key_to_z32(&secret_key.public());
+        let origin = secret_key.public().to_z32();
 
         let mut packet = Packet::new_reply(0);
         // record at root

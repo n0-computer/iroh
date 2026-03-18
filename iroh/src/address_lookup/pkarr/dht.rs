@@ -8,7 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use iroh_base::{EndpointId, SecretKey};
-use iroh_relay::pkarr::{self, SignedPacket};
+use iroh_relay::{endpoint_info::EndpointIdExt, pkarr::SignedPacket};
 use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_future::{
     boxed::BoxStream,
@@ -98,9 +98,8 @@ impl Inner {
         &self,
         public_key: &[u8; 32],
     ) -> Option<Result<AddressLookupItem, AddressLookupError>> {
-        let z32 =
-            pkarr::public_key_to_z32(&iroh_base::PublicKey::try_from(public_key.as_slice()).ok()?);
-        tracing::info!("resolving {z32} from DHT");
+        let pk = iroh_base::PublicKey::try_from(public_key.as_slice()).ok()?;
+        tracing::info!("resolving {} from DHT", pk.to_z32());
 
         let maybe_item = self
             .dht
@@ -245,9 +244,9 @@ impl DhtAddressLookup {
     /// Periodically publishes the endpoint address to the DHT.
     async fn publish_loop(self, public_key_bytes: [u8; 32], item: MutableItem) {
         let this = self;
-        let z32 = pkarr::public_key_to_z32(
-            &iroh_base::PublicKey::try_from(public_key_bytes.as_slice()).expect("valid key"),
-        );
+        let z32 = iroh_base::PublicKey::try_from(public_key_bytes.as_slice())
+            .expect("valid key")
+            .to_z32();
         loop {
             let res = this
                 .0
@@ -303,7 +302,7 @@ impl AddressLookup for DhtAddressLookup {
         &self,
         endpoint_id: EndpointId,
     ) -> Option<BoxStream<Result<AddressLookupItem, AddressLookupError>>> {
-        let z32 = pkarr::public_key_to_z32(&endpoint_id);
+        let z32 = endpoint_id.to_z32();
         tracing::info!("resolving {} as {}", endpoint_id, z32);
         let address_lookup = self.0.clone();
         let public_key_bytes = *endpoint_id.as_bytes();
@@ -321,6 +320,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use iroh_base::RelayUrl;
+    use mainline::Testnet;
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
     use url::Url;
