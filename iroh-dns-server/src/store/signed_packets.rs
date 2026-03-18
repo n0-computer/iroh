@@ -174,7 +174,7 @@ impl Actor {
                     }
                     _ => false,
                 };
-                let value = packet.serialize(timestamp_now());
+                let value = serialize_for_storage(&packet);
                 tables
                     .signed_packets
                     .insert(key.as_bytes(), &value[..])
@@ -194,8 +194,7 @@ impl Actor {
                 trace!("remove {}", key);
                 let updated = match tables.signed_packets.remove(key.as_bytes()).anyerr()? {
                     Some(row) => {
-                        let (packet, _last_seen) =
-                            SignedPacket::deserialize(row.value()).anyerr()?;
+                        let packet = deserialize_from_storage(row.value())?;
                         tables
                             .update_time
                             .remove(&packet.timestamp().to_be_bytes(), key.as_bytes())
@@ -382,6 +381,30 @@ impl SignedPacketStore {
     }
 }
 
+/// Serialize a signed packet for storage: `<8 bytes last_seen><packet bytes>`.
+fn serialize_for_storage(packet: &SignedPacket) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + packet.as_bytes().len());
+    out.extend_from_slice(&timestamp_now().to_be_bytes());
+    out.extend_from_slice(packet.as_bytes());
+    out
+}
+
+/// Deserialize a signed packet from storage format.
+///
+/// Handles backwards compatibility with older storage formats that didn't include
+/// the `last_seen` prefix.
+fn deserialize_from_storage(data: &[u8]) -> Result<SignedPacket> {
+    // Try parsing as <8 bytes last_seen><packet> (pkarr v3 format)
+    if data.len() >= 8
+        && let Ok(packet) = SignedPacket::from_bytes_unchecked(&data[8..])
+    {
+        return Ok(packet);
+    }
+    // Fall back to raw packet bytes (pre-v0.35 format without last_seen prefix)
+    SignedPacket::from_bytes_unchecked(data)
+        .map_err(|err| anyerr!("Failed to decode stored packet: {err:#}"))
+}
+
 fn get_packet(
     table: &impl ReadableTable<&'static SignedPacketsKey, &'static [u8]>,
     key: &PublicKeyBytes,
@@ -392,25 +415,7 @@ fn get_packet(
     else {
         return Ok(None);
     };
-    match SignedPacket::deserialize(row.value()) {
-        Ok((packet, _last_seen)) => Ok(Some(packet)),
-        Err(err) => {
-            // Prior to iroh-dns-server v0.35, we stored packets in the default `SignedPacket::as_bytes` serialization from pkarr v2,
-            // which did not include the `last_seen` timestamp added as a prefix in `SignedPacket::serialize` from pkarr v3.
-            // If decoding the packet as a serialized pkarr v3 packet fails, we assume it was stored with iroh-dns-server before v0.35,
-            // and prepend an empty timestamp.
-            let data = row.value();
-            let mut buf = Vec::with_capacity(data.len() + 8);
-            buf.extend(&[0u8; 8]);
-            buf.extend(data);
-            match SignedPacket::deserialize(&buf) {
-                Ok((packet, _last_seen)) => Ok(Some(packet)),
-                Err(err2) => Err(anyerr!(
-                    "Failed to decode as pkarr v3: {err:#}. Also failed to decode as pkarr v2: {err2:#}"
-                )),
-            }
-        }
-    }
+    Ok(Some(deserialize_from_storage(row.value())?))
 }
 
 async fn evict_task(send: mpsc::Sender<Message>, options: Options, cancel: CancellationToken) {

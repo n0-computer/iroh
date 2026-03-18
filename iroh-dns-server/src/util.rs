@@ -14,6 +14,7 @@ use hickory_server::proto::{
     },
     serialize::binary::BinDecodable,
 };
+use iroh_base::PublicKey;
 use iroh_relay::{endpoint_info::EndpointIdExt, pkarr::SignedPacket};
 use n0_error::{e, stack_error};
 
@@ -36,13 +37,13 @@ impl PublicKeyBytes {
     }
 
     pub fn from_z32(s: &str) -> Result<Self, InvalidPublicKeyBytes> {
-        let pk = iroh_base::PublicKey::from_z32(s)
+        let pk = PublicKey::from_z32(s)
             .map_err(|_| e!(InvalidPublicKeyBytes::InvalidEncoding))?;
         Ok(Self(*pk.as_bytes()))
     }
 
     pub fn to_z32(self) -> String {
-        iroh_base::PublicKey::from_bytes(&self.0)
+        PublicKey::from_bytes(&self.0)
             .expect("valid key")
             .to_z32()
     }
