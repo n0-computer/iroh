@@ -1010,7 +1010,7 @@ mod test_dns_pkarr {
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_info = EndpointInfo::new(secret_key.public())
-            .with_relay_url(Some("https://relay.example".parse().unwrap()));
+            .with_relay_url("https://relay.example".parse().unwrap());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state
             .upsert(signed_packet)

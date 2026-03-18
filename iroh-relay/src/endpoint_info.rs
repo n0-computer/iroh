@@ -138,11 +138,9 @@ impl EndpointData {
         }
     }
 
-    /// Sets the relay URL and returns the updated endpoint data.
-    pub fn with_relay_url(mut self, relay_url: Option<RelayUrl>) -> Self {
-        if let Some(url) = relay_url {
-            self.addrs.push(TransportAddr::Relay(url));
-        }
+    /// Adds the relay URL and returns the updated endpoint data.
+    pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
+        self.addrs.push(TransportAddr::Relay(relay_url));
         self
     }
 
@@ -266,7 +264,7 @@ impl AddrFilter {
 
     /// Constructs a filter that doesn't filter addresses and passes all through.
     pub fn unfiltered() -> Self {
-        Self::new(|addrs| addrs.iter().cloned().collect())
+        Self::new(|addrs| Cow::Borrowed(addrs))
     }
 
     /// Only keep relay addresses.
@@ -437,8 +435,8 @@ impl EndpointInfo {
         Self { endpoint_id, data }
     }
 
-    /// Sets the relay URL and returns the updated endpoint info.
-    pub fn with_relay_url(mut self, relay_url: Option<RelayUrl>) -> Self {
+    /// Adds the relay URL and returns the updated endpoint info.
+    pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
         self.data = self.data.with_relay_url(relay_url);
         self
     }
@@ -913,7 +911,7 @@ mod tests {
         let expected_endpoint_info = EndpointInfo::new(EndpointId::from_str(
             "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",
         )?)
-        .with_relay_url(Some("https://euw1-1.relay.iroh.network./".parse()?))
+        .with_relay_url("https://euw1-1.relay.iroh.network./".parse()?)
         .with_ip_addrs(BTreeSet::from([
             "192.168.96.145:60165".parse().unwrap(),
             "213.208.157.87:60165".parse().unwrap(),
