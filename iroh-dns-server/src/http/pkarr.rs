@@ -4,6 +4,7 @@ use axum::{
 };
 use bytes::Bytes;
 use http::{StatusCode, header};
+use iroh_relay::pkarr::{SignedPacket, public_key_from_z32};
 use tracing::info;
 
 use super::error::AppError;
@@ -14,10 +15,10 @@ pub async fn put(
     Path(key): Path<String>,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    let key = pkarr::PublicKey::try_from(key.as_str())
+    let public_key = public_key_from_z32(&key)
         .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, Some(format!("invalid key: {e}"))))?;
-    let label = &key.to_z32()[..10];
-    let signed_packet = pkarr::SignedPacket::from_relay_payload(&key, &body).map_err(|e| {
+    let label = &key[..10.min(key.len())];
+    let signed_packet = SignedPacket::from_relay_payload(&public_key, &body).map_err(|e| {
         AppError::new(
             StatusCode::BAD_REQUEST,
             Some(format!("invalid body payload: {e}")),

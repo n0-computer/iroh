@@ -148,6 +148,36 @@ impl SignedPacket {
         })
     }
 
+    /// Serialize for persistent storage: `<8 bytes last_seen><as_bytes()>`.
+    ///
+    /// Compatible with pkarr v3 serialization format.
+    pub fn serialize(&self, last_seen: u64) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8 + self.bytes.len());
+        out.extend_from_slice(&last_seen.to_be_bytes());
+        out.extend_from_slice(&self.bytes);
+        out
+    }
+
+    /// Deserialize from persistent storage format: `<8 bytes last_seen><signed_packet_bytes>`.
+    ///
+    /// Compatible with pkarr v3 serialization format.
+    /// Returns `(signed_packet, last_seen)`.
+    pub fn deserialize(bytes: &[u8]) -> Result<(SignedPacket, u64), SignedPacketVerifyError> {
+        if bytes.len() < 8 + HEADER_SIZE {
+            return Err(SignedPacketVerifyError::TooShort(bytes.len()));
+        }
+        let last_seen = u64::from_be_bytes(bytes[..8].try_into().expect("8 bytes"));
+        // Validate that last_seen is not wildly in the future (backwards compat with LE encoding)
+        let now_us = timestamp_now();
+        let last_seen = if last_seen > now_us + 60_000_000 {
+            0
+        } else {
+            last_seen
+        };
+        let packet = SignedPacket::from_bytes_unchecked(&bytes[8..])?;
+        Ok((packet, last_seen))
+    }
+
     /// Return the full serialized bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes

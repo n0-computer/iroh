@@ -14,8 +14,8 @@ use hickory_server::proto::{
     },
     serialize::binary::BinDecodable,
 };
-use n0_error::{AnyError, StdResultExt, e, stack_error};
-use pkarr::SignedPacket;
+use n0_error::{e, stack_error};
+use iroh_relay::pkarr::SignedPacket;
 
 #[derive(
     derive_more::From, derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy,
@@ -58,7 +58,7 @@ impl PublicKeyBytes {
     }
 
     pub fn from_signed_packet(packet: &SignedPacket) -> Self {
-        Self(packet.public_key().to_bytes())
+        Self(*packet.public_key().as_bytes())
     }
 }
 
@@ -71,19 +71,6 @@ impl fmt::Display for PublicKeyBytes {
 impl fmt::Debug for PublicKeyBytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "PublicKeyBytes({})", self.to_z32())
-    }
-}
-
-impl From<pkarr::PublicKey> for PublicKeyBytes {
-    fn from(value: pkarr::PublicKey) -> Self {
-        Self(value.to_bytes())
-    }
-}
-
-impl TryFrom<PublicKeyBytes> for pkarr::PublicKey {
-    type Error = AnyError;
-    fn try_from(value: PublicKeyBytes) -> Result<Self, Self::Error> {
-        pkarr::PublicKey::try_from(&value.0).anyerr()
     }
 }
 
@@ -113,7 +100,7 @@ pub fn signed_packet_to_hickory_records_without_origin(
     signed_packet: &SignedPacket,
     filter: impl Fn(&Record) -> bool,
 ) -> Result<(Label, BTreeMap<RrKey, Arc<RecordSet>>), ProtoError> {
-    let common_zone = Label::from_utf8(&signed_packet.public_key().to_z32())?;
+    let common_zone = Label::from_utf8(&iroh_relay::pkarr::public_key_to_z32(&signed_packet.public_key()))?;
     let mut message = signed_packet_to_hickory_message(signed_packet)?;
     let answers = message.take_answers();
     let mut output: BTreeMap<RrKey, Arc<RecordSet>> = BTreeMap::new();
