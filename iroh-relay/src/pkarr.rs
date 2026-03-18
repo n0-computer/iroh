@@ -397,8 +397,9 @@ fn normalize_name(origin: &str, name: String) -> String {
 }
 
 fn timestamp_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    use n0_future::time::SystemTime;
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
         .expect("system time before UNIX epoch")
         .as_micros() as u64
 }
