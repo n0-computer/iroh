@@ -4,20 +4,12 @@
 //!
 //! [pkarr]: https://pkarr.org
 
-use std::{
-    fmt::{self, Debug, Display, Formatter},
-    sync::LazyLock,
-};
+use std::fmt::{self, Debug, Display, Formatter};
 
 use iroh_base::{PublicKey, SecretKey, Signature};
 use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata::RData};
 
-/// z-base-32 encoding as used by pkarr.
-static Z_BASE_32: LazyLock<data_encoding::Encoding> = LazyLock::new(|| {
-    let mut spec = data_encoding::Specification::new();
-    spec.symbols.push_str("ybndrfg8ejkmcpqxot1uwisza345h769");
-    spec.encoding().expect("valid z-base-32 spec")
-});
+use crate::endpoint_info::EndpointIdExt;
 
 /// Maximum size of the encoded DNS packet within a signed packet.
 const MAX_DNS_PACKET_SIZE: usize = 1000;
@@ -27,59 +19,6 @@ const HEADER_SIZE: usize = 104;
 
 /// Maximum total size of a serialized signed packet.
 pub const MAX_SIGNED_PACKET_SIZE: usize = HEADER_SIZE + MAX_DNS_PACKET_SIZE;
-
-/// Encode bytes as z-base-32.
-pub(crate) fn z32_encode(bytes: &[u8]) -> String {
-    Z_BASE_32.encode(bytes)
-}
-
-/// Decode a z-base-32 string to bytes.
-pub(crate) fn z32_decode(s: &str) -> Result<Vec<u8>, data_encoding::DecodeError> {
-    Z_BASE_32.decode(s.as_bytes())
-}
-
-/// Encode a public key as z-base-32 (the pkarr addressing format).
-pub(crate) fn public_key_to_z32(key: &PublicKey) -> String {
-    z32_encode(key.as_bytes())
-}
-
-/// Parse a public key from a z-base-32 string.
-pub(crate) fn public_key_from_z32(s: &str) -> Result<PublicKey, Z32PublicKeyError> {
-    let bytes = z32_decode(s)?;
-    Ok(PublicKey::try_from(bytes.as_slice())?)
-}
-
-/// Error parsing a public key from z-base-32.
-#[derive(Debug)]
-pub enum Z32PublicKeyError {
-    /// Invalid z-base-32 encoding.
-    Decode(data_encoding::DecodeError),
-    /// Valid z-base-32 but not a valid public key.
-    Key(iroh_base::KeyParsingError),
-}
-
-impl fmt::Display for Z32PublicKeyError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Decode(e) => write!(f, "invalid z-base-32: {e}"),
-            Self::Key(e) => write!(f, "invalid public key: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for Z32PublicKeyError {}
-
-impl From<data_encoding::DecodeError> for Z32PublicKeyError {
-    fn from(e: data_encoding::DecodeError) -> Self {
-        Self::Decode(e)
-    }
-}
-
-impl From<iroh_base::KeyParsingError> for Z32PublicKeyError {
-    fn from(e: iroh_base::KeyParsingError) -> Self {
-        Self::Key(e)
-    }
-}
 
 /// A signed DNS packet in the pkarr format.
 ///
@@ -105,7 +44,7 @@ impl SignedPacket {
         ttl: u32,
     ) -> Result<SignedPacket, SignedPacketBuildError> {
         let public_key = secret_key.public();
-        let origin = public_key_to_z32(&public_key);
+        let origin = public_key.to_z32();
         let normalized = normalize_name(&origin, name.to_string());
         let dns_name = Name::new_unchecked(&normalized).into_owned();
         let mut packet = Packet::new_reply(0);
@@ -242,7 +181,7 @@ impl SignedPacket {
     /// The `name` is normalized relative to the signer's z-base-32 public key.
     /// Returns the TXT string values.
     pub fn txt_records(&self, name: &str) -> Vec<String> {
-        let origin = public_key_to_z32(&self.public_key());
+        let origin = self.public_key().to_z32();
         let normalized = normalize_name(&origin, name.to_string());
         let Ok(packet) = Packet::parse(self.encoded_packet()) else {
             return Vec::new();
@@ -278,7 +217,7 @@ impl SignedPacket {
     ///
     /// The name is the part before the z-base-32 public key zone.
     pub fn all_txt_records(&self) -> Vec<(String, String)> {
-        let origin = public_key_to_z32(&self.public_key());
+        let origin = self.public_key().to_z32();
         let Ok(packet) = Packet::parse(self.encoded_packet()) else {
             return Vec::new();
         };
@@ -324,11 +263,7 @@ impl Debug for SignedPacket {
 
 impl Display for SignedPacket {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        writeln!(
-            f,
-            "SignedPacket ({}):",
-            public_key_to_z32(&self.public_key())
-        )?;
+        writeln!(f, "SignedPacket ({}):", self.public_key().to_z32())?;
         writeln!(f, "  timestamp: {}", &self.timestamp())?;
         for (name, value) in self.all_txt_records() {
             writeln!(f, "  {name} TXT \"{value}\"")?;

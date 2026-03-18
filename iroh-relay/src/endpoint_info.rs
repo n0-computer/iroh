@@ -38,12 +38,21 @@ use std::{
     hash::Hash,
     net::SocketAddr,
     str::{FromStr, Utf8Error},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey, TransportAddr};
 use n0_error::{e, ensure, stack_error};
 use url::Url;
+
+use crate::pkarr;
+
+/// z-base-32 encoding as used by pkarr.
+static Z_BASE_32: LazyLock<data_encoding::Encoding> = LazyLock::new(|| {
+    let mut spec = data_encoding::Specification::new();
+    spec.symbols.push_str("ybndrfg8ejkmcpqxot1uwisza345h769");
+    spec.encoding().expect("valid z-base-32 spec")
+});
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
@@ -55,7 +64,7 @@ pub enum EncodingError {
     #[error(transparent)]
     FailedBuildingPacket {
         #[error(std_err)]
-        source: crate::pkarr::SignedPacketBuildError,
+        source: pkarr::SignedPacketBuildError,
     },
 }
 
@@ -66,7 +75,7 @@ pub enum DecodingError {
     #[error("endpoint id was not encoded in valid z32")]
     InvalidEncodingZ32 {
         #[error(std_err)]
-        source: crate::pkarr::Z32PublicKeyError,
+        source: data_encoding::DecodeError,
     },
     #[error("length must be 32 bytes, but got {len} byte(s)")]
     InvalidLength { len: usize },
@@ -86,12 +95,16 @@ pub trait EndpointIdExt {
 
 impl EndpointIdExt for EndpointId {
     fn to_z32(&self) -> String {
-        crate::pkarr::public_key_to_z32(self)
+        Z_BASE_32.encode(self.as_bytes())
     }
 
     fn from_z32(s: &str) -> Result<EndpointId, DecodingError> {
-        crate::pkarr::public_key_from_z32(s)
-            .map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))
+        let bytes = Z_BASE_32
+            .decode(s.as_bytes())
+            .map_err(|e| e!(DecodingError::InvalidEncodingZ32, e))?;
+        let pk =
+            EndpointId::try_from(bytes.as_slice()).map_err(|e| e!(DecodingError::InvalidKey, e))?;
+        Ok(pk)
     }
 }
 
@@ -460,22 +473,20 @@ impl EndpointInfo {
         Ok(Self::from(attrs))
     }
 
-    /// Parses a [`EndpointInfo`] from a [`crate::pkarr::SignedPacket`].
-    pub fn from_pkarr_signed_packet(
-        packet: &crate::pkarr::SignedPacket,
-    ) -> Result<Self, ParseError> {
+    /// Parses a [`EndpointInfo`] from a [`pkarr::SignedPacket`].
+    pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self, ParseError> {
         let attrs = TxtAttrs::from_pkarr_signed_packet(packet)?;
         Ok(attrs.into())
     }
 
-    /// Creates a [`crate::pkarr::SignedPacket`].
+    /// Creates a [`pkarr::SignedPacket`].
     ///
     /// This constructs a DNS packet and signs it with a [`SecretKey`].
     pub fn to_pkarr_signed_packet(
         &self,
         secret_key: &SecretKey,
         ttl: u32,
-    ) -> Result<crate::pkarr::SignedPacket, EncodingError> {
+    ) -> Result<pkarr::SignedPacket, EncodingError> {
         self.to_attrs().to_pkarr_signed_packet(secret_key, ttl)
     }
 
@@ -632,9 +643,9 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         self.endpoint_id
     }
 
-    /// Parses a [`crate::pkarr::SignedPacket`].
+    /// Parses a [`pkarr::SignedPacket`].
     pub(crate) fn from_pkarr_signed_packet(
-        packet: &crate::pkarr::SignedPacket,
+        packet: &pkarr::SignedPacket,
     ) -> Result<Self, ParseError> {
         let pubkey = packet.public_key();
         let endpoint_id = EndpointId::from_bytes(pubkey.as_bytes()).expect("valid key");
@@ -660,15 +671,15 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             .flat_map(move |(k, vs)| vs.iter().map(move |v| format!("{k}={v}")))
     }
 
-    /// Creates a [`crate::pkarr::SignedPacket`]
+    /// Creates a [`pkarr::SignedPacket`]
     ///
     /// This constructs a DNS packet and signs it with a [`SecretKey`].
     pub(crate) fn to_pkarr_signed_packet(
         &self,
         secret_key: &SecretKey,
         ttl: u32,
-    ) -> Result<crate::pkarr::SignedPacket, EncodingError> {
-        let signed_packet = crate::pkarr::SignedPacket::from_txt_strings(
+    ) -> Result<pkarr::SignedPacket, EncodingError> {
+        let signed_packet = pkarr::SignedPacket::from_txt_strings(
             secret_key,
             IROH_TXT_NAME,
             self.to_txt_strings(),

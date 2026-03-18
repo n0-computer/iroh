@@ -37,15 +37,12 @@ impl PublicKeyBytes {
     }
 
     pub fn from_z32(s: &str) -> Result<Self, InvalidPublicKeyBytes> {
-        let pk = PublicKey::from_z32(s)
-            .map_err(|_| e!(InvalidPublicKeyBytes::InvalidEncoding))?;
+        let pk = PublicKey::from_z32(s).map_err(|_| e!(InvalidPublicKeyBytes::InvalidEncoding))?;
         Ok(Self(*pk.as_bytes()))
     }
 
     pub fn to_z32(self) -> String {
-        PublicKey::from_bytes(&self.0)
-            .expect("valid key")
-            .to_z32()
+        PublicKey::from_bytes(&self.0).expect("valid key").to_z32()
     }
 
     pub fn to_bytes(self) -> [u8; 32] {
