@@ -294,6 +294,8 @@ pub(crate) mod pkarr_relay {
         routing::put,
     };
     use bytes::Bytes;
+    use iroh_base::EndpointId;
+    use iroh_relay::endpoint_info::EndpointIdExt;
     use tokio::sync::oneshot;
     use tracing::{debug, error, warn};
     use url::Url;
@@ -334,7 +336,7 @@ pub(crate) mod pkarr_relay {
         Path(key): Path<String>,
         body: Bytes,
     ) -> Result<impl IntoResponse, AppError> {
-        let key = iroh_relay::pkarr::public_key_from_z32(&key).map_err(std::io::Error::other)?;
+        let key = EndpointId::from_z32(&key).map_err(std::io::Error::other)?;
         let signed_packet = iroh_relay::pkarr::SignedPacket::from_relay_payload(&key, &body)
             .map_err(std::io::Error::other)?;
         let _updated = state.upsert(signed_packet)?;

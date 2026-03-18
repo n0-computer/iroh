@@ -1,8 +1,7 @@
 use std::str::FromStr;
 
 use clap::Parser;
-use iroh::EndpointId;
-use iroh_relay::pkarr::{public_key_from_z32, public_key_to_z32};
+use iroh::{EndpointId, endpoint_info::EndpointIdExt};
 use n0_error::{Result, StdResultExt};
 
 #[derive(Debug, Parser)]
@@ -22,11 +21,10 @@ fn main() -> Result<()> {
     match args.command {
         Command::EndpointToPkarr { endpoint_id } => {
             let endpoint_id = EndpointId::from_str(&endpoint_id)?;
-            println!("{}", public_key_to_z32(&endpoint_id))
+            println!("{}", endpoint_id.to_z32())
         }
         Command::PkarrToEndpoint { z32_pubkey } => {
-            let public_key = public_key_from_z32(&z32_pubkey).anyerr()?;
-            let endpoint_id = EndpointId::from_bytes(public_key.as_bytes())?;
+            let endpoint_id = EndpointId::from_z32(&z32_pubkey).anyerr()?;
             println!("{endpoint_id}")
         }
     }

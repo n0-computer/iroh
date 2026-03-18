@@ -29,22 +29,22 @@ const HEADER_SIZE: usize = 104;
 pub const MAX_SIGNED_PACKET_SIZE: usize = HEADER_SIZE + MAX_DNS_PACKET_SIZE;
 
 /// Encode bytes as z-base-32.
-pub fn z32_encode(bytes: &[u8]) -> String {
+pub(crate) fn z32_encode(bytes: &[u8]) -> String {
     Z_BASE_32.encode(bytes)
 }
 
 /// Decode a z-base-32 string to bytes.
-pub fn z32_decode(s: &str) -> Result<Vec<u8>, data_encoding::DecodeError> {
+pub(crate) fn z32_decode(s: &str) -> Result<Vec<u8>, data_encoding::DecodeError> {
     Z_BASE_32.decode(s.as_bytes())
 }
 
 /// Encode a public key as z-base-32 (the pkarr addressing format).
-pub fn public_key_to_z32(key: &PublicKey) -> String {
+pub(crate) fn public_key_to_z32(key: &PublicKey) -> String {
     z32_encode(key.as_bytes())
 }
 
 /// Parse a public key from a z-base-32 string.
-pub fn public_key_from_z32(s: &str) -> Result<PublicKey, Z32PublicKeyError> {
+pub(crate) fn public_key_from_z32(s: &str) -> Result<PublicKey, Z32PublicKeyError> {
     let bytes = z32_decode(s)?;
     Ok(PublicKey::try_from(bytes.as_slice())?)
 }
