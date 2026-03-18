@@ -66,7 +66,7 @@ pub enum DecodingError {
     #[error("endpoint id was not encoded in valid z32")]
     InvalidEncodingZ32 {
         #[error(std_err)]
-        source: crate::pkarr::SignedPacketVerifyError,
+        source: iroh_base::KeyParsingError,
     },
     #[error("length must be 32 bytes, but got {len} byte(s)")]
     InvalidLength { len: usize },
@@ -518,7 +518,7 @@ fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
         }));
     }
     let label = labels.next().expect("checked above");
-    let endpoint_id = crate::pkarr::public_key_from_z32(label)
+    let endpoint_id = EndpointId::from_z32(label)
         .map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
     Ok(endpoint_id)
 }
@@ -668,7 +668,7 @@ pub(crate) fn ensure_iroh_txt_label(name: String) -> String {
 
 #[cfg(not(wasm_browser))]
 pub(crate) fn endpoint_domain(endpoint_id: &EndpointId, origin: &str) -> String {
-    format!("{}.{}", crate::pkarr::public_key_to_z32(endpoint_id), origin)
+    format!("{}.{}", endpoint_id.to_z32(), origin)
 }
 
 #[cfg(test)]
@@ -807,7 +807,7 @@ mod tests {
                 )?;
                 Name::from_utf8(format!(
                     "_iroh.{}.dns.iroh.link.",
-                    crate::pkarr::public_key_to_z32(&other_id)
+                    other_id.to_z32()
                 ))
             }
                 .std_context("name")?,

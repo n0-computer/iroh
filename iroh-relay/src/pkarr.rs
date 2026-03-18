@@ -4,18 +4,9 @@
 //!
 //! [pkarr]: https://pkarr.org
 
-use data_encoding::Encoding;
 use iroh_base::{PublicKey, SecretKey, Signature};
 use simple_dns::{rdata::RData, Name, Packet, ResourceRecord, CLASS};
 use std::fmt::{self, Debug, Display, Formatter};
-use std::sync::LazyLock;
-
-/// z-base-32 encoding used by pkarr for public key addressing.
-static Z32: LazyLock<Encoding> = LazyLock::new(|| {
-    let mut spec = data_encoding::Specification::new();
-    spec.symbols.push_str("ybndrfg8ejkmcpqxot1uwisza345h769");
-    spec.encoding().expect("valid z-base-32 spec")
-});
 
 /// Maximum size of the encoded DNS packet within a signed packet.
 const MAX_DNS_PACKET_SIZE: usize = 1000;
@@ -26,27 +17,14 @@ const HEADER_SIZE: usize = 104;
 /// Maximum total size of a serialized signed packet.
 pub const MAX_SIGNED_PACKET_SIZE: usize = HEADER_SIZE + MAX_DNS_PACKET_SIZE;
 
-/// Encode bytes as z-base-32.
-pub fn z32_encode(bytes: &[u8]) -> String {
-    Z32.encode(bytes)
-}
-
-/// Decode z-base-32 to bytes.
-pub fn z32_decode(s: &str) -> Result<Vec<u8>, SignedPacketVerifyError> {
-    Z32.decode(s.as_bytes())
-        .map_err(|e| SignedPacketVerifyError::InvalidKey(e.to_string()))
-}
-
 /// Encode a public key as z-base-32 (the pkarr addressing format).
 pub fn public_key_to_z32(key: &PublicKey) -> String {
-    z32_encode(key.as_bytes())
+    key.to_z32()
 }
 
 /// Parse a public key from a z-base-32 string.
 pub fn public_key_from_z32(s: &str) -> Result<PublicKey, SignedPacketVerifyError> {
-    let bytes = z32_decode(s)?;
-    PublicKey::try_from(bytes.as_slice())
-        .map_err(|e| SignedPacketVerifyError::InvalidKey(e.to_string()))
+    PublicKey::from_z32(s).map_err(|e| SignedPacketVerifyError::InvalidKey(e.to_string()))
 }
 
 /// A signed DNS packet in the pkarr format.

@@ -36,15 +36,15 @@ impl PublicKeyBytes {
     }
 
     pub fn from_z32(s: &str) -> Result<Self, InvalidPublicKeyBytes> {
-        let bytes = iroh_relay::pkarr::z32_decode(s)
+        let pk = iroh_base::PublicKey::from_z32(s)
             .map_err(|_| e!(InvalidPublicKeyBytes::InvalidEncoding))?;
-        let bytes = TryInto::<[u8; 32]>::try_into(&bytes[..])
-            .map_err(|_| e!(InvalidPublicKeyBytes::InvalidLength))?;
-        Ok(Self(bytes))
+        Ok(Self(*pk.as_bytes()))
     }
 
     pub fn to_z32(self) -> String {
-        iroh_relay::pkarr::z32_encode(&self.0)
+        iroh_base::PublicKey::from_bytes(&self.0)
+            .expect("valid key")
+            .to_z32()
     }
 
     pub fn to_bytes(self) -> [u8; 32] {

@@ -28,6 +28,7 @@ hickory-server = { version = "0.25.1", features = ["https-ring"] }
 http = "1.0.0"
 humantime = "2.2.0"
 humantime-serde = "1.1.1"
+iroh-base = { version = "0.97", path = "../iroh-base", features = ["key"] }
 iroh-metrics = { version = "0.38", features = ["service"] }
 iroh-relay = { version = "0.97", path = "../iroh-relay", default-features = false }
 lru = "0.16.3"

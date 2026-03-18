@@ -140,6 +140,23 @@ impl PublicKey {
         )
     }
 
+    /// Encode this public key as a z-base-32 string.
+    ///
+    /// This is the encoding used by [pkarr](https://pkarr.org) for public key addressing.
+    pub fn to_z32(&self) -> String {
+        Z_BASE_32.encode(self.as_bytes())
+    }
+
+    /// Parse a public key from a z-base-32 string.
+    pub fn from_z32(s: &str) -> Result<Self, KeyParsingError> {
+        let mut bytes = [0u8; 32];
+        let len = Z_BASE_32
+            .decode_mut(s.as_bytes(), &mut bytes)
+            .map_err(|e| e.error)?;
+        ensure!(len == 32, KeyParsingError::DecodeInvalidLength);
+        Self::from_bytes(&bytes)
+    }
+
     /// Needed for internal conversions, not part of the stable API.
     #[doc(hidden)]
     pub fn as_verifying_key(&self) -> VerifyingKey {
@@ -415,6 +432,13 @@ impl Signature {
 #[stack_error(derive, add_meta)]
 #[error("Invalid signature")]
 pub struct SignatureError {}
+
+/// z-base-32 encoding as used by pkarr.
+static Z_BASE_32: std::sync::LazyLock<data_encoding::Encoding> = std::sync::LazyLock::new(|| {
+    let mut spec = data_encoding::Specification::new();
+    spec.symbols.push_str("ybndrfg8ejkmcpqxot1uwisza345h769");
+    spec.encoding().expect("valid z-base-32 spec")
+});
 
 fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
     let mut bytes = [0u8; 32];

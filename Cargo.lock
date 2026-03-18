@@ -2197,6 +2197,7 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "iroh",
+ "iroh-base",
  "iroh-metrics",
  "iroh-relay",
  "lru",
