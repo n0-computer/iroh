@@ -320,55 +320,54 @@
 <a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">use </span>std::collections::BTreeSet;
 <a href=#321 id=321 data-nosnippet>321</a>
 <a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">use </span>iroh_base::RelayUrl;
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
-<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">use </span>url::Url;
-<a href=#326 id=326 data-nosnippet>326</a>
-<a href=#327 id=327 data-nosnippet>327</a>    <span class="kw">use </span>mainline::Testnet;
-<a href=#328 id=328 data-nosnippet>328</a>
-<a href=#329 id=329 data-nosnippet>329</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#330 id=330 data-nosnippet>330</a>
-<a href=#331 id=331 data-nosnippet>331</a>    <span class="attr">#[tokio::test]
-<a href=#332 id=332 data-nosnippet>332</a>    #[ignore = <span class="string">"flaky"</span>]
-<a href=#333 id=333 data-nosnippet>333</a>    #[traced_test]
-<a href=#334 id=334 data-nosnippet>334</a>    </span><span class="kw">async fn </span>dht_address_lookup_smoke() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span>secret = SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::rng());
-<a href=#336 id=336 data-nosnippet>336</a>        <span class="kw">let </span>testnet = Testnet::new_async(<span class="number">3</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw">let </span><span class="kw-2">mut </span>dht_builder = DhtBuilder::default();
-<a href=#338 id=338 data-nosnippet>338</a>        dht_builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap);
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw">let </span>address_lookup = DhtAddressLookup::builder()
-<a href=#340 id=340 data-nosnippet>340</a>            .secret_key(secret.clone())
-<a href=#341 id=341 data-nosnippet>341</a>            .dht_builder(dht_builder)
-<a href=#342 id=342 data-nosnippet>342</a>            .addr_filter(AddrFilter::unfiltered())
-<a href=#343 id=343 data-nosnippet>343</a>            .build()<span class="question-mark">?</span>;
-<a href=#344 id=344 data-nosnippet>344</a>
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>).anyerr()<span class="question-mark">?</span>.into();
-<a href=#346 id=346 data-nosnippet>346</a>
-<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">let </span>data = EndpointData::default().with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
-<a href=#348 id=348 data-nosnippet>348</a>        address_lookup.publish(<span class="kw-2">&amp;</span>data);
-<a href=#349 id=349 data-nosnippet>349</a>
-<a href=#350 id=350 data-nosnippet>350</a>        <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.
-<a href=#351 id=351 data-nosnippet>351</a>        </span>tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), <span class="kw">async move </span>{
-<a href=#352 id=352 data-nosnippet>352</a>            <span class="kw">loop </span>{
-<a href=#353 id=353 data-nosnippet>353</a>                tokio::time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
-<a href=#354 id=354 data-nosnippet>354</a>                <span class="kw">let </span><span class="kw-2">mut </span>found_relay_urls = BTreeSet::new();
-<a href=#355 id=355 data-nosnippet>355</a>                <span class="kw">let </span>items = address_lookup
-<a href=#356 id=356 data-nosnippet>356</a>                    .resolve(secret.public())
-<a href=#357 id=357 data-nosnippet>357</a>                    .unwrap()
-<a href=#358 id=358 data-nosnippet>358</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#359 id=359 data-nosnippet>359</a>                    .<span class="kw">await</span>;
-<a href=#360 id=360 data-nosnippet>360</a>                <span class="kw">for </span>item <span class="kw">in </span>items.into_iter().flatten() {
-<a href=#361 id=361 data-nosnippet>361</a>                    <span class="kw">for </span>url <span class="kw">in </span>item.relay_urls() {
-<a href=#362 id=362 data-nosnippet>362</a>                        found_relay_urls.insert(url.clone());
-<a href=#363 id=363 data-nosnippet>363</a>                    }
-<a href=#364 id=364 data-nosnippet>364</a>                }
-<a href=#365 id=365 data-nosnippet>365</a>                <span class="kw">if </span>found_relay_urls.contains(<span class="kw-2">&amp;</span>relay_url) {
-<a href=#366 id=366 data-nosnippet>366</a>                    <span class="kw">break</span>;
-<a href=#367 id=367 data-nosnippet>367</a>                }
-<a href=#368 id=368 data-nosnippet>368</a>            }
-<a href=#369 id=369 data-nosnippet>369</a>        })
-<a href=#370 id=370 data-nosnippet>370</a>        .<span class="kw">await
-<a href=#371 id=371 data-nosnippet>371</a>        </span>.expect(<span class="string">"timeout, relay_url not found on DHT"</span>);
-<a href=#372 id=372 data-nosnippet>372</a>        <span class="prelude-val">Ok</span>(())
-<a href=#373 id=373 data-nosnippet>373</a>    }
-<a href=#374 id=374 data-nosnippet>374</a>}</code></pre></div></section></main></body></html>
+<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">use </span>mainline::Testnet;
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
+<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">use </span>url::Url;
+<a href=#327 id=327 data-nosnippet>327</a>
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#329 id=329 data-nosnippet>329</a>
+<a href=#330 id=330 data-nosnippet>330</a>    <span class="attr">#[tokio::test]
+<a href=#331 id=331 data-nosnippet>331</a>    #[ignore = <span class="string">"flaky"</span>]
+<a href=#332 id=332 data-nosnippet>332</a>    #[traced_test]
+<a href=#333 id=333 data-nosnippet>333</a>    </span><span class="kw">async fn </span>dht_address_lookup_smoke() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span>secret = SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::rng());
+<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span>testnet = Testnet::new_async(<span class="number">3</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#336 id=336 data-nosnippet>336</a>        <span class="kw">let </span><span class="kw-2">mut </span>dht_builder = DhtBuilder::default();
+<a href=#337 id=337 data-nosnippet>337</a>        dht_builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap);
+<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw">let </span>address_lookup = DhtAddressLookup::builder()
+<a href=#339 id=339 data-nosnippet>339</a>            .secret_key(secret.clone())
+<a href=#340 id=340 data-nosnippet>340</a>            .dht_builder(dht_builder)
+<a href=#341 id=341 data-nosnippet>341</a>            .addr_filter(AddrFilter::unfiltered())
+<a href=#342 id=342 data-nosnippet>342</a>            .build()<span class="question-mark">?</span>;
+<a href=#343 id=343 data-nosnippet>343</a>
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>).anyerr()<span class="question-mark">?</span>.into();
+<a href=#345 id=345 data-nosnippet>345</a>
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span>data = EndpointData::default().with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
+<a href=#347 id=347 data-nosnippet>347</a>        address_lookup.publish(<span class="kw-2">&amp;</span>data);
+<a href=#348 id=348 data-nosnippet>348</a>
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.
+<a href=#350 id=350 data-nosnippet>350</a>        </span>tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), <span class="kw">async move </span>{
+<a href=#351 id=351 data-nosnippet>351</a>            <span class="kw">loop </span>{
+<a href=#352 id=352 data-nosnippet>352</a>                tokio::time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
+<a href=#353 id=353 data-nosnippet>353</a>                <span class="kw">let </span><span class="kw-2">mut </span>found_relay_urls = BTreeSet::new();
+<a href=#354 id=354 data-nosnippet>354</a>                <span class="kw">let </span>items = address_lookup
+<a href=#355 id=355 data-nosnippet>355</a>                    .resolve(secret.public())
+<a href=#356 id=356 data-nosnippet>356</a>                    .unwrap()
+<a href=#357 id=357 data-nosnippet>357</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#358 id=358 data-nosnippet>358</a>                    .<span class="kw">await</span>;
+<a href=#359 id=359 data-nosnippet>359</a>                <span class="kw">for </span>item <span class="kw">in </span>items.into_iter().flatten() {
+<a href=#360 id=360 data-nosnippet>360</a>                    <span class="kw">for </span>url <span class="kw">in </span>item.relay_urls() {
+<a href=#361 id=361 data-nosnippet>361</a>                        found_relay_urls.insert(url.clone());
+<a href=#362 id=362 data-nosnippet>362</a>                    }
+<a href=#363 id=363 data-nosnippet>363</a>                }
+<a href=#364 id=364 data-nosnippet>364</a>                <span class="kw">if </span>found_relay_urls.contains(<span class="kw-2">&amp;</span>relay_url) {
+<a href=#365 id=365 data-nosnippet>365</a>                    <span class="kw">break</span>;
+<a href=#366 id=366 data-nosnippet>366</a>                }
+<a href=#367 id=367 data-nosnippet>367</a>            }
+<a href=#368 id=368 data-nosnippet>368</a>        })
+<a href=#369 id=369 data-nosnippet>369</a>        .<span class="kw">await
+<a href=#370 id=370 data-nosnippet>370</a>        </span>.expect(<span class="string">"timeout, relay_url not found on DHT"</span>);
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="prelude-val">Ok</span>(())
+<a href=#372 id=372 data-nosnippet>372</a>    }
+<a href=#373 id=373 data-nosnippet>373</a>}</code></pre></div></section></main></body></html>
