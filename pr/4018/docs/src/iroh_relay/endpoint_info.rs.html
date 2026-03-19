@@ -34,7 +34,7 @@
 <a href=#34 id=34 data-nosnippet>34</a>
 <a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">use </span>std::{
 <a href=#36 id=36 data-nosnippet>36</a>    borrow::Cow,
-<a href=#37 id=37 data-nosnippet>37</a>    collections::{BTreeMap, BTreeSet},
+<a href=#37 id=37 data-nosnippet>37</a>    collections::{BTreeMap, BTreeSet, HashSet},
 <a href=#38 id=38 data-nosnippet>38</a>    fmt::{<span class="self">self</span>, Display},
 <a href=#39 id=39 data-nosnippet>39</a>    hash::Hash,
 <a href=#40 id=40 data-nosnippet>40</a>    net::SocketAddr,
@@ -127,9 +127,9 @@
 <a href=#127 id=127 data-nosnippet>127</a>    </span>user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
 <a href=#128 id=128 data-nosnippet>128</a>}
 <a href=#129 id=129 data-nosnippet>129</a>
-<a href=#130 id=130 data-nosnippet>130</a><span class="kw">fn </span>dedup&lt;T: PartialEq + Ord + Clone&gt;(items: <span class="kw-2">&amp;mut </span>Vec&lt;T&gt;) -&gt; BTreeSet&lt;T&gt; {
+<a href=#130 id=130 data-nosnippet>130</a><span class="kw">fn </span>dedup&lt;T: Eq + Hash + Clone&gt;(items: <span class="kw-2">&amp;mut </span>Vec&lt;T&gt;) -&gt; HashSet&lt;T&gt; {
 <a href=#131 id=131 data-nosnippet>131</a>    <span class="comment">// Remove all duplicate entries, but keep the array order.
-<a href=#132 id=132 data-nosnippet>132</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>item_set = BTreeSet::new();
+<a href=#132 id=132 data-nosnippet>132</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>item_set = HashSet::new();
 <a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">for </span>(i, item) <span class="kw">in </span>items.clone().into_iter().enumerate() {
 <a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">if </span>item_set.contains(<span class="kw-2">&amp;</span>item) {
 <a href=#135 id=135 data-nosnippet>135</a>            items.remove(i);
