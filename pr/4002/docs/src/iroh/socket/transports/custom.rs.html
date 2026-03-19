@@ -39,7 +39,7 @@
 <a href=#39 id=39 data-nosnippet>39</a>    /// This will be called with `bufs`, `metas` and `source_addrs` of the same length.
 <a href=#40 id=40 data-nosnippet>40</a>    /// It is acceptable to panic if this is not the case.
 <a href=#41 id=41 data-nosnippet>41</a>    ///
-<a href=#42 id=42 data-nosnippet>42</a>    /// The maximum length of the slices is [`quinn_udp::BATCH_SIZE`].
+<a href=#42 id=42 data-nosnippet>42</a>    /// The maximum length of the slices is [`noq_udp::BATCH_SIZE`].
 <a href=#43 id=43 data-nosnippet>43</a>    /// It is acceptable to panic if this is exceeded.
 <a href=#44 id=44 data-nosnippet>44</a>    ///
 <a href=#45 id=45 data-nosnippet>45</a>    /// On success, all three slices must be filled up to the returned length,
@@ -50,13 +50,13 @@
 <a href=#50 id=50 data-nosnippet>50</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#51 id=51 data-nosnippet>51</a>        cx: <span class="kw-2">&amp;mut </span>Context,
 <a href=#52 id=52 data-nosnippet>52</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#53 id=53 data-nosnippet>53</a>        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+<a href=#53 id=53 data-nosnippet>53</a>        metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
 <a href=#54 id=54 data-nosnippet>54</a>        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
 <a href=#55 id=55 data-nosnippet>55</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt;;
 <a href=#56 id=56 data-nosnippet>56</a>
 <a href=#57 id=57 data-nosnippet>57</a>    <span class="doccomment">/// Maximum number of segments to transmit (GSO).
 <a href=#58 id=58 data-nosnippet>58</a>    ///
-<a href=#59 id=59 data-nosnippet>59</a>    /// This controls how many datagrams Quinn will batch into a single transmit.
+<a href=#59 id=59 data-nosnippet>59</a>    /// This controls how many datagrams Noq will batch into a single transmit.
 <a href=#60 id=60 data-nosnippet>60</a>    /// The default is 1 (no batching). Custom transports that support batching
 <a href=#61 id=61 data-nosnippet>61</a>    /// can override this to allow more efficient transmission.
 <a href=#62 id=62 data-nosnippet>62</a>    </span><span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NonZeroUsize {

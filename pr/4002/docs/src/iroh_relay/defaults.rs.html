@@ -30,10 +30,13 @@
 <a href=#30 id=30 data-nosnippet>30</a>    <span class="doccomment">/// Timeout used by the relay client while connecting to the relay server,
 <a href=#31 id=31 data-nosnippet>31</a>    /// using `TcpStream::connect`
 <a href=#32 id=32 data-nosnippet>32</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DIAL_ENDPOINT_TIMEOUT: Duration = Duration::from_millis(<span class="number">1500</span>);
-<a href=#33 id=33 data-nosnippet>33</a>    <span class="doccomment">/// Timeout for our async dns resolver
-<a href=#34 id=34 data-nosnippet>34</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DNS_TIMEOUT: Duration = Duration::from_secs(<span class="number">1</span>);
-<a href=#35 id=35 data-nosnippet>35</a>
-<a href=#36 id=36 data-nosnippet>36</a>    <span class="doccomment">/// Maximum time the server will attempt to get a successful write to the connection.
-<a href=#37 id=37 data-nosnippet>37</a>    </span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-<a href=#38 id=38 data-nosnippet>38</a>    </span><span class="kw">pub const </span>SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(<span class="number">2</span>);
-<a href=#39 id=39 data-nosnippet>39</a>}</code></pre></div></section></main></body></html>
+<a href=#33 id=33 data-nosnippet>33</a>
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="doccomment">/// Default timeout for DNS queries issued by [`DnsResolver`].
+<a href=#35 id=35 data-nosnippet>35</a>    ///
+<a href=#36 id=36 data-nosnippet>36</a>    /// [`DnsResolver`]: crate::dns::DnsResolver
+<a href=#37 id=37 data-nosnippet>37</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DNS_TIMEOUT: Duration = Duration::from_secs(<span class="number">3</span>);
+<a href=#38 id=38 data-nosnippet>38</a>
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// Maximum time the server will attempt to get a successful write to the connection.
+<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+<a href=#41 id=41 data-nosnippet>41</a>    </span><span class="kw">pub const </span>SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(<span class="number">2</span>);
+<a href=#42 id=42 data-nosnippet>42</a>}</code></pre></div></section></main></body></html>

@@ -3,8 +3,8 @@
 <a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>iroh_base::TransportAddr;
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>n0_future::time::Duration;
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>n0_watcher::{Watchable, Watcher};
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>quinn::WeakPathHandle;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>quinn_proto::PathId;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>noq::WeakPathHandle;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>noq_proto::PathId;
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>smallvec::SmallVec;
 <a href=#9 id=9 data-nosnippet>9</a>
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use crate</span>::{endpoint::PathStats, socket::transports};
@@ -194,7 +194,7 @@
 <a href=#194 id=194 data-nosnippet>194</a>}
 <a href=#195 id=195 data-nosnippet>195</a>
 <a href=#196 id=196 data-nosnippet>196</a><span class="kw">impl </span>PathInfo {
-<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">fn </span>new(conn: <span class="kw-2">&amp;</span>quinn::Connection, id: PathId, remote_addr: TransportAddr) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">fn </span>new(conn: <span class="kw-2">&amp;</span>noq::Connection, id: PathId, remote_addr: TransportAddr) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
 <a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>path = conn.path(id)<span class="question-mark">?</span>;
 <a href=#199 id=199 data-nosnippet>199</a>        <span class="prelude-val">Some</span>(PathInfo {
 <a href=#200 id=200 data-nosnippet>200</a>            path: path.weak_handle(),
@@ -302,7 +302,7 @@
 <a href=#302 id=302 data-nosnippet>302</a>    }
 <a href=#303 id=303 data-nosnippet>303</a>
 <a href=#304 id=304 data-nosnippet>304</a>    <span class="doccomment">/// Inserts a new path.
-<a href=#305 id=305 data-nosnippet>305</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: <span class="kw-2">&amp;</span>quinn::Connection, id: PathId, remote_addr: TransportAddr) {
+<a href=#305 id=305 data-nosnippet>305</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: <span class="kw-2">&amp;</span>noq::Connection, id: PathId, remote_addr: TransportAddr) {
 <a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(data) = PathInfo::new(conn, id, remote_addr) {
 <a href=#307 id=307 data-nosnippet>307</a>            <span class="self">self</span>.update(<span class="kw">move </span>|list| list.<span class="number">0</span>.push(data));
 <a href=#308 id=308 data-nosnippet>308</a>        }

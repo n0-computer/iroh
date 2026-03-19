@@ -263,7 +263,7 @@
 <a href=#263 id=263 data-nosnippet>263</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#264 id=264 data-nosnippet>264</a>        cx: <span class="kw-2">&amp;mut </span>std::task::Context,
 <a href=#265 id=265 data-nosnippet>265</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#266 id=266 data-nosnippet>266</a>        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+<a href=#266 id=266 data-nosnippet>266</a>        metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
 <a href=#267 id=267 data-nosnippet>267</a>        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
 <a href=#268 id=268 data-nosnippet>268</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
 <a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">let </span>n = bufs.len();
@@ -324,7 +324,7 @@
 <a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">use crate</span>::{
 <a href=#325 id=325 data-nosnippet>325</a>        Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
 <a href=#326 id=326 data-nosnippet>326</a>        endpoint::{
-<a href=#327 id=327 data-nosnippet>327</a>            Builder, Connection,
+<a href=#327 id=327 data-nosnippet>327</a>            Builder, Connection, presets,
 <a href=#328 id=328 data-nosnippet>328</a>            transports::{AddrKind, TransportBias},
 <a href=#329 id=329 data-nosnippet>329</a>        },
 <a href=#330 id=330 data-nosnippet>330</a>        protocol::{AcceptError, ProtocolHandler, Router},
@@ -381,7 +381,7 @@
 <a href=#381 id=381 data-nosnippet>381</a>            <span class="prelude-val">Some</span>(map) =&gt; RelayMode::Custom(map),
 <a href=#382 id=382 data-nosnippet>382</a>            <span class="prelude-val">None </span>=&gt; RelayMode::Disabled,
 <a href=#383 id=383 data-nosnippet>383</a>        };
-<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder()
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder(presets::N0)
 <a href=#385 id=385 data-nosnippet>385</a>            .secret_key(secret_key)
 <a href=#386 id=386 data-nosnippet>386</a>            .relay_mode(relay_mode)
 <a href=#387 id=387 data-nosnippet>387</a>            .ca_roots_config(<span class="kw">crate</span>::tls::CaRootsConfig::insecure_skip_verify())

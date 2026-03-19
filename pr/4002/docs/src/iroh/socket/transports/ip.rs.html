@@ -7,8 +7,8 @@
 <a href=#7 id=7 data-nosnippet>7</a>    task::{Context, Poll},
 <a href=#8 id=8 data-nosnippet>8</a>};
 <a href=#9 id=9 data-nosnippet>9</a>
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>n0_watcher::Watchable;
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>netdev::ipnet::{Ipv4Net, Ipv6Net};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>ipnet::{Ipv4Net, Ipv6Net};
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_watcher::Watchable;
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>netwatch::{UdpSender, UdpSocket};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>pin_project::pin_project;
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>tracing::{debug, info, trace};
@@ -190,16 +190,16 @@
 <a href=#190 id=190 data-nosnippet>190</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#191 id=191 data-nosnippet>191</a>        cx: <span class="kw-2">&amp;mut </span>Context,
 <a href=#192 id=192 data-nosnippet>192</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#193 id=193 data-nosnippet>193</a>        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+<a href=#193 id=193 data-nosnippet>193</a>        metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
 <a href=#194 id=194 data-nosnippet>194</a>        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
 <a href=#195 id=195 data-nosnippet>195</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">match </span><span class="self">self</span>.socket.poll_recv_quinn(cx, bufs, metas) {
+<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">match </span><span class="self">self</span>.socket.poll_recv_noq(cx, bufs, metas) {
 <a href=#197 id=197 data-nosnippet>197</a>            Poll::Pending =&gt; Poll::Pending,
 <a href=#198 id=198 data-nosnippet>198</a>            Poll::Ready(<span class="prelude-val">Ok</span>(n)) =&gt; {
 <a href=#199 id=199 data-nosnippet>199</a>                <span class="kw">for </span>(source_addr, meta) <span class="kw">in </span>source_addrs.iter_mut().zip(metas.iter_mut()).take(n) {
 <a href=#200 id=200 data-nosnippet>200</a>                    <span class="kw">if </span>meta.addr.is_ipv4() {
 <a href=#201 id=201 data-nosnippet>201</a>                        <span class="comment">// The AsyncUdpSocket is an AF_INET6 socket and needs to show this
-<a href=#202 id=202 data-nosnippet>202</a>                        // as coming from an IPv4-mapped IPv6 addresses, since Quinn will
+<a href=#202 id=202 data-nosnippet>202</a>                        // as coming from an IPv4-mapped IPv6 addresses, since Noq will
 <a href=#203 id=203 data-nosnippet>203</a>                        // use those when sending on an INET6 socket.
 <a href=#204 id=204 data-nosnippet>204</a>                        </span><span class="kw">let </span>v6_ip = <span class="kw">match </span>meta.addr.ip() {
 <a href=#205 id=205 data-nosnippet>205</a>                            IpAddr::V4(ipv4_addr) =&gt; ipv4_addr.to_ipv6_mapped(),
@@ -314,7 +314,7 @@
 <a href=#314 id=314 data-nosnippet>314</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
 <a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span>total_bytes = transmit.contents.len() <span class="kw">as </span>u64;
 <a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>res = Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.sender).poll_send(
-<a href=#317 id=317 data-nosnippet>317</a>            <span class="kw-2">&amp;</span>quinn_udp::Transmit {
+<a href=#317 id=317 data-nosnippet>317</a>            <span class="kw-2">&amp;</span>noq_udp::Transmit {
 <a href=#318 id=318 data-nosnippet>318</a>                destination: <span class="self">Self</span>::canonical_addr(dst),
 <a href=#319 id=319 data-nosnippet>319</a>                ecn: transmit.ecn,
 <a href=#320 id=320 data-nosnippet>320</a>                contents: transmit.contents,
@@ -464,7 +464,7 @@
 <a href=#464 id=464 data-nosnippet>464</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#465 id=465 data-nosnippet>465</a>        cx: <span class="kw-2">&amp;mut </span>Context,
 <a href=#466 id=466 data-nosnippet>466</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#467 id=467 data-nosnippet>467</a>        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+<a href=#467 id=467 data-nosnippet>467</a>        metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
 <a href=#468 id=468 data-nosnippet>468</a>        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
 <a href=#469 id=469 data-nosnippet>469</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
 <a href=#470 id=470 data-nosnippet>470</a>        <span class="macro">macro_rules!</span> poll_transport {

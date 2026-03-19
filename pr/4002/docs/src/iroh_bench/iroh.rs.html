@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>bytes::Bytes;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>iroh::{
 <a href=#8 id=8 data-nosnippet>8</a>    Endpoint, EndpointAddr, RelayMode, RelayUrl,
-<a href=#9 id=9 data-nosnippet>9</a>    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
+<a href=#9 id=9 data-nosnippet>9</a>    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream, presets},
 <a href=#10 id=10 data-nosnippet>10</a>};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>tracing::{trace, warn};
@@ -30,7 +30,7 @@
 <a href=#30 id=30 data-nosnippet>30</a>            .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
 <a href=#31 id=31 data-nosnippet>31</a>
 <a href=#32 id=32 data-nosnippet>32</a>        <span class="attr">#[allow(unused_mut)]
-<a href=#33 id=33 data-nosnippet>33</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder();
+<a href=#33 id=33 data-nosnippet>33</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder(presets::N0);
 <a href=#34 id=34 data-nosnippet>34</a>        <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
 <a href=#35 id=35 data-nosnippet>35</a>        </span>{
 <a href=#36 id=36 data-nosnippet>36</a>            <span class="kw">if </span>relay_url.is_some() {
@@ -91,7 +91,7 @@
 <a href=#91 id=91 data-nosnippet>91</a>        .clone()
 <a href=#92 id=92 data-nosnippet>92</a>        .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
 <a href=#93 id=93 data-nosnippet>93</a>    <span class="attr">#[allow(unused_mut)]
-<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder();
+<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder(presets::N0);
 <a href=#95 id=95 data-nosnippet>95</a>    <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
 <a href=#96 id=96 data-nosnippet>96</a>    </span>{
 <a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">if </span>relay_url.is_some() {
@@ -114,7 +114,7 @@
 <a href=#114 id=114 data-nosnippet>114</a>    }
 <a href=#115 id=115 data-nosnippet>115</a>
 <a href=#116 id=116 data-nosnippet>116</a>    <span class="comment">// TODO: We don't support passing client transport config currently
-<a href=#117 id=117 data-nosnippet>117</a>    // let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
+<a href=#117 id=117 data-nosnippet>117</a>    // let mut client_config = noq::ClientConfig::new(Arc::new(crypto));
 <a href=#118 id=118 data-nosnippet>118</a>    // client_config.transport_config(Arc::new(transport_config(&amp;opt)));
 <a href=#119 id=119 data-nosnippet>119</a>
 <a href=#120 id=120 data-nosnippet>120</a>    </span><span class="kw">let </span>connection = endpoint
@@ -133,7 +133,7 @@
 <a href=#133 id=133 data-nosnippet>133</a>        .max_concurrent_uni_streams(max_streams.try_into().unwrap())
 <a href=#134 id=134 data-nosnippet>134</a>        .initial_mtu(initial_mtu);
 <a href=#135 id=135 data-nosnippet>135</a>
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">let </span><span class="kw-2">mut </span>acks = quinn::AckFrequencyConfig::default();
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">let </span><span class="kw-2">mut </span>acks = noq::AckFrequencyConfig::default();
 <a href=#137 id=137 data-nosnippet>137</a>    acks.ack_eliciting_threshold(<span class="number">10u32</span>.into());
 <a href=#138 id=138 data-nosnippet>138</a>    builder = builder.ack_frequency_config(<span class="prelude-val">Some</span>(acks));
 <a href=#139 id=139 data-nosnippet>139</a>

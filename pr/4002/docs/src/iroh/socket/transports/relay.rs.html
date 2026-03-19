@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>
 <a href=#26 id=26 data-nosnippet>26</a><span class="attr">#[derive(Debug)]
 <a href=#27 id=27 data-nosnippet>27</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelayTransport {
-<a href=#28 id=28 data-nosnippet>28</a>    <span class="doccomment">/// Queue to receive datagrams from relays for [`quinn::AsyncUdpSocket::poll_recv`].
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="doccomment">/// Queue to receive datagrams from relays for [`noq::AsyncUdpSocket::poll_recv`].
 <a href=#29 id=29 data-nosnippet>29</a>    </span>relay_datagram_recv_queue: mpsc::Receiver&lt;RelayRecvDatagram&gt;,
 <a href=#30 id=30 data-nosnippet>30</a>    <span class="doccomment">/// Channel on which to send datagrams via a relay server.
 <a href=#31 id=31 data-nosnippet>31</a>    </span>relay_datagram_send_channel: mpsc::Sender&lt;RelaySendItem&gt;,
@@ -80,7 +80,7 @@
 <a href=#80 id=80 data-nosnippet>80</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#81 id=81 data-nosnippet>81</a>        cx: <span class="kw-2">&amp;mut </span>Context,
 <a href=#82 id=82 data-nosnippet>82</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#83 id=83 data-nosnippet>83</a>        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+<a href=#83 id=83 data-nosnippet>83</a>        metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
 <a href=#84 id=84 data-nosnippet>84</a>        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
 <a href=#85 id=85 data-nosnippet>85</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
 <a href=#86 id=86 data-nosnippet>86</a>        <span class="kw">let </span><span class="kw-2">mut </span>num_msgs = <span class="number">0</span>;
@@ -124,10 +124,10 @@
 <a href=#124 id=124 data-nosnippet>124</a>                <span class="comment">// Our receive buffer isn't big enough to process this datagram.
 <a href=#125 id=125 data-nosnippet>125</a>                // Continuing would cause a panic.
 <a href=#126 id=126 data-nosnippet>126</a>                </span><span class="macro">warn!</span>(
-<a href=#127 id=127 data-nosnippet>127</a>                    quinn_buf_len = buf_out.len(),
+<a href=#127 id=127 data-nosnippet>127</a>                    noq_buf_len = buf_out.len(),
 <a href=#128 id=128 data-nosnippet>128</a>                    datagram_len = dm.datagrams.contents.len(),
 <a href=#129 id=129 data-nosnippet>129</a>                    segment_size = <span class="question-mark">?</span>dm.datagrams.segment_size,
-<a href=#130 id=130 data-nosnippet>130</a>                    <span class="string">"dropping received datagram: quinn buffer too small"
+<a href=#130 id=130 data-nosnippet>130</a>                    <span class="string">"dropping received datagram: noq buffer too small"
 <a href=#131 id=131 data-nosnippet>131</a>                </span>);
 <a href=#132 id=132 data-nosnippet>132</a>                <span class="kw">break</span>;
 <a href=#133 id=133 data-nosnippet>133</a>                <span class="comment">// In theory we could put some logic in here to fragment the datagram in case
@@ -233,7 +233,7 @@
 <a href=#233 id=233 data-nosnippet>233</a>
 <a href=#234 id=234 data-nosnippet>234</a><span class="doccomment">/// Sender to send datagrams to the [`RelayActor`].
 <a href=#235 id=235 data-nosnippet>235</a>///
-<a href=#236 id=236 data-nosnippet>236</a>/// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
+<a href=#236 id=236 data-nosnippet>236</a>/// This includes the waker coordination required to support [`noq::UdpSender::poll_send`].
 <a href=#237 id=237 data-nosnippet>237</a></span><span class="attr">#[derive(Debug, Clone)]
 <a href=#238 id=238 data-nosnippet>238</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelaySender {
 <a href=#239 id=239 data-nosnippet>239</a>    sender: PollSender&lt;RelaySendItem&gt;,
@@ -279,9 +279,9 @@
 <a href=#279 id=279 data-nosnippet>279</a></span><span class="kw">fn </span>datagrams_from_transmit(transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; Datagrams {
 <a href=#280 id=280 data-nosnippet>280</a>    Datagrams {
 <a href=#281 id=281 data-nosnippet>281</a>        ecn: transmit.ecn.map(|ecn| <span class="kw">match </span>ecn {
-<a href=#282 id=282 data-nosnippet>282</a>            quinn_udp::EcnCodepoint::Ect0 =&gt; quinn_proto::EcnCodepoint::Ect0,
-<a href=#283 id=283 data-nosnippet>283</a>            quinn_udp::EcnCodepoint::Ect1 =&gt; quinn_proto::EcnCodepoint::Ect1,
-<a href=#284 id=284 data-nosnippet>284</a>            quinn_udp::EcnCodepoint::Ce =&gt; quinn_proto::EcnCodepoint::Ce,
+<a href=#282 id=282 data-nosnippet>282</a>            noq_udp::EcnCodepoint::Ect0 =&gt; noq_proto::EcnCodepoint::Ect0,
+<a href=#283 id=283 data-nosnippet>283</a>            noq_udp::EcnCodepoint::Ect1 =&gt; noq_proto::EcnCodepoint::Ect1,
+<a href=#284 id=284 data-nosnippet>284</a>            noq_udp::EcnCodepoint::Ce =&gt; noq_proto::EcnCodepoint::Ce,
 <a href=#285 id=285 data-nosnippet>285</a>        }),
 <a href=#286 id=286 data-nosnippet>286</a>        segment_size: transmit
 <a href=#287 id=287 data-nosnippet>287</a>            .segment_size

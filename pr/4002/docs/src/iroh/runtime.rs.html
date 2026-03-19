@@ -64,14 +64,14 @@
 <a href=#64 id=64 data-nosnippet>64</a>    </span><span class="kw">pub fn </span>abort(<span class="kw-2">&amp;</span><span class="self">self</span>) {}
 <a href=#65 id=65 data-nosnippet>65</a>}
 <a href=#66 id=66 data-nosnippet>66</a>
-<a href=#67 id=67 data-nosnippet>67</a><span class="kw">impl </span>quinn::Runtime <span class="kw">for </span>Runtime {
+<a href=#67 id=67 data-nosnippet>67</a><span class="kw">impl </span>noq::Runtime <span class="kw">for </span>Runtime {
 <a href=#68 id=68 data-nosnippet>68</a>    <span class="attr">#[cfg(not(wasm_browser))]
-<a href=#69 id=69 data-nosnippet>69</a>    </span><span class="kw">fn </span>new_timer(<span class="kw-2">&amp;</span><span class="self">self</span>, i: std::time::Instant) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::AsyncTimer&gt;&gt; {
-<a href=#70 id=70 data-nosnippet>70</a>        quinn::TokioRuntime.new_timer(i)
+<a href=#69 id=69 data-nosnippet>69</a>    </span><span class="kw">fn </span>new_timer(<span class="kw-2">&amp;</span><span class="self">self</span>, i: std::time::Instant) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>noq::AsyncTimer&gt;&gt; {
+<a href=#70 id=70 data-nosnippet>70</a>        noq::TokioRuntime.new_timer(i)
 <a href=#71 id=71 data-nosnippet>71</a>    }
 <a href=#72 id=72 data-nosnippet>72</a>
 <a href=#73 id=73 data-nosnippet>73</a>    <span class="attr">#[cfg(wasm_browser)]
-<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="kw">fn </span>new_timer(<span class="kw-2">&amp;</span><span class="self">self</span>, deadline: n0_future::time::Instant) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::AsyncTimer&gt;&gt; {
+<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="kw">fn </span>new_timer(<span class="kw-2">&amp;</span><span class="self">self</span>, deadline: n0_future::time::Instant) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>noq::AsyncTimer&gt;&gt; {
 <a href=#75 id=75 data-nosnippet>75</a>        Box::pin(web::Timer(n0_future::time::sleep_until(deadline)))
 <a href=#76 id=76 data-nosnippet>76</a>    }
 <a href=#77 id=77 data-nosnippet>77</a>
@@ -106,8 +106,8 @@
 <a href=#106 id=106 data-nosnippet>106</a>    </span><span class="kw">fn </span>wrap_udp_socket(
 <a href=#107 id=107 data-nosnippet>107</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#108 id=108 data-nosnippet>108</a>        t: std::net::UdpSocket,
-<a href=#109 id=109 data-nosnippet>109</a>    ) -&gt; std::io::Result&lt;Box&lt;<span class="kw">dyn </span>quinn::AsyncUdpSocket&gt;&gt; {
-<a href=#110 id=110 data-nosnippet>110</a>        quinn::TokioRuntime.wrap_udp_socket(t)
+<a href=#109 id=109 data-nosnippet>109</a>    ) -&gt; std::io::Result&lt;Box&lt;<span class="kw">dyn </span>noq::AsyncUdpSocket&gt;&gt; {
+<a href=#110 id=110 data-nosnippet>110</a>        noq::TokioRuntime.wrap_udp_socket(t)
 <a href=#111 id=111 data-nosnippet>111</a>    }
 <a href=#112 id=112 data-nosnippet>112</a>}
 <a href=#113 id=113 data-nosnippet>113</a>
@@ -124,7 +124,7 @@
 <a href=#124 id=124 data-nosnippet>124</a>    <span class="attr">#[derive(Debug)]
 <a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Timer(<span class="kw">pub</span>(<span class="kw">crate</span>) time::Sleep);
 <a href=#126 id=126 data-nosnippet>126</a>
-<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">impl </span>quinn::AsyncTimer <span class="kw">for </span>Timer {
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">impl </span>noq::AsyncTimer <span class="kw">for </span>Timer {
 <a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">fn </span>reset(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, deadline: time::Instant) {
 <a href=#129 id=129 data-nosnippet>129</a>            Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.<span class="number">0</span>).reset(deadline)
 <a href=#130 id=130 data-nosnippet>130</a>        }
