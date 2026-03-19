@@ -511,6 +511,7 @@ impl RemoteStateActor {
                     path_id = %PathId::ZERO,
                     ?res,
                 );
+                Self::configure_path(&path, &path_remote);
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
                     .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
@@ -809,6 +810,21 @@ impl RemoteStateActor {
     ///
     /// This goes through all the connections for which we are the client, and makes sure
     /// the path exists, or opens it.
+    /// Configures a path's transport-specific settings after it is opened or found.
+    ///
+    /// Relay paths get a longer idle timeout to accommodate transparent reconnection
+    /// by the relay actor (see [`RELAY_PATH_MAX_IDLE_TIMEOUT`]).
+    fn configure_path(path: &noq::Path, addr: &transports::Addr) {
+        if matches!(addr, transports::Addr::Relay(..)) {
+            path.set_max_idle_timeout(Some(crate::socket::RELAY_PATH_MAX_IDLE_TIMEOUT))
+                .ok();
+        }
+    }
+
+    /// Open the path on all connections.
+    ///
+    /// This goes through all the connections for which we are the client, and makes sure
+    /// the path exists, or opens it.
     #[instrument(level = "warn", skip(self))]
     fn open_path(&mut self, open_addr: &transports::Addr) {
         let bias = self.transport_bias.get(open_addr);
@@ -846,6 +862,7 @@ impl RemoteStateActor {
                     %path_id,
                     ?res,
                 );
+                Self::configure_path(&path, open_addr);
                 continue;
             }
             if conn.side().is_server() {
@@ -872,6 +889,7 @@ impl RemoteStateActor {
                         if let Err(e) = res {
                             warn!(?e, ?open_addr, ?path_status, "Setting path status failed");
                         }
+                        Self::configure_path(&path, open_addr);
                     }
                 }
                 None => {
@@ -936,19 +954,6 @@ impl RemoteStateActor {
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
                         .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
-
-                    // Relay paths need a longer idle timeout than direct paths.
-                    // See [`RELAY_PATH_MAX_IDLE_TIMEOUT`] for details.
-                    if matches!(path_remote, transports::Addr::Relay(..)) {
-                        if let Err(err) = path.set_max_idle_timeout(Some(
-                            crate::socket::RELAY_PATH_MAX_IDLE_TIMEOUT,
-                        )) {
-                            warn!(
-                                %err, %path_id,
-                                "failed to set relay path idle timeout"
-                            );
-                        }
-                    }
                 }
 
                 self.select_path();
