@@ -1776,7 +1776,7 @@
 <a href=#1776 id=1776 data-nosnippet>1776</a>        Endpoint, SecretKey,
 <a href=#1777 id=1777 data-nosnippet>1777</a>        address_lookup::memory::MemoryLookup,
 <a href=#1778 id=1778 data-nosnippet>1778</a>        dns::DnsResolver,
-<a href=#1779 id=1779 data-nosnippet>1779</a>        endpoint::QuicTransportConfig,
+<a href=#1779 id=1779 data-nosnippet>1779</a>        endpoint::{QuicTransportConfig, presets},
 <a href=#1780 id=1780 data-nosnippet>1780</a>        socket::{
 <a href=#1781 id=1781 data-nosnippet>1781</a>            EndpointInner, StaticConfig, TransportConfig,
 <a href=#1782 id=1782 data-nosnippet>1782</a>            mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
@@ -1980,13 +1980,13 @@
 <a href=#1980 id=1980 data-nosnippet>1980</a>    /// the endpoints rebind.
 <a href=#1981 id=1981 data-nosnippet>1981</a>    </span><span class="kw">async fn </span>endpoint_pair() -&gt; (AbortOnDropHandle&lt;()&gt;, Endpoint, Endpoint) {
 <a href=#1982 id=1982 data-nosnippet>1982</a>        <span class="kw">let </span>address_lookup = MemoryLookup::new();
-<a href=#1983 id=1983 data-nosnippet>1983</a>        <span class="kw">let </span>ep1 = Endpoint::empty_builder()
+<a href=#1983 id=1983 data-nosnippet>1983</a>        <span class="kw">let </span>ep1 = Endpoint::builder(presets::Minimal)
 <a href=#1984 id=1984 data-nosnippet>1984</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
 <a href=#1985 id=1985 data-nosnippet>1985</a>            .address_lookup(address_lookup.clone())
 <a href=#1986 id=1986 data-nosnippet>1986</a>            .bind()
 <a href=#1987 id=1987 data-nosnippet>1987</a>            .<span class="kw">await
 <a href=#1988 id=1988 data-nosnippet>1988</a>            </span>.unwrap();
-<a href=#1989 id=1989 data-nosnippet>1989</a>        <span class="kw">let </span>ep2 = Endpoint::empty_builder()
+<a href=#1989 id=1989 data-nosnippet>1989</a>        <span class="kw">let </span>ep2 = Endpoint::builder(presets::Minimal)
 <a href=#1990 id=1990 data-nosnippet>1990</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
 <a href=#1991 id=1991 data-nosnippet>1991</a>            .address_lookup(address_lookup.clone())
 <a href=#1992 id=1992 data-nosnippet>1992</a>            .bind()

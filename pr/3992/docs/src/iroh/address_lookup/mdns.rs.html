@@ -21,7 +21,7 @@
 <a href=#21 id=21 data-nosnippet>21</a>//! #[tokio::main]
 <a href=#22 id=22 data-nosnippet>22</a>//! async fn main() {
 <a href=#23 id=23 data-nosnippet>23</a>//!     let recent = Duration::from_secs(600); // 10 minutes in seconds
-<a href=#24 id=24 data-nosnippet>24</a>//!     let endpoint = Endpoint::empty_builder().bind().await.unwrap();
+<a href=#24 id=24 data-nosnippet>24</a>//!     let endpoint = Endpoint::bind(presets::Minimal).await.unwrap();
 <a href=#25 id=25 data-nosnippet>25</a>//!
 <a href=#26 id=26 data-nosnippet>26</a>//!     // Register the Address Lookupwith the endpoint
 <a href=#27 id=27 data-nosnippet>27</a>//!     let mdns = MdnsAddressLookup::builder().build(endpoint.id()).unwrap();

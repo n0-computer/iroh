@@ -76,7 +76,7 @@
 <a href=#76 id=76 data-nosnippet>76</a>//! };
 <a href=#77 id=77 data-nosnippet>77</a>//!
 <a href=#78 id=78 data-nosnippet>78</a>//! # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
-<a href=#79 id=79 data-nosnippet>79</a>//! let ep = Endpoint::empty_builder()
+<a href=#79 id=79 data-nosnippet>79</a>//! let ep = Endpoint::builder(presets::Minimal)
 <a href=#80 id=80 data-nosnippet>80</a>//!     .addr_filter(AddrFilter::relay_only())
 <a href=#81 id=81 data-nosnippet>81</a>//!     .address_lookup(PkarrPublisher::n0_dns())
 <a href=#82 id=82 data-nosnippet>82</a>//!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
@@ -98,7 +98,7 @@
 <a href=#98 id=98 data-nosnippet>98</a>//! # };
 <a href=#99 id=99 data-nosnippet>99</a>//! #
 <a href=#100 id=100 data-nosnippet>100</a>//! # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
-<a href=#101 id=101 data-nosnippet>101</a>//! let ep = Endpoint::empty_builder()
+<a href=#101 id=101 data-nosnippet>101</a>//! let ep = Endpoint::builder(presets::Minimal)
 <a href=#102 id=102 data-nosnippet>102</a>//!     .relay_mode(RelayMode::Default)
 <a href=#103 id=103 data-nosnippet>103</a>//!     .addr_filter(AddrFilter::relay_only())
 <a href=#104 id=104 data-nosnippet>104</a>//!     .address_lookup(PkarrPublisher::n0_dns())
@@ -598,7 +598,7 @@
 <a href=#598 id=598 data-nosnippet>598</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#599 id=599 data-nosnippet>599</a>    <span class="kw">use crate</span>::{
 <a href=#600 id=600 data-nosnippet>600</a>        Endpoint,
-<a href=#601 id=601 data-nosnippet>601</a>        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig},
+<a href=#601 id=601 data-nosnippet>601</a>        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig, presets},
 <a href=#602 id=602 data-nosnippet>602</a>    };
 <a href=#603 id=603 data-nosnippet>603</a>
 <a href=#604 id=604 data-nosnippet>604</a>    <span class="kw">type </span>InfoStore = HashMap&lt;EndpointId, (EndpointData, u64)&gt;;
@@ -922,7 +922,7 @@
 <a href=#922 id=922 data-nosnippet>922</a>    ) -&gt; (Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;) {
 <a href=#923 id=923 data-nosnippet>923</a>        <span class="kw">let </span>secret = SecretKey::generate(rng);
 <a href=#924 id=924 data-nosnippet>924</a>
-<a href=#925 id=925 data-nosnippet>925</a>        <span class="kw">let </span>ep = Endpoint::empty_builder()
+<a href=#925 id=925 data-nosnippet>925</a>        <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
 <a href=#926 id=926 data-nosnippet>926</a>            .secret_key(secret)
 <a href=#927 id=927 data-nosnippet>927</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#928 id=928 data-nosnippet>928</a>            .bind()
@@ -1093,10 +1093,10 @@
 <a href=#1093 id=1093 data-nosnippet>1093</a>    )&gt; {
 <a href=#1094 id=1094 data-nosnippet>1094</a>        <span class="kw">use </span>n0_future::task::AbortOnDropHandle;
 <a href=#1095 id=1095 data-nosnippet>1095</a>
-<a href=#1096 id=1096 data-nosnippet>1096</a>        <span class="kw">use crate</span>::{Endpoint, RelayMode};
+<a href=#1096 id=1096 data-nosnippet>1096</a>        <span class="kw">use crate</span>::{Endpoint, RelayMode, endpoint::presets};
 <a href=#1097 id=1097 data-nosnippet>1097</a>
 <a href=#1098 id=1098 data-nosnippet>1098</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
-<a href=#1099 id=1099 data-nosnippet>1099</a>        <span class="kw">let </span>ep = Endpoint::empty_builder()
+<a href=#1099 id=1099 data-nosnippet>1099</a>        <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
 <a href=#1100 id=1100 data-nosnippet>1100</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#1101 id=1101 data-nosnippet>1101</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
 <a href=#1102 id=1102 data-nosnippet>1102</a>            .secret_key(secret_key.clone())
