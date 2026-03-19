@@ -33,7 +33,8 @@
 //! [`N0_DNS_ENDPOINT_ORIGIN_STAGING`]: crate::dns::N0_DNS_ENDPOINT_ORIGIN_STAGING
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::{self, Display},
     hash::Hash,
     net::SocketAddr,
@@ -121,40 +122,82 @@ impl EndpointIdExt for EndpointId {
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct EndpointData {
     /// addresses where this endpoint can be reached.
-    addrs: BTreeSet<TransportAddr>,
+    addrs: Vec<TransportAddr>,
     /// Optional user-defined [`UserData`] for this endpoint.
     user_data: Option<UserData>,
 }
 
+fn dedup<T: Eq + Hash + Clone>(items: &mut Vec<T>) -> HashSet<T> {
+    // Remove all duplicate entries, but keep the array order.
+    let mut seen = HashSet::new();
+    items.retain(|item| seen.insert(item.clone()));
+    seen
+}
+
 impl EndpointData {
-    /// Creates a new [`EndpointData`] with a relay URL and a set of direct addresses.
-    pub fn new(addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
+    /// Creates a new [`EndpointData`] with given list of transport addresses.
+    ///
+    /// The address order is preserved, so it can encode priority for address lookup
+    /// services, should they not fit into e.g. a single DNS packet otherwise.
+    ///
+    /// If the addresses contain duplicate entries, those entries are removed.
+    pub fn new(mut addrs: Vec<TransportAddr>) -> Self {
+        dedup(&mut addrs);
         Self {
-            addrs: addrs.into_iter().collect(),
+            addrs,
             user_data: None,
         }
     }
 
-    /// Sets the relay URL and returns the updated endpoint data.
-    pub fn with_relay_url(mut self, relay_url: Option<RelayUrl>) -> Self {
-        if let Some(url) = relay_url {
-            self.addrs.insert(TransportAddr::Relay(url));
-        }
+    /// Sets the user-defined data and returns the updated endpoint info.
+    ///
+    /// Useful for calling on construction after [`EndpointData::new`] or [`EndpointData::from_iter`].
+    ///
+    /// See also [`Self::set_user_data`].
+    pub fn with_user_data(mut self, user_data: UserData) -> Self {
+        self.user_data = Some(user_data);
         self
     }
 
-    /// Sets the direct addresses and returns the updated endpoint data.
-    pub fn with_ip_addrs(mut self, addresses: BTreeSet<SocketAddr>) -> Self {
-        for addr in addresses.into_iter() {
-            self.addrs.insert(TransportAddr::Ip(addr));
+    /// Adds the relay URL to the end of the endpoint data, unless it already existed.
+    pub fn add_relay_url(&mut self, relay_url: RelayUrl) {
+        let addr = TransportAddr::Relay(relay_url);
+        if !self.addrs.contains(&addr) {
+            self.addrs.push(addr);
         }
-        self
+    }
+
+    /// Adds addresses in order with duplicates or already existing addresses filtered out.
+    pub fn add_ip_addrs(&mut self, addresses: Vec<SocketAddr>) {
+        self.add_addrs(addresses.into_iter().map(TransportAddr::Ip))
+    }
+
+    /// Adds addresses to the endpoint data in the given ordered, but with duplicates filtered.
+    pub fn add_addrs(&mut self, addrs: impl IntoIterator<Item = TransportAddr>) {
+        let mut addr_set = dedup(&mut self.addrs);
+        for addr in addrs.into_iter() {
+            if !addr_set.contains(&addr) {
+                self.addrs.push(addr.clone());
+                addr_set.insert(addr);
+            }
+        }
     }
 
     /// Sets the user-defined data and returns the updated endpoint data.
-    pub fn with_user_data(mut self, user_data: Option<UserData>) -> Self {
+    pub fn set_user_data(&mut self, user_data: Option<UserData>) {
         self.user_data = user_data;
-        self
+    }
+
+    /// Removes all direct addresses from the endpoint data.
+    pub fn clear_ip_addrs(&mut self) {
+        self.addrs
+            .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
+    }
+
+    /// Removes all direct addresses from the endpoint data.
+    pub fn clear_relay_urls(&mut self) {
+        self.addrs
+            .retain(|addr| !matches!(addr, TransportAddr::Relay(_)));
     }
 
     /// Returns the relay URL of the endpoint.
@@ -178,30 +221,6 @@ impl EndpointData {
         })
     }
 
-    /// Removes all direct addresses from the endpoint data.
-    pub fn clear_ip_addrs(&mut self) {
-        self.addrs
-            .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
-    }
-
-    /// Removes all direct addresses from the endpoint data.
-    pub fn clear_relay_urls(&mut self) {
-        self.addrs
-            .retain(|addr| !matches!(addr, TransportAddr::Relay(_)));
-    }
-
-    /// Add addresses to the endpoint data.
-    pub fn add_addrs(&mut self, addrs: impl IntoIterator<Item = TransportAddr>) {
-        for addr in addrs.into_iter() {
-            self.addrs.insert(addr);
-        }
-    }
-
-    /// Sets the user-defined data of the endpoint data.
-    pub fn set_user_data(&mut self, user_data: Option<UserData>) {
-        self.user_data = user_data;
-    }
-
     /// Returns the full list of all known addresses
     pub fn addrs(&self) -> impl Iterator<Item = &TransportAddr> {
         self.addrs.iter()
@@ -215,13 +234,52 @@ impl EndpointData {
     /// Apply the given filter to the current addresses.
     ///
     /// Returns a vec to allow re-ordering of addresses.
-    pub fn filtered_addrs(&self, filter: &AddrFilter) -> Vec<TransportAddr> {
+    pub fn filtered_addrs(&self, filter: &AddrFilter) -> Cow<'_, Vec<TransportAddr>> {
         filter.apply(&self.addrs)
+    }
+
+    /// Returns the `EndpointData` with given filter applied.
+    pub fn apply_filter(&self, filter: &AddrFilter) -> Cow<'_, Self> {
+        match self.filtered_addrs(filter) {
+            Cow::Borrowed(_) => Cow::Borrowed(self),
+            Cow::Owned(addrs) => {
+                let mut data = EndpointData::new(addrs);
+                data.set_user_data(self.user_data.clone());
+                Cow::Owned(data)
+            }
+        }
+    }
+}
+
+// These From instances are faster than `EndpointData::new`, as they don't require deduplication.
+
+impl From<BTreeSet<TransportAddr>> for EndpointData {
+    fn from(addrs: BTreeSet<TransportAddr>) -> Self {
+        Self {
+            addrs: addrs.into_iter().collect(),
+            user_data: None,
+        }
+    }
+}
+
+impl From<BTreeSet<SocketAddr>> for EndpointData {
+    fn from(addrs: BTreeSet<SocketAddr>) -> Self {
+        Self {
+            addrs: addrs.into_iter().map(TransportAddr::Ip).collect(),
+            user_data: None,
+        }
+    }
+}
+
+impl FromIterator<TransportAddr> for EndpointData {
+    fn from_iter<T: IntoIterator<Item = TransportAddr>>(iter: T) -> Self {
+        Self::new(iter.into_iter().collect())
     }
 }
 
 /// The function type inside [`AddrFilter`].
-type AddrFilterFn = dyn Fn(&BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static;
+type AddrFilterFn =
+    dyn Fn(&Vec<TransportAddr>) -> Cow<'_, Vec<TransportAddr>> + Send + Sync + 'static;
 
 /// A filter and/or reordering function applied to transport addresses,
 /// typically used by AddressLookup services in iroh before publishing.
@@ -249,31 +307,31 @@ impl std::fmt::Debug for AddrFilter {
 impl AddrFilter {
     /// Create a new [`AddrFilter`]
     pub fn new(
-        f: impl Fn(&BTreeSet<TransportAddr>) -> Vec<TransportAddr> + Send + Sync + 'static,
+        f: impl Fn(&Vec<TransportAddr>) -> Cow<'_, Vec<TransportAddr>> + Send + Sync + 'static,
     ) -> Self {
         Self(Some(Arc::new(f)))
     }
 
     /// Constructs a filter that doesn't filter addresses and passes all through.
     pub fn unfiltered() -> Self {
-        Self::new(|addrs| addrs.iter().cloned().collect())
+        Self::new(|addrs| Cow::Borrowed(addrs))
     }
 
     /// Only keep relay addresses.
     pub fn relay_only() -> Self {
-        Self::new(|addrs| addrs.iter().filter(|a| a.is_relay()).cloned().collect())
+        Self::new(|addrs| Cow::Owned(addrs.iter().filter(|a| a.is_relay()).cloned().collect()))
     }
 
     /// Only keep direct IP addresses.
     pub fn ip_only() -> Self {
-        Self::new(|addrs| addrs.iter().filter(|a| !a.is_relay()).cloned().collect())
+        Self::new(|addrs| Cow::Owned(addrs.iter().filter(|a| !a.is_relay()).cloned().collect()))
     }
 
     /// Apply the address filter function to a set of addresses.
-    pub fn apply(&self, addrs: &BTreeSet<TransportAddr>) -> Vec<TransportAddr> {
+    pub fn apply<'a>(&self, addrs: &'a Vec<TransportAddr>) -> Cow<'a, Vec<TransportAddr>> {
         match &self.0 {
             Some(f) => f(addrs),
-            None => addrs.iter().cloned().collect(),
+            None => Cow::Borrowed(addrs),
         }
     }
 }
@@ -281,7 +339,8 @@ impl AddrFilter {
 impl From<EndpointAddr> for EndpointData {
     fn from(endpoint_addr: EndpointAddr) -> Self {
         Self {
-            addrs: endpoint_addr.addrs,
+            // No need to check for duplicates - we already know they can't have duplicates
+            addrs: endpoint_addr.addrs.into_iter().collect(),
             user_data: None,
         }
     }
@@ -409,9 +468,10 @@ impl From<EndpointInfo> for EndpointAddr {
 
 impl From<EndpointAddr> for EndpointInfo {
     fn from(addr: EndpointAddr) -> Self {
-        let mut info = Self::new(addr.id);
-        info.add_addrs(addr.addrs);
-        info
+        Self {
+            endpoint_id: addr.id,
+            data: EndpointData::from(addr.addrs),
+        }
     }
 }
 
@@ -426,21 +486,21 @@ impl EndpointInfo {
         Self { endpoint_id, data }
     }
 
-    /// Sets the relay URL and returns the updated endpoint info.
-    pub fn with_relay_url(mut self, relay_url: Option<RelayUrl>) -> Self {
-        self.data = self.data.with_relay_url(relay_url);
+    /// Adds the relay URL and returns the updated endpoint info.
+    pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
+        self.data.add_relay_url(relay_url);
         self
     }
 
     /// Sets the IP based addresses and returns the updated endpoint info.
-    pub fn with_ip_addrs(mut self, addrs: BTreeSet<SocketAddr>) -> Self {
-        self.data = self.data.with_ip_addrs(addrs);
+    pub fn with_ip_addrs(mut self, addrs: Vec<SocketAddr>) -> Self {
+        self.data.add_ip_addrs(addrs);
         self
     }
 
     /// Sets the user-defined data and returns the updated endpoint info.
     pub fn with_user_data(mut self, user_data: Option<UserData>) -> Self {
-        self.data = self.data.with_user_data(user_data);
+        self.data.set_user_data(user_data);
         self
     }
 
@@ -448,17 +508,37 @@ impl EndpointInfo {
     pub fn to_endpoint_addr(&self) -> EndpointAddr {
         EndpointAddr {
             id: self.endpoint_id,
-            addrs: self.addrs.clone(),
+            addrs: self.data.addrs.iter().cloned().collect(),
         }
     }
 
-    /// Converts into a [`EndpointAddr`] without cloning.
+    /// Converts into a [`EndpointAddr`].
     pub fn into_endpoint_addr(self) -> EndpointAddr {
         let Self { endpoint_id, data } = self;
         EndpointAddr {
             id: endpoint_id,
-            addrs: data.addrs,
+            addrs: data.addrs.into_iter().collect(),
         }
+    }
+
+    /// Returns the transport addr information.
+    pub fn addrs(&self) -> impl Iterator<Item = &TransportAddr> {
+        self.data.addrs()
+    }
+
+    /// Returns the relay URL of the endpoint.
+    pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl> {
+        self.data.relay_urls()
+    }
+
+    /// Returns user data information, if set.
+    pub fn user_data(&self) -> Option<&UserData> {
+        self.data.user_data()
+    }
+
+    /// Returns the direct addresses of the endpoint.
+    pub fn ip_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
+        self.data.ip_addrs()
     }
 
     fn to_attrs(&self) -> TxtAttrs<IrohAttr> {
@@ -517,19 +597,6 @@ pub enum ParseError {
     NotAnIrohRecord { label: String },
     #[error(transparent)]
     DecodingError { source: DecodingError },
-}
-
-impl std::ops::Deref for EndpointInfo {
-    type Target = EndpointData;
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl std::ops::DerefMut for EndpointInfo {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data
-    }
 }
 
 /// Parses a [`EndpointId`] from iroh DNS name.
@@ -733,7 +800,7 @@ pub(crate) fn endpoint_domain(endpoint_id: &EndpointId, origin: &str) -> String 
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, str::FromStr};
+    use std::str::FromStr;
 
     use hickory_resolver::{
         lookup::Lookup,
@@ -753,11 +820,11 @@ mod tests {
 
     #[test]
     fn txt_attr_roundtrip() {
-        let endpoint_data = EndpointData::new([
+        let endpoint_data = EndpointData::from_iter([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
         ])
-        .with_user_data(Some("foobar".parse().unwrap()));
+        .with_user_data("foobar".parse().unwrap());
         let endpoint_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
             .parse()
             .unwrap();
@@ -771,11 +838,11 @@ mod tests {
     fn signed_packet_roundtrip() {
         let secret_key =
             SecretKey::from_str("vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia").unwrap();
-        let endpoint_data = EndpointData::new([
+        let endpoint_data = EndpointData::from_iter([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
         ])
-        .with_user_data(Some("foobar".parse().unwrap()));
+        .with_user_data("foobar".parse().unwrap());
         let expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
         let actual = EndpointInfo::from_pkarr_signed_packet(&packet).unwrap();
@@ -791,7 +858,7 @@ mod tests {
         // Tor-like address (larger id, 32 byte pubkey)
         let tor_addr = CustomAddr::from_parts(42, &[0xab; 32]);
 
-        let endpoint_data = EndpointData::new([
+        let endpoint_data = EndpointData::from_iter([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
             TransportAddr::Custom(bt_addr),
@@ -818,13 +885,13 @@ mod tests {
         // Tor-like address (larger id, 32 byte pubkey)
         let tor_addr = CustomAddr::from_parts(42, &[0xab; 32]);
 
-        let endpoint_data = EndpointData::new([
+        let endpoint_data = EndpointData::from_iter([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
             TransportAddr::Custom(bt_addr),
             TransportAddr::Custom(tor_addr),
         ])
-        .with_user_data(Some("foobar".parse().unwrap()));
+        .with_user_data("foobar".parse().unwrap());
 
         let expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
@@ -904,11 +971,11 @@ mod tests {
         let expected_endpoint_info = EndpointInfo::new(EndpointId::from_str(
             "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",
         )?)
-        .with_relay_url(Some("https://euw1-1.relay.iroh.network./".parse()?))
-        .with_ip_addrs(BTreeSet::from([
+        .with_relay_url("https://euw1-1.relay.iroh.network./".parse()?)
+        .with_ip_addrs(vec![
             "192.168.96.145:60165".parse().unwrap(),
             "213.208.157.87:60165".parse().unwrap(),
-        ]));
+        ]);
 
         assert_eq!(endpoint_info, expected_endpoint_info);
 

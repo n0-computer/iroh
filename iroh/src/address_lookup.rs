@@ -125,7 +125,7 @@
 //! [`MemoryLookup`]: memory::MemoryLookup
 
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     sync::{Arc, RwLock},
 };
 
@@ -205,9 +205,8 @@ impl<T> AsRef<T> for FilteredAddressLookup<T> {
 
 impl<T: AddressLookup> AddressLookup for FilteredAddressLookup<T> {
     fn publish(&self, data: &EndpointData) {
-        let addrs = data.filtered_addrs(&self.filter);
-        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
-        self.inner.publish(&data)
+        let data = data.apply_filter(&self.filter);
+        self.inner.publish(data.borrow());
     }
 
     fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
@@ -555,10 +554,7 @@ where
 impl AddressLookup for ConcurrentAddressLookup {
     fn publish(&self, data: &EndpointData) {
         let data = match &*self.addr_filter.read().expect("poisoned") {
-            Some(filter) => {
-                let addrs = data.filtered_addrs(filter);
-                Cow::Owned(EndpointData::new(addrs).with_user_data(data.user_data().cloned()))
-            }
+            Some(filter) => data.apply_filter(filter),
             None => Cow::Borrowed(data),
         };
         let services = self.services.read().expect("poisoned");
@@ -662,7 +658,7 @@ mod tests {
                 let port: u16 = rand::rng().random_range(10_000..20_000);
                 // "240.0.0.0/4" is reserved and unreachable
                 let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                let data = EndpointData::new([TransportAddr::Ip(addr)]);
+                let data = EndpointData::from_iter([TransportAddr::Ip(addr)]);
                 Some((data, ts))
             } else {
                 self.shared
@@ -891,7 +887,7 @@ mod tests {
 
         let relay_url: RelayUrl = "https://relay.example.com".parse().unwrap();
         let ip_addr: SocketAddr = "1.2.3.4:1234".parse().unwrap();
-        let data = EndpointData::new([
+        let data = EndpointData::from_iter([
             TransportAddr::Relay(relay_url.clone()),
             TransportAddr::Ip(ip_addr),
         ]);
@@ -1003,7 +999,7 @@ mod test_dns_pkarr {
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_info = EndpointInfo::new(secret_key.public())
-            .with_relay_url(Some("https://relay.example".parse().unwrap()));
+            .with_relay_url("https://relay.example".parse().unwrap());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state
             .upsert(signed_packet)
@@ -1043,7 +1039,7 @@ mod test_dns_pkarr {
         let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
             .build(secret_key, tls_config);
         let user_data: UserData = "foobar".parse().unwrap();
-        let data = EndpointData::new(relay_url.clone()).with_user_data(Some(user_data.clone()));
+        let data = EndpointData::from_iter(relay_url.clone()).with_user_data(user_data.clone());
         // does not block, update happens in background task
         publisher.update_endpoint_data(&data);
         // wait until our shared state received the update from pkarr publishing
