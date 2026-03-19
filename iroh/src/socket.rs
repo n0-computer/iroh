@@ -103,6 +103,15 @@ pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// some retries.
 pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 
+/// The maximum time a relay path can stay idle before being closed.
+///
+/// Relay paths need a longer idle timeout than direct paths because the relay actor
+/// manages the WebSocket connection and transparently reconnects after network changes
+/// or relay server restarts. Reconnection can take 5-10s (DNS + TCP + TLS + WebSocket
+/// upgrade), so the default [`PATH_MAX_IDLE_TIMEOUT`] (6.5s) is too aggressive — it
+/// would kill the QUIC path before the relay has time to recover.
+pub(crate) const RELAY_PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
 /// Pretty arbitrary and high right now.
