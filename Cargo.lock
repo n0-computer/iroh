@@ -2816,7 +2816,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "0.17.0"
-source = "git+https://github.com/n0-computer/noq?branch=fix-all#fee87e3acc21d0ce4fa59cbb93f249916f675922"
+source = "git+https://github.com/n0-computer/noq?branch=fix-all#98125c97050b0b64d1553aabe4333e30ce8b58dd"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2836,7 +2836,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "0.16.0"
-source = "git+https://github.com/n0-computer/noq?branch=fix-all#fee87e3acc21d0ce4fa59cbb93f249916f675922"
+source = "git+https://github.com/n0-computer/noq?branch=fix-all#98125c97050b0b64d1553aabe4333e30ce8b58dd"
 dependencies = [
  "aes-gcm",
  "bytes",
@@ -2864,7 +2864,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "0.9.0"
-source = "git+https://github.com/n0-computer/noq?branch=fix-all#fee87e3acc21d0ce4fa59cbb93f249916f675922"
+source = "git+https://github.com/n0-computer/noq?branch=fix-all#98125c97050b0b64d1553aabe4333e30ce8b58dd"
 dependencies = [
  "cfg_aliases",
  "libc",
