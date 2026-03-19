@@ -315,9 +315,8 @@ impl MdnsAddressLookup {
                         address_lookup.remove_all();
 
                         // apply user-supplied filter
-                        let addrs = data.filtered_addrs(&filter);
-                        debug!(addrs = ?addrs, "Applied address filter");
-                        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
+                        let data = data.apply_filter(&filter).into_owned();
+
 
                         let addrs =
                             MdnsAddressLookup::socketaddrs_to_addrs(data.ip_addrs());
@@ -565,10 +564,14 @@ fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> AddressLooku
     } else {
         None
     };
-    let endpoint_info = EndpointInfo::new(*endpoint_id)
-        .with_ip_addrs(ip_addrs)
-        .with_relay_url(relay_url)
-        .with_user_data(user_data);
+
+    let mut data = EndpointData::from(ip_addrs);
+    if let Some(relay_url) = relay_url {
+        data.add_relay_url(relay_url);
+    }
+    data.set_user_data(user_data);
+
+    let endpoint_info = EndpointInfo::from_parts(*endpoint_id, data);
     AddressLookupItem::new(endpoint_info, NAME, None)
 }
 
@@ -627,7 +630,7 @@ mod tests {
             let user_data: UserData = "foobar".parse()?;
             let endpoint_data =
                 EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
-                    .with_user_data(Some(user_data.clone()));
+                    .with_user_data(user_data.clone());
 
             // resolve twice to ensure we can create separate streams for the same endpoint_id
             let mut s1 = address_lookup_a
@@ -688,7 +691,7 @@ mod tests {
             // publish address_lookup_b's address
             let endpoint_data =
                 EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
-                    .with_user_data(Some("".parse()?));
+                    .with_user_data("".parse()?);
             address_lookup_b.publish(&endpoint_data);
 
             let mut s1 = address_lookup_a.subscribe().await;
@@ -751,9 +754,7 @@ mod tests {
             for i in 0..num_endpoints {
                 let (endpoint_id, address_lookup) = make_address_lookup(&mut rng, true)?;
                 let user_data: UserData = format!("endpoint{i}").parse()?;
-                let endpoint_data = endpoint_data
-                    .clone()
-                    .with_user_data(Some(user_data.clone()));
+                let endpoint_data = endpoint_data.clone().with_user_data(user_data.clone());
                 endpoint_ids.insert((endpoint_id, Some(user_data)));
                 address_lookup.publish(&endpoint_data);
                 address_lookup_list.push(address_lookup);
@@ -891,9 +892,10 @@ mod tests {
             // Create an mdns address lookup B that includes a relay url for publishing
             let (endpoint_id_b, mdns_b) = make_address_lookup(&mut rng, true)?;
             let relay_url: iroh_base::RelayUrl = "https://relay.example.com".parse().unwrap();
-            let endpoint_data =
-                EndpointData::from_iter([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
-                    .with_relay_url(Some(relay_url.clone()));
+            let endpoint_data = EndpointData::from_iter([
+                TransportAddr::Ip("0.0.0.0:11111".parse().unwrap()),
+                TransportAddr::Relay(relay_url.clone()),
+            ]);
 
             // Subscribe to discovery events filtered for endpoint B
             let mut events = mdns_a.subscribe().await.filter(|event| match event {

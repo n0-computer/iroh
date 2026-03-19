@@ -361,8 +361,7 @@ impl PkarrPublisher {
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_endpoint_data(&self, data: &EndpointData) {
-        let addrs = data.filtered_addrs(&self.addr_filter);
-        let data = EndpointData::new(addrs.into_owned()).with_user_data(data.user_data().cloned());
+        let data = data.apply_filter(&self.addr_filter).into_owned();
         let info = EndpointInfo::from_parts(self.endpoint_id, data);
         self.watchable.set(Some(info)).ok();
     }

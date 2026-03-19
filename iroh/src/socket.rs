@@ -586,7 +586,8 @@ impl Socket {
             addrs.push(TransportAddr::Relay(url));
         }
 
-        let data = EndpointData::new(addrs).with_user_data(user_data);
+        let mut data = EndpointData::new(addrs);
+        data.set_user_data(user_data);
         self.address_lookup.publish(&data);
     }
 }

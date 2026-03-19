@@ -125,7 +125,7 @@
 //! [`MemoryLookup`]: memory::MemoryLookup
 
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     sync::{Arc, RwLock},
 };
 
@@ -205,14 +205,8 @@ impl<T> AsRef<T> for FilteredAddressLookup<T> {
 
 impl<T: AddressLookup> AddressLookup for FilteredAddressLookup<T> {
     fn publish(&self, data: &EndpointData) {
-        match data.filtered_addrs(&self.filter) {
-            // addrs unchanged
-            Cow::Borrowed(_) => self.inner.publish(data),
-            Cow::Owned(addrs) => {
-                let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
-                self.inner.publish(&data);
-            }
-        }
+        let data = data.apply_filter(&self.filter);
+        self.inner.publish(data.borrow());
     }
 
     fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
@@ -560,12 +554,7 @@ where
 impl AddressLookup for ConcurrentAddressLookup {
     fn publish(&self, data: &EndpointData) {
         let data = match &*self.addr_filter.read().expect("poisoned") {
-            Some(filter) => match data.filtered_addrs(filter) {
-                Cow::Borrowed(_) => Cow::Borrowed(data),
-                Cow::Owned(addrs) => {
-                    Cow::Owned(EndpointData::new(addrs).with_user_data(data.user_data().cloned()))
-                }
-            },
+            Some(filter) => data.apply_filter(&filter),
             None => Cow::Borrowed(data),
         };
         let services = self.services.read().expect("poisoned");
@@ -1050,8 +1039,7 @@ mod test_dns_pkarr {
         let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
             .build(secret_key, tls_config);
         let user_data: UserData = "foobar".parse().unwrap();
-        let data =
-            EndpointData::from_iter(relay_url.clone()).with_user_data(Some(user_data.clone()));
+        let data = EndpointData::from_iter(relay_url.clone()).with_user_data(user_data.clone());
         // does not block, update happens in background task
         publisher.update_endpoint_data(&data);
         // wait until our shared state received the update from pkarr publishing
