@@ -73,6 +73,7 @@
 //!     Endpoint, SecretKey,
 //!     address_lookup::{self, AddrFilter, PkarrPublisher},
 //!     endpoint::RelayMode,
+//!     presets,
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
@@ -95,6 +96,7 @@
 //! #    address_lookup::{self, AddrFilter, PkarrPublisher},
 //! #    endpoint::RelayMode,
 //! #    Endpoint, SecretKey,
+//! #    presets,
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {

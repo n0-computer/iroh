@@ -15,6 +15,7 @@
 //!     RelayMode, SecretKey,
 //!     address_lookup::{DiscoveryEvent, MdnsAddressLookup},
 //!     endpoint::{Endpoint, Source},
+//!     presets,
 //! };
 //! use n0_future::StreamExt;
 //!

@@ -33,42 +33,41 @@ use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 ///
 /// This is where the [`MemoryLookup`] is useful: it allows applications to add and
 /// retract endpoint addressing information that is otherwise out-of-band to iroh.
-#[cfg_attr(
-    any(feature = "ring", feature = "aws-lc-rs"), // Endpoint::bind needs a crypto provider
-    doc = r##"
-# Examples
-
-```rust
-use iroh::{
-    Endpoint, EndpointAddr, TransportAddr, address_lookup::memory::MemoryLookup,
-    endpoint::presets,
-};
-use iroh_base::SecretKey;
-
-# #[tokio::main]
-# async fn main() -> n0_error::Result<()> {
-// Create the Address Lookup and endpoint.
-let address_lookup = MemoryLookup::new();
-
-let _ep = Endpoint::builder(presets::N0)
-    .address_lookup(address_lookup.clone())
-    .bind()
-    .await?;
-
-// Sometime later add a RelayUrl for our endpoint.
-let id = SecretKey::generate(&mut rand::rng()).public();
-// You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
-address_lookup.add_endpoint_info(EndpointAddr {
-    id,
-    addrs: [TransportAddr::Relay("https://example.com".parse()?)]
-        .into_iter()
-        .collect(),
-});
-
-# Ok(())
-# }
-```"##
-)]
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))] // Endpoint::bind needs a crypto provider
+/// # {
+/// use iroh::{
+///     Endpoint, EndpointAddr, TransportAddr, address_lookup::memory::MemoryLookup,
+///     endpoint::presets,
+/// };
+/// use iroh_base::SecretKey;
+///
+/// # #[tokio::main]
+/// # async fn wrapper() -> n0_error::Result<()> {
+/// // Create the Address Lookup and endpoint.
+/// let address_lookup = MemoryLookup::new();
+///
+/// let _ep = Endpoint::builder(presets::N0)
+///     .address_lookup(address_lookup.clone())
+///     .bind()
+///     .await?;
+///
+/// // Sometime later add a RelayUrl for our endpoint.
+/// let id = SecretKey::generate(&mut rand::rng()).public();
+/// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
+/// address_lookup.add_endpoint_info(EndpointAddr {
+///     id,
+///     addrs: [TransportAddr::Relay("https://example.com".parse()?)]
+///         .into_iter()
+///         .collect(),
+/// });
+///
+/// # Ok(())
+/// # }
+/// # }
+/// ```
 ///
 /// [`EndpointTicket`]: https://docs.rs/iroh-tickets/latest/iroh_tickets/endpoint/struct.EndpointTicket.html
 #[derive(Debug, Clone)]
@@ -122,34 +121,35 @@ impl MemoryLookup {
     }
 
     /// Creates a Memory Lookup instance from endpoint addresses.
-    #[cfg_attr(
-        any(feature = "ring", feature = "aws-lc-rs"), // Endpoint::bind needs a crypto provider
-        doc = r##"
-# Examples
-
-```rust
-use std::{net::SocketAddr, str::FromStr};
-
-use iroh::{Endpoint, EndpointAddr, address_lookup::memory::MemoryLookup, endpoint::presets};
-
-# fn get_addrs() -> Vec<EndpointAddr> {
-#     Vec::new()
-# }
-# #[tokio::main]
-# async fn main() -> n0_error::Result<()> {
-// get addrs from somewhere
-let addrs = get_addrs();
-
-// create a MemoryLookup from the list of addrs.
-let address_lookup = MemoryLookup::from_endpoint_info(addrs);
-// create an endpoint with the memory lookup address_lookup
-let endpoint = Endpoint::builder(presets::N0)
-    .address_lookup(address_lookup)
-    .bind()
-    .await?;
-# Ok(())
-# }
-```"##)]
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))] // Endpoint::bind needs a crypto provider
+    /// # {
+    /// use std::{net::SocketAddr, str::FromStr};
+    ///
+    /// use iroh::{Endpoint, EndpointAddr, address_lookup::memory::MemoryLookup, endpoint::presets};
+    ///
+    /// # fn get_addrs() -> Vec<EndpointAddr> {
+    /// #     Vec::new()
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn wrapper() -> n0_error::Result<()> {
+    /// // get addrs from somewhere
+    /// let addrs = get_addrs();
+    ///
+    /// // create a MemoryLookup from the list of addrs.
+    /// let address_lookup = MemoryLookup::from_endpoint_info(addrs);
+    /// // create an endpoint with the memory lookup address_lookup
+    /// let endpoint = Endpoint::builder(presets::N0)
+    ///     .address_lookup(address_lookup)
+    ///     .bind()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
     pub fn from_endpoint_info(infos: impl IntoIterator<Item = impl Into<EndpointInfo>>) -> Self {
         let res = Self::default();
         for info in infos {
