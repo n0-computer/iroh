@@ -21,6 +21,7 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
+arc-swap = "1"
 backon = { version = "1.4" }
 bytes = "1.11"
 data-encoding = "2.2"

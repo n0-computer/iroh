@@ -11,8 +11,6 @@ use iroh::{
     test_utils::test_transport::{TEST_TRANSPORT_ID, TestNetwork, TestTransport},
 };
 use n0_error::{Result, StdResultExt};
-use n0_watcher::Watcher;
-
 /// Each protocol is identified by its ALPN string.
 ///
 /// The ALPN, or application-layer protocol negotiation, is exchanged in the connection handshake,
@@ -124,7 +122,7 @@ async fn main() -> Result<()> {
 
     // Helper to print paths and verify test transport is selected
     let verify_test_transport = |label: &str| {
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         println!("Paths {}:", label);
         for path in paths.iter() {
             println!(
@@ -134,8 +132,8 @@ async fn main() -> Result<()> {
                 path.rtt()
             );
         }
-        let selected_path = paths.iter().find(|p| p.is_selected());
-        let is_test_transport = selected_path.is_some_and(|p| {
+        let selected_path = paths.selected();
+        let is_test_transport = selected_path.as_ref().is_some_and(|p| {
             matches!(p.remote_addr(), TransportAddr::Custom(addr) if addr.id() == TEST_TRANSPORT_ID)
         });
         assert!(
@@ -143,7 +141,7 @@ async fn main() -> Result<()> {
             "Expected test transport (id={}) to be selected {}, got: {:?}",
             TEST_TRANSPORT_ID,
             label,
-            selected_path.map(|p| p.remote_addr())
+            selected_path.as_ref().map(|p| p.remote_addr())
         );
         println!(
             "Verified: test transport (id={}) is selected {}",

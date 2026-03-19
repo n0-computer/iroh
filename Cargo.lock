@@ -2088,6 +2088,7 @@ dependencies = [
 name = "iroh"
 version = "0.97.0"
 dependencies = [
+ "arc-swap",
  "axum",
  "backon",
  "bytes",

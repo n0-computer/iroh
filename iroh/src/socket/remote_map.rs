@@ -13,12 +13,12 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Span, debug, error};
 
-pub(crate) use self::remote_state::PathWatchable;
+pub(crate) use self::remote_state::PathStore;
 use self::remote_state::RemoteStateActor;
 pub(super) use self::remote_state::RemoteStateMessage;
 pub use self::remote_state::{
-    PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, TransportAddrInfo,
-    TransportAddrUsage,
+    OwnedPathEntry, PathEntry, PathEvent, PathEventStream, PathStatsTracker, Paths, RemoteInfo,
+    TransportAddrInfo, TransportAddrUsage,
 };
 use super::{
     DirectAddr, Metrics as SocketMetrics,
@@ -255,7 +255,7 @@ impl RemoteMap {
         &mut self,
         remote: EndpointId,
         conn: noq::WeakConnectionHandle,
-    ) -> Option<PathWatchable> {
+    ) -> Option<PathStore> {
         let actor = self.remote_state_actor(remote);
         let (tx, rx) = oneshot::channel();
         actor

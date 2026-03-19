@@ -318,8 +318,6 @@ mod tests {
 
     use iroh_relay::RelayMap;
     use n0_error::{Result, StdResultExt};
-    use n0_watcher::Watcher;
-
     use super::*;
     use crate::{
         Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
@@ -419,27 +417,24 @@ mod tests {
 
     /// Returns true if the selected path is the custom transport.
     fn is_custom_selected(conn: &crate::endpoint::Connection) -> bool {
-        let paths = conn.paths().get();
-        paths.iter().find(|p| p.is_selected()).is_some_and(
-            |p| matches!(p.remote_addr(), TransportAddr::Custom(a) if a.id() == TEST_TRANSPORT_ID),
-        )
+        conn.paths()
+            .selected()
+            .is_some_and(|p| {
+                matches!(p.remote_addr(), TransportAddr::Custom(a) if a.id() == TEST_TRANSPORT_ID)
+            })
     }
 
     /// Returns true if the selected path is an IP transport.
     fn is_ip_selected(conn: &crate::endpoint::Connection) -> bool {
-        let paths = conn.paths().get();
-        paths
-            .iter()
-            .find(|p| p.is_selected())
+        conn.paths()
+            .selected()
             .is_some_and(|p| matches!(p.remote_addr(), TransportAddr::Ip(_)))
     }
 
     /// Returns true if the selected path is a relay transport.
     fn is_relay_selected(conn: &crate::endpoint::Connection) -> bool {
-        let paths = conn.paths().get();
-        paths
-            .iter()
-            .find(|p| p.is_selected())
+        conn.paths()
+            .selected()
             .is_some_and(|p| matches!(p.remote_addr(), TransportAddr::Relay(_)))
     }
 
@@ -476,7 +471,7 @@ mod tests {
             .await?;
 
         // Verify exactly one path exists and it's the custom transport
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         assert_eq!(paths.len(), 1, "Expected exactly one path");
         assert!(
             is_custom_selected(&conn),
@@ -636,7 +631,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(200)).await;
 
             // Debug: print paths after relay-only connect
-            let paths = conn.paths().get();
+            let paths = conn.paths();
             eprintln!("Paths after relay-only connect:");
             for path in paths.iter() {
                 eprintln!(
@@ -665,7 +660,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Debug: print all paths
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         eprintln!("Paths after connecting with all addresses:");
         for path in paths.iter() {
             eprintln!(

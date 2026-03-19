@@ -166,12 +166,11 @@ mod remote_map {
     };
 
     use iroh::{
-        EndpointId, Watcher,
-        endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks, PathInfo},
+        EndpointId,
+        endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks, OwnedPathEntry},
     };
     use n0_future::task::AbortOnDropHandle;
     use tokio::{sync::mpsc, task::JoinSet};
-    use tokio_stream::StreamExt;
     use tracing::{Instrument, debug, info, info_span};
 
     /// Information about a remote info.
@@ -209,7 +208,7 @@ mod remote_map {
     }
 
     impl Aggregate {
-        fn update(&mut self, path: &PathInfo) {
+        fn update(&mut self, path: &OwnedPathEntry) {
             self.last_update = SystemTime::now();
             if path.is_ip() {
                 self.ip_path = true;
@@ -217,11 +216,10 @@ mod remote_map {
             if path.is_relay() {
                 self.relay_path = true;
             }
-            if let Some(stats) = path.stats() {
-                debug!("path update addr {:?} {stats:?}", path.remote_addr());
-                self.rtt_min = self.rtt_min.min(stats.rtt);
-                self.rtt_max = self.rtt_max.max(stats.rtt);
-            }
+            let stats = path.stats();
+            debug!("path update addr {:?} {stats:?}", path.remote_addr());
+            self.rtt_min = self.rtt_min.min(stats.rtt);
+            self.rtt_max = self.rtt_max.max(stats.rtt);
         }
     }
 
@@ -238,9 +236,8 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn current_min_rtt(&self) -> Option<Duration> {
             self.connections()
-                .flat_map(|c| c.paths().get().into_iter())
-                .flat_map(|p| p.stats())
-                .map(|s| s.rtt)
+                .flat_map(|c| c.paths().into_iter())
+                .map(|p| p.rtt())
                 .min()
         }
 
@@ -249,7 +246,7 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn has_ip_path(&self) -> Option<bool> {
             self.connections()
-                .flat_map(|c| c.paths().get())
+                .flat_map(|c| c.paths().into_iter())
                 .filter(|path| path.is_ip())
                 .map(|_| true)
                 .next()
@@ -260,7 +257,7 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn has_relay_path(&self) -> Option<bool> {
             self.connections()
-                .flat_map(|c| c.paths().get())
+                .flat_map(|c| c.paths().into_iter())
                 .filter(|path| path.is_relay())
                 .map(|_| true)
                 .next()
@@ -406,14 +403,12 @@ mod remote_map {
             // Track path changes to update stats aggregate.
             tasks.spawn({
                 async move {
-                    let mut path_updates = conn.paths().stream();
-                    while let Some(paths) = path_updates.next().await {
-                        {
-                            let mut inner = map.write().expect("poisoned");
-                            let info = inner.entry(conn.remote_id()).or_default();
-                            for path in paths {
-                                info.aggregate.update(&path);
-                            }
+                    let mut events = conn.path_events();
+                    while let Some(_event) = events.recv().await {
+                        let mut inner = map.write().expect("poisoned");
+                        let info = inner.entry(conn.remote_id()).or_default();
+                        for path in conn.paths() {
+                            info.aggregate.update(&path);
                         }
                     }
                 }

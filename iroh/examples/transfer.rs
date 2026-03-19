@@ -42,7 +42,6 @@ use ipnet::{Ipv4Net, Ipv6Net};
 use iroh::endpoint::QuicTransportConfig;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
-    Watcher,
     address_lookup::{
         AddrFilter,
         dns::DnsAddressLookup,
@@ -50,12 +49,11 @@ use iroh::{
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{
-        BindOpts, Connection, ConnectionError, PathId, PathWatcher, RecvStream, SendStream, VarInt,
-        WriteError,
+        BindOpts, Connection, ConnectionError, PathId, RecvStream, SendStream, VarInt, WriteError,
     },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
-use n0_future::{stream::StreamExt, task::AbortOnDropHandle};
+use n0_future::task::AbortOnDropHandle;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::{
@@ -627,7 +625,7 @@ async fn provide(endpoint: &Endpoint, output: Output) -> Result<()> {
 async fn handle_connection(conn: Connection, output: Output) {
     let start = Instant::now();
     let remote_id = conn.remote_id();
-    let watcher = conn.paths();
+    let tracker = conn.path_stats_tracker();
     let _guard = watch_conn_type(&conn, Some(remote_id), output);
 
     // Accept incoming streams in a loop until the connection is closed by the remote.
@@ -660,7 +658,7 @@ async fn handle_connection(conn: Connection, output: Output) {
             duration: start.elapsed(),
         },
     );
-    output.emit_with_remote(remote_id, PathStats::from_watcher(watcher));
+    output.emit_with_remote(remote_id, PathStats::from_tracker(&tracker));
 }
 
 #[instrument("handle", skip_all, fields(id=send.id().index()))]
@@ -703,7 +701,7 @@ async fn fetch(
         remote_id,
         duration: start.elapsed(),
     });
-    let watcher = conn.paths();
+    let tracker = conn.path_stats_tracker();
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
     let _guard = watch_conn_type(&conn, None, output);
 
@@ -754,7 +752,7 @@ async fn fetch(
     // this call. It is however the only API we currently have to tell us when the
     // connection is drained and the stats will no longer change.
     conn_info.closed().await;
-    output.emit(PathStats::from_watcher(watcher));
+    output.emit(PathStats::from_tracker(&tracker));
 
     res
 }
@@ -925,24 +923,16 @@ fn watch_conn_type(
             output.emit(event)
         }
     };
-    let mut stream = conn.paths().stream();
+    let mut events = conn.path_events();
     let task = tokio::task::spawn(async move {
-        let mut previous = None;
-        while let Some(paths) = stream.next().await {
-            if let Some(path) = paths.iter().find(|p| p.is_selected()) {
-                // We can get path updates without the selected path changing. We don't want to log again in that case.
-                if Some(path) == previous.as_ref() {
-                    continue;
-                }
+        while let Some(event) = events.recv().await {
+            if let iroh::endpoint::PathEvent::Selected { id, remote_addr } = event {
+                let rtt = Duration::ZERO; // RTT is not available from the event itself
                 print(SelectedPath::Selected {
-                    id: path.id(),
-                    addr: path.remote_addr().clone(),
-                    rtt: path.rtt().expect("conn is not dropped"),
+                    id,
+                    addr: remote_addr,
+                    rtt,
                 });
-                previous = Some(path.clone());
-            } else {
-                output.emit(SelectedPath::None);
-                previous = None;
             }
         }
     });
@@ -1072,6 +1062,7 @@ struct ConnectionTypeChanged {
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "status")]
+#[allow(dead_code)]
 enum SelectedPath {
     Selected {
         #[serde(skip)]
@@ -1149,19 +1140,19 @@ struct PathStats {
 }
 
 impl PathStats {
-    fn from_watcher(mut watcher: PathWatcher) -> Self {
-        let list = watcher
-            .get()
+    fn from_tracker(tracker: &iroh::endpoint::PathStatsTracker) -> Self {
+        let list = tracker
+            .all_paths()
             .iter()
-            .filter_map(|info| {
-                let stats = info.stats()?;
-                Some(PathData {
+            .map(|info| {
+                let stats = info.stats();
+                PathData {
                     id: info.id(),
                     remote_addr: info.remote_addr().clone(),
                     rtt: stats.rtt,
                     bytes_sent: stats.udp_tx.bytes,
                     bytes_recv: stats.udp_rx.bytes,
-                })
+                }
             })
             .collect();
         PathStats { paths: list }
