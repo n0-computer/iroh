@@ -4638,12 +4638,11 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "swarm-discovery"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a5ab62937edac8b23fa40e55a358ea1924245b17fc1eb20d14929c8f11be98d"
+source = "git+https://github.com/n0-computer/swarm-discovery?branch=matheus23%2Fhickory-0.26#a3894abc55fdfbba989733aedf4049a451d45108"
 dependencies = [
  "acto",
- "hickory-proto 0.25.2",
- "rand 0.9.2",
+ "hickory-proto 0.26.0-beta.1",
+ "rand 0.10.0",
  "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",

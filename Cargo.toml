@@ -47,3 +47,4 @@ portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "main"
 noq = { git = "https://github.com/n0-computer/noq", branch = "matheus23/rand-0.10" }
 noq-udp = { git = "https://github.com/n0-computer/noq", branch = "matheus23/rand-0.10" }
 noq-proto = { git = "https://github.com/n0-computer/noq", branch = "matheus23/rand-0.10" }
+swarm-discovery = { git = "https://github.com/n0-computer/swarm-discovery", branch = "matheus23/hickory-0.26" }
