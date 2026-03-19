@@ -94,9 +94,8 @@
 //! # {
 //! # use iroh::{
 //! #    address_lookup::{self, AddrFilter, PkarrPublisher},
-//! #    endpoint::RelayMode,
+//! #    endpoint::{presets, RelayMode},
 //! #    Endpoint, SecretKey,
-//! #    presets,
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
