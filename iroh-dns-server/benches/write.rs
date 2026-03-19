@@ -46,8 +46,7 @@ fn benchmark_dns_server(c: &mut Criterion) {
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
                     let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
                     let relay_url = "http://localhost:8080".parse().unwrap();
-                    let endpoint_info =
-                        EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url));
+                    let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url);
                     let signed_packet = endpoint_info
                         .to_pkarr_signed_packet(&secret_key, 30)
                         .unwrap();
