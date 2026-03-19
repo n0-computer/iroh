@@ -193,11 +193,6 @@ impl Builder {
             hooks: Default::default(),
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
-            #[cfg(feature = "ring")]
-            crypto_provider: Some(Arc::new(rustls::crypto::ring::default_provider())),
-            #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-            crypto_provider: Some(Arc::new(rustls::crypto::aws_lc_rs::default_provider())),
-            #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
             crypto_provider: None,
         }
     }
