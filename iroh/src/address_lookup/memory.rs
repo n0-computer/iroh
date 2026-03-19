@@ -245,13 +245,13 @@ mod tests {
     use n0_error::{Result, StackResultExt};
 
     use super::*;
-    use crate::Endpoint;
+    use crate::{Endpoint, endpoint::presets};
 
     #[tokio::test]
     async fn test_basic() -> Result {
         let address_lookup = MemoryLookup::new();
 
-        let _ep = Endpoint::empty_builder()
+        let _ep = Endpoint::builder(presets::Minimal)
             .address_lookup(address_lookup.clone())
             .bind()
             .await?;

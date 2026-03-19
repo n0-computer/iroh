@@ -1776,7 +1776,7 @@ mod tests {
         Endpoint, SecretKey,
         address_lookup::memory::MemoryLookup,
         dns::DnsResolver,
-        endpoint::QuicTransportConfig,
+        endpoint::{QuicTransportConfig, presets},
         socket::{
             EndpointInner, StaticConfig, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
@@ -1980,13 +1980,13 @@ mod tests {
     /// the endpoints rebind.
     async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
         let address_lookup = MemoryLookup::new();
-        let ep1 = Endpoint::empty_builder()
+        let ep1 = Endpoint::builder(presets::Minimal)
             .alpns(vec![ALPN.to_vec()])
             .address_lookup(address_lookup.clone())
             .bind()
             .await
             .unwrap();
-        let ep2 = Endpoint::empty_builder()
+        let ep2 = Endpoint::builder(presets::Minimal)
             .alpns(vec![ALPN.to_vec()])
             .address_lookup(address_lookup.clone())
             .bind()

@@ -76,7 +76,7 @@
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::empty_builder()
+//! let ep = Endpoint::builder(presets::Minimal)
 //!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
 //!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
@@ -98,7 +98,7 @@
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::empty_builder()
+//! let ep = Endpoint::builder(presets::Minimal)
 //!     .relay_mode(RelayMode::Default)
 //!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
@@ -598,7 +598,7 @@ mod tests {
     use super::*;
     use crate::{
         Endpoint,
-        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig},
+        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig, presets},
     };
 
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
@@ -922,7 +922,7 @@ mod tests {
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let secret = SecretKey::generate(rng);
 
-        let ep = Endpoint::empty_builder()
+        let ep = Endpoint::builder(presets::Minimal)
             .secret_key(secret)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -1093,10 +1093,10 @@ mod test_dns_pkarr {
     )> {
         use n0_future::task::AbortOnDropHandle;
 
-        use crate::{Endpoint, RelayMode};
+        use crate::{Endpoint, RelayMode, endpoint::presets};
 
         let secret_key = SecretKey::generate(rng);
-        let ep = Endpoint::empty_builder()
+        let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())

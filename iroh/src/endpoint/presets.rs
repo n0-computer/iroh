@@ -20,6 +20,61 @@ pub trait Preset {
     fn apply(self, builder: Builder) -> Builder;
 }
 
+/// An empty preset that doesn't set anything on the builder.
+///
+/// This doesn't set mandatory builder options, so using this in
+/// `Endpoint::bind(presets::Empty)` will always fail.
+///
+/// However, it can be useful, if you want control over all mandatory options
+/// yourself, by using `Endpoint::builder(presets::Empty)`.
+///
+/// If you prefer a minimal version that is guarnateed to work, see the
+/// [`Minimal`] preset.
+#[derive(Debug, Copy, Clone, Default)]
+pub struct Empty;
+
+impl Preset for Empty {
+    fn apply(self, builder: Builder) -> Builder {
+        builder
+    }
+}
+
+/// A preset that is almost empty, besides setting mandatory options.
+///
+/// At the moment the only mandatory option to set on the endpoint builder is
+/// [`Builder::crypto_provider`]. This preset makes a choice for that based on
+/// the current set of enabled features in iroh, which is why it's only available
+/// with the "ring" or "aws-lc-rs" feature flag.
+///
+/// It uses either [ring] or [aws-lc-rs], depending on which feature is enabled
+/// on iroh (preferring ring if both are enabled).
+///
+/// [ring]: rustls::crypto::ring::default_provider
+/// [aws-lc-rs]: rustls::crypto::aws_lc_rs::default_provider
+#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[derive(Debug, Copy, Clone, Default)]
+pub struct Minimal;
+
+#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+impl Preset for Minimal {
+    fn apply(self, mut builder: Builder) -> Builder {
+        use std::sync::Arc;
+
+        #[cfg(feature = "ring")]
+        {
+            builder = builder.crypto_provider(Arc::new(rustls::crypto::ring::default_provider()));
+        }
+
+        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+        {
+            builder =
+                builder.crypto_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+        }
+
+        builder
+    }
+}
+
 /// Configures the endpoint to use the n0 defaults
 ///
 /// Currently this consists of
@@ -56,9 +111,9 @@ pub struct N0;
 #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
 impl Preset for N0 {
     fn apply(self, mut builder: Builder) -> Builder {
-        use std::sync::Arc;
-
         use crate::{address_lookup::PkarrPublisher, endpoint::default_relay_mode};
+
+        builder = Minimal.apply(builder);
 
         builder = builder.address_lookup(PkarrPublisher::n0_dns());
 
@@ -73,17 +128,6 @@ impl Preset for N0 {
         #[cfg(not(wasm_browser))]
         {
             builder = builder.address_lookup(crate::address_lookup::DnsAddressLookup::n0_dns());
-        }
-
-        #[cfg(feature = "ring")]
-        {
-            builder = builder.crypto_provider(Arc::new(rustls::crypto::ring::default_provider()));
-        }
-
-        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-        {
-            builder =
-                builder.crypto_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
         }
 
         builder = builder.relay_mode(default_relay_mode());
