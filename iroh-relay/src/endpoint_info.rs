@@ -178,7 +178,7 @@ impl EndpointData {
         self.add_addrs(addresses.into_iter().map(TransportAddr::Ip))
     }
 
-    /// Adds addresses to the endpoint data in the given orderd, but with duplicates filtered.
+    /// Adds addresses to the endpoint data in the given ordered, but with duplicates filtered.
     pub fn add_addrs(&mut self, addrs: impl IntoIterator<Item = TransportAddr>) {
         let mut addr_set = dedup(&mut self.addrs);
         for addr in addrs.into_iter() {

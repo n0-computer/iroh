@@ -554,7 +554,7 @@ where
 impl AddressLookup for ConcurrentAddressLookup {
     fn publish(&self, data: &EndpointData) {
         let data = match &*self.addr_filter.read().expect("poisoned") {
-            Some(filter) => data.apply_filter(&filter),
+            Some(filter) => data.apply_filter(filter),
             None => Cow::Borrowed(data),
         };
         let services = self.services.read().expect("poisoned");
