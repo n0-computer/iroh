@@ -28,7 +28,7 @@ pub trait Preset {
 /// However, it can be useful, if you want control over all mandatory options
 /// yourself, by using `Endpoint::builder(presets::Empty)`.
 ///
-/// If you prefer a minimal version that is guarnateed to work, see the
+/// If you prefer a minimal version that is guaranteed to work, see the
 /// [`Minimal`] preset.
 #[derive(Debug, Copy, Clone, Default)]
 pub struct Empty;

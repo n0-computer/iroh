@@ -6,7 +6,7 @@ use std::{
 use bytes::Bytes;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
-    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream, presets},
+    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
@@ -33,7 +33,7 @@ pub fn server_endpoint(
         #[allow(unused_mut)]
         let mut builder = Endpoint::builder(presets::N0);
         #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
-        let mut builder = Endpoint::empty_builder(); // allow building, but fail at runtime
+        let mut builder = Endpoint::builder(presets::Empty); // allow building, but fail at runtime
         #[cfg(feature = "local-relay")]
         {
             if relay_url.is_some() {
@@ -97,7 +97,7 @@ pub async fn connect_client(
     #[allow(unused_mut)]
     let mut builder = Endpoint::builder(presets::N0);
     #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
-    let mut builder = Endpoint::empty_builder(); // allow building, but fail at runtime
+    let mut builder = Endpoint::builder(presets::Empty); // allow building, but fail at runtime
     #[cfg(feature = "local-relay")]
     {
         if relay_url.is_some() {
