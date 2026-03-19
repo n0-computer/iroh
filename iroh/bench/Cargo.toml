@@ -34,4 +34,5 @@ local-relay = ["iroh/test-utils"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["iroh/fast-apple-datapath", "noq/fast-apple-datapath"]
 qlog = ["iroh/qlog", "noq/qlog"]
-ring = ["rustls/ring"]
+ring = ["rustls/ring", "iroh/ring"]
+aws-lc-rs = ["rustls/aws-lc-rs", "iroh/aws-lc-rs"]
