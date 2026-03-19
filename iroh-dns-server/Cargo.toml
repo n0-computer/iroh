@@ -61,7 +61,7 @@ z32 = "1.1.1"
 [dev-dependencies]
 criterion = "0.7.0"
 data-encoding = "2.3.3"
-hickory-resolver = "0.25.0"
+hickory-resolver = { version = "0.25.0", features = ["tls-ring", "https-ring"] }
 iroh = { path = "../iroh" }
 n0-tracing-test = "0.3"
 pkarr = { version = "5", features = ["relays", "dht"], default-features = false }
