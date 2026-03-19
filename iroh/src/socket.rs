@@ -591,7 +591,7 @@ impl Socket {
     /// Called whenever our addresses or home relay endpoint changes.
     fn publish_my_addr(&self) {
         let relay_url = self.my_relay();
-        let mut addrs: BTreeSet<_> = self
+        let mut addrs: Vec<_> = self
             .direct_addrs
             .sockaddrs()
             .map(TransportAddr::Ip)
@@ -607,10 +607,11 @@ impl Socket {
             return;
         }
         if let Some(url) = relay_url {
-            addrs.insert(TransportAddr::Relay(url));
+            addrs.push(TransportAddr::Relay(url));
         }
 
-        let data = EndpointData::new(addrs).with_user_data(user_data);
+        let mut data = EndpointData::new(addrs);
+        data.set_user_data(user_data);
         self.address_lookup.publish(&data);
     }
 }

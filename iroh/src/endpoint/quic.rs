@@ -52,8 +52,10 @@ pub use noq_proto::{
     Chunk,                            // noq::RecvStream
     ConnectError as QuicConnectError, // iroh::endpoint::ConnectWithOptsError
     ConnectionClose,                  // noq::ConnectionError
+    DecryptedInitial,                 // iroh::endpoint::connection::Incoming
     FrameStats,                       // noq::ConnectionStats
     FrameType,                        // noq_proto::TransportError
+    IncomingAlpns,                    // iroh::endpoint::DecryptedInitial
     PathId,                           // noq_proto::crypto::PacketKey
     RttEstimator,                     // noq_proto::congestion::Controller
     TimeSource,                       // iroh::endpoint::quic::ServerConfig

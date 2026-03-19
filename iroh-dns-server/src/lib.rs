@@ -182,7 +182,7 @@ mod tests {
             .expect("infallible");
         let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         pkarr.publish(&signed_packet).await?;
@@ -255,7 +255,7 @@ mod tests {
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         // publish the signed packet to our DHT
@@ -285,7 +285,7 @@ mod tests {
         let secret_key = SecretKey::generate(rng);
         let endpoint_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         Ok(packet)
     }
