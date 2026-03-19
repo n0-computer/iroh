@@ -110,7 +110,11 @@ pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 /// or relay server restarts. Reconnection can take 5-10s (DNS + TCP + TLS + WebSocket
 /// upgrade), so the default [`PATH_MAX_IDLE_TIMEOUT`] (6.5s) is too aggressive — it
 /// would kill the QUIC path before the relay has time to recover.
-pub(crate) const RELAY_PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+///
+/// Set to match the connection-level idle timeout (30s) so the relay path survives
+/// as long as the connection itself. Interface-down scenarios can last 15-20s before
+/// recovery, and the relay actor handles reconnection transparently.
+pub(crate) const RELAY_PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
