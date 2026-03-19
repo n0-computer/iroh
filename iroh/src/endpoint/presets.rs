@@ -56,8 +56,9 @@ pub struct N0;
 #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
 impl Preset for N0 {
     fn apply(self, mut builder: Builder) -> Builder {
-        use crate::{address_lookup::PkarrPublisher, endpoint::default_relay_mode};
         use std::sync::Arc;
+
+        use crate::{address_lookup::PkarrPublisher, endpoint::default_relay_mode};
 
         builder = builder.address_lookup(PkarrPublisher::n0_dns());
 
