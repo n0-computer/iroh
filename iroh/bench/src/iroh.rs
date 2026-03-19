@@ -4,6 +4,8 @@ use std::{
 };
 
 use bytes::Bytes;
+#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+use iroh::endpoint::presets;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
     endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},

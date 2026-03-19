@@ -14,7 +14,7 @@
 //! use iroh::{
 //!     RelayMode, SecretKey,
 //!     address_lookup::{DiscoveryEvent, MdnsAddressLookup},
-//!     endpoint::{presets, Endpoint, Source},
+//!     endpoint::{Endpoint, Source, presets},
 //! };
 //! use n0_future::StreamExt;
 //!
