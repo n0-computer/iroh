@@ -336,8 +336,7 @@ mod tests {
             let secret_key = SecretKey::generate(&mut rng);
             let endpoint_id = secret_key.public();
             let relay_url: RelayUrl = RELAY_URL.parse().expect("valid url");
-            let endpoint_info =
-                EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+            let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
             (
                 secret_key.public().to_z32(),
                 endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?,
