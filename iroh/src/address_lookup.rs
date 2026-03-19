@@ -1095,8 +1095,9 @@ mod test_dns_pkarr {
         crate::Endpoint,
         n0_future::task::AbortOnDropHandle<Result<()>>,
     )> {
-        use crate::{Endpoint, RelayMode};
         use n0_future::task::AbortOnDropHandle;
+
+        use crate::{Endpoint, RelayMode};
 
         let secret_key = SecretKey::generate(rng);
         let ep = Endpoint::empty_builder()
