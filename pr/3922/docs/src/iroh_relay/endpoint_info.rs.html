@@ -960,7 +960,7 @@
 <a href=#960 id=960 data-nosnippet>960</a>        <span class="kw">let </span>lookup = Lookup::new_with_max_ttl(query, records);
 <a href=#961 id=961 data-nosnippet>961</a>        <span class="kw">let </span>lookup = lookup
 <a href=#962 id=962 data-nosnippet>962</a>            .answers()
-<a href=#963 id=963 data-nosnippet>963</a>            .into_iter()
+<a href=#963 id=963 data-nosnippet>963</a>            .iter()
 <a href=#964 id=964 data-nosnippet>964</a>            .filter_map(|record| <span class="kw">match </span>record.data() {
 <a href=#965 id=965 data-nosnippet>965</a>                RData::TXT(txt) =&gt; <span class="prelude-val">Some</span>(TxtRecordData::from(txt.txt_data().to_vec())),
 <a href=#966 id=966 data-nosnippet>966</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
