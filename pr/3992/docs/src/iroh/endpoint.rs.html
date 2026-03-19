@@ -1617,7 +1617,7 @@
 <a href=#1617 id=1617 data-nosnippet>1617</a>        <span class="self">self</span>.inner.to_transport_addr(addr)
 <a href=#1618 id=1618 data-nosnippet>1618</a>    }
 <a href=#1619 id=1619 data-nosnippet>1619</a>
-<a href=#1620 id=1620 data-nosnippet>1620</a>    <span class="attr">#[cfg(test)]
+<a href=#1620 id=1620 data-nosnippet>1620</a>    <span class="attr">#[cfg(all(test, any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
 <a href=#1621 id=1621 data-nosnippet>1621</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>inner(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;EndpointInner&gt;, EndpointError&gt; {
 <a href=#1622 id=1622 data-nosnippet>1622</a>        <span class="kw">if </span><span class="self">self</span>.is_closed() {
 <a href=#1623 id=1623 data-nosnippet>1623</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(EndpointError::Closed));
@@ -1822,7 +1822,7 @@
 <a href=#1822 id=1822 data-nosnippet>1822</a>    std::env::var_os(<span class="string">"REQUEST_METHOD"</span>).is_some()
 <a href=#1823 id=1823 data-nosnippet>1823</a>}
 <a href=#1824 id=1824 data-nosnippet>1824</a>
-<a href=#1825 id=1825 data-nosnippet>1825</a><span class="attr">#[cfg(test)]
+<a href=#1825 id=1825 data-nosnippet>1825</a><span class="attr">#[cfg(all(test, any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
 <a href=#1826 id=1826 data-nosnippet>1826</a></span><span class="kw">mod </span>tests {
 <a href=#1827 id=1827 data-nosnippet>1827</a>    <span class="kw">use </span>std::{
 <a href=#1828 id=1828 data-nosnippet>1828</a>        collections::BTreeMap,
