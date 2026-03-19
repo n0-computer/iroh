@@ -6,7 +6,7 @@ pub(crate) use imp::Options;
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::net_report::{Config, QuicConfig, probes::Probe};
+    use crate::net_report::{NetReportConfig, QuicConfig, probes::Probe};
 
     /// Options for running probes
     ///
@@ -22,7 +22,7 @@ mod imp {
         /// TLS config for HTTPS probes.
         pub(crate) tls_config: rustls::ClientConfig,
         /// User-facing configuration.
-        pub(crate) user_config: Config,
+        pub(crate) user_config: NetReportConfig,
     }
 
     impl Options {
@@ -30,7 +30,7 @@ mod imp {
             Self {
                 quic_config: None,
                 tls_config,
-                user_config: Config::default(),
+                user_config: NetReportConfig::default(),
             }
         }
         /// Enable quic probes
@@ -40,7 +40,7 @@ mod imp {
         }
 
         /// Set the net report configuration.
-        pub(crate) fn net_report_config(mut self, config: Config) -> Self {
+        pub(crate) fn net_report_config(mut self, config: NetReportConfig) -> Self {
             self.user_config = config;
             self
         }
@@ -68,7 +68,7 @@ mod imp {
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::net_report::{Config, Probe};
+    use crate::net_report::{NetReportConfig, Probe};
 
     /// Options for running probes (in browsers).
     ///
@@ -77,20 +77,20 @@ mod imp {
     #[derive(Debug, Clone)]
     pub(crate) struct Options {
         /// User-facing configuration.
-        pub(crate) user_config: Config,
+        pub(crate) user_config: NetReportConfig,
     }
 
     impl Default for Options {
         fn default() -> Self {
             Self {
-                user_config: Config::default(),
+                user_config: NetReportConfig::default(),
             }
         }
     }
 
     impl Options {
         /// Set the net report configuration.
-        pub(crate) fn net_report_config(mut self, config: Config) -> Self {
+        pub(crate) fn net_report_config(mut self, config: NetReportConfig) -> Self {
             self.user_config = config;
             self
         }

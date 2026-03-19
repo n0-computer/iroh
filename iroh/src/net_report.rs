@@ -85,26 +85,38 @@ pub use self::{
 };
 pub(crate) use self::{options::Options, reportgen::QuicConfig};
 
-/// Configuration for the net report service.
+/// Configuration for the net report component.
 ///
 /// Controls which probes and checks are performed when generating network reports.
 /// All options default to `true`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct Config {
+pub struct NetReportConfig {
     /// Run HTTPS latency probes against relay servers.
     ///
-    /// Disable this on constrained devices where the extra TCP connections are
-    /// too expensive — QAD (UDP) probes already measure relay latency.
+    /// HTTPS latency probes perform an empty HTTPS GET request to each configured
+    /// relay server and measure latency.
+    ///
+    /// They are performed in addition to the QUIC address discovery (QAD) probes.
+    /// They are the only way to detect relay latencies and thus the preferred relay
+    /// in networks that do not allow QUIC traffic.
+    ///
+    /// Disabling them is harmless on networks that do allow QUIC traffic, but will
+    /// completely prevent finding the home relay on networks that do block QUIC.
     pub https_probes: bool,
+
     /// Check for captive portals when generating the first report.
     ///
-    /// Disable this on embedded devices or environments where captive portal
-    /// detection is not meaningful.
+    /// This is done by accessing a well-known URL that is available on each relay
+    /// server, `/generate_204`. If a GET request to this URL returns anything else
+    /// but a 204 No Content response, we assume we are behind a captive portal.
+    ///
+    /// When we have detected that we are behind a captive portal, we try to contact
+    /// the relay servers more frequently in case the captive portal status changes.
     pub captive_portal_check: bool,
 }
 
-impl Config {
+impl NetReportConfig {
     /// Creates a minimal configuration that disables all optional probes and checks.
     pub fn minimal() -> Self {
         Self {
@@ -114,7 +126,7 @@ impl Config {
     }
 }
 
-impl Default for Config {
+impl Default for NetReportConfig {
     fn default() -> Self {
         Self {
             https_probes: true,

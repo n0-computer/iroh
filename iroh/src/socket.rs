@@ -150,7 +150,7 @@ pub(crate) struct Options {
     pub(crate) hooks: EndpointHooksList,
     pub(crate) transport_bias: TransportBiasMap,
     pub(crate) portmapper_config: portmapper::PortmapperConfig,
-    pub(crate) net_report_config: crate::net_report::Config,
+    pub(crate) net_report_config: crate::net_report::NetReportConfig,
 
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,

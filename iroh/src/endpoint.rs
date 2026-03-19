@@ -101,7 +101,7 @@ pub use self::{
 #[cfg(not(wasm_browser))]
 use crate::socket::transports::IpConfig;
 use crate::socket::transports::TransportConfig;
-pub use crate::{net_report::Config as NetReportConfig, portmapper::PortmapperConfig};
+pub use crate::{net_report::NetReportConfig, portmapper::PortmapperConfig};
 
 /// Builder for [`Endpoint`].
 ///
@@ -706,10 +706,13 @@ impl Builder {
         self
     }
 
-    /// Configures the net report service.
+    /// Configures the net report.
     ///
-    /// Controls which probes (HTTPS latency, captive portal detection) are run.
-    /// Defaults to all probes enabled.
+    /// The net report component is responsible for figuring out if and how the endpoint is connected to the internet.
+    /// It does this by doing various probes to the configured relay servers to get public addresses, NAT behaviour, and
+    /// relay latencies. In addition it tries to detect captive portals.
+    ///
+    /// Some non-essential features of the net report component can be disabled via this configuration.
     pub fn net_report_config(mut self, config: NetReportConfig) -> Self {
         self.net_report_config = config;
         self
