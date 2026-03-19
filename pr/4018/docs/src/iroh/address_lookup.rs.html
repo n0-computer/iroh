@@ -554,7 +554,7 @@
 <a href=#554 id=554 data-nosnippet>554</a><span class="kw">impl </span>AddressLookup <span class="kw">for </span>ConcurrentAddressLookup {
 <a href=#555 id=555 data-nosnippet>555</a>    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>EndpointData) {
 <a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">let </span>data = <span class="kw">match </span><span class="kw-2">&amp;*</span><span class="self">self</span>.addr_filter.read().expect(<span class="string">"poisoned"</span>) {
-<a href=#557 id=557 data-nosnippet>557</a>            <span class="prelude-val">Some</span>(filter) =&gt; data.apply_filter(<span class="kw-2">&amp;</span>filter),
+<a href=#557 id=557 data-nosnippet>557</a>            <span class="prelude-val">Some</span>(filter) =&gt; data.apply_filter(filter),
 <a href=#558 id=558 data-nosnippet>558</a>            <span class="prelude-val">None </span>=&gt; Cow::Borrowed(data),
 <a href=#559 id=559 data-nosnippet>559</a>        };
 <a href=#560 id=560 data-nosnippet>560</a>        <span class="kw">let </span>services = <span class="self">self</span>.services.read().expect(<span class="string">"poisoned"</span>);

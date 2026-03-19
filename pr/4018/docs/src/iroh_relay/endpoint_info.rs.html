@@ -178,7 +178,7 @@
 <a href=#178 id=178 data-nosnippet>178</a>        <span class="self">self</span>.add_addrs(addresses.into_iter().map(TransportAddr::Ip))
 <a href=#179 id=179 data-nosnippet>179</a>    }
 <a href=#180 id=180 data-nosnippet>180</a>
-<a href=#181 id=181 data-nosnippet>181</a>    <span class="doccomment">/// Adds addresses to the endpoint data in the given orderd, but with duplicates filtered.
+<a href=#181 id=181 data-nosnippet>181</a>    <span class="doccomment">/// Adds addresses to the endpoint data in the given ordered, but with duplicates filtered.
 <a href=#182 id=182 data-nosnippet>182</a>    </span><span class="kw">pub fn </span>add_addrs(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addrs: <span class="kw">impl </span>IntoIterator&lt;Item = TransportAddr&gt;) {
 <a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr_set = dedup(<span class="kw-2">&amp;mut </span><span class="self">self</span>.addrs);
 <a href=#184 id=184 data-nosnippet>184</a>        <span class="kw">for </span>addr <span class="kw">in </span>addrs.into_iter() {
