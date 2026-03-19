@@ -94,7 +94,7 @@ jobs:
             aws s3 cp s3://vorc/iroh-dns-server-linux-aarch64-${{ inputs.base_hash }} bins/linux/arm64/iroh-dns-server
         
         - name: Build Docker image (iroh-relay)
-          uses: docker/build-push-action@v6
+          uses: docker/build-push-action@v7
           with:
             context: .
             push: ${{ inputs.publish }}
@@ -104,7 +104,7 @@ jobs:
             file: docker/Dockerfile.ci
 
         - name: Build Docker image (iroh-dns-server)
-          uses: docker/build-push-action@v6
+          uses: docker/build-push-action@v7
           with:
             context: .
             push: ${{ inputs.publish }}

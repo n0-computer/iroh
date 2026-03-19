@@ -157,6 +157,7 @@ pub(crate) mod dns_and_pkarr_servers {
             impl Preset for DnsPkarrPreset {
                 fn apply(self, builder: crate::endpoint::Builder) -> crate::endpoint::Builder {
                     builder
+                        .addr_filter(crate::address_lookup::AddrFilter::relay_only())
                         .address_lookup(self.dns_address_lookup)
                         .address_lookup(self.pkarr_address_publisher)
                         .dns_resolver(self.dns_resolver)

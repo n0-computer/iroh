@@ -1,6 +1,6 @@
-//! Exporting and encapsulating structs from quinn
+//! Exporting and encapsulating structs from noq
 //!
-//! Co-locates all iroh-quinn exports.
+//! Co-locates all iroh-noq exports.
 //!
 //! There are some structs that we use in particular ways, where we would like
 //! to limit or expand how those structs are used in iroh. By encapsulating them
@@ -10,76 +10,75 @@
 use std::path::Path;
 use std::{sync::Arc, time::Duration};
 
-/// `quinn` types that are used in the public iroh API.
-// Each type is notated with the iroh type or quinn type that uses it.
-pub use quinn::{
+/// `noq` types that are used in the public iroh API.
+// Each type is notated with the iroh type or noq type that uses it.
+pub use noq::{
     AcceptBi,             // iroh::endpoint::Connection
     AcceptUni,            // iroh::endpoint::Connection
     AckFrequencyConfig,   // iroh::endpoint::quic::QuicTransportConfig
-    ClosedStream,         // iroh::protocol::AcceptError, quinn::RecvStream, quinn::SendStream
+    ClosedStream,         // iroh::protocol::AcceptError, noq::RecvStream, noq::SendStream
     ConnectionError,      // iroh::endpoint::ConnectError
     ConnectionStats,      // iroh::endpoint::Connection
-    Dir,                  // quinn::StreamId
+    Dir,                  // noq::StreamId
     IdleTimeout,          // iroh::endpoint::quic::QuicTransportConfig
     MtuDiscoveryConfig,   // iroh::endpoint::quic::QuicTransportConfig
     OpenBi,               // iroh::endpoint::Connection
     OpenUni,              // iroh::endpoint::Connection
     PathStats,            // iroh::socket::remote_map::remote_state::PathInfo
     ReadDatagram,         // iroh::endpoint::Connection
-    ReadError,            // quinn::RecvStream
-    ReadExactError,       // quinn::RecvStream
-    ReadToEndError,       // quinn::RecvStream
-    RecvStream,           // quinn::AcceptBi, quinn::AcceptUni, quinn::OpenBi, quinn::OpenUni
-    ResetError,           // quinn::RecvStream
+    ReadError,            // noq::RecvStream
+    ReadExactError,       // noq::RecvStream
+    ReadToEndError,       // noq::RecvStream
+    RecvStream,           // noq::AcceptBi, noq::AcceptUni, noq::OpenBi, noq::OpenUni
+    ResetError,           // noq::RecvStream
     SendDatagram,         // iroh::endpoint::Connection
     SendDatagramError,    // iroh::endpoint::Connection
-    SendStream,           // quinn::AcceptBi, quinn::OpenUni
-    Side,                 // iroh::endpoint::Connection, quinn::StreamId,
-    StoppedError,         // quinn::SendStream
-    StreamId,             // quinn::RecvStream
-    UnorderedRecvStream,  // quinn::RecvStream
+    SendStream,           // noq::AcceptBi, noq::OpenUni
+    Side,                 // iroh::endpoint::Connection, noq::StreamId,
+    StoppedError,         // noq::SendStream
+    StreamId,             // noq::RecvStream
+    UnorderedRecvStream,  // noq::RecvStream
     VarInt,               // various
-    VarIntBoundsExceeded, // quinn::VarInt, quinn::IdleTimeout
-    WriteError,           // quinn::SendStream
-    Written,              // quinn::SendStream
+    VarIntBoundsExceeded, // noq::VarInt, noq::IdleTimeout
+    WriteError,           // noq::SendStream
+    Written,              // noq::SendStream
 };
 #[cfg(feature = "qlog")]
-pub use quinn::{QlogConfig, QlogFactory, QlogFileFactory};
-/// `quinn_proto` types that are used in the public iroh API.
-// Each type is notated with the iroh type or quinn type that uses it.
-pub use quinn_proto::{
-    ApplicationClose,                 // quinn::ConnectionError
-    Chunk,                            // quinn::RecvStream
+pub use noq::{QlogConfig, QlogFactory, QlogFileFactory};
+/// `noq_proto` types that are used in the public iroh API.
+// Each type is notated with the iroh type or noq type that uses it.
+pub use noq_proto::{
+    ApplicationClose,                 // noq::ConnectionError
+    Chunk,                            // noq::RecvStream
     ConnectError as QuicConnectError, // iroh::endpoint::ConnectWithOptsError
-    ConnectionClose,                  // quinn::ConnectionError
+    ConnectionClose,                  // noq::ConnectionError
     DecryptedInitial,                 // iroh::endpoint::connection::Incoming
-    FrameStats,                       // quinn::ConnectionStats
-    FrameType,                        // quinn_proto::TransportError
-    PathId,                           // quinn_proto::crypto::PacketKey
-    RttEstimator,                     // quinn_proto::congestion::Controller
+    FrameStats,                       // noq::ConnectionStats
+    FrameType,                        // noq_proto::TransportError
+    PathId,                           // noq_proto::crypto::PacketKey
+    RttEstimator,                     // noq_proto::congestion::Controller
     TimeSource,                       // iroh::endpoint::quic::ServerConfig
-    TokenLog,                         // quinn::ValidationTokenConfig
-    TokenReuseError,                  // quinn::TokenLog
-    TransportError,                   // quinn::ConnectionError
-    TransportErrorCode,               // quinn_proto::TransportError
-    UdpStats,                         // quinn::ConnectionStats
+    TokenLog,                         // noq::ValidationTokenConfig
+    TokenReuseError,                  // noq::TokenLog
+    TransportError,                   // noq::ConnectionError
+    TransportErrorCode,               // noq_proto::TransportError
+    UdpStats,                         // noq::ConnectionStats
     ValidationTokenConfig,            // iroh::endpoint::quic::::ServerConfig
     congestion::{
         Controller,        // iroh::endpoint::Connection
         ControllerFactory, // iroh::endpoint::quic::QuicTransportConfig
-        ControllerMetrics, // quinn_proto::congestion::Controller
+        ControllerMetrics, // noq_proto::congestion::Controller
     },
     crypto::{
-        AeadKey,                   // quinn::HandshakeTokenKey
-        CryptoError, // quinn_proto::crypto::CryptoError, quinn_proto::crypto::PacketKey
+        CryptoError,               // noq_proto::crypto::CryptoError, noq_proto::crypto::PacketKey
         ExportKeyingMaterialError, // iroh::endpoint::Connection
-        HandshakeTokenKey, // iroh::endpoint::quic::ServerConfig
-        HeaderKey,   // quinn_proto::crypto::Keys
-        Keys,        // quinn_proto::crypto::Session
-        PacketKey,   // quinn_proto::crypto::Keys
-        UnsupportedVersion, // quinn_proto::ConnectError
+        HandshakeTokenKey,         // iroh::endpoint::quic::ServerConfig
+        HeaderKey,                 // noq_proto::crypto::Keys
+        Keys,                      // noq_proto::crypto::Session
+        PacketKey,                 // noq_proto::crypto::Keys
+        UnsupportedVersion,        // noq_proto::ConnectError
     },
-    transport_parameters::TransportParameters, // quinn_proto::crypot::ServerConfig
+    transport_parameters::TransportParameters, // noq_proto::crypot::ServerConfig
 };
 use tracing::warn;
 
@@ -87,7 +86,7 @@ use crate::socket::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEO
 
 /// Builder for a [`QuicTransportConfig`].
 #[derive(Debug, Clone)]
-pub struct QuicTransportConfigBuilder(quinn::TransportConfig);
+pub struct QuicTransportConfigBuilder(noq::TransportConfig);
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -124,7 +123,7 @@ pub struct QuicTransportConfigBuilder(quinn::TransportConfig);
 ///     .build();
 /// ```
 #[derive(Debug, Clone)]
-pub struct QuicTransportConfig(Arc<quinn::TransportConfig>);
+pub struct QuicTransportConfig(Arc<noq::TransportConfig>);
 
 impl QuicTransportConfig {
     /// Returns a default [`QuicTransportConfigBuilder`] that allows customizing
@@ -141,7 +140,7 @@ impl Default for QuicTransportConfig {
 }
 
 impl QuicTransportConfig {
-    pub(crate) fn to_inner_arc(&self) -> Arc<quinn::TransportConfig> {
+    pub(crate) fn to_inner_arc(&self) -> Arc<noq::TransportConfig> {
         self.0.clone()
     }
 }
@@ -149,7 +148,7 @@ impl QuicTransportConfig {
 impl QuicTransportConfigBuilder {
     /// Create a default [`QuicTransportConfigBuilder`].
     fn new() -> Self {
-        let mut cfg = quinn::TransportConfig::default();
+        let mut cfg = noq::TransportConfig::default();
         // Override some transport config settings.
         cfg.keep_alive_interval(Some(HEARTBEAT_INTERVAL));
         cfg.default_path_keep_alive_interval(Some(HEARTBEAT_INTERVAL));
@@ -408,7 +407,7 @@ impl QuicTransportConfigBuilder {
     ///
     /// # Example
     /// ```
-    /// # use iroh::endpoint::QuicTransportConfig; use quinn_proto::congestion; use std::sync::Arc;
+    /// # use iroh::endpoint::QuicTransportConfig; use noq_proto::congestion; use std::sync::Arc;
     /// let config = QuicTransportConfig::builder()
     ///     .congestion_controller_factory(Arc::new(congestion::NewRenoConfig::default()))
     ///     .build();
@@ -428,7 +427,7 @@ impl QuicTransportConfigBuilder {
     ///
     /// GSO dramatically reduces CPU consumption when sending large numbers of packets with the same
     /// headers, such as when transmitting bulk data on a connection. However, it is not supported
-    /// by all network interface drivers or packet inspection tools. `quinn-udp` will attempt to
+    /// by all network interface drivers or packet inspection tools. `noq-udp` will attempt to
     /// disable GSO automatically when unavailable, but this can lead to spurious packet loss at
     /// startup, temporarily degrading performance.
     pub fn enable_segmentation_offload(mut self, enabled: bool) -> Self {
@@ -580,7 +579,7 @@ impl QuicTransportConfigBuilder {
 /// A builder for a [`ServerConfig`].
 #[derive(Debug, Clone)]
 pub struct ServerConfigBuilder {
-    inner: quinn::ServerConfig,
+    inner: noq::ServerConfig,
     transport: QuicTransportConfig,
 }
 
@@ -595,12 +594,12 @@ pub struct ServerConfigBuilder {
 /// [`Endpoint`]: crate::Endpoint
 /// [`Endpoint::create_server_config_builder`]: crate::Endpoint::create_server_config_builder
 // Note: used in `iroh::endpoint::connection::Incoming::accept_with`
-// This is new-typed since `quinn::ServerConfig` takes a `TransportConfig`, which we new-type as a `QuicTransportConfig`
+// This is new-typed since `noq::ServerConfig` takes a `TransportConfig`, which we new-type as a `QuicTransportConfig`
 #[derive(Debug, Clone)]
-pub struct ServerConfig(Arc<quinn::ServerConfig>);
+pub struct ServerConfig(Arc<noq::ServerConfig>);
 
 impl ServerConfig {
-    pub(crate) fn to_inner_arc(&self) -> Arc<quinn::ServerConfig> {
+    pub(crate) fn to_inner_arc(&self) -> Arc<noq::ServerConfig> {
         self.0.clone()
     }
 }
@@ -611,7 +610,7 @@ impl ServerConfigBuilder {
         ServerConfig(Arc::new(self.inner))
     }
 
-    pub(crate) fn new(inner: quinn::ServerConfig, transport: QuicTransportConfig) -> Self {
+    pub(crate) fn new(inner: noq::ServerConfig, transport: QuicTransportConfig) -> Self {
         Self { inner, transport }
     }
 
@@ -701,7 +700,7 @@ impl ServerConfigBuilder {
     ///
     /// This exists to allow system time to be mocked in tests, or wherever else desired.
     ///
-    /// Defaults to [`quinn::StdSystemTime`], which simply calls [`SystemTime::now()`](std::time::SystemTime::now).
+    /// Defaults to [`noq::StdSystemTime`], which simply calls [`SystemTime::now()`](std::time::SystemTime::now).
     ///
     /// [`SystemTime`]: std::time::SystemTime
     pub fn set_time_source(mut self, time_source: Arc<dyn TimeSource>) -> Self {

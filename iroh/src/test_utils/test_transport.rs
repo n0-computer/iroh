@@ -263,7 +263,7 @@ impl CustomEndpoint for TestTransport {
         &mut self,
         cx: &mut std::task::Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         let n = bufs.len();
@@ -324,7 +324,7 @@ mod tests {
     use crate::{
         Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
         endpoint::{
-            Builder, Connection,
+            Builder, Connection, presets,
             transports::{AddrKind, TransportBias},
         },
         protocol::{AcceptError, ProtocolHandler, Router},
@@ -381,7 +381,7 @@ mod tests {
             Some(map) => RelayMode::Custom(map),
             None => RelayMode::Disabled,
         };
-        let mut builder = Endpoint::builder()
+        let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
             .relay_mode(relay_mode)
             .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
