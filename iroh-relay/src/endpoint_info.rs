@@ -34,7 +34,7 @@
 
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::{self, Display},
     hash::Hash,
     net::SocketAddr,
@@ -127,9 +127,9 @@ pub struct EndpointData {
     user_data: Option<UserData>,
 }
 
-fn dedup<T: PartialEq + Ord + Clone>(items: &mut Vec<T>) -> BTreeSet<T> {
+fn dedup<T: Eq + Hash + Clone>(items: &mut Vec<T>) -> HashSet<T> {
     // Remove all duplicate entries, but keep the array order.
-    let mut item_set = BTreeSet::new();
+    let mut item_set = HashSet::new();
     for (i, item) in items.clone().into_iter().enumerate() {
         if item_set.contains(&item) {
             items.remove(i);
