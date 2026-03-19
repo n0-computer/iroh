@@ -34,7 +34,7 @@
 
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt::{self, Display},
     hash::Hash,
     net::SocketAddr,
@@ -42,6 +42,7 @@ use std::{
     sync::Arc,
 };
 
+use ahash::AHashSet;
 use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey, TransportAddr};
 use n0_error::{e, ensure, stack_error};
 use url::Url;
@@ -127,17 +128,11 @@ pub struct EndpointData {
     user_data: Option<UserData>,
 }
 
-fn dedup<T: Eq + Hash + Clone>(items: &mut Vec<T>) -> HashSet<T> {
+fn dedup<T: Eq + Hash + Clone>(items: &mut Vec<T>) -> AHashSet<T> {
     // Remove all duplicate entries, but keep the array order.
-    let mut item_set = HashSet::new();
-    for (i, item) in items.clone().into_iter().enumerate() {
-        if item_set.contains(&item) {
-            items.remove(i);
-        } else {
-            item_set.insert(item);
-        }
-    }
-    item_set
+    let mut seen = AHashSet::new();
+    items.retain(|item| seen.insert(item.clone()));
+    seen
 }
 
 impl EndpointData {
