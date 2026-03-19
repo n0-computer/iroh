@@ -1254,7 +1254,7 @@ impl ConnectionInfo {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
 mod tests {
     use std::time::Duration;
 

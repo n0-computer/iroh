@@ -583,7 +583,7 @@ impl AddressLookup for ConcurrentAddressLookup {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
 mod tests {
     use std::{
         collections::HashMap,
@@ -969,24 +969,19 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_relay::{
-        RelayMap,
         endpoint_info::UserData,
         tls::{CaRootsConfig, default_provider},
     };
-    use n0_error::{AnyError, Result, StackResultExt};
+    use n0_error::{Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
-    use rand::{CryptoRng, SeedableRng};
-    use tokio_util::task::AbortOnDropHandle;
+    use rand::SeedableRng;
 
     use crate::{
-        Endpoint, RelayMode,
         address_lookup::{EndpointData, PkarrPublisher},
         dns::DnsResolver,
         endpoint_info::EndpointInfo,
-        test_utils::{
-            DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
-        },
+        test_utils::{DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State},
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -1063,15 +1058,17 @@ mod test_dns_pkarr {
         Ok(())
     }
 
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
     const TEST_ALPN: &[u8] = b"TEST";
 
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_address_lookup() -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, _relay_guard) = crate::test_utils::run_relay_server().await?;
 
         let (ep1, _guard1) =
             ep_with_address_lookup(&mut rng, &relay_map, &dns_pkarr_server).await?;
@@ -1089,11 +1086,18 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    async fn ep_with_address_lookup<R: CryptoRng + ?Sized>(
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    async fn ep_with_address_lookup<R: rand::CryptoRng + ?Sized>(
         rng: &mut R,
-        relay_map: &RelayMap,
+        relay_map: &iroh_relay::RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
-    ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
+    ) -> Result<(
+        crate::Endpoint,
+        n0_future::task::AbortOnDropHandle<Result<()>>,
+    )> {
+        use crate::{Endpoint, RelayMode};
+        use n0_future::task::AbortOnDropHandle;
+
         let secret_key = SecretKey::generate(rng);
         let ep = Endpoint::empty_builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -1108,6 +1112,8 @@ mod test_dns_pkarr {
             let ep = ep.clone();
             async move {
                 // we skip accept() errors, they can be caused by retransmits
+
+                use n0_error::AnyError;
                 while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     let _conn = accepting.await.context("accepting")?;
                     // Just accept incoming connections, but don't do anything with them.

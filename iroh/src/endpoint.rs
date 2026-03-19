@@ -1617,7 +1617,7 @@ impl Endpoint {
         self.inner.to_transport_addr(addr)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
     pub(crate) fn inner(&self) -> Result<Arc<EndpointInner>, EndpointError> {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
@@ -1822,7 +1822,7 @@ fn is_cgi() -> bool {
     std::env::var_os("REQUEST_METHOD").is_some()
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
 mod tests {
     use std::{
         collections::BTreeMap,
