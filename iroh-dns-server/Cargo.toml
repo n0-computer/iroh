@@ -1,6 +1,6 @@
 [package]
 name = "iroh-dns-server"
-version = "0.96.1"
+version = "0.97.0"
 edition = "2024"
 description = "A pkarr relay and DNS server"
 license = "MIT OR Apache-2.0"
@@ -40,7 +40,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 struct_iterable = "0.1.1"
 n0-error = "0.1"
-strum = { version = "0.27", features = ["derive"] }
+strum = { version = "0.28", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",

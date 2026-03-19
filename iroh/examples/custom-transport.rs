@@ -4,7 +4,7 @@ use clap::Parser;
 use iroh::{
     Endpoint, SecretKey, TransportAddr,
     endpoint::{
-        Builder, Connection,
+        Builder, Connection, presets,
         transports::{AddrKind, TransportBias},
     },
     protocol::{AcceptError, ProtocolHandler, Router},
@@ -41,7 +41,7 @@ const CUSTOM_TRANSPORT_RTT_ADVANTAGE: Duration = Duration::from_millis(100);
 impl Args {
     /// Configure an endpoint builder with the custom transport and optional IP/relay transports.
     fn configure(&self, secret_key: SecretKey, transport: Arc<TestTransport>) -> Builder {
-        let mut builder = Endpoint::builder()
+        let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
             .preset(transport)
             // Give the custom transport a strong RTT advantage so it always wins path selection
