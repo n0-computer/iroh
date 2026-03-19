@@ -12,11 +12,7 @@
 //! # }
 //! ```
 
-use crate::{
-    RelayMode,
-    address_lookup::PkarrPublisher,
-    endpoint::{Builder, default_relay_mode},
-};
+use crate::endpoint::Builder;
 
 /// Defines a preset
 pub trait Preset {
@@ -60,6 +56,7 @@ pub struct N0;
 #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
 impl Preset for N0 {
     fn apply(self, mut builder: Builder) -> Builder {
+        use crate::{address_lookup::PkarrPublisher, endpoint::default_relay_mode};
         use std::sync::Arc;
 
         builder = builder.address_lookup(PkarrPublisher::n0_dns());
@@ -120,6 +117,8 @@ impl Preset for N0 {
 /// When in tests, or when the `test-utils` feature is enabled, this will use the
 /// [`N0_DNS_PKARR_RELAY_STAGING`].
 ///
+/// [ring]: rustls::crypto::ring::default_provider
+/// [aws-lc-rs]: rustls::crypto::aws_lc_rs::default_provider
 /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::address_lookup::N0_DNS_PKARR_RELAY_PROD
 /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::address_lookup::N0_DNS_PKARR_RELAY_STAGING
 #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
@@ -129,6 +128,8 @@ pub struct N0DisableRelay;
 #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
 impl Preset for N0DisableRelay {
     fn apply(self, builder: Builder) -> Builder {
+        use crate::RelayMode;
+
         N0.apply(builder).relay_mode(RelayMode::Disabled)
     }
 }
