@@ -105,7 +105,6 @@ pub struct Config {
 }
 
 impl Config {
-
     /// Creates a minimal configuration that disables all optional probes and checks.
     pub fn minimal() -> Self {
         Self {
@@ -280,7 +279,7 @@ impl Client {
             qad_conns: QadConns::default(),
             #[cfg(not(wasm_browser))]
             tls_config: opts.tls_config,
-            captive_portal_check: opts.config.captive_portal_check,
+            captive_portal_check: opts.user_config.captive_portal_check,
         }
     }
 

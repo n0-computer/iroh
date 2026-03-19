@@ -22,7 +22,7 @@ mod imp {
         /// TLS config for HTTPS probes.
         pub(crate) tls_config: rustls::ClientConfig,
         /// User-facing configuration.
-        pub(crate) config: Config,
+        pub(crate) user_config: Config,
     }
 
     impl Options {
@@ -30,7 +30,7 @@ mod imp {
             Self {
                 quic_config: None,
                 tls_config,
-                config: Config::default(),
+                user_config: Config::default(),
             }
         }
         /// Enable quic probes
@@ -41,7 +41,7 @@ mod imp {
 
         /// Set the net report configuration.
         pub(crate) fn net_report_config(mut self, config: Config) -> Self {
-            self.config = config;
+            self.user_config = config;
             self
         }
 
@@ -56,7 +56,7 @@ mod imp {
                     protocols.insert(Probe::QadIpv6);
                 }
             }
-            if self.config.https_probes {
+            if self.user_config.https_probes {
                 protocols.insert(Probe::Https);
             }
             protocols
@@ -77,38 +77,28 @@ mod imp {
     #[derive(Debug, Clone)]
     pub(crate) struct Options {
         /// User-facing configuration.
-        pub(crate) config: Config,
+        pub(crate) user_config: Config,
     }
 
     impl Default for Options {
         fn default() -> Self {
             Self {
-                config: Config::default(),
+                user_config: Config::default(),
             }
         }
     }
 
     impl Options {
-        /// Create an [`Options`] that disables all probes
-        pub(crate) fn disabled() -> Self {
-            Self {
-                config: Config {
-                    https_probes: false,
-                    captive_portal_check: false,
-                },
-            }
-        }
-
         /// Set the net report configuration.
         pub(crate) fn net_report_config(mut self, config: Config) -> Self {
-            self.config = config;
+            self.user_config = config;
             self
         }
 
         /// Turn the options into set of valid protocols
         pub(crate) fn as_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();
-            if self.config.https_probes {
+            if self.user_config.https_probes {
                 protocols.insert(Probe::Https);
             }
             protocols
