@@ -960,7 +960,7 @@ mod tests {
         let lookup = Lookup::new_with_max_ttl(query, records);
         let lookup = lookup
             .answers()
-            .into_iter()
+            .iter()
             .filter_map(|record| match record.data() {
                 RData::TXT(txt) => Some(TxtRecordData::from(txt.txt_data().to_vec())),
                 _ => None,
