@@ -65,7 +65,7 @@ implement <a href="trait.AddressLookup.html" title="trait iroh::address_lookup::
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{
     Endpoint, SecretKey,
     address_lookup::{<span class="self">self</span>, AddrFilter, PkarrPublisher},
-    endpoint::{presets, RelayMode},
+    endpoint::{RelayMode, presets},
 };
 
 <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
