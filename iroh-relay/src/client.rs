@@ -17,8 +17,6 @@ use n0_future::{
     split::{SplitSink, SplitStream, split},
     time,
 };
-#[cfg(any(test, feature = "test-utils"))]
-use tracing::warn;
 use tracing::{Level, debug, event, trace};
 use url::Url;
 
@@ -173,6 +171,26 @@ impl ClientBuilder {
     }
 
     /// Sets a custom TLS config.
+    ///
+    /// This is a required option.
+    ///
+    /// You can construct a [`rustls::ClientConfig`] by combining a [`ruslts::crypto::CryptoProvider`]
+    /// with a [`tls::CaRootsConfig`] using [`tls::CaRootsConfig::client_config`], for example:
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use iroh_relay::tls::CaRootsConfig;
+    ///
+    /// let crypto_provider: rustls::crypto::CryptoProvider = todo!();
+    /// let client_config = CaRootsConfig::default().client_config(Arc::new(crypto_provider));
+    /// ```
+    ///
+    /// If you enable the tls-ring or tls-aws-lc-rs feature, you can use the enabled crypto provider
+    /// by using [`tls::default_provider`].
+    ///
+    /// [`tls::CaRootsConfig`]: crate::tls::CaRootsConfig
+    /// [`tls::CaRootsConfig::client_config`]: crate::tls::CaRootsConfig::client_config
+    /// [`tls::default_provider`]: crate::tls::default_provider
     pub fn tls_client_config(mut self, tls_config: rustls::ClientConfig) -> Self {
         self.tls_config = Some(tls_config);
         self
@@ -233,17 +251,10 @@ impl ClientBuilder {
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let tls_config = match self.tls_config.clone() {
-            Some(config) => config,
-            #[cfg(feature = "tls-ring")]
-            None => crate::tls::CaRootsConfig::default()
-                .client_config(Arc::new(rustls::crypto::ring::default_provider()))?,
-            #[cfg(all(feature = "tls-aws-lc-rs", not(feature = "tls-ring")))]
-            None => crate::tls::CaRootsConfig::default()
-                .client_config(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))?,
-            #[cfg(not(with_crypto_provider))]
-            None => n0_error::bail!(ConnectError::MissingCryptoProvider),
-        };
+        let tls_config = self
+            .tls_config
+            .clone()
+            .ok_or_else(|| e!(ConnectError::MissingCryptoProvider))?;
 
         #[allow(unused_mut)]
         let mut builder =
@@ -474,65 +485,5 @@ impl Stream for ClientStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.stream).poll_next(cx)
-    }
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-/// Creates a client config that trusts any servers without verifying their TLS certificate.
-///
-/// Should be used for testing local relay setups only.
-pub fn make_dangerous_client_config() -> rustls::ClientConfig {
-    warn!(
-        "Insecure config: SSL certificates from relay servers will be trusted without verification"
-    );
-    rustls::client::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .expect("protocols supported by ring")
-    .dangerous()
-    .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
-    .with_no_client_auth()
-}
-
-/// Used to allow self signed certificates in tests
-#[cfg(any(test, feature = "test-utils"))]
-#[derive(Debug)]
-struct NoCertVerifier;
-
-#[cfg(any(test, feature = "test-utils"))]
-impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer,
-        _intermediates: &[rustls::pki_types::CertificateDer],
-        _server_name: &rustls::pki_types::ServerName,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
     }
 }

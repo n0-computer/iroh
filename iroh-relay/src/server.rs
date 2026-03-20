@@ -800,6 +800,7 @@ mod tests {
             handshake,
             relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         },
+        tls::{CaRootsConfig, default_provider},
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
@@ -941,12 +942,17 @@ mod tests {
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse()?;
 
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
         // set up client a
         let a_secret_key = SecretKey::generate(&mut rng);
         let a_key = a_secret_key.public();
         let resolver = dns_resolver();
         info!("client a build & connect");
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .tls_client_config(client_config.clone())
             .connect()
             .await?;
 
@@ -955,6 +961,7 @@ mod tests {
         let b_key = b_secret_key.public();
         info!("client b build & connect");
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .tls_client_config(client_config)
             .connect()
             .await?;
 
@@ -1000,6 +1007,10 @@ mod tests {
         let current_span = tracing::info_span!("this is a test");
         let _guard = current_span.enter();
 
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
         let a_secret_key = SecretKey::generate(&mut rng);
         let a_key = a_secret_key.public();
 
@@ -1033,6 +1044,7 @@ mod tests {
         // set up client a
         let resolver = dns_resolver();
         let result = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+            .tls_client_config(client_config.clone())
             .connect()
             .await;
 
@@ -1048,6 +1060,7 @@ mod tests {
 
         let resolver = dns_resolver();
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
+            .tls_client_config(client_config.clone())
             .connect()
             .await?;
 
@@ -1057,6 +1070,7 @@ mod tests {
 
         let resolver = dns_resolver();
         let mut client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
+            .tls_client_config(client_config)
             .connect()
             .await?;
 
@@ -1086,10 +1100,15 @@ mod tests {
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
         // set up client a
         let a_secret_key = SecretKey::generate(&mut rng);
         let resolver = dns_resolver();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .tls_client_config(client_config.clone())
             .connect()
             .await?;
 
@@ -1097,6 +1116,7 @@ mod tests {
         let b_secret_key = SecretKey::generate(&mut rng);
         let b_key = b_secret_key.public();
         let _client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .tls_client_config(client_config)
             .connect()
             .await?;
 

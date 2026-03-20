@@ -355,7 +355,7 @@ impl QuicClient {
     }
 }
 
-#[cfg(all(test, feature = "server"))]
+#[cfg(all(test, feature = "server", with_crypto_provider))]
 mod tests {
     use std::{net::Ipv4Addr, sync::Arc};
 
@@ -393,7 +393,7 @@ mod tests {
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
-        let client_config = crate::client::make_dangerous_client_config();
+        let client_config = crate::tls::make_dangerous_client_config();
         let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         let (addr, _latency) = quic_client
@@ -425,7 +425,7 @@ mod tests {
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
-        let client_config = crate::client::make_dangerous_client_config();
+        let client_config = crate::tls::make_dangerous_client_config();
         let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         // Start a connection attempt with nirvana - this will fail
@@ -528,7 +528,7 @@ mod tests {
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
-        let client_config = crate::client::make_dangerous_client_config();
+        let client_config = crate::tls::make_dangerous_client_config();
         let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         // Now we should still connect, but it should take more than 1s.
