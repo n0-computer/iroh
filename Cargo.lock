@@ -2177,6 +2177,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-dns"
+version = "0.97.0"
+dependencies = [
+ "data-encoding",
+ "iroh-base",
+ "n0-error",
+ "n0-future",
+ "simple-dns",
+]
+
+[[package]]
 name = "iroh-dns-server"
 version = "0.97.0"
 dependencies = [
@@ -2198,8 +2209,8 @@ dependencies = [
  "humantime-serde",
  "iroh",
  "iroh-base",
+ "iroh-dns",
  "iroh-metrics",
- "iroh-relay",
  "lru",
  "mainline",
  "n0-error",
@@ -2285,6 +2296,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "iroh-base",
+ "iroh-dns",
  "iroh-metrics",
  "lru",
  "n0-error",
@@ -2311,7 +2323,6 @@ dependencies = [
  "serde_json",
  "sha1",
  "simdutf8",
- "simple-dns",
  "strum 0.28.0",
  "time",
  "tokio",

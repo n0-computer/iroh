@@ -15,7 +15,7 @@ use hickory_server::proto::{
     serialize::binary::BinDecodable,
 };
 use iroh_base::PublicKey;
-use iroh_relay::{endpoint_info::EndpointIdExt, pkarr::SignedPacket};
+use iroh_dns::{EndpointIdExt, pkarr::SignedPacket};
 use n0_error::{e, stack_error};
 
 #[derive(

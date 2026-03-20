@@ -6,7 +6,7 @@ use hickory_server::proto::{
     ProtoError,
     rr::{Name, RecordSet, RecordType, RrKey},
 };
-use iroh_relay::pkarr::SignedPacket;
+use iroh_dns::pkarr::SignedPacket;
 use lru::LruCache;
 use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_error::{Result, StdResultExt};

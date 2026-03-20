@@ -28,7 +28,7 @@ mod tests {
         endpoint_info::EndpointInfo,
         tls::{CaRootsConfig, default_provider},
     };
-    use iroh_relay::{endpoint_info::EndpointIdExt, pkarr::SignedPacket};
+    use iroh_dns::{EndpointIdExt, pkarr::SignedPacket};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
     use rand::{CryptoRng, SeedableRng};

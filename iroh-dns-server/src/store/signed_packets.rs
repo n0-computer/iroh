@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use iroh_relay::pkarr::SignedPacket;
+use iroh_dns::pkarr::SignedPacket;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
 use redb::{
     Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition,
