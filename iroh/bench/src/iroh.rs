@@ -4,11 +4,9 @@ use std::{
 };
 
 use bytes::Bytes;
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-use iroh::endpoint::presets;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
-    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
+    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream, presets},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
