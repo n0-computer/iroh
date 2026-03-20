@@ -29,10 +29,10 @@
 <a href=#29 id=29 data-nosnippet>29</a>            .clone()
 <a href=#30 id=30 data-nosnippet>30</a>            .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
 <a href=#31 id=31 data-nosnippet>31</a>
-<a href=#32 id=32 data-nosnippet>32</a>        <span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#32 id=32 data-nosnippet>32</a>        <span class="attr">#[cfg(any(feature = <span class="string">"tls-ring"</span>, feature = <span class="string">"tls-aws-lc-rs"</span>))]
 <a href=#33 id=33 data-nosnippet>33</a>        #[allow(unused_mut)]
 <a href=#34 id=34 data-nosnippet>34</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder(presets::N0);
-<a href=#35 id=35 data-nosnippet>35</a>        <span class="attr">#[cfg(not(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
+<a href=#35 id=35 data-nosnippet>35</a>        <span class="attr">#[cfg(not(any(feature = <span class="string">"tls-ring"</span>, feature = <span class="string">"tls-aws-lc-rs"</span>)))]
 <a href=#36 id=36 data-nosnippet>36</a>        #[allow(unused_mut)]
 <a href=#37 id=37 data-nosnippet>37</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder(presets::Empty); <span class="comment">// allow building, but fail at runtime
 <a href=#38 id=38 data-nosnippet>38</a>        </span><span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
@@ -94,10 +94,10 @@
 <a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">let </span>relay_mode = relay_url
 <a href=#95 id=95 data-nosnippet>95</a>        .clone()
 <a href=#96 id=96 data-nosnippet>96</a>        .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="attr">#[cfg(any(feature = <span class="string">"tls-ring"</span>, feature = <span class="string">"tls-aws-lc-rs"</span>))]
 <a href=#98 id=98 data-nosnippet>98</a>    #[allow(unused_mut)]
 <a href=#99 id=99 data-nosnippet>99</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder(presets::N0);
-<a href=#100 id=100 data-nosnippet>100</a>    <span class="attr">#[cfg(not(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="attr">#[cfg(not(any(feature = <span class="string">"tls-ring"</span>, feature = <span class="string">"tls-aws-lc-rs"</span>)))]
 <a href=#101 id=101 data-nosnippet>101</a>    #[allow(unused_mut)]
 <a href=#102 id=102 data-nosnippet>102</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder(presets::Empty); <span class="comment">// allow building, but fail at runtime
 <a href=#103 id=103 data-nosnippet>103</a>    </span><span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]

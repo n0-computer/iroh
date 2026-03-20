@@ -123,7 +123,7 @@
 <a href=#123 id=123 data-nosnippet>123</a></span><span class="kw">pub struct </span>Builder {
 <a href=#124 id=124 data-nosnippet>124</a>    use_system_defaults: bool,
 <a href=#125 id=125 data-nosnippet>125</a>    nameservers: Vec&lt;(SocketAddr, DnsProtocol)&gt;,
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="attr">#[cfg(with_crypto_provider)]
 <a href=#127 id=127 data-nosnippet>127</a>    </span>tls_client_config: <span class="prelude-ty">Option</span>&lt;rustls::ClientConfig&gt;,
 <a href=#128 id=128 data-nosnippet>128</a>}
 <a href=#129 id=129 data-nosnippet>129</a>
@@ -145,14 +145,14 @@
 <a href=#145 id=145 data-nosnippet>145</a>    /// Performs DNS lookups over TLS-encrypted TCP connections, as defined in [RFC 7858].
 <a href=#146 id=146 data-nosnippet>146</a>    ///
 <a href=#147 id=147 data-nosnippet>147</a>    /// [RFC 7858]: https://www.rfc-editor.org/rfc/rfc7858.html
-<a href=#148 id=148 data-nosnippet>148</a>    </span><span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#148 id=148 data-nosnippet>148</a>    </span><span class="attr">#[cfg(with_crypto_provider)]
 <a href=#149 id=149 data-nosnippet>149</a>    </span>Tls,
 <a href=#150 id=150 data-nosnippet>150</a>    <span class="doccomment">/// DNS over HTTPS
 <a href=#151 id=151 data-nosnippet>151</a>    ///
 <a href=#152 id=152 data-nosnippet>152</a>    /// Performs DNS lookups over HTTPS, as defined in [RFC 8484].
 <a href=#153 id=153 data-nosnippet>153</a>    ///
 <a href=#154 id=154 data-nosnippet>154</a>    /// [RFC 8484]: https://www.rfc-editor.org/rfc/rfc8484.html
-<a href=#155 id=155 data-nosnippet>155</a>    </span><span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#155 id=155 data-nosnippet>155</a>    </span><span class="attr">#[cfg(with_crypto_provider)]
 <a href=#156 id=156 data-nosnippet>156</a>    </span>Https,
 <a href=#157 id=157 data-nosnippet>157</a>}
 <a href=#158 id=158 data-nosnippet>158</a>
@@ -162,9 +162,9 @@
 <a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#163 id=163 data-nosnippet>163</a>            DnsProtocol::Udp =&gt; Protocol::Udp,
 <a href=#164 id=164 data-nosnippet>164</a>            DnsProtocol::Tcp =&gt; Protocol::Tcp,
-<a href=#165 id=165 data-nosnippet>165</a>            <span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#165 id=165 data-nosnippet>165</a>            <span class="attr">#[cfg(with_crypto_provider)]
 <a href=#166 id=166 data-nosnippet>166</a>            </span>DnsProtocol::Tls =&gt; Protocol::Tls,
-<a href=#167 id=167 data-nosnippet>167</a>            <span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#167 id=167 data-nosnippet>167</a>            <span class="attr">#[cfg(with_crypto_provider)]
 <a href=#168 id=168 data-nosnippet>168</a>            </span>DnsProtocol::Https =&gt; Protocol::Https,
 <a href=#169 id=169 data-nosnippet>169</a>        }
 <a href=#170 id=170 data-nosnippet>170</a>    }
@@ -200,7 +200,7 @@
 <a href=#200 id=200 data-nosnippet>200</a>    ///
 <a href=#201 id=201 data-nosnippet>201</a>    /// This is only used with DNS-over-TLS and DNS-over-HTTPS, and requires
 <a href=#202 id=202 data-nosnippet>202</a>    /// enabling either the ring or aws-lc-rs feature.
-<a href=#203 id=203 data-nosnippet>203</a>    </span><span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#203 id=203 data-nosnippet>203</a>    </span><span class="attr">#[cfg(with_crypto_provider)]
 <a href=#204 id=204 data-nosnippet>204</a>    </span><span class="kw">pub fn </span>tls_client_config(<span class="kw-2">mut </span><span class="self">self</span>, client_config: rustls::ClientConfig) -&gt; <span class="self">Self </span>{
 <a href=#205 id=205 data-nosnippet>205</a>        <span class="self">self</span>.tls_client_config = <span class="prelude-val">Some</span>(client_config);
 <a href=#206 id=206 data-nosnippet>206</a>        <span class="self">self
@@ -525,7 +525,7 @@
 <a href=#525 id=525 data-nosnippet>525</a>            (ResolverConfig::new(), ResolverOpts::default())
 <a href=#526 id=526 data-nosnippet>526</a>        };
 <a href=#527 id=527 data-nosnippet>527</a>
-<a href=#528 id=528 data-nosnippet>528</a>        <span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#528 id=528 data-nosnippet>528</a>        <span class="attr">#[cfg(with_crypto_provider)]
 <a href=#529 id=529 data-nosnippet>529</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(client_config) = builder.tls_client_config.clone() {
 <a href=#530 id=530 data-nosnippet>530</a>            options.tls_config = client_config;
 <a href=#531 id=531 data-nosnippet>531</a>        }

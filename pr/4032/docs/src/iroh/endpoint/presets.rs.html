@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a>//! # Example
 <a href=#4 id=4 data-nosnippet>4</a>//!
 <a href=#5 id=5 data-nosnippet>5</a>//! ```no_run
-<a href=#6 id=6 data-nosnippet>6</a>//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#6 id=6 data-nosnippet>6</a>//! # #[cfg(with_crypto_provider)]
 <a href=#7 id=7 data-nosnippet>7</a>//! # {
 <a href=#8 id=8 data-nosnippet>8</a>//! # async fn wrapper() -&gt; n0_error::Result {
 <a href=#9 id=9 data-nosnippet>9</a>//! use iroh::{Endpoint, RelayMode, Watcher, endpoint::presets};
@@ -54,21 +54,21 @@
 <a href=#54 id=54 data-nosnippet>54</a>///
 <a href=#55 id=55 data-nosnippet>55</a>/// [ring]: rustls::crypto::ring::default_provider
 <a href=#56 id=56 data-nosnippet>56</a>/// [aws-lc-rs]: rustls::crypto::aws_lc_rs::default_provider
-<a href=#57 id=57 data-nosnippet>57</a></span><span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#57 id=57 data-nosnippet>57</a></span><span class="attr">#[cfg(with_crypto_provider)]
 <a href=#58 id=58 data-nosnippet>58</a>#[derive(Debug, Copy, Clone, Default)]
 <a href=#59 id=59 data-nosnippet>59</a></span><span class="kw">pub struct </span>Minimal;
 <a href=#60 id=60 data-nosnippet>60</a>
-<a href=#61 id=61 data-nosnippet>61</a><span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#61 id=61 data-nosnippet>61</a><span class="attr">#[cfg(with_crypto_provider)]
 <a href=#62 id=62 data-nosnippet>62</a></span><span class="kw">impl </span>Preset <span class="kw">for </span>Minimal {
 <a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">fn </span>apply(<span class="self">self</span>, <span class="kw-2">mut </span>builder: Builder) -&gt; Builder {
 <a href=#64 id=64 data-nosnippet>64</a>        <span class="kw">use </span>std::sync::Arc;
 <a href=#65 id=65 data-nosnippet>65</a>
-<a href=#66 id=66 data-nosnippet>66</a>        <span class="attr">#[cfg(feature = <span class="string">"ring"</span>)]
+<a href=#66 id=66 data-nosnippet>66</a>        <span class="attr">#[cfg(feature = <span class="string">"tls-ring"</span>)]
 <a href=#67 id=67 data-nosnippet>67</a>        </span>{
 <a href=#68 id=68 data-nosnippet>68</a>            builder = builder.crypto_provider(Arc::new(rustls::crypto::ring::default_provider()));
 <a href=#69 id=69 data-nosnippet>69</a>        }
 <a href=#70 id=70 data-nosnippet>70</a>
-<a href=#71 id=71 data-nosnippet>71</a>        <span class="attr">#[cfg(all(feature = <span class="string">"aws-lc-rs"</span>, not(feature = <span class="string">"ring"</span>)))]
+<a href=#71 id=71 data-nosnippet>71</a>        <span class="attr">#[cfg(all(feature = <span class="string">"tls-aws-lc-rs"</span>, not(feature = <span class="string">"tls-ring"</span>)))]
 <a href=#72 id=72 data-nosnippet>72</a>        </span>{
 <a href=#73 id=73 data-nosnippet>73</a>            builder =
 <a href=#74 id=74 data-nosnippet>74</a>                builder.crypto_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
@@ -107,11 +107,11 @@
 <a href=#107 id=107 data-nosnippet>107</a>/// [aws-lc-rs]: rustls::crypto::aws_lc_rs::default_provider
 <a href=#108 id=108 data-nosnippet>108</a>/// [`N0_DNS_PKARR_RELAY_PROD`]: crate::address_lookup::N0_DNS_PKARR_RELAY_PROD
 <a href=#109 id=109 data-nosnippet>109</a>/// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::address_lookup::N0_DNS_PKARR_RELAY_STAGING
-<a href=#110 id=110 data-nosnippet>110</a></span><span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#110 id=110 data-nosnippet>110</a></span><span class="attr">#[cfg(with_crypto_provider)]
 <a href=#111 id=111 data-nosnippet>111</a>#[derive(Debug, Copy, Clone, Default)]
 <a href=#112 id=112 data-nosnippet>112</a></span><span class="kw">pub struct </span>N0;
 <a href=#113 id=113 data-nosnippet>113</a>
-<a href=#114 id=114 data-nosnippet>114</a><span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#114 id=114 data-nosnippet>114</a><span class="attr">#[cfg(with_crypto_provider)]
 <a href=#115 id=115 data-nosnippet>115</a></span><span class="kw">impl </span>Preset <span class="kw">for </span>N0 {
 <a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">fn </span>apply(<span class="self">self</span>, <span class="kw-2">mut </span>builder: Builder) -&gt; Builder {
 <a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">use crate</span>::{address_lookup::PkarrPublisher, endpoint::default_relay_mode};
@@ -169,11 +169,11 @@
 <a href=#169 id=169 data-nosnippet>169</a>/// [aws-lc-rs]: rustls::crypto::aws_lc_rs::default_provider
 <a href=#170 id=170 data-nosnippet>170</a>/// [`N0_DNS_PKARR_RELAY_PROD`]: crate::address_lookup::N0_DNS_PKARR_RELAY_PROD
 <a href=#171 id=171 data-nosnippet>171</a>/// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::address_lookup::N0_DNS_PKARR_RELAY_STAGING
-<a href=#172 id=172 data-nosnippet>172</a></span><span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#172 id=172 data-nosnippet>172</a></span><span class="attr">#[cfg(with_crypto_provider)]
 <a href=#173 id=173 data-nosnippet>173</a>#[derive(Debug, Copy, Clone, Default)]
 <a href=#174 id=174 data-nosnippet>174</a></span><span class="kw">pub struct </span>N0DisableRelay;
 <a href=#175 id=175 data-nosnippet>175</a>
-<a href=#176 id=176 data-nosnippet>176</a><span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#176 id=176 data-nosnippet>176</a><span class="attr">#[cfg(with_crypto_provider)]
 <a href=#177 id=177 data-nosnippet>177</a></span><span class="kw">impl </span>Preset <span class="kw">for </span>N0DisableRelay {
 <a href=#178 id=178 data-nosnippet>178</a>    <span class="kw">fn </span>apply(<span class="self">self</span>, builder: Builder) -&gt; Builder {
 <a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">use </span><span class="kw">crate</span>::RelayMode;

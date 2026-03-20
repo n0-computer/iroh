@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a>//! ## Example
 <a href=#4 id=4 data-nosnippet>4</a>//!
 <a href=#5 id=5 data-nosnippet>5</a>//! ```no_run
-<a href=#6 id=6 data-nosnippet>6</a>//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#6 id=6 data-nosnippet>6</a>//! # #[cfg(with_crypto_provider)]
 <a href=#7 id=7 data-nosnippet>7</a>//! # use iroh::{
 <a href=#8 id=8 data-nosnippet>8</a>//! #     endpoint::{BindError, presets},
 <a href=#9 id=9 data-nosnippet>9</a>//! #     protocol::Router,
@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a>//! #     protocol::{AcceptError, ProtocolHandler},
 <a href=#15 id=15 data-nosnippet>15</a>//! # };
 <a href=#16 id=16 data-nosnippet>16</a>//! #
-<a href=#17 id=17 data-nosnippet>17</a>//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#17 id=17 data-nosnippet>17</a>//! # #[cfg(with_crypto_provider)]
 <a href=#18 id=18 data-nosnippet>18</a>//! # async fn test_compile() -&gt; Result&lt;(), BindError&gt; {
 <a href=#19 id=19 data-nosnippet>19</a>//! let endpoint = Endpoint::bind(presets::N0).await?;
 <a href=#20 id=20 data-nosnippet>20</a>//!
@@ -74,7 +74,7 @@
 <a href=#74 id=74 data-nosnippet>74</a>/// wait for [`tokio::signal::ctrl_c()`]:
 <a href=#75 id=75 data-nosnippet>75</a>///
 <a href=#76 id=76 data-nosnippet>76</a>/// ```no_run
-<a href=#77 id=77 data-nosnippet>77</a>/// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#77 id=77 data-nosnippet>77</a>/// # #[cfg(with_crypto_provider)]
 <a href=#78 id=78 data-nosnippet>78</a>/// # {
 <a href=#79 id=79 data-nosnippet>79</a>/// # use std::sync::Arc;
 <a href=#80 id=80 data-nosnippet>80</a>/// # use n0_error::StdResultExt;
@@ -610,7 +610,7 @@
 <a href=#610 id=610 data-nosnippet>610</a>    }
 <a href=#611 id=611 data-nosnippet>611</a>}
 <a href=#612 id=612 data-nosnippet>612</a>
-<a href=#613 id=613 data-nosnippet>613</a><span class="attr">#[cfg(all(test, any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
+<a href=#613 id=613 data-nosnippet>613</a><span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#614 id=614 data-nosnippet>614</a></span><span class="kw">mod </span>tests {
 <a href=#615 id=615 data-nosnippet>615</a>    <span class="kw">use </span>std::{sync::Mutex, time::Duration};
 <a href=#616 id=616 data-nosnippet>616</a>

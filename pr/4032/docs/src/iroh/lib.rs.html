@@ -8,7 +8,7 @@
 <a href=#8 id=8 data-nosnippet>8</a>//! another endpoint:
 <a href=#9 id=9 data-nosnippet>9</a>//!
 <a href=#10 id=10 data-nosnippet>10</a>//! ```no_run
-<a href=#11 id=11 data-nosnippet>11</a>//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#11 id=11 data-nosnippet>11</a>//! # #[cfg(with_crypto_provider)]
 <a href=#12 id=12 data-nosnippet>12</a>//! # {
 <a href=#13 id=13 data-nosnippet>13</a>//! # use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 <a href=#14 id=14 data-nosnippet>14</a>//! # use n0_error::{StackResultExt, StdResultExt};
@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a>//! The other endpoint can accept incoming connections using the [`Endpoint`] as well:
 <a href=#30 id=30 data-nosnippet>30</a>//!
 <a href=#31 id=31 data-nosnippet>31</a>//! ```no_run
-<a href=#32 id=32 data-nosnippet>32</a>//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#32 id=32 data-nosnippet>32</a>//! # #[cfg(with_crypto_provider)]
 <a href=#33 id=33 data-nosnippet>33</a>//! # {
 <a href=#34 id=34 data-nosnippet>34</a>//! # use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 <a href=#35 id=35 data-nosnippet>35</a>//! # use n0_error::{StackResultExt, StdResultExt};
@@ -176,7 +176,7 @@
 <a href=#176 id=176 data-nosnippet>176</a>//! The central struct is the [`Endpoint`], which allows you to connect to other endpoints:
 <a href=#177 id=177 data-nosnippet>177</a>//!
 <a href=#178 id=178 data-nosnippet>178</a>//! ```no_run
-<a href=#179 id=179 data-nosnippet>179</a>//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#179 id=179 data-nosnippet>179</a>//! # #[cfg(with_crypto_provider)]
 <a href=#180 id=180 data-nosnippet>180</a>//! # {
 <a href=#181 id=181 data-nosnippet>181</a>//! use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 <a href=#182 id=182 data-nosnippet>182</a>//! use n0_error::{Result, StackResultExt, StdResultExt};
@@ -204,7 +204,7 @@
 <a href=#204 id=204 data-nosnippet>204</a>//! Every [`Endpoint`] can also accept connections:
 <a href=#205 id=205 data-nosnippet>205</a>//!
 <a href=#206 id=206 data-nosnippet>206</a>//! ```no_run
-<a href=#207 id=207 data-nosnippet>207</a>//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#207 id=207 data-nosnippet>207</a>//! # #[cfg(with_crypto_provider)]
 <a href=#208 id=208 data-nosnippet>208</a>//! # {
 <a href=#209 id=209 data-nosnippet>209</a>//! use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 <a href=#210 id=210 data-nosnippet>210</a>//! use n0_error::{Result, StackResultExt, StdResultExt};
