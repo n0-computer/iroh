@@ -34,6 +34,7 @@ http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 iroh-base = { version = "0.97.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
+iroh-dns = { version = "0.97.0", path = "../iroh-dns" }
 iroh-metrics = { version = "0.38", default-features = false }
 lru = "0.16.3"
 n0-error = "0.1"
