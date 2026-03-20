@@ -3,13 +3,18 @@
 //! ## Example
 //!
 //! ```no_run
+//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
 //! # use iroh::{
-//! #     endpoint::{Connection, BindError, presets},
-//! #     protocol::{AcceptError, ProtocolHandler, Router},
+//! #     endpoint::{BindError, presets},
+//! #     protocol::Router,
 //! #     Endpoint,
-//! #     EndpointAddr
+//! # };
+//! # use iroh::{
+//! #     endpoint::Connection,
+//! #     protocol::{AcceptError, ProtocolHandler},
 //! # };
 //! #
+//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
 //! # async fn test_compile() -> Result<(), BindError> {
 //! let endpoint = Endpoint::bind(presets::N0).await?;
 //!
@@ -69,6 +74,8 @@ use crate::{
 /// wait for [`tokio::signal::ctrl_c()`]:
 ///
 /// ```no_run
+/// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+/// # {
 /// # use std::sync::Arc;
 /// # use n0_error::StdResultExt;
 /// # use iroh::{endpoint::{Connecting, presets}, protocol::{ProtocolHandler, Router}, Endpoint, EndpointAddr};
@@ -84,6 +91,7 @@ use crate::{
 /// tokio::signal::ctrl_c().await.std_context("ctrl+c")?;
 /// router.shutdown().await.std_context("shutdown")?;
 /// # Ok(())
+/// # }
 /// # }
 /// ```
 #[derive(Clone, Debug)]

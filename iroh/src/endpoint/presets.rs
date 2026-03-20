@@ -3,12 +3,15 @@
 //! # Example
 //!
 //! ```no_run
+//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+//! # {
 //! # async fn wrapper() -> n0_error::Result {
 //! use iroh::{Endpoint, RelayMode, Watcher, endpoint::presets};
 //!
 //! let endpoint = Endpoint::builder(presets::N0).bind().await?;
 //! # let _ = endpoint;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 

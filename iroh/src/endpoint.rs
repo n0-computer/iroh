@@ -322,6 +322,8 @@ impl Builder {
     /// # Example
     ///
     /// ```no_run
+    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # {
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
     /// # use iroh::{Endpoint, endpoint::presets};
@@ -332,6 +334,7 @@ impl Builder {
     ///     .bind()
     ///     .await?;
     /// # Ok(()) }
+    /// # }
     /// ```
     #[cfg(not(wasm_browser))]
     pub fn bind_addr<A>(self, addr: A) -> Result<Self, InvalidSocketAddr>
@@ -399,6 +402,8 @@ impl Builder {
     ///
     /// # Example
     /// ```no_run
+    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # {
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
     /// # use iroh::{Endpoint, endpoint::{BindOpts, presets}};
@@ -409,6 +414,7 @@ impl Builder {
     ///     .bind()
     ///     .await?;
     /// # Ok(()) }
+    /// # }
     /// ```
     #[cfg(not(wasm_browser))]
     pub fn bind_addr_with_opts<A>(
@@ -1092,6 +1098,8 @@ impl Endpoint {
     /// The observed [`EndpointAddr`] will have the current [`RelayUrl`] and direct addresses.
     ///
     /// ```no_run
+    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # {
     /// # async fn wrapper() -> n0_error::Result<()> {
     /// use iroh::{Endpoint, Watcher, endpoint::presets};
     ///
@@ -1102,6 +1110,7 @@ impl Endpoint {
     /// let endpoint_addr = endpoint.watch_addr().get();
     /// # let _ = endpoint_addr;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     ///
@@ -1126,7 +1135,9 @@ impl Endpoint {
     /// via [`Watcher::stream`] only terminates once the endpoint is fully dropped. To stop a task
     /// that loops over a watcher stream once the endpoint stops, combine with [`Self::closed`]:
     ///
-    /// ```
+    /// ```no_run
+    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # {
     /// # use iroh::{Watcher, Endpoint, endpoint::presets};
     /// # use n0_future::StreamExt;
     /// # use tracing::info;
@@ -1146,6 +1157,7 @@ impl Endpoint {
     /// // Our task above will stop even if there are still clones of `Endpoint` alive somewhere.
     /// endpoint.close().await;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     ///
@@ -1263,6 +1275,8 @@ impl Endpoint {
     ///
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
+    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # {
     /// use iroh::{Endpoint, Watcher as _, endpoint::presets};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -1270,6 +1284,7 @@ impl Endpoint {
     /// let ep = Endpoint::bind(presets::N0).await.unwrap();
     /// let _report = ep.net_report().initialized().await;
     /// # });
+    /// # }
     /// ```
     #[doc(hidden)]
     pub fn net_report(&self) -> impl Watcher<Value = Option<NetReport>> + use<> {
@@ -1572,7 +1587,9 @@ impl Endpoint {
     ///
     /// To run a task and stop it once the endpoint closes, you can use
     /// [`EndpointClosed::run_until`]:
-    /// ```
+    /// ```no_run
+    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # {
     /// # use iroh::endpoint::{Endpoint, presets};
     /// # async fn wrapper() -> n0_error::Result<()> {
     /// let endpoint = Endpoint::bind(presets::N0).await?;
@@ -1580,6 +1597,7 @@ impl Endpoint {
     ///     // the future will be aborted once the endpoint closes.
     /// }));
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub fn closed(&self) -> EndpointClosed {
