@@ -29,7 +29,7 @@ use std::time::Duration;
 use iroh::TransportAddr;
 use n0_error::{Result, StackResultExt};
 use n0_tracing_test::traced_test;
-use patchbay::{Firewall, LinkCondition, LinkLimits, Nat, RouterPreset};
+use patchbay::{Firewall, LinkCondition, LinkLimits, Nat, RouterPreset, TestGuard};
 use testdir::testdir;
 use tracing::{debug, info, warn};
 
@@ -932,7 +932,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
 
 /// Run the degradation ladder: iterate through levels, creating fresh devices
 /// each round but reusing the lab and relay. Returns the number of levels passed.
-async fn run_degrade_ladder(impaired_is_server: bool) -> Result<usize> {
+async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuard)> {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
@@ -1019,8 +1019,7 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<usize> {
             break;
         }
     }
-    guard.ok();
-    Ok(last_pass)
+    Ok((last_pass, guard))
 }
 
 /// Impaired side is the accepting (server) peer.
@@ -1028,12 +1027,13 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<usize> {
 #[traced_test]
 #[serial_test::serial]
 async fn degrade_ladder_impaired_server() -> Result {
-    let passed = run_degrade_ladder(true).await?;
+    let (passed, guard) = run_degrade_ladder(true).await?;
     assert!(
         passed >= DEGRADE_PASS_THRESHOLD_IMPAIRED_SERVER,
         "holepunch should pass at least {DEGRADE_PASS_THRESHOLD_IMPAIRED_SERVER} levels \
          with impaired server, but only passed {passed}"
     );
+    guard.ok();
     Ok(())
 }
 
@@ -1042,11 +1042,12 @@ async fn degrade_ladder_impaired_server() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn degrade_ladder_impaired_client() -> Result {
-    let passed = run_degrade_ladder(false).await?;
+    let (passed, guard) = run_degrade_ladder(false).await?;
     assert!(
         passed >= DEGRADE_PASS_THRESHOLD_IMPAIRED_CLIENT,
         "holepunch should pass at least {DEGRADE_PASS_THRESHOLD_IMPAIRED_CLIENT} levels \
          with impaired client, but only passed {passed}"
     );
+    guard.ok();
     Ok(())
 }
