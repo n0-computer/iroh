@@ -74,7 +74,7 @@
 //! use iroh::{
 //!     Endpoint, SecretKey,
 //!     address_lookup::{self, AddrFilter, PkarrPublisher},
-//!     endpoint::{presets, RelayMode},
+//!     endpoint::{RelayMode, presets},
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
