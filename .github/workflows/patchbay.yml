@@ -35,6 +35,7 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Run patchbay tests
+        id: tests
         run: cargo test --release -p iroh --test patchbay -- --test-threads=1
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
@@ -45,6 +46,7 @@ jobs:
           PATCHBAY_URL: https://frando.gateway.lol
           # TODO: put in secrets
           PATCHBAY_API_KEY: Raht1Xob7nitahKaezav3ahd
+          TEST_STATUS: ${{ steps.tests.outcome }}
         run: |
           set -euo pipefail
 
@@ -65,6 +67,7 @@ jobs:
             "pr": ${{ github.event.pull_request.number || 'null' }},
             "pr_url": "${{ github.event.pull_request.html_url || '' }}",
             "title": "${{ github.event.pull_request.title || github.event.head_commit.message || '' }}",
+            "status": "$TEST_STATUS",
             "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           MANIFEST
@@ -89,19 +92,43 @@ jobs:
           INVOCATION=$(echo "$BODY" | jq -r .invocation)
           VIEW_URL="$PATCHBAY_URL/#/inv/$INVOCATION"
           echo "PATCHBAY_VIEW_URL=$VIEW_URL" >> "$GITHUB_ENV"
+          echo "PATCHBAY_TEST_STATUS=$TEST_STATUS" >> "$GITHUB_ENV"
           echo "Results uploaded: $VIEW_URL"
 
-      - name: Comment on PR
-        if: always() && github.event.pull_request && env.PATCHBAY_VIEW_URL
+      - name: Find PR number
+        if: always() && env.PATCHBAY_VIEW_URL
+        id: find-pr
         uses: actions/github-script@v7
         with:
           script: |
+            if (context.eventName === 'pull_request') {
+              return context.issue.number;
+            }
+            // For push events, find an open PR for this branch
+            const branch = '${{ github.ref_name }}';
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${branch}`,
+              state: 'open',
+            });
+            return prs.length > 0 ? prs[0].number : '';
+          result-encoding: string
+
+      - name: Comment on PR
+        if: always() && env.PATCHBAY_VIEW_URL && steps.find-pr.outputs.result
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = parseInt('${{ steps.find-pr.outputs.result }}');
+            const status = process.env.PATCHBAY_TEST_STATUS;
+            const icon = status === 'success' ? '\u2705' : '\u274c';
             const marker = '<!-- patchbay-results -->';
-            const body = `${marker}\n**patchbay results:** ${process.env.PATCHBAY_VIEW_URL}`;
+            const body = `${marker}\n${icon} **patchbay:** ${status} | ${process.env.PATCHBAY_VIEW_URL}`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: prNumber,
             });
             const existing = comments.find(c => c.body.includes(marker));
             if (existing) {
@@ -115,7 +142,7 @@ jobs:
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: prNumber,
                 body,
               });
             }
