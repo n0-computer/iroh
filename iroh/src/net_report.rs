@@ -958,7 +958,7 @@ mod test_utils {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
@@ -978,7 +978,7 @@ mod tests {
     #[traced_test]
     async fn test_basic() -> Result<()> {
         let (server, relay) = test_utils::relay().await;
-        let client_config = iroh_relay::client::make_dangerous_client_config();
+        let client_config = iroh_relay::tls::make_dangerous_client_config();
         let ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
         let quic_addr_disc = QuicConfig {
             ep: ep.clone(),
