@@ -566,7 +566,12 @@ impl RemoteStateActor {
         }
 
         if is_major {
-            self.trigger_holepunching();
+            // Force holepunching regardless of whether candidates appear unchanged.
+            // After a major network change, local_direct_addrs may be stale
+            // (net_report hasn't completed yet), so trigger_holepunching() would
+            // skip with "no new addresses". The old paths are likely broken and
+            // we need to probe from the new network.
+            self.trigger_holepunching_forced();
         }
     }
 
@@ -750,6 +755,32 @@ impl RemoteStateActor {
             }
         }
 
+        self.do_holepunching(conn);
+    }
+
+    /// Triggers holepunching, bypassing the "no new candidates" check.
+    ///
+    /// Used after major network changes where the stale local addresses haven't been
+    /// re-discovered yet but the old paths are likely broken.
+    fn trigger_holepunching_forced(&mut self) {
+        if self.connections.is_empty() {
+            trace!("not holepunching: no connections");
+            return;
+        }
+
+        let Some(conn) = self
+            .connections
+            .iter()
+            .filter_map(|(id, state)| state.handle.upgrade().map(|conn| (*id, conn)))
+            .filter(|(_, conn)| conn.side().is_client())
+            .min_by_key(|(id, _)| *id)
+            .map(|(_, conn)| conn)
+        else {
+            trace!("not holepunching: no client connection");
+            return;
+        };
+
+        debug!("force holepunching after major network change");
         self.do_holepunching(conn);
     }
 
