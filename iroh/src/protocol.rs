@@ -3,7 +3,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+//! # #[cfg(with_crypto_provider)]
 //! # use iroh::{
 //! #     endpoint::{BindError, presets},
 //! #     protocol::Router,
@@ -14,7 +14,7 @@
 //! #     protocol::{AcceptError, ProtocolHandler},
 //! # };
 //! #
-//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+//! # #[cfg(with_crypto_provider)]
 //! # async fn test_compile() -> Result<(), BindError> {
 //! let endpoint = Endpoint::bind(presets::N0).await?;
 //!
@@ -74,7 +74,7 @@ use crate::{
 /// wait for [`tokio::signal::ctrl_c()`]:
 ///
 /// ```no_run
-/// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+/// # #[cfg(with_crypto_provider)]
 /// # {
 /// # use std::sync::Arc;
 /// # use n0_error::StdResultExt;
@@ -610,7 +610,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
     }
 }
 
-#[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{sync::Mutex, time::Duration};
 

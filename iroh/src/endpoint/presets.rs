@@ -3,7 +3,7 @@
 //! # Example
 //!
 //! ```no_run
-//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+//! # #[cfg(with_crypto_provider)]
 //! # {
 //! # async fn wrapper() -> n0_error::Result {
 //! use iroh::{Endpoint, RelayMode, Watcher, endpoint::presets};
@@ -54,21 +54,21 @@ impl Preset for Empty {
 ///
 /// [ring]: rustls::crypto::ring::default_provider
 /// [aws-lc-rs]: rustls::crypto::aws_lc_rs::default_provider
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(with_crypto_provider)]
 #[derive(Debug, Copy, Clone, Default)]
 pub struct Minimal;
 
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(with_crypto_provider)]
 impl Preset for Minimal {
     fn apply(self, mut builder: Builder) -> Builder {
         use std::sync::Arc;
 
-        #[cfg(feature = "ring")]
+        #[cfg(feature = "tls-ring")]
         {
             builder = builder.crypto_provider(Arc::new(rustls::crypto::ring::default_provider()));
         }
 
-        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+        #[cfg(all(feature = "tls-aws-lc-rs", not(feature = "tls-ring")))]
         {
             builder =
                 builder.crypto_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
@@ -107,11 +107,11 @@ impl Preset for Minimal {
 /// [aws-lc-rs]: rustls::crypto::aws_lc_rs::default_provider
 /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::address_lookup::N0_DNS_PKARR_RELAY_PROD
 /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::address_lookup::N0_DNS_PKARR_RELAY_STAGING
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(with_crypto_provider)]
 #[derive(Debug, Copy, Clone, Default)]
 pub struct N0;
 
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(with_crypto_provider)]
 impl Preset for N0 {
     fn apply(self, mut builder: Builder) -> Builder {
         use crate::{address_lookup::PkarrPublisher, endpoint::default_relay_mode};
@@ -169,11 +169,11 @@ impl Preset for N0 {
 /// [aws-lc-rs]: rustls::crypto::aws_lc_rs::default_provider
 /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::address_lookup::N0_DNS_PKARR_RELAY_PROD
 /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::address_lookup::N0_DNS_PKARR_RELAY_STAGING
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(with_crypto_provider)]
 #[derive(Debug, Copy, Clone, Default)]
 pub struct N0DisableRelay;
 
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(with_crypto_provider)]
 impl Preset for N0DisableRelay {
     fn apply(self, builder: Builder) -> Builder {
         use crate::RelayMode;

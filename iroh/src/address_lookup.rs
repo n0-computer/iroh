@@ -69,7 +69,7 @@
 //! [`PkarrPublisher`] and [`address_lookup::DnsAddressLookup`]:
 //!
 //! ```no_run
-//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+//! # #[cfg(with_crypto_provider)]
 //! # {
 //! use iroh::{
 //!     Endpoint, SecretKey,
@@ -582,7 +582,7 @@ impl AddressLookup for ConcurrentAddressLookup {
     }
 }
 
-#[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{
         collections::HashMap,
@@ -1057,10 +1057,10 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(with_crypto_provider)]
     const TEST_ALPN: &[u8] = b"TEST";
 
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(with_crypto_provider)]
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_address_lookup() -> Result<()> {
@@ -1085,7 +1085,7 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(with_crypto_provider)]
     async fn ep_with_address_lookup<R: rand::CryptoRng + ?Sized>(
         rng: &mut R,
         relay_map: &iroh_relay::RelayMap,

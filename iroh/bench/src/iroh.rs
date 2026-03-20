@@ -29,10 +29,10 @@ pub fn server_endpoint(
             .clone()
             .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
 
-        #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+        #[cfg(any(feature = "tls-ring", feature = "tls-aws-lc-rs"))]
         #[allow(unused_mut)]
         let mut builder = Endpoint::builder(presets::N0);
-        #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+        #[cfg(not(any(feature = "tls-ring", feature = "tls-aws-lc-rs")))]
         #[allow(unused_mut)]
         let mut builder = Endpoint::builder(presets::Empty); // allow building, but fail at runtime
         #[cfg(feature = "local-relay")]
@@ -94,10 +94,10 @@ pub async fn connect_client(
     let relay_mode = relay_url
         .clone()
         .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(any(feature = "tls-ring", feature = "tls-aws-lc-rs"))]
     #[allow(unused_mut)]
     let mut builder = Endpoint::builder(presets::N0);
-    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+    #[cfg(not(any(feature = "tls-ring", feature = "tls-aws-lc-rs")))]
     #[allow(unused_mut)]
     let mut builder = Endpoint::builder(presets::Empty); // allow building, but fail at runtime
     #[cfg(feature = "local-relay")]

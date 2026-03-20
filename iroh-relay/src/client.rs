@@ -235,13 +235,13 @@ impl ClientBuilder {
 
         let tls_config = match self.tls_config.clone() {
             Some(config) => config,
-            #[cfg(feature = "ring")]
+            #[cfg(feature = "tls-ring")]
             None => crate::tls::CaRootsConfig::default()
                 .client_config(Arc::new(rustls::crypto::ring::default_provider()))?,
-            #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+            #[cfg(all(feature = "tls-aws-lc-rs", not(feature = "tls-ring")))]
             None => crate::tls::CaRootsConfig::default()
                 .client_config(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))?,
-            #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+            #[cfg(not(with_crypto_provider))]
             None => n0_error::bail!(ConnectError::MissingCryptoProvider),
         };
 

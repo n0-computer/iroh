@@ -1263,7 +1263,7 @@ impl ConnectionInfo {
     }
 }
 
-#[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::time::Duration;
 

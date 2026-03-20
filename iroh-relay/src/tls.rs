@@ -162,7 +162,7 @@ impl CaRootsConfig {
 /// Returns the default crypto provider, if enabled via a feature flag.
 ///
 /// Prefers to ring over aws-lc-rs if both are enabled.
-#[cfg(feature = "ring")]
+#[cfg(feature = "tls-ring")]
 pub fn default_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
@@ -170,7 +170,7 @@ pub fn default_provider() -> Arc<CryptoProvider> {
 /// Returns the default crypto provider, if enabled via a feature flag.
 ///
 /// Prefers to ring over aws-lc-rs if both are enabled.
-#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+#[cfg(all(feature = "tls-aws-lc-rs", not(feature = "tls-ring")))]
 pub fn default_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 }

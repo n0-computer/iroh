@@ -322,7 +322,7 @@ impl Builder {
     /// # Example
     ///
     /// ```no_run
-    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # #[cfg(with_crypto_provider)]
     /// # {
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
@@ -402,7 +402,7 @@ impl Builder {
     ///
     /// # Example
     /// ```no_run
-    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # #[cfg(with_crypto_provider)]
     /// # {
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
@@ -1098,7 +1098,7 @@ impl Endpoint {
     /// The observed [`EndpointAddr`] will have the current [`RelayUrl`] and direct addresses.
     ///
     /// ```no_run
-    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # #[cfg(with_crypto_provider)]
     /// # {
     /// # async fn wrapper() -> n0_error::Result<()> {
     /// use iroh::{Endpoint, Watcher, endpoint::presets};
@@ -1136,7 +1136,7 @@ impl Endpoint {
     /// that loops over a watcher stream once the endpoint stops, combine with [`Self::closed`]:
     ///
     /// ```no_run
-    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # #[cfg(with_crypto_provider)]
     /// # {
     /// # use iroh::{Watcher, Endpoint, endpoint::presets};
     /// # use n0_future::StreamExt;
@@ -1275,7 +1275,7 @@ impl Endpoint {
     ///
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
-    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # #[cfg(with_crypto_provider)]
     /// # {
     /// use iroh::{Endpoint, Watcher as _, endpoint::presets};
     ///
@@ -1588,7 +1588,7 @@ impl Endpoint {
     /// To run a task and stop it once the endpoint closes, you can use
     /// [`EndpointClosed::run_until`]:
     /// ```no_run
-    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # #[cfg(with_crypto_provider)]
     /// # {
     /// # use iroh::endpoint::{Endpoint, presets};
     /// # async fn wrapper() -> n0_error::Result<()> {
@@ -1623,7 +1623,7 @@ impl Endpoint {
         self.inner.to_transport_addr(addr)
     }
 
-    #[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+    #[cfg(all(test, with_crypto_provider))]
     pub(crate) fn inner(&self) -> Result<Arc<EndpointInner>, EndpointError> {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
@@ -1828,7 +1828,7 @@ fn is_cgi() -> bool {
     std::env::var_os("REQUEST_METHOD").is_some()
 }
 
-#[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{
         collections::BTreeMap,

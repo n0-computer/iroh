@@ -19,7 +19,7 @@ mod resolver;
 mod verifier;
 
 pub use iroh_relay::tls::CaRootsConfig;
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(with_crypto_provider)]
 pub use iroh_relay::tls::default_provider;
 
 /// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection

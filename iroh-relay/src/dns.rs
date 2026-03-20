@@ -123,7 +123,7 @@ impl<E: StackError + 'static> StaggeredError<E> {
 pub struct Builder {
     use_system_defaults: bool,
     nameservers: Vec<(SocketAddr, DnsProtocol)>,
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(with_crypto_provider)]
     tls_client_config: Option<rustls::ClientConfig>,
 }
 
@@ -145,14 +145,14 @@ pub enum DnsProtocol {
     /// Performs DNS lookups over TLS-encrypted TCP connections, as defined in [RFC 7858].
     ///
     /// [RFC 7858]: https://www.rfc-editor.org/rfc/rfc7858.html
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(with_crypto_provider)]
     Tls,
     /// DNS over HTTPS
     ///
     /// Performs DNS lookups over HTTPS, as defined in [RFC 8484].
     ///
     /// [RFC 8484]: https://www.rfc-editor.org/rfc/rfc8484.html
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(with_crypto_provider)]
     Https,
 }
 
@@ -162,9 +162,9 @@ impl DnsProtocol {
         match self {
             DnsProtocol::Udp => Protocol::Udp,
             DnsProtocol::Tcp => Protocol::Tcp,
-            #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+            #[cfg(with_crypto_provider)]
             DnsProtocol::Tls => Protocol::Tls,
-            #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+            #[cfg(with_crypto_provider)]
             DnsProtocol::Https => Protocol::Https,
         }
     }
@@ -200,7 +200,7 @@ impl Builder {
     ///
     /// This is only used with DNS-over-TLS and DNS-over-HTTPS, and requires
     /// enabling either the ring or aws-lc-rs feature.
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(with_crypto_provider)]
     pub fn tls_client_config(mut self, client_config: rustls::ClientConfig) -> Self {
         self.tls_client_config = Some(client_config);
         self
@@ -525,7 +525,7 @@ impl HickoryResolver {
             (ResolverConfig::new(), ResolverOpts::default())
         };
 
-        #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+        #[cfg(with_crypto_provider)]
         if let Some(client_config) = builder.tls_client_config.clone() {
             options.tls_config = client_config;
         }

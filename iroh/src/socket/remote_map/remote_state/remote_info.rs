@@ -34,7 +34,7 @@ impl RemoteInfo {
     /// You can use this to construct an [`EndpointAddr`] for this remote:
     ///
     /// ```no_run
-    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// # #[cfg(with_crypto_provider)]
     /// # {
     /// # use iroh::{Endpoint, EndpointId, EndpointAddr, endpoint::presets};
     /// # #[tokio::main]

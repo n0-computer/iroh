@@ -142,7 +142,7 @@ wasm-bindgen-test = "0.3.62"
 cfg_aliases = { version = "0.2.1" }
 
 [features]
-default = ["metrics", "fast-apple-datapath", "portmapper", "ring"]
+default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring"]
 portmapper = ["dep:portmapper"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper?/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
@@ -154,9 +154,9 @@ qlog = ["noq/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["noq/fast-apple-datapath"]
 # Use ring as the crypto backend.
-ring = ["noq/ring", "iroh-relay/ring", "webpki/ring"]
+tls-ring = ["noq/ring", "iroh-relay/tls-ring", "webpki/ring"]
 # Use aws-lc-rs as the crypto backend, unless `ring` is also enabled.
-aws-lc-rs = ["noq/aws-lc-rs", "iroh-relay/aws-lc-rs", "webpki/aws-lc-rs"]
+tls-aws-lc-rs = ["noq/aws-lc-rs", "iroh-relay/tls-aws-lc-rs", "webpki/aws-lc-rs"]
 # Unstable: Custom transport API (may change without notice)
 unstable-custom-transports = []
 

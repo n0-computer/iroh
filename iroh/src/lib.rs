@@ -8,7 +8,7 @@
 //! another endpoint:
 //!
 //! ```no_run
-//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+//! # #[cfg(with_crypto_provider)]
 //! # {
 //! # use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! # use n0_error::{StackResultExt, StdResultExt};
@@ -29,7 +29,7 @@
 //! The other endpoint can accept incoming connections using the [`Endpoint`] as well:
 //!
 //! ```no_run
-//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+//! # #[cfg(with_crypto_provider)]
 //! # {
 //! # use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! # use n0_error::{StackResultExt, StdResultExt};
@@ -176,7 +176,7 @@
 //! The central struct is the [`Endpoint`], which allows you to connect to other endpoints:
 //!
 //! ```no_run
-//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+//! # #[cfg(with_crypto_provider)]
 //! # {
 //! use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! use n0_error::{Result, StackResultExt, StdResultExt};
@@ -204,7 +204,7 @@
 //! Every [`Endpoint`] can also accept connections:
 //!
 //! ```no_run
-//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+//! # #[cfg(with_crypto_provider)]
 //! # {
 //! use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! use n0_error::{Result, StackResultExt, StdResultExt};

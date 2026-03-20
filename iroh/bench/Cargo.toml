@@ -28,11 +28,11 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
 ] }
 
 [features]
-default = ["metrics", "fast-apple-datapath", "ring"]
+default = ["metrics", "fast-apple-datapath", "tls-ring"]
 metrics = ["iroh/metrics", "iroh-metrics"]
 local-relay = ["iroh/test-utils"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["iroh/fast-apple-datapath", "noq/fast-apple-datapath"]
 qlog = ["iroh/qlog", "noq/qlog"]
-ring = ["rustls/ring", "iroh/ring"]
-aws-lc-rs = ["rustls/aws-lc-rs", "iroh/aws-lc-rs"]
+tls-ring = ["rustls/ring", "iroh/tls-ring"]
+tls-aws-lc-rs = ["rustls/aws-lc-rs", "iroh/tls-aws-lc-rs"]

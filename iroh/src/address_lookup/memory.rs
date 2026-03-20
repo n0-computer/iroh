@@ -36,7 +36,7 @@ use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))] // Endpoint::bind needs a crypto provider
+/// # #[cfg(with_crypto_provider)] // Endpoint::bind needs a crypto provider
 /// # {
 /// use iroh::{
 ///     Endpoint, EndpointAddr, TransportAddr, address_lookup::memory::MemoryLookup,
@@ -125,7 +125,7 @@ impl MemoryLookup {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))] // Endpoint::bind needs a crypto provider
+    /// # #[cfg(with_crypto_provider)] // Endpoint::bind needs a crypto provider
     /// # {
     /// use std::{net::SocketAddr, str::FromStr};
     ///
@@ -239,7 +239,7 @@ impl AddressLookup for MemoryLookup {
     }
 }
 
-#[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use n0_error::{Result, StackResultExt};

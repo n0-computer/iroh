@@ -1173,7 +1173,7 @@ impl EndpointInner {
             .ok();
     }
 
-    #[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+    #[cfg(all(test, with_crypto_provider))]
     async fn force_network_change(&self, is_major: bool) {
         self.actor_sender
             .send(ActorMessage::ForceNetworkChange(is_major))
@@ -1268,7 +1268,7 @@ enum ActorMessage {
     ),
     #[debug("RemoteInfo(..)")]
     RemoteInfo(EndpointId, oneshot::Sender<RemoteInfo>),
-    #[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+    #[cfg(all(test, with_crypto_provider))]
     ForceNetworkChange(bool),
 }
 
@@ -1481,7 +1481,7 @@ impl Actor {
                     tx.send(watcher).ok();
                 }
             }
-            #[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+            #[cfg(all(test, with_crypto_provider))]
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major).await;
             }
@@ -1756,7 +1756,7 @@ impl Display for DirectAddrType {
     }
 }
 
-#[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{net::SocketAddrV4, sync::Arc, time::Duration};
 
