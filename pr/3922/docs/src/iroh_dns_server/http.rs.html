@@ -506,12 +506,16 @@
 <a href=#506 id=506 data-nosnippet>506</a>        }
 <a href=#507 id=507 data-nosnippet>507</a>
 <a href=#508 id=508 data-nosnippet>508</a>        <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>insecure_tls_config() -&gt; ClientConfig {
-<a href=#509 id=509 data-nosnippet>509</a>            <span class="kw">let </span><span class="kw-2">mut </span>cfg = ClientConfig::builder()
-<a href=#510 id=510 data-nosnippet>510</a>                .with_root_certificates(RootCertStore::empty())
-<a href=#511 id=511 data-nosnippet>511</a>                .with_no_client_auth();
-<a href=#512 id=512 data-nosnippet>512</a>            cfg.dangerous()
-<a href=#513 id=513 data-nosnippet>513</a>                .set_certificate_verifier(Arc::new(NoCertificateVerification::default()));
-<a href=#514 id=514 data-nosnippet>514</a>            cfg
-<a href=#515 id=515 data-nosnippet>515</a>        }
-<a href=#516 id=516 data-nosnippet>516</a>    }
-<a href=#517 id=517 data-nosnippet>517</a>}</code></pre></div></section></main></body></html>
+<a href=#509 id=509 data-nosnippet>509</a>            <span class="kw">let </span><span class="kw-2">mut </span>cfg = ClientConfig::builder_with_provider(Arc::new(
+<a href=#510 id=510 data-nosnippet>510</a>                rustls::crypto::ring::default_provider(),
+<a href=#511 id=511 data-nosnippet>511</a>            ))
+<a href=#512 id=512 data-nosnippet>512</a>            .with_safe_default_protocol_versions()
+<a href=#513 id=513 data-nosnippet>513</a>            .unwrap()
+<a href=#514 id=514 data-nosnippet>514</a>            .with_root_certificates(RootCertStore::empty())
+<a href=#515 id=515 data-nosnippet>515</a>            .with_no_client_auth();
+<a href=#516 id=516 data-nosnippet>516</a>            cfg.dangerous()
+<a href=#517 id=517 data-nosnippet>517</a>                .set_certificate_verifier(Arc::new(NoCertificateVerification::default()));
+<a href=#518 id=518 data-nosnippet>518</a>            cfg
+<a href=#519 id=519 data-nosnippet>519</a>        }
+<a href=#520 id=520 data-nosnippet>520</a>    }
+<a href=#521 id=521 data-nosnippet>521</a>}</code></pre></div></section></main></body></html>

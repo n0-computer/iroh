@@ -1263,7 +1263,7 @@
 <a href=#1263 id=1263 data-nosnippet>1263</a>    }
 <a href=#1264 id=1264 data-nosnippet>1264</a>}
 <a href=#1265 id=1265 data-nosnippet>1265</a>
-<a href=#1266 id=1266 data-nosnippet>1266</a><span class="attr">#[cfg(test)]
+<a href=#1266 id=1266 data-nosnippet>1266</a><span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#1267 id=1267 data-nosnippet>1267</a></span><span class="kw">mod </span>tests {
 <a href=#1268 id=1268 data-nosnippet>1268</a>    <span class="kw">use </span>std::time::Duration;
 <a href=#1269 id=1269 data-nosnippet>1269</a>
@@ -1279,14 +1279,14 @@
 <a href=#1279 id=1279 data-nosnippet>1279</a>    <span class="kw">use </span><span class="kw">super</span>::Endpoint;
 <a href=#1280 id=1280 data-nosnippet>1280</a>    <span class="kw">use crate</span>::{
 <a href=#1281 id=1281 data-nosnippet>1281</a>        RelayMode,
-<a href=#1282 id=1282 data-nosnippet>1282</a>        endpoint::{ConnectOptions, Incoming, PathInfo, PathInfoList, ZeroRttStatus},
+<a href=#1282 id=1282 data-nosnippet>1282</a>        endpoint::{ConnectOptions, Incoming, PathInfo, PathInfoList, ZeroRttStatus, presets},
 <a href=#1283 id=1283 data-nosnippet>1283</a>        test_utils::run_relay_server,
 <a href=#1284 id=1284 data-nosnippet>1284</a>    };
 <a href=#1285 id=1285 data-nosnippet>1285</a>
 <a href=#1286 id=1286 data-nosnippet>1286</a>    <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/iroh/test"</span>;
 <a href=#1287 id=1287 data-nosnippet>1287</a>
 <a href=#1288 id=1288 data-nosnippet>1288</a>    <span class="kw">async fn </span>spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
-<a href=#1289 id=1289 data-nosnippet>1289</a>        <span class="kw">let </span>server = Endpoint::empty_builder()
+<a href=#1289 id=1289 data-nosnippet>1289</a>        <span class="kw">let </span>server = Endpoint::builder(presets::Minimal)
 <a href=#1290 id=1290 data-nosnippet>1290</a>            .secret_key(secret_key)
 <a href=#1291 id=1291 data-nosnippet>1291</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#1292 id=1292 data-nosnippet>1292</a>            .bind()
@@ -1413,7 +1413,7 @@
 <a href=#1413 id=1413 data-nosnippet>1413</a>    #[traced_test]
 <a href=#1414 id=1414 data-nosnippet>1414</a>    </span><span class="kw">async fn </span>test_0rtt() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#1415 id=1415 data-nosnippet>1415</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
-<a href=#1416 id=1416 data-nosnippet>1416</a>        <span class="kw">let </span>client = Endpoint::empty_builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1416 id=1416 data-nosnippet>1416</a>        <span class="kw">let </span>client = Endpoint::bind(presets::Minimal).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1417 id=1417 data-nosnippet>1417</a>        <span class="kw">let </span>server = spawn_0rtt_server(SecretKey::generate(<span class="kw-2">&amp;mut </span>rng), <span class="macro">info_span!</span>(<span class="string">"server"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1418 id=1418 data-nosnippet>1418</a>
 <a href=#1419 id=1419 data-nosnippet>1419</a>        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.addr()).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1433,7 +1433,7 @@
 <a href=#1433 id=1433 data-nosnippet>1433</a>    #[traced_test]
 <a href=#1434 id=1434 data-nosnippet>1434</a>    </span><span class="kw">async fn </span>test_0rtt_non_consecutive() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#1435 id=1435 data-nosnippet>1435</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
-<a href=#1436 id=1436 data-nosnippet>1436</a>        <span class="kw">let </span>client = Endpoint::empty_builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1436 id=1436 data-nosnippet>1436</a>        <span class="kw">let </span>client = Endpoint::bind(presets::Minimal).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1437 id=1437 data-nosnippet>1437</a>        <span class="kw">let </span>server = spawn_0rtt_server(SecretKey::generate(<span class="kw-2">&amp;mut </span>rng), <span class="macro">info_span!</span>(<span class="string">"server"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1438 id=1438 data-nosnippet>1438</a>
 <a href=#1439 id=1439 data-nosnippet>1439</a>        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.addr()).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1458,7 +1458,7 @@
 <a href=#1458 id=1458 data-nosnippet>1458</a>    #[traced_test]
 <a href=#1459 id=1459 data-nosnippet>1459</a>    </span><span class="kw">async fn </span>test_0rtt_after_server_restart() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#1460 id=1460 data-nosnippet>1460</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
-<a href=#1461 id=1461 data-nosnippet>1461</a>        <span class="kw">let </span>client = Endpoint::empty_builder()
+<a href=#1461 id=1461 data-nosnippet>1461</a>        <span class="kw">let </span>client = Endpoint::builder(presets::Minimal)
 <a href=#1462 id=1462 data-nosnippet>1462</a>            .bind()
 <a href=#1463 id=1463 data-nosnippet>1463</a>            .instrument(<span class="macro">info_span!</span>(<span class="string">"client"</span>))
 <a href=#1464 id=1464 data-nosnippet>1464</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1497,7 +1497,7 @@
 <a href=#1497 id=1497 data-nosnippet>1497</a>        <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"test"</span>;
 <a href=#1498 id=1498 data-nosnippet>1498</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#1499 id=1499 data-nosnippet>1499</a>        <span class="kw">let </span>(relay_map, _relay_map, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1500 id=1500 data-nosnippet>1500</a>        <span class="kw">let </span>server = Endpoint::empty_builder()
+<a href=#1500 id=1500 data-nosnippet>1500</a>        <span class="kw">let </span>server = Endpoint::builder(presets::Minimal)
 <a href=#1501 id=1501 data-nosnippet>1501</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#1502 id=1502 data-nosnippet>1502</a>            .secret_key(SecretKey::generate(<span class="kw-2">&amp;mut </span>rng))
 <a href=#1503 id=1503 data-nosnippet>1503</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
@@ -1505,7 +1505,7 @@
 <a href=#1505 id=1505 data-nosnippet>1505</a>            .bind()
 <a href=#1506 id=1506 data-nosnippet>1506</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1507 id=1507 data-nosnippet>1507</a>
-<a href=#1508 id=1508 data-nosnippet>1508</a>        <span class="kw">let </span>client = Endpoint::empty_builder()
+<a href=#1508 id=1508 data-nosnippet>1508</a>        <span class="kw">let </span>client = Endpoint::builder(presets::Minimal)
 <a href=#1509 id=1509 data-nosnippet>1509</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#1510 id=1510 data-nosnippet>1510</a>            .secret_key(SecretKey::generate(<span class="kw-2">&amp;mut </span>rng))
 <a href=#1511 id=1511 data-nosnippet>1511</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())

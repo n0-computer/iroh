@@ -14,14 +14,14 @@
 <a href=#14 id=14 data-nosnippet>14</a>//! use iroh::{
 <a href=#15 id=15 data-nosnippet>15</a>//!     RelayMode, SecretKey,
 <a href=#16 id=16 data-nosnippet>16</a>//!     address_lookup::{DiscoveryEvent, MdnsAddressLookup},
-<a href=#17 id=17 data-nosnippet>17</a>//!     endpoint::{Endpoint, Source},
+<a href=#17 id=17 data-nosnippet>17</a>//!     endpoint::{Endpoint, Source, presets},
 <a href=#18 id=18 data-nosnippet>18</a>//! };
 <a href=#19 id=19 data-nosnippet>19</a>//! use n0_future::StreamExt;
 <a href=#20 id=20 data-nosnippet>20</a>//!
 <a href=#21 id=21 data-nosnippet>21</a>//! #[tokio::main]
 <a href=#22 id=22 data-nosnippet>22</a>//! async fn main() {
 <a href=#23 id=23 data-nosnippet>23</a>//!     let recent = Duration::from_secs(600); // 10 minutes in seconds
-<a href=#24 id=24 data-nosnippet>24</a>//!     let endpoint = Endpoint::empty_builder().bind().await.unwrap();
+<a href=#24 id=24 data-nosnippet>24</a>//!     let endpoint = Endpoint::bind(presets::Minimal).await.unwrap();
 <a href=#25 id=25 data-nosnippet>25</a>//!
 <a href=#26 id=26 data-nosnippet>26</a>//!     // Register the Address Lookupwith the endpoint
 <a href=#27 id=27 data-nosnippet>27</a>//!     let mdns = MdnsAddressLookup::builder().build(endpoint.id()).unwrap();
