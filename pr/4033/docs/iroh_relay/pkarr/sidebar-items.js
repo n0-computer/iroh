@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_SIGNED_PACKET_SIZE"],"enum":["SignedPacketBuildError","SignedPacketVerifyError"],"struct":["SignedPacket"]};
