@@ -174,11 +174,12 @@ impl ClientBuilder {
     ///
     /// This is a required option.
     ///
-    /// You can construct a [`rustls::ClientConfig`] by combining a [`ruslts::crypto::CryptoProvider`]
+    /// You can construct a [`rustls::ClientConfig`] by combining a [`rustls::crypto::CryptoProvider`]
     /// with a [`tls::CaRootsConfig`] using [`tls::CaRootsConfig::client_config`], for example:
     ///
     /// ```no_run
     /// use std::sync::Arc;
+    ///
     /// use iroh_relay::tls::CaRootsConfig;
     ///
     /// let crypto_provider: rustls::crypto::CryptoProvider = todo!();
