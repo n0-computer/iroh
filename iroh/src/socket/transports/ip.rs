@@ -196,6 +196,9 @@ impl IpTransport {
         match self.socket.poll_recv_noq(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(n)) => {
+                for meta in metas.iter().take(n) {
+                    trace!(from = %meta.addr, len = meta.len, "IP transport recv");
+                }
                 for (source_addr, meta) in source_addrs.iter_mut().zip(metas.iter_mut()).take(n) {
                     if meta.addr.is_ipv4() {
                         // The AsyncUdpSocket is an AF_INET6 socket and needs to show this
