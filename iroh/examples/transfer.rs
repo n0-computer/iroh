@@ -51,7 +51,7 @@ use iroh::{
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{
         BindOpts, Connection, ConnectionError, PathId, PathWatcher, RecvStream, SendStream, VarInt,
-        WriteError,
+        WriteError, presets,
     },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
@@ -457,7 +457,7 @@ impl EndpointArgs {
         output: Output,
         log: Option<&LogSettings>,
     ) -> Result<Endpoint> {
-        let mut builder = Endpoint::empty_builder();
+        let mut builder = Endpoint::builder(presets::Minimal);
         if self.no_relay {
             // nothing to do
         } else if !self.relay_url.is_empty() {

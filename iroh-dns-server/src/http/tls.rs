@@ -11,7 +11,10 @@ use axum_server::{
 };
 use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::{FutureExt, future::Boxed as BoxFuture};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+use rustls::{
+    ServerConfig,
+    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls_acme::{AcmeConfig, axum::AxumAcceptor, caches::DirCache};
@@ -77,15 +80,29 @@ impl TlsAcceptor {
     async fn self_signed(domains: Vec<String>) -> Result<Self> {
         let rcgen::CertifiedKey { cert, signing_key } =
             rcgen::generate_simple_self_signed(domains).anyerr()?;
-        let config = RustlsConfig::from_der(vec![cert.der().to_vec()], signing_key.serialize_der())
-            .await
-            .anyerr()?;
-        let acceptor = RustlsAcceptor::new(config);
+        let key = PrivateKeyDer::try_from(signing_key.serialize_der())?;
+
+        let mut config =
+            ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+                .with_safe_default_protocol_versions()
+                .anyerr()?
+                .with_no_client_auth()
+                .with_single_cert(vec![cert.der().clone()], key)
+                .anyerr()?;
+
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        let acceptor = RustlsAcceptor::new(RustlsConfig::from_config(Arc::new(config)));
         Ok(Self::Manual(acceptor))
     }
 
     async fn manual(domains: Vec<String>, dir: PathBuf) -> Result<Self> {
-        let config = rustls::ServerConfig::builder().with_no_client_auth();
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .anyerr()?
+        .with_no_client_auth();
+
         if domains.len() != 1 {
             bail_any!("Multiple domains in manual mode are not supported");
         }

@@ -355,9 +355,9 @@ impl QuicClient {
     }
 }
 
-#[cfg(all(test, feature = "server"))]
+#[cfg(all(test, feature = "server", with_crypto_provider))]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::{net::Ipv4Addr, sync::Arc};
 
     use n0_error::{Result, StdResultExt};
     use n0_future::{
@@ -393,7 +393,7 @@ mod tests {
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
-        let client_config = crate::client::make_dangerous_client_config();
+        let client_config = crate::tls::make_dangerous_client_config();
         let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         let (addr, _latency) = quic_client
@@ -425,7 +425,7 @@ mod tests {
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
-        let client_config = crate::client::make_dangerous_client_config();
+        let client_config = crate::tls::make_dangerous_client_config();
         let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         // Start a connection attempt with nirvana - this will fail
@@ -459,9 +459,8 @@ mod tests {
     /// In this case we don't simulate it via synthetically high RTT, but by dropping
     /// all packets on the server-side for 2 seconds.
     #[tokio::test]
-    // #[traced_test]
+    #[traced_test]
     async fn test_qad_connect_delayed() -> Result {
-        tracing_subscriber::fmt::try_init().ok();
         // Create a socket for our QAD server.  We need the socket separately because we
         // need to pop off messages before we attach it to the Noq Endpoint.
         let socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
@@ -474,10 +473,14 @@ mod tests {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
             .std_context("self signed")?;
         let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
-        let mut server_crypto = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(vec![cert.cert.into()], key.into())
-            .std_context("tls")?;
+        let mut server_crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .std_context("crypto provider")?
+        .with_no_client_auth()
+        .with_single_cert(vec![cert.cert.into()], key.into())
+        .std_context("tls")?;
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         server_crypto.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.to_vec()];
         let mut server_config = noq::ServerConfig::with_crypto(Arc::new(
@@ -525,7 +528,7 @@ mod tests {
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
-        let client_config = crate::client::make_dangerous_client_config();
+        let client_config = crate::tls::make_dangerous_client_config();
         let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         // Now we should still connect, but it should take more than 1s.
