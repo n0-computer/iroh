@@ -1173,7 +1173,7 @@
 <a href=#1173 id=1173 data-nosnippet>1173</a>            </span>.ok();
 <a href=#1174 id=1174 data-nosnippet>1174</a>    }
 <a href=#1175 id=1175 data-nosnippet>1175</a>
-<a href=#1176 id=1176 data-nosnippet>1176</a>    <span class="attr">#[cfg(all(test, any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
+<a href=#1176 id=1176 data-nosnippet>1176</a>    <span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#1177 id=1177 data-nosnippet>1177</a>    </span><span class="kw">async fn </span>force_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, is_major: bool) {
 <a href=#1178 id=1178 data-nosnippet>1178</a>        <span class="self">self</span>.actor_sender
 <a href=#1179 id=1179 data-nosnippet>1179</a>            .send(ActorMessage::ForceNetworkChange(is_major))
@@ -1268,7 +1268,7 @@
 <a href=#1268 id=1268 data-nosnippet>1268</a>    ),
 <a href=#1269 id=1269 data-nosnippet>1269</a>    <span class="attr">#[debug(<span class="string">"RemoteInfo(..)"</span>)]
 <a href=#1270 id=1270 data-nosnippet>1270</a>    </span>RemoteInfo(EndpointId, oneshot::Sender&lt;RemoteInfo&gt;),
-<a href=#1271 id=1271 data-nosnippet>1271</a>    <span class="attr">#[cfg(all(test, any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
+<a href=#1271 id=1271 data-nosnippet>1271</a>    <span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#1272 id=1272 data-nosnippet>1272</a>    </span>ForceNetworkChange(bool),
 <a href=#1273 id=1273 data-nosnippet>1273</a>}
 <a href=#1274 id=1274 data-nosnippet>1274</a>
@@ -1481,7 +1481,7 @@
 <a href=#1481 id=1481 data-nosnippet>1481</a>                    tx.send(watcher).ok();
 <a href=#1482 id=1482 data-nosnippet>1482</a>                }
 <a href=#1483 id=1483 data-nosnippet>1483</a>            }
-<a href=#1484 id=1484 data-nosnippet>1484</a>            <span class="attr">#[cfg(all(test, any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
+<a href=#1484 id=1484 data-nosnippet>1484</a>            <span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#1485 id=1485 data-nosnippet>1485</a>            </span>ActorMessage::ForceNetworkChange(is_major) =&gt; {
 <a href=#1486 id=1486 data-nosnippet>1486</a>                <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
 <a href=#1487 id=1487 data-nosnippet>1487</a>            }
@@ -1756,7 +1756,7 @@
 <a href=#1756 id=1756 data-nosnippet>1756</a>    }
 <a href=#1757 id=1757 data-nosnippet>1757</a>}
 <a href=#1758 id=1758 data-nosnippet>1758</a>
-<a href=#1759 id=1759 data-nosnippet>1759</a><span class="attr">#[cfg(all(test, any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
+<a href=#1759 id=1759 data-nosnippet>1759</a><span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#1760 id=1760 data-nosnippet>1760</a></span><span class="kw">mod </span>tests {
 <a href=#1761 id=1761 data-nosnippet>1761</a>    <span class="kw">use </span>std::{net::SocketAddrV4, sync::Arc, time::Duration};
 <a href=#1762 id=1762 data-nosnippet>1762</a>

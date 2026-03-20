@@ -162,7 +162,7 @@
 <a href=#162 id=162 data-nosnippet>162</a><span class="doccomment">/// Returns the default crypto provider, if enabled via a feature flag.
 <a href=#163 id=163 data-nosnippet>163</a>///
 <a href=#164 id=164 data-nosnippet>164</a>/// Prefers to ring over aws-lc-rs if both are enabled.
-<a href=#165 id=165 data-nosnippet>165</a></span><span class="attr">#[cfg(feature = <span class="string">"ring"</span>)]
+<a href=#165 id=165 data-nosnippet>165</a></span><span class="attr">#[cfg(feature = <span class="string">"tls-ring"</span>)]
 <a href=#166 id=166 data-nosnippet>166</a></span><span class="kw">pub fn </span>default_provider() -&gt; Arc&lt;CryptoProvider&gt; {
 <a href=#167 id=167 data-nosnippet>167</a>    Arc::new(rustls::crypto::ring::default_provider())
 <a href=#168 id=168 data-nosnippet>168</a>}
@@ -170,7 +170,7 @@
 <a href=#170 id=170 data-nosnippet>170</a><span class="doccomment">/// Returns the default crypto provider, if enabled via a feature flag.
 <a href=#171 id=171 data-nosnippet>171</a>///
 <a href=#172 id=172 data-nosnippet>172</a>/// Prefers to ring over aws-lc-rs if both are enabled.
-<a href=#173 id=173 data-nosnippet>173</a></span><span class="attr">#[cfg(all(feature = <span class="string">"aws-lc-rs"</span>, not(feature = <span class="string">"ring"</span>)))]
+<a href=#173 id=173 data-nosnippet>173</a></span><span class="attr">#[cfg(all(feature = <span class="string">"tls-aws-lc-rs"</span>, not(feature = <span class="string">"tls-ring"</span>)))]
 <a href=#174 id=174 data-nosnippet>174</a></span><span class="kw">pub fn </span>default_provider() -&gt; Arc&lt;CryptoProvider&gt; {
 <a href=#175 id=175 data-nosnippet>175</a>    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 <a href=#176 id=176 data-nosnippet>176</a>}

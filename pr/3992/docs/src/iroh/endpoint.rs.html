@@ -322,7 +322,7 @@
 <a href=#322 id=322 data-nosnippet>322</a>    /// # Example
 <a href=#323 id=323 data-nosnippet>323</a>    ///
 <a href=#324 id=324 data-nosnippet>324</a>    /// ```no_run
-<a href=#325 id=325 data-nosnippet>325</a>    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#325 id=325 data-nosnippet>325</a>    /// # #[cfg(with_crypto_provider)]
 <a href=#326 id=326 data-nosnippet>326</a>    /// # {
 <a href=#327 id=327 data-nosnippet>327</a>    /// # #[tokio::main]
 <a href=#328 id=328 data-nosnippet>328</a>    /// # async fn main() -&gt; n0_error::Result&lt;()&gt; {
@@ -402,7 +402,7 @@
 <a href=#402 id=402 data-nosnippet>402</a>    ///
 <a href=#403 id=403 data-nosnippet>403</a>    /// # Example
 <a href=#404 id=404 data-nosnippet>404</a>    /// ```no_run
-<a href=#405 id=405 data-nosnippet>405</a>    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#405 id=405 data-nosnippet>405</a>    /// # #[cfg(with_crypto_provider)]
 <a href=#406 id=406 data-nosnippet>406</a>    /// # {
 <a href=#407 id=407 data-nosnippet>407</a>    /// # #[tokio::main]
 <a href=#408 id=408 data-nosnippet>408</a>    /// # async fn main() -&gt; n0_error::Result&lt;()&gt; {
@@ -1098,7 +1098,7 @@
 <a href=#1098 id=1098 data-nosnippet>1098</a>    /// The observed [`EndpointAddr`] will have the current [`RelayUrl`] and direct addresses.
 <a href=#1099 id=1099 data-nosnippet>1099</a>    ///
 <a href=#1100 id=1100 data-nosnippet>1100</a>    /// ```no_run
-<a href=#1101 id=1101 data-nosnippet>1101</a>    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#1101 id=1101 data-nosnippet>1101</a>    /// # #[cfg(with_crypto_provider)]
 <a href=#1102 id=1102 data-nosnippet>1102</a>    /// # {
 <a href=#1103 id=1103 data-nosnippet>1103</a>    /// # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#1104 id=1104 data-nosnippet>1104</a>    /// use iroh::{Endpoint, Watcher, endpoint::presets};
@@ -1136,7 +1136,7 @@
 <a href=#1136 id=1136 data-nosnippet>1136</a>    /// that loops over a watcher stream once the endpoint stops, combine with [`Self::closed`]:
 <a href=#1137 id=1137 data-nosnippet>1137</a>    ///
 <a href=#1138 id=1138 data-nosnippet>1138</a>    /// ```no_run
-<a href=#1139 id=1139 data-nosnippet>1139</a>    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#1139 id=1139 data-nosnippet>1139</a>    /// # #[cfg(with_crypto_provider)]
 <a href=#1140 id=1140 data-nosnippet>1140</a>    /// # {
 <a href=#1141 id=1141 data-nosnippet>1141</a>    /// # use iroh::{Watcher, Endpoint, endpoint::presets};
 <a href=#1142 id=1142 data-nosnippet>1142</a>    /// # use n0_future::StreamExt;
@@ -1275,7 +1275,7 @@
 <a href=#1275 id=1275 data-nosnippet>1275</a>    ///
 <a href=#1276 id=1276 data-nosnippet>1276</a>    /// To get the first report use [`Watcher::initialized`]:
 <a href=#1277 id=1277 data-nosnippet>1277</a>    /// ```no_run
-<a href=#1278 id=1278 data-nosnippet>1278</a>    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#1278 id=1278 data-nosnippet>1278</a>    /// # #[cfg(with_crypto_provider)]
 <a href=#1279 id=1279 data-nosnippet>1279</a>    /// # {
 <a href=#1280 id=1280 data-nosnippet>1280</a>    /// use iroh::{Endpoint, Watcher as _, endpoint::presets};
 <a href=#1281 id=1281 data-nosnippet>1281</a>    ///
@@ -1588,7 +1588,7 @@
 <a href=#1588 id=1588 data-nosnippet>1588</a>    /// To run a task and stop it once the endpoint closes, you can use
 <a href=#1589 id=1589 data-nosnippet>1589</a>    /// [`EndpointClosed::run_until`]:
 <a href=#1590 id=1590 data-nosnippet>1590</a>    /// ```no_run
-<a href=#1591 id=1591 data-nosnippet>1591</a>    /// # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#1591 id=1591 data-nosnippet>1591</a>    /// # #[cfg(with_crypto_provider)]
 <a href=#1592 id=1592 data-nosnippet>1592</a>    /// # {
 <a href=#1593 id=1593 data-nosnippet>1593</a>    /// # use iroh::endpoint::{Endpoint, presets};
 <a href=#1594 id=1594 data-nosnippet>1594</a>    /// # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
@@ -1623,7 +1623,7 @@
 <a href=#1623 id=1623 data-nosnippet>1623</a>        <span class="self">self</span>.inner.to_transport_addr(addr)
 <a href=#1624 id=1624 data-nosnippet>1624</a>    }
 <a href=#1625 id=1625 data-nosnippet>1625</a>
-<a href=#1626 id=1626 data-nosnippet>1626</a>    <span class="attr">#[cfg(all(test, any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
+<a href=#1626 id=1626 data-nosnippet>1626</a>    <span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#1627 id=1627 data-nosnippet>1627</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>inner(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;EndpointInner&gt;, EndpointError&gt; {
 <a href=#1628 id=1628 data-nosnippet>1628</a>        <span class="kw">if </span><span class="self">self</span>.is_closed() {
 <a href=#1629 id=1629 data-nosnippet>1629</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(EndpointError::Closed));
@@ -1828,7 +1828,7 @@
 <a href=#1828 id=1828 data-nosnippet>1828</a>    std::env::var_os(<span class="string">"REQUEST_METHOD"</span>).is_some()
 <a href=#1829 id=1829 data-nosnippet>1829</a>}
 <a href=#1830 id=1830 data-nosnippet>1830</a>
-<a href=#1831 id=1831 data-nosnippet>1831</a><span class="attr">#[cfg(all(test, any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
+<a href=#1831 id=1831 data-nosnippet>1831</a><span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#1832 id=1832 data-nosnippet>1832</a></span><span class="kw">mod </span>tests {
 <a href=#1833 id=1833 data-nosnippet>1833</a>    <span class="kw">use </span>std::{
 <a href=#1834 id=1834 data-nosnippet>1834</a>        collections::BTreeMap,

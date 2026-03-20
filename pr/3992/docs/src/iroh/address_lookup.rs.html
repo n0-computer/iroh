@@ -69,7 +69,7 @@
 <a href=#69 id=69 data-nosnippet>69</a>//! [`PkarrPublisher`] and [`address_lookup::DnsAddressLookup`]:
 <a href=#70 id=70 data-nosnippet>70</a>//!
 <a href=#71 id=71 data-nosnippet>71</a>//! ```no_run
-<a href=#72 id=72 data-nosnippet>72</a>//! # #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+<a href=#72 id=72 data-nosnippet>72</a>//! # #[cfg(with_crypto_provider)]
 <a href=#73 id=73 data-nosnippet>73</a>//! # {
 <a href=#74 id=74 data-nosnippet>74</a>//! use iroh::{
 <a href=#75 id=75 data-nosnippet>75</a>//!     Endpoint, SecretKey,
@@ -582,7 +582,7 @@
 <a href=#582 id=582 data-nosnippet>582</a>    }
 <a href=#583 id=583 data-nosnippet>583</a>}
 <a href=#584 id=584 data-nosnippet>584</a>
-<a href=#585 id=585 data-nosnippet>585</a><span class="attr">#[cfg(all(test, any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>)))]
+<a href=#585 id=585 data-nosnippet>585</a><span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#586 id=586 data-nosnippet>586</a></span><span class="kw">mod </span>tests {
 <a href=#587 id=587 data-nosnippet>587</a>    <span class="kw">use </span>std::{
 <a href=#588 id=588 data-nosnippet>588</a>        collections::HashMap,
@@ -1057,10 +1057,10 @@
 <a href=#1057 id=1057 data-nosnippet>1057</a>        <span class="prelude-val">Ok</span>(())
 <a href=#1058 id=1058 data-nosnippet>1058</a>    }
 <a href=#1059 id=1059 data-nosnippet>1059</a>
-<a href=#1060 id=1060 data-nosnippet>1060</a>    <span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#1060 id=1060 data-nosnippet>1060</a>    <span class="attr">#[cfg(with_crypto_provider)]
 <a href=#1061 id=1061 data-nosnippet>1061</a>    </span><span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"TEST"</span>;
 <a href=#1062 id=1062 data-nosnippet>1062</a>
-<a href=#1063 id=1063 data-nosnippet>1063</a>    <span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#1063 id=1063 data-nosnippet>1063</a>    <span class="attr">#[cfg(with_crypto_provider)]
 <a href=#1064 id=1064 data-nosnippet>1064</a>    #[tokio::test]
 <a href=#1065 id=1065 data-nosnippet>1065</a>    #[traced_test]
 <a href=#1066 id=1066 data-nosnippet>1066</a>    </span><span class="kw">async fn </span>pkarr_publish_dns_address_lookup() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -1085,7 +1085,7 @@
 <a href=#1085 id=1085 data-nosnippet>1085</a>        <span class="prelude-val">Ok</span>(())
 <a href=#1086 id=1086 data-nosnippet>1086</a>    }
 <a href=#1087 id=1087 data-nosnippet>1087</a>
-<a href=#1088 id=1088 data-nosnippet>1088</a>    <span class="attr">#[cfg(any(feature = <span class="string">"ring"</span>, feature = <span class="string">"aws-lc-rs"</span>))]
+<a href=#1088 id=1088 data-nosnippet>1088</a>    <span class="attr">#[cfg(with_crypto_provider)]
 <a href=#1089 id=1089 data-nosnippet>1089</a>    </span><span class="kw">async fn </span>ep_with_address_lookup&lt;R: rand::CryptoRng + <span class="question-mark">?</span>Sized&gt;(
 <a href=#1090 id=1090 data-nosnippet>1090</a>        rng: <span class="kw-2">&amp;mut </span>R,
 <a href=#1091 id=1091 data-nosnippet>1091</a>        relay_map: <span class="kw-2">&amp;</span>iroh_relay::RelayMap,
