@@ -145,7 +145,7 @@ wasm-bindgen-test = "0.3.62"
 # patchbay netsim test dependencies (linux only)
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 ctor = "0.6"
-patchbay = "0.1"
+patchbay = { git = "https://github.com/n0-computer/patchbay.git", branch = "feat/server-push" }
 testdir = "0.9"
 
 [build-dependencies]

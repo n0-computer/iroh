@@ -7,7 +7,7 @@ use iroh::{
 };
 use n0_error::{Result, StdResultExt, ensure_any};
 use n0_future::task::AbortOnDropHandle;
-use patchbay::{Device, IpSupport, Lab, LabOpts, OutDir};
+use patchbay::{Device, IpSupport, Lab, LabOpts, OutDir, TestGuard};
 use tokio::sync::oneshot;
 use tracing::{Instrument, debug, error_span};
 
@@ -15,19 +15,22 @@ use self::relay::run_relay_server;
 
 const TEST_ALPN: &[u8] = b"test";
 
-/// Create a lab with a dual-stack relay server. Returns the lab, relay map, and a drop guard
-/// that keeps the relay alive.
+/// Create a lab with a dual-stack relay server. Returns the lab, relay map, a drop guard
+/// that keeps the relay alive, and a [`TestGuard`] that records pass/fail.
 ///
 /// The relay binds on `[::]` and is reachable via `https://relay.test` (resolved
 /// through lab-wide DNS entries for both IPv4 and IPv6).
-pub async fn lab_with_relay(path: PathBuf) -> Result<(Lab, RelayMap, AbortOnDropHandle<()>)> {
+pub async fn lab_with_relay(
+    path: PathBuf,
+) -> Result<(Lab, RelayMap, AbortOnDropHandle<()>, TestGuard)> {
     let mut opts = LabOpts::default().outdir(OutDir::Exact(path));
     if let Some(name) = std::thread::current().name() {
         opts = opts.label(name);
     }
     let lab = Lab::with_opts(opts).await?;
+    let guard = lab.test_guard();
     let (relay_map, relay_guard) = spawn_relay(&lab).await?;
-    Ok((lab, relay_map, relay_guard))
+    Ok((lab, relay_map, relay_guard, guard))
 }
 
 async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {

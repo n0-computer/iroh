@@ -3230,8 +3230,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "patchbay"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b0d142d73f3940b8c80efb60703feb642fdefa3e6480570311d114970eb572d"
+source = "git+https://github.com/n0-computer/patchbay.git?branch=feat%2Fserver-push#d75987aed81ab8525d7e0cbac4a3e01970d9fc50"
 dependencies = [
  "anyhow",
  "chrono",

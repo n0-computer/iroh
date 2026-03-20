@@ -56,7 +56,7 @@ fn userns_ctor() {
 #[traced_test]
 #[serial_test::serial]
 async fn holepunch_simple() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
@@ -73,7 +73,9 @@ async fn holepunch_simple() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Tests that changing the uplink of an interface works (i.e. switching wifis).
@@ -88,7 +90,7 @@ async fn holepunch_simple() -> Result {
 #[serial_test::serial]
 #[ignore = "known to still fail"]
 async fn switch_uplink() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let nat3 = lab.add_router("nat3").nat(Nat::Home).build().await?;
@@ -146,7 +148,9 @@ async fn switch_uplink() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Tests that changing the uplink from IPv4 to IPv6 works.
@@ -159,7 +163,7 @@ async fn switch_uplink() -> Result {
 #[serial_test::serial]
 #[ignore = "known to still fail"]
 async fn switch_uplink_ipv6() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let public = lab
         .add_router("public")
         .preset(RouterPreset::Public)
@@ -234,7 +238,9 @@ async fn switch_uplink_ipv6() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Test that switching to a faster link works.
@@ -248,7 +254,7 @@ async fn switch_uplink_ipv6() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn change_ifaces() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
 
@@ -306,7 +312,9 @@ async fn change_ifaces() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 // ---
@@ -321,7 +329,7 @@ async fn change_ifaces() -> Result {
 #[serial_test::serial]
 #[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_home_nat_one_side() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat = lab.add_router("nat").nat(Nat::Home).build().await?;
     let public = lab.add_router("public").build().await?;
     let dev1 = lab.add_device("dev1").uplink(nat.id()).build().await?;
@@ -340,7 +348,9 @@ async fn holepunch_home_nat_one_side() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Both peers behind CGNAT (EIM+EIF). The most permissive real-world NAT.
@@ -350,7 +360,7 @@ async fn holepunch_home_nat_one_side() -> Result {
 #[serial_test::serial]
 #[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_cgnat_both() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Cgnat).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Cgnat).build().await?;
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
@@ -372,7 +382,9 @@ async fn holepunch_cgnat_both() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Both peers behind FullCone NAT (EIM+EIF with hairpin). The most permissive
@@ -382,7 +394,7 @@ async fn holepunch_cgnat_both() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn holepunch_full_cone_both() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::FullCone).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::FullCone).build().await?;
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
@@ -404,7 +416,9 @@ async fn holepunch_full_cone_both() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Both peers behind Corporate (symmetric/EDM) NAT. Each destination gets a
@@ -414,7 +428,7 @@ async fn holepunch_full_cone_both() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn symmetric_nat_stays_relayed() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Corporate).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Corporate).build().await?;
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
@@ -440,7 +454,9 @@ async fn symmetric_nat_stays_relayed() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// One peer behind Home NAT (EIM), the other behind Corporate/symmetric NAT
@@ -451,7 +467,7 @@ async fn symmetric_nat_stays_relayed() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn mixed_home_vs_symmetric_stays_relayed() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let home = lab.add_router("home").nat(Nat::Home).build().await?;
     let corp = lab.add_router("corp").nat(Nat::Corporate).build().await?;
     let dev1 = lab.add_device("dev1").uplink(home.id()).build().await?;
@@ -475,7 +491,9 @@ async fn mixed_home_vs_symmetric_stays_relayed() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Both peers behind CloudNat (EDM+APDF), the symmetric NAT used by cloud
@@ -485,7 +503,7 @@ async fn mixed_home_vs_symmetric_stays_relayed() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn cloud_nat_stays_relayed() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::CloudNat).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::CloudNat).build().await?;
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
@@ -509,7 +527,9 @@ async fn cloud_nat_stays_relayed() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Double NAT: device behind a Home router, which itself sits behind an ISP
@@ -521,7 +541,7 @@ async fn cloud_nat_stays_relayed() -> Result {
 #[serial_test::serial]
 #[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_double_nat() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     // ISP-level CGNAT routers
     let isp1 = lab.add_router("isp1").nat(Nat::Cgnat).build().await?;
     let isp2 = lab.add_router("isp2").nat(Nat::Cgnat).build().await?;
@@ -557,7 +577,9 @@ async fn holepunch_double_nat() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 // ---
@@ -571,7 +593,7 @@ async fn holepunch_double_nat() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn corporate_firewall_relay_only() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let fw = lab
         .add_router("fw")
         .firewall(Firewall::Corporate)
@@ -599,7 +621,9 @@ async fn corporate_firewall_relay_only() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Holepunch through Home NATs with a degraded mobile link (100ms latency,
@@ -609,7 +633,7 @@ async fn corporate_firewall_relay_only() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn holepunch_mobile_3g() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let dev1 = lab
@@ -639,7 +663,9 @@ async fn holepunch_mobile_3g() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Holepunch through Home NATs on a satellite link (high latency, moderate
@@ -649,7 +675,7 @@ async fn holepunch_mobile_3g() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn holepunch_satellite() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let dev1 = lab
@@ -679,7 +705,9 @@ async fn holepunch_satellite() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Brief link outage: after holepunching succeeds, the link goes down for 2
@@ -690,7 +718,7 @@ async fn holepunch_satellite() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn link_outage_recovery() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
@@ -730,7 +758,9 @@ async fn link_outage_recovery() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Hotel WiFi: captive-portal firewall allows all outbound TCP but only UDP
@@ -740,7 +770,7 @@ async fn link_outage_recovery() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn hotel_wifi_relay_only() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let hotel = lab
         .add_router("hotel")
         .preset(RouterPreset::Hotel)
@@ -768,7 +798,9 @@ async fn hotel_wifi_relay_only() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 /// Asymmetric link conditions: one peer on a fast LAN, the other on degraded
@@ -778,7 +810,7 @@ async fn hotel_wifi_relay_only() -> Result {
 #[traced_test]
 #[serial_test::serial]
 async fn holepunch_asymmetric_links() -> Result {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let dev1 = lab
@@ -808,7 +840,9 @@ async fn holepunch_asymmetric_links() -> Result {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    guard.ok();
+    Ok(())
 }
 
 // ---
@@ -899,7 +933,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
 /// Run the degradation ladder: iterate through levels, creating fresh devices
 /// each round but reusing the lab and relay. Returns the number of levels passed.
 async fn run_degrade_ladder(impaired_is_server: bool) -> Result<usize> {
-    let (lab, relay_map, _relay_guard) = lab_with_relay(testdir!()).await?;
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let timeout = Duration::from_secs(15);
@@ -985,6 +1019,7 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<usize> {
             break;
         }
     }
+    guard.ok();
     Ok(last_pass)
 }
 
