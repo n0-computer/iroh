@@ -1,7 +1,28 @@
+//! Patchbay network simulation tests.
+//!
+//! These tests use the [`patchbay`] crate to create virtual network topologies
+//! in Linux user namespaces, testing iroh's NAT traversal, holepunching,
+//! and connectivity under various network conditions.
+//!
+//! These tests are disabled by default and only run when the `patchbay_tests` cfg is enabled.
+//! They require Linux with user namespace support. On non-Linux systems, you can use
+//! `patchbay-vm` to get a Linux VM with the required capabilities. See patchbay docs
+//! for details.
+//!
+//! To run:
+//!
+//! ```sh
+//! # On Linux (with user namespace support):
+//! RUSTFLAGS="--cfg patchbay_tests" cargo test --release -p iroh --test patchbay -- --test-threads=1
+//!
+//! # On macOS (via patchbay-vm):
+//! RUSTFLAGS="--cfg patchbay_tests" patchbay-vm test --release -p iroh --test patchbay -- --test-threads=1
+//! ```
+
 // patchbay only runs on linux
 #![cfg(target_os = "linux")]
-// Allow to skip patchbay tests. Used by CI to not run patchbay tests via cross.
-#![cfg(not(iroh_skip_patchbay))]
+// Only compile these tests when the patchbay_tests cfg is enabled.
+#![cfg(patchbay_tests)]
 
 use std::time::Duration;
 
@@ -14,12 +35,12 @@ use tracing::{debug, info, warn};
 
 use self::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
 
-#[path = "netsim/util.rs"]
+#[path = "patchbay/util.rs"]
 mod util;
 
 /// Init the user namespace before any threads are spawned.
 ///
-/// This gives us all permissions we need for netsim.
+/// This gives us all permissions we need for the patchbay tests.
 #[ctor::ctor]
 fn userns_ctor() {
     patchbay::init_userns().expect("failed to init userns");
