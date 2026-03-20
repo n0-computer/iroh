@@ -158,6 +158,10 @@ pub enum DnsProtocol {
 }
 
 impl DnsProtocol {
+    #[cfg_attr(
+        not(with_crypto_provider),
+        expect(unused_variables, reason = "unused when TLS is disabled in DNS")
+    )]
     fn to_hickory(self, ip: IpAddr) -> ConnectionConfig {
         match self {
             DnsProtocol::Udp => ConnectionConfig::udp(),
