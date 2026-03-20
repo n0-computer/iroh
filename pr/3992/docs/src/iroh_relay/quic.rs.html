@@ -355,7 +355,7 @@
 <a href=#355 id=355 data-nosnippet>355</a>    }
 <a href=#356 id=356 data-nosnippet>356</a>}
 <a href=#357 id=357 data-nosnippet>357</a>
-<a href=#358 id=358 data-nosnippet>358</a><span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
+<a href=#358 id=358 data-nosnippet>358</a><span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>, with_crypto_provider))]
 <a href=#359 id=359 data-nosnippet>359</a></span><span class="kw">mod </span>tests {
 <a href=#360 id=360 data-nosnippet>360</a>    <span class="kw">use </span>std::{net::Ipv4Addr, sync::Arc};
 <a href=#361 id=361 data-nosnippet>361</a>
@@ -393,7 +393,7 @@
 <a href=#393 id=393 data-nosnippet>393</a>
 <a href=#394 id=394 data-nosnippet>394</a>        <span class="comment">// create the client configuration used for the client endpoint when they
 <a href=#395 id=395 data-nosnippet>395</a>        // initiate a connection with the server
-<a href=#396 id=396 data-nosnippet>396</a>        </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::client::make_dangerous_client_config();
+<a href=#396 id=396 data-nosnippet>396</a>        </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::tls::make_dangerous_client_config();
 <a href=#397 id=397 data-nosnippet>397</a>        <span class="kw">let </span>quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 <a href=#398 id=398 data-nosnippet>398</a>
 <a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>(addr, _latency) = quic_client
@@ -425,7 +425,7 @@
 <a href=#425 id=425 data-nosnippet>425</a>
 <a href=#426 id=426 data-nosnippet>426</a>        <span class="comment">// create the client configuration used for the client endpoint when they
 <a href=#427 id=427 data-nosnippet>427</a>        // initiate a connection with the server
-<a href=#428 id=428 data-nosnippet>428</a>        </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::client::make_dangerous_client_config();
+<a href=#428 id=428 data-nosnippet>428</a>        </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::tls::make_dangerous_client_config();
 <a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">let </span>quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 <a href=#430 id=430 data-nosnippet>430</a>
 <a href=#431 id=431 data-nosnippet>431</a>        <span class="comment">// Start a connection attempt with nirvana - this will fail
@@ -528,7 +528,7 @@
 <a href=#528 id=528 data-nosnippet>528</a>
 <a href=#529 id=529 data-nosnippet>529</a>        <span class="comment">// create the client configuration used for the client endpoint when they
 <a href=#530 id=530 data-nosnippet>530</a>        // initiate a connection with the server
-<a href=#531 id=531 data-nosnippet>531</a>        </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::client::make_dangerous_client_config();
+<a href=#531 id=531 data-nosnippet>531</a>        </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::tls::make_dangerous_client_config();
 <a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">let </span>quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 <a href=#533 id=533 data-nosnippet>533</a>
 <a href=#534 id=534 data-nosnippet>534</a>        <span class="comment">// Now we should still connect, but it should take more than 1s.
