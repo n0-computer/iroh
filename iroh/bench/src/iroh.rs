@@ -33,6 +33,7 @@ pub fn server_endpoint(
         #[allow(unused_mut)]
         let mut builder = Endpoint::builder(presets::N0);
         #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+        #[allow(unused_mut)]
         let mut builder = Endpoint::builder(presets::Empty); // allow building, but fail at runtime
         #[cfg(feature = "local-relay")]
         {
@@ -97,6 +98,7 @@ pub async fn connect_client(
     #[allow(unused_mut)]
     let mut builder = Endpoint::builder(presets::N0);
     #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+    #[allow(unused_mut)]
     let mut builder = Endpoint::builder(presets::Empty); // allow building, but fail at runtime
     #[cfg(feature = "local-relay")]
     {
