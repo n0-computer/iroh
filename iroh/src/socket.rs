@@ -1290,7 +1290,7 @@ struct Actor {
     /// All of this to say: keeping the quinn endpoint alive here does not impact the
     /// lifetime of it since it's lifetime is shorter than that one that's stored in the
     /// [`Handle`].
-    endpoint: quinn::Endpoint,
+    endpoint: noq::Endpoint,
     /// Shared state between an awful lot of iroh subsystems.
     ///
     /// In particular both the [`EndpointInner`] as well as this actor itself have a
@@ -1506,8 +1506,8 @@ impl Actor {
         impl NetworkChangeHint for Hint {
             fn is_path_recoverable(
                 &self,
-                _path_id: quinn::PathId,
-                network_path: quinn_proto::FourTuple,
+                _path_id: noq::PathId,
+                network_path: noq_proto::FourTuple,
             ) -> bool {
                 match MultipathMappedAddr::from(network_path.remote) {
                     MultipathMappedAddr::Mixed(_) => {
@@ -1528,6 +1528,10 @@ impl Actor {
                             Some(local_ip) => self.local_addrs.contains(&local_ip),
                             None => true,
                         }
+                    }
+                    MultipathMappedAddr::Custom(_) => {
+                        // Assume it is unrecoverable for now
+                        false
                     }
                 }
             }
