@@ -1501,7 +1501,7 @@ impl Actor {
                     let has_usable_network = true;
                     #[cfg(not(target_family = "wasm"))]
                     let has_usable_network = interfaces.default_route_interface.is_some()
-                        || (interfaces.have_v4 || interfaces.have_v6);
+                        && (interfaces.have_v4 || interfaces.have_v6);
                     if has_usable_network || pending.expired() {
                         // Gateway appeared or we've waited long enough, notify now.
                         let is_major = pending.is_major;
@@ -1548,7 +1548,7 @@ impl Actor {
         let has_usable_network = true;
         #[cfg(not(target_family = "wasm"))]
         let has_usable_network = interfaces.default_route_interface.is_some()
-            || (interfaces.have_v4 || interfaces.have_v6);
+            && (interfaces.have_v4 || interfaces.have_v6);
         if has_usable_network {
             // This is considered a usable network change, propagate it to the QUIC stack
             // right away.
