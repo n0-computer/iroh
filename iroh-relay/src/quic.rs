@@ -4,7 +4,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use n0_error::stack_error;
 use n0_future::time::Duration;
-use quinn::{VarInt, crypto::rustls::QuicClientConfig};
+use noq::{VarInt, crypto::rustls::QuicClientConfig};
 use tokio::sync::watch;
 
 /// ALPN for our quic addr discovery
@@ -17,7 +17,7 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 #[cfg(feature = "server")]
 pub(crate) mod server {
     use n0_error::e;
-    use quinn::{
+    use noq::{
         ApplicationClose, ConnectionError,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     };
@@ -97,7 +97,7 @@ pub(crate) mod server {
             quic_config.server_config.alpn_protocols =
                 vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
             let server_config = QuicServerConfig::try_from(quic_config.server_config)?;
-            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_config));
+            let mut server_config = noq::ServerConfig::with_crypto(Arc::new(server_config));
             let transport_config =
                 Arc::get_mut(&mut server_config.transport).expect("not used yet");
             transport_config
@@ -106,7 +106,7 @@ pub(crate) mod server {
                 // enable sending quic address discovery frames
                 .send_observed_address_reports(true);
 
-            let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)
+            let endpoint = noq::Endpoint::server(server_config, quic_config.bind_addr)
                 .map_err(|err| e!(QuicSpawnError::EndpointServer, err))?;
             let bind_addr = endpoint
                 .local_addr()
@@ -201,7 +201,7 @@ pub(crate) mod server {
     }
 
     /// Handle the connection from the client.
-    async fn handle_connection(incoming: quinn::Incoming) -> Result<(), ConnectionError> {
+    async fn handle_connection(incoming: noq::Incoming) -> Result<(), ConnectionError> {
         let connection = match incoming.await {
             Ok(conn) => conn,
             Err(e) => {
@@ -212,7 +212,7 @@ pub(crate) mod server {
         // wait for the client to close the connection
         let connection_err = connection.closed().await;
         match connection_err {
-            quinn::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
+            noq::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
                 if error_code == QUIC_ADDR_DISC_CLOSE_CODE =>
             {
                 Ok(())
@@ -230,12 +230,12 @@ pub enum Error {
     #[error(transparent)]
     Connect {
         #[error(std_err)]
-        source: quinn::ConnectError,
+        source: noq::ConnectError,
     },
     #[error(transparent)]
     Connection {
         #[error(std_err)]
-        source: quinn::ConnectionError,
+        source: noq::ConnectionError,
     },
     #[error(transparent)]
     WatchRecv {
@@ -248,25 +248,25 @@ pub enum Error {
 #[derive(Debug, Clone)]
 pub struct QuicClient {
     /// A QUIC Endpoint.
-    ep: quinn::Endpoint,
+    ep: noq::Endpoint,
     /// A client config.
-    client_config: quinn::ClientConfig,
+    client_config: noq::ClientConfig,
 }
 
 impl QuicClient {
     /// Create a new QuicClient to handle the client side of QUIC
     /// address discovery.
-    pub fn new(ep: quinn::Endpoint, mut client_config: rustls::ClientConfig) -> Self {
+    pub fn new(ep: noq::Endpoint, mut client_config: rustls::ClientConfig) -> Self {
         // add QAD alpn
         client_config.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.into()];
         // go from rustls client config to rustls QUIC specific client config to
-        // a quinn client config
-        let mut client_config = quinn::ClientConfig::new(Arc::new(
+        // a noq client config
+        let mut client_config = noq::ClientConfig::new(Arc::new(
             QuicClientConfig::try_from(client_config).expect("known ciphersuite"),
         ));
 
         // enable the receive side of address discovery
-        let mut transport = quinn_proto::TransportConfig::default();
+        let mut transport = noq_proto::TransportConfig::default();
         // Setting the initial RTT estimate to a low value means
         // we're sacrificing initial throughput, which is fine for
         // QAD, which doesn't require us to have good initial throughput.
@@ -302,7 +302,7 @@ impl QuicClient {
         server_addr: SocketAddr,
         host: &str,
     ) -> Result<(SocketAddr, std::time::Duration), Error> {
-        use quinn_proto::PathId;
+        use noq_proto::PathId;
 
         let connecting = self
             .ep
@@ -347,7 +347,7 @@ impl QuicClient {
         &self,
         server_addr: SocketAddr,
         host: &str,
-    ) -> Result<quinn::Connection, Error> {
+    ) -> Result<noq::Connection, Error> {
         let config = self.client_config.clone();
         let connecting = self.ep.connect_with(config, server_addr, host);
         let conn = connecting?.await?;
@@ -355,9 +355,9 @@ impl QuicClient {
     }
 }
 
-#[cfg(all(test, feature = "server"))]
+#[cfg(all(test, feature = "server", with_crypto_provider))]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::{net::Ipv4Addr, sync::Arc};
 
     use n0_error::{Result, StdResultExt};
     use n0_future::{
@@ -365,7 +365,7 @@ mod tests {
         time::{self, Instant},
     };
     use n0_tracing_test::traced_test;
-    use quinn::crypto::rustls::QuicServerConfig;
+    use noq::crypto::rustls::QuicServerConfig;
     use tracing::{Instrument, debug, info, info_span};
     use webpki_types::PrivatePkcs8KeyDer;
 
@@ -388,12 +388,12 @@ mod tests {
 
         // create a client-side endpoint
         let client_endpoint =
-            quinn::Endpoint::client(SocketAddr::new(host.into(), 0)).std_context("client")?;
+            noq::Endpoint::client(SocketAddr::new(host.into(), 0)).std_context("client")?;
         let client_addr = client_endpoint.local_addr().std_context("local addr")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
-        let client_config = crate::client::make_dangerous_client_config();
+        let client_config = crate::tls::make_dangerous_client_config();
         let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         let (addr, _latency) = quic_client
@@ -413,9 +413,8 @@ mod tests {
     #[traced_test]
     async fn test_qad_client_closes_unresponsive_fast() -> Result {
         // create a client-side endpoint
-        let client_endpoint =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
-                .std_context("client")?;
+        let client_endpoint = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
+            .std_context("client")?;
 
         // create an socket that does not respond.
         let server_socket =
@@ -426,7 +425,7 @@ mod tests {
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
-        let client_config = crate::client::make_dangerous_client_config();
+        let client_config = crate::tls::make_dangerous_client_config();
         let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         // Start a connection attempt with nirvana - this will fail
@@ -460,11 +459,10 @@ mod tests {
     /// In this case we don't simulate it via synthetically high RTT, but by dropping
     /// all packets on the server-side for 2 seconds.
     #[tokio::test]
-    // #[traced_test]
+    #[traced_test]
     async fn test_qad_connect_delayed() -> Result {
-        tracing_subscriber::fmt::try_init().ok();
         // Create a socket for our QAD server.  We need the socket separately because we
-        // need to pop off messages before we attach it to the Quinn Endpoint.
+        // need to pop off messages before we attach it to the Noq Endpoint.
         let socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
             .await
             .std_context("bind")?;
@@ -475,13 +473,17 @@ mod tests {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
             .std_context("self signed")?;
         let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
-        let mut server_crypto = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(vec![cert.cert.into()], key.into())
-            .std_context("tls")?;
+        let mut server_crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .std_context("crypto provider")?
+        .with_no_client_auth()
+        .with_single_cert(vec![cert.cert.into()], key.into())
+        .std_context("tls")?;
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         server_crypto.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.to_vec()];
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
+        let mut server_config = noq::ServerConfig::with_crypto(Arc::new(
             QuicServerConfig::try_from(server_crypto).std_context("config")?,
         ));
         let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
@@ -501,11 +503,11 @@ mod tests {
                 .await
                 .ok();
                 info!("starting server");
-                let server = quinn::Endpoint::new(
+                let server = noq::Endpoint::new(
                     Default::default(),
                     Some(server_config),
                     socket.into_std().unwrap(),
-                    Arc::new(quinn::TokioRuntime),
+                    Arc::new(noq::TokioRuntime),
                 )
                 .std_context("endpoint new")?;
                 info!("accepting conn");
@@ -521,13 +523,12 @@ mod tests {
         let server_task = AbortOnDropHandle::new(server_task);
 
         info!("starting client");
-        let client_endpoint =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
-                .std_context("client")?;
+        let client_endpoint = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
+            .std_context("client")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
-        let client_config = crate::client::make_dangerous_client_config();
+        let client_config = crate::tls::make_dangerous_client_config();
         let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         // Now we should still connect, but it should take more than 1s.

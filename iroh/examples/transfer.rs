@@ -37,31 +37,32 @@ use console::Style;
 use data_encoding::HEXLOWER;
 use derive_more::{Display, From};
 use indicatif::HumanBytes;
+use ipnet::{Ipv4Net, Ipv6Net};
 #[cfg(feature = "qlog")]
 use iroh::endpoint::QuicTransportConfig;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     Watcher,
     address_lookup::{
+        AddrFilter,
         dns::DnsAddressLookup,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{
         BindOpts, Connection, ConnectionError, PathId, PathWatcher, RecvStream, SendStream, VarInt,
-        WriteError,
+        WriteError, presets,
     },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{stream::StreamExt, task::AbortOnDropHandle};
-use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     time::timeout,
 };
-use tracing::{Instrument, Span, debug, info, info_span, instrument, warn};
+use tracing::{Instrument, Span, debug, error, info, info_span, instrument, warn};
 use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -267,7 +268,7 @@ impl Request {
     }
 }
 
-#[derive(Debug, clap::Parser, Serialize)]
+#[derive(Debug, Clone, clap::Parser, Serialize)]
 #[serde(tag = "kind")]
 struct EndpointArgs {
     /// Set the environment for relay, pkarr, and DNS servers.
@@ -391,42 +392,25 @@ async fn main() -> Result<()> {
 
     // Determine file logging path and init tracing subscriber.
     let log = log.init(&command, secret_key.public())?;
+    let endpoint_args = match &command {
+        Commands::Provide { endpoint_args } => endpoint_args,
+        Commands::Fetch { endpoint_args, .. } => endpoint_args,
+    };
+    output.emit_if_json(&endpoint_args);
+    let endpoint = endpoint_args
+        .clone()
+        .bind_endpoint(secret_key, output, log.as_ref())
+        .await?;
 
-    match command {
-        Commands::Provide { endpoint_args } => {
-            output.emit_if_json(&endpoint_args);
-            let endpoint = endpoint_args
-                .bind_endpoint(secret_key, output, log.as_ref())
-                .await?;
-            provide(endpoint, output).await?
-        }
-        Commands::Fetch {
-            remote_id,
-            remote_relay_url,
-            remote_direct_address,
-            endpoint_args,
-            mode,
-            size,
-            duration,
-        } => {
-            output.emit_if_json(&endpoint_args);
-            let length = match (size, duration) {
-                (Some(size), None) => Length::Size(size),
-                (None, Some(duration)) => Length::Duration(Duration::from_secs(duration)),
-                (None, None) => Length::Duration(Duration::from_secs(10)),
-                (Some(_), Some(_)) => unreachable!("--size and --duration args are conflicting"),
-            };
-            let endpoint = endpoint_args
-                .bind_endpoint(secret_key, output, log.as_ref())
-                .await?;
-            let addrs = remote_relay_url
-                .into_iter()
-                .map(TransportAddr::Relay)
-                .chain(remote_direct_address.into_iter().map(TransportAddr::Ip));
-            let remote_addr = EndpointAddr::from_parts(remote_id, addrs);
-            fetch(endpoint, remote_addr, length, mode, output).await?
+    match run_command(command, &endpoint, output).await {
+        Ok(()) => (),
+        Err(err) => {
+            error!(?err, "run_command failed");
+            eprintln!("{err:#}");
         }
     }
+
+    close_endpoint_with_timeout(&endpoint, output).await;
 
     if let Some(log) = log {
         output.emit(LogsSaved {
@@ -437,6 +421,35 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn run_command(command: Commands, endpoint: &Endpoint, output: Output) -> Result<()> {
+    match command {
+        Commands::Provide { endpoint_args: _ } => provide(endpoint, output).await?,
+        Commands::Fetch {
+            remote_id,
+            remote_relay_url,
+            remote_direct_address,
+            endpoint_args: _,
+            mode,
+            size,
+            duration,
+        } => {
+            let length = match (size, duration) {
+                (Some(size), None) => Length::Size(size),
+                (None, Some(duration)) => Length::Duration(Duration::from_secs(duration)),
+                (None, None) => Length::Duration(Duration::from_secs(10)),
+                (Some(_), Some(_)) => unreachable!("--size and --duration args are conflicting"),
+            };
+            let addrs = remote_relay_url
+                .into_iter()
+                .map(TransportAddr::Relay)
+                .chain(remote_direct_address.into_iter().map(TransportAddr::Ip));
+            let remote_addr = EndpointAddr::from_parts(remote_id, addrs);
+            fetch(endpoint, remote_addr, length, mode, output).await?
+        }
+    }
+    Ok(())
+}
+
 impl EndpointArgs {
     async fn bind_endpoint(
         self,
@@ -444,15 +457,20 @@ impl EndpointArgs {
         output: Output,
         log: Option<&LogSettings>,
     ) -> Result<Endpoint> {
-        let relay_mode = if self.no_relay {
-            RelayMode::Disabled
+        let mut builder = Endpoint::builder(presets::Minimal);
+        if self.no_relay {
+            // nothing to do
         } else if !self.relay_url.is_empty() {
-            RelayMode::Custom(RelayMap::from_iter(self.relay_url))
+            builder = builder.relay_mode(RelayMode::Custom(RelayMap::from_iter(self.relay_url)));
         } else {
-            self.env.relay_mode()
+            builder = builder.relay_mode(self.env.relay_mode());
         };
-        let mut builder = Endpoint::empty_builder(relay_mode);
         builder = builder.secret_key(secret_key);
+        if self.no_relay {
+            builder = builder.addr_filter(AddrFilter::ip_only());
+        } else {
+            builder = builder.addr_filter(AddrFilter::relay_only());
+        }
 
         if Env::Dev == self.env {
             #[cfg(feature = "test-utils")]
@@ -570,7 +588,7 @@ impl EndpointArgs {
     }
 }
 
-async fn provide(endpoint: Endpoint, output: Output) -> Result<()> {
+async fn provide(endpoint: &Endpoint, output: Output) -> Result<()> {
     for id in 0.. {
         // Accept incoming connections until Ctrl-C is pressed.
         let incoming = tokio::select! {
@@ -602,8 +620,6 @@ async fn provide(endpoint: Endpoint, output: Output) -> Result<()> {
             .instrument(info_span!("accept", id, remote = tracing::field::Empty)),
         );
     }
-
-    close_endpoint_with_timeout(&endpoint, output).await;
 
     Ok(())
 }
@@ -672,7 +688,7 @@ async fn handle_request(
 }
 
 async fn fetch(
-    endpoint: Endpoint,
+    endpoint: &Endpoint,
     remote_addr: EndpointAddr,
     length: Length,
     mode: Mode,
@@ -681,6 +697,7 @@ async fn fetch(
     // Attempt to connect, over the given ALPN. Returns a connection.
     let start = Instant::now();
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
+    let conn_info = conn.to_info();
     let remote_id = conn.remote_id();
     output.emit(Connected {
         remote_id,
@@ -733,7 +750,10 @@ async fn fetch(
         duration: start.elapsed(),
     });
 
-    close_endpoint_with_timeout(&endpoint, output).await;
+    // Stats are collected by the paths watcher, so we do not look at the stats returned by
+    // this call. It is however the only API we currently have to tell us when the
+    // connection is drained and the stats will no longer change.
+    conn_info.closed().await;
     output.emit(PathStats::from_watcher(watcher));
 
     res
@@ -975,6 +995,7 @@ impl Output {
     }
 
     fn emit(&self, event: impl Serialize + fmt::Display) {
+        info!("{event}");
         match self.mode {
             OutputMode::Text => println!("{event} {}", self.time()),
             OutputMode::Json => println!(
@@ -985,6 +1006,7 @@ impl Output {
     }
 
     fn emit_with_remote(&self, remote: EndpointId, event: impl Serialize + fmt::Display) {
+        info!(remote=%remote.fmt_short(), "{event}");
         match self.mode {
             OutputMode::Text => println!(
                 "{} {event} {}",
@@ -1314,7 +1336,7 @@ pub fn init_tracing(path: Option<&Path>) {
     if let Some(path) = path {
         let file = File::create(path).expect("failed to create trace log file");
         let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("iroh=trace,transfer=trace"));
+            .unwrap_or_else(|_| EnvFilter::new("iroh=trace,transfer=trace,noq=trace"));
         let layer = fmt::layer().with_writer(file).with_filter(filter);
         registry().with(layer).init()
     } else {

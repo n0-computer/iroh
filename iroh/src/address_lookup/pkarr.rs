@@ -19,11 +19,10 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
-//! [`PkarrPublisher`] publishes all addresses it receives by default, with no internal limiting.
-//! You can supply an [`AddrFilter`] via [`PkarrPublisherBuilder::set_addr_filter`] to limit the kinds
-//! and number of addresses that get published.
-//!
-//! Note that [`PkarrResolver`] and [`address_lookup::DnsAddressLookup`] only resolve and do not publish, so filtering does not apply to them.
+//! [`PkarrPublisher`] filters published addresses: only relay addresses are published by default.
+//! To change this behavior, use [`PkarrPublisherBuilder::addr_filter`] and set it to e.g. [`AddrFilter::unfiltered`].
+//! This can be useful to enable publishing IP addresses if the iroh endpoint is reachable via public
+//! IP addresses.
 //!
 //! For address lookup in iroh the pkarr Resource Records contain the addressing information,
 //! providing endpoints which retrieve the pkarr Resource Record with enough detail
@@ -49,11 +48,16 @@
 //! [`EndpointId`]: crate::EndpointId
 //! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
 //! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
+//! [`N0` preset]: crate::endpoint::presets::N0
+//! [`AddrFilter`]: crate::address_lookup::AddrFilter
+//! [`AddrFilter::relay_only`]: crate::address_lookup::AddrFilter::relay_only
+//! [`AddrFilter::unfiltered`]: crate::address_lookup::AddrFilter::unfiltered
+//! [`PkarrPublisherBuilder::addr_filter`]: PkarrPublisherBuilder::addr_filter
 
 use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
-use iroh_relay::endpoint_info::{EncodingError, EndpointInfo};
+use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointInfo};
 use n0_error::{e, stack_error};
 use n0_future::{
     boxed::BoxStream,
@@ -65,7 +69,7 @@ use pkarr::{
     SignedPacket,
     errors::{PublicKeyError, SignedPacketVerifyError},
 };
-use tracing::{Instrument, debug, error_span, warn};
+use tracing::{Instrument, debug, error_span, trace, warn};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -73,7 +77,7 @@ use crate::dns::DnsResolver;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
+        AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
         Error as AddressLookupError, Item as AddressLookupItem,
     },
     endpoint::force_staging_infra,
@@ -158,9 +162,9 @@ pub struct PkarrPublisherBuilder {
     pkarr_relay: Url,
     ttl: u32,
     republish_interval: Duration,
+    filter: AddrFilter,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
-    filter: AddrFilter,
 }
 
 impl PkarrPublisherBuilder {
@@ -170,9 +174,9 @@ impl PkarrPublisherBuilder {
             pkarr_relay,
             ttl: DEFAULT_PKARR_TTL,
             republish_interval: DEFAULT_REPUBLISH_INTERVAL,
+            filter: AddrFilter::relay_only(),
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
-            filter: AddrFilter::default(),
         }
     }
 
@@ -210,8 +214,16 @@ impl PkarrPublisherBuilder {
         self
     }
 
-    /// Sets a filter to control which addresses are published by this service
-    pub fn set_addr_filter(mut self, filter: AddrFilter) -> Self {
+    /// Sets the address filter to control which addresses are published to the pkarr server.
+    ///
+    /// By default [`AddrFilter::relay_only`] is used. This avoids leaking IP addresses to the
+    /// public pkarr server.
+    ///
+    /// However, enabling IP address publishing can be useful, e.g. when iroh runs on a machine
+    /// connected to the internet via public IP addresses without a firewall.
+    /// In such cases, publishing them can make dialing such endpoints via DNS or Pkarr lookup
+    /// faster, potentially skipping a relay connection altogether.
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
         self.filter = filter;
         self
     }
@@ -245,13 +257,6 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
         let tls_config = endpoint.tls_config().clone();
         Ok(self.build(endpoint.secret_key().clone(), tls_config))
     }
-
-    fn with_addr_filter(self, filter: AddrFilter) -> Self
-    where
-        Self: Sized,
-    {
-        self.set_addr_filter(filter)
-    }
 }
 
 /// Publisher of address lookup information to a [pkarr] relay.
@@ -273,7 +278,7 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
 pub struct PkarrPublisher {
     endpoint_id: EndpointId,
     watchable: Watchable<Option<EndpointInfo>>,
-    filter: AddrFilter,
+    addr_filter: AddrFilter,
     _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
 
@@ -304,7 +309,7 @@ impl PkarrPublisher {
         republish_interval: Duration,
         #[cfg(not(wasm_browser))] dns_resolver: Option<DnsResolver>,
         tls_config: rustls::ClientConfig,
-        filter: AddrFilter,
+        addr_filter: AddrFilter,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let endpoint_id = secret_key.public();
@@ -333,7 +338,7 @@ impl PkarrPublisher {
         Self {
             watchable,
             endpoint_id,
-            filter,
+            addr_filter,
             _drop_guard: Arc::new(AbortOnDropHandle::new(join_handle)),
         }
     }
@@ -356,9 +361,7 @@ impl PkarrPublisher {
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_endpoint_data(&self, data: &EndpointData) {
-        let addrs = data.filtered_addrs(&self.filter);
-        debug!(addrs = ?addrs, "Applied address filter to endpoint data");
-        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
+        let data = data.apply_filter(&self.addr_filter).into_owned();
         let info = EndpointInfo::from_parts(self.endpoint_id, data);
         self.watchable.set(Some(info)).ok();
     }
@@ -406,7 +409,7 @@ impl PublisherService {
                             "Failed to publish to pkarr",
                         );
                     }
-                    _ => {
+                    Ok(()) => {
                         failed_attempts = 0;
                         // Republish after fixed interval
                         republish
@@ -430,12 +433,17 @@ impl PublisherService {
         debug!(
             data = ?info.data,
             pkarr_relay = %self.pkarr_client.pkarr_relay_url,
-            "Publish endpoint info to pkarr"
+            "Publishing endpoint info to pkarr"
         );
         let signed_packet = info
             .to_pkarr_signed_packet(&self.secret_key, self.ttl)
             .map_err(|err| e!(PkarrError::Encoding, err))?;
         self.pkarr_client.publish(&signed_packet).await?;
+        trace!(
+            data = ?info.data,
+            pkarr_relay = %self.pkarr_client.pkarr_relay_url,
+            "Published endpoint info to pkarr"
+        );
         Ok(())
     }
 }
@@ -483,11 +491,6 @@ impl AddressLookupBuilder for PkarrResolverBuilder {
         }
         let tls_config = endpoint.tls_config().clone();
         Ok(self.build(tls_config))
-    }
-
-    /// no-op: resolver does not publish
-    fn with_addr_filter(self, _filter: AddrFilter) -> Self {
-        self
     }
 }
 
