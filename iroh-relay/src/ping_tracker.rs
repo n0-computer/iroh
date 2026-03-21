@@ -87,7 +87,7 @@ impl PingTracker {
     /// the default timeout if no RTT has been measured yet.
     pub fn health_check_timeout(&self) -> Duration {
         self.last_rtt
-            .map(|rtt| (rtt * 3).max(Duration::from_millis(500)))
+            .map(|rtt| (rtt * 3).max(Duration::from_millis(500)).min(self.default_timeout))
             .unwrap_or(self.default_timeout)
     }
 
