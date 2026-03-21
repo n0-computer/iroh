@@ -105,9 +105,23 @@ pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The maximum time a path can stay idle before being closed.
 ///
-/// This is [`HEARTBEAT_INTERVAL`] + 1.5s.  This gives us a chance to send a PING frame and
-/// some retries.
-pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
+/// 15s gives 3x [`HEARTBEAT_INTERVAL`] (5s) for multiple retry chances, and enough
+/// margin for real-world outages (WiFi reconnect 2-5s, cellular handoff 2-10s).
+/// iroh 0.35 used 10s at the QUIC level; tailscale uses 45s at the WireGuard session
+/// level with 3s heartbeats.
+pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The maximum time a relay path can stay idle before being closed.
+///
+/// Relay paths need a longer idle timeout than direct paths because the relay actor
+/// manages the WebSocket connection and transparently reconnects after network changes
+/// or relay server restarts. During network outages the interface may be down for
+/// 5-15s, during which no relay traffic flows. Once the interface recovers, the relay
+/// actor reconnects (DNS + TCP + TLS + WebSocket upgrade), which adds another 1-2s.
+///
+/// Set to match the connection-level idle timeout (30s) so the relay path survives
+/// as long as the connection itself.
+pub(crate) const RELAY_PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
