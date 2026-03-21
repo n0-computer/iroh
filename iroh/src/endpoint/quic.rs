@@ -482,13 +482,15 @@ impl QuicTransportConfigBuilder {
     /// interact with the [`QuicTransportConfigBuilder::max_idle_timeout`], if the last path is
     /// abandoned the entire connection will be closed.
     ///
-    /// Note: this method will ignore values higher than the recommended 6500 ms and will log a warning.
+    /// Note: values higher than [`PATH_MAX_IDLE_TIMEOUT`] are clamped and a warning is logged.
     pub fn default_path_max_idle_timeout(mut self, timeout: Duration) -> Self {
         if timeout > PATH_MAX_IDLE_TIMEOUT {
             warn!(
-                "QuicTransportConfig::default_path_max_idle must be at most {:?}, ignoring user supplied value",
+                "QuicTransportConfig::default_path_max_idle must be at most {:?}, clamping",
                 PATH_MAX_IDLE_TIMEOUT
             );
+            self.0
+                .default_path_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT));
             return self;
         }
         self.0.default_path_max_idle_timeout(Some(timeout));

@@ -99,17 +99,21 @@ pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The maximum time a path can stay idle before being closed.
 ///
-/// This is [`HEARTBEAT_INTERVAL`] + 1.5s.  This gives us a chance to send a PING frame and
-/// some retries.
-pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
+/// Set to 15s to survive real-world network outages (WiFi reconnect, cellular handoff)
+/// which commonly last 2-10 seconds. With [`HEARTBEAT_INTERVAL`] at 5s, three heartbeat
+/// cycles fit within this window, giving multiple chances to detect path recovery.
+///
+/// For comparison, iroh 0.35 (DISCO) and tailscale both use 45s. We use 15s as a
+/// compromise: resilient to outages but still detects dead paths 3x faster.
+pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The maximum time a relay path can stay idle before being closed.
 ///
 /// Relay paths need a longer idle timeout than direct paths because the relay actor
 /// manages the WebSocket connection and transparently reconnects after network changes
 /// or relay server restarts. Reconnection can take 5-10s (DNS + TCP + TLS + WebSocket
-/// upgrade), so the default [`PATH_MAX_IDLE_TIMEOUT`] (6.5s) is too aggressive — it
-/// would kill the QUIC path before the relay has time to recover.
+/// upgrade), so even [`PATH_MAX_IDLE_TIMEOUT`] may be too aggressive — it could kill
+/// the QUIC path before the relay has time to recover.
 ///
 /// Set to match the connection-level idle timeout (30s) so the relay path survives
 /// as long as the connection itself. Interface-down scenarios can last 15-20s before
