@@ -87,7 +87,7 @@
 <a href=#87 id=87 data-nosnippet>87</a>    /// the default timeout if no RTT has been measured yet.
 <a href=#88 id=88 data-nosnippet>88</a>    </span><span class="kw">pub fn </span>health_check_timeout(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Duration {
 <a href=#89 id=89 data-nosnippet>89</a>        <span class="self">self</span>.last_rtt
-<a href=#90 id=90 data-nosnippet>90</a>            .map(|rtt| (rtt * <span class="number">3</span>).max(Duration::from_millis(<span class="number">500</span>)))
+<a href=#90 id=90 data-nosnippet>90</a>            .map(|rtt| (rtt * <span class="number">3</span>).max(Duration::from_millis(<span class="number">500</span>)).min(<span class="self">self</span>.default_timeout))
 <a href=#91 id=91 data-nosnippet>91</a>            .unwrap_or(<span class="self">self</span>.default_timeout)
 <a href=#92 id=92 data-nosnippet>92</a>    }
 <a href=#93 id=93 data-nosnippet>93</a>
