@@ -163,7 +163,14 @@ enum ActiveRelayMessage {
     /// socket with an IP address in this list the relay server will be pinged.  If the
     /// connection uses a local socket with an IP address not in this list the server will
     /// always re-connect.
-    CheckConnection(Vec<IpAddr>),
+    ///
+    /// When `is_network_change` is true, uses a shorter RTT-based timeout for the health
+    /// check ping instead of the default 5s, to detect broken connections faster after
+    /// a network change.
+    CheckConnection {
+        local_ips: Vec<IpAddr>,
+        is_network_change: bool,
+    },
     /// Sets this relay as the home relay, or not.
     SetHomeRelay(bool),
     #[cfg(test)]
@@ -434,7 +441,7 @@ impl ActiveRelayActor {
                         ActiveRelayMessage::SetHomeRelay(is_home) => {
                             self.set_home_relay(is_home);
                         }
-                        ActiveRelayMessage::CheckConnection(_local_ips) => {}
+                        ActiveRelayMessage::CheckConnection { .. } => {}
                         #[cfg(test)]
                         ActiveRelayMessage::GetLocalAddr(sender) => {
                             sender.send(None).ok();
@@ -560,10 +567,17 @@ impl ActiveRelayActor {
                         ActiveRelayMessage::SetHomeRelay(is_home) => {
                             self.set_home_relay(is_home);
                         }
-                        ActiveRelayMessage::CheckConnection(local_ips) => {
+                        ActiveRelayMessage::CheckConnection { local_ips, is_network_change } => {
                             match client_stream.local_addr() {
                                 Some(addr) if local_ips.contains(&addr.ip()) => {
-                                    let data = state.ping_tracker.new_ping();
+                                    let data = if is_network_change {
+                                        // Use RTT-based timeout for faster detection
+                                        let timeout = state.ping_tracker.health_check_timeout();
+                                        debug!(?timeout, "health check ping after network change");
+                                        state.ping_tracker.new_ping_with_timeout(timeout)
+                                    } else {
+                                        state.ping_tracker.new_ping()
+                                    };
                                     let fut = client_sink.send(ClientToRelayMsg::Ping(data));
                                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                                 }
@@ -799,7 +813,14 @@ impl ConnectedRelayState {
 
 pub(super) enum RelayActorMessage {
     MaybeCloseRelaysOnRebind,
-    NetworkChange { report: Report },
+    NetworkChange {
+        report: Report,
+    },
+    /// Trigger an immediate health check on all relay connections.
+    ///
+    /// Sent after a major network change to detect broken connections faster
+    /// using RTT-based timeouts instead of the default 5s ping timeout.
+    CheckConnectionAfterNetworkChange,
 }
 
 #[derive(Debug, Clone)]
@@ -928,6 +949,9 @@ impl RelayActor {
             }
             RelayActorMessage::MaybeCloseRelaysOnRebind => {
                 self.maybe_close_relays_on_rebind().await;
+            }
+            RelayActorMessage::CheckConnectionAfterNetworkChange => {
+                self.check_connection_after_network_change().await;
             }
         }
     }
@@ -1110,6 +1134,37 @@ impl RelayActor {
         handle
     }
 
+    /// Triggers an immediate health check on all relay connections after a network change.
+    ///
+    /// Uses RTT-based timeout for faster detection of broken connections.
+    async fn check_connection_after_network_change(&mut self) {
+        #[cfg(not(wasm_browser))]
+        let ifs = interfaces::State::new().await;
+        #[cfg(not(wasm_browser))]
+        let local_ips: Vec<_> = ifs
+            .interfaces
+            .values()
+            .flat_map(|netif| netif.addrs())
+            .map(|ipnet| ipnet.addr())
+            .collect();
+        #[cfg(wasm_browser)]
+        let local_ips = Vec::new();
+        let send_futs = self.active_relays.values().map(|handle| {
+            let local_ips = local_ips.clone();
+            async move {
+                handle
+                    .inbox_addr
+                    .send(ActiveRelayMessage::CheckConnection {
+                        local_ips,
+                        is_network_change: true,
+                    })
+                    .await
+                    .ok();
+            }
+        });
+        n0_future::join_all(send_futs).await;
+    }
+
     /// Closes the relay connections not originating from a local IP address.
     ///
     /// Called in response to a rebind, any relay connection originating from an address
@@ -1133,7 +1188,10 @@ impl RelayActor {
             async move {
                 handle
                     .inbox_addr
-                    .send(ActiveRelayMessage::CheckConnection(local_ips))
+                    .send(ActiveRelayMessage::CheckConnection {
+                        local_ips,
+                        is_network_change: false,
+                    })
                     .await
                     .ok();
             }
@@ -1408,7 +1466,10 @@ mod tests {
             .context("no local addr")?;
         info!(?local_addr, "check connection with addr");
         inbox_tx
-            .send(ActiveRelayMessage::CheckConnection(vec![local_addr.ip()]))
+            .send(ActiveRelayMessage::CheckConnection {
+                local_ips: vec![local_addr.ip()],
+                is_network_change: false,
+            })
             .await
             .std_context("send check connection message")?;
 
@@ -1434,7 +1495,10 @@ mod tests {
         // do not supply any "valid" local IP addresses.
         info!("check connection");
         inbox_tx
-            .send(ActiveRelayMessage::CheckConnection(Vec::new()))
+            .send(ActiveRelayMessage::CheckConnection {
+                local_ips: Vec::new(),
+                is_network_change: false,
+            })
             .await
             .std_context("send check connection msg")?;
 
