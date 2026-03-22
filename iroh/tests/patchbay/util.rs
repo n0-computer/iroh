@@ -240,7 +240,7 @@ fn watch_selected_path(conn: &Connection) {
 
 fn endpoint_builder(device: &Device, relay_map: RelayMap) -> iroh::endpoint::Builder {
     #[allow(unused_mut)]
-    let mut builder = Endpoint::empty_builder()
+    let mut builder = Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(RelayMode::Custom(relay_map))
         .ca_roots_config(CaRootsConfig::insecure_skip_verify())
         .alpns(vec![TEST_ALPN.to_vec()]);
