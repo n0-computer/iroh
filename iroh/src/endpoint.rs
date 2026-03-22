@@ -869,6 +869,13 @@ impl Endpoint {
         Builder::new(preset)
     }
 
+    /// Returns the builder for an [`Endpoint`], with an empty configuration.
+    ///
+    /// See [`Builder::empty`] for details.
+    pub fn empty_builder() -> Builder {
+        Builder::empty()
+    }
+
     /// Constructs a default [`Endpoint`] using the provided [`Preset`] and binds it immediately.
     pub async fn bind(preset: impl Preset) -> Result<Self, BindError> {
         Self::builder(preset).bind().await
