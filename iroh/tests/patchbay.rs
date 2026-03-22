@@ -327,7 +327,6 @@ async fn change_ifaces() -> Result {
 #[tokio::test]
 #[traced_test]
 #[serial_test::serial]
-#[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_home_nat_one_side() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat = lab.add_router("nat").nat(Nat::Home).build().await?;
@@ -358,7 +357,6 @@ async fn holepunch_home_nat_one_side() -> Result {
 #[tokio::test]
 #[traced_test]
 #[serial_test::serial]
-#[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_cgnat_both() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Cgnat).build().await?;
@@ -539,7 +537,6 @@ async fn cloud_nat_stays_relayed() -> Result {
 #[tokio::test]
 #[traced_test]
 #[serial_test::serial]
-#[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_double_nat() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     // ISP-level CGNAT routers
