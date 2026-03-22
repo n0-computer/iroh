@@ -101,10 +101,12 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 # target-common test/dev dependencies
 [dev-dependencies]
 console_error_panic_hook = "0.1"
+n0-error = { version = "0.1", features = ["anyhow"] }
 postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand_chacha = "0.9"
 chrono = "0.4.43"
+serial_test = "3.4.0"
 
 # *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
@@ -127,6 +129,7 @@ n0-tracing-test = "0.3"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
+    "json",
 ] }
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
@@ -137,6 +140,12 @@ console = { version = "0.16" }
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
 wasm-tracing = "2.1.0"
 wasm-bindgen-test = "0.3.62"
+
+# patchbay netsim test dependencies (linux only)
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "0.6"
+patchbay = { git = "https://github.com/n0-computer/patchbay.git", branch = "feat/server-push" }
+testdir = "0.9"
 
 [build-dependencies]
 cfg_aliases = { version = "0.2.1" }
