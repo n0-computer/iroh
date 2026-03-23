@@ -1,0 +1,109 @@
+name: Patchbay Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - Frando/netsim
+
+concurrency:
+  group: patchbay-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: "-Dwarnings --cfg patchbay_tests"
+  SCCACHE_CACHE_SIZE: "10G"
+  IROH_FORCE_STAGING_RELAYS: "1"
+
+jobs:
+  patchbay_tests:
+    name: Patchbay Tests
+    timeout-minutes: 45
+    runs-on: [self-hosted, linux, X64]
+    env:
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Run patchbay tests
+        id: tests
+        run: cargo test --release -p iroh --test patchbay -- --test-threads=1
+        env:
+          RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
+
+      - name: Push results
+        if: always()
+        env:
+          PATCHBAY_URL: https://frando.gateway.lol
+          PATCHBAY_API_KEY: ${{ secrets.PATCHBAY_API_KEY }}
+          TEST_STATUS: ${{ steps.tests.outcome }}
+        run: |
+          set -euo pipefail
+          PROJECT="${{ github.event.repository.name }}"
+          TESTDIR="$(cargo metadata --format-version=1 --no-deps | jq -r .target_directory)/testdir-current"
+          [ ! -d "$TESTDIR" ] && echo "No testdir output, skipping" && exit 0
+
+          cat > "$TESTDIR/run.json" <<MANIFEST
+          {
+            "project": "$PROJECT",
+            "branch": "${{ github.head_ref || github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "pr": ${{ github.event.pull_request.number || 'null' }},
+            "pr_url": "${{ github.event.pull_request.html_url || '' }}",
+            "title": "${{ github.event.pull_request.title || github.event.head_commit.message || '' }}",
+            "status": "$TEST_STATUS",
+            "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          MANIFEST
+
+          RESPONSE=$(tar -czf - -C "$TESTDIR" . | \
+            curl -s -w "\n%{http_code}" -X POST \
+              -H "Authorization: Bearer $PATCHBAY_API_KEY" \
+              -H "Content-Type: application/gzip" \
+              --data-binary @- "$PATCHBAY_URL/api/push/$PROJECT")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          [ "$HTTP_CODE" != "200" ] && echo "Push failed ($HTTP_CODE): $BODY" && exit 1
+
+          INVOCATION=$(echo "$BODY" | jq -r .invocation)
+          VIEW_URL="$PATCHBAY_URL/#/inv/$INVOCATION"
+          echo "PATCHBAY_VIEW_URL=$VIEW_URL" >> "$GITHUB_ENV"
+          echo "PATCHBAY_TEST_STATUS=$TEST_STATUS" >> "$GITHUB_ENV"
+          echo "Results: $VIEW_URL"
+
+      - name: Comment on PR
+        if: always() && env.PATCHBAY_VIEW_URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Find PR number: from event or by looking up open PRs for the branch
+            let prNumber = context.issue?.number;
+            if (!prNumber) {
+              const { data: prs } = await github.rest.pulls.list({
+                owner: context.repo.owner, repo: context.repo.repo,
+                head: `${context.repo.owner}:${{ github.ref_name }}`,
+                state: 'open',
+              });
+              if (!prs.length) return;
+              prNumber = prs[0].number;
+            }
+
+            const status = process.env.PATCHBAY_TEST_STATUS;
+            const icon = status === 'success' ? '\u2705' : '\u274c';
+            const marker = '<!-- patchbay-results -->';
+            const body = `${marker}\n${icon} **patchbay:** ${status} | ${process.env.PATCHBAY_VIEW_URL}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+            const params = { owner: context.repo.owner, repo: context.repo.repo };
+            if (existing) {
+              await github.rest.issues.updateComment({ ...params, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...params, issue_number: prNumber, body });
+            }

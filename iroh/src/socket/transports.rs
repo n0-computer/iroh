@@ -449,6 +449,15 @@ impl NetworkChangeSender {
         }
     }
 
+    /// Triggers an immediate relay connection health check after a network change.
+    ///
+    /// Uses RTT-based timeout for faster detection of broken connections.
+    pub(crate) fn check_relay_connection(&self) {
+        for relay in &self.relay {
+            relay.check_connection_after_network_change();
+        }
+    }
+
     /// Rebinds underlying connections, if necessary.
     pub(crate) fn rebind(&self) -> std::io::Result<()> {
         let mut res = Ok(());
