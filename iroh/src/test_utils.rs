@@ -403,7 +403,11 @@ pub(crate) mod pkarr_dns_state {
                     .as_ref()
                     .and_then(|p| EndpointInfo::from_pkarr_signed_packet(p).ok());
                 debug!("got info {:#?}", endpoint_info);
-                p.is_none()
+                // Wait until we have endpoint info with actual addressing data,
+                // not just an empty initial publish.
+                endpoint_info
+                    .as_ref()
+                    .is_none_or(|info| info.data.addrs().next().is_none())
             }) {
                 tokio::select! {
                     _ = &mut timeout => return Err(std::io::Error::other("timeout")),

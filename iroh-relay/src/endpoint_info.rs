@@ -799,7 +799,7 @@ pub(crate) fn endpoint_domain(endpoint_id: &EndpointId, origin: &str) -> String 
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, str::FromStr};
+    use std::str::FromStr;
 
     use iroh_base::{EndpointId, SecretKey, TransportAddr};
     use n0_error::Result;
