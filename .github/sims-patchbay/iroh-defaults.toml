@@ -113,7 +113,7 @@ regex = "DNS server listening on"
 name   = "transfer-provider"
 action = "spawn"
 parser = "ndjson"
-cmd    = ["${binary.transfer}", "--output", "json", "provide"]
+cmd    = ["${binary.transfer}", "--output", "json", "provide", "--env", "dev"]
 env    = { RUST_LOG = "iroh=info,iroh::_events=debug" }
 [step-template.captures.endpoint_id]
 match = { kind = "EndpointBound" }
@@ -128,7 +128,7 @@ pick  = ".direct_addresses.0"
 name   = "transfer-fetcher"
 action = "spawn"
 parser = "ndjson"
-cmd    = ["${binary.transfer}", "--output", "json", "fetch"]
+cmd    = ["${binary.transfer}", "--output", "json", "fetch", "--env", "dev"]
 env    = { RUST_LOG = "iroh=info,iroh::_events=debug" }
 [step-template.captures.size]
 match = { kind = "DownloadComplete" }
