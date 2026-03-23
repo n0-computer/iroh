@@ -1283,13 +1283,13 @@
 <a href=#1283 id=1283 data-nosnippet>1283</a>    /// The task of this actor is currently owned by the [`crate::Endpoint`] and wrapped in
 <a href=#1284 id=1284 data-nosnippet>1284</a>    /// an [`AbortOnDropHandle`]. When [`crate::Endpoint::close`] is called various
 <a href=#1285 id=1285 data-nosnippet>1285</a>    /// subsystems are being stopped. Then, when [`ShutdownState::at_endpoint_closed`] is
-<a href=#1286 id=1286 data-nosnippet>1286</a>    /// called by [`Endpoint::close`], this actor itself is stopped via it's
+<a href=#1286 id=1286 data-nosnippet>1286</a>    /// called by [`crate::Endpoint::close`], this actor itself is stopped via it's
 <a href=#1287 id=1287 data-nosnippet>1287</a>    /// [`CancellationToken`] and we will drop this clone of the endpoint. The endpoint is
-<a href=#1288 id=1288 data-nosnippet>1288</a>    /// then finally dropped when the [`Endpoint`] itself is dropped.
+<a href=#1288 id=1288 data-nosnippet>1288</a>    /// then finally dropped when the [`crate::Endpoint`] itself is dropped.
 <a href=#1289 id=1289 data-nosnippet>1289</a>    ///
 <a href=#1290 id=1290 data-nosnippet>1290</a>    /// All of this to say: keeping the quinn endpoint alive here does not impact the
 <a href=#1291 id=1291 data-nosnippet>1291</a>    /// lifetime of it since it's lifetime is shorter than that one that's stored in the
-<a href=#1292 id=1292 data-nosnippet>1292</a>    /// [`Endpoint`].
+<a href=#1292 id=1292 data-nosnippet>1292</a>    /// [`crate::Endpoint`].
 <a href=#1293 id=1293 data-nosnippet>1293</a>    </span>endpoint: noq::Endpoint,
 <a href=#1294 id=1294 data-nosnippet>1294</a>    <span class="doccomment">/// Shared state between an awful lot of iroh subsystems.
 <a href=#1295 id=1295 data-nosnippet>1295</a>    ///
