@@ -1,12 +1,15 @@
-# Multi-provider relay-only transfer, 2to2.
+# Multi-provider relay-only transfer, varying topology.
 # Fetchers connect round-robin: fetcher-i -> provider-(i % 2).
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
+[matrix]
+topo = ["2to2", "2to4", "2to6", "2to10"]
+
 [sim]
-name     = "iroh-2to2-relay-only"
-topology = "2to2-relay"
+name     = "iroh-${matrix.topo}-relay-only"
+topology = "${matrix.topo}-relay"
 
 [[step]]
 use  = "relay-setup"

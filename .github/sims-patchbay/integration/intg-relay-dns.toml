@@ -1,11 +1,14 @@
-# Integration test: relay + DNS discovery, 1to1.
+# Integration test: relay + DNS discovery.
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
+[matrix]
+topo = ["1to1", "1to3"]
+
 [sim]
-name     = "intg-1to1-relay-dns"
-topology = "1to1-relay-dns"
+name     = "intg-${matrix.topo}-relay-dns"
+topology = "${matrix.topo}-relay-dns"
 
 [[step]]
 use  = "relay-setup"

@@ -1,34 +1,35 @@
-# Relay+DNS transfer with 4 Mbit/s throttle and 200ms latency.
+# Both peers behind NAT with adverse network conditions.
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
-[sim]
-name     = "relay-dns-throttled"
-topology = "1to1-relay-dns"
+[matrix]
+cond = ["lossy", "throttled"]
 
-[[step]]
-action    = "set-link-condition"
-device    = "fetcher"
-condition = { latency_ms = 200, rate_kbit = 4000 }
+[matrix.params.cond]
+lossy     = { latency = "200", rate = "8000", loss = "1.0" }
+throttled = { latency = "200", rate = "4000", loss = "0" }
+
+[sim]
+name     = "nat-both-${matrix.cond}"
+topology = "1to1-nat"
 
 [[step]]
 use  = "relay-setup"
 vars = { device = "relay" }
 
 [[step]]
-use  = "dns-setup"
-vars = { device = "dns" }
+action    = "set-link-condition"
+device    = "fetcher"
+condition = { latency_ms = "${matrix.latency}", rate_kbit = "${matrix.rate}", loss_pct = "${matrix.loss}" }
 
 [[step]]
 use      = "transfer-provider"
 id       = "provider"
 device   = "provider"
-requires = ["relay.ready", "dns.ready"]
+requires = ["relay.ready"]
 args     = ["--env", "dev",
-            "--relay-url", "https://$NETSIM_IP_relay:3340",
-            "--pkarr-relay-url", "http://$NETSIM_IP_dns:8080/pkarr",
-            "--dns-origin-domain", "$NETSIM_IP_dns:5300"]
+            "--relay-url", "https://$NETSIM_IP_relay:3340"]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -39,8 +40,6 @@ args   = ["${provider.endpoint_id}",
           "--duration=30",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
-          "--pkarr-relay-url",  "http://$NETSIM_IP_dns:8080/pkarr",
-          "--dns-origin-domain", "$NETSIM_IP_dns:5300",
           "--remote-direct-address", "${provider.direct_addr}"]
 
 [[step]]
@@ -52,5 +51,4 @@ timeout = "120s"
 action = "assert"
 checks = [
   "fetcher.size matches [0-9]+",
-  "fetcher.conn_type contains Ip",
 ]
