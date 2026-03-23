@@ -53,6 +53,9 @@ jobs:
           --no-default-features \
           patchbay-runner
 
+    - name: Prepare sims (build binaries)
+      run: patchbay prepare .github/sims-patchbay/integration .github/sims-patchbay/perf
+
     - name: Run integration sims
       id: integration
       if: ${{ inputs.group == 'all' || inputs.group == 'integration' || inputs.group == '' }}
