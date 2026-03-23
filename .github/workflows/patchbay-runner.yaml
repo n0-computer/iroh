@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - Frando/patchbay-tomls  # TODO: remove before merge
   workflow_dispatch:
     inputs:
       branch:
@@ -55,17 +56,13 @@ jobs:
       id: integration
       if: ${{ inputs.group == 'all' || inputs.group == 'integration' || inputs.group == '' }}
       continue-on-error: true
-      run: |
-        sims=$(find .github/sims-patchbay/integration -name '*.toml' | sort | tr '\n' ' ')
-        patchbay run -v $sims
+      run: patchbay run -v .github/sims-patchbay/integration
 
     - name: Run perf sims
       id: perf
       if: ${{ inputs.group == 'all' || inputs.group == 'perf' || inputs.group == '' }}
       continue-on-error: true
-      run: |
-        sims=$(find .github/sims-patchbay/perf -name '*.toml' | sort | tr '\n' ' ')
-        patchbay run -v $sims
+      run: patchbay run -v .github/sims-patchbay/perf
 
     - name: Generate perf summary
       if: always()
