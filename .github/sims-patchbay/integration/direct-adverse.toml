@@ -23,12 +23,14 @@ condition = { latency_ms = "${matrix.latency}", rate_kbit = "${matrix.rate}", lo
 use    = "transfer-provider"
 id     = "provider"
 device = "provider"
+args   = ["--no-pkarr-publish", "--no-dns-resolve"]
 
 [[step]]
 use    = "transfer-fetcher"
 id     = "fetcher"
 device = "fetcher"
 args   = ["${provider.endpoint_id}",
+          "--no-pkarr-publish", "--no-dns-resolve",
           "--duration=30",
           "--remote-direct-address", "${provider.direct_addr}"]
 

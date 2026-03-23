@@ -14,12 +14,14 @@ topology = "${matrix.topo}"
 use    = "transfer-provider"
 id     = "provider"
 device = "provider"
+args   = ["--no-pkarr-publish", "--no-dns-resolve"]
 
 [[step]]
 use    = "transfer-fetcher"
 id     = "fetcher"
 device = "fetcher"
 args   = ["${provider.endpoint_id}",
+          "--no-pkarr-publish", "--no-dns-resolve",
           "--duration=10",
           "--remote-direct-address", "${provider.direct_addr}"]
 

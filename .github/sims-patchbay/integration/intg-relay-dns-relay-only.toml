@@ -21,7 +21,7 @@ use      = "transfer-provider"
 id       = "provider"
 device   = "provider"
 requires = ["relay.ready", "dns.ready"]
-args     = ["--env", "dev", "--relay-only",
+args     = ["--relay-only",
             "--relay-url", "https://$NETSIM_IP_relay:3340",
             "--pkarr-relay-url", "http://$NETSIM_IP_dns:8080/pkarr",
             "--dns-origin-domain", "$NETSIM_IP_dns:5300"]
@@ -31,7 +31,7 @@ use    = "transfer-fetcher"
 id     = "fetcher"
 device = "fetcher"
 args   = ["${provider.endpoint_id}",
-          "--env", "dev", "--relay-only",
+          "--relay-only",
           "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
