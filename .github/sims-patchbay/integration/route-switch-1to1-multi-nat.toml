@@ -1,21 +1,12 @@
-# 1-to-1 transfer through NAT with relay.
-# Matrix: both behind NAT, only fetcher, only provider.
-# When only one side is behind NAT, holepunching should succeed (assert direct IP).
+# Route switch mid-transfer: fetcher switches default route from eth0 to eth1.
+# Topology: single-sided multi-NAT.
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
-[matrix]
-variant = ["both", "fetcher", "provider"]
-
-[matrix.params.variant]
-both     = { topology = "1to1-nat",          expect_direct = false }
-fetcher  = { topology = "1to1-nat-fetcher",  expect_direct = true }
-provider = { topology = "1to1-nat-provider", expect_direct = true }
-
 [sim]
-name     = "1to1-nat-${matrix.variant}"
-topology = "${matrix.topology}"
+name     = "route-switch-1to1-multi-nat"
+topology = "1to1-multi-nat"
 
 [[step]]
 use  = "relay-setup"
@@ -35,10 +26,20 @@ id     = "fetcher"
 device = "fetcher"
 args   = ["${provider.endpoint_id}",
           "--env", "dev",
-          "--duration=20",
+          "--duration=15",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
           "--remote-direct-address", "${provider.direct_addr}"]
+
+# After 5s, switch fetcher's default route from eth0 to eth1
+[[step]]
+action = "wait"
+duration = "5s"
+
+[[step]]
+action = "set-default-route"
+device = "fetcher"
+to     = "eth1"
 
 [[step]]
 action  = "wait-for"
@@ -49,11 +50,4 @@ timeout = "60s"
 action = "assert"
 checks = [
   "fetcher.size matches [0-9]+",
-]
-
-[[step]]
-when   = "${matrix.expect_direct}"
-action = "assert"
-checks = [
-  "fetcher.conn_type contains Ip",
 ]

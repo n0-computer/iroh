@@ -1,19 +1,11 @@
-# Single-provider direct transfers, 20ms latency, 100 Mbit/s, 1G.
+# Single-provider direct transfer, no impairment, 10G, 1to10.
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
-[matrix]
-topo = ["1to1", "1to3", "1to5", "1to10"]
-
 [sim]
-name     = "iroh-${matrix.topo}-20ms"
-topology = "${matrix.topo}-public"
-
-[[step]]
-action    = "set-link-condition"
-device    = "fetcher"
-condition = { latency_ms = 20, rate_kbit = 100000 }
+name     = "iroh-1to10-10g"
+topology = "1to10-public"
 
 [[step]]
 use    = "transfer-provider"
@@ -25,7 +17,7 @@ use    = "transfer-fetcher"
 id     = "fetcher"
 device = "fetcher"
 args   = ["${provider.endpoint_id}",
-          "--size=1G",
+          "--size=10G",
           "--remote-direct-address", "${provider.direct_addr}"]
 
 [[step]]

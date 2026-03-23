@@ -1,0 +1,32 @@
+# Single-provider direct transfer, no impairment, 1G, 1to1.
+
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[sim]
+name     = "iroh-1to1-baseline"
+topology = "1to1-public"
+
+[[step]]
+use    = "transfer-provider"
+id     = "provider"
+device = "provider"
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--size=1G",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "120s"
+
+[[step]]
+action = "assert"
+checks = [
+  "fetcher.size matches [0-9]+",
+]

@@ -1,0 +1,33 @@
+# Multi-provider direct transfer, no impairment, 1G, 2to10.
+# Fetchers connect round-robin: fetcher-i -> provider-(i % 2).
+
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[sim]
+name     = "iroh-2to10-baseline"
+topology = "2to10-public"
+
+[[step]]
+use    = "transfer-provider"
+id     = "provider"
+device = "provider"
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider-${i % 2}.endpoint_id}",
+          "--size=1G",
+          "--remote-direct-address", "${provider-${i % 2}.direct_addr}"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "120s"
+
+[[step]]
+action = "assert"
+checks = [
+  "fetcher.size matches [0-9]+",
+]

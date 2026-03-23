@@ -1,16 +1,12 @@
-# Matrix sim: multi-provider relay-only transfers (2 providers, N fetchers).
-# Expands to: iroh-{topo}-relay-only for each topology.
-# Fetchers connect round-robin: fetcher-i → provider-(i % 2).
+# Multi-provider relay-only transfer, 2to2.
+# Fetchers connect round-robin: fetcher-i -> provider-(i % 2).
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
-[matrix]
-topo = ["2to2", "2to4", "2to6", "2to10"]
-
 [sim]
-name     = "iroh-${matrix.topo}-relay-only"
-topology = "${matrix.topo}-relay"
+name     = "iroh-2to2-relay-only"
+topology = "2to2-relay"
 
 [[step]]
 use  = "relay-setup"

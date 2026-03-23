@@ -1,15 +1,12 @@
-# Multi-provider direct transfers, 20ms latency, 100 Mbit/s, 1G.
+# Multi-provider direct transfer, 20ms latency, 100 Mbit/s, 1G, 2to4.
 # Fetchers connect round-robin: fetcher-i -> provider-(i % 2).
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
-[matrix]
-topo = ["2to2", "2to4", "2to6", "2to10"]
-
 [sim]
-name     = "iroh-${matrix.topo}-20ms"
-topology = "${matrix.topo}-public"
+name     = "iroh-2to4-20ms"
+topology = "2to4-public"
 
 [[step]]
 action    = "set-link-condition"

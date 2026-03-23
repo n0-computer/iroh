@@ -1,16 +1,16 @@
-# Matrix sim: integration tests for single-provider direct transfers.
-# Expands to: intg-{topo}-public for each topology.
-# Uses --duration (time-based) and asserts direct IP connectivity.
+# Single-provider direct transfer, 20ms latency, 100 Mbit/s, 1G, 1to10.
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
-[matrix]
-topo = ["1to1", "1to3"]
-
 [sim]
-name     = "intg-${matrix.topo}-public"
-topology = "${matrix.topo}-public"
+name     = "iroh-1to10-20ms"
+topology = "1to10-public"
+
+[[step]]
+action    = "set-link-condition"
+device    = "fetcher"
+condition = { latency_ms = 20, rate_kbit = 100000 }
 
 [[step]]
 use    = "transfer-provider"
@@ -22,17 +22,16 @@ use    = "transfer-fetcher"
 id     = "fetcher"
 device = "fetcher"
 args   = ["${provider.endpoint_id}",
-          "--duration=10",
+          "--size=1G",
           "--remote-direct-address", "${provider.direct_addr}"]
 
 [[step]]
 action  = "wait-for"
 id      = "fetcher"
-timeout = "60s"
+timeout = "120s"
 
 [[step]]
 action = "assert"
 checks = [
   "fetcher.size matches [0-9]+",
-  "fetcher.conn_type contains Ip",
 ]

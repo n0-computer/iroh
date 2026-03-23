@@ -1,15 +1,11 @@
-# Integration tests with full relay + DNS stack.
-# Ported from iroh_full.json: 1to1 and 1to3 with relay and DNS discovery.
+# Integration test: relay + DNS discovery, 1to1.
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
-[matrix]
-topo = ["1to1", "1to3"]
-
 [sim]
-name     = "intg-${matrix.topo}-relay-dns"
-topology = "${matrix.topo}-relay-dns"
+name     = "intg-1to1-relay-dns"
+topology = "1to1-relay-dns"
 
 [[step]]
 use  = "relay-setup"

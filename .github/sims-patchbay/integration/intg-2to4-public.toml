@@ -1,0 +1,34 @@
+# Integration test: multi-provider direct transfer, 2to4.
+# Fetchers connect round-robin: fetcher-i -> provider-(i % 2).
+
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[sim]
+name     = "intg-2to4-public"
+topology = "2to4-public"
+
+[[step]]
+use    = "transfer-provider"
+id     = "provider"
+device = "provider"
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider-${i % 2}.endpoint_id}",
+          "--duration=10",
+          "--remote-direct-address", "${provider-${i % 2}.direct_addr}"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "60s"
+
+[[step]]
+action = "assert"
+checks = [
+  "fetcher.size matches [0-9]+",
+  "fetcher.conn_type contains Ip",
+]
