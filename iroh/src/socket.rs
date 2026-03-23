@@ -1390,7 +1390,9 @@ impl Actor {
             let portmap_watcher_changed = portmap_watcher.changed();
 
             let notify_quic_network_change = match &self.call_notify_quic_network_change {
-                Some(pending) => MaybeFuture::Some(n0_future::time::sleep_until(pending.next_check)),
+                Some(pending) => {
+                    MaybeFuture::Some(n0_future::time::sleep_until(pending.next_check))
+                }
                 None => MaybeFuture::None,
             };
             n0_future::pin!(notify_quic_network_change);
