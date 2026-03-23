@@ -1,9 +1,21 @@
+# 1-to-1 transfer through NAT with relay.
+# Matrix: both behind NAT, only fetcher, only provider.
+# When only one side is behind NAT, holepunching should succeed (assert direct IP).
+
 [[extends]]
 file = "../iroh-defaults.toml"
 
+[matrix]
+variant = ["both", "fetcher", "provider"]
+
+[matrix.params.variant]
+both     = { topology = "1to1-nat",          expect_direct = false }
+fetcher  = { topology = "1to1-nat-fetcher",  expect_direct = true }
+provider = { topology = "1to1-nat-provider", expect_direct = true }
+
 [sim]
-name     = "1to1-nat-provider"
-topology = "1to1-nat-provider"
+name     = "1to1-nat-${matrix.variant}"
+topology = "${matrix.topology}"
 
 [[step]]
 use  = "relay-setup"
@@ -37,5 +49,11 @@ timeout = "60s"
 action = "assert"
 checks = [
   "fetcher.size matches [0-9]+",
+]
+
+[[step]]
+when   = "${matrix.expect_direct}"
+action = "assert"
+checks = [
   "fetcher.conn_type contains Ip",
 ]
