@@ -1342,7 +1342,7 @@ impl Actor {
             let portmap_watcher_changed = portmap_watcher.changed();
 
             let notify_quic_network_change = match &self.call_notify_quic_network_change {
-                Some((when, _)) => MaybeFuture::Some(tokio::time::sleep_until(*when)),
+                Some((when, _)) => MaybeFuture::Some(n0_future::time::sleep_until(*when)),
                 None => MaybeFuture::None,
             };
             n0_future::pin!(notify_quic_network_change);
@@ -1476,7 +1476,11 @@ impl Actor {
         }
 
         let interfaces = self.local_interfaces_watcher.get();
-        if interfaces.default_route_interface.is_some() {
+        #[cfg(target_family = "wasm")]
+        let has_default_route = true;
+        #[cfg(not(target_family = "wasm"))]
+        let has_default_route = interfaces.default_route_interface.is_some();
+        if has_default_route {
             // This is considered a usable network change, propagate it to the QUIC stack
             // right away.
             self.call_notify_quic_network_change = None;
@@ -1509,7 +1513,7 @@ impl Actor {
                 _path_id: noq::PathId,
                 network_path: noq_proto::FourTuple,
             ) -> bool {
-                match MultipathMappedAddr::from(network_path.remote) {
+                match MultipathMappedAddr::from(network_path.remote()) {
                     MultipathMappedAddr::Mixed(_) => {
                         // This address is only ever used to send an Initial packet to, it
                         // should never appear as an established path.
@@ -1517,14 +1521,14 @@ impl Actor {
                     }
                     MultipathMappedAddr::Relay(_) => {
                         // We pretend the relay path is never affected by link changes. The
-                        // relay actor transparently reconnects and the addreses never
+                        // relay actor transparently reconnects and the addresses never
                         // change.
                         true
                     }
                     MultipathMappedAddr::Ip(_) => {
                         // If we no longer have a valid interface to send from for a local
                         // IP then it can not be recovered.
-                        match network_path.local_ip {
+                        match network_path.local_ip() {
                             Some(local_ip) => self.local_addrs.contains(&local_ip),
                             None => true,
                         }
