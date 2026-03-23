@@ -56,7 +56,8 @@ impl TlsConfig {
         crypto_provider: Arc<rustls::crypto::CryptoProvider>,
     ) -> Self {
         let cert_resolver = Arc::new(
-            AlwaysResolvesCert::new(&secret_key).expect("Client cert key DER is valid; qed"),
+            AlwaysResolvesCert::new(&secret_key, &crypto_provider)
+                .expect("Client cert key DER is valid; qed"),
         );
         Self {
             secret_key,

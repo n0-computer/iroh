@@ -20,7 +20,10 @@ pub(super) enum CreateConfigError {
 }
 
 impl AlwaysResolvesCert {
-    pub(super) fn new(secret_key: &SecretKey) -> Result<Self, CreateConfigError> {
+    pub(super) fn new(
+        secret_key: &SecretKey,
+        crypto_provider: &Arc<rustls::crypto::CryptoProvider>,
+    ) -> Result<Self, CreateConfigError> {
         // Directly use the key
         let client_private_key = secret_key
             .as_signing_key()
@@ -29,9 +32,7 @@ impl AlwaysResolvesCert {
 
         let client_private_key = PrivatePkcs8KeyDer::from_pem_slice(client_private_key.as_bytes())
             .expect("cannot open private key file");
-        let provider = rustls::crypto::CryptoProvider::get_default()
-            .expect("no default crypto provider installed");
-        let client_private_key = provider
+        let client_private_key = crypto_provider
             .key_provider
             .load_private_key(client_private_key.into())
             .map_err(|e| rustls::Error::General(format!("failed to load private key: {e}")))?;
