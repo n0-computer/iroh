@@ -1,4 +1,4 @@
-name: netsim-patchbay
+name: patchbay-runner
 
 on:
   push:
@@ -11,11 +11,11 @@ on:
         required: false
         type: string
         default: ""
-      sims:
-        description: "Comma-separated sim file names to run (e.g. 'iroh-1to1-public.toml,intg-1to1-relay.toml'). Empty = all active sims."
+      group:
+        description: "Which sim group to run: 'all', 'integration', or 'perf'"
         required: false
         type: string
-        default: ""
+        default: "all"
       patchbay_branch:
         description: "Branch of netsim-rs/patchbay to use"
         required: false
@@ -28,9 +28,9 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  netsim-patchbay:
+  patchbay-runner:
     permissions: write-all
-    name: Patchbay netsim
+    name: Patchbay runner
     timeout-minutes: 60
     runs-on: [self-hosted, linux, X64]
     steps:
@@ -45,38 +45,32 @@ jobs:
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.9
 
-    - name: Build iroh
-      run: |
-        cargo build --release --all-features --workspace --bins --examples
-
     - name: Install patchbay
       run: |
         cargo install --git https://github.com/n0-computer/netsim-rs \
           --branch ${{ inputs.patchbay_branch || 'main' }} \
           --bin patchbay
 
-    - name: Collect sim files
-      id: collect_sims
-      run: |
-        if [[ -n "${{ inputs.sims }}" ]]; then
-          IFS=',' read -ra names <<< "${{ inputs.sims }}"
-          sims=""
-          for name in "${names[@]}"; do
-            name=$(echo "$name" | xargs)
-            sims="$sims .github/sims-patchbay/sims/$name"
-          done
-        else
-          # Run all active sims (iroh-* and intg-*), skip paused-*
-          sims=$(ls .github/sims-patchbay/sims/iroh-*.toml \
-                    .github/sims-patchbay/sims/intg-*.toml 2>/dev/null | tr '\n' ' ')
-        fi
-        echo "SIM_FILES=$sims" >> "$GITHUB_ENV"
-
-    - name: Run simulations
-      id: run_sims
+    - name: Run integration sims
+      id: integration
+      if: ${{ inputs.group == 'all' || inputs.group == 'integration' || inputs.group == '' }}
       continue-on-error: true
       run: |
-        sudo $(which patchbay) run -v $SIM_FILES
+        sims=$(find .github/sims-patchbay/integration -name '*.toml' | sort | tr '\n' ' ')
+        patchbay run -v $sims
+
+    - name: Run perf sims
+      id: perf
+      if: ${{ inputs.group == 'all' || inputs.group == 'perf' || inputs.group == '' }}
+      continue-on-error: true
+      run: |
+        sims=$(find .github/sims-patchbay/perf -name '*.toml' | sort | tr '\n' ' ')
+        patchbay run -v $sims
+
+    - name: Generate perf summary
+      if: always()
+      run: |
+        .github/sims-patchbay/perf-summary.sh .patchbay-work/latest >> $GITHUB_STEP_SUMMARY
 
     - name: Upload results
       if: always()
@@ -87,7 +81,7 @@ jobs:
         path: .patchbay-work/latest/
         retention-days: 7
 
-    - name: Show summary
+    - name: Show combined results
       if: always()
       run: |
         if [[ -f .patchbay-work/latest/combined-results.md ]]; then
@@ -95,7 +89,7 @@ jobs:
         fi
 
     - name: Fail if sims failed
-      if: ${{ steps.run_sims.outcome == 'failure' }}
+      if: ${{ steps.integration.outcome == 'failure' || steps.perf.outcome == 'failure' }}
       run: |
         echo "One or more simulations failed."
         if [[ -f .patchbay-work/latest/manifest.json ]]; then

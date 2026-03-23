@@ -5,7 +5,7 @@
 
 [[prepare]]
 examples     = ["transfer"]
-bins         = ["iroh-relay"]
+bins         = ["iroh-relay", "iroh-dns-server"]
 all-features = true
 
 # -- Binaries --
@@ -19,6 +19,11 @@ example = "transfer"
 name    = "relay"
 mode    = "target"
 bin     = "iroh-relay"
+
+[[binary]]
+name    = "dns-server"
+mode    = "target"
+bin     = "iroh-dns-server"
 
 # -- Relay setup step group --
 # Expands to: gen-certs → gen-file (relay config) → spawn relay.
@@ -52,10 +57,55 @@ id          = "${group.device}"
 device      = "${group.device}"
 cmd         = ["${binary.relay}", "--config-path", "${${group.device}-cfg.path}"]
 env         = { RUST_LOG = "iroh_relay=info" }
-ready_after = "2s"
 [step-group.step.captures.ready]
 pipe  = "stderr"
 regex = "relay: serving on"
+
+# -- DNS server setup step group --
+# Expands to: gen-file (dns config) → spawn dns server.
+# Caller supplies: vars.device
+
+[[step-group]]
+name = "dns-setup"
+
+[[step-group.step]]
+action  = "gen-file"
+id      = "${group.device}-cfg"
+content = """
+pkarr_put_rate_limit = "disabled"
+
+[http]
+port = 8080
+bind_addr = "0.0.0.0"
+
+[https]
+port = 8443
+bind_addr = "0.0.0.0"
+domains = ["localhost"]
+cert_mode = "self_signed"
+
+[dns]
+port = 5300
+bind_addr = "0.0.0.0"
+default_soa = "dns1.irohdns.example hostmaster.irohdns.example 0 10800 3600 604800 3600"
+default_ttl = 900
+origins = ["irohdns.example.", "."]
+rr_a = "0.0.0.0"
+rr_ns = "ns1.irohdns.example."
+
+[mainline]
+enabled = false
+"""
+
+[[step-group.step]]
+action      = "spawn"
+id          = "${group.device}"
+device      = "${group.device}"
+cmd         = ["${binary.dns-server}", "--config", "${${group.device}-cfg.path}"]
+env         = { RUST_LOG = "iroh_dns_server=info" }
+[step-group.step.captures.ready]
+pipe  = "stderr"
+regex = "DNS server listening on"
 
 # -- Transfer provider template --
 

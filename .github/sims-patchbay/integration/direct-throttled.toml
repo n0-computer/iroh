@@ -2,7 +2,7 @@
 file = "../iroh-defaults.toml"
 
 [sim]
-name     = "paused-direct-throttled"
+name     = "direct-throttled"
 topology = "1to1-public"
 
 [[step]]

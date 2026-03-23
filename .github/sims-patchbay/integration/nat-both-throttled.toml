@@ -2,7 +2,7 @@
 file = "../iroh-defaults.toml"
 
 [sim]
-name     = "paused-nat-both-lossy"
+name     = "nat-both-throttled"
 topology = "1to1-nat"
 
 [[step]]
@@ -12,7 +12,7 @@ vars = { device = "relay" }
 [[step]]
 action    = "set-link-condition"
 device    = "fetcher"
-condition = { latency_ms = 200, rate_kbit = 8000, loss_pct = 1.0 }
+condition = { latency_ms = 200, rate_kbit = 4000 }
 
 [[step]]
 use      = "transfer-provider"

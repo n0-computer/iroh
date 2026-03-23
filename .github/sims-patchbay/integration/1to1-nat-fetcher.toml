@@ -2,7 +2,7 @@
 file = "../iroh-defaults.toml"
 
 [sim]
-name     = "paused-1to1-nat-fetcher"
+name     = "1to1-nat-fetcher"
 topology = "1to1-nat-fetcher"
 
 [[step]]

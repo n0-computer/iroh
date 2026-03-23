@@ -1,21 +1,33 @@
+# Integration tests with full relay + DNS stack.
+# Ported from iroh_full.json: 1to1 and 1to3 with relay and DNS discovery.
+
 [[extends]]
 file = "../iroh-defaults.toml"
 
+[matrix]
+topo = ["1to1", "1to3"]
+
 [sim]
-name     = "paused-1to1-nat-provider"
-topology = "1to1-nat-provider"
+name     = "intg-${matrix.topo}-relay-dns"
+topology = "${matrix.topo}-relay-dns"
 
 [[step]]
 use  = "relay-setup"
 vars = { device = "relay" }
 
 [[step]]
+use  = "dns-setup"
+vars = { device = "dns" }
+
+[[step]]
 use      = "transfer-provider"
 id       = "provider"
 device   = "provider"
-requires = ["relay.ready"]
+requires = ["relay.ready", "dns.ready"]
 args     = ["--env", "dev",
-            "--relay-url", "https://$NETSIM_IP_relay:3340"]
+            "--relay-url", "https://$NETSIM_IP_relay:3340",
+            "--pkarr-relay-url", "http://$NETSIM_IP_dns:8080/pkarr",
+            "--dns-origin-domain", "$NETSIM_IP_dns:5300"]
 
 [[step]]
 use    = "transfer-fetcher"
@@ -23,9 +35,11 @@ id     = "fetcher"
 device = "fetcher"
 args   = ["${provider.endpoint_id}",
           "--env", "dev",
-          "--duration=20",
+          "--size=1G",
           "--relay-url",        "https://$NETSIM_IP_relay:3340",
           "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
+          "--pkarr-relay-url",  "http://$NETSIM_IP_dns:8080/pkarr",
+          "--dns-origin-domain", "$NETSIM_IP_dns:5300",
           "--remote-direct-address", "${provider.direct_addr}"]
 
 [[step]]

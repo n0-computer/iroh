@@ -2,7 +2,7 @@
 file = "../iroh-defaults.toml"
 
 [sim]
-name     = "paused-route-switch-both"
+name     = "route-switch-both"
 topology = "1to1-both-multi-nat"
 
 [[step]]

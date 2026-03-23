@@ -2,8 +2,12 @@
 file = "../iroh-defaults.toml"
 
 [sim]
-name     = "paused-direct-lossy"
-topology = "1to1-public"
+name     = "nat-both-lossy"
+topology = "1to1-nat"
+
+[[step]]
+use  = "relay-setup"
+vars = { device = "relay" }
 
 [[step]]
 action    = "set-link-condition"
@@ -11,16 +15,22 @@ device    = "fetcher"
 condition = { latency_ms = 200, rate_kbit = 8000, loss_pct = 1.0 }
 
 [[step]]
-use    = "transfer-provider"
-id     = "provider"
-device = "provider"
+use      = "transfer-provider"
+id       = "provider"
+device   = "provider"
+requires = ["relay.ready"]
+args     = ["--env", "dev",
+            "--relay-url", "https://$NETSIM_IP_relay:3340"]
 
 [[step]]
 use    = "transfer-fetcher"
 id     = "fetcher"
 device = "fetcher"
 args   = ["${provider.endpoint_id}",
+          "--env", "dev",
           "--duration=30",
+          "--relay-url",        "https://$NETSIM_IP_relay:3340",
+          "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
           "--remote-direct-address", "${provider.direct_addr}"]
 
 [[step]]
@@ -32,5 +42,4 @@ timeout = "120s"
 action = "assert"
 checks = [
   "fetcher.size matches [0-9]+",
-  "fetcher.conn_type contains Ip",
 ]
