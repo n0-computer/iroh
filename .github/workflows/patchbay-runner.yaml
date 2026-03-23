@@ -50,6 +50,7 @@ jobs:
       run: |
         cargo install --git https://github.com/n0-computer/patchbay \
           --branch ${{ inputs.patchbay_branch || 'main' }} \
+          --no-default-features \
           patchbay-runner
 
     - name: Run integration sims
