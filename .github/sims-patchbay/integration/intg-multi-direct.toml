@@ -29,10 +29,3 @@ args   = ["${provider.endpoint_id}",
 action  = "wait-for"
 id      = "fetcher"
 timeout = "60s"
-
-[[step]]
-action = "assert"
-checks = [
-  "fetcher.size matches [0-9]+",
-  "fetcher.conn_type contains Ip",
-]

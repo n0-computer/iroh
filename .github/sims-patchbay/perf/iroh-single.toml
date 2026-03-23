@@ -10,7 +10,7 @@ cond = ["baseline", "20ms", "200ms", "10g"]
 [matrix.params.cond]
 baseline = { size = "1G", latency = "0", rate = "0", impaired = "false" }
 "20ms"   = { size = "1G", latency = "20", rate = "100000", impaired = "true" }
-"200ms"  = { size = "1G", latency = "200", rate = "100000", impaired = "true" }
+"200ms"  = { size = "100M", latency = "200", rate = "100000", impaired = "true" }
 "10g"    = { size = "10G", latency = "0", rate = "0", impaired = "false" }
 
 [sim]

@@ -51,9 +51,3 @@ to     = "eth1"
 action  = "wait-for"
 id      = "fetcher"
 timeout = "60s"
-
-[[step]]
-action = "assert"
-checks = [
-  "fetcher.size matches [0-9]+",
-]

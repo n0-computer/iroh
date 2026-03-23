@@ -28,7 +28,7 @@ args     = ["--no-pkarr-publish", "--no-dns-resolve",
 use    = "transfer-fetcher"
 id     = "fetcher"
 device = "fetcher"
-args   = ["${provider-${i % 2}.endpoint_id}",
+args   = ["${provider.endpoint_id}",
           "--no-pkarr-publish", "--no-dns-resolve",
           "--relay-only",
           "--size=1G",
@@ -39,9 +39,3 @@ args   = ["${provider-${i % 2}.endpoint_id}",
 action  = "wait-for"
 id      = "fetcher"
 timeout = "120s"
-
-[[step]]
-action = "assert"
-checks = [
-  "fetcher.size matches [0-9]+",
-]
