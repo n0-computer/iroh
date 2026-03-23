@@ -25,6 +25,10 @@ jobs:
     env:
       RUSTC_WRAPPER: "sccache"
     steps:
+      - name: Enable unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        continue-on-error: true
+
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.9
@@ -35,6 +39,7 @@ jobs:
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
+      # ── Push results to patchbay-serve ──
       - name: Push results
         if: always()
         env:
@@ -55,7 +60,7 @@ jobs:
             "pr": ${{ github.event.pull_request.number || 'null' }},
             "pr_url": "${{ github.event.pull_request.html_url || '' }}",
             "title": "${{ github.event.pull_request.title || github.event.head_commit.message || '' }}",
-            "status": "$TEST_STATUS",
+            "test_outcome": "$TEST_STATUS",
             "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           MANIFEST
@@ -70,17 +75,16 @@ jobs:
           [ "$HTTP_CODE" != "200" ] && echo "Push failed ($HTTP_CODE): $BODY" && exit 1
 
           INVOCATION=$(echo "$BODY" | jq -r .invocation)
-          VIEW_URL="$PATCHBAY_URL/#/inv/$INVOCATION"
-          echo "PATCHBAY_VIEW_URL=$VIEW_URL" >> "$GITHUB_ENV"
+          echo "PATCHBAY_VIEW_URL=$PATCHBAY_URL/#/inv/$INVOCATION" >> "$GITHUB_ENV"
           echo "PATCHBAY_TEST_STATUS=$TEST_STATUS" >> "$GITHUB_ENV"
-          echo "Results: $VIEW_URL"
+          echo "Results: $PATCHBAY_URL/#/inv/$INVOCATION"
 
+      # ── Post or update PR comment ──
       - name: Comment on PR
         if: always() && env.PATCHBAY_VIEW_URL
         uses: actions/github-script@v7
         with:
           script: |
-            // Find PR number: from event or by looking up open PRs for the branch
             let prNumber = context.issue?.number;
             if (!prNumber) {
               const { data: prs } = await github.rest.pulls.list({
@@ -93,9 +97,17 @@ jobs:
             }
 
             const status = process.env.PATCHBAY_TEST_STATUS;
-            const icon = status === 'success' ? '\u2705' : '\u274c';
+            const icon = status === 'success' ? '✅' : '❌';
+            const sha = '${{ github.sha }}';
+            const shortSha = sha.slice(0, 7);
+            const commitUrl = `${{ github.server_url }}/${{ github.repository }}/commit/${sha}`;
+            const date = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
             const marker = '<!-- patchbay-results -->';
-            const body = `${marker}\n${icon} **patchbay:** ${status} | ${process.env.PATCHBAY_VIEW_URL}`;
+            const body = [
+              marker,
+              `${icon} **patchbay:** ${status} | ${process.env.PATCHBAY_VIEW_URL}`,
+              `<sub>${date} · [\`${shortSha}\`](${commitUrl})</sub>`,
+            ].join('\n');
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
