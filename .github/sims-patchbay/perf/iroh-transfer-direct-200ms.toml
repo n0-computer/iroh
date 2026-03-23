@@ -1,24 +1,19 @@
-# Direct transfer under adverse link conditions.
-# Matrix: throttled (4 Mbit/s) and lossy (8 Mbit/s, 1% loss).
+# Single-provider direct transfers, 200ms latency, 100 Mbit/s, 1G.
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
 [matrix]
-cond = ["throttled", "lossy"]
-
-[matrix.params.cond]
-throttled = { latency = 200, rate = 4000, loss = 0.0 }
-lossy     = { latency = 200, rate = 8000, loss = 1.0 }
+topo = ["1to1", "1to3", "1to5", "1to10"]
 
 [sim]
-name     = "direct-${matrix.cond}"
-topology = "1to1-public"
+name     = "iroh-${matrix.topo}-200ms"
+topology = "${matrix.topo}-public"
 
 [[step]]
 action    = "set-link-condition"
 device    = "fetcher"
-condition = { latency_ms = ${matrix.latency}, rate_kbit = ${matrix.rate}, loss_pct = ${matrix.loss} }
+condition = { latency_ms = 200, rate_kbit = 100000 }
 
 [[step]]
 use    = "transfer-provider"
@@ -30,7 +25,7 @@ use    = "transfer-fetcher"
 id     = "fetcher"
 device = "fetcher"
 args   = ["${provider.endpoint_id}",
-          "--duration=30",
+          "--size=1G",
           "--remote-direct-address", "${provider.direct_addr}"]
 
 [[step]]
@@ -42,5 +37,4 @@ timeout = "120s"
 action = "assert"
 checks = [
   "fetcher.size matches [0-9]+",
-  "fetcher.conn_type contains Ip",
 ]

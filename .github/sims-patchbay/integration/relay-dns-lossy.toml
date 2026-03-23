@@ -1,24 +1,16 @@
-# Relay+DNS transfer under adverse link conditions.
-# Matrix: throttled (4 Mbit/s) and lossy (8 Mbit/s, 1% loss).
+# Relay+DNS transfer with 1% packet loss, 8 Mbit/s, 200ms latency.
 
 [[extends]]
 file = "../iroh-defaults.toml"
 
-[matrix]
-cond = ["throttled", "lossy"]
-
-[matrix.params.cond]
-throttled = { latency = 200, rate = 4000, loss = 0.0 }
-lossy     = { latency = 200, rate = 8000, loss = 1.0 }
-
 [sim]
-name     = "relay-dns-${matrix.cond}"
+name     = "relay-dns-lossy"
 topology = "1to1-relay-dns"
 
 [[step]]
 action    = "set-link-condition"
 device    = "fetcher"
-condition = { latency_ms = ${matrix.latency}, rate_kbit = ${matrix.rate}, loss_pct = ${matrix.loss} }
+condition = { latency_ms = 200, rate_kbit = 8000, loss_pct = 1.0 }
 
 [[step]]
 use  = "relay-setup"
