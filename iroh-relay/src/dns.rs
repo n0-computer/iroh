@@ -224,7 +224,7 @@ impl Builder {
 /// Alternatively, you can create a fully custom DNS resolver by implementing the [`Resolver`]
 /// trait and creating the resolver with [`Self::custom`].
 #[derive(Debug, Clone)]
-pub struct DnsResolver(Arc<RwLock<dyn Resolver>>);
+pub struct DnsResolver(DnsResolverInner);
 
 impl DnsResolver {
     /// Creates a new DNS resolver with sensible cross-platform defaults.
@@ -254,17 +254,17 @@ impl DnsResolver {
     /// implement the [`Resolver`] trait on a struct and implement DNS resolution
     /// however you see fit.
     pub fn custom(resolver: impl Resolver) -> Self {
-        Self(Arc::new(RwLock::new(resolver)))
+        Self(DnsResolverInner::Custom(Arc::new(RwLock::new(resolver))))
     }
 
     /// Removes all entries from the cache.
     pub async fn clear_cache(&self) {
-        self.0.read().await.clear_cache()
+        self.0.clear_cache().await
     }
 
     /// Recreates the inner resolver.
     pub async fn reset(&self) {
-        self.0.write().await.reset()
+        self.0.reset().await
     }
 
     /// Looks up a TXT record.
@@ -274,7 +274,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = TxtRecordData>, DnsError> {
         let host = host.to_string();
-        let fut = self.0.read().await.lookup_txt(host);
+        let fut = self.0.lookup_txt(host);
         let res = time::timeout(timeout, fut).await??;
         Ok(res)
     }
@@ -286,7 +286,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let fut = self.0.read().await.lookup_ipv4(host);
+        let fut = self.0.lookup_ipv4(host);
         let addrs = time::timeout(timeout, fut).await??;
         Ok(addrs.into_iter().map(IpAddr::V4))
     }
@@ -298,7 +298,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let fut = self.0.read().await.lookup_ipv6(host);
+        let fut = self.0.lookup_ipv6(host);
         let addrs = time::timeout(timeout, fut).await??;
         Ok(addrs.into_iter().map(IpAddr::V6))
     }
@@ -566,39 +566,38 @@ impl DnsResolverInner {
 /// This contains a list of character strings, as defined in [RFC 1035 Section 3.3.14].
 ///
 /// [`TxtRecordData`] implements [`fmt::Display`], so you can call [`ToString::to_string`] to
-/// convert the record data into a string. This will parse each character string with
-/// [`String::from_utf8_lossy`] and then concatenate all strings without a separator.
+/// convert the record data into a string. This will concatenate all strings without a separator.
 ///
 /// If you want to process each character string individually, use [`Self::iter`].
 ///
 /// [RFC 1035 Section 3.3.14]: https://datatracker.ietf.org/doc/html/rfc1035#section-3.3.14
 #[derive(Debug, Clone)]
-pub struct TxtRecordData(Box<[Box<[u8]>]>);
+pub struct TxtRecordData(Box<[String]>);
 
 impl TxtRecordData {
     /// Returns an iterator over the character strings contained in this TXT record.
-    pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
-        self.0.iter().map(|x| x.as_ref())
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|x| x.as_str())
     }
 }
 
 impl fmt::Display for TxtRecordData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for s in self.iter() {
-            write!(f, "{}", &String::from_utf8_lossy(s))?
+            write!(f, "{s}")?
         }
         Ok(())
     }
 }
 
-impl FromIterator<Box<[u8]>> for TxtRecordData {
-    fn from_iter<T: IntoIterator<Item = Box<[u8]>>>(iter: T) -> Self {
+impl FromIterator<String> for TxtRecordData {
+    fn from_iter<T: IntoIterator<Item = String>>(iter: T) -> Self {
         Self(iter.into_iter().collect())
     }
 }
 
-impl From<Vec<Box<[u8]>>> for TxtRecordData {
-    fn from(value: Vec<Box<[u8]>>) -> Self {
+impl From<Vec<String>> for TxtRecordData {
+    fn from(value: Vec<String>) -> Self {
         Self(value.into_boxed_slice())
     }
 }

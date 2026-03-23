@@ -898,16 +898,10 @@ mod tests {
     fn test_from_txt_lookup() -> Result {
         let name = "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.";
         let records = vec![
+            TxtRecordData::from(vec!["addr=192.168.96.145:60165".to_string()]),
+            TxtRecordData::from(vec!["addr=213.208.157.87:60165".to_string()]),
             TxtRecordData::from(vec![
-                b"addr=192.168.96.145:60165".to_vec().into_boxed_slice(),
-            ]),
-            TxtRecordData::from(vec![
-                b"addr=213.208.157.87:60165".to_vec().into_boxed_slice(),
-            ]),
-            TxtRecordData::from(vec![
-                b"relay=https://euw1-1.relay.iroh.network./"
-                    .to_vec()
-                    .into_boxed_slice(),
+                "relay=https://euw1-1.relay.iroh.network./".to_string(),
             ]),
         ];
         let endpoint_info = EndpointInfo::from_txt_lookup(name.to_string(), records.into_iter())?;

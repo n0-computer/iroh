@@ -106,31 +106,25 @@ pub(super) fn parse_txt_response(
     Ok((records, min_ttl))
 }
 
-/// Extract raw character strings from a TXT record into `TxtRecordData`.
+/// Extract character strings from a TXT record into `TxtRecordData`.
 ///
-/// We use the `attributes()` method which gives us key=value pairs,
-/// then reconstruct the original strings. For non-attribute TXT records,
-/// we try converting to a String.
+/// For iroh's use case, TXT records contain `key=value` strings
+/// where each DNS character string is one attribute.
 fn extract_txt_record_data(txt: &simple_dns::rdata::TXT<'_>) -> TxtRecordData {
-    // Use String conversion to get the full concatenated TXT data,
-    // and wrap it as a single character string.
-    // For iroh's use case, TXT records contain `key=value` strings
-    // where each DNS character string is one attribute.
     let attrs = txt.attributes();
     if !attrs.is_empty() {
-        let strings: Vec<Box<[u8]>> = attrs
+        let strings: Vec<String> = attrs
             .into_iter()
             .map(|(k, v)| match v {
-                Some(val) => format!("{k}={val}").into_bytes().into_boxed_slice(),
-                None => k.into_bytes().into_boxed_slice(),
+                Some(val) => format!("{k}={val}"),
+                None => k.to_owned(),
             })
             .collect();
         TxtRecordData::from(strings)
     } else {
-        // Try String conversion for non-attribute data
         match String::try_from(txt.clone()) {
-            Ok(s) if !s.is_empty() => TxtRecordData::from(vec![s.into_bytes().into_boxed_slice()]),
-            _ => TxtRecordData::from(Vec::<Box<[u8]>>::new()),
+            Ok(s) if !s.is_empty() => TxtRecordData::from(vec![s]),
+            _ => TxtRecordData::from(Vec::<String>::new()),
         }
     }
 }
