@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use iroh::{
     Endpoint, Watcher,
-    endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks},
+    endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks, presets},
 };
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_future::task::AbortOnDropHandle;
@@ -23,7 +23,7 @@ async fn main() -> Result {
         .init();
 
     let monitor = Monitor::new();
-    let server = Endpoint::empty_builder()
+    let server = Endpoint::builder(presets::Minimal)
         .alpns(vec![ALPN.to_vec()])
         .hooks(monitor.clone())
         .bind()
@@ -35,7 +35,7 @@ async fn main() -> Result {
 
     let client_task = tokio::spawn(
         async move {
-            let client = Endpoint::empty_builder()
+            let client = Endpoint::builder(presets::Minimal)
                 .bind()
                 .instrument(info_span!("client"))
                 .await?;

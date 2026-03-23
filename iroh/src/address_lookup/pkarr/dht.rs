@@ -276,16 +276,15 @@ impl AddressLookup for DhtAddressLookup {
         };
 
         // apply user-supplied filter
-        let addrs = data.filtered_addrs(&self.0.filter);
+        let data = data.apply_filter(&self.0.filter).into_owned();
 
-        if addrs.is_empty() {
+        if !data.has_addrs() {
             tracing::debug!("no relay url or direct addresses in endpoint data, not publishing");
             return;
         }
 
         tracing::debug!("publishing {data:?}");
-        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
-        let info = EndpointInfo::from_parts(keypair.public(), data.clone());
+        let info = EndpointInfo::from_parts(keypair.public(), data);
         let Ok(signed_packet) = info.to_pkarr_signed_packet(keypair, self.0.ttl) else {
             tracing::warn!("failed to create signed packet");
             return;
@@ -319,7 +318,7 @@ impl AddressLookup for DhtAddressLookup {
 mod tests {
     use std::collections::BTreeSet;
 
-    use iroh_base::RelayUrl;
+    use iroh_base::{RelayUrl, TransportAddr};
     use mainline::Testnet;
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
@@ -343,7 +342,7 @@ mod tests {
 
         let relay_url: RelayUrl = Url::parse("https://example.com").anyerr()?.into();
 
-        let data = EndpointData::default().with_relay_url(Some(relay_url.clone()));
+        let data = EndpointData::from_iter([TransportAddr::Relay(relay_url.clone())]);
         address_lookup.publish(&data);
 
         // publish is fire and forget, so we have no way to wait until it is done.

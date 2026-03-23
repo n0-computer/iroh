@@ -69,20 +69,23 @@
 //! [`PkarrPublisher`] and [`address_lookup::DnsAddressLookup`]:
 //!
 //! ```no_run
+//! # #[cfg(with_crypto_provider)]
+//! # {
 //! use iroh::{
 //!     Endpoint, SecretKey,
 //!     address_lookup::{self, AddrFilter, PkarrPublisher},
-//!     endpoint::RelayMode,
+//!     endpoint::{RelayMode, presets},
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::empty_builder()
+//! let ep = Endpoint::builder(presets::Minimal)
 //!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
 //!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 //!
@@ -93,12 +96,12 @@
 //! # {
 //! # use iroh::{
 //! #    address_lookup::{self, AddrFilter, PkarrPublisher},
-//! #    endpoint::RelayMode,
+//! #    endpoint::{presets, RelayMode},
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::empty_builder()
+//! let ep = Endpoint::builder(presets::Minimal)
 //!     .relay_mode(RelayMode::Default)
 //!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
@@ -125,7 +128,7 @@
 //! [`MemoryLookup`]: memory::MemoryLookup
 
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     sync::{Arc, RwLock},
 };
 
@@ -205,9 +208,8 @@ impl<T> AsRef<T> for FilteredAddressLookup<T> {
 
 impl<T: AddressLookup> AddressLookup for FilteredAddressLookup<T> {
     fn publish(&self, data: &EndpointData) {
-        let addrs = data.filtered_addrs(&self.filter);
-        let data = EndpointData::new(addrs).with_user_data(data.user_data().cloned());
-        self.inner.publish(&data)
+        let data = data.apply_filter(&self.filter);
+        self.inner.publish(data.borrow());
     }
 
     fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
@@ -555,10 +557,7 @@ where
 impl AddressLookup for ConcurrentAddressLookup {
     fn publish(&self, data: &EndpointData) {
         let data = match &*self.addr_filter.read().expect("poisoned") {
-            Some(filter) => {
-                let addrs = data.filtered_addrs(filter);
-                Cow::Owned(EndpointData::new(addrs).with_user_data(data.user_data().cloned()))
-            }
+            Some(filter) => data.apply_filter(filter),
             None => Cow::Borrowed(data),
         };
         let services = self.services.read().expect("poisoned");
@@ -583,7 +582,7 @@ impl AddressLookup for ConcurrentAddressLookup {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{
         collections::HashMap,
@@ -602,7 +601,7 @@ mod tests {
     use super::*;
     use crate::{
         Endpoint,
-        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig},
+        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig, presets},
     };
 
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
@@ -662,7 +661,7 @@ mod tests {
                 let port: u16 = rand::rng().random_range(10_000..20_000);
                 // "240.0.0.0/4" is reserved and unreachable
                 let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                let data = EndpointData::new([TransportAddr::Ip(addr)]);
+                let data = EndpointData::from_iter([TransportAddr::Ip(addr)]);
                 Some((data, ts))
             } else {
                 self.shared
@@ -891,7 +890,7 @@ mod tests {
 
         let relay_url: RelayUrl = "https://relay.example.com".parse().unwrap();
         let ip_addr: SocketAddr = "1.2.3.4:1234".parse().unwrap();
-        let data = EndpointData::new([
+        let data = EndpointData::from_iter([
             TransportAddr::Relay(relay_url.clone()),
             TransportAddr::Ip(ip_addr),
         ]);
@@ -926,7 +925,7 @@ mod tests {
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let secret = SecretKey::generate(rng);
 
-        let ep = Endpoint::empty_builder()
+        let ep = Endpoint::builder(presets::Minimal)
             .secret_key(secret)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -969,24 +968,19 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_relay::{
-        RelayMap,
         endpoint_info::UserData,
         tls::{CaRootsConfig, default_provider},
     };
-    use n0_error::{AnyError, Result, StackResultExt};
+    use n0_error::{Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
-    use rand::{CryptoRng, SeedableRng};
-    use tokio_util::task::AbortOnDropHandle;
+    use rand::SeedableRng;
 
     use crate::{
-        Endpoint, RelayMode,
         address_lookup::{EndpointData, PkarrPublisher},
         dns::DnsResolver,
         endpoint_info::EndpointInfo,
-        test_utils::{
-            DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
-        },
+        test_utils::{DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State},
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -1003,7 +997,7 @@ mod test_dns_pkarr {
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_info = EndpointInfo::new(secret_key.public())
-            .with_relay_url(Some("https://relay.example".parse().unwrap()));
+            .with_relay_url("https://relay.example".parse().unwrap());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state
             .upsert(signed_packet)
@@ -1043,7 +1037,7 @@ mod test_dns_pkarr {
         let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
             .build(secret_key, tls_config);
         let user_data: UserData = "foobar".parse().unwrap();
-        let data = EndpointData::new(relay_url.clone()).with_user_data(Some(user_data.clone()));
+        let data = EndpointData::from_iter(relay_url.clone()).with_user_data(user_data.clone());
         // does not block, update happens in background task
         publisher.update_endpoint_data(&data);
         // wait until our shared state received the update from pkarr publishing
@@ -1063,15 +1057,17 @@ mod test_dns_pkarr {
         Ok(())
     }
 
+    #[cfg(with_crypto_provider)]
     const TEST_ALPN: &[u8] = b"TEST";
 
+    #[cfg(with_crypto_provider)]
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_address_lookup() -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, _relay_guard) = crate::test_utils::run_relay_server().await?;
 
         let (ep1, _guard1) =
             ep_with_address_lookup(&mut rng, &relay_map, &dns_pkarr_server).await?;
@@ -1089,13 +1085,21 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    async fn ep_with_address_lookup<R: CryptoRng + ?Sized>(
+    #[cfg(with_crypto_provider)]
+    async fn ep_with_address_lookup<R: rand::CryptoRng + ?Sized>(
         rng: &mut R,
-        relay_map: &RelayMap,
+        relay_map: &iroh_relay::RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
-    ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
+    ) -> Result<(
+        crate::Endpoint,
+        n0_future::task::AbortOnDropHandle<Result<()>>,
+    )> {
+        use n0_future::task::AbortOnDropHandle;
+
+        use crate::{Endpoint, RelayMode, endpoint::presets};
+
         let secret_key = SecretKey::generate(rng);
-        let ep = Endpoint::empty_builder()
+        let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())
@@ -1108,6 +1112,8 @@ mod test_dns_pkarr {
             let ep = ep.clone();
             async move {
                 // we skip accept() errors, they can be caused by retransmits
+
+                use n0_error::AnyError;
                 while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     let _conn = accepting.await.context("accepting")?;
                     // Just accept incoming connections, but don't do anything with them.
