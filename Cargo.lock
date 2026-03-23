@@ -2185,6 +2185,7 @@ dependencies = [
  "n0-error",
  "n0-future",
  "simple-dns",
+ "strum 0.28.0",
 ]
 
 [[package]]
