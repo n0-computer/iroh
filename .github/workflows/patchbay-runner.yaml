@@ -48,9 +48,9 @@ jobs:
 
     - name: Install patchbay
       run: |
-        cargo install --git https://github.com/n0-computer/netsim-rs \
+        cargo install --git https://github.com/n0-computer/patchbay \
           --branch ${{ inputs.patchbay_branch || 'main' }} \
-          --bin patchbay
+          patchbay-runner
 
     - name: Run integration sims
       id: integration
