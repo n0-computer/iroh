@@ -8,6 +8,8 @@
 //! another endpoint:
 //!
 //! ```no_run
+//! # #[cfg(with_crypto_provider)]
+//! # {
 //! # use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! # use n0_error::{StackResultExt, StdResultExt};
 //! # async fn wrapper() -> n0_error::Result<()> {
@@ -21,11 +23,14 @@
 //!     .std_context("unable to write all")?;
 //! # Ok(())
 //! # }
+//! # }
 //! ```
 //!
 //! The other endpoint can accept incoming connections using the [`Endpoint`] as well:
 //!
 //! ```no_run
+//! # #[cfg(with_crypto_provider)]
+//! # {
 //! # use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! # use n0_error::{StackResultExt, StdResultExt};
 //! # async fn wrapper() -> n0_error::Result<()> {
@@ -46,6 +51,7 @@
 //!     .await
 //!     .std_context("unable to read")?;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 //!
@@ -170,6 +176,8 @@
 //! The central struct is the [`Endpoint`], which allows you to connect to other endpoints:
 //!
 //! ```no_run
+//! # #[cfg(with_crypto_provider)]
+//! # {
 //! use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! use n0_error::{Result, StackResultExt, StdResultExt};
 //!
@@ -190,11 +198,14 @@
 //!     println!("Client closed");
 //!     Ok(())
 //! }
+//! # }
 //! ```
 //!
 //! Every [`Endpoint`] can also accept connections:
 //!
 //! ```no_run
+//! # #[cfg(with_crypto_provider)]
+//! # {
 //! use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! use n0_error::{Result, StackResultExt, StdResultExt};
 //! use n0_future::StreamExt;
@@ -224,6 +235,7 @@
 //!     ep.close().await;
 //!     Ok(())
 //! }
+//! # }
 //! ```
 //!
 //! Please see the examples directory for more nuanced examples.
@@ -253,7 +265,6 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
-mod quic_crypto;
 mod socket;
 pub mod tls;
 

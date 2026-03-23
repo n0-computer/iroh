@@ -3,8 +3,7 @@
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates, or using raw public keys.
 
-use ed25519_dalek::pkcs8::EncodePublicKey;
-use iroh_base::PublicKey;
+use iroh_base::{PublicKey, Signature};
 use rustls::{
     CertificateError, DigitallySignedStruct, DistinguishedName, SignatureScheme,
     SupportedProtocolVersion,
@@ -16,27 +15,19 @@ use rustls::{
 use webpki_types::SubjectPublicKeyInfoDer;
 
 /// The only TLS version we support is 1.3
-pub(super) static PROTOCOL_VERSIONS: &[&SupportedProtocolVersion] = &[&rustls::version::TLS13];
+pub(super) const PROTOCOL_VERSIONS: &[&SupportedProtocolVersion] = &[&rustls::version::TLS13];
 
-fn supported_sig_algs() -> WebPkiSupportedAlgorithms {
-    rustls::crypto::CryptoProvider::get_default()
-        .expect("no default crypto provider installed")
-        .signature_verification_algorithms
-}
+const ED25519_DALEK: Ed25519Dalek = Ed25519Dalek;
+const SUPPORTED_SIG_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms {
+    all: &[&ED25519_DALEK],
+    mapping: &[(SignatureScheme::ED25519, &[&ED25519_DALEK])],
+};
 
 /// Implementation of the `rustls` certificate verification traits
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 #[derive(Default, Debug)]
 pub(super) struct ServerCertificateVerifier;
-
-fn public_key_to_spki(remote_peer_id: &PublicKey) -> SubjectPublicKeyInfoDer<'static> {
-    let der_key = remote_peer_id
-        .as_verifying_key()
-        .to_public_key_der()
-        .expect("valid key");
-    SubjectPublicKeyInfoDer::from(der_key.into_vec())
-}
 
 impl ServerCertVerifier for ServerCertificateVerifier {
     fn verify_server_cert(
@@ -63,6 +54,10 @@ impl ServerCertVerifier for ServerCertificateVerifier {
         }
 
         let end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
+        let remote_public_spki = rustls::sign::public_key_to_spki(
+            &webpki_types::alg_id::ED25519,
+            remote_peer_id.as_bytes(),
+        );
 
         // This effectively checks that the `end_entity_as_spki` bytes have the expected
         // (constant) 12 byte prefix (consisting of the Ed25519 public key ASN.1 object
@@ -70,7 +65,7 @@ impl ServerCertVerifier for ServerCertificateVerifier {
         // consists of the object identifier and a bit sequence, a zero byte indicating
         // that the bit sequence is padded with 0 additional bits) matches, as well as
         // the public key bytes match the `remote_peer_id` public key bytes.
-        if public_key_to_spki(&remote_peer_id) != end_entity_as_spki {
+        if remote_public_spki != end_entity_as_spki {
             return Err(rustls::Error::InvalidCertificate(
                 CertificateError::UnknownIssuer,
             ));
@@ -100,12 +95,12 @@ impl ServerCertVerifier for ServerCertificateVerifier {
             message,
             &SubjectPublicKeyInfoDer::from(cert.as_ref()),
             dss,
-            &supported_sig_algs(),
+            &SUPPORTED_SIG_ALGS,
         )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        supported_sig_algs().supported_schemes()
+        SUPPORTED_SIG_ALGS.supported_schemes()
     }
 
     fn requires_raw_public_keys(&self) -> bool {
@@ -139,6 +134,9 @@ impl ClientCertVerifier for ClientCertificateVerifier {
             ));
         }
 
+        // Beyond checking for no intermediates, we don't check the client certificate.
+        // The actual signatures are already verified - this ensures authentication.
+
         Ok(ClientCertVerified::assertion())
     }
 
@@ -163,12 +161,12 @@ impl ClientCertVerifier for ClientCertificateVerifier {
             message,
             &SubjectPublicKeyInfoDer::from(cert.as_ref()),
             dss,
-            &supported_sig_algs(),
+            &SUPPORTED_SIG_ALGS,
         )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        supported_sig_algs().supported_schemes()
+        SUPPORTED_SIG_ALGS.supported_schemes()
     }
 
     fn root_hint_subjects(&self) -> &[DistinguishedName] {
@@ -177,5 +175,37 @@ impl ClientCertVerifier for ClientCertificateVerifier {
 
     fn requires_raw_public_keys(&self) -> bool {
         true
+    }
+}
+
+#[derive(Debug)]
+struct Ed25519Dalek;
+
+impl webpki_types::SignatureVerificationAlgorithm for Ed25519Dalek {
+    fn verify_signature(
+        &self,
+        public_key: &[u8],
+        message: &[u8],
+        signature: &[u8],
+    ) -> Result<(), webpki_types::InvalidSignature> {
+        let public_key =
+            PublicKey::try_from(public_key).map_err(|_| webpki_types::InvalidSignature)?;
+        let signature =
+            Signature::try_from(signature).map_err(|_| webpki_types::InvalidSignature)?;
+        public_key
+            .verify(message, &signature)
+            .map_err(|_| webpki_types::InvalidSignature)
+    }
+
+    fn public_key_alg_id(&self) -> webpki_types::AlgorithmIdentifier {
+        webpki_types::alg_id::ED25519
+    }
+
+    fn signature_alg_id(&self) -> webpki_types::AlgorithmIdentifier {
+        webpki_types::alg_id::ED25519
+    }
+
+    fn fips(&self) -> bool {
+        false
     }
 }

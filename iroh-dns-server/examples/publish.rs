@@ -107,8 +107,12 @@ async fn main() -> Result<()> {
         .client_config(default_provider())
         .expect("infallible");
     let pkarr = PkarrRelayClient::new(pkarr_relay_url, tls_config);
-    let endpoint_info = EndpointInfo::new(endpoint_id)
-        .with_relay_url(relay_url.map(Into::into))
+
+    let mut endpoint_info = EndpointInfo::new(endpoint_id);
+    if let Some(relay_url) = relay_url {
+        endpoint_info = endpoint_info.with_relay_url(relay_url.into());
+    }
+    endpoint_info = endpoint_info
         .with_ip_addrs(args.addr.into_iter().collect())
         .with_user_data(args.user_data);
     let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
