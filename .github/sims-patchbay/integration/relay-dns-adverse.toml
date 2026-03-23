@@ -12,7 +12,7 @@ throttled = { latency = "200", rate = "4000", loss = "0" }
 
 [sim]
 name     = "relay-dns-${matrix.cond}"
-topology = "1to1-relay-dns"
+topology = "1to1"
 
 [[step]]
 action    = "set-link-condition"

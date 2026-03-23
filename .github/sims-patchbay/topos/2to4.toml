@@ -1,11 +1,20 @@
 [[router]]
 name = "dc"
 
+[device.relay.eth0]
+gateway = "dc"
+
+[device.dns.eth0]
+gateway = "dc"
+
+[device.provider]
+count = 2
+
 [device.provider.eth0]
 gateway = "dc"
 
 [device.fetcher]
-count = 10
+count = 4
 
 [device.fetcher.eth0]
 gateway = "dc"

@@ -1,8 +1,0 @@
-[[router]]
-name = "dc"
-
-[device.provider.eth0]
-gateway = "dc"
-
-[device.fetcher.eth0]
-gateway = "dc"

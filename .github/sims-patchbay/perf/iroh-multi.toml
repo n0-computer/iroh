@@ -16,7 +16,7 @@ baseline = { size = "1G", latency = "0", rate = "0", impaired = "false" }
 
 [sim]
 name     = "iroh-${matrix.topo}-${matrix.cond}"
-topology = "${matrix.topo}-public"
+topology = "${matrix.topo}"
 
 [[step]]
 when      = "${matrix.impaired}"

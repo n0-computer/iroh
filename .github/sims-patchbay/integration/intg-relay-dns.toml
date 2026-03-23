@@ -8,7 +8,7 @@ topo = ["1to1", "1to3"]
 
 [sim]
 name     = "intg-${matrix.topo}-relay-dns"
-topology = "${matrix.topo}-relay-dns"
+topology = "${matrix.topo}"
 
 [[step]]
 use  = "relay-setup"

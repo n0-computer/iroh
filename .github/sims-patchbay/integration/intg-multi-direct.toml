@@ -8,7 +8,7 @@ topo = ["2to2", "2to4"]
 
 [sim]
 name     = "intg-${matrix.topo}-public"
-topology = "${matrix.topo}-public"
+topology = "${matrix.topo}"
 
 [[step]]
 use    = "transfer-provider"

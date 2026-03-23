@@ -3,7 +3,7 @@ file = "../iroh-defaults.toml"
 
 [sim]
 name     = "intg-1to1-relay"
-topology = "1to1-relay"
+topology = "1to1"
 
 [[step]]
 use  = "relay-setup"

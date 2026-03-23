@@ -9,7 +9,7 @@ topo = ["2to2", "2to4", "2to6", "2to10"]
 
 [sim]
 name     = "iroh-${matrix.topo}-relay-only"
-topology = "${matrix.topo}-relay"
+topology = "${matrix.topo}"
 
 [[step]]
 use  = "relay-setup"

@@ -4,6 +4,9 @@ name = "dc"
 [device.relay.eth0]
 gateway = "dc"
 
+[device.dns.eth0]
+gateway = "dc"
+
 [device.provider.eth0]
 gateway = "dc"
 

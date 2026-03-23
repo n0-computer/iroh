@@ -4,6 +4,9 @@ name = "dc"
 [device.relay.eth0]
 gateway = "dc"
 
+[device.dns.eth0]
+gateway = "dc"
+
 [device.provider]
 count = 2
 
@@ -11,7 +14,7 @@ count = 2
 gateway = "dc"
 
 [device.fetcher]
-count = 2
+count = 6
 
 [device.fetcher.eth0]
 gateway = "dc"
