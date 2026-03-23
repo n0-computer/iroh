@@ -42,9 +42,12 @@ use std::{
     sync::Arc,
 };
 
-use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+pub use iroh_dns::{DecodingError, EndpointIdExt};
 use n0_error::{e, ensure, stack_error};
 use url::Url;
+
+use crate::pkarr;
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
@@ -56,59 +59,8 @@ pub enum EncodingError {
     #[error(transparent)]
     FailedBuildingPacket {
         #[error(std_err)]
-        source: pkarr::errors::SignedPacketBuildError,
+        source: pkarr::SignedPacketBuildError,
     },
-    #[error("invalid TXT entry")]
-    InvalidTxtEntry {
-        #[error(std_err)]
-        source: pkarr::dns::SimpleDnsError,
-    },
-}
-
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub enum DecodingError {
-    #[error("endpoint id was not encoded in valid z32")]
-    InvalidEncodingZ32 {
-        #[error(std_err)]
-        source: z32::Z32Error,
-    },
-    #[error("length must be 32 bytes, but got {len} byte(s)")]
-    InvalidLength { len: usize },
-    #[error("endpoint id is not a valid public key")]
-    InvalidKey { source: KeyParsingError },
-}
-
-/// Extension methods for [`EndpointId`] to encode to and decode from [`z32`],
-/// which is the encoding used in [`pkarr`] domain names.
-pub trait EndpointIdExt {
-    /// Encodes a [`EndpointId`] in [`z-base-32`] encoding.
-    ///
-    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-    fn to_z32(&self) -> String;
-
-    /// Parses a [`EndpointId`] from [`z-base-32`] encoding.
-    ///
-    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-    fn from_z32(s: &str) -> Result<EndpointId, DecodingError>;
-}
-
-impl EndpointIdExt for EndpointId {
-    fn to_z32(&self) -> String {
-        z32::encode(self.as_bytes())
-    }
-
-    fn from_z32(s: &str) -> Result<EndpointId, DecodingError> {
-        let bytes =
-            z32::decode(s.as_bytes()).map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
-        let bytes: &[u8; 32] = &bytes
-            .try_into()
-            .map_err(|_| e!(DecodingError::InvalidLength { len: s.len() }))?;
-        let endpoint_id =
-            EndpointId::from_bytes(bytes).map_err(|err| e!(DecodingError::InvalidKey, err))?;
-        Ok(endpoint_id)
-    }
 }
 
 /// Data about an endpoint that may be published to and resolved from discovery services.
@@ -618,7 +570,7 @@ fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
         }));
     }
     let label = labels.next().expect("checked above");
-    let endpoint_id = EndpointId::from_z32(label)?;
+    let endpoint_id = <EndpointId as EndpointIdExt>::from_z32(label)?;
     Ok(endpoint_id)
 }
 
@@ -716,27 +668,10 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     pub(crate) fn from_pkarr_signed_packet(
         packet: &pkarr::SignedPacket,
     ) -> Result<Self, ParseError> {
-        use pkarr::dns::{
-            rdata::RData,
-            {self},
-        };
         let pubkey = packet.public_key();
-        let pubkey_z32 = pubkey.to_z32();
-        let endpoint_id =
-            EndpointId::from_bytes(&pubkey.verifying_key().to_bytes()).expect("valid key");
-        let zone = dns::Name::new(&pubkey_z32).expect("z32 encoding is valid");
-        let txt_data = packet
-            .all_resource_records()
-            .filter_map(|rr| match &rr.rdata {
-                RData::TXT(txt) => match rr.name.without(&zone) {
-                    Some(name) if name.to_string() == IROH_TXT_NAME => Some(txt),
-                    Some(_) | None => None,
-                },
-                _ => None,
-            });
-
-        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
-        Self::from_strings(endpoint_id, txt_strs)
+        let endpoint_id = EndpointId::from_bytes(pubkey.as_bytes()).expect("valid key");
+        let txt_strs = packet.txt_records(IROH_TXT_NAME);
+        Self::from_strings(endpoint_id, txt_strs.into_iter())
     }
 
     /// Parses a TXT records lookup.
@@ -765,20 +700,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         secret_key: &SecretKey,
         ttl: u32,
     ) -> Result<pkarr::SignedPacket, EncodingError> {
-        use pkarr::dns::{self, rdata};
-        let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
-        let name = dns::Name::new(IROH_TXT_NAME).expect("constant");
-
-        let mut builder = pkarr::SignedPacket::builder();
-        for s in self.to_txt_strings() {
-            let mut txt = rdata::TXT::new();
-            txt.add_string(&s)
-                .map_err(|err| e!(EncodingError::InvalidTxtEntry, err))?;
-            builder = builder.txt(name.clone(), txt.into_owned(), ttl);
-        }
-        let signed_packet = builder
-            .build(&keypair)
-            .map_err(|err| e!(EncodingError::FailedBuildingPacket, err))?;
+        let signed_packet = pkarr::SignedPacket::from_txt_strings(
+            secret_key,
+            IROH_TXT_NAME,
+            self.to_txt_strings(),
+            ttl,
+        )
+        .map_err(|err| e!(EncodingError::FailedBuildingPacket, err))?;
         Ok(signed_packet)
     }
 }
@@ -795,7 +723,7 @@ pub(crate) fn ensure_iroh_txt_label(name: String) -> String {
 
 #[cfg(not(wasm_browser))]
 pub(crate) fn endpoint_domain(endpoint_id: &EndpointId, origin: &str) -> String {
-    format!("{}.{}", EndpointId::to_z32(endpoint_id), origin)
+    format!("{}.{}", endpoint_id.to_z32(), origin)
 }
 
 #[cfg(test)]
@@ -928,14 +856,13 @@ mod tests {
             Record::from_rdata(name.clone(), 30, RData::A(A::new(127, 0, 0, 1))),
             // Test a record with a mismatching name
             Record::from_rdata(
-                Name::from_utf8(format!(
-                    "_iroh.{}.dns.iroh.link.",
-                    EndpointId::from_str(
-                        // Another EndpointId
-                        "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
-                    )?
-                    .to_z32()
-                ))
+                {
+                    // Another EndpointId
+                    let other_id = EndpointId::from_str(
+                        "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e",
+                    )?;
+                    Name::from_utf8(format!("_iroh.{}.dns.iroh.link.", other_id.to_z32()))
+                }
                 .std_context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![

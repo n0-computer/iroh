@@ -6,9 +6,10 @@ use hickory_server::proto::{
     ProtoError,
     rr::{Name, RecordSet, RecordType, RrKey},
 };
+use iroh_relay::pkarr::SignedPacket;
 use lru::LruCache;
+use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_error::{Result, StdResultExt};
-use pkarr::{Client as PkarrClient, SignedPacket};
 use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};
 use ttl_cache::TtlCache;
@@ -42,7 +43,7 @@ pub enum PacketSource {
 pub struct ZoneStore {
     cache: Arc<Mutex<ZoneCache>>,
     store: Arc<SignedPacketStore>,
-    pkarr: Option<Arc<PkarrClient>>,
+    dht: Option<Dht>,
     metrics: Arc<Metrics>,
 }
 
@@ -63,22 +64,20 @@ impl ZoneStore {
         Ok(Self::new(packet_store, metrics))
     }
 
-    /// Configure a pkarr client for resolution of packets from the bittorrent mainline DHT.
+    /// Configure a mainline DHT client for resolution of packets as a fallback.
     ///
     /// This will be used only as a fallback if there is no local info available.
     ///
     /// Optionally set custom bootstrap nodes. If `bootstrap` is empty it will use the default
     /// mainline bootstrap nodes.
     pub fn with_mainline_fallback(self, bootstrap: BootstrapOption) -> Self {
-        let pkarr_client = match bootstrap {
-            BootstrapOption::Default => PkarrClient::builder().build().unwrap(),
-            BootstrapOption::Custom(bootstrap) => PkarrClient::builder()
-                .dht(|builder| builder.bootstrap(&bootstrap))
-                .build()
-                .unwrap(),
-        };
+        let mut builder = DhtBuilder::default();
+        if let BootstrapOption::Custom(ref nodes) = bootstrap {
+            builder.bootstrap(nodes);
+        }
+        let dht = builder.build().expect("failed to build DHT node");
         Self {
-            pkarr: Some(Arc::new(pkarr_client)),
+            dht: Some(dht),
             ..self
         }
     }
@@ -89,7 +88,7 @@ impl ZoneStore {
         Self {
             store: Arc::new(store),
             cache: Arc::new(Mutex::new(zone_cache)),
-            pkarr: None,
+            dht: None,
             metrics,
         }
     }
@@ -137,23 +136,24 @@ impl ZoneStore {
             };
         };
 
-        if let Some(pkarr) = self.pkarr.as_ref() {
-            let key = pkarr::PublicKey::try_from(pubkey.as_bytes()).expect("valid public key");
-            // use the more expensive `resolve_most_recent` here.
-            //
-            // it will be cached for some time.
-            debug!("DHT resolve {}", key.to_z32());
-            let packet_opt = pkarr.resolve(&key).await;
-            if let Some(packet) = packet_opt {
+        if let Some(dht) = self.dht.as_ref() {
+            debug!("DHT resolve {}", pubkey.to_z32());
+            let maybe_item = dht
+                .clone()
+                .as_async()
+                .get_mutable_most_recent(pubkey.as_bytes(), None)
+                .await;
+            if let Some(item) = maybe_item
+                && let Some(packet) = mutable_item_to_signed_packet(&item)
+            {
                 debug!("DHT resolve successful {:?}", packet);
                 return self
                     .cache
                     .lock()
                     .await
                     .insert_and_resolve_dht(&packet, name, record_type);
-            } else {
-                debug!("DHT resolve failed");
             }
+            debug!("DHT resolve failed");
         }
         Ok(None)
     }
@@ -182,6 +182,16 @@ impl ZoneStore {
             Ok(false)
         }
     }
+}
+
+/// Convert a mainline [`MutableItem`] to a [`SignedPacket`].
+fn mutable_item_to_signed_packet(item: &MutableItem) -> Option<SignedPacket> {
+    let mut bytes = Vec::with_capacity(104 + item.value().len());
+    bytes.extend_from_slice(item.key());
+    bytes.extend_from_slice(item.signature());
+    bytes.extend_from_slice(&(item.seq() as u64).to_be_bytes());
+    bytes.extend_from_slice(item.value());
+    SignedPacket::from_bytes_unchecked(&bytes).ok()
 }
 
 #[derive(derive_more::Debug)]
@@ -281,12 +291,12 @@ impl CachedZone {
             signed_packet_to_hickory_records_without_origin(signed_packet, |_| true)?;
         Ok(Self {
             records,
-            timestamp: signed_packet.timestamp().into(),
+            timestamp: signed_packet.timestamp(),
         })
     }
 
     fn is_newer_than(&self, signed_packet: &SignedPacket) -> bool {
-        self.timestamp > signed_packet.timestamp().into()
+        self.timestamp > signed_packet.timestamp()
     }
 
     fn resolve(&self, name: &Name, record_type: RecordType) -> Option<Arc<RecordSet>> {

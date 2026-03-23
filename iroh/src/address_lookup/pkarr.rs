@@ -57,7 +57,10 @@
 use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
-use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointInfo};
+use iroh_relay::{
+    endpoint_info::{AddrFilter, EncodingError, EndpointIdExt, EndpointInfo},
+    pkarr::{SignedPacket, SignedPacketVerifyError},
+};
 use n0_error::{e, stack_error};
 use n0_future::{
     boxed::BoxStream,
@@ -65,10 +68,6 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Disconnected, Watchable, Watcher as _};
-use pkarr::{
-    SignedPacket,
-    errors::{PublicKeyError, SignedPacketVerifyError},
-};
 use tracing::{Instrument, debug, error_span, trace, warn};
 use url::Url;
 
@@ -94,7 +93,7 @@ pub enum PkarrError {
     #[error("Invalid public key")]
     PublicKey {
         #[error(std_err)]
-        source: PublicKeyError,
+        source: iroh_base::KeyParsingError,
     },
     #[error("Packet failed to verify")]
     Verify {
@@ -230,7 +229,7 @@ impl PkarrPublisherBuilder {
 
     /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
     ///
-    /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
+    /// This publisher will be able to publish [pkarr](https://pkarr.org) records for [`SecretKey`].
     pub fn build(self, secret_key: SecretKey, tls_config: rustls::ClientConfig) -> PkarrPublisher {
         PkarrPublisher::new(
             secret_key,
@@ -301,7 +300,7 @@ impl PkarrPublisher {
     /// Creates a new [`PkarrPublisher`] with a custom TTL and republish intervals.
     ///
     /// This allows creating the publisher with custom time-to-live values of the
-    /// [`pkarr::SignedPacket`]s and well as a custom republish interval.
+    /// [`SignedPacket`](iroh_relay::pkarr::SignedPacket)s as well as a custom republish interval.
     fn new(
         secret_key: SecretKey,
         pkarr_relay: Url,
@@ -562,7 +561,7 @@ impl AddressLookup for PkarrResolver {
     }
 }
 
-/// A [pkarr] client to publish [`pkarr::SignedPacket`]s to a pkarr relay.
+/// A [pkarr](https://pkarr.org) client to publish [`SignedPacket`](iroh_relay::pkarr::SignedPacket)s to a pkarr relay.
 ///
 /// [pkarr]: https://pkarr.org
 #[derive(Debug, Clone)]
@@ -643,9 +642,7 @@ impl PkarrRelayClient {
         &self,
         endpoint_id: EndpointId,
     ) -> Result<SignedPacket, AddressLookupError> {
-        // We map the error to string, as in browsers the error is !Send
-        let public_key = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
-            .map_err(|err| e!(PkarrError::PublicKey, err))?;
+        let public_key = endpoint_id;
 
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
@@ -674,7 +671,6 @@ impl PkarrRelayClient {
             .bytes()
             .await
             .map_err(|source| e!(PkarrError::HttpPayload { source }))?;
-        // We map the error to string, as in browsers the error is !Send
         let packet = SignedPacket::from_relay_payload(&public_key, &payload)
             .map_err(|err| e!(PkarrError::Verify, err))?;
         Ok(packet)
