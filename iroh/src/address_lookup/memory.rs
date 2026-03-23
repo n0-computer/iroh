@@ -33,10 +33,11 @@ use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 ///
 /// This is where the [`MemoryLookup`] is useful: it allows applications to add and
 /// retract endpoint addressing information that is otherwise out-of-band to iroh.
-///
 /// # Examples
 ///
-/// ```rust
+/// ```no_run
+/// # #[cfg(with_crypto_provider)] // Endpoint::bind needs a crypto provider
+/// # {
 /// use iroh::{
 ///     Endpoint, EndpointAddr, TransportAddr, address_lookup::memory::MemoryLookup,
 ///     endpoint::presets,
@@ -44,7 +45,7 @@ use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
-/// # async fn main() -> n0_error::Result<()> {
+/// # async fn wrapper() -> n0_error::Result<()> {
 /// // Create the Address Lookup and endpoint.
 /// let address_lookup = MemoryLookup::new();
 ///
@@ -64,6 +65,7 @@ use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 /// });
 ///
 /// # Ok(())
+/// # }
 /// # }
 /// ```
 ///
@@ -122,7 +124,9 @@ impl MemoryLookup {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```no_run
+    /// # #[cfg(with_crypto_provider)] // Endpoint::bind needs a crypto provider
+    /// # {
     /// use std::{net::SocketAddr, str::FromStr};
     ///
     /// use iroh::{Endpoint, EndpointAddr, address_lookup::memory::MemoryLookup, endpoint::presets};
@@ -131,7 +135,7 @@ impl MemoryLookup {
     /// #     Vec::new()
     /// # }
     /// # #[tokio::main]
-    /// # async fn main() -> n0_error::Result<()> {
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// // get addrs from somewhere
     /// let addrs = get_addrs();
     ///
@@ -143,6 +147,7 @@ impl MemoryLookup {
     ///     .bind()
     ///     .await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub fn from_endpoint_info(infos: impl IntoIterator<Item = impl Into<EndpointInfo>>) -> Self {
@@ -234,19 +239,19 @@ impl AddressLookup for MemoryLookup {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use n0_error::{Result, StackResultExt};
 
     use super::*;
-    use crate::Endpoint;
+    use crate::{Endpoint, endpoint::presets};
 
     #[tokio::test]
     async fn test_basic() -> Result {
         let address_lookup = MemoryLookup::new();
 
-        let _ep = Endpoint::empty_builder()
+        let _ep = Endpoint::builder(presets::Minimal)
             .address_lookup(address_lookup.clone())
             .bind()
             .await?;
