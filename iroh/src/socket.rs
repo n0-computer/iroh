@@ -1283,13 +1283,13 @@ struct Actor {
     /// The task of this actor is currently owned by the [`crate::Endpoint`] and wrapped in
     /// an [`AbortOnDropHandle`]. When [`crate::Endpoint::close`] is called various
     /// subsystems are being stopped. Then, when [`ShutdownState::at_endpoint_closed`] is
-    /// called by [`Handle::close`], this actor itself is stopped via it's
+    /// called by [`Endpoint::close`], this actor itself is stopped via it's
     /// [`CancellationToken`] and we will drop this clone of the endpoint. The endpoint is
-    /// than finally dropped when the [`Handle`] itself is dropped.
+    /// then finally dropped when the [`Endpoint`] itself is dropped.
     ///
     /// All of this to say: keeping the quinn endpoint alive here does not impact the
     /// lifetime of it since it's lifetime is shorter than that one that's stored in the
-    /// [`Handle`].
+    /// [`Endpoint`].
     endpoint: noq::Endpoint,
     /// Shared state between an awful lot of iroh subsystems.
     ///
