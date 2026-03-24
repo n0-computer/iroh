@@ -51,7 +51,7 @@ use tokio::sync::{
     oneshot,
 };
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
-use tracing::{Instrument, Level, Span, debug, event, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, Transport, TransportConfig};
 use url::Url;
 
