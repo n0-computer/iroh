@@ -1,0 +1,15 @@
+[[router]]
+name = "dc"
+
+[[router]]
+name = "lan-fetcher"
+nat  = "home"
+
+[device.relay.eth0]
+gateway = "dc"
+
+[device.provider.eth0]
+gateway = "dc"
+
+[device.fetcher.eth0]
+gateway = "lan-fetcher"

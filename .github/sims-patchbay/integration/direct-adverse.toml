@@ -1,0 +1,47 @@
+# Direct transfer with adverse network conditions.
+
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[matrix]
+cond = ["lossy", "throttled"]
+
+[matrix.params.cond]
+lossy     = { latency = "200", rate = "8000", loss = "1.0" }
+throttled = { latency = "200", rate = "4000", loss = "0" }
+
+[sim]
+name     = "direct-${matrix.cond}"
+topology = "1to1"
+
+[[step]]
+action    = "set-link-condition"
+device    = "fetcher"
+condition = { latency_ms = "${matrix.latency}", rate_kbit = "${matrix.rate}", loss_pct = "${matrix.loss}" }
+
+[[step]]
+use    = "transfer-provider"
+id     = "provider"
+device = "provider"
+args   = ["--no-pkarr-publish", "--no-dns-resolve"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--no-pkarr-publish", "--no-dns-resolve",
+          "--duration=30",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "120s"
+
+[[step]]
+action = "assert"
+checks = [
+  "fetcher.size matches [0-9]+",
+  "fetcher.conn_type contains Ip",
+]

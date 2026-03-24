@@ -1,0 +1,45 @@
+# Multi-provider direct transfer, varying topology and conditions.
+# Fetchers connect round-robin: fetcher-i -> provider-(i % 2).
+
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[matrix]
+topo = ["2to2", "2to4", "2to6", "2to10"]
+cond = ["baseline", "20ms", "200ms", "10g"]
+
+[matrix.params.cond]
+baseline = { size = "1G", latency = "0", rate = "0", impaired = "false" }
+"20ms"   = { size = "1G", latency = "20", rate = "100000", impaired = "true" }
+"200ms"  = { size = "100M", latency = "200", rate = "100000", impaired = "true" }
+"10g"    = { size = "10G", latency = "0", rate = "0", impaired = "false" }
+
+[sim]
+name     = "iroh-${matrix.topo}-${matrix.cond}"
+topology = "${matrix.topo}"
+
+[[step]]
+when      = "${matrix.impaired}"
+action    = "set-link-condition"
+device    = "fetcher"
+condition = { latency_ms = "${matrix.latency}", rate_kbit = "${matrix.rate}" }
+
+[[step]]
+use    = "transfer-provider"
+id     = "provider"
+device = "provider"
+args   = ["--no-pkarr-publish", "--no-dns-resolve"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--no-pkarr-publish", "--no-dns-resolve",
+          "--size=${matrix.size}",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "120s"

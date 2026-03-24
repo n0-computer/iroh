@@ -1,0 +1,60 @@
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[sim]
+name     = "interface-down-up"
+topology = "1to1-nat-down-up"
+
+[[step]]
+use  = "relay-setup"
+vars = { device = "relay" }
+
+[[step]]
+use      = "transfer-provider"
+id       = "provider"
+device   = "provider"
+requires = ["relay.ready"]
+args     = ["--no-pkarr-publish", "--no-dns-resolve",
+            "--relay-url", "https://$NETSIM_IP_relay:3340"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--no-pkarr-publish", "--no-dns-resolve",
+          "--duration=15",
+          "--relay-url",        "https://$NETSIM_IP_relay:3340",
+          "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+# After 5s, bring interface down
+[[step]]
+action = "wait"
+duration = "5s"
+
+[[step]]
+action    = "link-down"
+device    = "fetcher"
+interface = "eth0"
+
+# After 10s total, bring interface back up
+[[step]]
+action = "wait"
+duration = "5s"
+
+[[step]]
+action    = "link-up"
+device    = "fetcher"
+interface = "eth0"
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "60s"
+
+[[step]]
+action = "assert"
+checks = [
+  "fetcher.size matches [0-9]+",
+]

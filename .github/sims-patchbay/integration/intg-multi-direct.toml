@@ -1,0 +1,31 @@
+# Integration test: multi-provider direct transfer.
+
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[matrix]
+topo = ["2to2", "2to4"]
+
+[sim]
+name     = "intg-${matrix.topo}-public"
+topology = "${matrix.topo}"
+
+[[step]]
+use    = "transfer-provider"
+id     = "provider"
+device = "provider"
+args   = ["--no-pkarr-publish", "--no-dns-resolve"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--no-pkarr-publish", "--no-dns-resolve",
+          "--duration=10",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "60s"

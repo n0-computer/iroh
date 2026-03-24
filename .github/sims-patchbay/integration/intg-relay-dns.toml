@@ -1,0 +1,52 @@
+# Integration test: relay + DNS discovery.
+
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[matrix]
+topo = ["1to1", "1to3"]
+
+[sim]
+name     = "intg-${matrix.topo}-relay-dns"
+topology = "${matrix.topo}"
+
+[[step]]
+use  = "relay-setup"
+vars = { device = "relay" }
+
+[[step]]
+use  = "dns-setup"
+vars = { device = "dns" }
+
+[[step]]
+use      = "transfer-provider"
+id       = "provider"
+device   = "provider"
+requires = ["relay.ready", "dns.ready"]
+args     = ["--relay-url", "https://$NETSIM_IP_relay:3340",
+            "--pkarr-relay-url", "http://$NETSIM_IP_dns:8080/pkarr",
+            "--dns-origin-domain", "$NETSIM_IP_dns:5300"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--size=1G",
+          "--relay-url",        "https://$NETSIM_IP_relay:3340",
+          "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
+          "--pkarr-relay-url",  "http://$NETSIM_IP_dns:8080/pkarr",
+          "--dns-origin-domain", "$NETSIM_IP_dns:5300",
+          "--remote-direct-address", "${provider.direct_addr}"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "60s"
+
+[[step]]
+action = "assert"
+checks = [
+  "fetcher.size matches [0-9]+",
+  "fetcher.conn_type contains Ip",
+]

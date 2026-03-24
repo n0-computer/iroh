@@ -1,0 +1,41 @@
+# Multi-provider relay-only transfer, varying topology.
+# Fetchers connect round-robin: fetcher-i -> provider-(i % 2).
+
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[matrix]
+topo = ["2to2", "2to4", "2to6", "2to10"]
+
+[sim]
+name     = "iroh-${matrix.topo}-relay-only"
+topology = "${matrix.topo}"
+
+[[step]]
+use  = "relay-setup"
+vars = { device = "relay" }
+
+[[step]]
+use      = "transfer-provider"
+id       = "provider"
+device   = "provider"
+requires = ["relay.ready"]
+args     = ["--no-pkarr-publish", "--no-dns-resolve",
+            "--relay-only",
+            "--relay-url", "https://$NETSIM_IP_relay:3340"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--no-pkarr-publish", "--no-dns-resolve",
+          "--relay-only",
+          "--size=1G",
+          "--relay-url",        "https://$NETSIM_IP_relay:3340",
+          "--remote-relay-url", "https://$NETSIM_IP_relay:3340"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "120s"

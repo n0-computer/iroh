@@ -1,0 +1,21 @@
+# Both peers behind NAT with link conditions
+[[router]]
+name = "dc"
+
+[[router]]
+name = "lan-provider"
+nat  = "home"
+
+[[router]]
+name = "lan-fetcher"
+nat  = "home"
+
+[device.relay.eth0]
+gateway = "dc"
+
+[device.provider.eth0]
+gateway = "lan-provider"
+
+[device.fetcher.eth0]
+gateway = "lan-fetcher"
+impair  = { latency_ms = 50, rate_kbit = 10000 }

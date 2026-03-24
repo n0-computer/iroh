@@ -1,0 +1,38 @@
+# Both peers multi-homed behind two NATs each
+[[router]]
+name = "dc"
+
+[[router]]
+name = "lan-provider-1"
+nat  = "home"
+
+[[router]]
+name = "lan-provider-2"
+nat  = "home"
+
+[[router]]
+name = "lan-fetcher-1"
+nat  = "home"
+
+[[router]]
+name = "lan-fetcher-2"
+nat  = "home"
+
+[device.relay.eth0]
+gateway = "dc"
+
+[device.provider.eth0]
+gateway = "lan-provider-1"
+impair  = { latency_ms = 50, rate_kbit = 10000 }
+
+[device.provider.eth1]
+gateway = "lan-provider-2"
+impair  = { latency_ms = 50, rate_kbit = 10000 }
+
+[device.fetcher.eth0]
+gateway = "lan-fetcher-1"
+impair  = { latency_ms = 50, rate_kbit = 10000 }
+
+[device.fetcher.eth1]
+gateway = "lan-fetcher-2"
+impair  = { latency_ms = 50, rate_kbit = 10000 }

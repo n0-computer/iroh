@@ -1,0 +1,50 @@
+# Integration test: relay-only transfer with full relay + DNS stack.
+# Ported from iroh_full.json 1_to_1ro case.
+
+[[extends]]
+file = "../iroh-defaults.toml"
+
+[sim]
+name     = "intg-1to1-relay-dns-relay-only"
+topology = "1to1"
+
+[[step]]
+use  = "relay-setup"
+vars = { device = "relay" }
+
+[[step]]
+use  = "dns-setup"
+vars = { device = "dns" }
+
+[[step]]
+use      = "transfer-provider"
+id       = "provider"
+device   = "provider"
+requires = ["relay.ready", "dns.ready"]
+args     = ["--relay-only",
+            "--relay-url", "https://$NETSIM_IP_relay:3340",
+            "--pkarr-relay-url", "http://$NETSIM_IP_dns:8080/pkarr",
+            "--dns-origin-domain", "$NETSIM_IP_dns:5300"]
+
+[[step]]
+use    = "transfer-fetcher"
+id     = "fetcher"
+device = "fetcher"
+args   = ["${provider.endpoint_id}",
+          "--relay-only",
+          "--size=1G",
+          "--relay-url",        "https://$NETSIM_IP_relay:3340",
+          "--remote-relay-url", "https://$NETSIM_IP_relay:3340",
+          "--pkarr-relay-url",  "http://$NETSIM_IP_dns:8080/pkarr",
+          "--dns-origin-domain", "$NETSIM_IP_dns:5300"]
+
+[[step]]
+action  = "wait-for"
+id      = "fetcher"
+timeout = "120s"
+
+[[step]]
+action = "assert"
+checks = [
+  "fetcher.size matches [0-9]+",
+]
