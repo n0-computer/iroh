@@ -105,11 +105,9 @@ pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The maximum time a path can stay idle before being closed.
 ///
-/// 15s gives 3x [`HEARTBEAT_INTERVAL`] (5s) for multiple retry chances, and enough
-/// margin for real-world outages (WiFi reconnect 2-5s, cellular handoff 2-10s).
-/// iroh 0.35 used 10s at the QUIC level; tailscale uses 45s at the WireGuard session
-/// level with 3s heartbeats.
-pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+/// This is [`HEARTBEAT_INTERVAL`] + 1.5s.  This gives us a chance to send a PING frame and
+/// some retries.
+pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 
 /// The maximum time a relay path can stay idle before being closed.
 ///
