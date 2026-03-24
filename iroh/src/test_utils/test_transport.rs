@@ -318,6 +318,7 @@ mod tests {
 
     use iroh_relay::RelayMap;
     use n0_error::{Result, StdResultExt};
+    use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
 
     use super::*;
@@ -529,6 +530,7 @@ mod tests {
 
     /// Test that IP is selected over custom transport when custom has an RTT disadvantage.
     #[tokio::test]
+    #[traced_test]
     async fn test_ip_wins_over_custom() -> Result<()> {
         let network = TestNetwork::new();
         let s1 = SecretKey::generate(&mut rand::rng());
