@@ -1285,7 +1285,7 @@ enum ActorMessage {
 /// too slow for interface recovery scenarios.
 struct PendingNetworkChangeNotify {
     /// Next time to check for default route.
-    next_check: n0_future::time::Instant,
+    next_check: Instant,
     /// Current backoff interval.
     interval: Duration,
     /// Whether this was a major change.
@@ -1301,7 +1301,7 @@ impl PendingNetworkChangeNotify {
 
     fn new(is_major: bool) -> Self {
         Self {
-            next_check: n0_future::time::Instant::now() + Self::INITIAL_INTERVAL,
+            next_check: Instant::now() + Self::INITIAL_INTERVAL,
             interval: Self::INITIAL_INTERVAL,
             is_major,
             started: Instant::now(),
@@ -1311,7 +1311,7 @@ impl PendingNetworkChangeNotify {
     /// Advance to the next check interval (exponential backoff, capped).
     fn advance(&mut self) {
         self.interval = (self.interval * 2).min(Self::MAX_INTERVAL);
-        self.next_check = n0_future::time::Instant::now() + self.interval;
+        self.next_check = Instant::now() + self.interval;
     }
 
     /// Whether we've exceeded the maximum wait time.
@@ -1495,16 +1495,11 @@ impl Actor {
                     trace!(%eid, "cleaned up RemoteStateActor");
                 }
                 _ = &mut notify_quic_network_change => {
+                    let has_network = self.has_usable_network();
                     let Some(pending) = self.call_notify_quic_network_change.as_mut() else {
                         continue;
                     };
-                    let interfaces = self.local_interfaces_watcher.get();
-                    #[cfg(target_family = "wasm")]
-                    let has_usable_network = true;
-                    #[cfg(not(target_family = "wasm"))]
-                    let has_usable_network = interfaces.default_route_interface.is_some()
-                        && (interfaces.have_v4 || interfaces.have_v6);
-                    if has_usable_network || pending.expired() {
+                    if has_network || pending.expired() {
                         // Gateway appeared or we've waited long enough, notify now.
                         let is_major = pending.is_major;
                         self.call_notify_quic_network_change = None;
@@ -1523,6 +1518,20 @@ impl Actor {
                     trace!("tick: else");
                 }
             }
+        }
+    }
+
+    /// Whether the local network has a default route and at least one IP address.
+    fn has_usable_network(&mut self) -> bool {
+        #[cfg(target_family = "wasm")]
+        {
+            true
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let interfaces = self.local_interfaces_watcher.get();
+            interfaces.default_route_interface.is_some()
+                && (interfaces.have_v4 || interfaces.have_v6)
         }
     }
 
@@ -1545,13 +1554,7 @@ impl Actor {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
 
-        let interfaces = self.local_interfaces_watcher.get();
-        #[cfg(target_family = "wasm")]
-        let has_usable_network = true;
-        #[cfg(not(target_family = "wasm"))]
-        let has_usable_network = interfaces.default_route_interface.is_some()
-            && (interfaces.have_v4 || interfaces.have_v6);
-        if has_usable_network {
+        if self.has_usable_network() {
             // This is considered a usable network change, propagate it to the QUIC stack
             // right away.
             self.call_notify_quic_network_change = None;
