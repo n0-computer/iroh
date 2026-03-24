@@ -1518,7 +1518,7 @@ impl Actor {
                         // This address is only ever used to send an Initial packet to, it
                         // should never appear as an established path.
                         error!("A mixed address can not be used for network changes");
-                        false;
+                        false
                     }
                     MultipathMappedAddr::Relay(_) => {
                         // We pretend the relay path is never affected by link changes. The
