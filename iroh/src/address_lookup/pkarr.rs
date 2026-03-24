@@ -643,7 +643,8 @@ impl PkarrRelayClient {
         use hyper_util::rt::TokioIo;
 
         let host_name = url.host_str().unwrap_or_default();
-        let port = url.port().unwrap_or(443);
+        let default_port = if url.scheme() == "https" { 443 } else { 80 };
+        let port = url.port().unwrap_or(default_port);
 
         let io_err = |msg: &str| std::io::Error::other(msg.to_string());
 
@@ -690,24 +691,29 @@ impl PkarrRelayClient {
             }
         };
 
-        // TCP + TLS.
+        // TCP connection, optionally with TLS.
         let tcp_stream = tokio::net::TcpStream::connect(addr)
             .await
             .map_err(|err| e!(PkarrError::HttpSend { source: err }))?;
 
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(self.tls_config.clone()));
-        let server_name =
-            rustls::pki_types::ServerName::try_from(host_name.to_owned()).map_err(|e| {
-                e!(PkarrError::HttpSend {
-                    source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
-                })
-            })?;
-        let tls_stream = connector
-            .connect(server_name, tcp_stream)
-            .await
-            .map_err(|err| e!(PkarrError::HttpSend { source: err }))?;
+        let io = if url.scheme() == "https" {
+            let connector = tokio_rustls::TlsConnector::from(Arc::new(self.tls_config.clone()));
+            let server_name = rustls::pki_types::ServerName::try_from(host_name.to_owned())
+                .map_err(|e| {
+                    e!(PkarrError::HttpSend {
+                        source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
+                    })
+                })?;
+            let tls_stream = connector
+                .connect(server_name, tcp_stream)
+                .await
+                .map_err(|err| e!(PkarrError::HttpSend { source: err }))?;
+            tokio_util::either::Either::Left(tls_stream)
+        } else {
+            tokio_util::either::Either::Right(tcp_stream)
+        };
 
-        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls_stream))
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(io))
             .await
             .map_err(|err| {
                 e!(PkarrError::HttpSend {
