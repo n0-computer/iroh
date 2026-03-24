@@ -6,7 +6,7 @@
 //! See the [`endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
-#[cfg(feature = "dns_hickory")]
+#[cfg(any(feature = "dns_hickory", feature = "reqwest"))]
 use std::net::SocketAddr;
 use std::{
     fmt,

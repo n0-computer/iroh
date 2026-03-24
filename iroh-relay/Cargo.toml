@@ -137,6 +137,7 @@ reqwest = ["dep:reqwest"]
 server = [
     "metrics",
     "reqwest",
+    "tokio/signal",
     "dep:clap",
     "dep:dashmap",
     "dep:ahash",
