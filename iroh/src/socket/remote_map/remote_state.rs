@@ -567,12 +567,7 @@ impl RemoteStateActor {
         }
 
         if is_major {
-            // Force holepunching regardless of whether candidates appear unchanged.
-            // After a major network change, the local addresses reported by
-            // local_direct_addrs may be stale (STUN/QAD hasn't completed yet), so
-            // trigger_holepunching() would skip with "no new addresses". But the old
-            // paths are likely broken and we need to probe from the new network.
-            self.trigger_holepunching_forced();
+            self.trigger_holepunching();
         }
     }
 
