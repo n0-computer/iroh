@@ -1012,7 +1012,7 @@
 <a href=#1012 id=1012 data-nosnippet>1012</a>    }
 <a href=#1013 id=1013 data-nosnippet>1013</a>}
 <a href=#1014 id=1014 data-nosnippet>1014</a>
-<a href=#1015 id=1015 data-nosnippet>1015</a><span class="attr">#[cfg(test)]
+<a href=#1015 id=1015 data-nosnippet>1015</a><span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#1016 id=1016 data-nosnippet>1016</a></span><span class="kw">mod </span>tests {
 <a href=#1017 id=1017 data-nosnippet>1017</a>    <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
 <a href=#1018 id=1018 data-nosnippet>1018</a>
@@ -1032,7 +1032,7 @@
 <a href=#1032 id=1032 data-nosnippet>1032</a>    #[traced_test]
 <a href=#1033 id=1033 data-nosnippet>1033</a>    </span><span class="kw">async fn </span>test_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#1034 id=1034 data-nosnippet>1034</a>        <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
-<a href=#1035 id=1035 data-nosnippet>1035</a>        <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
+<a href=#1035 id=1035 data-nosnippet>1035</a>        <span class="kw">let </span>client_config = iroh_relay::tls::make_dangerous_client_config();
 <a href=#1036 id=1036 data-nosnippet>1036</a>        <span class="kw">let </span>ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).anyerr()<span class="question-mark">?</span>;
 <a href=#1037 id=1037 data-nosnippet>1037</a>        <span class="kw">let </span>quic_addr_disc = QuicConfig {
 <a href=#1038 id=1038 data-nosnippet>1038</a>            ep: ep.clone(),

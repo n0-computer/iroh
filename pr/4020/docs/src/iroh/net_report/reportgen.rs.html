@@ -884,7 +884,7 @@
 <a href=#884 id=884 data-nosnippet>884</a>    }
 <a href=#885 id=885 data-nosnippet>885</a>}
 <a href=#886 id=886 data-nosnippet>886</a>
-<a href=#887 id=887 data-nosnippet>887</a><span class="attr">#[cfg(test)]
+<a href=#887 id=887 data-nosnippet>887</a><span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#888 id=888 data-nosnippet>888</a></span><span class="kw">mod </span>tests {
 <a href=#889 id=889 data-nosnippet>889</a>    <span class="kw">use </span>std::net::Ipv4Addr;
 <a href=#890 id=890 data-nosnippet>890</a>
@@ -921,7 +921,7 @@
 <a href=#921 id=921 data-nosnippet>921</a>    </span><span class="kw">async fn </span>test_qad_probe_v4() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
 <a href=#923 id=923 data-nosnippet>923</a>        <span class="kw">let </span>relay = Arc::new(relay);
-<a href=#924 id=924 data-nosnippet>924</a>        <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
+<a href=#924 id=924 data-nosnippet>924</a>        <span class="kw">let </span>client_config = iroh_relay::tls::make_dangerous_client_config();
 <a href=#925 id=925 data-nosnippet>925</a>        <span class="kw">let </span>ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).anyerr()<span class="question-mark">?</span>;
 <a href=#926 id=926 data-nosnippet>926</a>        <span class="kw">let </span>client_addr = ep.local_addr().anyerr()<span class="question-mark">?</span>;
 <a href=#927 id=927 data-nosnippet>927</a>
