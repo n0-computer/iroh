@@ -811,9 +811,10 @@ impl RemoteStateActor {
     /// Relay paths get a longer idle timeout to accommodate transparent reconnection
     /// by the relay actor (see [`RELAY_PATH_MAX_IDLE_TIMEOUT`]).
     fn configure_path(path: &noq::Path, addr: &transports::Addr) {
-        if matches!(addr, transports::Addr::Relay(..)) {
-            path.set_max_idle_timeout(Some(RELAY_PATH_MAX_IDLE_TIMEOUT))
-                .ok();
+        if matches!(addr, transports::Addr::Relay(..))
+            && let Err(e) = path.set_max_idle_timeout(Some(RELAY_PATH_MAX_IDLE_TIMEOUT))
+        {
+            debug!(?e, "failed to set relay path idle timeout");
         }
     }
 
