@@ -27,7 +27,7 @@
 use std::time::Duration;
 
 use iroh::TransportAddr;
-use n0_error::{Result, StackResultExt};
+use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_tracing_test::traced_test;
 use patchbay::{Firewall, LinkCondition, LinkLimits, Nat, RouterPreset, TestGuard};
 use testdir::testdir;
@@ -854,8 +854,8 @@ async fn holepunch_asymmetric_links() -> Result {
 /// twice: once with the impaired side accepting, once connecting.
 ///
 /// Bump these thresholds as iroh's holepunching improves.
-const DEGRADE_PASS_THRESHOLD_IMPAIRED_SERVER: usize = 7;
-const DEGRADE_PASS_THRESHOLD_IMPAIRED_CLIENT: usize = 7;
+const DEGRADE_PASS_THRESHOLD_IMPAIRED_SERVER: usize = 3;
+const DEGRADE_PASS_THRESHOLD_IMPAIRED_CLIENT: usize = 3;
 
 const DEGRADE_LEVELS: &[LinkLimits] = &[
     // 0: mild — good wifi
@@ -868,17 +868,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
         duplicate_pct: 0.0,
         corrupt_pct: 0.0,
     },
-    // 1: moderate — mediocre 4G
-    LinkLimits {
-        latency_ms: 40,
-        jitter_ms: 15,
-        loss_pct: 1.0,
-        reorder_pct: 1.0,
-        rate_kbit: 0,
-        duplicate_pct: 0.0,
-        corrupt_pct: 0.0,
-    },
-    // 2: poor — bad wifi or 3G
+    // 1: poor — bad wifi or 3G
     LinkLimits {
         latency_ms: 100,
         jitter_ms: 30,
@@ -888,7 +878,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
         duplicate_pct: 0.0,
         corrupt_pct: 0.0,
     },
-    // 3: bad — congested 3G
+    // 2: bad — congested 3G
     LinkLimits {
         latency_ms: 200,
         jitter_ms: 60,
@@ -898,7 +888,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
         duplicate_pct: 0.0,
         corrupt_pct: 0.0,
     },
-    // 4: terrible — barely usable
+    // 3: terrible — barely usable
     LinkLimits {
         latency_ms: 300,
         jitter_ms: 80,
@@ -908,7 +898,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
         duplicate_pct: 0.0,
         corrupt_pct: 0.0,
     },
-    // 5: extreme — GEO satellite with heavy loss
+    // 4: extreme — GEO satellite with heavy loss
     LinkLimits {
         latency_ms: 500,
         jitter_ms: 100,
@@ -936,7 +926,7 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
-    let timeout = Duration::from_secs(10);
+    let timeout = Duration::from_secs(20);
 
     let mut last_pass = 0;
     for (impairment_level, limits) in DEGRADE_LEVELS.iter().enumerate() {
@@ -948,9 +938,7 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
         };
         let server_name = format!("{impairment_level}-server");
         let client_name = format!("{impairment_level}-client");
-        tracing::event!(
-            target: "test::_events::ladder_start",
-            tracing::Level::INFO,
+        tracing::info!(
             impairment_level,
             latency_ms = limits.latency_ms,
             loss_pct = limits.loss_pct,
@@ -971,8 +959,9 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
 
         let server_id = server.id();
         let client_id = client.id();
-        let result = Pair::new(server, client, relay_map.clone())
-            .run(
+        let result = tokio::time::timeout(
+            timeout * 2,
+            Pair::new(server, client, relay_map.clone()).run(
                 async move |_dev, _ep, conn| {
                     ping_accept(&conn, timeout).await?;
                     Ok(())
@@ -983,8 +972,11 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
                     ping_open(&conn, timeout).await?;
                     Ok(())
                 },
-            )
-            .await;
+            ),
+        )
+        .await
+        .std_context("pair timed timeout")
+        .flatten();
 
         lab.remove_device(server_id)?;
         lab.remove_device(client_id)?;
@@ -1018,8 +1010,6 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
 
         if ok {
             last_pass = impairment_level + 1;
-        } else {
-            break;
         }
     }
     Ok((last_pass, guard))

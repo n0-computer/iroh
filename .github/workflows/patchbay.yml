@@ -34,7 +34,7 @@ jobs:
 
       - name: Run patchbay tests
         id: tests
-        run: cargo test --release -p iroh --test patchbay -- --test-threads=1
+        run: cargo test --release -p iroh --test patchbay -- --test-threads=1 --nocapture
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
