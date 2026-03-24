@@ -31,7 +31,7 @@ use n0_error::{Result, StackResultExt};
 use n0_tracing_test::traced_test;
 use patchbay::{Firewall, LinkCondition, LinkLimits, Nat, RouterPreset, TestGuard};
 use testdir::testdir;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use self::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
 
@@ -946,8 +946,8 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
         } else {
             (None, impaired)
         };
-        let server_name = format!("server-{impairment_level}");
-        let client_name = format!("client-{impairment_level}");
+        let server_name = format!("{impairment_level}-server");
+        let client_name = format!("{impairment_level}-client");
         tracing::event!(
             target: "test::_events::ladder_start",
             tracing::Level::INFO,
@@ -994,7 +994,7 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
         match result.as_ref() {
             Ok(()) => {
                 tracing::event!(
-                    target: "test::_events::ladder_pass",
+                    target: "iroh::_events::test_ladder_pass",
                     tracing::Level::INFO,
                     impairment_level,
                     latency_ms = limits.latency_ms,
@@ -1005,7 +1005,7 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
             }
             Err(err) => {
                 tracing::event!(
-                    target: "test::_events::ladder_fail",
+                    target: "iroh::_events::test_ladder_fail",
                     tracing::Level::WARN,
                     latency_ms = limits.latency_ms,
                     loss_pct = limits.loss_pct,
