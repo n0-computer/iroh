@@ -754,31 +754,6 @@ impl RemoteStateActor {
         self.do_holepunching(conn);
     }
 
-    /// Triggers holepunching, bypassing the "no new candidates" check.
-    ///
-    /// Used after major network changes where the stale local addresses haven't been
-    /// re-discovered yet but the old paths are likely broken.
-    fn trigger_holepunching_forced(&mut self) {
-        if self.connections.is_empty() {
-            trace!("not holepunching: no connections");
-            return;
-        }
-
-        let Some(conn) = self
-            .connections
-            .iter()
-            .filter_map(|(id, state)| state.handle.upgrade().map(|conn| (*id, conn)))
-            .filter(|(_, conn)| conn.side().is_client())
-            .min_by_key(|(id, _)| *id)
-            .map(|(_, conn)| conn)
-        else {
-            trace!("not holepunching: no client connection");
-            return;
-        };
-
-        debug!("force holepunching after major network change");
-        self.do_holepunching(conn);
-    }
 
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
