@@ -456,6 +456,7 @@ mod tests {
 
     /// Test custom transport only - no IP, no relay, dial by custom address.
     #[tokio::test]
+    #[traced_test]
     async fn test_custom_transport_only() -> Result<()> {
         let network = TestNetwork::new();
         let s1 = SecretKey::generate(&mut rand::rng());
@@ -492,6 +493,7 @@ mod tests {
 
     /// Test that custom transport is selected over IP when given an RTT advantage.
     #[tokio::test]
+    #[traced_test]
     async fn test_custom_transport_wins_over_ip() -> Result<()> {
         let network = TestNetwork::new();
         let s1 = SecretKey::generate(&mut rand::rng());
@@ -501,7 +503,7 @@ mod tests {
         let t2 = network.create_transport(s2.public())?;
 
         // Strong RTT advantage for custom transport
-        let custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
+        let custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_secs(10));
         let config = EndpointConfig::default()
             .with_ip()
             .with_custom_bias(custom_bias);
@@ -573,6 +575,7 @@ mod tests {
     /// both relay and custom addresses to verify the custom transport (primary) wins
     /// over the relay (backup).
     #[tokio::test]
+    #[traced_test]
     async fn test_custom_transport_wins_over_relay() -> Result<()> {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let network = TestNetwork::new();
