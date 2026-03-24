@@ -813,7 +813,9 @@ impl ConnectedRelayState {
 
 pub(super) enum RelayActorMessage {
     MaybeCloseRelaysOnRebind,
-    NetworkChange { report: Report },
+    NetworkChange {
+        report: Report,
+    },
     /// Trigger an immediate health check on all relay connections.
     ///
     /// Sent after a major network change to detect broken connections faster
