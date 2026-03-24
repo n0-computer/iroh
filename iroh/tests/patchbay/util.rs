@@ -119,8 +119,40 @@ impl Pair {
             }
             .instrument(error_span!("ep-cnct"))
         })?;
-        task2.await.anyerr()??;
-        task1.await.anyerr()??;
+
+        let (res1, res2) = tokio::join!(task1, task2);
+
+        let res1: Result<()> = res1
+            .std_context("device1 panicked")
+            .map(|res| res.context("device1 failed"))
+            .flatten();
+        let res2: Result<()> = res2
+            .std_context("device2 panicked")
+            .map(|res| res.context("device2 failed"))
+            .flatten();
+
+        if let Err(err) = res1.as_ref() {
+            self.dev1.run_sync(|| {
+                tracing::event!(
+                    target: "test::_event::failed",
+                    tracing::Level::ERROR,
+                    error: format!("{err:#}"),
+                );
+                Ok(())
+            });
+        }
+        if let Err(err) = res2.as_ref() {
+            self.dev2.run_sync(|| {
+                tracing::event!(
+                    target: "test::_event::failed",
+                    tracing::Level::ERROR,
+                    error: format!("{err:#}"),
+                );
+                Ok(())
+            });
+        }
+        res1?;
+        res2?;
         Ok(())
     }
 }

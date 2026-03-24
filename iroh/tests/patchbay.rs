@@ -936,20 +936,22 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
-    let timeout = Duration::from_secs(15);
+    let timeout = Duration::from_secs(10);
 
     let mut last_pass = 0;
-    for (level, limits) in DEGRADE_LEVELS.iter().enumerate() {
+    for (impairment_level, limits) in DEGRADE_LEVELS.iter().enumerate() {
         let impaired = Some(LinkCondition::Manual(*limits));
         let (server_cond, client_cond) = if impaired_is_server {
             (impaired, None)
         } else {
             (None, impaired)
         };
-        let server_name = format!("{level}-server");
-        let client_name = format!("{level}-client");
-        debug!(
-            level,
+        let server_name = format!("server-{impairment_level}");
+        let client_name = format!("client-{impairment_level}");
+        tracing::event!(
+            target: "test::_events::ladder_start",
+            tracing::Level::INFO,
+            impairment_level,
             latency_ms = limits.latency_ms,
             loss_pct = limits.loss_pct,
             reorder_pct = limits.reorder_pct,
@@ -977,9 +979,7 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
                 },
                 async move |_dev, _ep, conn| {
                     let mut paths = conn.paths();
-                    if paths.wait_ip(timeout).await.is_err() {
-                        n0_error::bail_any!("holepunch_timeout");
-                    }
+                    paths.wait_ip(timeout).await?;
                     ping_open(&conn, timeout).await?;
                     Ok(())
                 },
@@ -989,32 +989,35 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
         lab.remove_device(server_id)?;
         lab.remove_device(client_id)?;
 
-        let ok = match result {
-            Ok(()) => true,
-            Err(e) if e.to_string().contains("holepunch_timeout") => false,
-            Err(e) => return Err(e),
-        };
+        let ok = result.is_ok();
 
-        if ok {
-            info!(
-                level,
-                latency_ms = limits.latency_ms,
-                loss_pct = limits.loss_pct,
-                reorder_pct = limits.reorder_pct,
-                "PASSED",
-            );
-        } else {
-            warn!(
-                level,
-                latency_ms = limits.latency_ms,
-                loss_pct = limits.loss_pct,
-                reorder_pct = limits.reorder_pct,
-                "FAILED",
-            );
+        match result.as_ref() {
+            Ok(()) => {
+                tracing::event!(
+                    target: "test::_events::ladder_pass",
+                    tracing::Level::INFO,
+                    impairment_level,
+                    latency_ms = limits.latency_ms,
+                    loss_pct = limits.loss_pct,
+                    reorder_pct = limits.reorder_pct,
+                    "PASSED",
+                );
+            }
+            Err(err) => {
+                tracing::event!(
+                    target: "test::_events::ladder_fail",
+                    tracing::Level::WARN,
+                    latency_ms = limits.latency_ms,
+                    loss_pct = limits.loss_pct,
+                    reorder_pct = limits.reorder_pct,
+                    error = format!("{err:#}"),
+                    "FAILED",
+                );
+            }
         }
 
         if ok {
-            last_pass = level + 1;
+            last_pass = impairment_level + 1;
         } else {
             break;
         }
