@@ -85,6 +85,34 @@ pub use self::{
 };
 pub(crate) use self::{options::Options, reportgen::QuicConfig};
 
+/// Configuration for the net report service.
+///
+/// Controls which probes and checks are performed when generating network reports.
+/// All options default to `true`.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct Config {
+    /// Run HTTPS latency probes against relay servers.
+    ///
+    /// Disable this on constrained devices where the extra TCP connections are
+    /// too expensive — QAD (UDP) probes already measure relay latency.
+    pub https_probes: bool,
+    /// Check for captive portals when generating the first report.
+    ///
+    /// Disable this on embedded devices or environments where captive portal
+    /// detection is not meaningful.
+    pub captive_portal_check: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            https_probes: true,
+            captive_portal_check: true,
+        }
+    }
+}
+
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const ENOUGH_ENDPOINTS: usize = 3;
 
@@ -100,6 +128,8 @@ pub(crate) struct Client {
     qad_conns: QadConns,
     #[cfg(not(wasm_browser))]
     tls_config: rustls::ClientConfig,
+    /// Whether to check for captive portals.
+    captive_portal_check: bool,
     /// A collection of previously generated reports.
     ///
     /// Sometimes it is useful to look at past reports to decide what to do.
@@ -239,6 +269,7 @@ impl Client {
             qad_conns: QadConns::default(),
             #[cfg(not(wasm_browser))]
             tls_config: opts.tls_config,
+            captive_portal_check: opts.config.captive_portal_check,
         }
     }
 
@@ -294,6 +325,7 @@ impl Client {
             self.reports.last.clone(),
             self.relay_map.clone(),
             self.probes.clone(),
+            self.captive_portal_check,
             if_state.clone(),
             shutdown_token.child_token(),
             #[cfg(not(wasm_browser))]

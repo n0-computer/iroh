@@ -30,9 +30,9 @@ derive_more = { version = "2.0.1", features = [
     "deref",
 ] }
 http = "1"
-http-body-util = "0.1.0"
+http-body-util = { version = "0.1.0" }
 hyper = { version = "1", features = ["server", "client", "http1"] }
-hyper-util = "0.1.1"
+hyper-util = { version = "0.1.1", features = ["tokio"] }
 iroh-base = { version = "0.97.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.38", default-features = false }
 lru = "0.16.3"
@@ -49,7 +49,7 @@ postcard = { version = "1", default-features = false, features = [
 noq = { version = "0.17.0", default-features = false, features = ["rustls"] }
 noq-proto = { version = "0.16.0", default-features = false }
 rand = "0.9.2"
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"], optional = true }
 rustls = { version = "0.23.33", default-features = false }
 rustls-platform-verifier = { version = "0.6.2", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
@@ -88,7 +88,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "0.25.1", features = ["tokio", "system-config"] }
+hickory-resolver = { version = "0.25.1", features = ["tokio", "system-config"], optional = true }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -128,11 +128,15 @@ cfg_aliases = "0.2.1"
 vergen-gitcl = "1.0.8"
 
 [features]
-default = ["metrics", "tls-ring"]
+default = ["metrics", "reqwest", "tls-ring", "dns_hickory"]
+dns_hickory = ["dep:hickory-resolver"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["dep:rustls-platform-verifier"]
+# reqwest HTTP client support (for DnsResolver impl)
+reqwest = ["dep:reqwest"]
 server = [
     "metrics",
+    "reqwest",
     "tokio/signal",
     "dep:clap",
     "dep:dashmap",
@@ -161,14 +165,14 @@ tls-ring = [
     "rustls/ring",
     "tokio-rustls/ring",
     "tokio-websockets/ring",
-    "hickory-resolver/https-ring",
+    "hickory-resolver?/https-ring",
 ]
 tls-aws-lc-rs = [
     "noq/aws-lc-rs",
     "rustls/aws-lc-rs",
     "tokio-rustls/aws-lc-rs",
     "tokio-websockets/aws_lc_rs",
-    "hickory-resolver/https-aws-lc-rs",
+    "hickory-resolver?/https-aws-lc-rs",
 ]
 
 [[bin]]

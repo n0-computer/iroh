@@ -71,10 +71,24 @@ impl<T: Future> Future for MaybeFuture<T> {
 
 /// Creates a reqwest client builder that always uses the rustls backend, unless we
 /// are in a browser context, where that is not supported.
+#[cfg(wasm_browser)]
 pub(crate) fn reqwest_client_builder(
     tls_client_config: Option<rustls::ClientConfig>,
 ) -> reqwest::ClientBuilder {
     let mut builder = reqwest::Client::builder();
+    // On ESP-IDF, skip the preconfigured TLS config and disable cert verification.
+    // The crypto provider lacks RSA signature support (too large for flash),
+    // so cert chains with RSA intermediates fail verification.
+    // danger_accept_invalid_certs must be set BEFORE use_preconfigured_tls,
+    // otherwise the preconfigured verifier takes precedence.
+    // These requests are for relay latency probes and pkarr discovery —
+    // iroh's own key-based authentication provides the actual security layer.
+    #[cfg(target_os = "espidf")]
+    {
+        let _ = tls_client_config; // ignore preconfigured TLS on ESP-IDF
+        builder = builder.use_rustls_tls().danger_accept_invalid_certs(true);
+    }
+    #[cfg(not(target_os = "espidf"))]
     #[cfg(not(wasm_browser))]
     {
         builder = if let Some(config) = tls_client_config {

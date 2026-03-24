@@ -11,7 +11,7 @@ use iroh_base::SecretKey;
 use noq::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use tracing::warn;
 
-use self::resolver::ResolveRawPublicKeyCert;
+use self::resolver::AlwaysResolvesCert;
 
 pub(crate) mod misc;
 pub(crate) mod name;
@@ -42,7 +42,7 @@ pub(crate) const DEFAULT_MAX_TLS_TICKETS: usize = 8 * 32;
 #[derive(Debug)]
 pub(crate) struct TlsConfig {
     pub(crate) secret_key: SecretKey,
-    cert_resolver: Arc<ResolveRawPublicKeyCert>,
+    cert_resolver: Arc<AlwaysResolvesCert>,
     server_verifier: Arc<verifier::ServerCertificateVerifier>,
     client_verifier: Arc<verifier::ClientCertificateVerifier>,
     session_store: Arc<dyn rustls::client::ClientSessionStore>,
@@ -55,15 +55,19 @@ impl TlsConfig {
         max_tls_tickets: usize,
         crypto_provider: Arc<rustls::crypto::CryptoProvider>,
     ) -> Self {
+        let cert_resolver = Arc::new(
+            AlwaysResolvesCert::new(&secret_key, &crypto_provider)
+                .expect("Client cert key DER is valid; qed"),
+        );
         Self {
-            cert_resolver: Arc::new(ResolveRawPublicKeyCert::new(&secret_key)),
+            secret_key,
+            cert_resolver,
             server_verifier: Arc::new(verifier::ServerCertificateVerifier),
             client_verifier: Arc::new(verifier::ClientCertificateVerifier),
             session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
                 max_tls_tickets,
             )),
             crypto_provider,
-            secret_key,
         }
     }
 

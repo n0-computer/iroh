@@ -28,6 +28,10 @@ ctutils = { version = "0.4.0", default-features = false }
 data-encoding = "2.2"
 derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_into", "deref", "from_str", "into_iterator"] }
 ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
+hmac = "0.12"
+sha2 = { version = "0.10", default-features = false }
+hkdf = "0.12"
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 http = "1"
 ipnet = "2"
 iroh-base = { version = "0.97.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
@@ -78,7 +82,11 @@ sync_wrapper = { version = "1.0.2", features = ["futures"] }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "0.25.1", default-features = false }
+hickory-resolver = { version = "0.25.1", default-features = false, optional = true }
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1.1", features = ["tokio"] }
+http-body-util = "0.1"
+tokio-rustls = { version = "0.26", default-features = false }
 portmapper = { version = "0.15", optional = true, default-features = false }
 noq = { version = "0.17.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
@@ -93,6 +101,10 @@ tokio = { version = "1", features = [
 
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider",
+    "stream",
+] }
 wasm-bindgen-futures = "0.4"
 # we don't use time directly, but need to enable it because x509_parser uses these in browsers and we need to enable some feature flags for that to work
 time = { version = "0.3", features = ["wasm-bindgen"] }
@@ -142,10 +154,12 @@ wasm-bindgen-test = "0.3.62"
 cfg_aliases = { version = "0.2.1" }
 
 [features]
-default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring"]
+default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring", "dns_hickory"]
+dns_hickory = ["dep:hickory-resolver", "iroh-relay/dns_hickory"]
 portmapper = ["dep:portmapper"]
+signals = ["tokio/signal", "tokio/process"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper?/metrics"]
-test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
+test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum", "dns_hickory"]
 address-lookup-mdns = ["dep:swarm-discovery"]
 address-lookup-pkarr-dht = ["pkarr/dht", "pkarr/relays"]
 # Enables fetching TLS trust anchors from the operating system

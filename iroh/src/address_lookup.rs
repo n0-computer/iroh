@@ -1082,6 +1082,8 @@ mod test_dns_pkarr {
 
         // we connect only by endpoint id!
         let _conn = ep2.connect(ep1.id(), TEST_ALPN).await?;
+        ep1.close().await;
+        ep2.close().await;
         Ok(())
     }
 

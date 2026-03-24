@@ -40,7 +40,7 @@ enum Mode {
     /// INSECURE: Do not verify server certificates at all.
     ///
     /// May only be used in tests or local development setups.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(any(test, feature = "test-utils", target_os = "espidf"))]
     InsecureSkipVerify,
 }
 
@@ -81,7 +81,7 @@ impl CaRootsConfig {
     /// INSECURE: Do not verify server certificates at all.
     ///
     /// May only be used in tests or local development setups.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(any(test, feature = "test-utils", target_os = "espidf"))]
     pub fn insecure_skip_verify() -> Self {
         Self {
             mode: Mode::InsecureSkipVerify,
@@ -139,7 +139,7 @@ impl CaRootsConfig {
                     .build()
                     .map_err(io::Error::other)?
             }
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(any(test, feature = "test-utils", target_os = "espidf"))]
             Mode::InsecureSkipVerify => {
                 Arc::new(no_cert_verifier::NoCertVerifier { crypto_provider })
             }
@@ -161,18 +161,32 @@ impl CaRootsConfig {
 
 /// Returns the default crypto provider, if enabled via a feature flag.
 ///
-/// Prefers to ring over aws-lc-rs if both are enabled.
+/// Uses the installed default provider, or panics if none is installed.
+///
+/// Prefers ring over aws-lc-rs if both are enabled.
 #[cfg(feature = "tls-ring")]
 pub fn default_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-/// Returns the default crypto provider, if enabled via a feature flag.
+/// Returns the default crypto provider using aws-lc-rs.
 ///
-/// Prefers to ring over aws-lc-rs if both are enabled.
+/// Prefers ring over aws-lc-rs if both are enabled.
 #[cfg(all(feature = "tls-aws-lc-rs", not(feature = "tls-ring")))]
 pub fn default_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+}
+
+/// Returns the installed default crypto provider.
+///
+/// Used when no specific crypto provider feature is enabled (e.g. ESP-IDF).
+#[cfg(not(with_crypto_provider))]
+pub fn default_provider() -> Arc<CryptoProvider> {
+    CryptoProvider::get_default()
+        .expect(
+            "no default crypto provider installed; call CryptoProvider::install_default() first",
+        )
+        .clone()
 }
 
 #[cfg(all(any(test, feature = "test-utils"), with_crypto_provider))]
@@ -194,7 +208,7 @@ pub fn make_dangerous_client_config() -> rustls::ClientConfig {
         .with_no_client_auth()
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(any(test, feature = "test-utils", target_os = "espidf"))]
 mod no_cert_verifier {
     use std::sync::Arc;
 
