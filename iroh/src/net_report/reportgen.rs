@@ -35,9 +35,9 @@ use iroh_relay::{
 };
 use n0_error::{e, stack_error};
 #[cfg(wasm_browser)]
-use n0_future::future::Pending;
-#[cfg(wasm_browser)]
 use n0_future::StreamExt as _;
+#[cfg(wasm_browser)]
+use n0_future::future::Pending;
 use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration, Instant},
@@ -299,11 +299,7 @@ impl Actor {
                             trace!("check started after {CAPTIVE_PORTAL_DELAY:?}");
                             time::timeout(
                                 CAPTIVE_PORTAL_TIMEOUT,
-                                check_captive_portal(
-                                    &dns_resolver,
-                                    &dm,
-                                    preferred_relay,
-                                ),
+                                check_captive_portal(&dns_resolver, &dm, preferred_relay),
                             )
                             .await
                         })
@@ -505,12 +501,9 @@ impl Probe {
         let report = match self {
             Probe::Https => {
                 #[cfg(not(wasm_browser))]
-                let res = run_https_probe(
-                    &socket_state.dns_resolver,
-                    relay.url.clone(),
-                    tls_config,
-                )
-                .await;
+                let res =
+                    run_https_probe(&socket_state.dns_resolver, relay.url.clone(), tls_config)
+                        .await;
                 #[cfg(wasm_browser)]
                 let res = run_https_probe(relay.url.clone()).await;
                 match res {
@@ -847,16 +840,20 @@ async fn run_https_probe(
                 .collect();
             trace!(?addrs, "resolved addrs");
             if addrs.is_empty() {
-                return Err(e!(MeasureHttpsLatencyError::Connect,
-                    std::io::Error::new(std::io::ErrorKind::NotFound, "no addresses resolved")));
+                return Err(e!(
+                    MeasureHttpsLatencyError::Connect,
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "no addresses resolved")
+                ));
             }
             SocketAddr::new(addrs[0], port)
         }
         Some(Host::Ipv4(ip)) => SocketAddr::new(ip.into(), port),
         Some(Host::Ipv6(ip)) => SocketAddr::new(ip.into(), port),
         None => {
-            return Err(e!(MeasureHttpsLatencyError::Connect,
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, "no host in relay URL")));
+            return Err(e!(
+                MeasureHttpsLatencyError::Connect,
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "no host in relay URL")
+            ));
         }
     };
 
@@ -866,9 +863,13 @@ async fn run_https_probe(
         .map_err(|err| e!(MeasureHttpsLatencyError::Connect, err))?;
 
     let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(tls_config));
-    let server_name = rustls::pki_types::ServerName::try_from(host_name.to_owned())
-        .map_err(|e| e!(MeasureHttpsLatencyError::Connect,
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, e)))?;
+    let server_name =
+        rustls::pki_types::ServerName::try_from(host_name.to_owned()).map_err(|e| {
+            e!(
+                MeasureHttpsLatencyError::Connect,
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
+            )
+        })?;
     let tls_stream = connector
         .connect(server_name, tcp_stream)
         .await
@@ -904,7 +905,9 @@ async fn run_https_probe(
         let mut body = response.into_body();
         let mut body_size = 0;
         while let Some(frame) = body.frame().await {
-            if let Ok(frame) = frame && let Some(data) = frame.data_ref() {
+            if let Ok(frame) = frame
+                && let Some(data) = frame.data_ref()
+            {
                 body_size += data.len();
                 if body_size >= MAX_BODY_SIZE {
                     break;
@@ -925,9 +928,7 @@ async fn run_https_probe(
 /// use of self-signed certificates for servers.  Currently this is used for testing.
 #[cfg(wasm_browser)]
 #[allow(clippy::unused_async)]
-async fn run_https_probe(
-    relay: RelayUrl,
-) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
+async fn run_https_probe(relay: RelayUrl) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     use crate::util::reqwest_client_builder;
 
     trace!("HTTPS probe start");

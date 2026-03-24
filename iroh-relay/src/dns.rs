@@ -6,14 +6,14 @@
 //! See the [`endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
+#[cfg(feature = "dns_hickory")]
+use std::net::SocketAddr;
 use std::{
     fmt,
     future::Future,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::Arc,
 };
-#[cfg(feature = "dns_hickory")]
-use std::net::SocketAddr;
 
 #[cfg(feature = "dns_hickory")]
 use hickory_resolver::{

@@ -654,10 +654,16 @@ impl PkarrRelayClient {
                     let addrs: Vec<_> = resolver
                         .lookup_ipv4_ipv6(domain, Duration::from_secs(5))
                         .await
-                        .map_err(|err| e!(PkarrError::HttpSend { source: std::io::Error::other(err) }))?
+                        .map_err(|err| {
+                            e!(PkarrError::HttpSend {
+                                source: std::io::Error::other(err)
+                            })
+                        })?
                         .collect();
                     if addrs.is_empty() {
-                        return Err(e!(PkarrError::HttpSend { source: io_err("no addresses resolved") }));
+                        return Err(e!(PkarrError::HttpSend {
+                            source: io_err("no addresses resolved")
+                        }));
                     }
                     std::net::SocketAddr::new(addrs[0], port)
                 } else {
@@ -668,13 +674,19 @@ impl PkarrRelayClient {
                         .to_socket_addrs()
                         .map_err(|err| e!(PkarrError::HttpSend { source: err }))?
                         .next()
-                        .ok_or_else(|| e!(PkarrError::HttpSend { source: io_err("no addresses resolved") }))?
+                        .ok_or_else(|| {
+                            e!(PkarrError::HttpSend {
+                                source: io_err("no addresses resolved")
+                            })
+                        })?
                 }
             }
             Some(url::Host::Ipv4(ip)) => std::net::SocketAddr::new(ip.into(), port),
             Some(url::Host::Ipv6(ip)) => std::net::SocketAddr::new(ip.into(), port),
             None => {
-                return Err(e!(PkarrError::HttpSend { source: io_err("no host in URL") }));
+                return Err(e!(PkarrError::HttpSend {
+                    source: io_err("no host in URL")
+                }));
             }
         };
 
@@ -684,10 +696,12 @@ impl PkarrRelayClient {
             .map_err(|err| e!(PkarrError::HttpSend { source: err }))?;
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(self.tls_config.clone()));
-        let server_name = rustls::pki_types::ServerName::try_from(host_name.to_owned())
-            .map_err(|e| e!(PkarrError::HttpSend {
-                source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
-            }))?;
+        let server_name =
+            rustls::pki_types::ServerName::try_from(host_name.to_owned()).map_err(|e| {
+                e!(PkarrError::HttpSend {
+                    source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
+                })
+            })?;
         let tls_stream = connector
             .connect(server_name, tcp_stream)
             .await
@@ -695,7 +709,11 @@ impl PkarrRelayClient {
 
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls_stream))
             .await
-            .map_err(|err| e!(PkarrError::HttpSend { source: std::io::Error::other(err) }))?;
+            .map_err(|err| {
+                e!(PkarrError::HttpSend {
+                    source: std::io::Error::other(err)
+                })
+            })?;
 
         tokio::spawn(async move {
             if let Err(err) = conn.await {
@@ -719,17 +737,22 @@ impl PkarrRelayClient {
                 .expect("valid request")
         };
 
-        let response = sender
-            .send_request(req)
-            .await
-            .map_err(|err| e!(PkarrError::HttpSend { source: std::io::Error::other(err) }))?;
+        let response = sender.send_request(req).await.map_err(|err| {
+            e!(PkarrError::HttpSend {
+                source: std::io::Error::other(err)
+            })
+        })?;
 
         let status = response.status();
         let body_bytes = response
             .into_body()
             .collect()
             .await
-            .map_err(|err| e!(PkarrError::HttpPayload { source: std::io::Error::other(err) }))?
+            .map_err(|err| {
+                e!(PkarrError::HttpPayload {
+                    source: std::io::Error::other(err)
+                })
+            })?
             .to_bytes();
 
         Ok((status, body_bytes))
@@ -760,16 +783,17 @@ impl PkarrRelayClient {
             let client = crate::util::reqwest_client_builder(None)
                 .build()
                 .expect("failed to create request client");
-            let response = client
-                .get(url.as_str())
-                .send()
-                .await
-                .map_err(|err| e!(PkarrError::HttpSend { source: std::io::Error::other(err) }))?;
+            let response = client.get(url.as_str()).send().await.map_err(|err| {
+                e!(PkarrError::HttpSend {
+                    source: std::io::Error::other(err)
+                })
+            })?;
             let status = response.status();
-            let payload = response
-                .bytes()
-                .await
-                .map_err(|err| e!(PkarrError::HttpPayload { source: std::io::Error::other(err) }))?;
+            let payload = response.bytes().await.map_err(|err| {
+                e!(PkarrError::HttpPayload {
+                    source: std::io::Error::other(err)
+                })
+            })?;
             (status, payload)
         };
 
@@ -812,7 +836,11 @@ impl PkarrRelayClient {
                 .body(signed_packet.to_relay_payload())
                 .send()
                 .await
-                .map_err(|source| e!(PkarrError::HttpSend { source: std::io::Error::other(source) }))?;
+                .map_err(|source| {
+                    e!(PkarrError::HttpSend {
+                        source: std::io::Error::other(source)
+                    })
+                })?;
             response.status()
         };
 

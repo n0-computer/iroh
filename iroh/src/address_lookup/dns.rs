@@ -69,9 +69,14 @@ impl DnsAddressLookupBuilder {
         DnsAddressLookup {
             dns_resolver: {
                 #[cfg(feature = "dns_hickory")]
-                { self.dns_resolver.unwrap_or_default() }
+                {
+                    self.dns_resolver.unwrap_or_default()
+                }
                 #[cfg(not(feature = "dns_hickory"))]
-                { self.dns_resolver.expect("dns_resolver is required when the dns_hickory feature is disabled") }
+                {
+                    self.dns_resolver
+                        .expect("dns_resolver is required when the dns_hickory feature is disabled")
+                }
             },
             origin_domain: self.origin_domain,
         }

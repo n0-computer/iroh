@@ -236,9 +236,13 @@ impl Builder {
         #[cfg(not(wasm_browser))]
         let dns_resolver = {
             #[cfg(feature = "dns_hickory")]
-            { self.dns_resolver.unwrap_or_default() }
+            {
+                self.dns_resolver.unwrap_or_default()
+            }
             #[cfg(not(feature = "dns_hickory"))]
-            { self.dns_resolver.expect("dns_resolver is required when the dns_hickory feature is disabled. Use Builder::dns_resolver() to provide one.") }
+            {
+                self.dns_resolver.expect("dns_resolver is required when the dns_hickory feature is disabled. Use Builder::dns_resolver() to provide one.")
+            }
         };
 
         let metrics = EndpointMetrics::default();
