@@ -76,11 +76,6 @@ impl PingTracker {
         }
     }
 
-    /// Returns the last measured RTT to the relay server, if any.
-    pub fn last_rtt(&self) -> Option<Duration> {
-        self.last_rtt
-    }
-
     /// Returns an appropriate timeout for a health check ping.
     ///
     /// Uses 3x the last measured RTT (to account for jitter), falling back to

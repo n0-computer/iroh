@@ -813,9 +813,7 @@ impl ConnectedRelayState {
 
 pub(super) enum RelayActorMessage {
     MaybeCloseRelaysOnRebind,
-    NetworkChange {
-        report: Report,
-    },
+    NetworkChange { report: Report },
     /// Trigger an immediate health check on all relay connections.
     ///
     /// Sent after a major network change to detect broken connections faster
@@ -1138,31 +1136,7 @@ impl RelayActor {
     ///
     /// Uses RTT-based timeout for faster detection of broken connections.
     async fn check_connection_after_network_change(&mut self) {
-        #[cfg(not(wasm_browser))]
-        let ifs = interfaces::State::new().await;
-        #[cfg(not(wasm_browser))]
-        let local_ips: Vec<_> = ifs
-            .interfaces
-            .values()
-            .flat_map(|netif| netif.addrs())
-            .map(|ipnet| ipnet.addr())
-            .collect();
-        #[cfg(wasm_browser)]
-        let local_ips = Vec::new();
-        let send_futs = self.active_relays.values().map(|handle| {
-            let local_ips = local_ips.clone();
-            async move {
-                handle
-                    .inbox_addr
-                    .send(ActiveRelayMessage::CheckConnection {
-                        local_ips,
-                        is_network_change: true,
-                    })
-                    .await
-                    .ok();
-            }
-        });
-        n0_future::join_all(send_futs).await;
+        self.send_check_connection(true).await;
     }
 
     /// Closes the relay connections not originating from a local IP address.
@@ -1171,6 +1145,13 @@ impl RelayActor {
     /// that's not known to be currently a local IP address should be closed.  All the other
     /// relay connections are pinged.
     async fn maybe_close_relays_on_rebind(&mut self) {
+        self.send_check_connection(false).await;
+        self.log_active_relay();
+    }
+
+    /// Sends a [`ActiveRelayMessage::CheckConnection`] to all active relays with current
+    /// local IPs.
+    async fn send_check_connection(&self, is_network_change: bool) {
         #[cfg(not(wasm_browser))]
         let ifs = interfaces::State::new().await;
         #[cfg(not(wasm_browser))]
@@ -1180,7 +1161,8 @@ impl RelayActor {
             .flat_map(|netif| netif.addrs())
             .map(|ipnet| ipnet.addr())
             .collect();
-        // In browsers, we don't have this information. This will do the right thing in the ActiveRelayActor, though.
+        // In browsers, we don't have this information. This will do the right thing
+        // in the ActiveRelayActor, though.
         #[cfg(wasm_browser)]
         let local_ips = Vec::new();
         let send_futs = self.active_relays.values().map(|handle| {
@@ -1190,14 +1172,13 @@ impl RelayActor {
                     .inbox_addr
                     .send(ActiveRelayMessage::CheckConnection {
                         local_ips,
-                        is_network_change: false,
+                        is_network_change,
                     })
                     .await
                     .ok();
             }
         });
         n0_future::join_all(send_futs).await;
-        self.log_active_relay();
     }
 
     /// Cleans up [`ActiveRelayActor`]s which have stopped running.
