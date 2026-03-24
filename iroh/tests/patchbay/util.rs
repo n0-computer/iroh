@@ -136,7 +136,7 @@ impl Pair {
                         tracing::event!(
                             target: "iroh::_events::test_ok",
                             tracing::Level::INFO,
-                            msg = "device ok"
+                            msg = %"device ok"
                         );
                     }
                     Err(error) => {
@@ -144,7 +144,7 @@ impl Pair {
                             target: "iroh::_events::test_failed",
                             tracing::Level::ERROR,
                             error,
-                            msg = "device failed"
+                            msg = %"device failed"
                         );
                     }
                 }
