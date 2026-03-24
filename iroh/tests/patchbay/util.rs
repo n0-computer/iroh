@@ -2,10 +2,10 @@ use std::{future::Future, path::PathBuf, time::Duration};
 
 use iroh::{
     Endpoint, EndpointAddr, RelayMap, RelayMode, Watcher,
-    endpoint::{Connection, PathInfo, PathWatcher},
+    endpoint::{Connection, PathInfo, PathWatcher, presets},
     tls::CaRootsConfig,
 };
-use n0_error::{Result, StdResultExt, ensure_any};
+use n0_error::{Result, StdResultExt, anyerr, ensure_any};
 use n0_future::task::AbortOnDropHandle;
 use patchbay::{Device, IpSupport, Lab, LabOpts, OutDir, TestGuard};
 use tokio::sync::oneshot;
@@ -122,35 +122,37 @@ impl Pair {
 
         let (res1, res2) = tokio::join!(task1, task2);
 
-        let res1: Result<()> = res1
-            .std_context("device1 panicked")
-            .map(|res| res.context("device1 failed"))
-            .flatten();
-        let res2: Result<()> = res2
-            .std_context("device2 panicked")
-            .map(|res| res.context("device2 failed"))
-            .flatten();
-
-        if let Err(err) = res1.as_ref() {
-            self.dev1.run_sync(|| {
-                tracing::event!(
-                    target: "test::_event::failed",
-                    tracing::Level::ERROR,
-                    error: format!("{err:#}"),
-                );
+        // Map the results to include the device name, and emit a tracing event within the device context.
+        let [res1, res2] = [(&self.dev1, res1), (&self.dev2, res2)].map(|(dev, res)| {
+            let res = match res {
+                Err(err) => Err(anyerr!(err, "device {} panicked", dev.name())),
+                Ok(Err(err)) => Err(anyerr!(err, "device {} failed", dev.name())),
+                Ok(Ok(())) => Ok(()),
+            };
+            let res_str = res.as_ref().map_err(|err| format!("{err:#}")).cloned();
+            dev.run_sync(move || {
+                match res_str {
+                    Ok(()) => {
+                        tracing::event!(
+                            target: "iroh::_events::test_ok",
+                            tracing::Level::INFO,
+                            msg = "device ok"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::event!(
+                            target: "iroh::_events::test_failed",
+                            tracing::Level::ERROR,
+                            error,
+                            msg = "device failed"
+                        );
+                    }
+                }
                 Ok(())
-            });
-        }
-        if let Err(err) = res2.as_ref() {
-            self.dev2.run_sync(|| {
-                tracing::event!(
-                    target: "test::_event::failed",
-                    tracing::Level::ERROR,
-                    error: format!("{err:#}"),
-                );
-                Ok(())
-            });
-        }
+            })
+            .ok();
+            res
+        });
         res1?;
         res2?;
         Ok(())
@@ -272,7 +274,8 @@ fn watch_selected_path(conn: &Connection) {
 
 fn endpoint_builder(device: &Device, relay_map: RelayMap) -> iroh::endpoint::Builder {
     #[allow(unused_mut)]
-    let mut builder = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+    let mut builder = Endpoint::builder(presets::Minimal)
+        .relay_mode(RelayMode::Custom(relay_map))
         .ca_roots_config(CaRootsConfig::insecure_skip_verify())
         .alpns(vec![TEST_ALPN.to_vec()]);
 
