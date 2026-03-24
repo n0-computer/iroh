@@ -503,7 +503,7 @@ mod tests {
         let t2 = network.create_transport(s2.public())?;
 
         // Strong RTT advantage for custom transport
-        let custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
+        let custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_secs(1));
         let config = EndpointConfig::default()
             .with_ip()
             .with_custom_bias(custom_bias);
@@ -542,8 +542,7 @@ mod tests {
         let t2 = network.create_transport(s2.public())?;
 
         // Strong RTT disadvantage for custom transport
-        let custom_bias =
-            TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(100));
+        let custom_bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_secs(1));
         let config = EndpointConfig::default()
             .with_ip()
             .with_custom_bias(custom_bias);
