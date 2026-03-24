@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - Frando/netsim
 
 concurrency:
   group: patchbay-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
