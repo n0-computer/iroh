@@ -22,7 +22,9 @@ workspace = true
 
 [dependencies]
 backon = { version = "1.4" }
+blake3 = { version = "1.8.3", default-features = false }
 bytes = "1.11"
+ctutils = { version = "0.4.0", default-features = false }
 data-encoding = "2.2"
 derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_into", "deref", "from_str", "into_iterator"] }
 ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
@@ -38,16 +40,13 @@ papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
 pkarr = { version = "5", default-features = false }
-noq = { version = "0.17.0", default-features = false, features = ["rustls-ring"] }
-noq-proto = "0.16"
-noq-udp = "0.9"
+noq = { version = "0.17.0", default-features = false, features = ["rustls"] }
+noq-proto = { version = "0.16", default-features = false }
+noq-udp = { version = "0.9", default-features = false }
 rand = "0.9.2"
-reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls",
-    "stream",
-] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustc-hash = "2"
-rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
+rustls = { version = "0.23.33", default-features = false }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 smallvec = "1.11.1"
 strum = { version = "0.28", features = ["derive"] }
@@ -61,7 +60,7 @@ tokio-stream = { version = "0.1.15", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
 tracing = "0.1"
 url = { version = "2.5", features = ["serde"] }
-webpki = { package = "rustls-webpki", version = "0.103.7", features = ["ring"] }
+webpki = { package = "rustls-webpki", version = "0.103.7", default-features = false, features = ["std"] }
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 webpki-roots = "1.0.3"
 pkcs8 = "0.11.0-rc.9"
@@ -79,9 +78,9 @@ sync_wrapper = { version = "1.0.2", features = ["futures"] }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = "0.25.1"
+hickory-resolver = { version = "0.25.1", default-features = false }
 portmapper = { version = "0.15", optional = true, default-features = false }
-noq = { version = "0.17.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+noq = { version = "0.17.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -143,7 +142,7 @@ wasm-bindgen-test = "0.3.62"
 cfg_aliases = { version = "0.2.1" }
 
 [features]
-default = ["metrics", "fast-apple-datapath", "portmapper"]
+default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring"]
 portmapper = ["dep:portmapper"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper?/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
@@ -154,6 +153,10 @@ platform-verifier = ["iroh-relay/platform-verifier"]
 qlog = ["noq/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["noq/fast-apple-datapath"]
+# Use ring as the crypto backend.
+tls-ring = ["noq/ring", "iroh-relay/tls-ring", "webpki/ring"]
+# Use aws-lc-rs as the crypto backend, unless `ring` is also enabled.
+tls-aws-lc-rs = ["noq/aws-lc-rs", "iroh-relay/tls-aws-lc-rs", "webpki/aws-lc-rs"]
 # Unstable: Custom transport API (may change without notice)
 unstable-custom-transports = []
 

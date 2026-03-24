@@ -506,9 +506,13 @@ mod tests {
         }
 
         pub(super) fn insecure_tls_config() -> ClientConfig {
-            let mut cfg = ClientConfig::builder()
-                .with_root_certificates(RootCertStore::empty())
-                .with_no_client_auth();
+            let mut cfg = ClientConfig::builder_with_provider(Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(RootCertStore::empty())
+            .with_no_client_auth();
             cfg.dangerous()
                 .set_certificate_verifier(Arc::new(NoCertificateVerification::default()));
             cfg

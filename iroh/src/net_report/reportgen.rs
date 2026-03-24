@@ -884,7 +884,7 @@ async fn run_https_probe(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::net::Ipv4Addr;
 
@@ -921,7 +921,7 @@ mod tests {
     async fn test_qad_probe_v4() -> Result {
         let (server, relay) = test_utils::relay().await;
         let relay = Arc::new(relay);
-        let client_config = iroh_relay::client::make_dangerous_client_config();
+        let client_config = iroh_relay::tls::make_dangerous_client_config();
         let ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
         let client_addr = ep.local_addr().anyerr()?;
 

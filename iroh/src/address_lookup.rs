@@ -69,20 +69,23 @@
 //! [`PkarrPublisher`] and [`address_lookup::DnsAddressLookup`]:
 //!
 //! ```no_run
+//! # #[cfg(with_crypto_provider)]
+//! # {
 //! use iroh::{
 //!     Endpoint, SecretKey,
 //!     address_lookup::{self, AddrFilter, PkarrPublisher},
-//!     endpoint::RelayMode,
+//!     endpoint::{RelayMode, presets},
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::empty_builder()
+//! let ep = Endpoint::builder(presets::Minimal)
 //!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
 //!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 //!
@@ -93,12 +96,12 @@
 //! # {
 //! # use iroh::{
 //! #    address_lookup::{self, AddrFilter, PkarrPublisher},
-//! #    endpoint::RelayMode,
+//! #    endpoint::{presets, RelayMode},
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::empty_builder()
+//! let ep = Endpoint::builder(presets::Minimal)
 //!     .relay_mode(RelayMode::Default)
 //!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
@@ -579,7 +582,7 @@ impl AddressLookup for ConcurrentAddressLookup {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{
         collections::HashMap,
@@ -598,7 +601,7 @@ mod tests {
     use super::*;
     use crate::{
         Endpoint,
-        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig},
+        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig, presets},
     };
 
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
@@ -922,7 +925,7 @@ mod tests {
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let secret = SecretKey::generate(rng);
 
-        let ep = Endpoint::empty_builder()
+        let ep = Endpoint::builder(presets::Minimal)
             .secret_key(secret)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -965,24 +968,19 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_relay::{
-        RelayMap,
         endpoint_info::UserData,
         tls::{CaRootsConfig, default_provider},
     };
-    use n0_error::{AnyError, Result, StackResultExt};
+    use n0_error::{Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
-    use rand::{CryptoRng, SeedableRng};
-    use tokio_util::task::AbortOnDropHandle;
+    use rand::SeedableRng;
 
     use crate::{
-        Endpoint, RelayMode,
         address_lookup::{EndpointData, PkarrPublisher},
         dns::DnsResolver,
         endpoint_info::EndpointInfo,
-        test_utils::{
-            DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
-        },
+        test_utils::{DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State},
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -1059,15 +1057,17 @@ mod test_dns_pkarr {
         Ok(())
     }
 
+    #[cfg(with_crypto_provider)]
     const TEST_ALPN: &[u8] = b"TEST";
 
+    #[cfg(with_crypto_provider)]
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_address_lookup() -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, _relay_guard) = crate::test_utils::run_relay_server().await?;
 
         let (ep1, _guard1) =
             ep_with_address_lookup(&mut rng, &relay_map, &dns_pkarr_server).await?;
@@ -1085,13 +1085,21 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    async fn ep_with_address_lookup<R: CryptoRng + ?Sized>(
+    #[cfg(with_crypto_provider)]
+    async fn ep_with_address_lookup<R: rand::CryptoRng + ?Sized>(
         rng: &mut R,
-        relay_map: &RelayMap,
+        relay_map: &iroh_relay::RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
-    ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
+    ) -> Result<(
+        crate::Endpoint,
+        n0_future::task::AbortOnDropHandle<Result<()>>,
+    )> {
+        use n0_future::task::AbortOnDropHandle;
+
+        use crate::{Endpoint, RelayMode, endpoint::presets};
+
         let secret_key = SecretKey::generate(rng);
-        let ep = Endpoint::empty_builder()
+        let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())
@@ -1104,6 +1112,8 @@ mod test_dns_pkarr {
             let ep = ep.clone();
             async move {
                 // we skip accept() errors, they can be caused by retransmits
+
+                use n0_error::AnyError;
                 while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     let _conn = accepting.await.context("accepting")?;
                     // Just accept incoming connections, but don't do anything with them.
