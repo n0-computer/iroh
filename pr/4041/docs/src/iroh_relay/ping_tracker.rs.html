@@ -76,36 +76,31 @@
 <a href=#76 id=76 data-nosnippet>76</a>        }
 <a href=#77 id=77 data-nosnippet>77</a>    }
 <a href=#78 id=78 data-nosnippet>78</a>
-<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Returns the last measured RTT to the relay server, if any.
-<a href=#80 id=80 data-nosnippet>80</a>    </span><span class="kw">pub fn </span>last_rtt(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Duration&gt; {
-<a href=#81 id=81 data-nosnippet>81</a>        <span class="self">self</span>.last_rtt
-<a href=#82 id=82 data-nosnippet>82</a>    }
-<a href=#83 id=83 data-nosnippet>83</a>
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="doccomment">/// Returns an appropriate timeout for a health check ping.
-<a href=#85 id=85 data-nosnippet>85</a>    ///
-<a href=#86 id=86 data-nosnippet>86</a>    /// Uses 3x the last measured RTT (to account for jitter), falling back to
-<a href=#87 id=87 data-nosnippet>87</a>    /// the default timeout if no RTT has been measured yet.
-<a href=#88 id=88 data-nosnippet>88</a>    </span><span class="kw">pub fn </span>health_check_timeout(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Duration {
-<a href=#89 id=89 data-nosnippet>89</a>        <span class="self">self</span>.last_rtt
-<a href=#90 id=90 data-nosnippet>90</a>            .map(|rtt| {
-<a href=#91 id=91 data-nosnippet>91</a>                (rtt * <span class="number">3</span>)
-<a href=#92 id=92 data-nosnippet>92</a>                    .max(Duration::from_millis(<span class="number">500</span>))
-<a href=#93 id=93 data-nosnippet>93</a>                    .min(<span class="self">self</span>.default_timeout)
-<a href=#94 id=94 data-nosnippet>94</a>            })
-<a href=#95 id=95 data-nosnippet>95</a>            .unwrap_or(<span class="self">self</span>.default_timeout)
-<a href=#96 id=96 data-nosnippet>96</a>    }
-<a href=#97 id=97 data-nosnippet>97</a>
-<a href=#98 id=98 data-nosnippet>98</a>    <span class="doccomment">/// Cancel-safe waiting for a ping timeout.
-<a href=#99 id=99 data-nosnippet>99</a>    ///
-<a href=#100 id=100 data-nosnippet>100</a>    /// Unless the most recent sent ping times out, this will never return.
-<a href=#101 id=101 data-nosnippet>101</a>    </span><span class="kw">pub async fn </span>timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#102 id=102 data-nosnippet>102</a>        <span class="kw">match </span><span class="self">self</span>.inner {
-<a href=#103 id=103 data-nosnippet>103</a>            <span class="prelude-val">Some</span>(PingInner { deadline, data, .. }) =&gt; {
-<a href=#104 id=104 data-nosnippet>104</a>                time::sleep_until(deadline).<span class="kw">await</span>;
-<a href=#105 id=105 data-nosnippet>105</a>                <span class="macro">debug!</span>(<span class="question-mark">?</span>data, <span class="string">"Ping timeout."</span>);
-<a href=#106 id=106 data-nosnippet>106</a>                <span class="self">self</span>.inner = <span class="prelude-val">None</span>;
-<a href=#107 id=107 data-nosnippet>107</a>            }
-<a href=#108 id=108 data-nosnippet>108</a>            <span class="prelude-val">None </span>=&gt; std::future::pending().<span class="kw">await</span>,
-<a href=#109 id=109 data-nosnippet>109</a>        }
-<a href=#110 id=110 data-nosnippet>110</a>    }
-<a href=#111 id=111 data-nosnippet>111</a>}</code></pre></div></section></main></body></html>
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Returns an appropriate timeout for a health check ping.
+<a href=#80 id=80 data-nosnippet>80</a>    ///
+<a href=#81 id=81 data-nosnippet>81</a>    /// Uses 3x the last measured RTT (to account for jitter), falling back to
+<a href=#82 id=82 data-nosnippet>82</a>    /// the default timeout if no RTT has been measured yet.
+<a href=#83 id=83 data-nosnippet>83</a>    </span><span class="kw">pub fn </span>health_check_timeout(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Duration {
+<a href=#84 id=84 data-nosnippet>84</a>        <span class="self">self</span>.last_rtt
+<a href=#85 id=85 data-nosnippet>85</a>            .map(|rtt| {
+<a href=#86 id=86 data-nosnippet>86</a>                (rtt * <span class="number">3</span>)
+<a href=#87 id=87 data-nosnippet>87</a>                    .max(Duration::from_millis(<span class="number">500</span>))
+<a href=#88 id=88 data-nosnippet>88</a>                    .min(<span class="self">self</span>.default_timeout)
+<a href=#89 id=89 data-nosnippet>89</a>            })
+<a href=#90 id=90 data-nosnippet>90</a>            .unwrap_or(<span class="self">self</span>.default_timeout)
+<a href=#91 id=91 data-nosnippet>91</a>    }
+<a href=#92 id=92 data-nosnippet>92</a>
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// Cancel-safe waiting for a ping timeout.
+<a href=#94 id=94 data-nosnippet>94</a>    ///
+<a href=#95 id=95 data-nosnippet>95</a>    /// Unless the most recent sent ping times out, this will never return.
+<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="kw">pub async fn </span>timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">match </span><span class="self">self</span>.inner {
+<a href=#98 id=98 data-nosnippet>98</a>            <span class="prelude-val">Some</span>(PingInner { deadline, data, .. }) =&gt; {
+<a href=#99 id=99 data-nosnippet>99</a>                time::sleep_until(deadline).<span class="kw">await</span>;
+<a href=#100 id=100 data-nosnippet>100</a>                <span class="macro">debug!</span>(<span class="question-mark">?</span>data, <span class="string">"Ping timeout."</span>);
+<a href=#101 id=101 data-nosnippet>101</a>                <span class="self">self</span>.inner = <span class="prelude-val">None</span>;
+<a href=#102 id=102 data-nosnippet>102</a>            }
+<a href=#103 id=103 data-nosnippet>103</a>            <span class="prelude-val">None </span>=&gt; std::future::pending().<span class="kw">await</span>,
+<a href=#104 id=104 data-nosnippet>104</a>        }
+<a href=#105 id=105 data-nosnippet>105</a>    }
+<a href=#106 id=106 data-nosnippet>106</a>}</code></pre></div></section></main></body></html>
