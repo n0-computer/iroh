@@ -3366,7 +3366,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "patchbay"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/patchbay.git?branch=feat%2Fserver-push#729bc67bbb9df8a95c0e690c4476eb32c3cd5203"
+source = "git+https://github.com/n0-computer/patchbay.git?branch=main#9f41d41e3030e38eba405e7052c4566f8f7831f0"
 dependencies = [
  "anyhow",
  "chrono",
