@@ -136,7 +136,7 @@ enable multipath as well.</p>
 <p>If the path is idle for this long the path will be abandoned. Bear in mind this will
 interact with the <a href="struct.QuicTransportConfigBuilder.html#method.max_idle_timeout" title="method iroh::endpoint::QuicTransportConfigBuilder::max_idle_timeout"><code>QuicTransportConfigBuilder::max_idle_timeout</code></a>, if the last path is
 abandoned the entire connection will be closed.</p>
-<p>Note: values higher than 15s are clamped and a warning is logged.</p>
+<p>Note: values higher than [<code>PATH_MAX_IDLE_TIMEOUT</code>] are clamped and a warning is logged.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.default_path_keep_alive_interval" class="method"><a class="src rightside" href="../../src/iroh/endpoint/quic.rs.html#510-520">Source</a><h4 class="code-header">pub fn <a href="#method.default_path_keep_alive_interval" class="fn">default_path_keep_alive_interval</a>(self, interval: <a class="struct" href="https://doc.rust-lang.org/nightly/core/time/struct.Duration.html" title="struct core::time::Duration">Duration</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Sets a default per-path keep alive interval.</p>
 <p>Note that this does not interact with the connection-wide
 <a href="struct.QuicTransportConfigBuilder.html#method.keep_alive_interval" title="method iroh::endpoint::QuicTransportConfigBuilder::keep_alive_interval"><code>QuicTransportConfigBuilder::keep_alive_interval</code></a>.  This setting will keep this path active,
