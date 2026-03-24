@@ -503,7 +503,7 @@
 <a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>t2 = network.create_transport(s2.public())<span class="question-mark">?</span>;
 <a href=#504 id=504 data-nosnippet>504</a>
 <a href=#505 id=505 data-nosnippet>505</a>        <span class="comment">// Strong RTT advantage for custom transport
-<a href=#506 id=506 data-nosnippet>506</a>        </span><span class="kw">let </span>custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_secs(<span class="number">1</span>));
+<a href=#506 id=506 data-nosnippet>506</a>        </span><span class="kw">let </span>custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_secs(<span class="number">10</span>));
 <a href=#507 id=507 data-nosnippet>507</a>        <span class="kw">let </span>config = EndpointConfig::default()
 <a href=#508 id=508 data-nosnippet>508</a>            .with_ip()
 <a href=#509 id=509 data-nosnippet>509</a>            .with_custom_bias(custom_bias);
@@ -542,7 +542,7 @@
 <a href=#542 id=542 data-nosnippet>542</a>        <span class="kw">let </span>t2 = network.create_transport(s2.public())<span class="question-mark">?</span>;
 <a href=#543 id=543 data-nosnippet>543</a>
 <a href=#544 id=544 data-nosnippet>544</a>        <span class="comment">// Strong RTT disadvantage for custom transport
-<a href=#545 id=545 data-nosnippet>545</a>        </span><span class="kw">let </span>custom_bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_secs(<span class="number">1</span>));
+<a href=#545 id=545 data-nosnippet>545</a>        </span><span class="kw">let </span>custom_bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_secs(<span class="number">10</span>));
 <a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">let </span>config = EndpointConfig::default()
 <a href=#547 id=547 data-nosnippet>547</a>            .with_ip()
 <a href=#548 id=548 data-nosnippet>548</a>            .with_custom_bias(custom_bias);
