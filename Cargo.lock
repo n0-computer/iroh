@@ -3097,7 +3097,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -3141,7 +3141,7 @@ source = "git+https://github.com/n0-computer/noq?branch=main#1280ffd01bb1f031a61
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -4750,8 +4750,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swarm-discovery"
-version = "0.5.0"
-source = "git+https://github.com/n0-computer/swarm-discovery?branch=matheus23%2Fhickory-0.26#a3894abc55fdfbba989733aedf4049a451d45108"
+version = "0.6.0-alpha.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "737bfdaf732174c48b8193b29158460d8d959dd8e9ce071a5bbda95d8546b68b"
 dependencies = [
  "acto",
  "hickory-proto 0.26.0-beta.1",
