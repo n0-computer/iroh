@@ -38,7 +38,7 @@ use crate::{
     },
     endpoint::DirectAddr,
     socket::{
-        Metrics as SocketMetrics,
+        Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
         remote_map::{Private, to_transport_addr},
         transports::{self, OwnedTransmit, PathSelectionData, TransportBiasMap, TransportsSender},
@@ -511,6 +511,7 @@ impl RemoteStateActor {
                     path_id = %PathId::ZERO,
                     ?res,
                 );
+                Self::configure_path(&path, &path_remote);
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
                     .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
@@ -805,6 +806,18 @@ impl RemoteStateActor {
         }
     }
 
+    /// Configure path-type-specific settings.
+    ///
+    /// Relay paths get a longer idle timeout to accommodate transparent reconnection
+    /// by the relay actor (see [`RELAY_PATH_MAX_IDLE_TIMEOUT`]).
+    fn configure_path(path: &noq::Path, addr: &transports::Addr) {
+        if matches!(addr, transports::Addr::Relay(..))
+            && let Err(e) = path.set_max_idle_timeout(Some(RELAY_PATH_MAX_IDLE_TIMEOUT))
+        {
+            debug!(?e, "failed to set relay path idle timeout");
+        }
+    }
+
     /// Open the path on all connections.
     ///
     /// This goes through all the connections for which we are the client, and makes sure
@@ -846,6 +859,7 @@ impl RemoteStateActor {
                     %path_id,
                     ?res,
                 );
+                Self::configure_path(&path, open_addr);
                 continue;
             }
             if conn.side().is_server() {
@@ -872,6 +886,7 @@ impl RemoteStateActor {
                         if let Err(e) = res {
                             warn!(?e, ?open_addr, ?path_status, "Setting path status failed");
                         }
+                        Self::configure_path(&path, open_addr);
                     }
                 }
                 None => {
@@ -933,6 +948,7 @@ impl RemoteStateActor {
                         %conn_id,
                         %path_id,
                     );
+                    Self::configure_path(&path, &path_remote);
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
                         .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
