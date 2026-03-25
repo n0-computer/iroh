@@ -88,7 +88,7 @@ async fn holepunch_simple() -> Result {
 #[tokio::test]
 #[traced_test]
 #[serial_test::serial]
-#[ignore = "known to still fail"]
+//#[ignore = "known to still fail"]
 async fn switch_uplink() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -161,7 +161,7 @@ async fn switch_uplink() -> Result {
 #[tokio::test]
 #[traced_test]
 #[serial_test::serial]
-#[ignore = "known to still fail"]
+//#[ignore = "known to still fail"]
 async fn switch_uplink_ipv6() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let public = lab
