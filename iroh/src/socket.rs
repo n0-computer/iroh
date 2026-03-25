@@ -1277,6 +1277,49 @@ enum ActorMessage {
     ForceNetworkChange(bool),
 }
 
+/// State for polling until a default route is available after a network change.
+///
+/// When a network change is detected but no default route exists yet (e.g.,
+/// interface just came up but gateway not assigned), we poll with exponential
+/// backoff until the gateway appears. This avoids the fixed 2s delay that was
+/// too slow for interface recovery scenarios.
+struct PendingNetworkChangeNotify {
+    /// Next time to check for default route.
+    next_check: Instant,
+    /// Current backoff interval.
+    interval: Duration,
+    /// Whether this was a major change.
+    is_major: bool,
+    /// When we started polling (to enforce a max wait).
+    started: Instant,
+}
+
+impl PendingNetworkChangeNotify {
+    const INITIAL_INTERVAL: Duration = Duration::from_millis(100);
+    const MAX_INTERVAL: Duration = Duration::from_secs(1);
+    const MAX_WAIT: Duration = Duration::from_secs(5);
+
+    fn new(is_major: bool) -> Self {
+        Self {
+            next_check: Instant::now() + Self::INITIAL_INTERVAL,
+            interval: Self::INITIAL_INTERVAL,
+            is_major,
+            started: Instant::now(),
+        }
+    }
+
+    /// Advance to the next check interval (exponential backoff, capped).
+    fn advance(&mut self) {
+        self.interval = (self.interval * 2).min(Self::MAX_INTERVAL);
+        self.next_check = Instant::now() + self.interval;
+    }
+
+    /// Whether we've exceeded the maximum wait time.
+    fn expired(&self) -> bool {
+        self.started.elapsed() >= Self::MAX_WAIT
+    }
+}
+
 struct Actor {
     /// A clone of the quinn Endpoint.
     ///
@@ -1310,8 +1353,13 @@ struct Actor {
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
-    /// When to call [`Actor::notify_quic_network_change`].
-    call_notify_quic_network_change: Option<(Instant, bool)>,
+    /// Polling state for [`Actor::notify_quic_network_change`].
+    ///
+    /// When a network change is detected but no default route is available yet,
+    /// we poll with exponential backoff (100ms, 200ms, 400ms, 800ms, 1s, 1s, ...)
+    /// until the gateway appears. Once it does, we notify immediately.
+    /// After 5s total we notify anyway even without a gateway.
+    call_notify_quic_network_change: Option<PendingNetworkChangeNotify>,
 }
 
 impl Actor {
@@ -1342,7 +1390,9 @@ impl Actor {
             let portmap_watcher_changed = portmap_watcher.changed();
 
             let notify_quic_network_change = match &self.call_notify_quic_network_change {
-                Some((when, _)) => MaybeFuture::Some(n0_future::time::sleep_until(*when)),
+                Some(pending) => {
+                    MaybeFuture::Some(n0_future::time::sleep_until(pending.next_check))
+                }
                 None => MaybeFuture::None,
             };
             n0_future::pin!(notify_quic_network_change);
@@ -1445,14 +1495,43 @@ impl Actor {
                     trace!(%eid, "cleaned up RemoteStateActor");
                 }
                 _ = &mut notify_quic_network_change => {
-                    if let Some((_, is_major)) = self.call_notify_quic_network_change.take() {
+                    let has_network = self.has_usable_network();
+                    let Some(pending) = self.call_notify_quic_network_change.as_mut() else {
+                        continue;
+                    };
+                    if has_network || pending.expired() {
+                        // Gateway appeared or we've waited long enough, notify now.
+                        let is_major = pending.is_major;
+                        self.call_notify_quic_network_change = None;
                         self.notify_quic_network_change(is_major);
+                    } else {
+                        // No gateway yet, back off and try again.
+                        trace!(
+                            interval = ?pending.interval,
+                            elapsed = ?pending.started.elapsed(),
+                            "no default route yet, retrying"
+                        );
+                        pending.advance();
                     }
                 }
                 else => {
                     trace!("tick: else");
                 }
             }
+        }
+    }
+
+    /// Whether the local network has a default route and at least one IP address.
+    fn has_usable_network(&mut self) -> bool {
+        #[cfg(target_family = "wasm")]
+        {
+            true
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let interfaces = self.local_interfaces_watcher.get();
+            interfaces.default_route_interface.is_some()
+                && (interfaces.have_v4 || interfaces.have_v6)
         }
     }
 
@@ -1475,25 +1554,24 @@ impl Actor {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
 
-        let interfaces = self.local_interfaces_watcher.get();
-        #[cfg(target_family = "wasm")]
-        let has_default_route = true;
-        #[cfg(not(target_family = "wasm"))]
-        let has_default_route = interfaces.default_route_interface.is_some();
-        if has_default_route {
+        if self.has_usable_network() {
             // This is considered a usable network change, propagate it to the QUIC stack
             // right away.
             self.call_notify_quic_network_change = None;
             self.notify_quic_network_change(is_major);
         } else {
-            // This is probably not a very usable state of our interfaces. Hopefully this
-            // will improve soon with a new interfaces change, but if not set a timer that
-            // will handle this change after some time. This should allow us to debounce a
-            // quick succession of network changes.
-            let scheduled_call = self
-                .call_notify_quic_network_change
-                .get_or_insert((Instant::now() + Duration::from_secs(2), is_major));
-            scheduled_call.1 = is_major;
+            // No default route yet (e.g., interface just came up but gateway not
+            // assigned). Poll with exponential backoff until the gateway appears.
+            match &mut self.call_notify_quic_network_change {
+                Some(pending) => {
+                    // Update is_major if this change is more severe.
+                    pending.is_major |= is_major;
+                }
+                None => {
+                    self.call_notify_quic_network_change =
+                        Some(PendingNetworkChangeNotify::new(is_major));
+                }
+            }
         }
     }
 
