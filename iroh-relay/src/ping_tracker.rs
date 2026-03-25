@@ -46,9 +46,10 @@ impl PingTracker {
         self.default_timeout
     }
 
-    /// Starts a new ping.
+    /// Starts a new ping with an RTT-based timeout.
     pub fn new_ping(&mut self) -> [u8; 8] {
-        self.new_ping_with_timeout(self.default_timeout)
+        let timeout = self.ping_timeout();
+        self.new_ping_with_timeout(timeout)
     }
 
     /// Starts a new ping with a custom timeout.
@@ -79,11 +80,11 @@ impl PingTracker {
         }
     }
 
-    /// Returns an appropriate timeout for a health check ping.
+    /// Returns the timeout for the next ping.
     ///
     /// Uses 3x the last measured RTT (to account for jitter), falling back to
     /// the default timeout if no RTT has been measured yet.
-    pub fn health_check_timeout(&self) -> Duration {
+    pub fn ping_timeout(&self) -> Duration {
         self.last_rtt
             .map(|rtt| {
                 (rtt * 3)
