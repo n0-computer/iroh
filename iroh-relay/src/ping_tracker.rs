@@ -13,7 +13,7 @@ const MIN_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_millis(500);
 #[derive(Debug)]
 pub struct PingTracker {
     inner: Option<PingInner>,
-    default_timeout: Duration,
+    max_timeout: Duration,
     /// Last measured round-trip time to the relay server.
     last_rtt: Option<Duration>,
 }
@@ -32,18 +32,18 @@ impl Default for PingTracker {
 }
 
 impl PingTracker {
-    /// Creates a new ping tracker, setting the ping timeout for pings.
-    pub fn new(default_timeout: Duration) -> Self {
+    /// Creates a new ping tracker with the given maximum ping timeout.
+    pub fn new(max_timeout: Duration) -> Self {
         Self {
             inner: None,
-            default_timeout,
+            max_timeout,
             last_rtt: None,
         }
     }
 
-    /// Returns the current timeout set for pings.
-    pub fn default_timeout(&self) -> Duration {
-        self.default_timeout
+    /// Returns the maximum ping timeout.
+    pub fn max_timeout(&self) -> Duration {
+        self.max_timeout
     }
 
     /// Starts a new ping with an RTT-based timeout.
@@ -86,12 +86,8 @@ impl PingTracker {
     /// the default timeout if no RTT has been measured yet.
     pub fn ping_timeout(&self) -> Duration {
         self.last_rtt
-            .map(|rtt| {
-                (rtt * 3)
-                    .max(MIN_HEALTH_CHECK_TIMEOUT)
-                    .min(self.default_timeout)
-            })
-            .unwrap_or(self.default_timeout)
+            .map(|rtt| (rtt * 3).clamp(MIN_HEALTH_CHECK_TIMEOUT, self.max_timeout))
+            .unwrap_or(self.max_timeout)
     }
 
     /// Cancel-safe waiting for a ping timeout.
