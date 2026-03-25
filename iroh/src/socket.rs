@@ -1546,6 +1546,7 @@ impl Actor {
             if let Err(err) = self.transports_network_change.rebind() {
                 warn!("failed to rebind transports: {err:?}");
             }
+            self.transports_network_change.check_relay_connection();
 
             #[cfg(not(wasm_browser))]
             self.sock.dns_resolver.reset().await;
@@ -1638,13 +1639,6 @@ impl Actor {
 
         self.endpoint.handle_network_change(Some(Arc::new(hint)));
         self.remote_map.on_network_change(is_major);
-
-        if is_major {
-            // Trigger immediate relay health check with RTT-based timeout.
-            // If the relay connection is alive, the ping succeeds quickly.
-            // If broken, detected faster than the default 5s ping timeout.
-            self.transports_network_change.check_relay_connection();
-        }
     }
 
     fn handle_relay_map_change(&mut self) {
