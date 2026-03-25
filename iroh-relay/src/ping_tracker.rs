@@ -4,6 +4,9 @@ use tracing::debug;
 /// Maximum time for a ping response in the relay protocol.
 pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Minimum timeout for an RTT-based health check ping.
+const MIN_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// Tracks pings on a single relay connection.
 ///
 /// Only the last ping needs is useful, any previously sent ping is forgotten and ignored.
@@ -87,7 +90,7 @@ impl PingTracker {
     /// the default timeout if no RTT has been measured yet.
     pub fn health_check_timeout(&self) -> Duration {
         self.last_rtt
-            .map(|rtt| (rtt * 3).max(Duration::from_millis(500)))
+            .map(|rtt| (rtt * 3).max(MIN_HEALTH_CHECK_TIMEOUT))
             .unwrap_or(self.default_timeout)
     }
 
