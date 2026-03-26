@@ -836,10 +836,6 @@ async fn holepunch_asymmetric_links() -> Result {
 /// Each level adds more latency, loss, and reordering. The test runs each level
 /// twice: once with the impaired side accepting, once connecting.
 ///
-/// Bump these thresholds as iroh's holepunching improves.
-const DEGRADE_PASS_THRESHOLD_IMPAIRED_SERVER: usize = 3;
-const DEGRADE_PASS_THRESHOLD_IMPAIRED_CLIENT: usize = 3;
-
 const DEGRADE_LEVELS: &[LinkLimits] = &[
     // 0: mild — good wifi
     LinkLimits {
@@ -903,125 +899,101 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
     },
 ];
 
-/// Run the degradation ladder: iterate through levels, creating fresh devices
-/// each round but reusing the lab and relay. Returns the number of levels passed.
-async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuard)> {
+/// Run a single degradation level: create devices with the given impairment,
+/// try to holepunch and ping, return Ok if successful.
+async fn run_degrade_level(impaired_is_server: bool, level: usize) -> Result<TestGuard> {
+    let limits = DEGRADE_LEVELS[level];
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let timeout = Duration::from_secs(20);
 
-    let mut last_pass = 0;
-    for (impairment_level, limits) in DEGRADE_LEVELS.iter().enumerate() {
-        let impaired = Some(LinkCondition::Manual(*limits));
-        let (server_cond, client_cond) = if impaired_is_server {
-            (impaired, None)
-        } else {
-            (None, impaired)
-        };
-        let server_name = format!("{impairment_level}-server");
-        let client_name = format!("{impairment_level}-client");
-        tracing::info!(
-            impairment_level,
+    let impaired = Some(LinkCondition::Manual(limits));
+    let (server_cond, client_cond) = if impaired_is_server {
+        (impaired, None)
+    } else {
+        (None, impaired)
+    };
+    let server = lab
+        .add_device("server")
+        .iface("eth0", nat1.id(), server_cond)
+        .build()
+        .await?;
+    let client = lab
+        .add_device("client")
+        .iface("eth0", nat2.id(), client_cond)
+        .build()
+        .await?;
+
+    let result = tokio::time::timeout(
+        timeout * 2,
+        Pair::new(server, client, relay_map).run(
+            async move |_dev, _ep, conn| {
+                ping_accept(&conn, timeout).await?;
+                Ok(())
+            },
+            async move |_dev, _ep, conn| {
+                let mut paths = conn.paths();
+                paths.wait_ip(timeout).await?;
+                ping_open(&conn, timeout).await?;
+                Ok(())
+            },
+        ),
+    )
+    .await
+    .std_context("pair timed out")
+    .flatten();
+
+    match &result {
+        Ok(()) => tracing::event!(
+            target: "iroh::_events::test_ladder_pass",
+            tracing::Level::INFO,
+            level,
             latency_ms = limits.latency_ms,
             loss_pct = limits.loss_pct,
             reorder_pct = limits.reorder_pct,
             impaired_is_server,
-            "starting level",
-        );
-        let server = lab
-            .add_device(&server_name)
-            .iface("eth0", nat1.id(), server_cond)
-            .build()
-            .await?;
-        let client = lab
-            .add_device(&client_name)
-            .iface("eth0", nat2.id(), client_cond)
-            .build()
-            .await?;
-
-        let server_id = server.id();
-        let client_id = client.id();
-        let result = tokio::time::timeout(
-            timeout * 2,
-            Pair::new(server, client, relay_map.clone()).run(
-                async move |_dev, _ep, conn| {
-                    ping_accept(&conn, timeout).await?;
-                    Ok(())
-                },
-                async move |_dev, _ep, conn| {
-                    let mut paths = conn.paths();
-                    paths.wait_ip(timeout).await?;
-                    ping_open(&conn, timeout).await?;
-                    Ok(())
-                },
-            ),
-        )
-        .await
-        .std_context("pair timed timeout")
-        .flatten();
-
-        lab.remove_device(server_id)?;
-        lab.remove_device(client_id)?;
-
-        let ok = result.is_ok();
-
-        match result.as_ref() {
-            Ok(()) => {
-                tracing::event!(
-                    target: "iroh::_events::test_ladder_pass",
-                    tracing::Level::INFO,
-                    impairment_level,
-                    latency_ms = limits.latency_ms,
-                    loss_pct = limits.loss_pct,
-                    reorder_pct = limits.reorder_pct,
-                    "PASSED",
-                );
-            }
-            Err(err) => {
-                tracing::event!(
-                    target: "iroh::_events::test_ladder_fail",
-                    tracing::Level::WARN,
-                    latency_ms = limits.latency_ms,
-                    loss_pct = limits.loss_pct,
-                    reorder_pct = limits.reorder_pct,
-                    error = format!("{err:#}"),
-                    "FAILED",
-                );
-            }
-        }
-
-        if ok {
-            last_pass = impairment_level + 1;
-        }
+            "PASSED",
+        ),
+        Err(err) => tracing::event!(
+            target: "iroh::_events::test_ladder_fail",
+            tracing::Level::WARN,
+            level,
+            latency_ms = limits.latency_ms,
+            loss_pct = limits.loss_pct,
+            reorder_pct = limits.reorder_pct,
+            impaired_is_server,
+            error = format!("{err:#}"),
+            "FAILED",
+        ),
     }
-    Ok((last_pass, guard))
+
+    result?;
+    Ok(guard)
 }
 
-/// Impaired side is the accepting (server) peer.
-#[tokio::test]
-#[traced_test]
-async fn degrade_ladder_impaired_server() -> Result {
-    let (passed, guard) = run_degrade_ladder(true).await?;
-    assert!(
-        passed >= DEGRADE_PASS_THRESHOLD_IMPAIRED_SERVER,
-        "holepunch should pass at least {DEGRADE_PASS_THRESHOLD_IMPAIRED_SERVER} levels \
-         with impaired server, but only passed {passed}"
-    );
-    guard.ok();
-    Ok(())
+macro_rules! degrade_test {
+    ($name:ident, $impaired_is_server:expr, $level:expr) => {
+        #[tokio::test]
+        #[traced_test]
+        async fn $name() -> Result {
+            let guard = run_degrade_level($impaired_is_server, $level).await?;
+            guard.ok();
+            Ok(())
+        }
+    };
 }
 
-/// Impaired side is the connecting (client) peer.
-#[tokio::test]
-#[traced_test]
-async fn degrade_ladder_impaired_client() -> Result {
-    let (passed, guard) = run_degrade_ladder(false).await?;
-    assert!(
-        passed >= DEGRADE_PASS_THRESHOLD_IMPAIRED_CLIENT,
-        "holepunch should pass at least {DEGRADE_PASS_THRESHOLD_IMPAIRED_CLIENT} levels \
-         with impaired client, but only passed {passed}"
-    );
-    guard.ok();
-    Ok(())
-}
+degrade_test!(degrade_server_0_mild, true, 0);
+degrade_test!(degrade_server_1_poor, true, 1);
+degrade_test!(degrade_server_2_bad, true, 2);
+degrade_test!(degrade_server_3_terrible, true, 3);
+degrade_test!(degrade_server_4_extreme, true, 4);
+degrade_test!(degrade_server_5_absurd, true, 5);
+
+degrade_test!(degrade_client_0_mild, false, 0);
+degrade_test!(degrade_client_1_poor, false, 1);
+degrade_test!(degrade_client_2_bad, false, 2);
+degrade_test!(degrade_client_3_terrible, false, 3);
+degrade_test!(degrade_client_4_extreme, false, 4);
+degrade_test!(degrade_client_5_absurd, false, 5);
