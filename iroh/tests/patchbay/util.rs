@@ -5,6 +5,7 @@ use iroh::{
     endpoint::{Connection, PathInfo, PathWatcher, presets},
     tls::CaRootsConfig,
 };
+use iroh_metrics::MetricsGroupSet;
 use n0_error::{Result, StdResultExt, anyerr, ensure_any};
 use n0_future::task::AbortOnDropHandle;
 use patchbay::{Device, IpSupport, Lab, LabOpts, OutDir, TestGuard};
@@ -100,9 +101,12 @@ impl Pair {
                 addr_tx.send(addr_relay_only(endpoint.addr())).unwrap();
                 let conn = endpoint.accept().await.unwrap().accept().anyerr()?.await?;
                 watch_selected_path(&conn);
-                peer1(dev, endpoint.clone(), conn.clone()).await?;
+                peer1(dev.clone(), endpoint.clone(), conn.clone()).await?;
                 conn.closed().await;
                 endpoint.close().await;
+                for group in endpoint.metrics().groups() {
+                    dev.record_iroh_metrics(group);
+                }
                 n0_error::Ok(())
             }
             .instrument(error_span!("ep-acpt"))
@@ -113,8 +117,11 @@ impl Pair {
                 let addr = addr_rx.await.unwrap();
                 let conn = endpoint.connect(addr, TEST_ALPN).await?;
                 watch_selected_path(&conn);
-                peer2(dev, endpoint.clone(), conn).await?;
+                peer2(dev.clone(), endpoint.clone(), conn).await?;
                 endpoint.close().await;
+                for group in endpoint.metrics().groups() {
+                    dev.record_iroh_metrics(group);
+                }
                 n0_error::Ok(())
             }
             .instrument(error_span!("ep-cnct"))

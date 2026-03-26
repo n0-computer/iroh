@@ -54,7 +54,6 @@ fn userns_ctor() {
 /// establish via relay, upgrade to direct.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn holepunch_simple() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -87,7 +86,6 @@ async fn holepunch_simple() -> Result {
 /// The test currently fails, but should pass.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 #[ignore = "known to still fail"]
 async fn switch_uplink() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
@@ -160,7 +158,6 @@ async fn switch_uplink() -> Result {
 /// The test currently fails, but should pass.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 #[ignore = "known to still fail"]
 async fn switch_uplink_ipv6() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
@@ -252,7 +249,6 @@ async fn switch_uplink_ipv6() -> Result {
 /// Verify we switch to the LAN connection.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn change_ifaces() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -326,7 +322,6 @@ async fn change_ifaces() -> Result {
 /// the NATted peer's mapped port once it learns the address via relay.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 #[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_home_nat_one_side() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
@@ -357,7 +352,6 @@ async fn holepunch_home_nat_one_side() -> Result {
 /// Holepunching should succeed easily since filtering is endpoint-independent.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 #[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_cgnat_both() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
@@ -392,7 +386,6 @@ async fn holepunch_cgnat_both() -> Result {
 /// always succeeds on the first try.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn holepunch_full_cone_both() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::FullCone).build().await?;
@@ -426,7 +419,6 @@ async fn holepunch_full_cone_both() -> Result {
 /// must stay on the relay.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn symmetric_nat_stays_relayed() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Corporate).build().await?;
@@ -465,7 +457,6 @@ async fn symmetric_nat_stays_relayed() -> Result {
 /// port. Connection stays relayed.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn mixed_home_vs_symmetric_stays_relayed() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let home = lab.add_router("home").nat(Nat::Home).build().await?;
@@ -501,7 +492,6 @@ async fn mixed_home_vs_symmetric_stays_relayed() -> Result {
 /// is impossible, connection stays relayed.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn cloud_nat_stays_relayed() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::CloudNat).build().await?;
@@ -538,7 +528,6 @@ async fn cloud_nat_stays_relayed() -> Result {
 /// holepunching should succeed.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 #[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_double_nat() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
@@ -591,7 +580,6 @@ async fn holepunch_double_nat() -> Result {
 /// via HTTPS (TCP 443) must still work.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn corporate_firewall_relay_only() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let fw = lab
@@ -631,7 +619,6 @@ async fn corporate_firewall_relay_only() -> Result {
 /// the poor link quality.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn holepunch_mobile_3g() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -673,7 +660,6 @@ async fn holepunch_mobile_3g() -> Result {
 /// during NAT traversal.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn holepunch_satellite() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -716,7 +702,6 @@ async fn holepunch_satellite() -> Result {
 /// path after recovery.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn link_outage_recovery() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -768,7 +753,6 @@ async fn link_outage_recovery() -> Result {
 /// Relay via HTTPS should work, holepunching should not.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn hotel_wifi_relay_only() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let hotel = lab
@@ -808,7 +792,6 @@ async fn hotel_wifi_relay_only() -> Result {
 /// the direct path despite the asymmetric quality.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn holepunch_asymmetric_links() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -1018,7 +1001,6 @@ async fn run_degrade_ladder(impaired_is_server: bool) -> Result<(usize, TestGuar
 /// Impaired side is the accepting (server) peer.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn degrade_ladder_impaired_server() -> Result {
     let (passed, guard) = run_degrade_ladder(true).await?;
     assert!(
@@ -1033,7 +1015,6 @@ async fn degrade_ladder_impaired_server() -> Result {
 /// Impaired side is the connecting (client) peer.
 #[tokio::test]
 #[traced_test]
-#[serial_test::serial]
 async fn degrade_ladder_impaired_client() -> Result {
     let (passed, guard) = run_degrade_ladder(false).await?;
     assert!(
