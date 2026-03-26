@@ -3545,13 +3545,14 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "patchbay"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/patchbay.git?branch=main#9f41d41e3030e38eba405e7052c4566f8f7831f0"
+source = "git+https://github.com/n0-computer/patchbay.git?branch=feat%2Fcompare#8b855e710eb517bfcd05ad4054b10369ef661b7b"
 dependencies = [
  "anyhow",
  "chrono",
  "derive_more",
  "futures",
  "ipnet",
+ "iroh-metrics",
  "libc",
  "nix",
  "rtnetlink",
