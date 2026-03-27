@@ -173,6 +173,17 @@ impl RemotePathState {
         self.paths.keys()
     }
 
+    /// Returns an iterator over addresses with Unknown path status, along with their path state.
+    ///
+    /// This exposes both the address and the path state metadata (including source information),
+    /// allowing callers to make decisions based on where the address came from.
+    pub(super) fn unknown_paths(&self) -> impl Iterator<Item = (&transports::Addr, &PathState)> {
+        self.paths
+            .iter()
+            .filter(|entry| matches!(entry.1.status, PathStatus::Unknown))
+            .map(|(addr, state)| (addr, state))
+    }
+
     /// Returns whether this stores any addresses.
     pub(super) fn is_empty(&self) -> bool {
         self.paths.is_empty()
@@ -624,5 +635,34 @@ mod tests {
         ));
         assert_eq!(metrics.transport_ip_paths_added.get(), 2);
         assert_eq!(metrics.transport_ip_paths_removed.get(), 1);
+    }
+
+    #[test]
+    fn test_unknown_paths_exposes_sources_and_filters_status() {
+        let mut state = RemotePathState::new(Default::default());
+
+        let addr1 = ip_addr(1001);
+        let addr2 = ip_addr(1002);
+        let addr3 = ip_addr(1003);
+
+        // Insert addr1 as open and addr2 as unknown
+        state.insert_open_path(addr1.clone(), Source::Udp);
+        state.insert_multiple([addr2.clone(), addr3.clone()].into_iter(), Source::Relay);
+
+        // Now make addr3 open
+        state.insert_open_path(addr3.clone(), Source::Udp);
+
+        // Get unknown paths
+        let unknown: Vec<_> = state.unknown_paths().collect();
+
+        // Should only have addr2 (Unknown status)
+        assert_eq!(unknown.len(), 1);
+        let (addr, path_state) = unknown[0];
+        assert_eq!(addr, &addr2);
+        assert!(matches!(path_state.status, PathStatus::Unknown));
+
+        // Verify we can access source metadata
+        assert!(!path_state.sources.is_empty());
+        assert!(path_state.sources.contains_key(&Source::Relay));
     }
 }

@@ -529,6 +529,19 @@ impl RemoteStateActor {
                         self.open_path(&remote);
                     }
                 }
+
+                // Try paths that are still unknown so they can be evaluated quickly.
+                // This closes the timing window where only the initially selected path
+                // may be evaluated before additional address discovery happens.
+                let unknown_addrs = self
+                    .paths
+                    .unknown_paths()
+                    .map(|(addr, _state)| addr)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for addr in unknown_addrs {
+                    self.open_path(&addr);
+                }
             }
             self.trigger_holepunching();
         }
