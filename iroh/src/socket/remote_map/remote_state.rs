@@ -557,7 +557,15 @@ impl RemoteStateActor {
         }
 
         if is_major {
-            self.trigger_holepunching();
+            // Force holepunching regardless of whether candidates appear unchanged.
+            // After a major network change, local_direct_addrs may be stale
+            // (net_report hasn't completed yet), so trigger_holepunching() would
+            // skip with "no new addresses". The old paths are likely broken and
+            // we need to probe from the new network.
+            if let Some(conn) = self.holepunch_connection() {
+                debug!("force holepunching after major network change");
+                self.do_holepunching(conn);
+            }
         }
     }
 
@@ -674,6 +682,30 @@ impl RemoteStateActor {
         trace!(?direct_addrs, "updated local QNT addresses");
     }
 
+    /// Returns the connection to use for holepunching, if any.
+    ///
+    /// Holepunching happens on the connection with the lowest [`ConnId`] which is a
+    /// client.
+    fn holepunch_connection(&self) -> Option<noq::Connection> {
+        if self.connections.is_empty() {
+            trace!("not holepunching: no connections");
+            return None;
+        }
+
+        let conn = self
+            .connections
+            .iter()
+            .filter_map(|(id, state)| state.handle.upgrade().map(|conn| (*id, conn)))
+            .filter(|(_, conn)| conn.side().is_client())
+            .min_by_key(|(id, _)| *id)
+            .map(|(_, conn)| conn);
+
+        if conn.is_none() {
+            trace!("not holepunching: no client connection");
+        }
+        conn
+    }
+
     /// Triggers holepunching to the remote endpoint.
     ///
     /// This will manage the entire process of holepunching with the remote endpoint.
@@ -686,20 +718,7 @@ impl RemoteStateActor {
     ///   last attempt **and** there was a recent attempt, a trigger_holepunching call
     ///   will be scheduled instead.
     fn trigger_holepunching(&mut self) {
-        if self.connections.is_empty() {
-            trace!("not holepunching: no connections");
-            return;
-        }
-
-        let Some(conn) = self
-            .connections
-            .iter()
-            .filter_map(|(id, state)| state.handle.upgrade().map(|conn| (*id, conn)))
-            .filter(|(_, conn)| conn.side().is_client())
-            .min_by_key(|(id, _)| *id)
-            .map(|(_, conn)| conn)
-        else {
-            trace!("not holepunching: no client connection");
+        let Some(conn) = self.holepunch_connection() else {
             return;
         };
         let remote_candidates = match conn.get_remote_nat_traversal_addresses() {
