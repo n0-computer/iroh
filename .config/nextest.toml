@@ -16,3 +16,6 @@ threads-required = 32
 
 [profile.default]
 slow-timeout = { period = "10s", terminate-after = 3 }
+
+[profile.patchbay]
+slow-timeout = { period = "100s", terminate-after = 4 }
