@@ -26,11 +26,12 @@
 
 use std::time::Duration;
 
-use iroh::TransportAddr;
-use n0_error::{Result, StackResultExt};
+use iroh::{Endpoint, EndpointAddr, RelayMode, TransportAddr, Watcher};
+use n0_error::{Result, StackResultExt, ensure_any};
 use n0_tracing_test::traced_test;
 use patchbay::{Firewall, LinkCondition, LinkLimits, Nat, RouterPreset, TestGuard};
 use testdir::testdir;
+use tokio::sync::oneshot;
 use tracing::{debug, info, warn};
 
 use self::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
@@ -74,6 +75,120 @@ async fn holepunch_simple() -> Result {
             },
         )
         .await?;
+    guard.ok();
+    Ok(())
+}
+
+/// Two nodes connected over two independent LAN links.
+///
+/// This uses relay-disabled endpoints and an explicit EndpointAddr with two IP addrs,
+/// so the connection setup does not depend on public-IP probing.
+#[tokio::test]
+#[traced_test]
+#[serial_test::serial]
+async fn two_ip_paths_without_public_ip_probing() -> Result {
+    let mut opts = patchbay::LabOpts::default().outdir(patchbay::OutDir::Exact(testdir!()));
+    if let Some(name) = std::thread::current().name() {
+        opts = opts.label(name);
+    }
+    let lab = patchbay::Lab::with_opts(opts).await?;
+    let guard = lab.test_guard();
+
+    let lan1 = lab.add_router("lan1").build().await?;
+    let lan2 = lab.add_router("lan2").build().await?;
+
+    let dev1 = lab
+        .add_device("dev1")
+        .iface("eth0", lan1.id(), None)
+        .iface("eth1", lan2.id(), None)
+        .build()
+        .await?;
+    let dev2 = lab
+        .add_device("dev2")
+        .iface("eth0", lan1.id(), None)
+        .iface("eth1", lan2.id(), None)
+        .build()
+        .await?;
+
+    const ALPN: &[u8] = b"patchbay-two-ip";
+    let timeout = Duration::from_secs(10);
+    let (addr_tx, addr_rx) = oneshot::channel();
+
+    let task1 = dev1.spawn(move |_dev| async move {
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .alpns(vec![ALPN.to_vec()])
+            .bind()
+            .await?;
+
+        let server_addr = ep.addr();
+        let direct_addrs = server_addr.ip_addrs().cloned().collect::<Vec<_>>();
+        ensure_any!(
+            direct_addrs.len() >= 2,
+            "expected at least 2 direct addrs, got {:?}",
+            direct_addrs
+        );
+        addr_tx.send(server_addr).ok();
+
+        let conn = ep.accept().await.unwrap().accept().anyerr()?.await?;
+        let mut paths = conn.paths();
+        tokio::time::timeout(timeout, async {
+            loop {
+                let ip_paths = paths.get().iter().filter(|p| p.is_ip()).count();
+                if ip_paths >= 2 {
+                    break;
+                }
+                paths.updated().await?;
+            }
+            n0_error::Ok(())
+        })
+        .await
+        .anyerr()??;
+
+        conn.close(0u32.into(), b"");
+        ep.close().await;
+        n0_error::Ok(())
+    })?;
+
+    let task2 = dev2.spawn(move |_dev| async move {
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .alpns(vec![ALPN.to_vec()])
+            .bind()
+            .await?;
+
+        let server_addr = addr_rx.await.anyerr()?;
+        let direct_addrs = server_addr.ip_addrs().cloned().collect::<Vec<_>>();
+        ensure_any!(
+            direct_addrs.len() >= 2,
+            "expected at least 2 direct addrs from server, got {:?}",
+            direct_addrs
+        );
+
+        let dst = EndpointAddr::new(server_addr.id)
+            .with_ip_addr(direct_addrs[0])
+            .with_ip_addr(direct_addrs[1]);
+        let conn = ep.connect(dst, ALPN).await?;
+
+        let mut paths = conn.paths();
+        tokio::time::timeout(timeout, async {
+            loop {
+                let ip_paths = paths.get().iter().filter(|p| p.is_ip()).count();
+                if ip_paths >= 2 {
+                    break;
+                }
+                paths.updated().await?;
+            }
+            n0_error::Ok(())
+        })
+        .await
+        .anyerr()??;
+
+        conn.close(0u32.into(), b"");
+        ep.close().await;
+        n0_error::Ok(())
+    })?;
+
+    task2.await.anyerr()??;
+    task1.await.anyerr()??;
     guard.ok();
     Ok(())
 }
