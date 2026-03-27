@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 480">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7C7CFF"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4ADE80"/>
+    </marker>
+    <style>
+      text { font-family: system-ui, -apple-system, sans-serif; }
+      .state { fill: #252542; stroke: #7C7CFF; stroke-width: 2; }
+      .state-active { fill: #1a3a2a; stroke: #4ADE80; stroke-width: 2; }
+      .state-warn { fill: #2a2a1a; stroke: #FBBF24; stroke-width: 2; }
+      .arrow { stroke: #7C7CFF; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+      .arrow-fast { stroke: #4ADE80; stroke-width: 1.5; fill: none; marker-end: url(#arrow-green); }
+      .label { font-size: 14px; font-weight: 600; fill: #E2E2F0; text-anchor: middle; }
+      .label-sm { font-size: 11px; fill: #9494A8; text-anchor: middle; }
+      .note { fill: #2a2a4a; stroke: #7C7CFF; stroke-width: 1; stroke-dasharray: 4 2; }
+      .note-text { font-size: 12px; fill: #9494F7; font-style: italic; }
+      .title { font-size: 16px; font-weight: 700; fill: #E2E2F0; }
+      .side-label { font-size: 11px; fill: #5454C6; font-weight: 600; text-anchor: middle; }
+    </style>
+  </defs>
+  <rect width="100%" height="100%" fill="#1a1a2e"/>
+
+  <text x="360" y="35" class="title" text-anchor="middle">Connection Lifecycle</text>
+
+  <!-- Divider labels -->
+  <text x="190" y="65" class="side-label">OUTGOING (client)</text>
+  <text x="530" y="65" class="side-label">INCOMING (server)</text>
+  <line x1="360" y1="55" x2="360" y2="430" stroke="#5454C6" stroke-width="1" stroke-dasharray="8 4" opacity="0.4"/>
+
+  <!-- === OUTGOING SIDE === -->
+
+  <!-- Connecting -->
+  <rect x="110" y="85" width="160" height="40" rx="8" class="state"/>
+  <text x="190" y="110" class="label">Connecting</text>
+  <text x="190" y="75" class="label-sm">Endpoint::connect()</text>
+
+  <!-- Connecting -> Connection (normal path) -->
+  <path d="M 190 125 L 190 175" class="arrow"/>
+  <text x="225" y="155" class="label-sm">.await</text>
+
+  <!-- Connecting -> 0-RTT (fast path) -->
+  <path d="M 110 105 L 40 105 L 40 195 L 80 195" class="arrow-fast"/>
+  <text x="30" y="155" class="label-sm" text-anchor="end">.into_0rtt()</text>
+
+  <!-- 0-RTT outgoing -->
+  <rect x="80" y="175" width="100" height="40" rx="8" class="state-warn"/>
+  <text x="130" y="200" class="label" style="font-size: 12px;">0-RTT</text>
+
+  <!-- 0-RTT -> Connection -->
+  <path d="M 130 215 L 130 260 L 260 260 L 260 290" class="arrow"/>
+  <text x="170" y="250" class="label-sm">accepted or rejected</text>
+
+  <!-- Normal path to Connection -->
+  <path d="M 190 175 L 190 230 L 260 230 L 260 290" class="arrow"/>
+
+  <!-- === INCOMING SIDE === -->
+
+  <!-- Incoming -->
+  <rect x="450" y="85" width="160" height="40" rx="8" class="state"/>
+  <text x="530" y="110" class="label">Incoming</text>
+  <text x="530" y="75" class="label-sm">Endpoint::accept()</text>
+
+  <!-- Incoming -> Accepting -->
+  <path d="M 530 125 L 530 175" class="arrow"/>
+  <text x="565" y="155" class="label-sm">.accept()</text>
+
+  <!-- Incoming -> refuse/ignore -->
+  <path d="M 610 105 L 680 105 L 680 145" class="arrow"/>
+  <text x="690" y="130" class="label-sm" text-anchor="start">refuse</text>
+  <text x="680" y="158" class="label-sm" style="fill: #F87171;">dropped</text>
+
+  <!-- Accepting -->
+  <rect x="450" y="175" width="160" height="40" rx="8" class="state"/>
+  <text x="530" y="200" class="label">Accepting</text>
+
+  <!-- Accepting -> Connection -->
+  <path d="M 530 215 L 530 260 L 460 260 L 460 290" class="arrow"/>
+  <text x="565" y="240" class="label-sm">.await</text>
+
+  <!-- Accepting -> 0-RTT incoming -->
+  <path d="M 450 195 L 400 195 L 400 260 L 460 260" class="arrow-fast"/>
+  <text x="390" y="230" class="label-sm" text-anchor="end">.into_0rtt()</text>
+
+  <!-- === SHARED: Connection === -->
+
+  <rect x="260" y="290" width="200" height="50" rx="8" class="state-active"/>
+  <text x="360" y="320" class="label" style="font-size: 16px;">Connection</text>
+
+  <!-- Connection -> closed -->
+  <path d="M 360 340 L 360 380" class="arrow"/>
+  <text x="400" y="365" class="label-sm">.close() / error</text>
+  <circle cx="360" cy="395" r="10" fill="none" stroke="#7C7CFF" stroke-width="2"/>
+  <circle cx="360" cy="395" r="5" fill="#7C7CFF"/>
+
+  <!-- Annotation -->
+  <rect x="80" y="430" width="560" height="40" rx="4" class="note"/>
+  <text x="360" y="452" class="note-text" text-anchor="middle">
+    Both sides converge to the same Connection type. 0-RTT is an optimization, not a different kind of connection.
+  </text>
+</svg>

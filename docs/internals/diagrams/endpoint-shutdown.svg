@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 580 440">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7C7CFF"/>
+    </marker>
+    <style>
+      text { font-family: system-ui, -apple-system, sans-serif; }
+      .arrow { stroke: #7C7CFF; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+      .label { font-size: 14px; font-weight: 600; fill: #E2E2F0; text-anchor: middle; }
+      .label-sm { font-size: 11px; fill: #9494A8; }
+      .msg { font-size: 12px; fill: #E2E2F0; font-weight: 600; }
+      .note { fill: #2a2a4a; stroke: #7C7CFF; stroke-width: 1; stroke-dasharray: 4 2; }
+      .note-text { font-size: 12px; fill: #9494F7; font-style: italic; }
+      .title { font-size: 16px; font-weight: 700; fill: #E2E2F0; }
+      .lifeline { stroke: #5454C6; stroke-width: 1; stroke-dasharray: 4 3; }
+      .phase { font-size: 11px; fill: #FBBF24; font-weight: 600; }
+    </style>
+  </defs>
+  <rect width="100%" height="100%" fill="#1a1a2e"/>
+
+  <text x="290" y="35" class="title" text-anchor="middle">Endpoint Shutdown Sequence</text>
+
+  <!-- Lifeline headers -->
+  <rect x="55" y="55" width="70" height="30" rx="6" fill="#252542" stroke="#7C7CFF" stroke-width="2"/>
+  <text x="90" y="75" class="label" style="font-size: 12px;">User</text>
+
+  <rect x="185" y="55" width="90" height="30" rx="6" fill="#252542" stroke="#7C7CFF" stroke-width="2"/>
+  <text x="230" y="75" class="label" style="font-size: 12px;">Endpoint</text>
+
+  <rect x="340" y="55" width="70" height="30" rx="6" fill="#252542" stroke="#7C7CFF" stroke-width="2"/>
+  <text x="375" y="75" class="label" style="font-size: 12px;">QUIC</text>
+
+  <rect x="465" y="55" width="70" height="30" rx="6" fill="#252542" stroke="#7C7CFF" stroke-width="2"/>
+  <text x="500" y="75" class="label" style="font-size: 12px;">Actor</text>
+
+  <!-- Lifelines -->
+  <line x1="90" y1="85" x2="90" y2="380" class="lifeline"/>
+  <line x1="230" y1="85" x2="230" y2="380" class="lifeline"/>
+  <line x1="375" y1="85" x2="375" y2="380" class="lifeline"/>
+  <line x1="500" y1="85" x2="500" y2="380" class="lifeline"/>
+
+  <!-- Phase 1 -->
+  <text x="25" y="125" class="phase">1</text>
+  <path d="M 95 120 L 225 120" class="arrow"/>
+  <text x="160" y="113" class="msg" text-anchor="middle">close()</text>
+  <text x="160" y="135" class="label-sm" text-anchor="middle">cancel at_close_start</text>
+
+  <!-- Phase 2 -->
+  <text x="25" y="185" class="phase">2</text>
+  <path d="M 235 170 L 370 170" class="arrow"/>
+  <text x="303" y="163" class="msg" text-anchor="middle">close + drain</text>
+  <path d="M 370 210 L 235 210" class="arrow"/>
+  <text x="303" y="203" class="msg" text-anchor="middle">drained</text>
+  <text x="303" y="225" class="label-sm" text-anchor="middle">cancel at_endpoint_closed</text>
+
+  <!-- Phase 3 -->
+  <text x="25" y="270" class="phase">3</text>
+  <path d="M 235 265 L 495 265" class="arrow"/>
+  <text x="365" y="258" class="msg" text-anchor="middle">must exit within 100ms</text>
+  <path d="M 495 300 L 235 300" class="arrow"/>
+  <text x="365" y="293" class="msg" text-anchor="middle">actor done</text>
+
+  <!-- Phase 4 -->
+  <text x="25" y="340" class="phase">4</text>
+  <text x="230" y="340" class="label-sm" text-anchor="middle" style="fill: #4ADE80;">closed = true</text>
+  <text x="230" y="355" class="label-sm" text-anchor="middle">all resources released</text>
+
+  <!-- End markers -->
+  <line x1="220" y1="370" x2="240" y2="370" stroke="#7C7CFF" stroke-width="2"/>
+  <line x1="365" y1="330" x2="385" y2="330" stroke="#7C7CFF" stroke-width="2"/>
+  <line x1="490" y1="315" x2="510" y2="315" stroke="#7C7CFF" stroke-width="2"/>
+
+  <!-- Annotation -->
+  <rect x="50" y="392" width="480" height="36" rx="4" class="note"/>
+  <text x="290" y="414" class="note-text" text-anchor="middle">
+    Dropping Endpoint without close() logs an error and aborts ungracefully. Always call close().
+  </text>
+</svg>

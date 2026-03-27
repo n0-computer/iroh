@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7C7CFF"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5454C6"/>
+    </marker>
+    <style>
+      text { font-family: system-ui, -apple-system, sans-serif; }
+      .box { fill: #252542; stroke: #7C7CFF; stroke-width: 2; }
+      .box-accent { fill: #252542; stroke: #9494F7; stroke-width: 1.5; }
+      .arrow { stroke: #7C7CFF; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+      .arrow-muted { stroke: #5454C6; stroke-width: 1; fill: none;
+                     marker-end: url(#arrow-muted); opacity: 0.6; }
+      .label { font-size: 14px; font-weight: 600; fill: #E2E2F0; text-anchor: middle; }
+      .label-sm { font-size: 11px; fill: #9494A8; text-anchor: middle; }
+      .note { fill: #2a2a4a; stroke: #7C7CFF; stroke-width: 1; stroke-dasharray: 4 2; }
+      .note-text { font-size: 12px; fill: #9494F7; font-style: italic; }
+      .title { font-size: 16px; font-weight: 700; fill: #E2E2F0; }
+      .region { fill: none; stroke: #5454C6; stroke-width: 1; stroke-dasharray: 6 3; opacity: 0.4; }
+      .region-label { font-size: 10px; fill: #5454C6; font-weight: 600; }
+    </style>
+  </defs>
+  <rect width="100%" height="100%" fill="#1a1a2e"/>
+
+  <text x="320" y="35" class="title" text-anchor="middle">Socket Architecture</text>
+
+  <!-- Application layer -->
+  <rect x="230" y="55" width="180" height="40" rx="8" class="box"/>
+  <text x="320" y="80" class="label">Endpoint</text>
+  <text x="320" y="48" class="label-sm">your application</text>
+
+  <!-- Arrow down to QUIC -->
+  <path d="M 320 95 L 320 120" class="arrow"/>
+
+  <!-- QUIC layer -->
+  <rect x="230" y="120" width="180" height="40" rx="8" class="box-accent"/>
+  <text x="320" y="145" class="label">QUIC (noq)</text>
+
+  <!-- Arrow down to Socket -->
+  <path d="M 320 160 L 320 190" class="arrow"/>
+
+  <!-- Per-peer region -->
+  <rect x="35" y="185" width="290" height="110" rx="8" class="region"/>
+  <text x="50" y="200" class="region-label">PER PEER</text>
+
+  <!-- RemoteStateActor -->
+  <rect x="50" y="210" width="170" height="40" rx="8" class="box"/>
+  <text x="135" y="235" class="label">RemoteState</text>
+
+  <!-- Stuff it does (as compact labels) -->
+  <text x="135" y="265" class="label-sm">holepunching + path selection</text>
+  <text x="135" y="278" class="label-sm">+ address lookup</text>
+
+  <!-- Socket in the middle -->
+  <rect x="230" y="210" width="85" height="40" rx="8" class="box-accent"/>
+  <text x="272" y="233" class="label" style="font-size: 12px;">Socket</text>
+
+  <!-- Socket -> RemoteState -->
+  <path d="M 230 230 L 225 230" class="arrow-muted"/>
+
+  <!-- Transport region -->
+  <rect x="355" y="185" width="250" height="110" rx="8" class="region"/>
+  <text x="370" y="200" class="region-label">TRANSPORTS</text>
+
+  <!-- Transports -->
+  <rect x="370" y="210" width="80" height="35" rx="6" class="box"/>
+  <text x="410" y="232" class="label" style="font-size: 12px;">IP</text>
+  <text x="410" y="258" class="label-sm">direct UDP</text>
+
+  <rect x="460" y="210" width="80" height="35" rx="6" class="box"/>
+  <text x="500" y="232" class="label" style="font-size: 12px;">Relay</text>
+  <text x="500" y="258" class="label-sm">WebSocket</text>
+
+  <!-- Socket -> Transports -->
+  <path d="M 315 230 L 365 230" class="arrow"/>
+
+  <!-- Down to network -->
+  <path d="M 410 245 L 410 330 L 320 330 L 320 350" class="arrow-muted"/>
+  <path d="M 500 245 L 500 330 L 320 330" class="arrow-muted"/>
+
+  <!-- Network -->
+  <rect x="230" y="350" width="180" height="40" rx="8" fill="#1a3a2a" stroke="#4ADE80" stroke-width="2"/>
+  <text x="320" y="375" class="label">Network</text>
+
+  <!-- Annotation -->
+  <rect x="60" y="400" width="520" height="13" rx="4" class="note" style="stroke: none;"/>
+  <text x="320" y="410" class="note-text" text-anchor="middle">
+    The socket picks the best path per peer. Relay is the fallback; direct IP is preferred.
+  </text>
+</svg>

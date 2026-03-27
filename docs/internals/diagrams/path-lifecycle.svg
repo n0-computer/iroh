@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 520">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7C7CFF"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5454C6"/>
+    </marker>
+    <style>
+      text { font-family: system-ui, -apple-system, sans-serif; }
+      .state { fill: #252542; stroke: #7C7CFF; stroke-width: 2; }
+      .state-active { fill: #1a3a2a; stroke: #4ADE80; stroke-width: 2; }
+      .state-warn { fill: #2a2a1a; stroke: #FBBF24; stroke-width: 2; }
+      .state-error { fill: #2a1a1a; stroke: #F87171; stroke-width: 2; }
+      .arrow { stroke: #7C7CFF; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+      .arrow-muted { stroke: #5454C6; stroke-width: 1.5; fill: none;
+                     marker-end: url(#arrow-muted); stroke-dasharray: 4 2; }
+      .label { font-size: 14px; font-weight: 600; fill: #E2E2F0; text-anchor: middle; }
+      .label-sm { font-size: 11px; fill: #9494A8; text-anchor: middle; }
+      .note { fill: #2a2a4a; stroke: #7C7CFF; stroke-width: 1; stroke-dasharray: 4 2; }
+      .note-text { font-size: 12px; fill: #9494F7; font-style: italic; }
+      .title { font-size: 16px; font-weight: 700; fill: #E2E2F0; }
+    </style>
+  </defs>
+  <rect width="100%" height="100%" fill="#1a1a2e"/>
+
+  <!-- Title -->
+  <text x="340" y="35" class="title" text-anchor="middle">Path Status Lifecycle</text>
+
+  <!-- Start dot -->
+  <circle cx="340" cy="80" r="8" fill="#7C7CFF"/>
+  <path d="M 340 88 L 340 115" class="arrow"/>
+  <text x="375" y="106" class="label-sm">discovered</text>
+
+  <!-- Unknown state -->
+  <rect x="260" y="115" width="160" height="44" rx="8" class="state"/>
+  <text x="340" y="142" class="label">Unknown</text>
+
+  <!-- Transitions from Unknown -->
+  <!-- Unknown -> Open (left, down) -->
+  <path d="M 280 159 L 180 200 L 180 245" class="arrow"/>
+  <text x="210" y="195" class="label-sm">holepunch</text>
+  <text x="210" y="208" class="label-sm">succeeds</text>
+
+  <!-- Unknown -> Unusable (right, down) -->
+  <path d="M 400 159 L 500 200 L 500 245" class="arrow"/>
+  <text x="470" y="195" class="label-sm">holepunch</text>
+  <text x="470" y="208" class="label-sm">fails</text>
+
+  <!-- Open state (active green) -->
+  <rect x="100" y="245" width="160" height="44" rx="8" class="state-active"/>
+  <text x="180" y="272" class="label">Open</text>
+
+  <!-- Unusable state (error red) -->
+  <rect x="420" y="245" width="160" height="44" rx="8" class="state-error"/>
+  <text x="500" y="272" class="label">Unusable</text>
+
+  <!-- Open -> Inactive -->
+  <path d="M 180 289 L 180 365" class="arrow"/>
+  <text x="215" y="330" class="label-sm">abandoned</text>
+
+  <!-- Inactive state (warning yellow) -->
+  <rect x="100" y="365" width="160" height="44" rx="8" class="state-warn"/>
+  <text x="180" y="392" class="label">Inactive</text>
+
+  <!-- Inactive -> Open (back up, curved) -->
+  <path d="M 115 365 Q 70 320 115 289" class="arrow"/>
+  <text x="60" y="330" class="label-sm" text-anchor="end">reopened</text>
+
+  <!-- Unusable -> Open (cross, curved) -->
+  <path d="M 420 267 Q 340 240 260 267" class="arrow"/>
+  <text x="340" y="255" class="label-sm">retry succeeds</text>
+
+  <!-- Pruned indicator -->
+  <text x="500" y="320" class="label-sm">pruned when</text>
+  <text x="500" y="334" class="label-sm">&gt; 30 paths</text>
+  <path d="M 500 289 L 500 310" class="arrow-muted"/>
+
+  <text x="255" y="440" class="label-sm">pruned: oldest beyond</text>
+  <text x="255" y="454" class="label-sm">10 most recent</text>
+  <path d="M 210 409 L 210 430" class="arrow-muted"/>
+
+  <!-- Annotation: the key insight -->
+  <rect x="60" y="470" width="560" height="40" rx="4" class="note"/>
+  <text x="340" y="492" class="note-text" text-anchor="middle">
+    Key: Open/Inactive paths proved reachable once. Unusable never did. Pruning prioritizes proven paths.
+  </text>
+</svg>

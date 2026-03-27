@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 460">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7C7CFF"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5454C6"/>
+    </marker>
+    <style>
+      text { font-family: system-ui, -apple-system, sans-serif; }
+      .state { fill: #252542; stroke: #7C7CFF; stroke-width: 2; }
+      .state-active { fill: #1a3a2a; stroke: #4ADE80; stroke-width: 2; }
+      .state-warn { fill: #2a2a1a; stroke: #FBBF24; stroke-width: 2; }
+      .state-error { fill: #2a1a1a; stroke: #F87171; stroke-width: 2; }
+      .arrow { stroke: #7C7CFF; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+      .arrow-muted { stroke: #5454C6; stroke-width: 1.5; fill: none;
+                     marker-end: url(#arrow-muted); stroke-dasharray: 4 2; }
+      .label { font-size: 14px; font-weight: 600; fill: #E2E2F0; text-anchor: middle; }
+      .label-sm { font-size: 11px; fill: #9494A8; text-anchor: middle; }
+      .note { fill: #2a2a4a; stroke: #7C7CFF; stroke-width: 1; stroke-dasharray: 4 2; }
+      .note-text { font-size: 12px; fill: #9494F7; font-style: italic; }
+      .title { font-size: 16px; font-weight: 700; fill: #E2E2F0; }
+      .const { font-size: 10px; fill: #FBBF24; font-family: monospace; text-anchor: middle; }
+    </style>
+  </defs>
+  <rect width="100%" height="100%" fill="#1a1a2e"/>
+
+  <text x="350" y="35" class="title" text-anchor="middle">ActiveRelayActor States</text>
+
+  <!-- Start -->
+  <circle cx="100" cy="100" r="8" fill="#7C7CFF"/>
+  <path d="M 108 100 L 155 100" class="arrow"/>
+
+  <!-- Dialing -->
+  <rect x="155" y="78" width="150" height="44" rx="8" class="state-warn"/>
+  <text x="230" y="105" class="label">Dialing</text>
+  <text x="230" y="55" class="const">CONNECT_TIMEOUT: 10s</text>
+  <text x="230" y="68" class="label-sm">DNS + TCP + TLS + WS</text>
+
+  <!-- Connected -->
+  <rect x="400" y="78" width="150" height="44" rx="8" class="state-active"/>
+  <text x="475" y="105" class="label">Connected</text>
+
+  <!-- Dialing -> Connected -->
+  <path d="M 305 100 L 395 100" class="arrow"/>
+  <text x="350" y="92" class="label-sm">success</text>
+
+  <!-- Connected -> Sending (down) -->
+  <path d="M 475 122 L 475 175" class="arrow"/>
+  <text x="520" y="153" class="label-sm">datagrams</text>
+  <text x="520" y="165" class="label-sm">to send</text>
+
+  <!-- Sending -->
+  <rect x="400" y="175" width="150" height="44" rx="8" class="state"/>
+  <text x="475" y="202" class="label">Sending</text>
+  <text x="475" y="240" class="const">batch: up to 20 datagrams</text>
+
+  <!-- Sending -> Connected (back up) -->
+  <path d="M 400 197 L 370 197 L 370 110 L 400 110" class="arrow"/>
+  <text x="355" y="155" class="label-sm" text-anchor="end">batch done</text>
+
+  <!-- Error: Connected -> Dialing (connection lost) -->
+  <path d="M 400 90 L 350 70 L 305 90" class="arrow"/>
+  <text x="350" y="62" class="label-sm" style="fill: #F87171;">connection lost</text>
+
+  <!-- Backoff loop on Dialing -->
+  <path d="M 205 78 Q 205 35 255 35 Q 305 35 305 78" class="arrow"/>
+  <text x="255" y="28" class="const">backoff: 10ms → 16s (jitter)</text>
+  <text x="255" y="16" class="label-sm" style="fill: #F87171;">dial/handshake fails</text>
+
+  <!-- Exit conditions -->
+  <rect x="155" y="295" width="150" height="44" rx="8" class="state-error"/>
+  <text x="230" y="322" class="label">Shutdown</text>
+
+  <!-- Dialing -> Shutdown -->
+  <path d="M 230 122 L 230 290" class="arrow-muted"/>
+
+  <!-- Connected -> Shutdown -->
+  <path d="M 450 122 L 450 260 L 310 295" class="arrow-muted"/>
+
+  <!-- Shutdown reasons -->
+  <text x="130" y="360" class="label-sm" text-anchor="start">stop_token cancelled</text>
+  <text x="130" y="375" class="label-sm" text-anchor="start">inbox closed</text>
+  <text x="130" y="390" class="label-sm" text-anchor="start">inactive 60s (non-home only)</text>
+
+  <!-- Annotations -->
+  <rect x="70" y="410" width="560" height="40" rx="4" class="note"/>
+  <text x="350" y="432" class="note-text" text-anchor="middle">
+    Home relay never shuts down for inactivity. Backoff resets after a successfully established connection.
+  </text>
+</svg>
