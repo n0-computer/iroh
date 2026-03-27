@@ -13,7 +13,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Debug,
-    net::SocketAddr,
     sync::Arc,
 };
 
@@ -800,38 +799,22 @@ async fn run_probe_v4(
 
     // wait for an addr
     let addr = receiver
-        .wait_for(|addr| addr.is_some())
+        .next()
         .await
-        .map_err(|_| e!(QadProbeError::ReceiverDropped))?
-        .expect("known");
-    let report = QadProbeReport {
-        relay: relay.url.clone(),
-        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
-        latency: conn.rtt(PathId::ZERO).unwrap_or_default(),
-    };
-
+        .ok_or_else(|| e!(QadProbeError::ReceiverDropped))?;
+    let report = QadProbeReport::new(relay.url.clone(), addr, conn.rtt(PathId::ZERO));
+    let relay_url = relay.url.clone();
     let observer = Watchable::new(None);
-    let endpoint = relay.url.clone();
     let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
         let conn = conn.clone();
         let observer = observer.clone();
         async move {
             loop {
-                let val = *receiver.borrow();
-                // if we've sent to an ipv4 address, but received an observed address
-                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-                let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
-                let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
-                observer
-                    .set(val.map(|addr| QadProbeReport {
-                        relay: endpoint.clone(),
-                        addr,
-                        latency,
-                    }))
-                    .ok();
-                if receiver.changed().await.is_err() {
+                let Some(addr) = receiver.next().await else {
                     break;
-                }
+                };
+                let report = QadProbeReport::new(relay_url.clone(), addr, conn.rtt(PathId::ZERO));
+                observer.set(Some(report)).ok();
             }
         }
     }));
@@ -874,38 +857,23 @@ async fn run_probe_v6(
 
     // wait for an addr
     let addr = receiver
-        .wait_for(|addr| addr.is_some())
+        .next()
         .await
-        .map_err(|_| e!(QadProbeError::ReceiverDropped))?
-        .expect("known");
-    let report = QadProbeReport {
-        relay: relay.url.clone(),
-        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
-        latency: conn.rtt(PathId::ZERO).unwrap_or_default(),
-    };
+        .ok_or_else(|| e!(QadProbeError::ReceiverDropped))?;
+    let report = QadProbeReport::new(relay.url.clone(), addr, conn.rtt(PathId::ZERO));
 
     let observer = Watchable::new(None);
-    let endpoint = relay.url.clone();
+    let relay_url = relay.url.clone();
     let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
-        let observer = observer.clone();
         let conn = conn.clone();
+        let observer = observer.clone();
         async move {
             loop {
-                let val = *receiver.borrow();
-                // if we've sent to an ipv4 address, but received an observed address
-                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-                let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
-                let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
-                observer
-                    .set(val.map(|addr| QadProbeReport {
-                        relay: endpoint.clone(),
-                        addr,
-                        latency,
-                    }))
-                    .ok();
-                if receiver.changed().await.is_err() {
+                let Some(addr) = receiver.next().await else {
                     break;
-                }
+                };
+                let report = QadProbeReport::new(relay_url.clone(), addr, conn.rtt(PathId::ZERO));
+                observer.set(Some(report)).ok();
             }
         }
     }));

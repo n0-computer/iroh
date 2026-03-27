@@ -450,6 +450,21 @@ pub(super) struct QadProbeReport {
     pub(super) addr: SocketAddr,
 }
 
+impl QadProbeReport {
+    /// Creates a new [`QadProbeReport`].
+    ///
+    /// The `addr` will be canonicalized: If we've sent to an IPv4 address, but received an observed address
+    /// that is IPv6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+    pub(super) fn new(relay: RelayUrl, addr: SocketAddr, latency: Option<Duration>) -> Self {
+        let addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
+        Self {
+            relay,
+            addr,
+            latency: latency.unwrap_or_default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct HttpsProbeReport {
     /// The relay that was probed
