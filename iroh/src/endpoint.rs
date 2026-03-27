@@ -96,10 +96,10 @@ pub use self::{
         VarIntBoundsExceeded, WriteError, Written,
     },
 };
-pub use crate::portmapper::PortmapperConfig;
 #[cfg(not(wasm_browser))]
 use crate::socket::transports::IpConfig;
 use crate::socket::transports::TransportConfig;
+pub use crate::{net_report::NetReportConfig, portmapper::PortmapperConfig};
 
 /// Builder for [`Endpoint`].
 ///
@@ -127,6 +127,7 @@ pub struct Builder {
     hooks: EndpointHooksList,
     transport_bias: socket::transports::TransportBiasMap,
     portmapper_config: PortmapperConfig,
+    net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
 }
 
@@ -193,6 +194,7 @@ impl Builder {
             hooks: Default::default(),
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
+            net_report_config: Default::default(),
             crypto_provider: None,
         }
     }
@@ -255,6 +257,7 @@ impl Builder {
             hooks: self.hooks,
             transport_bias: self.transport_bias,
             portmapper_config: self.portmapper_config,
+            net_report_config: self.net_report_config,
             static_config,
         };
 
@@ -739,6 +742,18 @@ impl Builder {
     /// Defaults to [`PortmapperConfig::Enabled`].
     pub fn portmapper_config(mut self, config: PortmapperConfig) -> Self {
         self.portmapper_config = config;
+        self
+    }
+
+    /// Configures the net report.
+    ///
+    /// The net report component is responsible for figuring out if and how the endpoint is connected to the internet.
+    /// It does this by doing various probes to the configured relay servers to get public addresses, NAT behaviour, and
+    /// relay latencies. In addition it tries to detect captive portals.
+    ///
+    /// Some non-essential features of the net report component can be disabled via this configuration.
+    pub fn net_report_config(mut self, config: NetReportConfig) -> Self {
+        self.net_report_config = config;
         self
     }
 
