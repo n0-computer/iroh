@@ -20,7 +20,6 @@ use noq_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
-use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 
@@ -86,9 +85,7 @@ const RTT_SWITCHING_MIN_IP: Duration = Duration::from_millis(5);
 /// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
 /// actor has lagged processing the events, which is rather critical for us.
 type PathEvents = MergeUnbounded<
-    Pin<
-        Box<dyn Stream<Item = (ConnId, Result<PathEvent, BroadcastStreamRecvError>)> + Send + Sync>,
-    >,
+    Pin<Box<dyn Stream<Item = (ConnId, Result<PathEvent, noq::Lagged>)> + Send + Sync>>,
 >;
 
 /// A stream of events of announced NAT traversal candidate addresses for all connections.
@@ -97,13 +94,7 @@ type PathEvents = MergeUnbounded<
 type AddrEvents = MergeUnbounded<
     Pin<
         Box<
-            dyn Stream<
-                    Item = (
-                        ConnId,
-                        Result<n0_nat_traversal::Event, BroadcastStreamRecvError>,
-                    ),
-                > + Send
-                + Sync,
+            dyn Stream<Item = (ConnId, Result<n0_nat_traversal::Event, noq::Lagged>)> + Send + Sync,
         >,
     >,
 >;
@@ -457,11 +448,10 @@ impl RemoteStateActor {
             self.connections.remove(&conn_id);
 
             // Hook up paths, NAT addresses and connection closed event streams.
-            self.path_events.push(Box::pin(
-                BroadcastStream::new(conn.path_events()).map(move |evt| (conn_id, evt)),
-            ));
+            self.path_events
+                .push(Box::pin(conn.path_events().map(move |evt| (conn_id, evt))));
             self.addr_events.push(Box::pin(
-                BroadcastStream::new(conn.nat_traversal_updates()).map(move |evt| (conn_id, evt)),
+                conn.nat_traversal_updates().map(move |evt| (conn_id, evt)),
             ));
             self.connections_close.push(OnClosed::new(&conn));
 
@@ -906,11 +896,7 @@ impl RemoteStateActor {
     }
 
     #[instrument(skip(self))]
-    fn handle_path_event(
-        &mut self,
-        conn_id: ConnId,
-        event: Result<PathEvent, BroadcastStreamRecvError>,
-    ) {
+    fn handle_path_event(&mut self, conn_id: ConnId, event: Result<PathEvent, noq::Lagged>) {
         let Ok(event) = event else {
             warn!("missed a PathEvent, RemoteStateActor lagging");
             // TODO: Is it possible to recover using the sync APIs to figure out what the
