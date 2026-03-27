@@ -25,13 +25,13 @@ async fn start_dns_server(config: Config) -> Result<Server> {
 }
 
 fn benchmark_dns_server(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("dns_server_writes");
     group.sample_size(10);
     for iters in [10_u64, 100_u64, 250_u64, 1000_u64].iter() {
         group.throughput(Throughput::Elements(*iters));
         group.bench_with_input(BenchmarkId::from_parameter(iters), iters, |b, &iters| {
             b.iter(|| {
-                let rt = Runtime::new().unwrap();
                 rt.block_on(async move {
                     let config = Config::load("./config.dev.toml").await.unwrap();
                     let server = start_dns_server(config).await.unwrap();
