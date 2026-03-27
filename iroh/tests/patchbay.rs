@@ -86,7 +86,6 @@ async fn holepunch_simple() -> Result {
 /// The test currently fails, but should pass.
 #[tokio::test]
 #[traced_test]
-#[ignore = "known to still fail"]
 async fn switch_uplink() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -158,7 +157,6 @@ async fn switch_uplink() -> Result {
 /// The test currently fails, but should pass.
 #[tokio::test]
 #[traced_test]
-#[ignore = "known to still fail"]
 async fn switch_uplink_ipv6() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let public = lab
@@ -322,7 +320,6 @@ async fn change_ifaces() -> Result {
 /// the NATted peer's mapped port once it learns the address via relay.
 #[tokio::test]
 #[traced_test]
-#[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_home_nat_one_side() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat = lab.add_router("nat").nat(Nat::Home).build().await?;
@@ -352,7 +349,6 @@ async fn holepunch_home_nat_one_side() -> Result {
 /// Holepunching should succeed easily since filtering is endpoint-independent.
 #[tokio::test]
 #[traced_test]
-#[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_cgnat_both() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Cgnat).build().await?;
@@ -528,7 +524,6 @@ async fn cloud_nat_stays_relayed() -> Result {
 /// holepunching should succeed.
 #[tokio::test]
 #[traced_test]
-#[ignore = "stays relayed, holepunch times out (deadline elapsed)"]
 async fn holepunch_double_nat() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     // ISP-level CGNAT routers
