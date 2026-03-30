@@ -5,7 +5,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
 use n0_future::{SinkExt, StreamExt};
-use rand::Rng;
+use rand::RngExt;
 use time::{Date, OffsetDateTime};
 use tokio::{
     sync::mpsc::{self, error::TrySendError},
