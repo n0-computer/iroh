@@ -177,17 +177,6 @@ pub trait PathWatcherExt {
 
     fn selected(&mut self) -> PathInfo;
 
-    fn match_selected(&mut self, f: impl FnOnce(&PathInfo) -> bool) -> bool {
-        f(&self.selected())
-    }
-
-    fn is_ip(&mut self) -> bool {
-        self.match_selected(PathInfo::is_ip)
-    }
-
-    fn is_relay(&mut self) -> bool {
-        self.match_selected(PathInfo::is_relay)
-    }
     /// Wait until the selected path is a direct (IP) path.
     async fn wait_ip(&mut self, timeout: Duration) -> Result<PathInfo> {
         self.wait_selected(timeout, PathInfo::is_ip).await

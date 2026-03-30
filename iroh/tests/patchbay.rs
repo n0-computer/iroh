@@ -63,7 +63,7 @@ async fn holepunch_simple() -> Result {
             async move |_dev, _ep, _conn| Ok(()),
             async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "connection started relayed");
+                assert!(paths.selected().is_relay(), "connection started relayed");
                 paths.wait_ip(timeout).await?;
                 info!("connection became direct");
                 Ok(())
@@ -96,7 +96,7 @@ async fn switch_uplink() -> Result {
         .run(
             async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "connection started relayed");
+                assert!(paths.selected().is_relay(), "connection started relayed");
 
                 // Wait until a first direct path is established.
                 let first = paths.wait_ip(timeout).await?;
@@ -119,7 +119,7 @@ async fn switch_uplink() -> Result {
             },
             async move |dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "connection started relayed");
+                assert!(paths.selected().is_relay(), "connection started relayed");
 
                 // Wait for conn to become direct.
                 paths
@@ -180,7 +180,7 @@ async fn switch_uplink_ipv6() -> Result {
         .run(
             async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "connection started relayed");
+                assert!(paths.selected().is_relay(), "connection started relayed");
 
                 // Wait until a first direct path is established.
                 let first = paths
@@ -208,7 +208,7 @@ async fn switch_uplink_ipv6() -> Result {
             },
             async move |dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "connection started relayed");
+                assert!(paths.selected().is_relay(), "connection started relayed");
 
                 // Wait for conn to become direct.
                 paths
@@ -276,7 +276,7 @@ async fn change_ifaces() -> Result {
             },
             async move |dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "connection started relayed");
+                assert!(paths.selected().is_relay(), "connection started relayed");
                 let first = paths
                     .wait_ip(timeout)
                     .await
@@ -431,13 +431,13 @@ async fn symmetric_nat_stays_relayed() -> Result {
             },
             async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "should start on relay");
+                assert!(paths.selected().is_relay(), "should start on relay");
                 // Ping to verify the relay path works.
                 ping_open(&conn, timeout).await?;
                 // Give holepunching time to attempt and fail.
                 tokio::time::sleep(Duration::from_secs(8)).await;
                 assert!(
-                    paths.is_relay(),
+                    paths.selected().is_relay(),
                     "should still be relayed — symmetric NAT blocks holepunching"
                 );
                 Ok(())
@@ -469,11 +469,11 @@ async fn mixed_home_vs_symmetric_stays_relayed() -> Result {
             },
             async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "should start on relay");
+                assert!(paths.selected().is_relay(), "should start on relay");
                 ping_open(&conn, timeout).await?;
                 tokio::time::sleep(Duration::from_secs(8)).await;
                 assert!(
-                    paths.is_relay(),
+                    paths.selected().is_relay(),
                     "should still be relayed — symmetric NAT on one side blocks holepunching"
                 );
                 Ok(())
@@ -504,11 +504,11 @@ async fn cloud_nat_stays_relayed() -> Result {
             },
             async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "should start on relay");
+                assert!(paths.selected().is_relay(), "should start on relay");
                 ping_open(&conn, timeout).await?;
                 tokio::time::sleep(Duration::from_secs(8)).await;
                 assert!(
-                    paths.is_relay(),
+                    paths.selected().is_relay(),
                     "should still be relayed — cloud symmetric NAT blocks holepunching"
                 );
                 Ok(())
@@ -596,11 +596,11 @@ async fn corporate_firewall_relay_only() -> Result {
             },
             async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "should start on relay");
+                assert!(paths.selected().is_relay(), "should start on relay");
                 ping_open(&conn, timeout).await?;
                 tokio::time::sleep(Duration::from_secs(8)).await;
                 assert!(
-                    paths.is_relay(),
+                    paths.selected().is_relay(),
                     "should still be relayed — corporate firewall blocks UDP"
                 );
                 Ok(())
@@ -769,11 +769,11 @@ async fn hotel_wifi_relay_only() -> Result {
             },
             async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                assert!(paths.is_relay(), "should start on relay");
+                assert!(paths.selected().is_relay(), "should start on relay");
                 ping_open(&conn, timeout).await?;
                 tokio::time::sleep(Duration::from_secs(8)).await;
                 assert!(
-                    paths.is_relay(),
+                    paths.selected().is_relay(),
                     "should still be relayed — hotel firewall blocks UDP"
                 );
                 Ok(())
