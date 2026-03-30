@@ -21,6 +21,6 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 [profile.patchbay]
 fail-fast = false
 retries = 1
-test-threads = 4
+test-threads = 8
 default-filter = 'binary(patchbay)'
-slow-timeout = { period = "60s", terminate-after = 4 }
+slow-timeout = { period = "30s", terminate-after = 4 }

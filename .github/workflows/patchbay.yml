@@ -66,7 +66,7 @@ jobs:
             --arg pr_url "${{ github.event.pull_request.html_url || '' }}" \
             --arg title "${{ github.event.pull_request.title || github.event.head_commit.message || '' }}" \
             --arg outcome "${{ steps.tests.outcome }}" \
-            '{$project, $branch, $commit, $pr, $pr_url, $title, test_outcome: $outcome, created_at: (now | todate)}' \
+            '{kind: "test", $project, $branch, $commit, $pr, $pr_url, $title, test_outcome: $outcome, created_at: (now | todate)}' \
             > "$TESTDIR/run.json"
 
           RESPONSE=$(tar -czf - -C "$TESTDIR" . | \
@@ -81,31 +81,23 @@ jobs:
           VIEW_URL=$(echo "$BODY" | jq -r '.view_url // empty')
           echo "PATCHBAY_VIEW_URL=$VIEW_URL" >> "$GITHUB_ENV"
 
+      - name: Find existing comment
+        if: always() && env.PATCHBAY_VIEW_URL && github.event.pull_request.number
+        uses: peter-evans/find-comment@v4
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '<!-- patchbay-results -->'
+
       - name: Comment on PR
-        if: always() && env.PATCHBAY_VIEW_URL
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          SHA="${{ github.sha }}"
-          STATUS="${{ steps.tests.outcome }}"
-          ICON=$([[ "$STATUS" == "success" ]] && echo "✅" || echo "❌")
-          MARKER="<!-- patchbay-results -->"
-          printf -v BODY '%s\n%s\n%s' \
-            "$MARKER" \
-            "$ICON **patchbay:** $STATUS | $PATCHBAY_VIEW_URL" \
-            "<sub>$(date -u '+%Y-%m-%d %H:%M:%S UTC') · [\`${SHA:0:7}\`](${{ github.server_url }}/$GH_REPO/commit/$SHA)</sub>"
-
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          if [ -z "$PR_NUMBER" ]; then
-            PR_NUMBER=$(gh pr list --head "${{ github.ref_name }}" --state open --json number -q '.[0].number')
-          fi
-          [ -z "$PR_NUMBER" ] && echo "No PR found, skipping comment" && exit 0
-
-          EXISTING=$(gh api --paginate "repos/$GH_REPO/issues/$PR_NUMBER/comments" --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" | head -1)
-          if [ -n "$EXISTING" ]; then
-            gh api "repos/$GH_REPO/issues/comments/$EXISTING" -X PATCH -f body="$BODY"
-          else
-            gh pr comment "$PR_NUMBER" --body "$BODY"
-          fi
+        if: always() && env.PATCHBAY_VIEW_URL && github.event.pull_request.number
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          body: |
+            <!-- patchbay-results -->
+            ${{ steps.tests.outcome == 'success' && '✅' || '❌' }} **patchbay:** ${{ steps.tests.outcome }} | ${{ env.PATCHBAY_VIEW_URL }}
+            <sub>${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}</sub>
+          edit-mode: replace
