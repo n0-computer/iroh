@@ -24,7 +24,7 @@
 
 use std::time::Duration;
 
-use iroh::TransportAddr;
+use iroh::{TransportAddr, endpoint::Side};
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_tracing_test::traced_test;
 use patchbay::{Firewall, LinkCondition, LinkLimits, Nat, RouterPreset, TestGuard};
@@ -898,7 +898,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
 
 /// Run a single degradation level: create devices with the given impairment,
 /// try to holepunch and ping, return Ok if successful.
-async fn run_degrade_level(impaired_is_server: bool, level: usize) -> Result<TestGuard> {
+async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuard> {
     let limits = DEGRADE_LEVELS[level];
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -906,10 +906,9 @@ async fn run_degrade_level(impaired_is_server: bool, level: usize) -> Result<Tes
     let timeout = Duration::from_secs(20);
 
     let impaired = Some(LinkCondition::Manual(limits));
-    let (server_cond, client_cond) = if impaired_is_server {
-        (impaired, None)
-    } else {
-        (None, impaired)
+    let (server_cond, client_cond) = match impaired_side {
+        Side::Server => (impaired, None),
+        Side::Client => (None, impaired),
     };
     let server = lab
         .add_device("server")
@@ -949,7 +948,7 @@ async fn run_degrade_level(impaired_is_server: bool, level: usize) -> Result<Tes
             latency_ms = limits.latency_ms,
             loss_pct = limits.loss_pct,
             reorder_pct = limits.reorder_pct,
-            impaired_is_server,
+            impaired_side = ?impaired_side,
             "PASSED",
         ),
         Err(err) => tracing::event!(
@@ -959,7 +958,7 @@ async fn run_degrade_level(impaired_is_server: bool, level: usize) -> Result<Tes
             latency_ms = limits.latency_ms,
             loss_pct = limits.loss_pct,
             reorder_pct = limits.reorder_pct,
-            impaired_is_server,
+            impaired_side = ?impaired_side,
             error = format!("{err:#}"),
             "FAILED",
         ),
@@ -972,83 +971,83 @@ async fn run_degrade_level(impaired_is_server: bool, level: usize) -> Result<Tes
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_0_mild() -> Result {
-    run_degrade_level(true, 0).await?.ok();
+    run_degrade_level(Side::Server,0).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_1_poor() -> Result {
-    run_degrade_level(true, 1).await?.ok();
+    run_degrade_level(Side::Server,1).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_2_bad() -> Result {
-    run_degrade_level(true, 2).await?.ok();
+    run_degrade_level(Side::Server,2).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_3_terrible() -> Result {
-    run_degrade_level(true, 3).await?.ok();
+    run_degrade_level(Side::Server,3).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_4_extreme() -> Result {
-    run_degrade_level(true, 4).await?.ok();
+    run_degrade_level(Side::Server,4).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_5_absurd() -> Result {
-    run_degrade_level(true, 5).await?.ok();
+    run_degrade_level(Side::Server,5).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_0_mild() -> Result {
-    run_degrade_level(false, 0).await?.ok();
+    run_degrade_level(Side::Client,0).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_1_poor() -> Result {
-    run_degrade_level(false, 1).await?.ok();
+    run_degrade_level(Side::Client,1).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_2_bad() -> Result {
-    run_degrade_level(false, 2).await?.ok();
+    run_degrade_level(Side::Client,2).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_3_terrible() -> Result {
-    run_degrade_level(false, 3).await?.ok();
+    run_degrade_level(Side::Client,3).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_4_extreme() -> Result {
-    run_degrade_level(false, 4).await?.ok();
+    run_degrade_level(Side::Client,4).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_5_absurd() -> Result {
-    run_degrade_level(false, 5).await?.ok();
+    run_degrade_level(Side::Client,5).await?.ok();
     Ok(())
 }
