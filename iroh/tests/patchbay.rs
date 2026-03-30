@@ -4,25 +4,22 @@
 //! in Linux user namespaces, testing iroh's NAT traversal, holepunching,
 //! and connectivity under various network conditions.
 //!
-//! These tests are disabled by default and only run when the `patchbay_tests` cfg is enabled.
-//! They require Linux with user namespace support. On non-Linux systems, you can use
-//! `patchbay-vm` to get a Linux VM with the required capabilities. See patchbay docs
-//! for details.
+//! These tests require Linux with user namespace support. On non-Linux systems, you can use
+//! the `patchbay` CLI to get a Linux container or VM with the required capabilities.
+//! See patchbay docs for details.
 //!
 //! To run:
 //!
 //! ```sh
 //! # On Linux (with user namespace support):
-//! RUSTFLAGS="--cfg patchbay_tests" cargo test --release -p iroh --test patchbay -- --test-threads=1
+//! cargo nextest run -p iroh --test patchbay -P patchbay
 //!
-//! # On macOS (via patchbay-vm):
-//! RUSTFLAGS="--cfg patchbay_tests" patchbay-vm test --release -p iroh --test patchbay -- --test-threads=1
+//! # On macOS (runs in container via patchbay CLI):
+//! patchbay test --release -p iroh --test patchbay
 //! ```
 
 // patchbay only runs on linux
 #![cfg(target_os = "linux")]
-// Only compile these tests when the patchbay_tests cfg is enabled.
-#![cfg(patchbay_tests)]
 
 use std::time::Duration;
 

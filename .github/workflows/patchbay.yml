@@ -46,7 +46,6 @@ jobs:
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
           NEXTEST_EXPERIMENTAL_LIBTEST_JSON: "1"
-          RUSTFLAGS: "--cfg patchbay_tests"
 
       - name: Push results
         if: always()
