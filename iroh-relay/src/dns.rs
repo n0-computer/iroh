@@ -15,8 +15,9 @@ use std::{
 
 use hickory_resolver::{
     TokioResolver,
-    config::{ResolverConfig, ResolverOpts},
-    name_server::TokioConnectionProvider,
+    config::{ConnectionConfig, ResolverConfig, ResolverOpts},
+    net::runtime::TokioRuntimeProvider,
+    proto::rr::RData,
 };
 use iroh_base::EndpointId;
 use n0_error::{StackError, e, stack_error};
@@ -86,7 +87,7 @@ pub enum DnsError {
     MissingHost {},
     #[error(transparent)]
     Resolve {
-        source: hickory_resolver::ResolveError,
+        source: hickory_resolver::net::NetError,
     },
     #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
@@ -157,15 +158,18 @@ pub enum DnsProtocol {
 }
 
 impl DnsProtocol {
-    fn to_hickory(self) -> hickory_resolver::proto::xfer::Protocol {
-        use hickory_resolver::proto::xfer::Protocol;
+    #[cfg_attr(
+        not(with_crypto_provider),
+        expect(unused_variables, reason = "unused when TLS is disabled in DNS")
+    )]
+    fn to_hickory(self, ip: IpAddr) -> ConnectionConfig {
         match self {
-            DnsProtocol::Udp => Protocol::Udp,
-            DnsProtocol::Tcp => Protocol::Tcp,
+            DnsProtocol::Udp => ConnectionConfig::udp(),
+            DnsProtocol::Tcp => ConnectionConfig::tcp(),
             #[cfg(with_crypto_provider)]
-            DnsProtocol::Tls => Protocol::Tls,
+            DnsProtocol::Tls => ConnectionConfig::tls(Arc::from(ip.to_string())),
             #[cfg(with_crypto_provider)]
-            DnsProtocol::Https => Protocol::Https,
+            DnsProtocol::Https => ConnectionConfig::https(Arc::from(ip.to_string()), None),
         }
     }
 }
@@ -518,21 +522,22 @@ impl HickoryResolver {
                 Ok((config, options)) => (config, options),
                 Err(error) => {
                     debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
-                    (ResolverConfig::google(), ResolverOpts::default())
+                    (
+                        ResolverConfig::udp_and_tcp(&hickory_resolver::config::GOOGLE),
+                        ResolverOpts::default(),
+                    )
                 }
             }
         } else {
-            (ResolverConfig::new(), ResolverOpts::default())
+            (ResolverConfig::default(), ResolverOpts::default())
         };
 
-        #[cfg(with_crypto_provider)]
-        if let Some(client_config) = builder.tls_client_config.clone() {
-            options.tls_config = client_config;
-        }
-
         for (addr, proto) in builder.nameservers.iter() {
+            let mut transport = proto.to_hickory(addr.ip());
+            transport.port = addr.port();
             let nameserver =
-                hickory_resolver::config::NameServerConfig::new(*addr, proto.to_hickory());
+                hickory_resolver::config::NameServerConfig::new(addr.ip(), false, vec![transport]);
+
             config.add_name_server(nameserver);
         }
 
@@ -541,17 +546,23 @@ impl HickoryResolver {
         options.negative_max_ttl = Some(Duration::ZERO);
 
         let mut hickory_builder =
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
+            TokioResolver::builder_with_config(config, TokioRuntimeProvider::default());
         *hickory_builder.options_mut() = options;
-        hickory_builder.build()
+
+        #[cfg(with_crypto_provider)]
+        if let Some(client_config) = builder.tls_client_config.clone() {
+            hickory_builder = hickory_builder.with_tls_config(client_config);
+        }
+
+        hickory_builder.build().expect("config works")
     }
 
-    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::ResolveError> {
+    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::net::NetError> {
         let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
 
         // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
         // there is no easy way to do this.
-        let mut config = hickory_resolver::config::ResolverConfig::new();
+        let mut config = hickory_resolver::config::ResolverConfig::default();
         if let Some(name) = system_config.domain() {
             config.set_domain(name.clone());
         }
@@ -559,7 +570,7 @@ impl HickoryResolver {
             config.add_search(name.clone());
         }
         for nameserver_cfg in system_config.name_servers() {
-            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.socket_addr.ip()) {
+            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.ip) {
                 config.add_name_server(nameserver_cfg.clone());
             }
         }
@@ -572,7 +583,13 @@ impl Resolver for HickoryResolver {
         let resolver = self.resolver.clone();
         Box::pin(async move {
             let lookup = resolver.ipv4_lookup(host).await?;
-            let iter: BoxIter<Ipv4Addr> = Box::new(lookup.into_iter().map(Ipv4Addr::from));
+            let iter: BoxIter<Ipv4Addr> =
+                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
+                    match record.data() {
+                        RData::A(addr) => Some(addr.0),
+                        _ => None,
+                    }
+                }));
             Ok(iter)
         })
     }
@@ -581,7 +598,13 @@ impl Resolver for HickoryResolver {
         let resolver = self.resolver.clone();
         Box::pin(async move {
             let lookup = resolver.ipv6_lookup(host).await?;
-            let iter: BoxIter<Ipv6Addr> = Box::new(lookup.into_iter().map(Ipv6Addr::from));
+            let iter: BoxIter<Ipv6Addr> =
+                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
+                    match record.data() {
+                        RData::AAAA(addr) => Some(addr.0),
+                        _ => None,
+                    }
+                }));
             Ok(iter)
         })
     }
@@ -590,11 +613,18 @@ impl Resolver for HickoryResolver {
         let resolver = self.resolver.clone();
         Box::pin(async move {
             let lookup = resolver.txt_lookup(host).await?;
-            let iter: BoxIter<TxtRecordData> = Box::new(
-                lookup
-                    .into_iter()
-                    .map(|txt| TxtRecordData::from_iter(txt.iter().cloned())),
-            );
+            let iter: BoxIter<TxtRecordData> =
+                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
+                    match record.data() {
+                        RData::TXT(txt) => {
+                            // I don't know a way of avoiding this deep copy, even if it's agonizing.
+                            // The representation of `TxtRecrodData` and `hickory_proto::rr::rdata::TXT`
+                            // is identical.
+                            Some(TxtRecordData::from(txt.txt_data().to_vec()))
+                        }
+                        _ => None,
+                    }
+                }));
             Ok(iter)
         })
     }

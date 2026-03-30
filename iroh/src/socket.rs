@@ -43,7 +43,7 @@ use noq::{
     NetworkChangeHint, WeakConnectionHandle,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
-use rand::Rng;
+use rand::RngExt;
 use rustc_hash::FxHashSet;
 use tokio::sync::{
     Mutex as AsyncMutex,
@@ -1975,7 +1975,7 @@ mod tests {
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use rand::{CryptoRng, Rng, RngCore, SeedableRng};
+    use rand::{CryptoRng, Rng, RngExt, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
 
