@@ -36,6 +36,7 @@ jobs:
         if: ${{ env.TESTS_RESULT == 'failure' }}
         with:
           severity: error
+          text: "Beta rust in **${{ github.repository }}**:"
           details: |
             Rustc beta tests failed
             See https://github.com/${{ github.repository }}/actions/workflows/beta.yaml

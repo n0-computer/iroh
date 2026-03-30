@@ -4,7 +4,7 @@
 //! It allows to put authentication in front of iroh protocols. The protocols don't need any special support.
 //! Authentication is handled prior to establishing the connections, over a separate connection.
 
-use iroh::{Endpoint, EndpointAddr, protocol::Router};
+use iroh::{Endpoint, EndpointAddr, endpoint::presets, protocol::Router};
 use n0_error::{Result, StdResultExt};
 
 use crate::echo::Echo;
@@ -35,19 +35,25 @@ async fn main() -> Result<()> {
 
 async fn connect_side(remote_addr: EndpointAddr, token: &[u8]) -> Result<()> {
     let (auth_hook, auth_task) = auth::outgoing(token.to_vec());
-    let endpoint = Endpoint::builder().hooks(auth_hook).bind().await?;
+    let endpoint = Endpoint::builder(presets::N0)
+        .hooks(auth_hook)
+        .bind()
+        .await?;
     let _guard = auth_task.spawn(endpoint.clone());
     Echo::connect(&endpoint, remote_addr, b"hello there!").await
 }
 
 async fn connect_side_no_auth(remote_addr: EndpointAddr) -> Result<()> {
-    let endpoint = Endpoint::bind().await?;
+    let endpoint = Endpoint::bind(presets::N0).await?;
     Echo::connect(&endpoint, remote_addr, b"hello there!").await
 }
 
 async fn accept_side(token: &[u8]) -> Result<Router> {
     let (auth_hook, auth_protocol) = auth::incoming(token.to_vec());
-    let endpoint = Endpoint::builder().hooks(auth_hook).bind().await?;
+    let endpoint = Endpoint::builder(presets::N0)
+        .hooks(auth_hook)
+        .bind()
+        .await?;
 
     let router = Router::builder(endpoint)
         .accept(auth::ALPN, auth_protocol)
@@ -113,12 +119,13 @@ mod auth {
 
     use iroh::{
         Endpoint, EndpointAddr, EndpointId,
-        endpoint::{AfterHandshakeOutcome, BeforeConnectOutcome, Connection, EndpointHooks},
+        endpoint::{
+            AfterHandshakeOutcome, BeforeConnectOutcome, Connection, ConnectionError, EndpointHooks,
+        },
         protocol::{AcceptError, ProtocolHandler},
     };
     use n0_error::{AnyError, Result, StackResultExt, StdResultExt, anyerr};
     use n0_future::task::AbortOnDropHandle;
-    use quinn::ConnectionError;
     use tokio::{
         sync::{mpsc, oneshot},
         task::JoinSet,

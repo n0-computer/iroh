@@ -11,41 +11,66 @@
 //!
 //! [module docs]: crate
 
-use std::{
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
-    sync::Arc,
-};
+use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
+#[cfg(not(wasm_browser))]
+use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-use iroh_relay::{RelayConfig, RelayMap};
+use iroh_relay::{RelayConfig, RelayMap, tls::CaRootsConfig};
+#[cfg(not(wasm_browser))]
+use n0_error::bail;
 use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
-use tracing::{debug, instrument, trace, warn};
+use pin_project::pin_project;
+use tokio_util::sync::WaitForCancellationFutureOwned;
+use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
 use url::Url;
 
+/// Types for defining custom transports
+pub mod transports {
+    #[cfg(feature = "unstable-custom-transports")]
+    pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
+    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias};
+}
+
 use self::hooks::EndpointHooksList;
-pub use super::magicsock::{
-    DirectAddr, DirectAddrType, PathInfo,
-    remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
+pub use super::socket::{
+    BindError, DirectAddr, DirectAddrType,
+    remote_map::{
+        PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, Source,
+        TransportAddrInfo, TransportAddrUsage,
+    },
 };
 #[cfg(wasm_browser)]
-use crate::discovery::pkarr::PkarrResolver;
+use crate::address_lookup::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
+#[cfg(feature = "unstable-custom-transports")]
+use crate::endpoint::transports::CustomTransport;
+pub use crate::tls::TlsConfigError;
 use crate::{
     NetReport,
-    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
+    address_lookup::{
+        AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
+        Error as AddressLookupError, UserData,
+    },
     endpoint::presets::Preset,
-    magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     metrics::EndpointMetrics,
-    tls::{self, DEFAULT_MAX_TLS_TICKETS},
+    socket::{
+        self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
+    },
+    tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
 
+#[cfg(not(wasm_browser))]
+mod bind;
 mod connection;
 pub(crate) mod hooks;
 pub mod presets;
-mod quic;
+pub(crate) mod quic;
 
+#[cfg(not(wasm_browser))]
+pub use bind::{BindOpts, InvalidSocketAddr, ToSocketAddr};
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 
 #[cfg(feature = "qlog")]
@@ -53,22 +78,28 @@ pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
     connection::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-        ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt,
-        IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
-        RemoteEndpointIdError, ZeroRttStatus,
+        ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingAddr,
+        IncomingZeroRtt, IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
+        RemoteEndpointIdError, RetryError, ZeroRttStatus,
     },
     quic::{
-        AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
+        AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
-        CryptoError, CryptoServerConfig, ExportKeyingMaterialError, FrameStats, HandshakeTokenKey,
-        IdleTimeout, MtuDiscoveryConfig, OpenBi, OpenUni, PathStats, QuicTransportConfig,
-        ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
-        RetryError, SendDatagramError, SendStream, ServerConfig, Side, StoppedError, StreamId,
-        TransportError, TransportErrorCode, UdpStats, UnsupportedVersion, VarInt,
-        VarIntBoundsExceeded, WeakConnectionHandle, WriteError, Written,
+        ControllerMetrics, CryptoError, DecryptedInitial, Dir, ExportKeyingMaterialError,
+        FrameStats, FrameType, HandshakeTokenKey, HeaderKey, IdleTimeout, IncomingAlpns, Keys,
+        MtuDiscoveryConfig, OpenBi, OpenUni, PacketKey, PathId, PathStats, QuicConnectError,
+        QuicTransportConfig, QuicTransportConfigBuilder, ReadDatagram, ReadError, ReadExactError,
+        ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagram, SendDatagramError,
+        SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError, StreamId, TimeSource,
+        TokenLog, TokenReuseError, TransportError, TransportErrorCode, TransportParameters,
+        UdpStats, UnorderedRecvStream, UnsupportedVersion, ValidationTokenConfig, VarInt,
+        VarIntBoundsExceeded, WriteError, Written,
     },
 };
-pub use crate::magicsock::transports::TransportConfig;
+pub use crate::portmapper::PortmapperConfig;
+#[cfg(not(wasm_browser))]
+use crate::socket::transports::IpConfig;
+use crate::socket::transports::TransportConfig;
 
 /// Builder for [`Endpoint`].
 ///
@@ -82,16 +113,21 @@ pub struct Builder {
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: QuicTransportConfig,
     keylog: bool,
-    discovery: Vec<Box<dyn DynIntoDiscovery>>,
-    discovery_user_data: Option<UserData>,
+    address_lookup: Vec<Box<dyn DynAddressLookupBuilder>>,
+    address_lookup_user_data: Option<UserData>,
+    /// Default address filter applied to all address lookup services added via
+    /// [`Builder::address_lookup`].
+    addr_filter: Option<AddrFilter>,
     proxy_url: Option<Url>,
+    ca_roots_config: Option<CaRootsConfig>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
-    #[cfg(any(test, feature = "test-utils"))]
-    insecure_skip_relay_cert_verify: bool,
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
+    transport_bias: socket::transports::TransportBiasMap,
+    portmapper_config: PortmapperConfig,
+    crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -100,11 +136,16 @@ impl From<RelayMode> for Option<TransportConfig> {
             RelayMode::Disabled => None,
             RelayMode::Default => Some(TransportConfig::Relay {
                 relay_map: mode.relay_map(),
+                is_user_defined: true,
             }),
             RelayMode::Staging => Some(TransportConfig::Relay {
                 relay_map: mode.relay_map(),
+                is_user_defined: true,
             }),
-            RelayMode::Custom(relay_map) => Some(TransportConfig::Relay { relay_map }),
+            RelayMode::Custom(relay_map) => Some(TransportConfig::Relay {
+                relay_map,
+                is_user_defined: true,
+            }),
         }
     }
 }
@@ -116,58 +157,77 @@ impl Builder {
     /// Creates a new [`Builder`] using the given [`Preset`].
     ///
     /// See [`presets`] for more.
-    pub fn new<P: Preset>(preset: P) -> Self {
-        Self::empty(RelayMode::Disabled).preset(preset)
+    pub fn new(preset: impl Preset) -> Self {
+        Self::empty().preset(preset)
     }
 
     /// Applies the given [`Preset`].
-    pub fn preset<P: Preset>(mut self, preset: P) -> Self {
+    pub fn preset(mut self, preset: impl Preset) -> Self {
         self = preset.apply(self);
         self
     }
 
-    /// Creates an empty builder with no discovery services.
-    pub fn empty(relay_mode: RelayMode) -> Self {
-        let mut transports = vec![
+    /// Creates an empty builder with no address lookup services, and [`RelayMode::Disabled`].
+    pub fn empty() -> Self {
+        let transports = vec![
             #[cfg(not(wasm_browser))]
             TransportConfig::default_ipv4(),
             #[cfg(not(wasm_browser))]
             TransportConfig::default_ipv6(),
         ];
-        if let Some(relay) = relay_mode.into() {
-            transports.push(relay);
-        }
+
         Self {
             secret_key: Default::default(),
             alpn_protocols: Default::default(),
             transport_config: QuicTransportConfig::default(),
             keylog: Default::default(),
-            discovery: Default::default(),
-            discovery_user_data: Default::default(),
+            address_lookup: Default::default(),
+            address_lookup_user_data: Default::default(),
+            addr_filter: None,
             proxy_url: None,
+            ca_roots_config: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: false,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
+            transport_bias: Default::default(),
+            portmapper_config: Default::default(),
+            crypto_provider: None,
         }
     }
 
     // # The final constructor that everyone needs.
 
-    /// Binds the magic endpoint.
+    /// Binds the endpoint.
     pub async fn bind(self) -> Result<Endpoint, BindError> {
-        let mut rng = rand::rng();
         let secret_key = self
             .secret_key
-            .unwrap_or_else(move || SecretKey::generate(&mut rng));
+            .unwrap_or_else(|| SecretKey::generate(&mut rand::rng()));
 
+        let crypto_provider = self
+            .crypto_provider
+            .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?;
+
+        let token_key = Arc::new(
+            RustlsTokenKey::new(&mut rand::rng(), &crypto_provider)
+                .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?,
+        );
+
+        let span = info_span!("endpoint", id = %secret_key.public().fmt_short());
+        let _guard = span.enter();
+
+        let tls_config = tls::TlsConfig::new(
+            secret_key.clone(),
+            self.max_tls_tickets,
+            crypto_provider.clone(),
+        );
         let static_config = StaticConfig {
+            server_config: tls_config.make_server_config(self.keylog)?,
+            client_config: tls_config.make_client_config(self.keylog)?,
+            tls_config,
             transport_config: self.transport_config.clone(),
-            tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
-            keylog: self.keylog,
+            token_key,
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
@@ -176,33 +236,49 @@ impl Builder {
 
         let metrics = EndpointMetrics::default();
 
-        let msock_opts = magicsock::Options {
+        let tls_config = self
+            .ca_roots_config
+            .unwrap_or_default()
+            .client_config(crypto_provider)
+            .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
+
+        let sock_opts = socket::Options {
             transports: self.transports,
             secret_key,
-            discovery_user_data: self.discovery_user_data,
+            address_lookup_user_data: self.address_lookup_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
             dns_resolver,
             server_config,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+            tls_config,
             metrics,
             hooks: self.hooks,
+            transport_bias: self.transport_bias,
+            portmapper_config: self.portmapper_config,
+            static_config,
         };
 
-        let msock = magicsock::MagicSock::spawn(msock_opts).await?;
-        trace!("created magicsock");
-        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
+        let inner = socket::EndpointInner::bind(sock_opts)
+            .instrument(Span::current())
+            .await?;
+        debug!(
+            id = %inner.static_config.tls_config.secret_key.public(),
+            iroh_version = %env!("CARGO_PKG_VERSION"),
+            "iroh endpoint bound"
+        );
 
         let ep = Endpoint {
-            msock,
-            static_config: Arc::new(static_config),
+            inner: Arc::new(inner),
         };
 
-        // Add discovery mechanisms
-        for create_service in self.discovery {
-            let service = create_service.into_discovery(&ep)?;
-            ep.discovery().add_boxed(service);
+        // Add Address Lookup mechanisms
+        let address_lookup = ep.address_lookup().expect("just created the endpoint");
+        if let Some(filter) = self.addr_filter {
+            address_lookup.set_addr_filter(filter);
+        }
+        for create_service in self.address_lookup {
+            let service = create_service.into_address_lookup(&ep)?;
+            address_lookup.add_boxed(service);
         }
 
         Ok(ep)
@@ -210,35 +286,194 @@ impl Builder {
 
     // # The very common methods everyone basically needs.
 
-    /// Adds an IP transport, binding to the provided IPv4 address.
+    /// Binds an IP socket at the provided socket address.
     ///
-    /// If you want to remove the default transports, make sure to call `clear_ip` first.
+    /// This is an advanced API to tightly control the sockets used by the endpoint. Most
+    /// uses do not need to explicitly bind sockets.
     ///
-    /// Setting the port to `0` will use a random port.
-    /// If the port specified is already in use, it will fallback to choosing a random port.
+    /// # Warning
+    ///
+    /// - The builder always comes pre-configured with an IPv4 socket to be bound on the
+    ///   *unspecified* address: `0.0.0.0`. This is the equivalent of using `INADDR_ANY`
+    ///   special bind address and results in a socket listening on *all* interfaces
+    ///   available.
+    ///
+    /// - Likewise the builder always comes pre-configured with an IPv6 socket to be bound
+    ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
+    ///
+    /// - Adding a bind address removes the pre-configured unspecified bind address for this
+    ///   address family. Use [`Self::bind_addr_with_opts`] to bind additional addresses without
+    ///   replacing the default bind address.
+    ///
+    /// - This should be called at most once for each address family: once for IPv4 and/or
+    ///   once for IPv6. Calling it multiple times for the same address family will result
+    ///   in undefined routing behaviour. To bind multiple sockets of the same address
+    ///   family, use [`Self::bind_addr_with_opts`].
+    ///
+    /// # Description
+    ///
+    /// Requests a socket to be bound on a specific address, with an implied netmask of
+    /// `/0`. This allows restricting binding to only one network interface for a given
+    /// address family.
+    ///
+    /// If the port specified is already in use, binding the endpoint will fail. Using
+    /// port `0` in the socket address assigns a random free port.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_error::Result<()> {
+    /// # use iroh::{Endpoint, endpoint::presets};
+    /// let endpoint = Endpoint::builder(presets::N0)
+    ///     .clear_ip_transports()
+    ///     .bind_addr("127.0.0.1:0")?
+    ///     .bind_addr("[::1]:0")?
+    ///     .bind()
+    ///     .await?;
+    /// # Ok(()) }
+    /// # }
+    /// ```
     #[cfg(not(wasm_browser))]
-    pub fn bind_addr_v4(mut self, bind_addr: SocketAddrV4) -> Self {
-        self.transports.push(TransportConfig::Ip {
-            bind_addr: bind_addr.into(),
-        });
-        self
+    pub fn bind_addr<A>(self, addr: A) -> Result<Self, InvalidSocketAddr>
+    where
+        A: ToSocketAddr,
+        <A as ToSocketAddr>::Err: Into<InvalidSocketAddr>,
+    {
+        self.bind_addr_with_opts(addr, BindOpts::default())
     }
 
-    /// Adds an IP transport, binding to the provided IPv6 address.
+    /// Binds an IP socket at the provided socket address.
     ///
-    /// If you want to remove the default transports, make sure to call `clear_ip` first.
+    /// This is an advanced API to tightly control the sockets used by the endpoint. Most
+    /// uses do not need to explicitly bind sockets.
     ///
-    /// Setting the port to `0` will use a random port.
-    /// If the port specified is already in use, it will fallback to choosing a random port.
+    /// # Warning
+    ///
+    /// - The builder always comes pre-configured with an IPv4 socket to be bound on the
+    ///   *unspecified* address: `0.0.0.0`. This is the equivalent of using `INADDR_ANY`
+    ///   special bind address and results in a socket listening on *all* interfaces
+    ///   available.
+    ///
+    /// - Likewise the builder always comes pre-configured with an IPv6 socket to be bound
+    ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
+    ///
+    /// # Description
+    ///
+    /// Requests a socket to be bound on a specific address. This allows restricting binding
+    /// to only one network interface for a given address family.
+    ///
+    /// [`BindOpts::set_prefix_len`] **should** be used to configure the netmask of the
+    /// network interface. This allows outgoing datagrams that start a new network flow to
+    /// be sent over the socket which is attached to the subnet of the destination
+    /// address. If multiple sockets are bound the standard routing-table semantics are
+    /// used: the socket attached to the subnet with the longest prefix matching the
+    /// destination is used. Practically this means the smallest subnets are at the top of
+    /// the routing table, and the first subnet containing the destination address is
+    /// chosen.
+    ///
+    /// If no socket is bound to a subnet that contains the destination address, the notion
+    /// of "default route" is used. At most one socket per address family may be marked as
+    /// the default route using [`BindOpts::set_is_default_route`], and this will be used
+    /// for destinations not contained by the subnets of the bound sockets. This network is
+    /// expected to have a default gateway configured. A socket with a prefix length of `/0`
+    /// will be set as a "default route" implicitly, unless [`BindOpts::set_is_default_route`]
+    /// is set to `false` explicitly.
+    ///
+    /// Be aware that using a subnet with a prefix length of `/0` will always contain all
+    /// destination addresses. It is valid to configure this, but no more than one such
+    /// socket should be bound or the routing will be non-deterministic.
+    ///
+    /// To use a subnet with a non-zero prefix length as the default route in addition to
+    /// being routed when its prefix matches, use [`BindOpts::set_is_default_route].
+    /// Subnets with a prefix length of zero are always marked as default routes.
+    ///
+    /// Finally note that most outgoing datagrams are part of an existing network flow. That
+    /// is, they are in response to an incoming datagram. In this case the outgoing datagram
+    /// will be sent over the same socket as the incoming datagram was received on, and the
+    /// routing with the prefix length and default route as described above does not apply.
+    ///
+    /// Using port `0` in the socket address assigns a random free port.
+    ///
+    /// If the port specified is already in use, binding the endpoint will fail, unless
+    /// [`BindOpts::set_is_required`] is set to `false`
+    ///
+    /// # Example
+    /// ```no_run
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_error::Result<()> {
+    /// # use iroh::{Endpoint, endpoint::{BindOpts, presets}};
+    /// let endpoint = Endpoint::builder(presets::N0)
+    ///     .clear_ip_transports()
+    ///     .bind_addr_with_opts("127.0.0.1:0", BindOpts::default().set_prefix_len(24))?
+    ///     .bind_addr_with_opts("[::1]:0", BindOpts::default().set_prefix_len(48))?
+    ///     .bind()
+    ///     .await?;
+    /// # Ok(()) }
+    /// # }
+    /// ```
     #[cfg(not(wasm_browser))]
-    pub fn bind_addr_v6(mut self, bind_addr: SocketAddrV6) -> Self {
-        self.transports.push(TransportConfig::Ip {
-            bind_addr: bind_addr.into(),
-        });
-        self
+    pub fn bind_addr_with_opts<A>(
+        mut self,
+        addr: A,
+        opts: BindOpts,
+    ) -> Result<Self, InvalidSocketAddr>
+    where
+        A: ToSocketAddr,
+        <A as ToSocketAddr>::Err: Into<InvalidSocketAddr>,
+    {
+        let addr = addr.to_socket_addr().map_err(Into::into)?;
+        match addr {
+            SocketAddr::V4(addr) => {
+                if self
+                    .transports
+                    .iter()
+                    .any(|t| t.is_ipv4_default() && t.is_user_defined())
+                {
+                    bail!(InvalidSocketAddr::DuplicateDefaultAddr);
+                }
+
+                let ip_net = Ipv4Net::new(*addr.ip(), opts.prefix_len())?;
+                self.transports.push(TransportConfig::Ip {
+                    config: IpConfig::V4 {
+                        ip_net,
+                        port: addr.port(),
+                        is_required: opts.is_required(),
+                        is_default: opts.is_default_route(),
+                    },
+                    is_user_defined: true,
+                });
+            }
+            SocketAddr::V6(addr) => {
+                if self
+                    .transports
+                    .iter()
+                    .any(|t| t.is_ipv6_default() && t.is_user_defined())
+                {
+                    bail!(InvalidSocketAddr::DuplicateDefaultAddr);
+                }
+
+                let ip_net = Ipv6Net::new(*addr.ip(), opts.prefix_len())?;
+                self.transports.push(TransportConfig::Ip {
+                    config: IpConfig::V6 {
+                        ip_net,
+                        scope_id: addr.scope_id(),
+                        port: addr.port(),
+                        is_required: opts.is_required(),
+                        is_default: opts.is_default_route(),
+                    },
+                    is_user_defined: true,
+                });
+            }
+        }
+        Ok(self)
     }
 
-    /// Removes all IP based transports
+    /// Removes all IP based transports.
     #[cfg(not(wasm_browser))]
     pub fn clear_ip_transports(mut self) -> Self {
         self.transports
@@ -246,7 +481,7 @@ impl Builder {
         self
     }
 
-    /// Removes all relay based transports
+    /// Removes all relay based transports.
     pub fn clear_relay_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Relay { .. }));
@@ -316,48 +551,68 @@ impl Builder {
         self
     }
 
-    /// Removes all discovery services from the builder.
+    /// Removes all Address Lookup services from the builder.
     ///
-    /// If no discovery service is set, connecting to an endpoint without providing its
+    /// If no Address Lookup is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
     ///
-    /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-    pub fn clear_discovery(mut self) -> Self {
-        self.discovery.clear();
+    /// See the documentation of the [`crate::address_lookup::AddressLookup`] trait for details.
+    pub fn clear_address_lookup(mut self) -> Self {
+        self.address_lookup.clear();
         self
     }
 
-    /// Adds a discovery mechanism for this endpoint.
+    /// Adds an additional Address Lookup for this endpoint.
     ///
-    /// The function `discovery`
-    /// will be called on endpoint creation with the configured secret key of
-    /// the endpoint. Discovery services that need to publish information need
-    /// to use this secret key to sign the information.
+    /// Once the endpoint is created the provided [`AddressLookupBuilder::into_address_lookup`] will be
+    /// called. This allows Address Lookup's to finalize their configuration by e.g. using
+    /// the secret key from the endpoint which can be needed to sign published information.
     ///
-    /// If you add multiple discovery services, they will be combined using a
-    /// [`crate::discovery::ConcurrentDiscovery`].
+    /// This method can be called multiple times and all the Address Lookup's passed in
+    /// will be combined using an internal instance of the
+    /// [`crate::address_lookup::ConcurrentAddressLookup`]. To clear all Address Lookup's, use
+    /// [`Self::clear_address_lookup`].
     ///
-    /// If no discovery service is set, connecting to an endpoint without providing its
+    /// If no Address Lookup is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
     ///
-    /// To clear all discovery services, use [`Builder::clear_discovery`].
-    ///
-    /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-    pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
-        self.discovery.push(Box::new(discovery));
+    /// See the documentation of the [`crate::address_lookup::AddressLookup`] trait for details.
+    pub fn address_lookup(mut self, address_lookup: impl AddressLookupBuilder) -> Self {
+        self.address_lookup.push(Box::new(address_lookup));
         self
     }
 
-    /// Sets the initial user-defined data to be published in discovery services for this node.
+    /// Sets the address filter applied to all address data before publishing.
     ///
-    /// When using discovery services, this string of [`UserData`] will be published together
+    /// This filter is applied once, at the [`ConcurrentAddressLookup`] level, before
+    /// distributing data to any individual address lookup service. This ensures
+    /// consistent filtering regardless of how the services configured.
+    ///
+    /// [`ConcurrentAddressLookup`]: crate::address_lookup::ConcurrentAddressLookup
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
+        self.addr_filter = Some(filter);
+        self
+    }
+
+    /// Clears the address filter, allowing all addresses to be published.
+    ///
+    /// This removes any filter previously set via [`Self::addr_filter`], including
+    /// filters set by presets.
+    pub fn clear_addr_filter(mut self) -> Self {
+        self.addr_filter = None;
+        self
+    }
+
+    /// Sets the initial user-defined data to be published in Address Lookup's for this node.
+    ///
+    /// When using Address Lookup's, this string of [`UserData`] will be published together
     /// with the endpoint's addresses and relay URL. When other endpoints discover this endpoint,
     /// they retrieve the [`UserData`] in addition to the addressing info.
     ///
     /// Iroh itself does not interpret the user-defined data in any way, it is purely left
     /// for applications to parse and use.
-    pub fn user_data_for_discovery(mut self, user_data: UserData) -> Self {
-        self.discovery_user_data = Some(user_data);
+    pub fn user_data_for_address_lookup(mut self, user_data: UserData) -> Self {
+        self.address_lookup_user_data = Some(user_data);
         self
     }
 
@@ -382,7 +637,7 @@ impl Builder {
     /// Optionally sets a custom DNS resolver to use for this endpoint.
     ///
     /// The DNS resolver is used to resolve relay hostnames, and endpoint addresses if
-    /// [`crate::discovery::dns::DnsDiscovery`] is configured.
+    /// [`crate::address_lookup::DnsAddressLookup`] is configured.
     ///
     /// By default, a new DNS resolver is created which is configured to use the
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
@@ -411,6 +666,18 @@ impl Builder {
         self
     }
 
+    /// Sets the trusted CA root certificates for non-iroh TLS connections.
+    ///
+    /// These Certificate Authority roots are used as trust anchors for verifying
+    /// the validity of TLS certificates presented by external services, such as
+    /// iroh relays, pkarr servers, or DNS-over-HTTPS resolvers.
+    /// They don't need to be trusted for the integrity or authenticity of native
+    /// iroh connections, which rely on iroh's own cryptographic authentication mechanisms.
+    pub fn ca_roots_config(mut self, ca_roots_config: CaRootsConfig) -> Self {
+        self.ca_roots_config = Some(ca_roots_config);
+        self
+    }
+
     /// Enables saving the TLS pre-master key for connections.
     ///
     /// This key should normally remain secret but can be useful to debug networking issues
@@ -423,15 +690,6 @@ impl Builder {
         self
     }
 
-    /// Skip verification of SSL certificates from relay servers
-    ///
-    /// May only be used in tests.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
-        self.insecure_skip_relay_cert_verify = skip_verify;
-        self
-    }
-
     /// Set the maximum number of TLS tickets to cache.
     ///
     /// Set this to a larger value if you want to do 0rtt connections to a large
@@ -440,6 +698,24 @@ impl Builder {
     /// The default is 256, taking about 150 KiB in memory.
     pub fn max_tls_tickets(mut self, n: usize) -> Self {
         self.max_tls_tickets = n;
+        self
+    }
+
+    /// Specify the rustls cryptography to use for all TLS operations.
+    ///
+    /// This includes
+    /// - TLS for encryption and authentication of iroh connections themselves, but also
+    /// - HTTPS connections to relays
+    /// - Pkarr relay publishing HTTPS connections
+    /// - and any other Address Lookup services that decide to use [`Endpoint::tls_config`].
+    ///
+    /// The two most common crypto providers in use today are `ring` as well as `aws-lc-rs`.
+    ///
+    /// If either the `ring` or `aws-lc-rs` feature is set in iroh, this function doesn't need to be called.
+    ///
+    /// If none of these features are set, then calling this function in the builder is mandatory.
+    pub fn crypto_provider(mut self, crypto_provider: Arc<rustls::crypto::CryptoProvider>) -> Self {
+        self.crypto_provider = Some(crypto_provider);
         self
     }
 
@@ -457,27 +733,58 @@ impl Builder {
         self.hooks.push(hooks);
         self
     }
-}
 
-/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
-#[derive(Debug)]
-struct StaticConfig {
-    tls_config: tls::TlsConfig,
-    transport_config: QuicTransportConfig,
-    keylog: bool,
-}
-
-impl StaticConfig {
-    /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> ServerConfig {
-        let quic_server_config = self
-            .tls_config
-            .make_server_config(alpn_protocols, self.keylog);
-        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(self.transport_config.to_arc());
-
-        server_config
+    /// Configures the portmapper service (UPnP, PCP, NAT-PMP).
+    ///
+    /// Defaults to [`PortmapperConfig::Enabled`].
+    pub fn portmapper_config(mut self, config: PortmapperConfig) -> Self {
+        self.portmapper_config = config;
+        self
     }
+
+    /// Adds a custom transport
+    #[cfg(feature = "unstable-custom-transports")]
+    pub fn add_custom_transport(mut self, factory: Arc<dyn CustomTransport>) -> Self {
+        self.transports.push(TransportConfig::Custom(factory));
+        self
+    }
+
+    /// Sets the transport bias for a specific address kind.
+    ///
+    /// Transport bias controls how different transport types are prioritized during
+    /// path selection. By default:
+    /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
+    /// - Relay is a backup transport (only used when no primary transport is available)
+    ///
+    /// Use this to customize the behavior, for example to add bias for custom transports.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::time::Duration;
+    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias}};
+    ///
+    /// let endpoint = Builder::new(SomePreset)
+    ///     .transport_bias(AddrKind::Custom(42), TransportBias::primary().with_rtt_advantage(Duration::from_millis(10)))
+    ///     .bind()
+    ///     .await?;
+    /// ```
+    pub fn transport_bias(
+        mut self,
+        kind: transports::AddrKind,
+        bias: transports::TransportBias,
+    ) -> Self {
+        self.transport_bias = self.transport_bias.with_bias(kind, bias);
+        self
+    }
+}
+
+#[allow(missing_docs)]
+#[stack_error(derive, add_meta)]
+#[non_exhaustive]
+pub enum EndpointError {
+    #[error("Endpoint is closed")]
+    Closed,
 }
 
 /// Controls an iroh endpoint, establishing connections with other endpoints.
@@ -507,10 +814,7 @@ impl StaticConfig {
 /// [QUIC]: https://quicwg.org
 #[derive(Clone, Debug)]
 pub struct Endpoint {
-    /// Handle to the magicsocket/actor
-    pub(crate) msock: Handle,
-    /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
-    static_config: Arc<StaticConfig>,
+    inner: Arc<EndpointInner>,
 }
 
 #[allow(missing_docs)]
@@ -521,11 +825,11 @@ pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
     #[error("No addressing information available")]
-    NoAddress { source: DiscoveryError },
+    NoAddress { source: AddressLookupError },
     #[error("Unable to connect to remote")]
-    Quinn {
+    Noq {
         #[error(std_err)]
-        source: quinn_proto::ConnectError,
+        source: QuicConnectError,
     },
     #[error("Internal consistency error")]
     InternalConsistencyError {
@@ -534,6 +838,8 @@ pub enum ConnectWithOptsError {
     },
     #[error("Connection was rejected locally")]
     LocallyRejected,
+    #[error("Endpoint is closed")]
+    EndpointClosed,
 }
 
 #[allow(missing_docs)]
@@ -551,20 +857,6 @@ pub enum ConnectError {
     },
 }
 
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta, from_sources)]
-#[non_exhaustive]
-pub enum BindError {
-    #[error(transparent)]
-    MagicSpawn {
-        source: magicsock::CreateHandleError,
-    },
-    #[error(transparent)]
-    Discovery {
-        source: crate::discovery::IntoDiscoveryError,
-    },
-}
-
 impl Endpoint {
     // The ordering of public methods is reflected directly in the documentation.  This is
     // roughly ordered by what is most commonly needed by users, but grouped in similar
@@ -572,52 +864,58 @@ impl Endpoint {
 
     // # Methods relating to construction.
 
-    /// Returns the builder for an [`Endpoint`], with a production configuration.
-    ///
-    /// This uses the [`presets::N0`] as the configuration.
-    pub fn builder() -> Builder {
-        Builder::new(presets::N0)
+    /// Returns the builder for an [`Endpoint`], with the given [`Preset`] configuration.
+    pub fn builder(preset: impl Preset) -> Builder {
+        Builder::new(preset)
     }
 
-    /// Returns the builder for an [`Endpoint`], with an empty configuration.
-    ///
-    /// See [`Builder::empty`] for details.
-    pub fn empty_builder(relay_mode: RelayMode) -> Builder {
-        Builder::empty(relay_mode)
-    }
-
-    /// Constructs a default [`Endpoint`] and binds it immediately.
-    ///
-    /// Uses the [`presets::N0`] as configuration.
-    pub async fn bind() -> Result<Self, BindError> {
-        Self::builder().bind().await
+    /// Constructs a default [`Endpoint`] using the provided [`Preset`] and binds it immediately.
+    pub async fn bind(preset: impl Preset) -> Result<Self, BindError> {
+        Self::builder(preset).bind().await
     }
 
     /// Sets the list of accepted ALPN protocols.
     ///
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.
+    ///
+    /// If the endpoint is closed, this method will log a warning and ignore
+    /// the request to set new ALPNs.
     pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) {
-        let server_config = self.static_config.create_server_config(alpns);
-        self.msock.endpoint().set_server_config(Some(server_config));
+        if self.is_closed() {
+            warn!("Attempting to set ALPNs for a closed endpoint. Ignoring.");
+            return;
+        }
+        let server_config = self.inner.static_config.create_server_config(alpns);
+        self.inner
+            .noq_endpoint()
+            .set_server_config(Some(server_config));
     }
 
     /// Adds the provided configuration to the [`RelayMap`].
     ///
     /// Replacing and returning any existing configuration for [`RelayUrl`].
+    ///
+    /// Will also return `None` if the endpoint is closed.
     pub async fn insert_relay(
         &self,
         relay: RelayUrl,
         config: Arc<RelayConfig>,
     ) -> Option<Arc<RelayConfig>> {
-        self.msock.insert_relay(relay, config).await
+        if self.is_closed() {
+            return None;
+        }
+        self.inner.insert_relay(relay, config).await
     }
 
     /// Removes the configuration from the [`RelayMap`] for the provided [`RelayUrl`].
     ///
-    /// Returns any existing configuration.
+    /// Returns any existing configuration if it exists. Will also return `None` if the endpoint is closed.
     pub async fn remove_relay(&self, relay: &RelayUrl) -> Option<Arc<RelayConfig>> {
-        self.msock.remove_relay(relay).await
+        if self.is_closed() {
+            return None;
+        }
+        self.inner.remove_relay(relay).await
     }
 
     // # Methods for establishing connectivity.
@@ -633,7 +931,7 @@ impl Endpoint {
     ///
     /// If neither a [`RelayUrl`] or direct addresses are configured in the [`EndpointAddr`] it
     /// may still be possible a connection can be established.  This depends on which, if any,
-    /// [`crate::discovery::Discovery`] services were configured using [`Builder::discovery`].  The discovery
+    /// [`crate::address_lookup::AddressLookup`]s were configured using [`Builder::address_lookup`].  The Address Lookup
     /// service will also be used if the remote endpoint is not reachable on the provided direct
     /// addresses and there is no [`RelayUrl`].
     ///
@@ -675,7 +973,7 @@ impl Endpoint {
     ///    [`Connecting::into_0rtt`].
     ///    **Note:** Please read the documentation for `into_0rtt` carefully to assess
     ///    security concerns.
-    /// 2. The [`TransportConfig`] for the connection can be modified via the provided
+    /// 2. The [`QuicTransportConfig`] for the connection can be modified via the provided
     ///    [`ConnectOptions`].
     ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
     ///    establishing and maintaining direct connections.  Carefully test settings you use and
@@ -683,7 +981,7 @@ impl Endpoint {
     #[instrument(name = "connect", skip_all, fields(
         me = %self.id().fmt_short(),
         remote = tracing::field::Empty,
-        alpn = String::from_utf8_lossy(alpn).to_string(),
+        alpn = %String::from_utf8_lossy(alpn).to_string(),
     ))]
     pub async fn connect_with_opts(
         &self,
@@ -691,54 +989,60 @@ impl Endpoint {
         alpn: &[u8],
         options: ConnectOptions,
     ) -> Result<Connecting, ConnectWithOptsError> {
+        if self.is_closed() {
+            return Err(e!(ConnectWithOptsError::EndpointClosed));
+        }
+
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
+        let endpoint_id = endpoint_addr.id;
+
+        Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
+
         if let BeforeConnectOutcome::Reject =
-            self.msock.hooks.before_connect(&endpoint_addr, alpn).await
+            self.inner.hooks.before_connect(&endpoint_addr, alpn).await
         {
             return Err(e!(ConnectWithOptsError::LocallyRejected));
         }
-        let endpoint_id = endpoint_addr.id;
-
-        tracing::Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
 
         // Connecting to ourselves is not supported.
         ensure!(endpoint_id != self.id(), ConnectWithOptsError::SelfConnect);
 
-        trace!(
-            dst_endpoint_id = %endpoint_id.fmt_short(),
+        event!(
+            target: "iroh::_events::conn::connecting",
+            tracing::Level::DEBUG,
+            remote_id = %endpoint_id.fmt_short(),
+            alpn = %String::from_utf8_lossy(alpn),
+        );
+
+        debug!(
             relay_url = ?endpoint_addr.relay_urls().next().cloned(),
             ip_addresses = ?endpoint_addr.ip_addrs().cloned().collect::<Vec<_>>(),
             "connecting",
         );
 
-        let mapped_addr = self.msock.resolve_remote(endpoint_addr).await??;
+        let mapped_addr = self.inner.resolve_remote(endpoint_addr).await??;
 
         let transport_config = options
             .transport_config
-            .map(|cfg| cfg.to_arc())
-            .unwrap_or(self.static_config.transport_config.to_arc());
+            .map(|cfg| cfg.to_inner_arc())
+            .unwrap_or(self.inner.static_config.transport_config.to_inner_arc());
 
-        // Start connecting via quinn. This will time out after 10 seconds if no reachable
+        // Start connecting via noq. This will time out after 10 seconds if no reachable
         // address is available.
 
-        let client_config = {
-            let mut alpn_protocols = vec![alpn.to_vec()];
-            alpn_protocols.extend(options.additional_alpns);
-            let quic_client_config = self
-                .static_config
-                .tls_config
-                .make_client_config(alpn_protocols, self.static_config.keylog);
-            let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-            client_config.transport_config(transport_config.clone());
-            client_config
-        };
+        let mut alpn_protocols = vec![alpn.to_vec()];
+        alpn_protocols.extend(options.additional_alpns);
+        let client_config = self
+            .inner
+            .static_config
+            .create_client_config(alpn_protocols, transport_config.clone());
 
         let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(endpoint_id);
-        let connect = self
-            .msock
-            .endpoint()
-            .connect_with(client_config, dest_addr, server_name)?;
+        let connect =
+            self.inner
+                .noq_endpoint()
+                .connect_with(client_config, dest_addr, server_name)?;
 
         Ok(Connecting::new(connect, self.clone(), endpoint_id))
     }
@@ -753,7 +1057,7 @@ impl Endpoint {
     /// [`Endpoint::close`].
     pub fn accept(&self) -> Accept<'_> {
         Accept {
-            inner: self.msock.endpoint().accept(),
+            inner: self.inner.noq_endpoint().accept(),
             ep: self.clone(),
         }
     }
@@ -762,7 +1066,7 @@ impl Endpoint {
 
     /// Returns the secret_key of this endpoint.
     pub fn secret_key(&self) -> &SecretKey {
-        &self.static_config.tls_config.secret_key
+        &self.inner.static_config.tls_config.secret_key
     }
 
     /// Returns the endpoint id of this endpoint.
@@ -770,7 +1074,7 @@ impl Endpoint {
     /// This ID is the unique addressing information of this endpoint and other peers must know
     /// it to be able to connect to this endpoint.
     pub fn id(&self) -> EndpointId {
-        self.static_config.tls_config.secret_key.public()
+        self.inner.static_config.tls_config.secret_key.public()
     }
 
     /// Returns the current [`EndpointAddr`].
@@ -794,16 +1098,19 @@ impl Endpoint {
     /// The observed [`EndpointAddr`] will have the current [`RelayUrl`] and direct addresses.
     ///
     /// ```no_run
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// use iroh::{Endpoint, Watcher};
+    /// use iroh::{Endpoint, Watcher, endpoint::presets};
     ///
-    /// let endpoint = Endpoint::builder()
+    /// let endpoint = Endpoint::builder(presets::N0)
     ///     .alpns(vec![b"my-alpn".to_vec()])
     ///     .bind()
     ///     .await?;
     /// let endpoint_addr = endpoint.watch_addr().get();
     /// # let _ = endpoint_addr;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     ///
@@ -815,18 +1122,50 @@ impl Endpoint {
     /// If there are no `addrs`in the [`EndpointAddr`], you may not be dialable by other endpoints
     /// on the internet.
     ///
-    ///
     /// The `EndpointAddr` will change as:
     /// - network conditions change
     /// - the endpoint connects to a relay server
     /// - the endpoint changes its preferred relay server
     /// - more addresses are discovered for this endpoint
     ///
+    /// ## Closing behavior
+    ///
+    /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
+    /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
+    /// via [`Watcher::stream`] only terminates once the endpoint is fully dropped. To stop a task
+    /// that loops over a watcher stream once the endpoint stops, combine with [`Self::closed`]:
+    ///
+    /// ```no_run
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
+    /// # use iroh::{Watcher, Endpoint, endpoint::presets};
+    /// # use n0_future::StreamExt;
+    /// # use tracing::info;
+    /// # async fn wrapper() -> n0_error::Result<()> {
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
+    /// // We want to watch address changes in a different task, and stop our task
+    /// // once the endpoint stops.
+    /// let mut addr_stream = endpoint.watch_addr().stream();
+    /// let endpoint_closed = endpoint.closed();
+    /// tokio::spawn(endpoint_closed.run_until(async move {
+    ///     while let Some(addr) = addr_stream.next().await {
+    ///         info!("our address changed: {addr:?}");
+    ///     }
+    ///     info!("endpoint closed");
+    /// }));
+    /// // Do fancy things, then close the endpoint.
+    /// // Our task above will stop even if there are still clones of `Endpoint` alive somewhere.
+    /// endpoint.close().await;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    ///
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
-        let watch_addrs = self.msock.ip_addrs();
-        let watch_relay = self.msock.home_relay();
+        let watch_addrs = self.inner.ip_addrs();
+        let watch_relay = self.inner.home_relay();
         let endpoint_id = self.id();
 
         watch_addrs.or(watch_relay).map(move |(addrs, relays)| {
@@ -845,12 +1184,17 @@ impl Endpoint {
     /// When compiled to Wasm, this function returns a watcher that initializes
     /// with an [`EndpointAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
+    ///
+    /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
+    /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
+    /// via [`Watcher::stream`] only terminates once the endpoint stops. If you want to stop a
+    /// task once the endpoint stops combine with [`Self::closed`].
     #[cfg(wasm_browser)]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `EndpointAddr` have *some* way
         // of connecting to us.
-        let watch_relay = self.msock.home_relay();
+        let watch_relay = self.inner.home_relay();
         let endpoint_id = self.id();
         watch_relay.map(move |mut relays| {
             EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
@@ -861,9 +1205,9 @@ impl Endpoint {
     ///
     /// This currently means at least one relay server was connected,
     /// and at least one local IP address is available.
-    /// Event if no relays are configured, this will still wait for a relay connection.
+    /// Even if no relays are configured, this will still wait for a relay connection.
     ///
-    /// Once this has been resolved once, this will always immediately resolve.
+    /// Once this has been resolved the first time, this will always immediately resolve.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
@@ -873,8 +1217,37 @@ impl Endpoint {
     /// To understand if the endpoint has gone back "offline",
     /// you must use the [`Endpoint::watch_addr`] method, to
     /// get information on the current relay and direct address information.
+    ///
+    /// In the common case where the endpoint's configured relay servers are
+    /// only accessible via a wide area network (WAN) connection, this method
+    /// will await indefinitely when the endpoint has no WAN connection. If you're
+    /// writing an app that's designed to work without a WAN connection, defer
+    /// any calls to `online` as long as possible, or avoid calling `online`
+    /// entirely.
+    ///
+    /// The online method does not interact with [`crate::address_lookup::AddressLookup`]
+    /// services, which means that any Address Lookup that relies on a WAN
+    /// connection is independent of the endpoint's online status.
+    ///
+    /// # Examples
+    ///
+    /// ```no run
+    /// use iroh::Endpoint;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    /// // After this await returns, the endpoint is bound to a local socket.
+    /// // It can be dialed, but almost certainly hasn't finished picking a
+    /// // relay.
+    /// let endpoint = Endpoint::bind().await;
+    ///
+    /// // After this await returns we have a connection to at least one relay
+    /// // and holepunching should work as expected.
+    /// endpoint.online().await;
+    /// }
+    /// ```
     pub async fn online(&self) {
-        self.msock.home_relay().initialized().await;
+        self.inner.home_relay().initialized().await;
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -893,29 +1266,48 @@ impl Endpoint {
     /// run, the [`Watcher`] will always return [`Some`] report immediately, which
     /// is the most recently run `net-report`.
     ///
+    /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
+    /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
+    /// via [`Watcher::stream`] only terminates once the endpoint stops. If you want to stop a
+    /// task once the endpoint stops combine with [`Self::closed`].
+    ///
     /// # Examples
     ///
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{Endpoint, Watcher as _};
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
+    /// use iroh::{Endpoint, Watcher as _, endpoint::presets};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let ep = Endpoint::bind().await.unwrap();
+    /// let ep = Endpoint::bind(presets::N0).await.unwrap();
     /// let _report = ep.net_report().initialized().await;
     /// # });
+    /// # }
     /// ```
     #[doc(hidden)]
     pub fn net_report(&self) -> impl Watcher<Value = Option<NetReport>> + use<> {
-        self.msock.net_report()
+        self.inner.net_report()
+    }
+
+    /// Returns the last [`NetReport`] generated by this endpoint.
+    ///
+    /// Returns `None` if no net report was ever generated.
+    ///
+    /// This method is hidden in the docs because it is not part of the public api
+    #[doc(hidden)]
+    pub fn last_net_report(&self) -> Option<NetReport> {
+        self.inner.net_report().get()
     }
 
     /// Returns the local socket addresses on which the underlying sockets are bound.
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
+    #[cfg(not(wasm_browser))]
     pub fn bound_sockets(&self) -> Vec<SocketAddr> {
-        self.msock
+        self.inner
             .local_addr()
             .into_iter()
             .filter_map(|addr| addr.into_socket_addr())
@@ -928,17 +1320,45 @@ impl Endpoint {
 
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
+    /// # Errors
+    ///
+    /// Returns an `EndpointError::Closed` error if the endpoint is closed.
+    ///
     /// See [`Builder::dns_resolver`].
     #[cfg(not(wasm_browser))]
-    pub fn dns_resolver(&self) -> &DnsResolver {
-        self.msock.dns_resolver()
+    pub fn dns_resolver(&self) -> Result<&DnsResolver, EndpointError> {
+        if self.is_closed() {
+            return Err(e!(EndpointError::Closed));
+        }
+        Ok(self.inner.dns_resolver())
     }
 
-    /// Returns the discovery mechanism, if configured.
+    /// Returns the [`rustls::ClientConfig`] used by the endpoint for connecting to external services.
     ///
-    /// See [`Builder::discovery`].
-    pub fn discovery(&self) -> &ConcurrentDiscovery {
-        self.msock.discovery()
+    /// This might be useful for address lookup services or other functions
+    /// that want to use the same trust anchors as iroh does for verifying the
+    /// validity of TLS certificates presented by external services.
+    ///
+    /// Note that this TLS config is unrelated to how iroh validates the authenticity
+    /// of iroh connections itself.
+    ///
+    /// The config is based on the trust anchors set via [`Builder::ca_roots_config`].
+    pub fn tls_config(&self) -> &rustls::ClientConfig {
+        &self.inner.tls_config
+    }
+
+    /// Returns the Address Lookup service, if configured.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `EndpointError::Closed` error if the endpoint is closed.
+    ///
+    /// See [`Builder::address_lookup`].
+    pub fn address_lookup(&self) -> Result<&ConcurrentAddressLookup, EndpointError> {
+        if self.is_closed() {
+            return Err(e!(EndpointError::Closed));
+        }
+        Ok(self.inner.address_lookup())
     }
 
     /// Returns metrics collected for this endpoint.
@@ -949,10 +1369,10 @@ impl Endpoint {
     /// You can access individual metrics directly by using the public fields:
     /// ```rust
     /// # use std::collections::BTreeMap;
-    /// # use iroh::endpoint::Endpoint;
+    /// # use iroh::endpoint::{Endpoint, presets};
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// let endpoint = Endpoint::bind().await?;
-    /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
+    /// assert_eq!(endpoint.metrics().socket.recv_datagrams.get(), 0);
     /// # Ok(())
     /// # }
     /// ```
@@ -967,9 +1387,9 @@ impl Endpoint {
     /// ```rust
     /// # use std::collections::BTreeMap;
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
-    /// # use iroh::endpoint::Endpoint;
+    /// # use iroh::endpoint::{Endpoint, presets};
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// let endpoint = Endpoint::bind().await?;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
     ///     .iter()
@@ -979,7 +1399,7 @@ impl Endpoint {
     ///     })
     ///     .collect();
     ///
-    /// assert_eq!(metrics["magicsock:recv_datagrams"], MetricValue::Counter(0));
+    /// assert_eq!(metrics["socket:recv_datagrams"], MetricValue::Counter(0));
     /// # Ok(())
     /// # }
     /// ```
@@ -990,14 +1410,14 @@ impl Endpoint {
     /// [`encode_openmetrics_to_string`]:
     /// ```rust
     /// # use iroh_metrics::{Registry, MetricsSource};
-    /// # use iroh::endpoint::Endpoint;
+    /// # use iroh::endpoint::{Endpoint, presets};
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// let endpoint = Endpoint::bind().await?;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
     /// let s = registry.encode_openmetrics_to_string()?;
-    /// assert!(s.contains(r#"TYPE magicsock_recv_datagrams counter"#));
-    /// assert!(s.contains(r#"magicsock_recv_datagrams_total 0"#));
+    /// assert!(s.contains(r#"TYPE socket_recv_datagrams counter"#));
+    /// assert!(s.contains(r#"socket_recv_datagrams_total 0"#));
     /// # Ok(())
     /// # }
     /// ```
@@ -1013,7 +1433,7 @@ impl Endpoint {
     /// ```no_run
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
-    /// # use iroh::endpoint::Endpoint;
+    /// # use iroh::endpoint::{Endpoint, presets};
     /// # use n0_error::{StackResultExt, StdResultExt};
     /// # async fn wrapper() -> n0_error::Result<()> {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
@@ -1029,7 +1449,7 @@ impl Endpoint {
     /// });
     ///
     /// // Spawn an endpoint and add the metrics to the registry.
-    /// let endpoint = Endpoint::bind().await?;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// registry.write().unwrap().register_all(endpoint.metrics());
     ///
     /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
@@ -1041,8 +1461,8 @@ impl Endpoint {
     ///     .await
     ///     .std_context("text")?;
     ///
-    /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
-    /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
+    /// assert!(res.contains(r#"TYPE socket_recv_datagrams counter"#));
+    /// assert!(res.contains(r#"socket_recv_datagrams_total 0"#));
     /// # metrics_task.abort();
     /// # Ok(())
     /// # }
@@ -1057,7 +1477,7 @@ impl Endpoint {
     /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
     #[cfg(feature = "metrics")]
     pub fn metrics(&self) -> &EndpointMetrics {
-        &self.msock.metrics
+        &self.inner.metrics
     }
 
     /// Returns addressing information about a recently used remote endpoint.
@@ -1065,11 +1485,14 @@ impl Endpoint {
     /// The returned [`RemoteInfo`] contains a list of all transport addresses for the remote
     /// that we know about. This is a snapshot in time and not a watcher.
     ///
-    /// Returns `None` if the endpoint doesn't have information about the remote.
+    /// Returns `None` if the endpoint doesn't have information about the remote or if the endpoint is closed.
     /// When remote endpoints are no longer used, our endpoint will keep information around
     /// for a little while, and then drop it. Afterwards, this will return `None`.
     pub async fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
-        self.msock.remote_info(endpoint_id).await
+        if self.is_closed() {
+            return None;
+        }
+        self.inner.remote_info(endpoint_id).await
     }
 
     // # Methods for less common state updates.
@@ -1084,26 +1507,39 @@ impl Endpoint {
     ///
     /// Even when the network did not change, or iroh was already able to detect
     /// the network change itself, there is no harm in calling this function.
+    ///
+    /// If the endpoint is closed, this method will log a warning and ignore the request.
     pub async fn network_change(&self) {
-        self.msock.network_change().await;
+        if self.is_closed() {
+            debug!("Attempting to notify a closed endpoint about a network change. Ignoring.");
+            return;
+        }
+        self.inner.network_change().await;
     }
 
     // # Methods to update internal state.
 
-    /// Sets the initial user-defined data to be published in discovery services for this endpoint.
+    /// Sets the initial user-defined data to be published in Address Lookups for this endpoint.
     ///
     /// If the user-defined data passed to this function is different to the previous one,
-    /// the endpoint will republish its endpoint info to the configured discovery services.
+    /// the endpoint will republish its endpoint info to the configured Address Lookups.
     ///
-    /// See also [`Builder::user_data_for_discovery`] for setting an initial value when
+    /// See also [`Builder::user_data_for_address_lookup`] for setting an initial value when
     /// building the endpoint.
-    pub fn set_user_data_for_discovery(&self, user_data: Option<UserData>) {
-        self.msock.set_user_data_for_discovery(user_data);
+    ///
+    /// If the endpoint is closed, this method will log a warning and ignore the
+    /// request.
+    pub fn set_user_data_for_address_lookup(&self, user_data: Option<UserData>) {
+        if self.is_closed() {
+            warn!("Attempting to set user data for a closed endpoint. Ignoring.");
+            return;
+        }
+        self.inner.set_user_data_for_address_lookup(user_data);
     }
 
     // # Methods for terminating the endpoint.
 
-    /// Closes the QUIC endpoint and the magic socket.
+    /// Closes the QUIC endpoint and the socket.
     ///
     /// This will close any remaining open [`Connection`]s with an error code
     /// of `0` and an empty reason.  Though it is best practice to close those
@@ -1136,28 +1572,63 @@ impl Endpoint {
     /// Be aware however that the underlying UDP sockets are only closed once all clones of
     /// the the respective [`Endpoint`] are dropped.
     pub async fn close(&self) {
-        if self.is_closed() {
-            return;
-        }
-
-        tracing::debug!("Connections closed");
-        self.msock.close().await;
+        self.inner.close().await;
     }
 
     /// Check if this endpoint is still alive, or already closed.
     pub fn is_closed(&self) -> bool {
-        self.msock.is_closed()
+        self.inner.is_closed()
+    }
+
+    /// Returns a future that resolves once the endpoint closes.
+    ///
+    /// The returned future does not contain a clone or reference to the [`Endpoint`],
+    /// so keeping the returned future alive does not prevent the endpoint from being dropped.
+    ///
+    /// To run a task and stop it once the endpoint closes, you can use
+    /// [`EndpointClosed::run_until`]:
+    /// ```no_run
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
+    /// # use iroh::endpoint::{Endpoint, presets};
+    /// # async fn wrapper() -> n0_error::Result<()> {
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
+    /// tokio::spawn(endpoint.closed().run_until(async move {
+    ///     // the future will be aborted once the endpoint closes.
+    /// }));
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    pub fn closed(&self) -> EndpointClosed {
+        EndpointClosed {
+            inner: self.inner.closed(),
+        }
+    }
+
+    /// Create a [`ServerConfigBuilder`] for this endpoint that includes the given alpns.
+    ///
+    /// Use the [`ServerConfigBuilder`] to customize the [`ServerConfig`] connection configuration
+    /// for a connection accepted using the [`Incoming::accept_with`] method.
+    pub fn create_server_config_builder(&self, alpns: Vec<Vec<u8>>) -> ServerConfigBuilder {
+        let inner = self.inner.static_config.create_server_config(alpns);
+        ServerConfigBuilder::new(inner, self.inner.static_config.transport_config.clone())
     }
 
     // # Remaining private methods
 
-    #[cfg(test)]
-    pub(crate) fn magic_sock(&self) -> Handle {
-        self.msock.clone()
+    /// Translates a raw [`SocketAddr`] (which may be a synthetic mapped address) into
+    /// a transport address.
+    pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> crate::socket::transports::Addr {
+        self.inner.to_transport_addr(addr)
     }
-    #[cfg(test)]
-    pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
-        self.msock.endpoint()
+
+    #[cfg(all(test, with_crypto_provider))]
+    pub(crate) fn inner(&self) -> Result<Arc<EndpointInner>, EndpointError> {
+        if self.is_closed() {
+            return Err(e!(EndpointError::Closed));
+        }
+        Ok(self.inner.clone())
     }
 }
 
@@ -1172,7 +1643,7 @@ impl ConnectOptions {
     /// Initializes new connection options.
     ///
     /// By default, the connection will use the same options
-    /// as [`Endpoint::connect`], e.g. a default [`TransportConfig`].
+    /// as [`Endpoint::connect`], e.g. a default [`QuicTransportConfig`].
     pub fn new() -> Self {
         Self::default()
     }
@@ -1206,6 +1677,41 @@ impl ConnectOptions {
     pub fn with_additional_alpns(mut self, alpns: Vec<Vec<u8>>) -> Self {
         self.additional_alpns = alpns;
         self
+    }
+}
+
+/// Future returned from [`Endpoint::closed`].
+#[derive(derive_more::Debug)]
+#[pin_project]
+#[debug("EndpointClosed")]
+pub struct EndpointClosed {
+    #[pin]
+    inner: WaitForCancellationFutureOwned,
+}
+
+impl Future for EndpointClosed {
+    type Output = ();
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.project();
+        this.inner.poll(cx)
+    }
+}
+
+impl EndpointClosed {
+    /// Runs a future to completion, or until the [`Endpoint`] is closed.
+    ///
+    /// Returns the output of `fut` if it completes before the endpoint closes,
+    /// or `None` otherwise.
+    pub async fn run_until<F: Future>(self, fut: F) -> Option<F::Output> {
+        n0_future::future::or(async { Some(fut.await) }, async {
+            self.await;
+            None
+        })
+        .await
     }
 }
 
@@ -1274,6 +1780,24 @@ impl RelayMode {
             RelayMode::Custom(relay_map) => relay_map.clone(),
         }
     }
+
+    /// Create a custom relay mode from a list of [`RelayUrl`]s.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # fn main() -> n0_error::Result<()> {
+    /// # use iroh::RelayMode;
+    /// RelayMode::custom([
+    ///     "https://use1-1.relay.n0.iroh-canary.iroh.link.".parse()?,
+    ///     "https://euw-1.relay.n0.iroh-canary.iroh.link.".parse()?,
+    /// ]);
+    /// # Ok(()) }
+    /// ```
+    pub fn custom(map: impl IntoIterator<Item = RelayUrl>) -> Self {
+        let m = RelayMap::from_iter(map);
+        Self::Custom(m)
+    }
 }
 
 /// Environment variable to force the use of staging relays.
@@ -1304,30 +1828,37 @@ fn is_cgi() -> bool {
     std::env::var_os("REQUEST_METHOD").is_some()
 }
 
-// TODO: These tests could still be flaky, lets fix that:
-// https://github.com/n0-computer/iroh/issues/1183
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{
+        collections::BTreeMap,
+        io,
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        str::FromStr,
         sync::Arc,
         time::{Duration, Instant},
     };
 
-    use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
+    use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+    use iroh_relay::{endpoint_info::UserData, tls::CaRootsConfig};
     use n0_error::{AnyError as Error, Result, StdResultExt};
-    use n0_future::{BufferedStreamExt, StreamExt, stream, time};
+    use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
+    use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use quinn::ConnectionError;
+    use noq::PathStats;
     use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
     use tokio::sync::oneshot;
-    use tracing::{Instrument, error_span, info, info_span, instrument};
-    use tracing_test::traced_test;
+    use tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
 
     use super::Endpoint;
     use crate::{
         RelayMap, RelayMode,
-        discovery::static_provider::StaticProvider,
-        endpoint::{ConnectOptions, Connection},
+        address_lookup::memory::MemoryLookup,
+        endpoint::{
+            ApplicationClose, BindError, BindOpts, ConnectError, ConnectOptions,
+            ConnectWithOptsError, Connection, ConnectionError, PathWatcher, presets,
+        },
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
     };
@@ -1337,7 +1868,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_connect_self() -> Result {
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::builder(presets::Minimal)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await
@@ -1362,11 +1893,12 @@ mod tests {
         let qlog = QlogFileGroup::from_env("endpoint_connect_close");
 
         // Wait for the endpoint to be started to make sure it's up before clients try to connect
-        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(server_secret_key)
             .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
-            .insecure_skip_relay_cert_verify(true)
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
         // Wait for the endpoint to be reachable via relay
@@ -1385,15 +1917,17 @@ mod tests {
                 conn.close(7u8.into(), b"bye");
 
                 let res = conn.accept_uni().await;
-                assert_eq!(res.unwrap_err(), quinn::ConnectionError::LocallyClosed);
+                assert_eq!(res.unwrap_err(), ConnectionError::LocallyClosed);
 
                 let res = stream.read_to_end(10).await;
                 assert_eq!(
                     res.unwrap_err(),
-                    quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(
-                        quinn::ConnectionError::LocallyClosed
+                    noq::ReadToEndError::Read(noq::ReadError::ConnectionLost(
+                        ConnectionError::LocallyClosed
                     ))
                 );
+                info!("Closing the endpoint");
+                ep.close().await;
                 info!("server test completed");
                 Ok::<_, Error>(())
             }
@@ -1402,9 +1936,10 @@ mod tests {
 
         let client = tokio::spawn(
             async move {
-                let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+                let ep = Endpoint::builder(presets::Minimal)
+                    .relay_mode(RelayMode::Custom(relay_map))
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .insecure_skip_relay_cert_verify(true)
+                    .ca_roots_config(CaRootsConfig::insecure_skip_verify())
                     .transport_config(qlog.create("client")?)
                     .bind()
                     .await?;
@@ -1422,16 +1957,17 @@ mod tests {
                 info!("waiting for closed");
                 // Remote now closes the connection, we should see an error sometime soon.
                 let err = conn.closed().await;
-                let expected_err =
-                    quinn::ConnectionError::ApplicationClosed(quinn::ApplicationClose {
-                        error_code: 7u8.into(),
-                        reason: b"bye".to_vec().into(),
-                    });
+                let expected_err = ConnectionError::ApplicationClosed(ApplicationClose {
+                    error_code: 7u8.into(),
+                    reason: b"bye".to_vec().into(),
+                });
                 assert_eq!(err, expected_err);
 
                 info!("opening new - expect it to fail");
                 let res = conn.open_uni().await;
                 assert_eq!(res.unwrap_err(), expected_err);
+                info!("Closing the client");
+                ep.close().await;
                 info!("client test completed");
                 Ok::<_, Error>(())
             }
@@ -1455,15 +1991,16 @@ mod tests {
         let test_start = Instant::now();
         let n_clients = 5;
         let n_chunks_per_client = 2;
-        let chunk_size = 10;
+        let chunk_size = 100;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let server_secret_key = SecretKey::generate(&mut rng);
         let server_endpoint_id = server_secret_key.public();
 
         // Make sure the server is bound before having clients connect to it:
-        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .insecure_skip_relay_cert_verify(true)
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(server_secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -1480,79 +2017,99 @@ mod tests {
 
                 info!(me = %ep.id().fmt_short(), eps = ?eps, "server listening on");
                 for i in 0..n_clients {
-                    let round_start = Instant::now();
-                    info!("[server] round {i}");
-                    let incoming = ep.accept().await.anyerr()?;
-                    let conn = incoming.await.anyerr()?;
-                    let endpoint_id = conn.remote_id();
-                    info!(%i, peer = %endpoint_id.fmt_short(), "accepted connection");
-                    let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
-                    let mut buf = vec![0u8; chunk_size];
-                    for _i in 0..n_chunks_per_client {
-                        recv.read_exact(&mut buf).await.anyerr()?;
-                        send.write_all(&buf).await.anyerr()?;
+                    let res = tokio::time::timeout(Duration::from_secs(5), async {
+                        let round_start = Instant::now();
+                        info!("[server] round {i}");
+                        let incoming = ep.accept().await.anyerr()?;
+                        let conn = incoming.await.anyerr()?;
+                        let endpoint_id = conn.remote_id();
+                        info!(%i, peer = %endpoint_id.fmt_short(), "accepted connection");
+                        let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
+                        let mut buf = vec![0u8; chunk_size];
+                        for _i in 0..n_chunks_per_client {
+                            recv.read_exact(&mut buf).await.anyerr()?;
+                            send.write_all(&buf).await.anyerr()?;
+                        }
+                        info!(%i, peer = %endpoint_id.fmt_short(), "finishing");
+                        send.finish().anyerr()?;
+                        conn.closed().await; // we're the last to send data, so we wait for the other side to close
+                        info!(%i, peer = %endpoint_id.fmt_short(), "finished");
+                        info!("[server] round {i} done in {:?}", round_start.elapsed());
+                        Ok::<_, Error>(())
+                    })
+                    .await
+                    .std_context("timeout");
+                    match res {
+                        Err(err) | Ok(Err(err)) => {
+                            // ensure we close the endpoint before returning early
+                            // on error
+                            ep.close().await;
+                            return Err(err);
+                        }
+                        _ => {
+                            // if this round went `Ok` don't close the endpoint yet
+                        }
                     }
-                    send.finish().anyerr()?;
-                    conn.closed().await; // we're the last to send data, so we wait for the other side to close
-                    info!(%i, peer = %endpoint_id.fmt_short(), "finished");
-                    info!("[server] round {i} done in {:?}", round_start.elapsed());
                 }
+                // close the endpoint before dropping the server task
+                ep.close().await;
                 Ok::<_, Error>(())
             }
-            .instrument(error_span!("server")),
+            .instrument(debug_span!("server")),
         );
 
-        let start = Instant::now();
-
-        for i in 0..n_clients {
-            let round_start = Instant::now();
-            info!("[client] round {i}");
-            let client_secret_key = SecretKey::generate(&mut rng);
-            async {
-                info!("client binding");
-                let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let client = tokio::spawn(async move {
+            for i in 0..n_clients {
+                let round_start = Instant::now();
+                info!("[client] round {i}");
+                let client_secret_key = SecretKey::generate(&mut rng);
+                let ep = Endpoint::builder(presets::Minimal)
+                    .relay_mode(RelayMode::Custom(relay_map.clone()))
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .insecure_skip_relay_cert_verify(true)
+                    .ca_roots_config(CaRootsConfig::insecure_skip_verify())
                     .secret_key(client_secret_key)
                     .bind()
                     .await?;
-                let eps = ep.bound_sockets();
+                let ep_1 = ep.clone();
+                let res = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    async {
+                        info!("client binding");
+                        let eps = ep.bound_sockets();
 
-                info!(me = %ep.id().fmt_short(), eps=?eps, "client bound");
-                let endpoint_addr =
-                    EndpointAddr::new(server_endpoint_id).with_relay_url(relay_url.clone());
-                info!(to = ?endpoint_addr, "client connecting");
-                let conn = ep.connect(endpoint_addr, TEST_ALPN).await.anyerr()?;
-                info!("client connected");
-                let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+                        info!(me = %ep.id().fmt_short(), eps=?eps, "client bound");
+                        let endpoint_addr =
+                            EndpointAddr::new(server_endpoint_id).with_relay_url(relay_url.clone());
+                        info!(to = ?endpoint_addr, "client connecting");
+                        let conn = ep.connect(endpoint_addr, TEST_ALPN).await.anyerr()?;
+                        info!("client connected");
+                        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
 
-                for i in 0..n_chunks_per_client {
-                    let mut buf = vec![i; chunk_size];
-                    send.write_all(&buf).await.anyerr()?;
-                    recv.read_exact(&mut buf).await.anyerr()?;
-                    assert_eq!(buf, vec![i; chunk_size]);
-                }
-                // we're the last to receive data, so we close
-                conn.close(0u32.into(), b"bye!");
-                info!("client finished");
-                ep.close().await;
-                info!("client closed");
-                Ok::<_, Error>(())
+                        for i in 0..n_chunks_per_client {
+                            let mut buf = vec![i; chunk_size];
+                            send.write_all(&buf).await.anyerr()?;
+                            recv.read_exact(&mut buf).await.anyerr()?;
+                            assert_eq!(buf, vec![i; chunk_size]);
+                        }
+                        // we're the last to receive data, so we close
+                        conn.close(0u32.into(), b"bye!");
+                        info!("client finished");
+                        Ok::<_, Error>(())
+                    }
+                    .instrument(debug_span!("client", %i)),
+                )
+                .await
+                .std_context("timeout");
+                ep_1.close().await;
+                info!("client endpoint closed");
+                res??;
+                info!("[client] round {i} done in {:?}", round_start.elapsed());
             }
-            .instrument(error_span!("client", %i))
-            .await?;
-            info!("[client] round {i} done in {:?}", round_start.elapsed());
-        }
+            Ok::<_, Error>(())
+        });
 
         server.await.anyerr()??;
-
-        // We appear to have seen this being very slow at times.  So ensure we fail if this
-        // test is too slow.  We're only making two connections transferring very little
-        // data, this really shouldn't take long.
-        if start.elapsed() > Duration::from_secs(15) {
-            panic!("Test too slow, something went wrong");
-        }
-
+        client.await.anyerr()??;
         Ok(())
     }
 
@@ -1560,12 +2117,14 @@ mod tests {
     #[traced_test]
     async fn endpoint_send_relay() -> Result {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
-        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .insecure_skip_relay_cert_verify(true)
+        let client = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
-        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-            .insecure_skip_relay_cert_verify(true)
+        let server = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -1609,11 +2168,11 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_direct_only() -> Result {
         // Connect two endpoints on the same network, without a relay server, without
-        // discovery.
+        // Address Lookup.
         let ep1 = {
             let span = info_span!("server");
             let _guard = span.enter();
-            Endpoint::builder()
+            Endpoint::builder(presets::N0)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .relay_mode(RelayMode::Disabled)
                 .bind()
@@ -1622,7 +2181,7 @@ mod tests {
         let ep2 = {
             let span = info_span!("client");
             let _guard = span.enter();
-            Endpoint::builder()
+            Endpoint::builder(presets::N0)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .relay_mode(RelayMode::Disabled)
                 .bind()
@@ -1631,7 +2190,7 @@ mod tests {
         let ep1_nodeaddr = ep1.addr();
 
         #[instrument(name = "client", skip_all)]
-        async fn connect(ep: Endpoint, dst: EndpointAddr) -> Result<quinn::ConnectionError> {
+        async fn connect(ep: Endpoint, dst: EndpointAddr) -> Result<ConnectionError> {
             info!(me = %ep.id().fmt_short(), "client starting");
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.anyerr()?;
@@ -1660,7 +2219,7 @@ mod tests {
         let conn_closed = dbg!(ep2_connect.await.anyerr()??);
         assert!(matches!(
             conn_closed,
-            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+            ConnectionError::ApplicationClosed(ApplicationClose { .. })
         ));
 
         Ok(())
@@ -1670,7 +2229,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_relay_only_becomes_direct() -> Result {
         // Connect two endpoints on the same network, via a relay server, without
-        // discovery.  Wait until there is a direct connection.
+        // Address Lookup.  Wait until there is a direct connection.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
         let qlog = Arc::new(QlogFileGroup::from_env("two_relay_only_becomes_direct"));
@@ -1680,13 +2239,13 @@ mod tests {
             relay_map: RelayMap,
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
             qlog: Arc<QlogFileGroup>,
-        ) -> Result<quinn::ConnectionError> {
+        ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             let secret = SecretKey::generate(&mut rng);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .insecure_skip_relay_cert_verify(true)
+                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .transport_config(qlog.create("client")?)
                 .bind()
@@ -1707,9 +2266,19 @@ mod tests {
                 }
             }
             info!("Have direct connection");
+            #[cfg(feature = "metrics")]
+            {
+                // Validate holepunch metrics.
+                assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
+                assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
+            }
+
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
-            Ok(conn.closed().await)
+
+            let res = conn.closed().await;
+            ep.close().await;
+            Ok(res)
         }
 
         #[instrument(name = "server", skip_all)]
@@ -1720,10 +2289,10 @@ mod tests {
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
             let secret = SecretKey::generate(&mut rng);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .insecure_skip_relay_cert_verify(true)
+                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
                 .transport_config(qlog.create("server")?)
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
@@ -1745,7 +2314,8 @@ mod tests {
             let msg = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(msg, b"close please");
             info!("received 'close please'");
-            // Dropping the connection closes it just fine.
+            // Closing the endpoint closes all connections.
+            ep.close().await;
             Ok(())
         }
 
@@ -1756,7 +2326,7 @@ mod tests {
         let conn_closed = dbg!(client_task.await.anyerr()??);
         assert!(matches!(
             conn_closed,
-            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+            ConnectionError::ApplicationClosed(ApplicationClose { .. })
         ));
 
         Ok(())
@@ -1766,7 +2336,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_relay_only_no_ip() -> Result {
         // Connect two endpoints on the same network, via a relay server, without
-        // discovery.
+        // Address Lookup.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
 
@@ -1774,13 +2344,13 @@ mod tests {
         async fn connect(
             relay_map: RelayMap,
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
-        ) -> Result<quinn::ConnectionError> {
+        ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             let secret = SecretKey::generate(&mut rng);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .insecure_skip_relay_cert_verify(true)
+                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .clear_ip_transports() // disable direct
                 .bind()
@@ -1796,7 +2366,7 @@ mod tests {
             info!("Waiting for connection");
             'outer: while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
-                for info in infos {
+                for info in infos.iter() {
                     if info.is_ip() {
                         panic!("should not happen: {:?}", info);
                     }
@@ -1808,7 +2378,9 @@ mod tests {
             info!("Have relay connection");
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
-            Ok(conn.closed().await)
+            let res = conn.closed().await;
+            ep.close().await;
+            Ok(res)
         }
 
         #[instrument(name = "server", skip_all)]
@@ -1818,10 +2390,10 @@ mod tests {
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
             let secret = SecretKey::generate(&mut rng);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .insecure_skip_relay_cert_verify(true)
+                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .clear_ip_transports()
                 .bind()
@@ -1842,7 +2414,8 @@ mod tests {
             let msg = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(msg, b"close please");
             info!("received 'close please'");
-            // Dropping the connection closes it just fine.
+            // Closing the endpoint closes all connections.
+            ep.close().await;
             Ok(())
         }
 
@@ -1853,7 +2426,7 @@ mod tests {
         let conn_closed = dbg!(client_task.await.anyerr()??);
         assert!(matches!(
             conn_closed,
-            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+            ConnectionError::ApplicationClosed(ApplicationClose { .. })
         ));
 
         Ok(())
@@ -1863,7 +2436,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_direct_add_relay() -> Result {
         // Connect two endpoints on the same network, without relay server and without
-        // discovery.  Add a relay connection later.
+        // Address Lookup.  Add a relay connection later.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
 
@@ -1873,10 +2446,10 @@ mod tests {
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
         ) -> Result<()> {
             let secret = SecretKey::from([0u8; 32]);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .insecure_skip_relay_cert_verify(true)
+                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
@@ -1920,12 +2493,12 @@ mod tests {
         async fn accept(
             relay_map: RelayMap,
             node_addr_tx: oneshot::Sender<EndpointAddr>,
-        ) -> Result<quinn::ConnectionError> {
+        ) -> Result<ConnectionError> {
             let secret = SecretKey::from([1u8; 32]);
-            let ep = Endpoint::builder()
+            let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .insecure_skip_relay_cert_verify(true)
+                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
@@ -1968,7 +2541,7 @@ mod tests {
         let conn_closed = dbg!(server_task.await.anyerr()??);
         assert!(matches!(
             conn_closed,
-            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+            ConnectionError::ApplicationClosed(ApplicationClose { .. })
         ));
 
         Ok(())
@@ -1978,12 +2551,14 @@ mod tests {
     #[traced_test]
     async fn endpoint_relay_map_change() -> Result {
         let (relay_map, relay_url, _guard1) = run_relay_server().await?;
-        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .insecure_skip_relay_cert_verify(true)
+        let client = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
-        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-            .insecure_skip_relay_cert_verify(true)
+        let server = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2086,15 +2661,15 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_bidi_send_recv() -> Result {
-        let disco = StaticProvider::new();
-        let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(disco.clone())
+        let disco = MemoryLookup::new();
+        let ep1 = Endpoint::builder(presets::Minimal)
+            .address_lookup(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
 
-        let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(disco.clone())
+        let ep2 = Endpoint::builder(presets::Minimal)
+            .address_lookup(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2186,9 +2761,10 @@ mod tests {
     async fn test_direct_addresses_no_qad_relay() -> Result {
         let (relay_map, _, _guard) = run_relay_server_with(false).await.unwrap();
 
-        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map))
             .alpns(vec![TEST_ALPN.to_vec()])
-            .insecure_skip_relay_cert_verify(true)
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
 
@@ -2201,8 +2777,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn graceful_close() -> Result {
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server = Endpoint::empty_builder(RelayMode::Disabled)
+        let client = Endpoint::bind(presets::Minimal).await?;
+        let server = Endpoint::builder(presets::Minimal)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2244,12 +2820,12 @@ mod tests {
         use iroh_metrics::Registry;
 
         let secret_key = SecretKey::from_bytes(&[0u8; 32]);
-        let client = Endpoint::empty_builder(RelayMode::Disabled)
+        let client = Endpoint::builder(presets::Minimal)
             .secret_key(secret_key)
             .bind()
             .await?;
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let server = Endpoint::empty_builder(RelayMode::Disabled)
+        let server = Endpoint::builder(presets::Minimal)
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2271,18 +2847,18 @@ mod tests {
         let server = server_task.await.anyerr()??;
 
         let m = client.metrics();
-        // assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
-        // assert_eq!(m.magicsock.connection_became_direct.get(), 1);
-        // assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
-        // assert_eq!(m.magicsock.endpoints_contacted_directly.get(), 1);
-        assert!(m.magicsock.recv_datagrams.get() > 0);
+        // assert_eq!(m.socket.num_direct_conns_added.get(), 1);
+        // assert_eq!(m.socket.connection_became_direct.get(), 1);
+        // assert_eq!(m.socket.connection_handshake_success.get(), 1);
+        // assert_eq!(m.socket.endpoints_contacted_directly.get(), 1);
+        assert!(m.socket.recv_datagrams.get() > 0);
 
         let m = server.metrics();
-        // assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
-        // assert_eq!(m.magicsock.connection_became_direct.get(), 1);
-        // assert_eq!(m.magicsock.endpoints_contacted_directly.get(), 1);
-        // assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
-        assert!(m.magicsock.recv_datagrams.get() > 0);
+        // assert_eq!(m.socket.num_direct_conns_added.get(), 1);
+        // assert_eq!(m.socket.connection_became_direct.get(), 1);
+        // assert_eq!(m.socket.endpoints_contacted_directly.get(), 1);
+        // assert_eq!(m.socket.connection_handshake_success.get(), 1);
+        assert!(m.socket.recv_datagrams.get() > 0);
 
         // test openmetrics encoding with labeled subregistries per endpoint
         fn register_endpoint(registry: &mut Registry, endpoint: &Endpoint) {
@@ -2294,8 +2870,8 @@ mod tests {
         register_endpoint(&mut registry, &client);
         register_endpoint(&mut registry, &server);
         // let s = registry.encode_openmetrics_to_string().anyerr()?;
-        // assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#));
-        // assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#));
+        // assert!(s.contains(r#"socket_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#));
+        // assert!(s.contains(r#"socket_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#));
         Ok(())
     }
 
@@ -2306,8 +2882,8 @@ mod tests {
         primary_connect_alpn: &[u8],
         secondary_connect_alpns: Vec<Vec<u8>>,
     ) -> Result<Vec<u8>> {
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server = Endpoint::empty_builder(RelayMode::Disabled)
+        let client = Endpoint::bind(presets::Minimal).await?;
+        let server = Endpoint::builder(presets::Minimal)
             .alpns(accept_alpns)
             .bind()
             .await?;
@@ -2396,7 +2972,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn watch_net_report() -> Result {
-        let endpoint = Endpoint::empty_builder(RelayMode::Staging).bind().await?;
+        let endpoint = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Staging)
+            .bind()
+            .await?;
 
         // can get a first report
         endpoint.net_report().updated().await.anyerr()?;
@@ -2427,10 +3006,7 @@ mod tests {
         }
 
         async fn noop_server() -> Result<(Router, EndpointAddr)> {
-            let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-                .bind()
-                .await
-                .anyerr()?;
+            let endpoint = Endpoint::bind(presets::Minimal).await.anyerr()?;
             let addr = endpoint.addr();
             let router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
             Ok((router, addr))
@@ -2450,9 +3026,9 @@ mod tests {
             .map(|(_, addr)| addr.clone())
             .collect::<Vec<_>>();
         let ids = addrs.iter().map(|addr| addr.id).collect::<Vec<_>>();
-        let discovery = StaticProvider::from_endpoint_info(addrs);
-        let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(discovery)
+        let address_lookup = MemoryLookup::from_endpoint_info(addrs);
+        let endpoint = Endpoint::builder(presets::Minimal)
+            .address_lookup(address_lookup)
             .bind()
             .await
             .anyerr()?;
@@ -2474,6 +3050,655 @@ mod tests {
         let dt1 = t1.elapsed().as_secs_f64();
 
         assert!(dt0 / dt1 < 20.0, "First round: {dt0}s, second round {dt1}s");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_custom_relay() -> Result {
+        let _ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::custom([RelayUrl::from_str(
+                "https://use1-1.relay.n0.iroh-canary.iroh.link.",
+            )?]))
+            .bind()
+            .await?;
+
+        let relays = RelayMap::try_from_iter([
+            "https://use1-1.relay.n0.iroh.iroh.link/",
+            "https://euc1-1.relay.n0.iroh.iroh.link/",
+        ])?;
+        let _ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relays))
+            .bind()
+            .await?;
+
+        Ok(())
+    }
+
+    /// Testing bind_addr: Clear IP transports and add single IPv4 bind
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_clear() -> Result {
+        let ep = Endpoint::builder(presets::Minimal)
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 1);
+        assert_eq!(bound_sockets[0].ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        ep.close().await;
+        Ok(())
+    }
+
+    /// Testing bind_addr: Do not clear IP transports and add single non-default IPv4 bind
+    ///
+    /// This will bind two sockets: default wildcard bind for IPv6, and our
+    /// manually-added IPv4 bind.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_no_clear() -> Result {
+        let ep = Endpoint::builder(presets::Minimal)
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 1);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
+        // Test that our manually added socket is there
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        ep.close().await;
+        Ok(())
+    }
+
+    // Testing bind_addr: Do not clear IP transports and add single default IPv4 bind.
+    //
+    // This replaces the default IPv4 bind added by the builder,
+    // but keeps the default wildcard IPv6 bind.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_default() -> Result {
+        let ep = Endpoint::builder(presets::Minimal)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, 0),
+                BindOpts::default().set_is_default_route(true),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 1);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        ep.close().await;
+        drop(ep);
+
+        Ok(())
+    }
+
+    /// Testing bind_addr: Do not clear IP transports and add single IPv4 bind with a non-zero prefix len
+    ///
+    /// This will bind three sockets: default wildcard bind for IPv4 and IPv6, and our
+    /// manually-added IPv4 bind.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_nonzero_prefix() -> Result {
+        let ep = Endpoint::builder(presets::Minimal)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, 0),
+                BindOpts::default().set_prefix_len(32),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 3);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
+        // Test that the default wildcard socket is there
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+        );
+        // Test that our manually added socket is there
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        ep.close().await;
+        Ok(())
+    }
+
+    /// Bind on an unusable port with the default opts.
+    ///
+    /// Binding the endpoint fails with an AddrInUse error.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_badport() -> Result {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = socket.local_addr()?.port();
+
+        let res = Endpoint::builder(presets::Minimal)
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::LOCALHOST, port))?
+            .bind()
+            .await;
+
+        assert!(matches!(
+            res,
+            Err(BindError::Sockets {
+                source: io_error,
+                ..
+            })
+            if io_error.kind() == io::ErrorKind::AddrInUse
+        ));
+        Ok(())
+    }
+
+    /// Bind a non-default route on an unusable port, but set is_required = false.
+    ///
+    /// Binding the endpoint succeeds.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_badport_notrequired() -> Result {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = socket.local_addr()?.port();
+
+        let ep = Endpoint::builder(presets::Minimal)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, port),
+                BindOpts::default()
+                    .set_prefix_len(32)
+                    .set_is_required(false),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        // just the default wildcard binds
+        assert_eq!(bound_sockets.len(), 2);
+        // our requested bind addr is not included because it failed to bind
+        assert!(
+            !bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        Ok(())
+    }
+
+    /// Bind on a default route on an unusable port, but set is_required = false.
+    ///
+    /// Binding the endpoint succeeds.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_badport_default_notrequired() -> Result {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = socket.local_addr()?.port();
+
+        let ep = Endpoint::builder(presets::Minimal)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, port),
+                BindOpts::default().set_is_required(false),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        // just the IPv6 default, but no IPv4 bind at all because we replaced the default
+        // with a bind with an unusable port and set it to not be required.
+        assert_eq!(bound_sockets.len(), 1);
+        assert!(bound_sockets[0].is_ipv6());
+        Ok(())
+    }
+
+    /// Bind on an unusable port, with is_required = false, and no other transports.
+    ///
+    /// Binding the endpoint fails with "no valid address available".
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_badport_notrequired_no_other_transports() -> Result {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = socket.local_addr()?.port();
+
+        let res = Endpoint::builder(presets::Minimal)
+            .clear_ip_transports()
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, port),
+                BindOpts::default().set_is_required(false),
+            )?
+            .bind()
+            .await;
+
+        assert!(matches!(
+            res,
+            Err(BindError::CreateQuicEndpoint {
+                source: io_error,
+                ..
+            })
+            if io_error.kind() == io::ErrorKind::Other && io_error.to_string() == "no valid address available"
+        ));
+        Ok(())
+    }
+
+    /// Bind with prefix len 0 but set the route as non-default.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_prefix_len_0_not_default() -> Result {
+        let ep = Endpoint::builder(presets::Minimal)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, 0),
+                BindOpts::default().set_is_default_route(false),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        // The two default wildcard binds plus our additional route (which does not replace the default route
+        // because we set is_default_route to false explicitly).
+        assert_eq!(bound_sockets.len(), 3);
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V6(Ipv6Addr::UNSPECIFIED))
+        );
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+        );
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        Ok(())
+    }
+
+    #[ignore = "flaky"]
+    #[tokio::test]
+    #[traced_test]
+    async fn connect_via_relay_becomes_direct_and_sends_direct() -> Result {
+        let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
+        let qlog = Arc::new(QlogFileGroup::from_env(
+            "connect_via_relay_becomes_direct_and_sends_direct",
+        ));
+        let transfer_size = 1_000_000;
+
+        fn collect_stats(mut watcher: PathWatcher) -> BTreeMap<TransportAddr, PathStats> {
+            watcher
+                .get()
+                .iter()
+                .map(|info| {
+                    (
+                        info.remote_addr().clone(),
+                        info.stats().expect("conn is not yet dropped"),
+                    )
+                })
+                .collect()
+        }
+
+        let client = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .transport_config(qlog.create("client")?)
+            .bind()
+            .await?;
+        let server = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .transport_config(qlog.create("server")?)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let server_addr = EndpointAddr::new(server.id()).with_relay_url(relay_url);
+        let server_task = tokio::spawn(async move {
+            let incoming = server.accept().await.anyerr()?;
+            let conn = incoming.await.anyerr()?;
+            let watcher = conn.paths();
+            let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
+            let msg = recv.read_to_end(transfer_size).await.anyerr()?;
+            send.write_all(&msg).await.anyerr()?;
+            send.finish().anyerr()?;
+            conn.closed().await;
+            let stats = collect_stats(watcher);
+            Ok::<_, Error>(stats)
+        });
+
+        let conn = client.connect(server_addr, TEST_ALPN).await?;
+        let watcher = conn.paths();
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(&vec![42u8; transfer_size]).await.anyerr()?;
+        send.finish().anyerr()?;
+        recv.read_to_end(transfer_size).await.anyerr()?;
+        conn.close(0u32.into(), b"thanks, bye!");
+        client.close().await;
+        let client_stats = collect_stats(watcher);
+        let server_stats = server_task.await.anyerr()??;
+
+        info!("client stats: {client_stats:#?}");
+        info!("server stats: {server_stats:#?}");
+
+        let client_total_relay_tx = client_stats
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_tx.bytes)
+            .sum::<u64>();
+        let client_total_relay_rx = client_stats
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_rx.bytes)
+            .sum::<u64>();
+        let server_total_relay_tx = server_stats
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_tx.bytes)
+            .sum::<u64>();
+        let server_total_relay_rx = server_stats
+            .iter()
+            .filter(|(remote, _stats)| remote.is_relay())
+            .map(|(_, stats)| stats.udp_rx.bytes)
+            .sum::<u64>();
+
+        info!(?client_total_relay_tx, "total");
+        info!(?client_total_relay_rx, "total");
+        info!(?server_total_relay_tx, "total");
+        info!(?server_total_relay_rx, "total");
+
+        // We should send/receive only the minorty of traffic via the relay.
+        assert!(client_total_relay_tx < transfer_size as u64 / 2);
+        assert!(client_total_relay_rx < transfer_size as u64 / 2);
+        assert!(server_total_relay_tx < transfer_size as u64 / 2);
+        assert!(server_total_relay_rx < transfer_size as u64 / 2);
+
+        Ok(())
+    }
+
+    /// Tests that correct logs are emitted when connecting two endpoints with same secret keys to a relay.
+    #[tokio::test]
+    #[traced_test]
+    async fn same_endpoint_id_relay() -> Result {
+        let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
+        let secret_key = SecretKey::generate(&mut rng);
+
+        let client = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .bind()
+            .instrument(error_span!("ep-client"))
+            .await?;
+
+        info!("client {}", client.id());
+
+        // bind ep1 and wait until connected to relay.
+        let ep1 = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .secret_key(secret_key.clone())
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .instrument(error_span!("ep1"))
+            .await?;
+        info!("ep1 bound {:?}", ep1.id());
+        ep1.online().await;
+        info!("ep1 online");
+
+        let addr = EndpointAddr::new(secret_key.public()).with_relay_url(relay_url.clone());
+
+        tokio::try_join!(
+            async {
+                let conn = client.connect(addr.clone(), TEST_ALPN).await?;
+                let reason = conn.closed().await;
+                assert!(is_application_closed(&reason, 1));
+                n0_error::Ok(())
+            },
+            async {
+                let conn = ep1.accept().await.unwrap().await?;
+                conn.close(1u32.into(), b"bye");
+                n0_error::Ok(())
+            }
+        )?;
+        info!("client connected to ep1");
+
+        // now start second endpoint with same secret key
+        let ep2 = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map))
+            .secret_key(secret_key.clone())
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .instrument(error_span!("ep2"))
+            .await?;
+        info!("ep2 bound {:?}", ep2.id());
+        ep2.online().await;
+        println!("ep2 online");
+
+        // `online` does not mean that the connection to the home relay was *established*,
+        // only that the home relay was *chosen* based on the net report probes.
+        // We need to wait for the connection to be established though, to be sure that new packets
+        // will be routed to the new endpoint and not to the old endpoint anymore.
+        // We don't expose being connected to the home relay on the endpoint currently,
+        // so we resort to log assertions.
+        // TODO(Frando): Replace once we add a proper API for this.
+        let expected_log_line = format!(
+            "ep2:endpoint{{id={}}}:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected",
+            ep2.id().fmt_short()
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !logs_contain(&expected_log_line) {
+                tokio::time::sleep(Duration::from_millis(10)).await
+            }
+        })
+        .await
+        .std_context("relay connection did not establish in time")?;
+
+        tokio::try_join!(
+            async {
+                let conn = client.connect(addr.clone(), TEST_ALPN).await?;
+                let reason = conn.closed().await;
+                assert!(is_application_closed(&reason, 1));
+                n0_error::Ok(())
+            },
+            async {
+                let conn = ep2.accept().await.unwrap().await?;
+                conn.close(1u32.into(), b"bye");
+                n0_error::Ok(())
+            }
+        )?;
+        println!("client connected to ep2");
+
+        // assert that ep1 did not receive a connection
+        assert!(now_or_never(ep1.accept()).is_none());
+
+        // We assert that we get the warn log once for endpoint 1, and not at all for endpoint 2.
+        logs_assert(|logs| {
+            let expected_line = |line: &str| {
+                line.contains("WARN") && line.contains("Another endpoint connected with the same endpoint id. No more messages will be received")
+            };
+            let count_line_ep1 = logs
+                .iter()
+                .filter(|line| line.contains(":ep1:") && expected_line(line))
+                .count();
+            let count_line_ep2 = logs
+                .iter()
+                .filter(|line| line.contains(":ep2:") && expected_line(line))
+                .count();
+            if count_line_ep1 == 1 && count_line_ep2 == 0 {
+                Ok(())
+            } else {
+                Err("Logs don't match expectations".to_string())
+            }
+        });
+        tokio::join!(ep1.close(), ep2.close(), client.close());
+        Ok(())
+    }
+
+    fn is_application_closed(close_reason: &ConnectionError, code: u32) -> bool {
+        matches!(
+            close_reason,
+            ConnectionError::ApplicationClosed(f) if f.error_code ==code.into()
+        )
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_closed_endpoint_behaviour() -> Result {
+        // create endpoint
+        // call endpoint.close
+        // ensure methods behave in the expected way
+        info!("Creating endpoint");
+        let ep = Endpoint::builder(presets::N0).bind().await?;
+        let closed = ep.closed();
+        info!("Closing endpoint");
+        let now = Instant::now();
+        ep.close().await;
+        info!("Endpoint closed in {:?}", now.elapsed());
+
+        // Assert that the `closed` cancellation token is now cancelled
+        assert_eq!(now_or_never(closed), Some(()));
+
+        info!("Set ALPNS fails silently");
+        ep.set_alpns(vec![b"test".into()]);
+
+        info!("Insert Relay returns None");
+        let relay_config = crate::defaults::staging::default_na_east_relay();
+        assert!(
+            ep.insert_relay("localhost:300".parse()?, Arc::new(relay_config))
+                .await
+                .is_none()
+        );
+
+        info!("Remove Relay returns None");
+        assert!(ep.remove_relay(&"localhost:300".parse()?).await.is_none());
+
+        info!("Connecting");
+        let mut rng = ChaCha8Rng::seed_from_u64(41);
+        let ep_id = SecretKey::generate(&mut rng).public();
+
+        // should likely be an error that states that the
+        // endpoint is closed instead:
+        if let ConnectError::Connect { source, .. } = ep.connect(ep_id, b"test").await.unwrap_err()
+        {
+            assert!(matches!(
+                source,
+                ConnectWithOptsError::EndpointClosed { .. }
+            ));
+        } else {
+            panic!("unexpected error for connect");
+        }
+
+        info!("Accepting!");
+        assert!(ep.accept().await.is_none());
+
+        // this should work
+        info!("Addr: {:?}", ep.addr());
+
+        // create watchers to verify they terminate after the endpoint is dropped.
+        let mut addrs = ep.watch_addr().stream();
+        let mut net_reports = ep.net_report().stream();
+
+        // returns None
+        let net_report = ep.last_net_report();
+        info!("last Net report {net_report:?}");
+
+        // this should work
+        let sockets = ep.bound_sockets();
+        info!("Sockets: {sockets:?}");
+
+        // these should return errors
+        assert!(ep.dns_resolver().is_err());
+        assert!(ep.address_lookup().is_err());
+
+        #[cfg(feature = "metrics")]
+        {
+            // this should work
+            let metrics = ep.metrics();
+            info!("Metrics: {metrics:?}");
+        }
+
+        // this should return none
+        assert!(ep.remote_info(ep_id).await.is_none());
+
+        // this should fail silently
+        ep.network_change().await;
+
+        // this should fail silently
+        ep.set_user_data_for_address_lookup(Some(
+            UserData::try_from("TEST".to_string()).expect("valid string"),
+        ));
+        drop(ep);
+        // now that the endpoint is dropped, all watchers should terminate.
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while let Some(addr) = addrs.next().await {
+                info!("Addrs stream: {addr:?}");
+            }
+            while let Some(net_report) = net_reports.next().await {
+                info!("Net report stream: {net_report:?}");
+            }
+        })
+        .await
+        .expect("watchers not closed");
+
+        info!("Done!");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_closed_endpoint_unpolled_accept_fut() -> Result {
+        info!("Creating endpoint");
+        let ep = Endpoint::builder(presets::N0).bind().await?;
+
+        info!("Get accept future");
+        let accept_fut = ep.accept();
+
+        info!("Closing endpoint");
+        let now = Instant::now();
+        tokio::time::timeout(Duration::from_secs(5), ep.close())
+            .await
+            .expect("Endpoint closes in a reasonable time");
+        info!("Endpoint closed in {:?}", now.elapsed());
+
+        info!("Accept future returns None after the endpoint has closed");
+        let incoming = accept_fut.await;
+        assert!(incoming.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_closed_endpoint_polled_accept_fut() -> Result {
+        info!("Creating endpoint");
+        let ep = Endpoint::builder(presets::N0).bind().await?;
+
+        info!("Run an accept task");
+        let ep2 = ep.clone();
+        let accept_task = tokio::spawn(async move {
+            info!("Waiting on Accept");
+            let res = ep2.accept().await;
+            info!("Accept await has returned");
+            res
+        });
+
+        // Try to ensure the accept future is polled at least once.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        info!("Closing the endpoint");
+        tokio::time::timeout(Duration::from_secs(5), ep.close())
+            .await
+            .expect("Endpoint closes in a reasonable time");
+        info!("Endpoint closed");
+
+        info!("Await the accept task");
+        let incoming = accept_task.await.expect("accept task panicked");
+        assert!(incoming.is_none());
+
         Ok(())
     }
 }

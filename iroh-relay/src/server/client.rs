@@ -17,8 +17,8 @@ use tracing::{Instrument, debug, trace, warn};
 use crate::{
     PingTracker,
     protos::{
-        disco,
         relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg},
+        streams::BytesStreamSink,
     },
     server::{
         clients::Clients,
@@ -37,12 +37,18 @@ pub(super) struct Packet {
 }
 
 /// Configuration for a [`Client`].
+///
+/// Generic over the stream type to support different WebSocket implementations.
 #[derive(Debug)]
-pub(super) struct Config {
-    pub(super) endpoint_id: EndpointId,
-    pub(super) stream: RelayedStream,
-    pub(super) write_timeout: Duration,
-    pub(super) channel_capacity: usize,
+pub struct Config<S> {
+    /// The endpoint ID of the client
+    pub endpoint_id: EndpointId,
+    /// The relayed stream connection
+    pub stream: RelayedStream<S>,
+    /// Write timeout for the client connection
+    pub write_timeout: Duration,
+    /// Channel capacity for internal message queues
+    pub channel_capacity: usize,
 }
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
@@ -50,7 +56,7 @@ pub(super) struct Config {
 /// [`Server`]: crate::server::Server
 /// [`Client`]: crate::client::Client
 #[derive(Debug)]
-pub(super) struct Client {
+pub struct Client {
     /// Identity of the connected peer.
     endpoint_id: EndpointId,
     /// Connection identifier.
@@ -59,24 +65,25 @@ pub(super) struct Client {
     done: CancellationToken,
     /// Actor handle.
     handle: AbortOnDropHandle<()>,
-    /// Queue of packets intended for the client.
-    send_queue: mpsc::Sender<Packet>,
-    /// Queue of disco packets intended for the client.
-    disco_send_queue: mpsc::Sender<Packet>,
-    /// Channel to notify the client that a previous sender has disconnected.
-    peer_gone: mpsc::Sender<EndpointId>,
+    /// Channel to send packets intended for the client.
+    packet_queue: mpsc::Sender<Packet>,
+    /// Channel to send non-packet messages to the client.
+    message_queue: mpsc::Sender<RelayToClientMsg>,
 }
 
 impl Client {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
-    pub(super) fn new(
-        config: Config,
+    pub(super) fn new<S>(
+        config: Config<S>,
         connection_id: u64,
         clients: &Clients,
         metrics: Arc<Metrics>,
-    ) -> Client {
+    ) -> Client
+    where
+        S: BytesStreamSink + Send + 'static,
+    {
         let Config {
             endpoint_id,
             stream,
@@ -84,18 +91,15 @@ impl Client {
             channel_capacity,
         } = config;
 
+        let (packet_send_queue_s, packet_send_queue_r) = mpsc::channel(channel_capacity);
+        let (message_send_queue_s, message_send_queue_r) = mpsc::channel(channel_capacity);
         let done = CancellationToken::new();
-        let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
-
-        let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
-        let (peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
 
         let actor = Actor {
             stream,
             timeout: write_timeout,
-            send_queue: send_queue_r,
-            disco_send_queue: disco_send_queue_r,
-            endpoint_gone: peer_gone_r,
+            packet_send_queue: packet_send_queue_r,
+            message_send_queue: message_send_queue_r,
             endpoint_id,
             connection_id,
             clients: clients.clone(),
@@ -117,9 +121,8 @@ impl Client {
             connection_id,
             handle: AbortOnDropHandle::new(handle),
             done,
-            send_queue: send_queue_s,
-            disco_send_queue: disco_send_queue_s,
-            peer_gone: peer_gone_s,
+            packet_queue: packet_send_queue_s,
+            message_queue: message_send_queue_s,
         }
     }
 
@@ -150,26 +153,27 @@ impl Client {
         src: EndpointId,
         data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
-        self.send_queue.try_send(Packet { src, data })
-    }
-
-    pub(super) fn try_send_disco_packet(
-        &self,
-        src: EndpointId,
-        data: Datagrams,
-    ) -> Result<(), TrySendError<Packet>> {
-        self.disco_send_queue.try_send(Packet { src, data })
+        self.packet_queue.try_send(Packet { src, data })
     }
 
     pub(super) fn try_send_peer_gone(
         &self,
         key: EndpointId,
-    ) -> Result<(), TrySendError<EndpointId>> {
-        self.peer_gone.try_send(key)
+    ) -> Result<(), TrySendError<RelayToClientMsg>> {
+        self.message_queue
+            .try_send(RelayToClientMsg::EndpointGone(key))
+    }
+
+    pub(super) fn try_send_health(
+        &self,
+        problem: String,
+    ) -> Result<(), TrySendError<RelayToClientMsg>> {
+        self.message_queue
+            .try_send(RelayToClientMsg::Health { problem })
     }
 }
 
-/// Error for [`Actor::handle_frame`]
+/// Error when handling an incoming frame from a client.
 #[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
@@ -184,7 +188,7 @@ pub enum HandleFrameError {
     Send { source: WriteFrameError },
 }
 
-/// Error for [`Actor::write_frame`]
+/// Error when writing a frame to a client.
 #[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
@@ -215,20 +219,12 @@ pub enum RunError {
         #[error(from)]
         source: HandleFrameError,
     },
-    #[error("Server.disco_send_queue dropped")]
-    DiscoSendQueuePacketDrop {},
-    #[error("Failed to send disco packet")]
-    DiscoPacketSend { source: WriteFrameError },
-    #[error("Server.send_queue dropped")]
-    SendQueuePacketDrop {},
     #[error("Failed to send packet")]
     PacketSend { source: WriteFrameError },
-    #[error("Server.endpoint_gone dropped")]
-    EndpointGoneDrop {},
-    #[error("EndpointGone write frame failed")]
-    EndpointGoneWriteFrame { source: WriteFrameError },
-    #[error("Keep alive write frame failed")]
-    KeepAliveWriteFrame { source: WriteFrameError },
+    #[error("Handle was dropped")]
+    HandleDropped {},
+    #[error("Writing a frame failed")]
+    WriteFrame { source: WriteFrameError },
     #[error("Tick flush")]
     TickFlush {},
 }
@@ -251,17 +247,15 @@ pub enum RunError {
 ///     - receive a ping and write a pong back
 ///     to speak to the endpoint ID associated with that client.
 #[derive(Debug)]
-struct Actor {
+struct Actor<S> {
     /// IO Stream to talk to the client
-    stream: RelayedStream,
+    stream: RelayedStream<S>,
     /// Maximum time we wait to complete a write to the client
     timeout: Duration,
-    /// Packets queued to send to the client
-    send_queue: mpsc::Receiver<Packet>,
-    /// Important packets queued to send to the client
-    disco_send_queue: mpsc::Receiver<Packet>,
-    /// Notify the client that a previous sender has disconnected
-    endpoint_gone: mpsc::Receiver<EndpointId>,
+    /// Receiver for packets to be sent to the client.
+    packet_send_queue: mpsc::Receiver<Packet>,
+    /// Receiver for non-packet messages to be sent to the client.
+    message_send_queue: mpsc::Receiver<RelayToClientMsg>,
     /// [`EndpointId`] of this client
     endpoint_id: EndpointId,
     /// Connection identifier.
@@ -274,7 +268,10 @@ struct Actor {
     metrics: Arc<Metrics>,
 }
 
-impl Actor {
+impl<S> Actor<S>
+where
+    S: BytesStreamSink,
+{
     async fn run(mut self, done: CancellationToken) {
         // Note the accept and disconnects metrics must be in a pair.  Technically the
         // connection is accepted long before this in the HTTP server, but it is clearer to
@@ -326,27 +323,20 @@ impl Actor {
                     // reset the ping interval, we just received a message
                     ping_interval.reset();
                 }
-                // First priority, disco packets
-                packet = self.disco_send_queue.recv() => {
-                    let packet = packet.ok_or_else(|| e!(RunError::DiscoSendQueuePacketDrop))?;
-                    self.send_disco_packet(packet)
-                        .await
-                        .map_err(|err| e!(RunError::DiscoPacketSend, err))?;
-                }
                 // Second priority, sending regular packets
-                packet = self.send_queue.recv() => {
-                    let packet = packet.ok_or_else(|| e!(RunError::SendQueuePacketDrop))?;
+                packet = self.packet_send_queue.recv() => {
+                    let packet = packet.ok_or_else(|| e!(RunError::HandleDropped))?;
                     self.send_packet(packet)
                         .await
                         .map_err(|err| e!(RunError::PacketSend, err))?;
                 }
-                // Last priority, sending left endpoints
-                endpoint_id = self.endpoint_gone.recv() => {
-                    let endpoint_id = endpoint_id.ok_or_else(|| e!(RunError::EndpointGoneDrop))?;
-                    trace!("endpoint_id gone: {:?}", endpoint_id);
-                    self.write_frame(RelayToClientMsg::EndpointGone(endpoint_id))
+                // Last priority, sending other message
+                message = self.message_send_queue.recv() => {
+                    let message = message .ok_or_else(|| e!(RunError::HandleDropped))?;
+                    trace!("send {message:?}");
+                    self.write_frame(message)
                         .await
-                        .map_err(|err| e!(RunError::EndpointGoneWriteFrame, err))?;
+                        .map_err(|err| e!(RunError::WriteFrame, err))?;
                 }
                 _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
@@ -359,7 +349,7 @@ impl Actor {
                     let data = self.ping_tracker.new_ping();
                     self.write_frame(RelayToClientMsg::Ping(data))
                         .await
-                        .map_err(|err| e!(RunError::KeepAliveWriteFrame, err))?;
+                        .map_err(|err| e!(RunError::WriteFrame, err))?;
                 }
             }
 
@@ -411,20 +401,6 @@ impl Actor {
         }
     }
 
-    async fn send_disco_packet(&mut self, packet: Packet) -> Result<(), WriteFrameError> {
-        trace!("send disco packet");
-        match self.send_raw(packet).await {
-            Ok(()) => {
-                self.metrics.disco_packets_sent.inc();
-                Ok(())
-            }
-            Err(err) => {
-                self.metrics.disco_packets_dropped.inc();
-                Err(err)
-            }
-        }
-    }
-
     /// Handles frame read results.
     async fn handle_frame(
         &mut self,
@@ -467,23 +443,12 @@ impl Actor {
         dst: EndpointId,
         data: Datagrams,
     ) -> Result<(), ForwardPacketError> {
-        if disco::looks_like_disco_wrapper(&data.contents) {
-            self.metrics.disco_packets_recv.inc();
-            self.clients
-                .send_disco_packet(dst, data, self.endpoint_id, &self.metrics)?;
-        } else {
-            self.metrics.send_packets_recv.inc();
-            self.clients
-                .send_packet(dst, data, self.endpoint_id, &self.metrics)?;
-        }
+        self.metrics.send_packets_recv.inc();
+        self.clients
+            .send_packet(dst, data, self.endpoint_id, &self.metrics)?;
+
         Ok(())
     }
-}
-
-#[derive(Debug)]
-pub(crate) enum PacketScope {
-    Disco,
-    Data,
 }
 
 #[derive(Debug)]
@@ -492,10 +457,14 @@ pub(crate) enum SendError {
     Closed,
 }
 
+/// Error returned when forwarding a packet to a client fails.
+///
+/// This error occurs when the relay server cannot deliver a packet to its intended
+/// recipient, typically due to the client's send queue being full or the client
+/// disconnecting.
 #[stack_error(derive, add_meta)]
-#[error("failed to forward {scope:?} packet: {reason:?}")]
+#[error("failed to forward packet: {reason:?}")]
 pub struct ForwardPacketError {
-    scope: PacketScope,
     reason: SendError,
 }
 
@@ -536,9 +505,9 @@ mod tests {
     use iroh_base::SecretKey;
     use n0_error::{Result, StdResultExt, bail_any};
     use n0_future::Stream;
+    use n0_tracing_test::traced_test;
     use rand::SeedableRng;
     use tracing::info;
-    use tracing_test::traced_test;
 
     use super::*;
     use crate::{client::conn::Conn, protos::common::FrameType};
@@ -572,8 +541,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
-        let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
-        let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
+        let (message_s, message_r) = mpsc::channel(10);
 
         let endpoint_id = SecretKey::generate(&mut rng).public();
         let (io, io_rw) = tokio::io::duplex(1024);
@@ -585,9 +553,8 @@ mod tests {
         let actor = Actor {
             stream,
             timeout: Duration::from_secs(1),
-            send_queue: send_queue_r,
-            disco_send_queue: disco_send_queue_r,
-            endpoint_gone: peer_gone_r,
+            packet_send_queue: send_queue_r,
+            message_send_queue: message_r,
             connection_id: 0,
             endpoint_id,
             clients: clients.clone(),
@@ -625,26 +592,12 @@ mod tests {
             }
         );
 
-        // send disco packet
-        println!("  send disco packet");
-        disco_send_queue_s
-            .send(packet.clone())
-            .await
-            .std_context("send")?;
-        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut io_rw)
-            .await
-            .anyerr()?;
-        assert_eq!(
-            frame,
-            RelayToClientMsg::Datagrams {
-                remote_endpoint_id: endpoint_id,
-                datagrams: data.to_vec().into()
-            }
-        );
-
         // send peer_gone
         println!("send peer gone");
-        peer_gone_s.send(endpoint_id).await.std_context("send")?;
+        message_s
+            .send(RelayToClientMsg::EndpointGone(endpoint_id))
+            .await
+            .std_context("send")?;
         let frame = recv_frame(FrameType::EndpointGone, &mut io_rw)
             .await
             .anyerr()?;
@@ -671,20 +624,6 @@ mod tests {
             .send(ClientToRelayMsg::Datagrams {
                 dst_endpoint_id: target,
                 datagrams: Datagrams::from(data),
-            })
-            .await
-            .std_context("send")?;
-
-        // send disco packet
-        println!("  send disco packet");
-        // starts with `MAGIC` & key, then data
-        let mut disco_data = disco::MAGIC.as_bytes().to_vec();
-        disco_data.extend_from_slice(target.as_bytes());
-        disco_data.extend_from_slice(data);
-        io_rw
-            .send(ClientToRelayMsg::Datagrams {
-                dst_endpoint_id: target,
-                datagrams: disco_data.clone().into(),
             })
             .await
             .std_context("send")?;

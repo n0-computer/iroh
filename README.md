@@ -39,7 +39,7 @@ To ensure these connections are as fast as possible, we [continuously measure ir
 
 ### Built on [QUIC]
 
-Iroh uses [Quinn] to establish [QUIC] connections between endpoints.
+Iroh uses [noq] to establish [QUIC] connections between endpoints.
 This way you get authenticated encryption, concurrent streams with stream priorities, a datagram transport and avoid head-of-line-blocking out of the box.
 
 ## Compose Protocols
@@ -154,7 +154,7 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 
 [QUIC]: https://en.wikipedia.org/wiki/QUIC
 [BLAKE3]: https://github.com/BLAKE3-team/BLAKE3
-[Quinn]: https://github.com/quinn-rs/quinn
+[noq]: https://github.com/n0-computer/noq
 [iroh-blobs]: https://github.com/n0-computer/iroh-blobs
 [iroh-gossip]: https://github.com/n0-computer/iroh-gossip
 [iroh-docs]: https://github.com/n0-computer/iroh-docs

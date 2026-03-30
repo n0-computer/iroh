@@ -41,19 +41,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 [workspace.lints.clippy]
 unused-async = "warn"
 
-
 [patch.crates-io]
-iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "main" }
-iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "main" }
-iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "main" }
-
-netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
-
-# iroh-quinn = { path = "../quinn/quinn" }
-# iroh-quinn-proto = { path = "../quinn/quinn-proto" }
-# iroh-quinn-udp = { path = "../quinn/quinn-udp" }
-
-# [patch."https://github.com/n0-computer/quinn"]
-# iroh-quinn = { path = "../quinn/quinn" }
-# iroh-quinn-proto = { path = "../quinn/quinn-proto" }
-# iroh-quinn-udp = { path = "../quinn/quinn-udp" }
+noq = { git = "https://github.com/n0-computer/noq", branch = "main" }
+noq-proto = { git = "https://github.com/n0-computer/noq", branch = "main" }
+noq-udp = { git = "https://github.com/n0-computer/noq", branch = "main" }

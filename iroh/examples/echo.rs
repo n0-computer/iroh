@@ -8,7 +8,7 @@
 
 use iroh::{
     Endpoint, EndpointAddr,
-    endpoint::Connection,
+    endpoint::{Connection, presets},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_error::{Result, StdResultExt};
@@ -21,6 +21,7 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let router = start_accept_side().await?;
 
     // wait for the endpoint to be online
@@ -35,7 +36,7 @@ async fn main() -> Result<()> {
 }
 
 async fn connect_side(addr: EndpointAddr) -> Result<()> {
-    let endpoint = Endpoint::bind().await?;
+    let endpoint = Endpoint::bind(presets::N0).await?;
 
     // Open a connection to the accepting endpoint
     let conn = endpoint.connect(addr, ALPN).await?;
@@ -68,7 +69,7 @@ async fn connect_side(addr: EndpointAddr) -> Result<()> {
 }
 
 async fn start_accept_side() -> Result<Router> {
-    let endpoint = Endpoint::bind().await?;
+    let endpoint = Endpoint::bind(presets::N0).await?;
 
     // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the endpoint.
     let router = Router::builder(endpoint).accept(ALPN, Echo).spawn();

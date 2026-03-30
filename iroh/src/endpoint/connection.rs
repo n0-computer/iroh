@@ -1,4 +1,4 @@
-//! The [`Connection`] wraps a `quinn::Connection`.
+//! The [`Connection`] wraps a `noq::Connection`.
 //!
 //! The [`Connection`] is how you send data to and receive data from the remote endpoint.
 //!
@@ -27,34 +27,79 @@ use std::{
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
-use iroh_base::EndpointId;
+use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
-use n0_watcher::Watcher;
+use noq::WeakConnectionHandle;
 use pin_project::pin_project;
-use quinn::{
-    AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
-    RetryError, SendDatagramError, ServerConfig, Side, VarInt, WeakConnectionHandle,
-};
-use quinn_proto::PathId;
-use tracing::warn;
+use tracing::{event, warn};
 
+use super::quic::DecryptedInitial;
 use crate::{
     Endpoint,
-    endpoint::AfterHandshakeOutcome,
-    magicsock::{
+    endpoint::{
+        AfterHandshakeOutcome,
+        quic::{
+            AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
+            ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
+            SendDatagramError, ServerConfig, Side, VarInt,
+        },
+    },
+    socket::{
         RemoteStateActorStoppedError,
-        remote_map::{PathInfoList, PathsWatcher},
+        remote_map::{PathInfo, PathWatchable, PathWatcher},
     },
 };
+
+/// The remote address for an incoming connection.
+///
+/// When the incoming connection is a direct connection, this is a SocketAddr.
+/// When it is a relay connection, we know both the relay URL and the endpoint ID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IncomingAddr {
+    /// A direct connection from an IP address.
+    Ip(SocketAddr),
+    /// A connection via a relay.
+    Relay {
+        /// The URL of the relay.
+        url: RelayUrl,
+        /// The endpoint ID of the remote peer.
+        endpoint_id: EndpointId,
+    },
+    /// A connection via a custom transport.
+    Custom(iroh_base::CustomAddr),
+}
+
+impl From<IncomingAddr> for iroh_base::TransportAddr {
+    fn from(addr: IncomingAddr) -> Self {
+        match addr {
+            IncomingAddr::Ip(addr) => Self::Ip(addr),
+            IncomingAddr::Relay { url, .. } => Self::Relay(url),
+            IncomingAddr::Custom(addr) => Self::Custom(addr),
+        }
+    }
+}
+
+impl From<crate::socket::transports::Addr> for IncomingAddr {
+    fn from(addr: crate::socket::transports::Addr) -> Self {
+        match addr {
+            crate::socket::transports::Addr::Ip(addr) => Self::Ip(addr),
+            crate::socket::transports::Addr::Relay(url, endpoint_id) => {
+                Self::Relay { url, endpoint_id }
+            }
+            crate::socket::transports::Addr::Custom(addr) => Self::Custom(addr),
+        }
+    }
+}
 
 /// Future produced by [`Endpoint::accept`].
 #[derive(derive_more::Debug)]
 #[pin_project]
 pub struct Accept<'a> {
     #[pin]
-    #[debug("quinn::Accept")]
-    pub(crate) inner: quinn::Accept<'a>,
+    #[debug("noq::Accept")]
+    pub(crate) inner: noq::Accept<'a>,
     pub(crate) ep: Endpoint,
 }
 
@@ -66,10 +111,18 @@ impl Future for Accept<'_> {
         match this.inner.poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(inner)) => Poll::Ready(Some(Incoming {
-                inner,
-                ep: this.ep.clone(),
-            })),
+            Poll::Ready(Some(inner)) => {
+                let incoming = Incoming {
+                    inner,
+                    ep: this.ep.clone(),
+                };
+                event!(
+                    target: "iroh::_events::conn::incoming",
+                    tracing::Level::DEBUG,
+                    remote_addr = ?incoming.remote_addr(),
+                );
+                Poll::Ready(Some(incoming))
+            }
         }
     }
 }
@@ -78,7 +131,7 @@ impl Future for Accept<'_> {
 /// handshake.
 #[derive(Debug)]
 pub struct Incoming {
-    inner: quinn::Incoming,
+    inner: noq::Incoming,
     ep: Endpoint,
 }
 
@@ -100,15 +153,21 @@ impl Incoming {
 
     /// Accepts this incoming connection using a custom configuration.
     ///
+    /// Use the [`Endpoint::create_server_config_builder`] method to create a [`ServerConfigBuilder`]
+    /// to customize a [`ServerConfig`].
+    ///
     /// See [`accept()`] for more details.
     ///
     /// [`accept()`]: Incoming::accept
+    /// [`Endpoint::create_server_config_builder`]: crate::Endpoint::create_server_config_builder
+    /// [`ServerConfigBuilder`]: crate::endpoint::ServerConfigBuilder
+    /// [`ServerConfig`]: crate::endpoint::ServerConfig
     pub fn accept_with(
         self,
         server_config: Arc<ServerConfig>,
     ) -> Result<Accepting, ConnectionError> {
         self.inner
-            .accept_with(server_config)
+            .accept_with(server_config.to_inner_arc())
             .map(|conn| Accepting::new(conn, self.ep))
     }
 
@@ -124,7 +183,9 @@ impl Incoming {
     /// Errors if `remote_address_validated()` is true.
     #[allow(clippy::result_large_err)]
     pub fn retry(self) -> Result<(), RetryError> {
-        self.inner.retry()
+        self.inner
+            .retry()
+            .map_err(|err| e!(RetryError { err, ep: self.ep }))
     }
 
     /// Ignores this incoming connection attempt, not sending any packet in response.
@@ -138,17 +199,27 @@ impl Incoming {
         self.inner.local_ip()
     }
 
-    /// Returns the peer's UDP address.
-    pub fn remote_address(&self) -> SocketAddr {
-        self.inner.remote_address()
+    /// Returns the remote address of this incoming connection.
+    pub fn remote_addr(&self) -> IncomingAddr {
+        self.ep
+            .to_transport_addr(self.inner.remote_address())
+            .into()
     }
 
     /// Whether the socket address that is initiating this connection has been validated.
     ///
     /// This means that the sender of the initial packet has proved that they can receive
-    /// traffic sent to `self.remote_address()`.
-    pub fn remote_address_validated(&self) -> bool {
+    /// traffic sent to `self.remote_addr()`.
+    pub fn remote_addr_validated(&self) -> bool {
         self.inner.remote_address_validated()
+    }
+
+    /// Decrypt the Initial packet payload
+    ///
+    /// This clones and decrypts the packet payload (~1200 bytes).
+    /// Can be used to extract information from the TLS ClientHello without completing the handshake.
+    pub fn decrypt(&self) -> Option<DecryptedInitial> {
+        self.inner.decrypt()
     }
 }
 
@@ -158,10 +229,28 @@ impl IntoFuture for Incoming {
 
     fn into_future(self) -> Self::IntoFuture {
         IncomingFuture(Box::pin(async move {
-            let quinn_conn = self.inner.into_future().await?;
-            let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
+            let noq_conn = self.inner.into_future().await?;
+            let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
             Ok(conn)
         }))
+    }
+}
+
+/// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
+#[stack_error(derive, add_meta, from_sources)]
+#[error("retry() with validated Incoming")]
+pub struct RetryError {
+    err: noq::RetryError,
+    ep: Endpoint,
+}
+
+impl RetryError {
+    /// Get the [`Incoming`]
+    pub fn into_incoming(self) -> Incoming {
+        Incoming {
+            inner: self.err.into_incoming(),
+            ep: self.ep,
+        }
     }
 }
 
@@ -179,17 +268,17 @@ impl Future for IncomingFuture {
 }
 
 /// Extracts the ALPN protocol from the peer's handshake data.
-fn alpn_from_quinn_conn(conn: &quinn::Connection) -> Option<Vec<u8>> {
+fn alpn_from_noq_conn(conn: &noq::Connection) -> Option<Vec<u8>> {
     let data = conn.handshake_data()?;
-    match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
+    match data.downcast::<noq::crypto::rustls::HandshakeData>() {
         Ok(data) => data.protocol,
         Err(_) => None,
     }
 }
 
-async fn alpn_from_quinn_connecting(conn: &mut quinn::Connecting) -> Result<Vec<u8>, AlpnError> {
+async fn alpn_from_noq_connecting(conn: &mut noq::Connecting) -> Result<Vec<u8>, AlpnError> {
     let data = conn.handshake_data().await?;
-    match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
+    match data.downcast::<noq::crypto::rustls::HandshakeData>() {
         Ok(data) => match data.protocol {
             Some(protocol) => Ok(protocol),
             None => Err(e!(AlpnError::Unavailable)),
@@ -209,18 +298,18 @@ pub enum AuthenticationError {
     NoAlpn {},
 }
 
-/// Converts a `quinn::Connection` to a `Connection`.
+/// Converts a `noq::Connection` to a `Connection`.
 ///
 /// Returns an error if there was a connection error, the handshake data has not completed
 /// or if the remote did not set an ALPN.
 ///
 /// Otherwise returns a future that completes once the connection has been registered with the
-/// magicsock. This future can return an [`RemoteStateActorStoppedError`], which will only be
+/// socket. This future can return an [`RemoteStateActorStoppedError`], which will only be
 /// emitted if the endpoint is closing.
 ///
 /// The returned future is `'static`, so it can be stored without being lifetime-bound on `&ep`.
-fn conn_from_quinn_conn(
-    conn: quinn::Connection,
+fn conn_from_noq_conn(
+    conn: noq::Connection,
     ep: &Endpoint,
 ) -> Result<
     impl Future<Output = Result<Connection, ConnectingError>> + Send + 'static,
@@ -239,13 +328,22 @@ fn conn_from_quinn_conn(
         }
     };
 
-    // Register this connection with the magicsock.
+    event!(
+        target: "iroh::_events::conn::connected",
+        tracing::Level::DEBUG,
+        conn_id = conn.stable_id(),
+        side = ?conn.side(),
+        remote_id = %info.endpoint_id.fmt_short(),
+        alpn = %String::from_utf8_lossy(&info.alpn),
+    );
+
+    // Register this connection with the socket.
     let fut = ep
-        .msock
+        .inner
         .register_connection(info.endpoint_id, conn.weak_handle());
 
     // Check hooks
-    let msock = ep.msock.clone();
+    let inner = ep.inner.clone();
     Ok(async move {
         let paths = fut.await?;
         let conn = Connection {
@@ -254,7 +352,7 @@ fn conn_from_quinn_conn(
         };
 
         if let AfterHandshakeOutcome::Reject { error_code, reason } =
-            msock.hooks.after_handshake(&conn.to_info()).await
+            inner.hooks.after_handshake(&conn.to_info()).await
         {
             conn.close(error_code, &reason);
             return Err(e!(ConnectingError::LocallyRejected));
@@ -264,9 +362,9 @@ fn conn_from_quinn_conn(
     })
 }
 
-fn static_info_from_conn(conn: &quinn::Connection) -> Result<StaticInfo, AuthenticationError> {
-    let endpoint_id = remote_id_from_quinn_conn(conn)?;
-    let alpn = alpn_from_quinn_conn(conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
+fn static_info_from_conn(conn: &noq::Connection) -> Result<StaticInfo, AuthenticationError> {
+    let endpoint_id = remote_id_from_noq_conn(conn)?;
+    let alpn = alpn_from_noq_conn(conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
     Ok(StaticInfo { endpoint_id, alpn })
 }
 
@@ -278,9 +376,7 @@ fn static_info_from_conn(conn: &quinn::Connection) -> Result<StaticInfo, Authent
 /// connection.
 ///
 /// [`PublicKey`]: iroh_base::PublicKey
-fn remote_id_from_quinn_conn(
-    conn: &quinn::Connection,
-) -> Result<EndpointId, RemoteEndpointIdError> {
+fn remote_id_from_noq_conn(conn: &noq::Connection) -> Result<EndpointId, RemoteEndpointIdError> {
     let data = conn.peer_identity();
     match data {
         None => {
@@ -317,30 +413,30 @@ fn remote_id_from_quinn_conn(
 /// This future resolves to a [`Connection`] once the handshake completes.
 #[derive(derive_more::Debug)]
 pub struct Connecting {
-    inner: quinn::Connecting,
-    /// Future to register the connection with the magicsock.
+    inner: noq::Connecting,
+    /// Future to register the connection with the socket.
     ///
     /// This is set and polled after `inner` completes. We are using an option instead of an enum
     /// because we need infallible access to `inner` in some methods.
-    #[debug("{}", register_with_magicsock.as_ref().map(|_| "Some(RegisterWithMagicsockFut)").unwrap_or("None"))]
-    register_with_magicsock: Option<RegisterWithMagicsockFut>,
+    #[debug("{}", register_with_socket.as_ref().map(|_| "Some(RegisterWithSocketFut)").unwrap_or("None"))]
+    register_with_socket: Option<RegisterWithSocketFut>,
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
     remote_endpoint_id: EndpointId,
 }
 
-type RegisterWithMagicsockFut = BoxFuture<Result<Connection, ConnectingError>>;
+type RegisterWithSocketFut = BoxFuture<Result<Connection, ConnectingError>>;
 
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
 pub struct Accepting {
-    inner: quinn::Connecting,
-    /// Future to register the connection with the magicsock.
+    inner: noq::Connecting,
+    /// Future to register the connection with the socket.
     ///
     /// This is set and polled after `inner` completes. We are using an option instead of an enum
     /// because we need infallible access to `inner` in some methods.
-    #[debug("{}", register_with_magicsock.as_ref().map(|_| "Some(RegisterWithMagicsockFut)").unwrap_or("None"))]
-    register_with_magicsock: Option<RegisterWithMagicsockFut>,
+    #[debug("{}", register_with_socket.as_ref().map(|_| "Some(RegisterWithSocketFut)").unwrap_or("None"))]
+    register_with_socket: Option<RegisterWithSocketFut>,
     ep: Endpoint,
 }
 
@@ -383,7 +479,7 @@ pub enum ConnectingError {
 
 impl Connecting {
     pub(crate) fn new(
-        inner: quinn::Connecting,
+        inner: noq::Connecting,
         ep: Endpoint,
         remote_endpoint_id: EndpointId,
     ) -> Self {
@@ -391,7 +487,7 @@ impl Connecting {
             inner,
             ep,
             remote_endpoint_id,
-            register_with_magicsock: None,
+            register_with_socket: None,
         }
     }
 
@@ -429,16 +525,16 @@ impl Connecting {
     ///
     /// See also documentation for [`Accepting::into_0rtt`].
     ///
-    /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
+    /// [`RecvStream::is_0rtt`]: noq::RecvStream::is_0rtt
     #[allow(clippy::result_large_err)]
     pub fn into_0rtt(self) -> Result<OutgoingZeroRttConnection, Connecting> {
         match self.inner.into_0rtt() {
-            Ok((quinn_conn, zrtt_accepted)) => {
+            Ok((noq_conn, zrtt_accepted)) => {
                 let accepted: BoxFuture<_> = Box::pin({
-                    let quinn_conn = quinn_conn.clone();
+                    let noq_conn = noq_conn.clone();
                     async move {
                         let accepted = zrtt_accepted.await;
-                        let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
+                        let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
                         Ok(match accepted {
                             true => ZeroRttStatus::Accepted(conn),
                             false => ZeroRttStatus::Rejected(conn),
@@ -447,7 +543,7 @@ impl Connecting {
                 });
                 let accepted = accepted.shared();
                 Ok(Connection {
-                    inner: quinn_conn,
+                    inner: noq_conn,
                     data: OutgoingZeroRttData { accepted },
                 })
             }
@@ -462,7 +558,7 @@ impl Connecting {
 
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub async fn alpn(&mut self) -> Result<Vec<u8>, AlpnError> {
-        alpn_from_quinn_connecting(&mut self.inner).await
+        alpn_from_noq_connecting(&mut self.inner).await
     }
 
     /// Returns the [`EndpointId`] of the endpoint that this connection attempt tries to connect to.
@@ -476,23 +572,23 @@ impl Future for Connecting {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         loop {
-            if let Some(fut) = &mut self.register_with_magicsock {
+            if let Some(fut) = &mut self.register_with_socket {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
-                let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
-                let fut = conn_from_quinn_conn(quinn_conn, &self.ep)?;
-                self.register_with_magicsock = Some(Box::pin(fut.err_into()));
+                let noq_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
+                let fut = conn_from_noq_conn(noq_conn, &self.ep)?;
+                self.register_with_socket = Some(Box::pin(fut.err_into()));
             }
         }
     }
 }
 
 impl Accepting {
-    pub(crate) fn new(inner: quinn::Connecting, ep: Endpoint) -> Self {
+    pub(crate) fn new(inner: noq::Connecting, ep: Endpoint) -> Self {
         Self {
             inner,
             ep,
-            register_with_magicsock: None,
+            register_with_socket: None,
         }
     }
 
@@ -522,27 +618,34 @@ impl Accepting {
     ///
     /// See also documentation for [`Connecting::into_0rtt`].
     ///
-    /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
+    /// [`RecvStream::is_0rtt`]: crate::endpoint::RecvStream::is_0rtt
     pub fn into_0rtt(self) -> IncomingZeroRttConnection {
-        let (quinn_conn, zrtt_accepted) = self
+        let (noq_conn, zrtt_accepted) = self
             .inner
             .into_0rtt()
             .expect("incoming connections can always be converted to 0-RTT");
 
         let accepted: BoxFuture<_> = Box::pin({
-            let quinn_conn = quinn_conn.clone();
+            let noq_conn = noq_conn.clone();
             async move {
                 let _ = zrtt_accepted.await;
-                let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
+                let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
                 Ok(conn)
             }
         });
         let accepted = accepted.shared();
 
         IncomingZeroRttConnection {
-            inner: quinn_conn,
+            inner: noq_conn,
             data: IncomingZeroRttData { accepted },
         }
+    }
+
+    /// Returns the remote address of this connection.
+    pub fn remote_addr(&self) -> IncomingAddr {
+        self.ep
+            .to_transport_addr(self.inner.remote_address())
+            .into()
     }
 
     /// Parameters negotiated during the handshake
@@ -552,7 +655,7 @@ impl Accepting {
 
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub async fn alpn(&mut self) -> Result<Vec<u8>, AlpnError> {
-        alpn_from_quinn_connecting(&mut self.inner).await
+        alpn_from_noq_connecting(&mut self.inner).await
     }
 }
 
@@ -561,13 +664,13 @@ impl Future for Accepting {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         loop {
-            if let Some(fut) = &mut self.register_with_magicsock {
+            if let Some(fut) = &mut self.register_with_socket {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
-                let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
-                match conn_from_quinn_conn(quinn_conn, &self.ep) {
+                let noq_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
+                match conn_from_noq_conn(noq_conn, &self.ep) {
                     Err(err) => return Poll::Ready(Err(err)),
-                    Ok(fut) => self.register_with_magicsock = Some(Box::pin(fut.err_into())),
+                    Ok(fut) => self.register_with_socket = Some(Box::pin(fut.err_into())),
                 };
             }
         }
@@ -634,7 +737,7 @@ pub type IncomingZeroRttConnection = Connection<IncomingZeroRtt>;
 /// May be cloned to obtain another handle to the same connection.
 #[derive(Debug, Clone)]
 pub struct Connection<State: ConnectionState = HandshakeCompleted> {
-    inner: quinn::Connection,
+    inner: noq::Connection,
     /// State-specific information
     data: State::Data,
 }
@@ -643,7 +746,7 @@ pub struct Connection<State: ConnectionState = HandshakeCompleted> {
 #[derive(Debug, Clone)]
 pub struct HandshakeCompletedData {
     info: StaticInfo,
-    paths: PathsWatcher,
+    paths: PathWatchable,
 }
 
 /// Static info from a completed TLS handshake.
@@ -726,8 +829,8 @@ impl<T: ConnectionState> Connection<T> {
     /// without writing anything to [`SendStream`] will never succeed.
     ///
     /// [`open_bi`]: Connection::open_bi
-    /// [`SendStream`]: quinn::SendStream
-    /// [`RecvStream`]: quinn::RecvStream
+    /// [`SendStream`]: crate::endpoint::SendStream
+    /// [`RecvStream`]: crate::endpoint::RecvStream
     #[inline]
     pub fn open_bi(&self) -> OpenBi<'_> {
         self.inner.open_bi()
@@ -747,8 +850,8 @@ impl<T: ConnectionState> Connection<T> {
     /// writing anything to the connected [`SendStream`] will never succeed.
     ///
     /// [`open_bi`]: Connection::open_bi
-    /// [`SendStream`]: quinn::SendStream
-    /// [`RecvStream`]: quinn::RecvStream
+    /// [`SendStream`]: crate::endpoint::SendStream
+    /// [`RecvStream`]: crate::endpoint::RecvStream
     #[inline]
     pub fn accept_bi(&self) -> AcceptBi<'_> {
         self.inner.accept_bi()
@@ -822,20 +925,18 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.send_datagram(data)
     }
 
-    // TODO: It seems `SendDatagram` is not yet exposed by quinn.  This has been fixed
-    //       upstream and will be in the next release.
-    // /// Transmits `data` as an unreliable, unordered application datagram
-    // ///
-    // /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
-    // /// conditions, which effectively prioritizes old datagrams over new datagrams.
-    // ///
-    // /// See [`send_datagram()`] for details.
-    // ///
-    // /// [`send_datagram()`]: Connection::send_datagram
-    // #[inline]
-    // pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
-    //     self.inner.send_datagram_wait(data)
-    // }
+    /// Transmits `data` as an unreliable, unordered application datagram
+    ///
+    /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
+    /// conditions, which effectively prioritizes old datagrams over new datagrams.
+    ///
+    /// See [`send_datagram()`] for details.
+    ///
+    /// [`send_datagram()`]: Connection::send_datagram
+    #[inline]
+    pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
+        self.inner.send_datagram_wait(data)
+    }
 
     /// Computes the maximum size of datagrams that may be passed to [`send_datagram`].
     ///
@@ -879,10 +980,7 @@ impl<T: ConnectionState> Connection<T> {
 
     /// Current state of the congestion control algorithm, for debugging purposes.
     #[inline]
-    pub fn congestion_state(
-        &self,
-        path_id: PathId,
-    ) -> Option<Box<dyn quinn_proto::congestion::Controller>> {
+    pub fn congestion_state(&self, path_id: PathId) -> Option<Box<dyn Controller>> {
         self.inner.congestion_state(path_id)
     }
 
@@ -904,7 +1002,7 @@ impl<T: ConnectionState> Connection<T> {
     /// default `rustls` session, the return value can be [`downcast`] to a
     /// <code>Vec<[rustls::pki_types::CertificateDer]></code>
     ///
-    /// [`Session`]: quinn_proto::crypto::Session
+    /// [`Session`]: noq_proto::crypto::Session
     /// [`downcast`]: Box::downcast
     #[inline]
     pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
@@ -934,7 +1032,7 @@ impl<T: ConnectionState> Connection<T> {
         output: &mut [u8],
         label: &[u8],
         context: &[u8],
-    ) -> Result<(), quinn_proto::crypto::ExportKeyingMaterialError> {
+    ) -> Result<(), ExportKeyingMaterialError> {
         self.inner.export_keying_material(output, label, context)
     }
 
@@ -947,7 +1045,7 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.set_max_concurrent_uni_streams(count)
     }
 
-    /// See [`quinn_proto::TransportConfig::receive_window`].
+    /// See [`noq_proto::TransportConfig::receive_window`].
     #[inline]
     pub fn set_receive_window(&self, receive_window: VarInt) {
         self.inner.set_receive_window(receive_window)
@@ -986,16 +1084,30 @@ impl Connection<HandshakeCompleted> {
     /// A connection can have several network paths to the remote endpoint, commonly there
     /// will be a path via the relay server and a holepunched path.
     ///
-    /// The watcher is updated whenever a path is opened or closed, or when the path selected
-    /// for transmission changes (see [`PathInfo::is_selected`]).
+    /// Returns a [`PathWatcher`], which implements the [`Watcher`] trait. The watcher is updated
+    /// whenever a path is opened or closed, or when the path selected for transmission changes
+    /// (see [`PathInfo::is_selected`]).
     ///
     /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
-    /// transmission path.
+    /// network path.
     ///
-    /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
-    /// [`PathInfo`]: crate::magicsock::PathInfo
-    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        self.data.paths.clone()
+    /// As long as a [`PathWatcher`] is alive, the list of paths will only grow. If paths
+    /// are closed, they will be marked as closed (see [`PathInfo::is_closed`]) but will
+    /// not be removed from the list of paths. This allows to reliably retrieve stats for
+    /// closed paths.
+    ///
+    /// A [`PathWatcher`] does not keep the [`Connection`] itself alive. If all references to
+    /// a connection are dropped, the [`PathWatcher`] will start to return an error when
+    /// updating. Its last value may still be used - note however that accessing
+    /// stats for a path via [`PathInfo::stats`] returns `None` if all references to a
+    /// [`Connection`] have been dropped. To reliably access path stats when a connection closes,
+    /// wait for [`Connection::closed`] and then call [`Connection::paths`] and directly
+    /// iterate over the path stats while the [`Connection`] struct is still in scope.
+    ///
+    /// [`PathInfoList`]: crate::endpoint::PathInfoList
+    /// [`Watcher`]: crate::Watcher
+    pub fn paths(&self) -> PathWatcher {
+        self.data.paths.watch()
     }
 
     /// Returns the side of the connection (client or server).
@@ -1019,7 +1131,7 @@ impl Connection<HandshakeCompleted> {
 impl Connection<IncomingZeroRtt> {
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> Option<Vec<u8>> {
-        alpn_from_quinn_conn(&self.inner)
+        alpn_from_noq_conn(&self.inner)
     }
 
     /// Waits until the full handshake occurs and then returns a [`Connection`].
@@ -1037,12 +1149,24 @@ impl Connection<IncomingZeroRtt> {
     pub async fn handshake_completed(&self) -> Result<Connection, ConnectingError> {
         self.data.accepted.clone().await
     }
+
+    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    ///
+    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// included in the TLS certificate presented during the handshake when connecting.
+    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// connection.
+    ///
+    /// [`PublicKey`]: iroh_base::PublicKey
+    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
+        remote_id_from_noq_conn(&self.inner)
+    }
 }
 
 impl Connection<OutgoingZeroRtt> {
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> Option<Vec<u8>> {
-        alpn_from_quinn_conn(&self.inner)
+        alpn_from_noq_conn(&self.inner)
     }
 
     /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
@@ -1066,6 +1190,18 @@ impl Connection<OutgoingZeroRtt> {
     /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(&self) -> Result<ZeroRttStatus, ConnectingError> {
         self.data.accepted.clone().await
+    }
+
+    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    ///
+    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// included in the TLS certificate presented during the handshake when connecting.
+    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// connection.
+    ///
+    /// [`PublicKey`]: iroh_base::PublicKey
+    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
+        remote_id_from_noq_conn(&self.inner)
     }
 }
 
@@ -1094,21 +1230,11 @@ impl ConnectionInfo {
         self.inner.upgrade().is_some()
     }
 
-    /// Returns a [`Watcher`] for the network paths of this connection.
+    /// Returns a watcher for the network paths of this connection.
     ///
-    /// A connection can have several network paths to the remote endpoint, commonly there
-    /// will be a path via the relay server and a holepunched path.
-    ///
-    /// The watcher is updated whenever a path is opened or closed, or when the path selected
-    /// for transmission changes (see [`PathInfo::is_selected`]).
-    ///
-    /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
-    /// transmission path.
-    ///
-    /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
-    /// [`PathInfo`]: crate::magicsock::PathInfo
-    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        self.data.paths.clone()
+    /// See [`Connection::paths`] for details.
+    pub fn paths(&self) -> PathWatcher {
+        self.data.paths.watch()
     }
 
     /// Returns connection statistics.
@@ -1130,31 +1256,37 @@ impl ConnectionInfo {
         let fut = self.inner.upgrade()?.on_closed();
         Some(fut.await)
     }
+
+    /// Returns the currently selected path.
+    pub fn selected_path(&self) -> Option<PathInfo> {
+        self.paths().into_iter().find(|path| path.is_selected())
+    }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::time::Duration;
 
     use iroh_base::{EndpointAddr, SecretKey};
+    use iroh_relay::tls::CaRootsConfig;
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::StreamExt;
+    use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use rand::SeedableRng;
     use tracing::{Instrument, error_span, info, info_span, trace_span};
-    use tracing_test::traced_test;
 
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, Incoming, PathInfo, PathInfoList, ZeroRttStatus},
+        endpoint::{ConnectOptions, Incoming, PathInfo, PathInfoList, ZeroRttStatus, presets},
         test_utils::run_relay_server,
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
     async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
-        let server = Endpoint::empty_builder(RelayMode::Disabled)
+        let server = Endpoint::builder(presets::Minimal)
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -1281,7 +1413,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let client = Endpoint::bind(presets::Minimal).await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
@@ -1301,7 +1433,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt_non_consecutive() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let client = Endpoint::bind(presets::Minimal).await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
@@ -1326,7 +1458,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled)
+        let client = Endpoint::builder(presets::Minimal)
             .bind()
             .instrument(info_span!("client"))
             .await?;
@@ -1365,16 +1497,18 @@ mod tests {
         const ALPN: &[u8] = b"test";
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, _relay_map, _guard) = run_relay_server().await?;
-        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let server = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
-            .insecure_skip_relay_cert_verify(true)
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
 
-        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+        let client = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::generate(&mut rng))
-            .insecure_skip_relay_cert_verify(true)
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;
 
@@ -1425,23 +1559,23 @@ mod tests {
             }
         );
 
+        tokio::time::pause();
+
         // Close the client connection.
         info!("close client conn");
         conn_client.close(0u32.into(), b"");
 
-        // Verify that the path watch streams close.
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), paths_client.next())
-                .await
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), paths_server.next())
-                .await
-                .unwrap(),
-            None
-        );
+        // Verify that the path watch streams close shortly after the connection is closed
+        tokio::time::timeout(Duration::from_nanos(1), async {
+            while paths_client.next().await.is_some() {}
+        })
+        .await
+        .expect("client paths watcher did not close within 1s of connection close");
+        tokio::time::timeout(Duration::from_nanos(1), async {
+            while paths_client.next().await.is_some() {}
+        })
+        .await
+        .expect("server paths watcher did not close within 1s of connection close");
 
         server.close().await;
         client.close().await;

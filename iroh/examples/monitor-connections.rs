@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use iroh::{
-    Endpoint, RelayMode, Watcher,
-    endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks},
+    Endpoint, Watcher,
+    endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks, presets},
 };
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_future::task::AbortOnDropHandle;
@@ -23,7 +23,7 @@ async fn main() -> Result {
         .init();
 
     let monitor = Monitor::new();
-    let server = Endpoint::empty_builder(RelayMode::Disabled)
+    let server = Endpoint::builder(presets::Minimal)
         .alpns(vec![ALPN.to_vec()])
         .hooks(monitor.clone())
         .bind()
@@ -35,7 +35,7 @@ async fn main() -> Result {
 
     let client_task = tokio::spawn(
         async move {
-            let client = Endpoint::empty_builder(RelayMode::Disabled)
+            let client = Endpoint::builder(presets::Minimal)
                 .bind()
                 .instrument(info_span!("client"))
                 .await?;
@@ -111,7 +111,7 @@ impl Monitor {
                 Some(conn) = rx.recv() => {
                     let alpn = String::from_utf8_lossy(conn.alpn()).to_string();
                     let remote = conn.remote_id().fmt_short();
-                    let rtt = conn.paths().peek().iter().map(|p| p.stats().rtt).min();
+                    let rtt = conn.paths().peek().iter().map(|p| p.stats().expect("conn is not dropped").rtt).min();
                     info!(%remote, %alpn, ?rtt, "new connection");
                     tasks.spawn(async move {
                         match conn.closed().await {

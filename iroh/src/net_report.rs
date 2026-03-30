@@ -58,25 +58,6 @@ mod reportgen;
 
 mod options;
 
-/// We "vendor" what we need of the library in browsers for simplicity.
-///
-/// We could consider making `portmapper` compile to wasm in the future,
-/// but what we need is so little it's likely not worth it.
-#[cfg(wasm_browser)]
-pub(crate) mod portmapper {
-    /// Output of a port mapping probe.
-    #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-    #[display("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
-    pub struct ProbeOutput {
-        /// If UPnP can be considered available.
-        pub upnp: bool,
-        /// If PCP can be considered available.
-        pub pcp: bool,
-        /// If PMP can be considered available.
-        pub nat_pmp: bool,
-    }
-}
-
 pub(crate) use self::reportgen::IfStateDetails;
 #[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
@@ -117,9 +98,8 @@ pub(crate) struct Client {
     relay_map: RelayMap,
     #[cfg(not(wasm_browser))]
     qad_conns: QadConns,
-    #[cfg(any(test, feature = "test-utils"))]
-    insecure_skip_relay_cert_verify: bool,
-
+    #[cfg(not(wasm_browser))]
+    tls_config: rustls::ClientConfig,
     /// A collection of previously generated reports.
     ///
     /// Sometimes it is useful to look at past reports to decide what to do.
@@ -147,31 +127,31 @@ impl QadConns {
     }
 
     fn current_v4(&self) -> Option<ProbeReport> {
-        if let Some((_, ref conn)) = self.v4 {
-            if let Some(mut r) = conn.observer.get() {
-                // grab latest rtt
+        if let Some((_, ref conn)) = self.v4
+            && let Some(mut r) = conn.observer.get()
+        {
+            // grab latest rtt
 
-                use quinn_proto::PathId;
-                if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
-                    r.latency = latency;
-                }
-                return Some(ProbeReport::QadIpv4(r));
+            use noq_proto::PathId;
+            if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
+                r.latency = latency;
             }
+            return Some(ProbeReport::QadIpv4(r));
         }
         None
     }
 
     fn current_v6(&self) -> Option<ProbeReport> {
-        if let Some((_, ref conn)) = self.v6 {
-            if let Some(mut r) = conn.observer.get() {
-                // grab latest rtt
+        if let Some((_, ref conn)) = self.v6
+            && let Some(mut r) = conn.observer.get()
+        {
+            // grab latest rtt
 
-                use quinn_proto::PathId;
-                if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
-                    r.latency = latency;
-                }
-                return Some(ProbeReport::QadIpv6(r));
+            use noq_proto::PathId;
+            if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
+                r.latency = latency;
             }
+            return Some(ProbeReport::QadIpv6(r));
         }
         None
     }
@@ -199,9 +179,9 @@ impl QadConns {
 #[cfg(not(wasm_browser))]
 #[derive(Debug)]
 struct QadConn {
-    conn: quinn::Connection,
+    conn: noq::Connection,
     observer: Watchable<Option<QadProbeReport>>,
-    _handle: AbortOnDropHandle<()>,
+    _handle: AbortOnDropHandle<Option<()>>,
 }
 
 #[derive(Debug)]
@@ -236,8 +216,6 @@ impl Client {
         metrics: Arc<Metrics>,
     ) -> Self {
         let probes = opts.as_protocols();
-        #[cfg(any(test, feature = "test-utils"))]
-        let insecure_skip_relay_cert_verify = opts.insecure_skip_relay_cert_verify;
 
         #[cfg(not(wasm_browser))]
         let quic_client = opts
@@ -259,15 +237,20 @@ impl Client {
             relay_map,
             #[cfg(not(wasm_browser))]
             qad_conns: QadConns::default(),
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
+            #[cfg(not(wasm_browser))]
+            tls_config: opts.tls_config,
         }
     }
 
     /// Generates a [`Report`].
     ///
     /// Look at [`Options`] for the different configuration options.
-    pub(crate) async fn get_report(&mut self, if_state: IfStateDetails, is_major: bool) -> Report {
+    pub(crate) async fn get_report(
+        &mut self,
+        if_state: IfStateDetails,
+        is_major: bool,
+        shutdown_token: CancellationToken,
+    ) -> Report {
         let now = Instant::now();
 
         let mut do_full = is_major
@@ -279,12 +262,12 @@ impl Client {
         // If the last report had a captive portal and reported no UDP access,
         // it's possible that we didn't get a useful net_report due to the
         // captive portal blocking us. If so, make this report a full (non-incremental) one.
-        if !do_full {
-            if let Some(ref last) = self.reports.last {
-                if !last.has_udp() && last.captive_portal == Some(true) {
-                    do_full = true;
-                }
-            }
+        if !do_full
+            && let Some(ref last) = self.reports.last
+            && !last.has_udp()
+            && last.captive_portal == Some(true)
+        {
+            do_full = true;
         }
         if do_full {
             self.reports.last = None; // causes ProbePlan::new below to do a full (initial) plan
@@ -312,15 +295,21 @@ impl Client {
             self.relay_map.clone(),
             self.probes.clone(),
             if_state.clone(),
+            shutdown_token.child_token(),
             #[cfg(not(wasm_browser))]
             self.socket_state.clone(),
-            #[cfg(any(test, feature = "test-utils"))]
-            self.insecure_skip_relay_cert_verify,
+            #[cfg(not(wasm_browser))]
+            self.tls_config.clone(),
         );
 
         #[cfg(not(wasm_browser))]
         let reports = self
-            .spawn_qad_probes(&if_state, enough_relays, do_full)
+            .spawn_qad_probes(
+                &if_state,
+                enough_relays,
+                do_full,
+                shutdown_token.child_token(),
+            )
             .await;
 
         #[cfg(not(wasm_browser))]
@@ -394,8 +383,8 @@ impl Client {
         self.add_report_history_and_set_preferred_relay(&mut report);
         debug!(
             ?report,
-            "generated report in {:02}ms",
-            now.elapsed().as_millis()
+            duration = ?now.elapsed(),
+            "net_report generated",
         );
 
         report
@@ -407,6 +396,7 @@ impl Client {
         if_state: &IfStateDetails,
         enough_relays: usize,
         do_full: bool,
+        shutdown_token: CancellationToken,
     ) -> Vec<ProbeReport> {
         use tracing::{Instrument, warn_span};
 
@@ -458,40 +448,42 @@ impl Client {
         const MAX_RELAYS: usize = 5;
 
         let mut v4_buf = JoinSet::new();
-        let cancel_v4 = CancellationToken::new();
+        let cancel_v4 = shutdown_token.child_token();
         let mut v6_buf = JoinSet::new();
-        let cancel_v6 = CancellationToken::new();
+        let cancel_v6 = shutdown_token.child_token();
 
         let relays = self.relay_map.relays::<Vec<_>>();
         for relay in relays.into_iter().take(MAX_RELAYS) {
             if if_state.have_v4 && needs_v4_probe {
-                debug!(?relay.url, "v4 QAD probe");
+                trace!(?relay.url, "v4 QAD probe starting");
                 let relay = relay.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
                 let relay_url = relay.url.clone();
+                let inner_token = cancel_v4.child_token();
                 v4_buf.spawn(
                     cancel_v4
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v4(relay, quic_client, dns_resolver),
+                            run_probe_v4(relay, quic_client, dns_resolver, inner_token),
                         ))
                         .instrument(warn_span!("QADv4", %relay_url)),
                 );
             }
             if if_state.have_v6 && needs_v6_probe {
-                debug!(?relay.url, "v6 QAD probe");
+                trace!(?relay.url, "v6 QAD probe starting");
                 let relay = relay.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
                 let relay_url = relay.url.clone();
+                let inner_token = cancel_v6.child_token();
                 v6_buf.spawn(
                     cancel_v6
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v6(relay, quic_client, dns_resolver),
+                            run_probe_v6(relay, quic_client, dns_resolver, inner_token),
                         ))
                         .instrument(warn_span!("QADv6", %relay_url)),
                 );
@@ -505,7 +497,8 @@ impl Client {
         // completed.
         let mut ipv4_pending = !v4_buf.is_empty();
         let mut ipv6_pending = !v6_buf.is_empty();
-        loop {
+
+        while !v4_buf.is_empty() || !v6_buf.is_empty() {
             // We early-abort the tasks once we have at least `enough_relays` reports,
             // and at least one ipv4 and one ipv6 report completed (if they were started, see comment above).
 
@@ -518,6 +511,11 @@ impl Client {
 
             tokio::select! {
                 biased;
+
+                _ = shutdown_token.cancelled() => {
+                    trace!("qad report cancelled");
+                    break;
+                }
 
                 val = v4_buf.join_next(), if !v4_buf.is_empty() => {
                     let span = warn_span!("QADv4");
@@ -553,7 +551,9 @@ impl Client {
                         Some(Ok(Some(Err(time::Elapsed { .. })))) => {
                             debug!("probe timed out");
                         }
-                        None => {}
+                        None => {
+                            trace!("report canceled");
+                        }
                     }
                 }
                 val = v6_buf.join_next(), if !v6_buf.is_empty() => {
@@ -590,7 +590,9 @@ impl Client {
                         Some(Ok(Some(Err(time::Elapsed { .. })))) => {
                             debug!("probe timed out");
                         }
-                        None => {}
+                        None => {
+                            trace!("report canceled");
+                        }
                     }
                 }
                 else => {
@@ -598,6 +600,10 @@ impl Client {
                 }
             }
         }
+
+        // make sure to cancel all outstanding reports
+        v4_buf.abort_all();
+        v6_buf.abort_all();
 
         reports
     }
@@ -742,11 +748,11 @@ impl Client {
                 if Some(url) == prev_relay.as_ref() {
                     old_relay_cur_latency = duration;
                 }
-                if let Some(best) = best_recent.get(url) {
-                    if r.preferred_relay.is_none() || best < best_any {
-                        best_any = best;
-                        r.preferred_relay.replace(url.clone());
-                    }
+                if let Some(best) = best_recent.get(url)
+                    && (r.preferred_relay.is_none() || best < best_any)
+                {
+                    best_any = best;
+                    r.preferred_relay.replace(url.clone());
                 }
             }
 
@@ -772,8 +778,9 @@ async fn run_probe_v4(
     relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
+    shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-    use quinn_proto::PathId;
+    use noq_proto::PathId;
 
     let relay_addr = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay)
         .await
@@ -789,14 +796,13 @@ async fn run_probe_v4(
         .await
         .map_err(|source| e!(QadProbeError::Quic { source }))?;
 
-    let mut receiver = conn.observed_external_addr();
+    let mut watcher = conn.observed_external_addr();
 
     // wait for an addr
-    let addr = receiver
-        .wait_for(|addr| addr.is_some())
+    let addr = watcher
+        .next()
         .await
-        .map_err(|_| e!(QadProbeError::ReceiverDropped))?
-        .expect("known");
+        .ok_or_else(|| e!(QadProbeError::ReceiverDropped))?;
     let report = QadProbeReport {
         relay: relay.url.clone(),
         addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
@@ -805,29 +811,25 @@ async fn run_probe_v4(
 
     let observer = Watchable::new(None);
     let endpoint = relay.url.clone();
-    let handle = task::spawn({
+    let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
         let conn = conn.clone();
         let observer = observer.clone();
         async move {
-            loop {
-                let val = *receiver.borrow();
+            while let Some(val) = watcher.next().await {
                 // if we've sent to an ipv4 address, but received an observed address
                 // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-                let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
+                let val = SocketAddr::new(val.ip().to_canonical(), val.port());
                 let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
                 observer
-                    .set(val.map(|addr| QadProbeReport {
+                    .set(Some(QadProbeReport {
                         relay: endpoint.clone(),
-                        addr,
+                        addr: val,
                         latency,
                     }))
                     .ok();
-                if receiver.changed().await.is_err() {
-                    break;
-                }
             }
         }
-    });
+    }));
     let handle = AbortOnDropHandle::new(handle);
 
     Ok((
@@ -845,8 +847,9 @@ async fn run_probe_v6(
     relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
+    shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-    use quinn_proto::PathId;
+    use noq_proto::PathId;
 
     let relay_addr = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay)
         .await
@@ -862,14 +865,13 @@ async fn run_probe_v6(
         .await
         .map_err(|source| e!(QadProbeError::Quic { source }))?;
 
-    let mut receiver = conn.observed_external_addr();
+    let mut watcher = conn.observed_external_addr();
 
     // wait for an addr
-    let addr = receiver
-        .wait_for(|addr| addr.is_some())
+    let addr = watcher
+        .next()
         .await
-        .map_err(|_| e!(QadProbeError::ReceiverDropped))?
-        .expect("known");
+        .ok_or_else(|| e!(QadProbeError::ReceiverDropped))?;
     let report = QadProbeReport {
         relay: relay.url.clone(),
         addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
@@ -878,29 +880,25 @@ async fn run_probe_v6(
 
     let observer = Watchable::new(None);
     let endpoint = relay.url.clone();
-    let handle = task::spawn({
+    let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
         let observer = observer.clone();
         let conn = conn.clone();
         async move {
-            loop {
-                let val = *receiver.borrow();
+            while let Some(val) = watcher.next().await {
                 // if we've sent to an ipv4 address, but received an observed address
                 // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-                let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
+                let val = SocketAddr::new(val.ip().to_canonical(), val.port());
                 let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
                 observer
-                    .set(val.map(|addr| QadProbeReport {
+                    .set(Some(QadProbeReport {
                         relay: endpoint.clone(),
-                        addr,
+                        addr: val,
                         latency,
                     }))
                     .ok();
-                if receiver.changed().await.is_err() {
-                    break;
-                }
             }
         }
-    });
+    }));
     let handle = AbortOnDropHandle::new(handle);
 
     Ok((
@@ -950,15 +948,18 @@ mod test_utils {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use iroh_base::RelayUrl;
-    use iroh_relay::dns::DnsResolver;
+    use iroh_relay::{
+        dns::DnsResolver,
+        tls::{CaRootsConfig, default_provider},
+    };
     use n0_error::{Result, StdResultExt};
+    use n0_tracing_test::traced_test;
     use tokio_util::sync::CancellationToken;
-    use tracing_test::traced_test;
 
     use super::*;
     use crate::net_report::probes::Probe;
@@ -967,9 +968,8 @@ mod tests {
     #[traced_test]
     async fn test_basic() -> Result<()> {
         let (server, relay) = test_utils::relay().await;
-        let client_config = iroh_relay::client::make_dangerous_client_config();
-        let ep =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
+        let client_config = iroh_relay::tls::make_dangerous_client_config();
+        let ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
         let quic_addr_disc = QuicConfig {
             ep: ep.clone(),
             client_config,
@@ -979,9 +979,10 @@ mod tests {
         let relay_map = RelayMap::from(relay);
 
         let resolver = DnsResolver::new();
-        let opts = Options::default()
-            .quic_config(Some(quic_addr_disc.clone()))
-            .insecure_skip_relay_cert_verify(true);
+        let tls_config = CaRootsConfig::insecure_skip_verify()
+            .client_config(default_provider())
+            .expect("infallible");
+        let opts = Options::new(tls_config).quic_config(Some(quic_addr_disc.clone()));
         let mut client = Client::new(
             resolver.clone(),
             relay_map.clone(),
@@ -994,7 +995,9 @@ mod tests {
         for i in 0..5 {
             let cancel = CancellationToken::new();
             println!("--round {i}");
-            let r = client.get_report(if_state.clone(), false).await;
+            let r = client
+                .get_report(if_state.clone(), false, cancel.child_token())
+                .await;
 
             assert!(r.has_udp(), "want UDP");
             dbg!(&r);
@@ -1180,10 +1183,13 @@ mod tests {
             },
         ];
         let resolver = DnsResolver::new();
+        let tls_config = CaRootsConfig::insecure_skip_verify()
+            .client_config(default_provider())
+            .expect("infallible");
         for mut tt in tests {
             println!("test: {}", tt.name);
             let relay_map = RelayMap::empty();
-            let opts = Options::default();
+            let opts = Options::new(tls_config.clone());
             let mut client = Client::new(resolver.clone(), relay_map, opts, Default::default());
             for s in &mut tt.steps {
                 // trigger the timer

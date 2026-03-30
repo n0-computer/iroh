@@ -34,7 +34,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use clap::Parser;
 use iroh::{
     Endpoint, EndpointId,
-    endpoint::Connection,
+    endpoint::{Connection, presets},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_error::{Result, StdResultExt};
@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
 
     // Build an endpoint
-    let endpoint = Endpoint::bind().await?;
+    let endpoint = Endpoint::bind(presets::N0).await?;
 
     // Build our protocol handler. The `builder` exposes access to various subsystems in the
     // iroh endpoint. In our case, we need a blobs client and the endpoint.
@@ -173,7 +173,7 @@ impl BlobSearch {
     /// Query a remote endpoint, download all matching blobs and print the results.
     pub async fn query_remote(&self, endpoint_id: EndpointId, query: &str) -> Result<u64> {
         // Establish a connection to our endpoint.
-        // We use the default endpoint discovery in iroh, so we can connect by endpoint id without
+        // We use the default address lookup in iroh, so we can connect by endpoint id without
         // providing further information.
         let conn = self.endpoint.connect(endpoint_id, ALPN).await?;
 

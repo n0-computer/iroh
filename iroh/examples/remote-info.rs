@@ -7,7 +7,7 @@
 
 use std::time::{Duration, SystemTime};
 
-use iroh::{Endpoint, EndpointAddr};
+use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_future::IterExt;
 use tracing::{Instrument, info, info_span};
@@ -28,7 +28,7 @@ async fn main() -> Result {
     let (hook, remote_map) = RemoteMap::new();
 
     // Bind our endpoint and install the remote map hook.
-    let server = Endpoint::builder()
+    let server = Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
         .hooks(hook)
         .bind()
@@ -133,7 +133,7 @@ fn log_aggregate(remote_map: &RemoteMap) {
 
 async fn run_clients(server_addr: EndpointAddr, count: usize) -> Result {
     std::iter::repeat_with(async || {
-        let client = Endpoint::builder()
+        let client = Endpoint::builder(presets::N0)
             .bind()
             .instrument(info_span!("client"))
             .await?;
@@ -217,10 +217,11 @@ mod remote_map {
             if path.is_relay() {
                 self.relay_path = true;
             }
-            let stats = path.stats();
-            debug!("path update addr {:?} {stats:?}", path.remote_addr());
-            self.rtt_min = self.rtt_min.min(stats.rtt);
-            self.rtt_max = self.rtt_max.max(stats.rtt);
+            if let Some(stats) = path.stats() {
+                debug!("path update addr {:?} {stats:?}", path.remote_addr());
+                self.rtt_min = self.rtt_min.min(stats.rtt);
+                self.rtt_max = self.rtt_max.max(stats.rtt);
+            }
         }
     }
 
@@ -237,8 +238,9 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn current_min_rtt(&self) -> Option<Duration> {
             self.connections()
-                .flat_map(|c| c.paths().get())
-                .map(|path| path.stats().rtt)
+                .flat_map(|c| c.paths().get().into_iter())
+                .flat_map(|p| p.stats())
+                .map(|s| s.rtt)
                 .min()
         }
 
