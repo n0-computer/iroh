@@ -832,7 +832,6 @@ async fn holepunch_asymmetric_links() -> Result {
 /// Increasingly degraded link on one side, clean link on the other.
 /// Each level adds more latency, loss, and reordering. The test runs each level
 /// twice: once with the impaired side accepting, once connecting.
-///
 const DEGRADE_LEVELS: &[LinkLimits] = &[
     // 0: mild — good wifi
     LinkLimits {
