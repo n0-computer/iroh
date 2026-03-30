@@ -969,28 +969,86 @@ async fn run_degrade_level(impaired_is_server: bool, level: usize) -> Result<Tes
     Ok(guard)
 }
 
-macro_rules! degrade_test {
-    ($name:ident, $impaired_is_server:expr, $level:expr) => {
-        #[tokio::test]
-        #[traced_test]
-        async fn $name() -> Result {
-            let guard = run_degrade_level($impaired_is_server, $level).await?;
-            guard.ok();
-            Ok(())
-        }
-    };
+#[tokio::test]
+#[traced_test]
+async fn degrade_server_0_mild() -> Result {
+    run_degrade_level(true, 0).await?.ok();
+    Ok(())
 }
 
-degrade_test!(degrade_server_0_mild, true, 0);
-degrade_test!(degrade_server_1_poor, true, 1);
-degrade_test!(degrade_server_2_bad, true, 2);
-degrade_test!(degrade_server_3_terrible, true, 3);
-degrade_test!(degrade_server_4_extreme, true, 4);
-degrade_test!(degrade_server_5_absurd, true, 5);
+#[tokio::test]
+#[traced_test]
+async fn degrade_server_1_poor() -> Result {
+    run_degrade_level(true, 1).await?.ok();
+    Ok(())
+}
 
-degrade_test!(degrade_client_0_mild, false, 0);
-degrade_test!(degrade_client_1_poor, false, 1);
-degrade_test!(degrade_client_2_bad, false, 2);
-degrade_test!(degrade_client_3_terrible, false, 3);
-degrade_test!(degrade_client_4_extreme, false, 4);
-degrade_test!(degrade_client_5_absurd, false, 5);
+#[tokio::test]
+#[traced_test]
+async fn degrade_server_2_bad() -> Result {
+    run_degrade_level(true, 2).await?.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn degrade_server_3_terrible() -> Result {
+    run_degrade_level(true, 3).await?.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn degrade_server_4_extreme() -> Result {
+    run_degrade_level(true, 4).await?.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn degrade_server_5_absurd() -> Result {
+    run_degrade_level(true, 5).await?.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn degrade_client_0_mild() -> Result {
+    run_degrade_level(false, 0).await?.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn degrade_client_1_poor() -> Result {
+    run_degrade_level(false, 1).await?.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn degrade_client_2_bad() -> Result {
+    run_degrade_level(false, 2).await?.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn degrade_client_3_terrible() -> Result {
+    run_degrade_level(false, 3).await?.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn degrade_client_4_extreme() -> Result {
+    run_degrade_level(false, 4).await?.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn degrade_client_5_absurd() -> Result {
+    run_degrade_level(false, 5).await?.ok();
+    Ok(())
+}
