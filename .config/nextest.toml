@@ -1,5 +1,5 @@
 [test-groups]
-run-in-isolation = { max-threads = 32 } 
+run-in-isolation = { max-threads = 32 }
 # these are tests that must not run with other tests concurrently. All tests in
 # this group can take up at most 32 threads among them, but each one requiring
 # 16 threads also. The effect should be that tests run isolated.
@@ -16,3 +16,10 @@ threads-required = 32
 
 [profile.default]
 slow-timeout = { period = "10s", terminate-after = 3 }
+
+[profile.patchbay]
+fail-fast = false
+retries = 1
+test-threads = 4
+slow-timeout = { period = "20s", terminate-after = 3 }
+default-filter = 'binary(patchbay)'
