@@ -31,5 +31,3 @@ args = [
 workspace = false
 command = "cargo"
 args = ["nextest", "run", "--profile", "patchbay"]
-[tasks.patchbay.env]
-RUSTFLAGS = "--cfg patchbay_tests"

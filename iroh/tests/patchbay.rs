@@ -18,8 +18,9 @@
 //! patchbay test --release -p iroh --test patchbay
 //! ```
 
-// patchbay only runs on linux
-#![cfg(target_os = "linux")]
+// patchbay only runs on linux, and is skipped in cross-compile environments
+// via a cfg directive
+#![cfg(all(target_os = "linux", not(skip_patchbay)))]
 
 use std::time::Duration;
 

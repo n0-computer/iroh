@@ -98,6 +98,6 @@ jobs:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           body: |
             <!-- patchbay-results -->
-            ${{ steps.tests.outcome == 'success' && '✅' || '❌' }} **patchbay:** ${{ steps.tests.outcome }} | ${{ env.PATCHBAY_VIEW_URL }}
-            <sub>${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}</sub>
+            ${{ steps.tests.outcome == 'success' && '✅' || '❌' }} **patchbay:** ${{ steps.tests.outcome }} | [results](${{ env.PATCHBAY_VIEW_URL }})
+            <sub>Last updated: ${{ github.event.pull_request.updated_at }} · [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})</sub>
           edit-mode: replace
