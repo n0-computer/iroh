@@ -192,7 +192,7 @@ jobs:
 
       - name: Install wasm-bindgen-test-runner
         # Match the version of wasm-bindgen used in Cargo.lock
-        run: cargo binstall wasm-bindgen-cli@0.2.114 --locked --no-confirm
+        run: cargo binstall wasm-bindgen-cli@0.2.115 --locked --no-confirm
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
