@@ -42,16 +42,17 @@ use crate::{
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
 };
 
-mod client;
-mod clients;
-mod http_server;
+pub mod client;
+pub mod clients;
+pub mod http_server;
 mod metrics;
 pub(crate) mod resolver;
-pub(crate) mod streams;
+pub mod streams;
 #[cfg(feature = "test-utils")]
 pub mod testing;
 
 pub use self::{
+    http_server::{Handlers, RelayService},
     metrics::{Metrics, RelayMetrics},
     resolver::{DEFAULT_CERT_RELOAD_INTERVAL, ReloadingResolver},
 };
@@ -651,13 +652,13 @@ fn serve_no_content_handler<B: hyper::body::Body>(
         !c.is_empty() && c.len() < 64 && c.as_bytes().iter().all(|c| is_challenge_char(*c as char))
     };
 
-    if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER) {
-        if check(challenge) {
-            response = response.header(
-                NO_CONTENT_RESPONSE_HEADER,
-                format!("response {}", challenge.to_str()?),
-            );
-        }
+    if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER)
+        && check(challenge)
+    {
+        response = response.header(
+            NO_CONTENT_RESPONSE_HEADER,
+            format!("response {}", challenge.to_str()?),
+        );
     }
 
     response
@@ -713,10 +714,10 @@ async fn run_captive_portal_service(http_listener: TcpListener) {
             biased;
 
             Some(res) = tasks.join_next() => {
-                if let Err(err) = res {
-                    if err.is_panic() {
-                        panic!("task panicked: {err:#?}");
-                    }
+                if let Err(err) = res
+                    && err.is_panic()
+                {
+                    panic!("task panicked: {err:#?}");
                 }
             }
 
@@ -778,7 +779,7 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, time::Duration};
+    use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
     use http::StatusCode;
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
@@ -799,6 +800,7 @@ mod tests {
             handshake,
             relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         },
+        tls::{CaRootsConfig, default_provider},
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
@@ -845,6 +847,16 @@ mod tests {
         DnsResolver::new()
     }
 
+    fn ring_config() -> rustls::ClientConfig {
+        rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(rustls::RootCertStore::empty())
+        .with_no_client_auth()
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn test_no_services() {
@@ -887,7 +899,10 @@ mod tests {
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
-        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let client = reqwest::Client::builder()
+            .use_preconfigured_tls(ring_config())
+            .build()
+            .unwrap();
         let response = client.get(&url).send().await.unwrap();
         assert_eq!(response.status(), 200);
         let body = response.text().await.unwrap();
@@ -901,7 +916,10 @@ mod tests {
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";
 
-        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let client = reqwest::Client::builder()
+            .use_preconfigured_tls(ring_config())
+            .build()
+            .unwrap();
         let response = client
             .get(&url)
             .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
@@ -924,12 +942,17 @@ mod tests {
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse()?;
 
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
         // set up client a
         let a_secret_key = SecretKey::generate(&mut rng);
         let a_key = a_secret_key.public();
         let resolver = dns_resolver();
         info!("client a build & connect");
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .tls_client_config(client_config.clone())
             .connect()
             .await?;
 
@@ -938,6 +961,7 @@ mod tests {
         let b_key = b_secret_key.public();
         info!("client b build & connect");
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .tls_client_config(client_config)
             .connect()
             .await?;
 
@@ -983,6 +1007,10 @@ mod tests {
         let current_span = tracing::info_span!("this is a test");
         let _guard = current_span.enter();
 
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
         let a_secret_key = SecretKey::generate(&mut rng);
         let a_key = a_secret_key.public();
 
@@ -1016,6 +1044,7 @@ mod tests {
         // set up client a
         let resolver = dns_resolver();
         let result = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+            .tls_client_config(client_config.clone())
             .connect()
             .await;
 
@@ -1031,6 +1060,7 @@ mod tests {
 
         let resolver = dns_resolver();
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
+            .tls_client_config(client_config.clone())
             .connect()
             .await?;
 
@@ -1040,6 +1070,7 @@ mod tests {
 
         let resolver = dns_resolver();
         let mut client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
+            .tls_client_config(client_config)
             .connect()
             .await?;
 
@@ -1069,10 +1100,15 @@ mod tests {
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
         // set up client a
         let a_secret_key = SecretKey::generate(&mut rng);
         let resolver = dns_resolver();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .tls_client_config(client_config.clone())
             .connect()
             .await?;
 
@@ -1080,6 +1116,7 @@ mod tests {
         let b_secret_key = SecretKey::generate(&mut rng);
         let b_key = b_secret_key.public();
         let _client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .tls_client_config(client_config)
             .connect()
             .await?;
 

@@ -46,7 +46,7 @@ jobs:
           # - x86_64-unknown-netbsd
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -61,7 +61,7 @@ jobs:
         # See https://github.com/cross-rs/cross/issues/1222
       - name: Cache cross
         id: cache-cross
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cross
           key: cross-${{ runner.os }}-${{ runner.arch }}
@@ -77,6 +77,7 @@ jobs:
         run: cross build --all --target ${{ matrix.target }}
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
   android_build:
     name: Android Build Only
@@ -92,7 +93,7 @@ jobs:
           - armv7-linux-androideabi
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -108,7 +109,7 @@ jobs:
           java-version: "17"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Setup Android NDK
         uses: arqu/setup-ndk@main
@@ -136,7 +137,7 @@ jobs:
           - i686-unknown-linux-gnu
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -151,7 +152,7 @@ jobs:
         # See https://github.com/cross-rs/cross/issues/1222
       - name: Cache cross
         id: cache-cross
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cross
           key: cross-${{ runner.os }}-${{ runner.arch }}
@@ -164,6 +165,7 @@ jobs:
         run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
   wasm_test:
     name: Build & test wasm32 for browsers
@@ -172,7 +174,7 @@ jobs:
       RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup node.js version 22.5 # needed for browser-like websocket API support in node.js
         uses: actions/setup-node@v6
@@ -186,10 +188,11 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.16.3
+        uses: cargo-bins/cargo-binstall@v1.17.9
 
       - name: Install wasm-bindgen-test-runner
-        run: cargo binstall wasm-bindgen-cli --locked --no-confirm
+        # Match the version of wasm-bindgen used in Cargo.lock
+        run: cargo binstall wasm-bindgen-cli@0.2.115 --locked --no-confirm
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
@@ -198,10 +201,10 @@ jobs:
         run: cargo build --target wasm32-unknown-unknown -p iroh-base --all-features
 
       - name: wasm32 build (iroh-relay)
-        run: cargo build --target wasm32-unknown-unknown -p iroh-relay --no-default-features
+        run: cargo build --target wasm32-unknown-unknown -p iroh-relay
 
       - name: wasm32 build (iroh)
-        run: cargo build --target wasm32-unknown-unknown -p iroh --no-default-features
+        run: cargo build --target wasm32-unknown-unknown -p iroh
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
@@ -214,7 +217,7 @@ jobs:
           ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh.wasm | grep 'import "env"'
 
       - name: Run integration test in wasm
-        run: cargo test -p iroh --test integration --target=wasm32-unknown-unknown --no-default-features
+        run: cargo test -p iroh --test integration --target=wasm32-unknown-unknown
 
   check_semver:
     runs-on: ubuntu-latest
@@ -222,7 +225,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Install sccache
@@ -242,7 +245,7 @@ jobs:
         # uses: obi1kenobi/cargo-semver-checks-action@v2
         uses: n0-computer/cargo-semver-checks-action@feat-baseline
         with:
-          package: iroh, iroh-base, iroh-dns-server, iroh-bench, iroh-relay, iroh-net-report
+          package: iroh, iroh-base, iroh-dns-server, iroh-relay, iroh-net-report
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
@@ -254,7 +257,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -271,7 +274,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
       RUSTDOCFLAGS: --cfg docsrs
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2025-10-09
@@ -288,7 +291,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -306,6 +309,27 @@ jobs:
       - name: clippy check (default features)
         run: cargo clippy --workspace --all-targets --lib --bins --tests --benches --examples
 
+  check_optional_deps:
+    timeout-minutes: 10
+    name: Check optional deps are absent without features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify optional deps are absent without features
+        run: |
+          fail=0
+          for dep in portmapper igd-next swarm-discovery ring aws-lc-rs; do
+            echo    "cargo tree -p iroh --no-default-features --edges normal --target all -i $dep";
+            output=$(cargo tree -p iroh --no-default-features --edges normal --target all -i "$dep" 2>&1) || true
+            if ! echo "$output" | grep -qE "(nothing to print|did not match any packages)"; then
+              echo "ERROR: $dep should not be in the dependency tree without its feature"
+              echo "$output"
+              fail=1
+            fi
+          done
+          exit $fail
+
   msrv:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
@@ -315,7 +339,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.MSRV }}
@@ -331,7 +355,7 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           arguments: --workspace --all-features
@@ -345,18 +369,19 @@ jobs:
     secrets: inherit
     with:
       branch: ${{ github.ref }}
-      max_workers: 4
+      max_workers: 6
       netsim_branch: "main"
-      sim_paths: "sims/iroh/iroh.json,sims/integration"
+      sim_paths: ${{ github.event_name == 'pull_request' && 'sims/integration' || 'sims/iroh/iroh.json,sims/integration' }}
       pr_number: ${{ github.event.pull_request.number || '' }}
+      filter: ${{ github.event_name == 'pull_request' && 'skip:intg_iroh_full__1_to_3,intg_iroh_full__1_to_1x3,intg_iroh_relay_only__1_to_3' || '' }}
 
   codespell:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: pip-codespell-2.4.1

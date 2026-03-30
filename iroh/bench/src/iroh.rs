@@ -6,7 +6,7 @@ use std::{
 use bytes::Bytes;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
-    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
+    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream, presets},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
@@ -29,11 +29,17 @@ pub fn server_endpoint(
             .clone()
             .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
 
+        #[cfg(any(feature = "tls-ring", feature = "tls-aws-lc-rs"))]
         #[allow(unused_mut)]
-        let mut builder = Endpoint::builder();
+        let mut builder = Endpoint::builder(presets::N0);
+        #[cfg(not(any(feature = "tls-ring", feature = "tls-aws-lc-rs")))]
+        #[allow(unused_mut)]
+        let mut builder = Endpoint::builder(presets::Empty); // allow building, but fail at runtime
         #[cfg(feature = "local-relay")]
         {
-            builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
+            if relay_url.is_some() {
+                builder = builder.ca_roots_config(iroh::tls::CaRootsConfig::insecure_skip_verify());
+            }
             if opt.only_relay {
                 builder = builder.clear_ip_transports();
             }
@@ -88,11 +94,17 @@ pub async fn connect_client(
     let relay_mode = relay_url
         .clone()
         .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
+    #[cfg(any(feature = "tls-ring", feature = "tls-aws-lc-rs"))]
     #[allow(unused_mut)]
-    let mut builder = Endpoint::builder();
+    let mut builder = Endpoint::builder(presets::N0);
+    #[cfg(not(any(feature = "tls-ring", feature = "tls-aws-lc-rs")))]
+    #[allow(unused_mut)]
+    let mut builder = Endpoint::builder(presets::Empty); // allow building, but fail at runtime
     #[cfg(feature = "local-relay")]
     {
-        builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
+        if relay_url.is_some() {
+            builder = builder.ca_roots_config(iroh::tls::CaRootsConfig::insecure_skip_verify());
+        }
         if opt.only_relay {
             builder = builder.clear_ip_transports();
         }
@@ -110,7 +122,7 @@ pub async fn connect_client(
     }
 
     // TODO: We don't support passing client transport config currently
-    // let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
+    // let mut client_config = noq::ClientConfig::new(Arc::new(crypto));
     // client_config.transport_config(Arc::new(transport_config(&opt)));
 
     let connection = endpoint
@@ -125,18 +137,20 @@ pub async fn connect_client(
 pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuicTransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
-    let mut config = QuicTransportConfig::default();
-    config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
-    config.initial_mtu(initial_mtu);
+    let mut builder = QuicTransportConfig::builder()
+        .max_concurrent_uni_streams(max_streams.try_into().unwrap())
+        .initial_mtu(initial_mtu);
 
-    let mut acks = quinn::AckFrequencyConfig::default();
+    let mut acks = noq::AckFrequencyConfig::default();
     acks.ack_eliciting_threshold(10u32.into());
-    config.ack_frequency_config(Some(acks));
+    builder = builder.ack_frequency_config(Some(acks));
 
     #[cfg(feature = "qlog")]
-    config.qlog_from_env("bench-iroh");
+    {
+        builder = builder.qlog_from_env("bench-iroh");
+    }
 
-    config
+    builder.build()
 }
 
 async fn drain_stream(

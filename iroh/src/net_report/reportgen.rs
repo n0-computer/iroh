@@ -49,14 +49,12 @@ use url::Host;
 
 #[cfg(not(wasm_browser))]
 use super::defaults::timeouts::DNS_TIMEOUT;
-#[cfg(wasm_browser)]
-use super::portmapper; // We stub the library
 use super::{
     Report,
     probes::{Probe, ProbePlan},
 };
 #[cfg(not(wasm_browser))]
-use crate::discovery::dns::DNS_STAGGERING_MS;
+use crate::address_lookup::DNS_STAGGERING_MS;
 use crate::{
     net_report::defaults::timeouts::{
         CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
@@ -124,7 +122,7 @@ impl Client {
         if_state: IfStateDetails,
         shutdown_token: CancellationToken,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
-        #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
+        #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
     ) -> (Self, mpsc::Receiver<ProbeFinished>) {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let actor = Actor {
@@ -134,8 +132,8 @@ impl Client {
             protocols,
             #[cfg(not(wasm_browser))]
             socket_state,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
+            #[cfg(not(wasm_browser))]
+            tls_config,
             if_state,
         };
         let task = task::spawn(
@@ -173,8 +171,8 @@ struct Actor {
     /// Any socket-related state that doesn't exist/work in browsers
     #[cfg(not(wasm_browser))]
     socket_state: SocketState,
-    #[cfg(any(test, feature = "test-utils"))]
-    insecure_skip_relay_cert_verify: bool,
+    #[cfg(not(wasm_browser))]
+    tls_config: rustls::ClientConfig,
     if_state: IfStateDetails,
 }
 
@@ -249,7 +247,7 @@ impl Actor {
 
                         // If all probes are done & we have_udp cancel captive
                         if num_probes == 0 {
-                            debug!("all regular probes done");
+                            trace!("all regular probes done");
                             debug_assert!(probes.len() <= 1, "{} probes", probes.len());
 
                             if have_udp {
@@ -289,6 +287,8 @@ impl Actor {
             let dns_resolver = self.socket_state.dns_resolver.clone();
             let dm = self.relay_map.clone();
             let token = token.clone();
+            #[cfg(not(wasm_browser))]
+            let tls_config = self.tls_config.clone();
             tasks.spawn(
                 async move {
                     let res = token
@@ -297,7 +297,12 @@ impl Actor {
                             trace!("check started after {CAPTIVE_PORTAL_DELAY:?}");
                             time::timeout(
                                 CAPTIVE_PORTAL_TIMEOUT,
-                                check_captive_portal(&dns_resolver, &dm, preferred_relay),
+                                check_captive_portal(
+                                    &dns_resolver,
+                                    &dm,
+                                    preferred_relay,
+                                    tls_config,
+                                ),
                             )
                             .await
                         })
@@ -380,8 +385,8 @@ impl Actor {
                         relay.clone(),
                         #[cfg(not(wasm_browser))]
                         self.socket_state.clone(),
-                        #[cfg(any(test, feature = "test-utils"))]
-                        self.insecure_skip_relay_cert_verify,
+                        #[cfg(not(wasm_browser))]
+                        self.tls_config.clone(),
                     ),
                 ));
                 probes.spawn(
@@ -402,7 +407,7 @@ impl Actor {
                         "run-probe",
                         ?proto,
                         ?delay,
-                        ?relay,
+                        relay=%relay.url,
                     )),
                 );
             }
@@ -479,8 +484,8 @@ pub(super) enum QuicError {
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct QuicConfig {
     /// A QUIC Endpoint
-    #[debug("quinn::Endpoint")]
-    pub(crate) ep: quinn::Endpoint,
+    #[debug("noq::Endpoint")]
+    pub(crate) ep: noq::Endpoint,
     /// A client config.
     pub(crate) client_config: rustls::ClientConfig,
     /// Enable ipv4 QUIC address discovery probes
@@ -496,22 +501,22 @@ impl Probe {
         delay: Duration,
         relay: Arc<RelayConfig>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
-        #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
+        #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
     ) -> Result<ProbeReport, ProbeError> {
         if !delay.is_zero() {
             trace!("delaying probe");
             time::sleep(delay).await;
         }
-        debug!("starting probe");
+        trace!("starting probe");
 
-        match self {
+        let report = match self {
             Probe::Https => {
                 match run_https_probe(
                     #[cfg(not(wasm_browser))]
                     &socket_state.dns_resolver,
                     relay.url.clone(),
-                    #[cfg(any(test, feature = "test-utils"))]
-                    insecure_skip_relay_cert_verify,
+                    #[cfg(not(wasm_browser))]
+                    tls_config,
                 )
                 .await
                 {
@@ -521,7 +526,9 @@ impl Probe {
             }
             #[cfg(not(wasm_browser))]
             Probe::QadIpv4 | Probe::QadIpv6 => unreachable!("must not be used"),
-        }
+        };
+        debug!(?report, "probe finished");
+        report
     }
 }
 
@@ -556,6 +563,7 @@ async fn check_captive_portal(
     dns_resolver: &DnsResolver,
     dm: &RelayMap,
     preferred_relay: Option<RelayUrl>,
+    tls_config: rustls::ClientConfig,
 ) -> Result<bool, CaptivePortalError> {
     // If we have a preferred relay and we can use it for non-QAD requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
@@ -569,7 +577,7 @@ async fn check_captive_portal(
         None => {
             let urls: Vec<_> = dm.urls();
             if urls.is_empty() {
-                debug!("No suitable relay for captive portal check");
+                trace!("No suitable relay for captive portal check");
                 return Ok(false);
             }
 
@@ -578,7 +586,8 @@ async fn check_captive_portal(
         }
     };
 
-    let mut builder = reqwest_client_builder().redirect(reqwest::redirect::Policy::none());
+    let mut builder =
+        reqwest_client_builder(Some(tls_config)).redirect(reqwest::redirect::Policy::none());
 
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
@@ -619,7 +628,7 @@ async fn check_captive_portal(
         .map(|s| s.to_str().unwrap_or_default())
         == Some(&expected_response);
 
-    debug!(
+    trace!(
         "check_captive_portal url={} status_code={} valid_response={}",
         res.url(),
         res.status(),
@@ -801,7 +810,7 @@ pub(super) enum MeasureHttpsLatencyError {
 async fn run_https_probe(
     #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
     relay: RelayUrl,
-    #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
+    #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
     let url = relay.join(RELAY_PROBE_PATH)?;
@@ -809,7 +818,10 @@ async fn run_https_probe(
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
-    let mut builder = reqwest_client_builder();
+    #[cfg(not(wasm_browser))]
+    let mut builder = reqwest_client_builder(Some(tls_config));
+    #[cfg(wasm_browser)]
+    let mut builder = reqwest_client_builder(None);
 
     #[cfg(not(wasm_browser))]
     {
@@ -833,9 +845,6 @@ async fn run_https_probe(
         trace!(?addrs, "resolved addrs");
         builder = builder.resolve_to_addrs(domain, &addrs);
     }
-
-    #[cfg(all(not(wasm_browser), any(test, feature = "test-utils")))]
-    let builder = builder.danger_accept_invalid_certs(insecure_skip_relay_cert_verify);
 
     let client = builder
         .build()
@@ -869,11 +878,14 @@ async fn run_https_probe(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::net::Ipv4Addr;
 
-    use iroh_relay::dns::DnsResolver;
+    use iroh_relay::{
+        dns::DnsResolver,
+        tls::{CaRootsConfig, default_provider},
+    };
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
 
@@ -884,7 +896,14 @@ mod tests {
         let (_server, relay) = test_utils::relay().await;
         let dns_resolver = DnsResolver::new();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
-        let report = run_https_probe(&dns_resolver, relay.url, true).await?;
+        let report = run_https_probe(
+            &dns_resolver,
+            relay.url,
+            CaRootsConfig::insecure_skip_verify()
+                .client_config(default_provider())
+                .expect("infallible"),
+        )
+        .await?;
 
         assert!(report.latency > Duration::ZERO);
 
@@ -896,9 +915,8 @@ mod tests {
     async fn test_qad_probe_v4() -> Result {
         let (server, relay) = test_utils::relay().await;
         let relay = Arc::new(relay);
-        let client_config = iroh_relay::client::make_dangerous_client_config();
-        let ep =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
+        let client_config = iroh_relay::tls::make_dangerous_client_config();
+        let ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
         let client_addr = ep.local_addr().anyerr()?;
 
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);

@@ -25,6 +25,8 @@ mod extract;
 mod response;
 
 use self::extract::{DnsMimeType, DnsRequestBody, DnsRequestQuery};
+#[cfg(test)]
+pub(crate) use self::response::DnsResponse;
 
 /// GET handler for resolving DoH queries
 pub async fn get(

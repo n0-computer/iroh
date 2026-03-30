@@ -14,6 +14,8 @@ use tokio::sync::oneshot;
 pub use self::{dns_and_pkarr_servers::DnsPkarrServer, qlog::QlogFileGroup};
 
 mod qlog;
+#[cfg(feature = "unstable-custom-transports")]
+pub mod test_transport;
 
 /// A drop guard to clean up test infrastructure.
 ///
@@ -86,13 +88,16 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
 pub(crate) mod dns_and_pkarr_servers {
     use std::{net::SocketAddr, time::Duration};
 
-    use iroh_base::{EndpointId, SecretKey};
+    use iroh_base::EndpointId;
     use url::Url;
 
     use super::CleanupDropGuard;
     use crate::{
-        discovery::{ConcurrentDiscovery, dns::DnsDiscovery, pkarr::PkarrPublisher},
+        address_lookup::{
+            DnsAddressLookup, DnsAddressLookupBuilder, PkarrPublisher, PkarrPublisherBuilder,
+        },
         dns::DnsResolver,
+        endpoint::presets::Preset,
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, pkarr_relay::run_pkarr_relay,
         },
@@ -136,19 +141,29 @@ pub(crate) mod dns_and_pkarr_servers {
             })
         }
 
-        /// Create a [`ConcurrentDiscovery`] with [`DnsDiscovery`] and [`PkarrPublisher`]
-        /// configured to use the test servers.
-        pub fn discovery(&self, secret_key: SecretKey) -> ConcurrentDiscovery {
-            ConcurrentDiscovery::from_services(vec![
-                // Enable DNS discovery by default
-                Box::new(
-                    DnsDiscovery::builder(self.endpoint_origin.clone())
-                        .dns_resolver(self.dns_resolver())
-                        .build(),
-                ),
-                // Enable pkarr publishing by default
-                Box::new(PkarrPublisher::builder(self.pkarr_url.clone()).build(secret_key)),
-            ])
+        /// Returns a [`Preset`] to apply the DNS address lookup and Pkarr Publisher to an endpoint.
+        pub fn preset(&self) -> impl Preset {
+            struct DnsPkarrPreset {
+                dns_address_lookup: DnsAddressLookupBuilder,
+                pkarr_address_publisher: PkarrPublisherBuilder,
+                dns_resolver: DnsResolver,
+            }
+
+            let preset = DnsPkarrPreset {
+                dns_address_lookup: DnsAddressLookup::builder(self.endpoint_origin.clone()),
+                pkarr_address_publisher: PkarrPublisher::builder(self.pkarr_url.clone()),
+                dns_resolver: self.dns_resolver(),
+            };
+            impl Preset for DnsPkarrPreset {
+                fn apply(self, builder: crate::endpoint::Builder) -> crate::endpoint::Builder {
+                    builder
+                        .addr_filter(crate::address_lookup::AddrFilter::relay_only())
+                        .address_lookup(self.dns_address_lookup)
+                        .address_lookup(self.pkarr_address_publisher)
+                        .dns_resolver(self.dns_resolver)
+                }
+            }
+            preset
         }
 
         /// Create a [`DnsResolver`] configured to use the test DNS server.

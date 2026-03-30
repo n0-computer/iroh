@@ -19,13 +19,14 @@ use iroh_relay::{
     },
     server::{self as relay, ClientRateLimit, QuicConfig},
 };
-use n0_error::{AnyError as Error, Result, StdResultExt, bail_any};
+use n0_error::{Result, StdResultExt, bail_any};
 use n0_future::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{AcmeConfig, caches::DirCache};
 use tracing::{debug, warn};
 use tracing_subscriber::{EnvFilter, prelude::*};
 use url::Url;
+use webpki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
@@ -61,45 +62,19 @@ enum CertMode {
 fn load_certs(
     filename: impl AsRef<Path>,
 ) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
-    let certfile = std::fs::File::open(filename).std_context("cannot open certificate file")?;
-    let mut reader = std::io::BufReader::new(certfile);
-
-    let certs: Result<Vec<_>, std::io::Error> = rustls_pemfile::certs(&mut reader).collect();
-    let certs = certs.std_context("reading cert")?;
-
-    Ok(certs)
+    let filename = filename.as_ref();
+    CertificateDer::pem_file_iter(filename)
+        .with_std_context(|_| format!("failed to open certificate file at {}", filename.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .with_std_context(|_| format!("failed to read certificates from {}", filename.display()))
 }
 
 fn load_secret_key(
     filename: impl AsRef<Path>,
 ) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
     let filename = filename.as_ref();
-    let keyfile = std::fs::File::open(filename)
-        .with_std_context(|_| format!("cannot open secret key file {}", filename.display()))?;
-    let mut reader = std::io::BufReader::new(keyfile);
-
-    loop {
-        match rustls_pemfile::read_one(&mut reader)
-            .std_context("cannot parse secret key .pem file")?
-        {
-            Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
-            }
-            Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs8(key));
-            }
-            Some(rustls_pemfile::Item::Sec1Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Sec1(key));
-            }
-            None => break,
-            _ => {}
-        }
-    }
-
-    bail_any!(
-        "no keys found in {} (encrypted keys not supported)",
-        filename.display()
-    );
+    PrivateKeyDer::from_pem_file(filename)
+        .with_std_context(|_| format!("failed to read secret key from {}", filename.display()))
 }
 
 /// Configuration for the relay-server.
@@ -573,7 +548,7 @@ async fn maybe_load_tls(
             let (private_key, certs) = tokio::task::spawn_blocking(move || {
                 let key = load_secret_key(key_path)?;
                 let certs = load_certs(cert_path)?;
-                Ok::<_, Error>((key, certs))
+                n0_error::Ok((key, certs))
             })
             .await
             .std_context("join")??;

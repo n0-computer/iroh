@@ -11,7 +11,8 @@
 //! we won't hit these with only this integration test.
 use iroh::{
     Endpoint, RelayMode,
-    discovery::{Discovery, pkarr::PkarrResolver},
+    address_lookup::{AddressLookup, pkarr::PkarrResolver},
+    endpoint::presets,
 };
 use n0_error::{Result, StdResultExt};
 use n0_future::{
@@ -35,12 +36,12 @@ const ECHO_ALPN: &[u8] = b"echo";
 async fn simple_endpoint_id_based_connection_transfer() -> Result {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     setup_logging();
-    let client = Endpoint::builder()
+    let client = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Staging)
         .bind()
         .await?;
     tracing::info!("started client, id {}", client.id().fmt_short());
-    let server = Endpoint::builder()
+    let server = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Staging)
         .alpns(vec![ECHO_ALPN.to_vec()])
         .bind()
@@ -87,10 +88,11 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     time::timeout(Duration::from_secs(20), {
         let endpoint_id = server.id();
         tracing::info!(
-            "start timeout waiting for records to be published, waiting for {endpoint_id} resolution"
+            "start timeout waiting for records to be published, waiting for {endpoint_id} address lookup"
         );
+        let tls_config = server.tls_config().clone();
         async move {
-            let resolver = PkarrResolver::n0_dns().build();
+            let resolver = PkarrResolver::n0_dns().build(tls_config);
             loop {
                 // Very rudimentary non-backoff algorithm
                 time::sleep(Duration::from_secs(1)).await;
@@ -137,20 +139,11 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
 
 #[cfg(wasm_browser)]
 fn setup_logging() {
-    use std::str::FromStr;
+    use tracing::Level;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_str("trace").expect("hardcoded"))
-        .with_max_level(tracing::level_filters::LevelFilter::DEBUG)
-        .with_writer(
-            // To avoide trace events in the browser from showing their JS backtrace
-            tracing_subscriber_wasm::MakeConsoleWriter::default()
-                .map_trace_level_to(tracing::Level::DEBUG),
-        )
-        // If we don't do this in the browser, we get a runtime error.
-        .without_time()
-        .with_ansi(false)
-        .init();
+    let mut config = wasm_tracing::WasmLayerConfig::new();
+    config.set_max_level(Level::TRACE);
+    wasm_tracing::set_as_global_default_with_config(config).unwrap();
 }
 
 #[cfg(not(wasm_browser))]

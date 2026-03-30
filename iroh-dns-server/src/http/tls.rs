@@ -11,6 +11,10 @@ use axum_server::{
 };
 use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::{FutureExt, future::Boxed as BoxFuture};
+use rustls::{
+    ServerConfig,
+    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls_acme::{AcmeConfig, axum::AxumAcceptor, caches::DirCache};
@@ -76,15 +80,29 @@ impl TlsAcceptor {
     async fn self_signed(domains: Vec<String>) -> Result<Self> {
         let rcgen::CertifiedKey { cert, signing_key } =
             rcgen::generate_simple_self_signed(domains).anyerr()?;
-        let config = RustlsConfig::from_der(vec![cert.der().to_vec()], signing_key.serialize_der())
-            .await
-            .anyerr()?;
-        let acceptor = RustlsAcceptor::new(config);
+        let key = PrivateKeyDer::try_from(signing_key.serialize_der())?;
+
+        let mut config =
+            ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+                .with_safe_default_protocol_versions()
+                .anyerr()?
+                .with_no_client_auth()
+                .with_single_cert(vec![cert.der().clone()], key)
+                .anyerr()?;
+
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        let acceptor = RustlsAcceptor::new(RustlsConfig::from_config(Arc::new(config)));
         Ok(Self::Manual(acceptor))
     }
 
     async fn manual(domains: Vec<String>, dir: PathBuf) -> Result<Self> {
-        let config = rustls::ServerConfig::builder().with_no_client_auth();
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .anyerr()?
+        .with_no_client_auth();
+
         if domains.len() != 1 {
             bail_any!("Multiple domains in manual mode are not supported");
         }
@@ -135,49 +153,23 @@ impl TlsAcceptor {
     }
 }
 
-async fn load_certs(
-    filename: impl AsRef<Path>,
-) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
+async fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<CertificateDer<'static>>> {
+    let filename = filename.as_ref();
     let certfile = tokio::fs::read(filename)
         .await
-        .std_context("cannot open certificate file")?;
-    let mut reader = std::io::Cursor::new(certfile);
-    let certs: Result<Vec<_>, std::io::Error> = rustls_pemfile::certs(&mut reader).collect();
-    let certs = certs.anyerr()?;
-
-    Ok(certs)
+        .with_std_context(|_| format!("cannot open certificate file at {}", filename.display()))?;
+    CertificateDer::pem_slice_iter(&certfile)
+        .collect::<Result<Vec<_>, _>>()
+        .with_std_context(|_| format!("cannot parse certificates from {}", filename.display()))
 }
 
-async fn load_secret_key(
-    filename: impl AsRef<Path>,
-) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
-    let keyfile = tokio::fs::read(filename.as_ref())
+async fn load_secret_key(filename: impl AsRef<Path>) -> Result<PrivateKeyDer<'static>> {
+    let filename = filename.as_ref();
+    let keyfile = tokio::fs::read(filename)
         .await
-        .std_context("cannot open secret key file")?;
-    let mut reader = std::io::Cursor::new(keyfile);
-
-    loop {
-        match rustls_pemfile::read_one(&mut reader)
-            .std_context("cannot parse secret key .pem file")?
-        {
-            Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
-            }
-            Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs8(key));
-            }
-            Some(rustls_pemfile::Item::Sec1Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Sec1(key));
-            }
-            None => break,
-            _ => {}
-        }
-    }
-
-    bail_any!(
-        "no keys found in {} (encrypted keys not supported)",
-        filename.as_ref().display()
-    );
+        .with_std_context(|_| format!("cannot open secret key file at {}", filename.display()))?;
+    PrivateKeyDer::from_pem_slice(&keyfile)
+        .with_std_context(|_| format!("cannot parse secret key from {}", filename.display()))
 }
 
 static UNSAFE_HOSTNAME_CHARACTERS: OnceLock<regex::Regex> = OnceLock::new();

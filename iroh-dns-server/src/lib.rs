@@ -22,8 +22,11 @@ mod tests {
     };
 
     use iroh::{
-        RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
+        RelayUrl, SecretKey,
+        address_lookup::PkarrRelayClient,
+        dns::DnsResolver,
         endpoint_info::EndpointInfo,
+        tls::{CaRootsConfig, default_provider},
     };
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
@@ -38,14 +41,15 @@ mod tests {
         util::PublicKeyBytes,
     };
 
-    const DNS_TIMEOUT: Duration = Duration::from_secs(1);
+    const DNS_TIMEOUT: Duration = Duration::from_secs(2);
 
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result {
-        let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
+        let dir = tempfile::tempdir()?;
+        let server = Server::spawn_for_tests(dir.path()).await?;
         let pkarr_relay_url = {
-            let mut url = http_url.clone();
+            let mut url = server.http_url().expect("http is bound");
             url.set_path("/pkarr");
             url
         };
@@ -113,7 +117,7 @@ mod tests {
 
         use hickory_server::proto::rr::Name;
         let pubkey = signed_packet.public_key().to_z32();
-        let resolver = test_resolver(nameserver);
+        let resolver = test_resolver(server.dns_addr());
 
         // resolve root record
         let name = Name::from_utf8(format!("{pubkey}.")).anyerr()?;
@@ -158,10 +162,11 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn integration_smoke() -> Result {
-        let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
+        let dir = tempfile::tempdir()?;
+        let server = Server::spawn_for_tests(dir.path()).await?;
 
         let pkarr_relay = {
-            let mut url = http_url.clone();
+            let mut url = server.http_url().expect("http is bound");
             url.set_path("/pkarr");
             url
         };
@@ -172,14 +177,17 @@ mod tests {
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
-        let pkarr = PkarrRelayClient::new(pkarr_relay);
+        let tls_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .expect("infallible");
+        let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         pkarr.publish(&signed_packet).await?;
 
-        let resolver = test_resolver(nameserver);
+        let resolver = test_resolver(server.dns_addr());
         let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
 
         assert_eq!(res.endpoint_id, endpoint_id);
@@ -225,6 +233,7 @@ mod tests {
     #[traced_test]
     #[ignore = "flaky"]
     async fn integration_mainline() -> Result {
+        let dir = tempfile::tempdir()?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         // run a mainline testnet
@@ -232,9 +241,13 @@ mod tests {
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
-        let (server, nameserver, _http_url) =
-            Server::spawn_for_tests_with_options(Some(BootstrapOption::Custom(bootstrap)), None)
-                .await?;
+        let server = Server::spawn_for_tests_with_options(
+            dir.path(),
+            Some(BootstrapOption::Custom(bootstrap)),
+            None,
+            None,
+        )
+        .await?;
 
         let origin = "irohdns.example.";
 
@@ -242,7 +255,7 @@ mod tests {
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         // publish the signed packet to our DHT
@@ -254,7 +267,7 @@ mod tests {
         pkarr.publish(&signed_packet, None).await.anyerr()?;
 
         // resolve via DNS from our server, which will lookup from our DHT
-        let resolver = test_resolver(nameserver);
+        let resolver = test_resolver(server.dns_addr());
         let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
 
         assert_eq!(res.endpoint_id, endpoint_id);
@@ -272,7 +285,7 @@ mod tests {
         let secret_key = SecretKey::generate(rng);
         let endpoint_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         Ok(packet)
     }

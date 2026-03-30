@@ -24,16 +24,19 @@ pub const DEFAULT_KEY_CACHE_CAPACITY: usize = 1024 * 1024;
 
 /// Contains all timeouts that we use in `iroh`.
 #[cfg(not(wasm_browser))]
-pub(crate) mod timeouts {
+pub mod timeouts {
     use n0_future::time::Duration;
 
     /// Timeout used by the relay client while connecting to the relay server,
     /// using `TcpStream::connect`
     pub(crate) const DIAL_ENDPOINT_TIMEOUT: Duration = Duration::from_millis(1500);
-    /// Timeout for our async dns resolver
-    pub(crate) const DNS_TIMEOUT: Duration = Duration::from_secs(1);
+
+    /// Default timeout for DNS queries issued by [`DnsResolver`].
+    ///
+    /// [`DnsResolver`]: crate::dns::DnsResolver
+    pub(crate) const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
     /// Maximum time the server will attempt to get a successful write to the connection.
     #[cfg(feature = "server")]
-    pub(crate) const SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+    pub const SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 }

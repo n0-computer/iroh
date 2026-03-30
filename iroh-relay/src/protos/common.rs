@@ -5,9 +5,9 @@
 
 use bytes::{Buf, BufMut};
 use n0_error::{e, stack_error};
-use quinn_proto::{
+use noq_proto::{
     VarInt,
-    coding::{Codec, UnexpectedEnd},
+    coding::{Decodable, Encodable, UnexpectedEnd},
 };
 
 /// Possible frame types during handshaking

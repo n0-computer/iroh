@@ -8,11 +8,13 @@
 //! another endpoint:
 //!
 //! ```no_run
-//! # use iroh::{Endpoint, EndpointAddr};
+//! # #[cfg(with_crypto_provider)]
+//! # {
+//! # use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! # use n0_error::{StackResultExt, StdResultExt};
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let addr: EndpointAddr = todo!();
-//! let ep = Endpoint::bind().await?;
+//! let ep = Endpoint::bind(presets::N0).await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
 //! let mut send_stream = conn.open_uni().await.std_context("unable to open uni")?;
 //! send_stream
@@ -21,15 +23,18 @@
 //!     .std_context("unable to write all")?;
 //! # Ok(())
 //! # }
+//! # }
 //! ```
 //!
 //! The other endpoint can accept incoming connections using the [`Endpoint`] as well:
 //!
 //! ```no_run
-//! # use iroh::{Endpoint, EndpointAddr};
+//! # #[cfg(with_crypto_provider)]
+//! # {
+//! # use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! # use n0_error::{StackResultExt, StdResultExt};
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::builder()
+//! let ep = Endpoint::builder(presets::N0)
 //!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
 //!     .await?;
@@ -46,6 +51,7 @@
 //!     .await
 //!     .std_context("unable to read")?;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 //!
@@ -151,18 +157,18 @@
 //!
 //! </div>
 //!
-//! ## Endpoint Discovery
+//! ## Address Lookup
 //!
 //! The need to know the [`RelayUrl`] *or* some direct addresses in addition to the
 //! [`EndpointId`] to connect to an iroh endpoint can be an obstacle.  To address this, the
-//! [`endpoint::Builder`] allows you to configure a [`discovery`] service.
+//! [`endpoint::Builder`] allows you to configure an [`address_lookup`] service.
 //!
-//! The [`DnsDiscovery`] service is a discovery service which will publish the [`RelayUrl`]
+//! The [`address_lookup::DnsAddressLookup`] service is an address lookup service which will publish the [`RelayUrl`]
 //! and direct addresses to a service publishing those as DNS records.  To connect it looks
 //! up the [`EndpointId`] in the DNS system to find the addressing details.  This enables
 //! connecting using only the [`EndpointId`] which is often more convenient and resilient.
 //!
-//! See [the discovery module] for more details.
+//! See [the Address Lookup module] for more details.
 //!
 //!
 //! # Examples
@@ -170,12 +176,14 @@
 //! The central struct is the [`Endpoint`], which allows you to connect to other endpoints:
 //!
 //! ```no_run
-//! use iroh::{Endpoint, EndpointAddr};
+//! # #[cfg(with_crypto_provider)]
+//! # {
+//! use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! use n0_error::{Result, StackResultExt, StdResultExt};
 //!
 //! async fn connect(addr: EndpointAddr) -> Result<()> {
 //!     // The Endpoint is the central object that manages an iroh node.
-//!     let ep = Endpoint::bind().await?;
+//!     let ep = Endpoint::bind(presets::N0).await?;
 //!
 //!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
 //!     let conn = ep.connect(addr, b"hello-world").await?;
@@ -190,18 +198,21 @@
 //!     println!("Client closed");
 //!     Ok(())
 //! }
+//! # }
 //! ```
 //!
 //! Every [`Endpoint`] can also accept connections:
 //!
 //! ```no_run
-//! use iroh::{Endpoint, EndpointAddr};
+//! # #[cfg(with_crypto_provider)]
+//! # {
+//! use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 //! use n0_error::{Result, StackResultExt, StdResultExt};
 //! use n0_future::StreamExt;
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.
-//!     let ep = Endpoint::builder()
+//!     let ep = Endpoint::builder(presets::N0)
 //!         .alpns(vec![b"hello-world".to_vec()])
 //!         .bind()
 //!         .await?;
@@ -224,6 +235,7 @@
 //!     ep.close().await;
 //!     Ok(())
 //! }
+//! # }
 //! ```
 //!
 //! Please see the examples directory for more nuanced examples.
@@ -239,11 +251,11 @@
 //! [`SecretKey`]: crate::SecretKey
 //! [`PublicKey`]: crate::PublicKey
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`discovery`]: crate::endpoint::Builder::discovery
-//! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
+//! [`address_lookup`]: crate::endpoint::Builder::address_lookup
+//! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
 //! [number 0]: https://n0.computer
 //! [`RelayMode::Default`]: crate::RelayMode::Default
-//! [the discovery module]: crate::discovery
+//! [the Address Lookup module]: crate::address_lookup
 //! [`Connection::open_bi`]: crate::endpoint::Connection::open_bi
 //! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
 
@@ -253,17 +265,15 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
-mod magicsock;
-mod tls;
+mod socket;
+pub mod tls;
 
+pub(crate) mod portmapper;
+pub(crate) mod runtime;
 pub(crate) mod util;
-#[cfg(wasm_browser)]
-pub(crate) mod web_runtime;
 
+pub mod address_lookup;
 pub mod defaults;
-pub mod discovery;
-#[cfg(not(wasm_browser))]
-pub mod dns;
 pub mod endpoint;
 pub mod metrics;
 mod net_report;
@@ -274,6 +284,8 @@ pub use iroh_base::{
     EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
     Signature, SignatureError, TransportAddr,
 };
+#[cfg(not(wasm_browser))]
+pub use iroh_relay::dns;
 pub use iroh_relay::{RelayConfig, RelayMap, endpoint_info};
 pub use n0_watcher::Watcher;
 pub use net_report::{Report as NetReport, TIMEOUT as NET_REPORT_TIMEOUT};

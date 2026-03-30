@@ -1,42 +1,17 @@
 use std::sync::Arc;
 
-use ed25519_dalek::pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding};
 use iroh_base::SecretKey;
-use n0_error::stack_error;
-use webpki_types::{CertificateDer, PrivatePkcs8KeyDer, pem::PemObject};
+use webpki_types::CertificateDer;
 
 #[derive(Debug)]
-pub(super) struct AlwaysResolvesCert {
+pub(super) struct ResolveRawPublicKeyCert {
     key: Arc<rustls::sign::CertifiedKey>,
 }
 
-/// Error for generating TLS configs.
-#[stack_error(derive, add_meta, from_sources, std_sources)]
-#[non_exhaustive]
-pub(super) enum CreateConfigError {
-    /// Rustls configuration error
-    #[error("rustls error")]
-    Rustls { source: rustls::Error },
-}
-
-impl AlwaysResolvesCert {
-    pub(super) fn new(secret_key: &SecretKey) -> Result<Self, CreateConfigError> {
-        // Directly use the key
-        let client_private_key = secret_key
-            .as_signing_key()
-            .to_pkcs8_pem(LineEnding::default())
-            .expect("key is valid");
-
-        let client_private_key = PrivatePkcs8KeyDer::from_pem_slice(client_private_key.as_bytes())
-            .expect("cannot open private key file");
-        let client_private_key = rustls::crypto::ring::sign::any_eddsa_type(&client_private_key)?;
-
-        let client_public_key = client_private_key
-            .public_key()
-            .ok_or(rustls::Error::InconsistentKeys(
-                rustls::InconsistentKeys::Unknown,
-            ))
-            .expect("cannot load public key");
+impl ResolveRawPublicKeyCert {
+    pub(super) fn new(secret_key: &SecretKey) -> Self {
+        let client_private_key = Arc::new(IrohSecretKey::from(secret_key.clone()));
+        let client_public_key = client_private_key.spki_public_key();
         let client_public_key_as_cert = CertificateDer::from(client_public_key.to_vec());
 
         let certified_key =
@@ -44,11 +19,11 @@ impl AlwaysResolvesCert {
 
         let key = Arc::new(certified_key);
 
-        Ok(Self { key })
+        Self { key }
     }
 }
 
-impl rustls::client::ResolvesClientCert for AlwaysResolvesCert {
+impl rustls::client::ResolvesClientCert for ResolveRawPublicKeyCert {
     fn resolve(
         &self,
         _root_hint_subjects: &[&[u8]],
@@ -66,7 +41,7 @@ impl rustls::client::ResolvesClientCert for AlwaysResolvesCert {
     }
 }
 
-impl rustls::server::ResolvesServerCert for AlwaysResolvesCert {
+impl rustls::server::ResolvesServerCert for ResolveRawPublicKeyCert {
     fn resolve(
         &self,
         _client_hello: rustls::server::ClientHello<'_>,
@@ -76,5 +51,50 @@ impl rustls::server::ResolvesServerCert for AlwaysResolvesCert {
 
     fn only_raw_public_keys(&self) -> bool {
         true
+    }
+}
+
+#[derive(Debug, Clone, derive_more::From)]
+struct IrohSecretKey {
+    #[from]
+    key: SecretKey,
+}
+
+impl IrohSecretKey {
+    fn spki_public_key(&self) -> webpki_types::SubjectPublicKeyInfoDer<'static> {
+        rustls::sign::public_key_to_spki(
+            &webpki_types::alg_id::ED25519,
+            self.key.public().as_bytes(),
+        )
+    }
+}
+impl rustls::sign::SigningKey for IrohSecretKey {
+    fn choose_scheme(
+        &self,
+        offered: &[rustls::SignatureScheme],
+    ) -> Option<Box<dyn rustls::sign::Signer>> {
+        if offered.contains(&rustls::SignatureScheme::ED25519) {
+            Some(Box::new(self.clone()))
+        } else {
+            None
+        }
+    }
+
+    fn algorithm(&self) -> rustls::SignatureAlgorithm {
+        rustls::SignatureAlgorithm::ED25519
+    }
+
+    fn public_key(&self) -> Option<webpki_types::SubjectPublicKeyInfoDer<'_>> {
+        Some(self.spki_public_key())
+    }
+}
+
+impl rustls::sign::Signer for IrohSecretKey {
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>, rustls::Error> {
+        Ok(self.key.sign(message).to_bytes().to_vec())
+    }
+
+    fn scheme(&self) -> rustls::SignatureScheme {
+        rustls::SignatureScheme::ED25519
     }
 }

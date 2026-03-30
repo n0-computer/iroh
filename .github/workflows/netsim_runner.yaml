@@ -14,10 +14,11 @@ on:
         required: true
         type: string
         default: "main"
-      debug_logs:
+      rust_log:
+        description: "Custom RUST_LOG value (e.g. 'iroh=debug,noq=trace'). If empty, defaults to warn."
         required: false
-        type: boolean
-        default: false
+        type: string
+        default: ""
       build_profile:
         required: false
         type: string
@@ -30,10 +31,6 @@ on:
         required: false
         type: boolean
         default: false
-      visualizations:
-        required: false
-        type: boolean
-        default: false
       pr_number:
         required: false
         type: string
@@ -42,6 +39,11 @@ on:
         required: false
         type: boolean
         default: false
+      filter:
+        description: "Test filter: 'skip:test1,test2' to exclude or 'only:test1,test2' to run exclusively"
+        required: false
+        type: string
+        default: ""
   workflow_call:
     inputs:
       branch:
@@ -55,10 +57,11 @@ on:
         required: true
         type: string
         default: "main"
-      debug_logs:
+      rust_log:
+        description: "Custom RUST_LOG value (e.g. 'iroh=debug,noq=trace'). If empty, defaults to warn."
         required: false
-        type: boolean
-        default: false
+        type: string
+        default: ""
       build_profile:
         required: false
         type: string
@@ -71,10 +74,6 @@ on:
         required: false
         type: boolean
         default: false
-      visualizations:
-        required: false
-        type: boolean
-        default: false
       pr_number:
         required: false
         type: string
@@ -83,6 +82,11 @@ on:
         required: false
         type: boolean
         default: false
+      filter:
+        description: "Test filter: 'skip:test1,test2' to exclude or 'only:test1,test2' to run exclusively. No prefix defaults to only."
+        required: false
+        type: string
+        default: ""
 
 env:
   RUST_BACKTRACE: 1
@@ -100,7 +104,7 @@ jobs:
     runs-on: [self-hosted, linux, X64]
     steps:
     - name: Checkout
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
       with:
         submodules: recursive
         ref: ${{ inputs.branch }}
@@ -115,13 +119,11 @@ jobs:
       run: |
         cargo build --profile ${{ inputs.build_profile }} --workspace --all-features --examples --bins
 
-    - name: Fetch and build chuck
+    - name: Fetch netsim
       run: |
         cd ..
         rm -rf chuck
-        git clone --single-branch --branch ${{ inputs.netsim_branch }} https://github.com/n0-computer/chuck.git
-        cd chuck
-        cargo build --release
+        git clone --depth 1 --single-branch --branch ${{ inputs.netsim_branch }} https://github.com/n0-computer/chuck.git
 
     - name: Install netsim deps
       run: |
@@ -130,13 +132,18 @@ jobs:
         ./setup.sh
         ./cleanup.sh || true
 
+    - name: Copy sim configs
+      run: |
+        cp -r .github/sims/iroh/ ../chuck/netsim/sims/iroh/
+        cp -r .github/sims/integration/ ../chuck/netsim/sims/integration/
+        cp -r .github/sims/paused/ ../chuck/netsim/sims/paused/
+
     - name: Copy binaries to right location
       run: |
         cp target/${{inputs.build_profile}}/examples/* ../chuck/netsim/bins/
         cp target/${{inputs.build_profile}}/examples/transfer ../chuck/netsim/bins/iroh-transfer
         cp target/${{inputs.build_profile}}/iroh-relay ../chuck/netsim/bins/iroh-relay
         cp target/${{inputs.build_profile}}/iroh-dns-server ../chuck/netsim/bins/iroh-dns-server
-        cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
 
     - name: Get commit sha
       shell: bash
@@ -148,10 +155,25 @@ jobs:
       continue-on-error: true
       run: |
         cd ../chuck/netsim
-        # split sim_paths by comma
         IFS=',' read -ra sim_paths <<< "${{ inputs.sim_paths }}"
+        rust_log="${{ inputs.rust_log }}"
+        filter="${{ inputs.filter }}"
+        filter_flag=""
+        if [[ -n "${filter}" ]]; then
+          if [[ "${filter}" == skip:* ]]; then
+            filter_flag="--skip=${filter#skip:}"
+          elif [[ "${filter}" == only:* ]]; then
+            filter_flag="--only=${filter#only:}"
+          else
+            filter_flag="--only=${filter}"
+          fi
+        fi
         for sim_path in "${sim_paths[@]}"; do
-          sudo python3 main.py ${{ inputs.debug_logs && '--debug' || ''}} ${{ inputs.visualizations && '--visualize' || ''}} --max-workers=${{ inputs.max_workers }} --integration $sim_path
+          if [[ -n "${rust_log}" ]]; then
+            sudo RUST_LOG="${rust_log}" python3 main.py ${filter_flag} --max-workers=${{ inputs.max_workers }} --integration $sim_path
+          else
+            sudo python3 main.py ${filter_flag} --max-workers=${{ inputs.max_workers }} --integration $sim_path
+          fi
         done
 
     - name: Generate report
@@ -167,7 +189,7 @@ jobs:
     - name: Cache AWS CLI
       if: always()
       id: cache-awscli
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/awscli
         key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
@@ -205,7 +227,7 @@ jobs:
 
     - name: Upload report
       if: always()
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       id: upload-report
       with:
         name: netsim-report-${{ env.LAST_COMMIT_SHA }}
@@ -216,7 +238,12 @@ jobs:
     - name: Fail Job if Tests Failed
       if: ${{ steps.run_tests.outcome == 'failure' }}
       run: |
-        echo "Tests failed logs are available at: ${{steps.upload-report.outputs.artifact-url}}"
+        echo "Tests failed. Report: ${{steps.upload-report.outputs.artifact-url}}"
+        echo ""
+        if [ -f ../chuck/netsim/logs/failed_tests.txt ]; then
+          echo "=== FAILED TESTS ==="
+          cat ../chuck/netsim/logs/failed_tests.txt
+        fi
         exit 1
 
     - name: Find Docs Comment

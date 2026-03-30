@@ -14,7 +14,7 @@ use std::sync::{
 
 use iroh::{
     Endpoint, EndpointAddr,
-    endpoint::{Accepting, Connection},
+    endpoint::{Accepting, Connection, presets},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_error::{Result, StdResultExt, e};
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
 }
 
 async fn connect_side(addr: &EndpointAddr) -> Result<()> {
-    let endpoint = Endpoint::bind().await?;
+    let endpoint = Endpoint::bind(presets::N0).await?;
 
     // Open a connection to the accepting endpoint
     let conn = endpoint.connect(addr.clone(), ALPN).await?;
@@ -79,7 +79,7 @@ async fn connect_side(addr: &EndpointAddr) -> Result<()> {
 }
 
 async fn start_accept_side() -> Result<Router> {
-    let endpoint = Endpoint::bind().await?;
+    let endpoint = Endpoint::bind(presets::N0).await?;
 
     let echo = ScreenedEcho {
         conn_attempt_count: Arc::new(AtomicU64::new(0)),
@@ -108,7 +108,7 @@ impl ProtocolHandler for ScreenedEcho {
         let count = self.conn_attempt_count.load(Ordering::Relaxed);
 
         // reject every other connection
-        if count % 2 == 0 {
+        if count.is_multiple_of(2) {
             println!("rejecting connection");
             return Err(e!(AcceptError::NotAllowed));
         }

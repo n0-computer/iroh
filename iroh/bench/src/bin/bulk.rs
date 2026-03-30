@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use clap::Parser;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-use iroh_bench::quinn;
+use iroh_bench::noq;
 use iroh_bench::{Commands, Opt, configure_tracing_subscriber, iroh, rt, s2n};
 #[cfg(feature = "metrics")]
 use iroh_metrics::{MetricValue, MetricsGroup};
@@ -20,8 +20,8 @@ fn main() {
             }
         }
         #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-        Commands::Quinn(opt) => {
-            if let Err(e) = run_quinn(opt) {
+        Commands::Noq(opt) => {
+            if let Err(e) = run_noq(opt) {
                 eprintln!("failed: {e:#}");
             }
         }
@@ -35,7 +35,7 @@ fn main() {
 
 pub fn run_iroh(opt: Opt) -> Result<()> {
     let server_span = tracing::error_span!("server");
-    let runtime = rt();
+    let runtime = rt(opt.workers_per_ep);
 
     #[cfg(feature = "local-relay")]
     let (relay_url, relay_server) = if opt.only_relay {
@@ -70,7 +70,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         let relay_url = relay_url.clone();
         handles.push(std::thread::spawn(move || {
             let _guard = tracing::error_span!("client", id).entered();
-            let runtime = rt();
+            let runtime = rt(opt.workers_per_ep);
             match runtime.block_on(iroh::client(server_addr, relay_url.clone(), opt)) {
                 Ok(stats) => Ok(stats),
                 Err(e) => {
@@ -93,7 +93,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
     if opt.metrics {
         // print metrics
         println!("\nMetrics:");
-        collect_and_print("MagicsockMetrics", &*endpoint_metrics.magicsock);
+        collect_and_print("SocketMetrics", &*endpoint_metrics.socket);
         collect_and_print("NetReportMetrics", &*endpoint_metrics.net_report);
         collect_and_print("PortmapMetrics", &*endpoint_metrics.portmapper);
         #[cfg(feature = "local-relay")]
@@ -108,23 +108,23 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
 }
 
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-pub fn run_quinn(opt: Opt) -> Result<()> {
+pub fn run_noq(opt: Opt) -> Result<()> {
     use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 
     let server_span = tracing::error_span!("server");
-    let runtime = rt();
+    let runtime = rt(opt.workers_per_ep);
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     let cert = CertificateDer::from(cert.cert);
 
     let (server_addr, endpoint) = {
         let _guard = server_span.enter();
-        quinn::server_endpoint(&runtime, cert.clone(), key.into(), &opt)
+        noq::server_endpoint(&runtime, cert.clone(), key.into(), &opt)
     };
 
     let server_thread = std::thread::spawn(move || {
         let _guard = server_span.entered();
-        if let Err(e) = runtime.block_on(quinn::server(endpoint, opt)) {
+        if let Err(e) = runtime.block_on(noq::server(endpoint, opt)) {
             eprintln!("server failed: {e:#}");
         }
     });
@@ -134,8 +134,8 @@ pub fn run_quinn(opt: Opt) -> Result<()> {
         let cert = cert.clone();
         handles.push(std::thread::spawn(move || {
             let _guard = tracing::error_span!("client", id).entered();
-            let runtime = rt();
-            match runtime.block_on(quinn::client(server_addr, cert, opt)) {
+            let runtime = rt(opt.workers_per_ep);
+            match runtime.block_on(noq::client(server_addr, cert, opt)) {
                 Ok(stats) => Ok(stats),
                 Err(e) => {
                     eprintln!("client failed: {e:#}");

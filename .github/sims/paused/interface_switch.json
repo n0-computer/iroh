@@ -1,0 +1,165 @@
+{
+    "name": "interface_switch_iroh",
+    "cases": [
+        {
+            "name": "route_switch_mid_transfer",
+            "description": "Multi-homed host switches route from NAT1 to NAT2 mid-transfer",
+            "visualize": true,
+            "nodes": [
+                {
+                    "name": "1_r",
+                    "count": 1,
+                    "cmd": "./bins/iroh-relay --dev --config-path ./data/relay.cfg",
+                    "type": "public",
+                    "wait": 2,
+                    "connect": {
+                        "strategy": "none"
+                    }
+                },
+                {
+                    "name": "i_srv",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json provide --env dev --relay-url=\"http://10.0.0.1:3340\"",
+                    "type": "nat",
+                    "wait": 10,
+                    "connect": {
+                        "strategy": "none"
+                    },
+                    "param_parser": "iroh_endpoint_json"
+                },
+                {
+                    "name": "i_get",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json fetch --duration=15 --env dev --relay-url=\"http://10.0.0.1:3340\" --remote-relay-url=\"http://10.0.0.1:3340\" --remote-direct-address=\"%s\" %s",
+                    "type": "multi_nat",
+                    "connect": {
+                        "strategy": "params_with_parsed_addrs",
+                        "node": "i_srv"
+                    },
+                    "process": "short",
+                    "parser": "iroh_json",
+                    "integration": "magic_iroh_client_json",
+                    "integration_require": {
+                        "transfer_success": "true",
+                        "final_conn_direct": "true"
+                    },
+                    "link": {
+                        "bw": 10,
+                        "latency": 50,
+                        "loss": 0
+                    },
+                    "actions": [
+                        {"delay": 5, "action": "switch_route", "from": 0, "to": 1}
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "interface_down_up",
+            "description": "Interface goes down mid-transfer then comes back up",
+            "visualize": true,
+            "nodes": [
+                {
+                    "name": "1_r",
+                    "count": 1,
+                    "cmd": "./bins/iroh-relay --dev --config-path ./data/relay.cfg",
+                    "type": "public",
+                    "wait": 2,
+                    "connect": {
+                        "strategy": "none"
+                    }
+                },
+                {
+                    "name": "i_srv",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json provide --env dev --relay-url=\"http://10.0.0.1:3340\"",
+                    "type": "nat",
+                    "wait": 10,
+                    "connect": {
+                        "strategy": "none"
+                    },
+                    "param_parser": "iroh_endpoint_json"
+                },
+                {
+                    "name": "i_get",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json fetch --duration=15 --env dev --relay-url=\"http://10.0.0.1:3340\" --remote-relay-url=\"http://10.0.0.1:3340\" --remote-direct-address=\"%s\" %s",
+                    "type": "nat",
+                    "connect": {
+                        "strategy": "params_with_parsed_addrs",
+                        "node": "i_srv"
+                    },
+                    "process": "short",
+                    "parser": "iroh_json",
+                    "integration": "magic_iroh_client_json",
+                    "integration_require": {
+                        "transfer_success": "true",
+                        "final_conn_direct": "true"
+                    },
+                    "link": {
+                        "bw": 10,
+                        "latency": 50,
+                        "loss": 0
+                    },
+                    "actions": [
+                        {"delay": 5, "action": "link_down", "interface": 0},
+                        {"delay": 10, "action": "link_up", "interface": 0}
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "route_switch_both_multi_nat",
+            "description": "Both provider and consumer are multi-homed, consumer switches mid-transfer",
+            "visualize": true,
+            "nodes": [
+                {
+                    "name": "1_r",
+                    "count": 1,
+                    "cmd": "./bins/iroh-relay --dev --config-path ./data/relay.cfg",
+                    "type": "public",
+                    "wait": 2,
+                    "connect": {
+                        "strategy": "none"
+                    }
+                },
+                {
+                    "name": "i_srv",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json provide --env dev --relay-url=\"http://10.0.0.1:3340\"",
+                    "type": "multi_nat",
+                    "wait": 10,
+                    "connect": {
+                        "strategy": "none"
+                    },
+                    "param_parser": "iroh_endpoint_json"
+                },
+                {
+                    "name": "i_get",
+                    "count": 1,
+                    "cmd": "./bins/iroh-transfer --output json fetch --duration=15 --env dev --relay-url=\"http://10.0.0.1:3340\" --remote-relay-url=\"http://10.0.0.1:3340\" --remote-direct-address=\"%s\" %s",
+                    "type": "multi_nat",
+                    "connect": {
+                        "strategy": "params_with_parsed_addrs",
+                        "node": "i_srv"
+                    },
+                    "process": "short",
+                    "parser": "iroh_json",
+                    "integration": "magic_iroh_client_json",
+                    "integration_require": {
+                        "transfer_success": "true",
+                        "final_conn_direct": "true"
+                    },
+                    "link": {
+                        "bw": 10,
+                        "latency": 50,
+                        "loss": 0
+                    },
+                    "actions": [
+                        {"delay": 5, "action": "switch_route", "from": 0, "to": 1}
+                    ]
+                }
+            ]
+        }
+    ]
+}

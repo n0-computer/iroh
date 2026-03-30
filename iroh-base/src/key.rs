@@ -11,7 +11,7 @@ use std::{
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use n0_error::{ensure, stack_error};
+use n0_error::{e, ensure, stack_error};
 use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize, de, ser};
 
@@ -132,7 +132,7 @@ impl PublicKey {
 
     /// Convert to a hex string limited to the first 5 bytes for a friendly string
     /// representation of the key.
-    pub fn fmt_short(&self) -> impl Display + 'static {
+    pub fn fmt_short(&self) -> impl Display + Copy + 'static {
         PublicKeyShort(
             self.0.as_bytes()[0..5]
                 .try_into()
@@ -153,6 +153,7 @@ impl PublicKey {
     }
 }
 
+#[derive(Copy, Clone)]
 struct PublicKeyShort([u8; 5]);
 
 impl Display for PublicKeyShort {
@@ -278,7 +279,7 @@ impl SecretKey {
     /// Generate a new [`SecretKey`] with a randomness generator.
     ///
     /// ```rust
-    /// // use the OsRng option for OS depedndent most secure RNG.
+    /// // use the OsRng option for OS dependent most secure RNG.
     /// let _key = iroh_base::SecretKey::generate(&mut rand::rng());
     /// ```
     pub fn generate<R: CryptoRng + ?Sized>(csprng: &mut R) -> Self {
@@ -392,6 +393,20 @@ impl Debug for Signature {
 impl Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+#[stack_error(derive, add_meta)]
+#[error("Could not parse ed25519 signature")]
+pub struct SignatureParsingError;
+
+impl TryFrom<&[u8]> for Signature {
+    type Error = SignatureParsingError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let signature =
+            ed25519_dalek::Signature::from_slice(bytes).map_err(|_| e!(SignatureParsingError))?;
+        Ok(Self(signature))
     }
 }
 

@@ -3,12 +3,13 @@ use std::{net::SocketAddr, str::FromStr};
 use clap::{Parser, ValueEnum};
 use iroh::{
     EndpointId, SecretKey,
-    discovery::{
+    address_lookup::{
         UserData,
         dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrRelayClient},
     },
     endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME},
+    tls::{CaRootsConfig, default_provider},
 };
 use n0_error::{Result, StackResultExt};
 use url::Url;
@@ -102,9 +103,16 @@ async fn main() -> Result<()> {
     println!();
     println!("publish to {pkarr_relay_url} ...");
 
-    let pkarr = PkarrRelayClient::new(pkarr_relay_url);
-    let endpoint_info = EndpointInfo::new(endpoint_id)
-        .with_relay_url(relay_url.map(Into::into))
+    let tls_config = CaRootsConfig::default()
+        .client_config(default_provider())
+        .expect("infallible");
+    let pkarr = PkarrRelayClient::new(pkarr_relay_url, tls_config);
+
+    let mut endpoint_info = EndpointInfo::new(endpoint_id);
+    if let Some(relay_url) = relay_url {
+        endpoint_info = endpoint_info.with_relay_url(relay_url.into());
+    }
+    endpoint_info = endpoint_info
         .with_ip_addrs(args.addr.into_iter().collect())
         .with_user_data(args.user_data);
     let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
