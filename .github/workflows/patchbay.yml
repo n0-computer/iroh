@@ -12,7 +12,7 @@ concurrency:
 
 env:
   RUST_BACKTRACE: 1
-  RUSTFLAGS: "-Dwarnings --cfg patchbay_tests"
+  RUSTFLAGS: "-Dwarnings"
   SCCACHE_CACHE_SIZE: "10G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
@@ -34,7 +34,7 @@ jobs:
 
       - name: Run patchbay tests
         id: tests
-        run: cargo test --release -p iroh --test patchbay -- --test-threads=1 --nocapture
+        run: cargo nextest run --release -p iroh --test patchbay -P patchbay --no-fail-fast
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
