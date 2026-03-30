@@ -16,11 +16,13 @@ use self::relay::run_relay_server;
 
 const TEST_ALPN: &[u8] = b"test";
 
-/// Create a lab with a dual-stack relay server. Returns the lab, relay map, a drop guard
-/// that keeps the relay alive, and a [`TestGuard`] that records pass/fail.
+/// Creates a lab with a dual-stack relay server.
 ///
-/// The relay binds on `[::]` and is reachable via `https://relay.test` (resolved
-/// through lab-wide DNS entries for both IPv4 and IPv6).
+/// Returns the lab, relay map, a drop guard that keeps the relay alive,
+/// and a [`TestGuard`] that records pass/fail.
+///
+/// The relay binds on `[::]` and is reachable via `https://relay.test`
+/// (resolved through lab-wide DNS entries for both IPv4 and IPv6).
 pub async fn lab_with_relay(
     path: PathBuf,
 ) -> Result<(Lab, RelayMap, AbortOnDropHandle<()>, TestGuard)> {
@@ -59,17 +61,7 @@ async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
     Ok((relay_map, AbortOnDropHandle::new(task_relay)))
 }
 
-// ---
-// Pair: run two connected endpoints
-// ---
-
-/// Two connected endpoints in the test lab, ready to run.
-///
-/// `peer1` runs in `dev1`'s namespace as the accepting side.
-/// `peer2` runs in `dev2`'s namespace as the connecting side.
-///
-/// `peer1` awaits the connection to be closed afterwards, whereas `peer2` closes
-/// the connection.
+/// Manages two connected endpoints in the test lab.
 pub struct Pair {
     dev1: Device,
     dev2: Device,
@@ -85,6 +77,21 @@ impl Pair {
         }
     }
 
+    /// Bind an endpoint on each device and establish a connection between them.
+    ///
+    /// `peer1` runs in `dev1`'s namespace as the accepting side.
+    /// `peer2` runs in `dev2`'s namespace as the connecting side.
+    ///
+    /// A connection is made from `peer1` to `peer2` with a relay-only
+    /// [`EndpointAddr`], and then the supplied functions are invoked, passing
+    /// the device, endpoint, and connection to user code.
+    ///
+    /// After a future complete, `peer1` awaits the connection to be closed,
+    /// whereas `peer2` closes the connection.
+    ///
+    /// Afterwards, both endpoints are closed and metrics are recorded through
+    /// [`Device::record_iroh_metrics`]. Will also emit a debug log with target
+    /// `patchbay::_events` with the result of the user-supplied work functions.
     pub async fn run<F1, Fut1, F2, Fut2>(self, peer1: F1, peer2: F2) -> Result
     where
         F1: FnOnce(Device, Endpoint, Connection) -> Fut1 + Send + 'static,
