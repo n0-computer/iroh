@@ -212,6 +212,11 @@ impl RelayNetworkChangeSender {
         });
     }
 
+    /// Triggers an immediate health check on relay connections after a network change.
+    pub(super) fn check_connection_after_network_change(&self) {
+        self.send_relay_actor(RelayActorMessage::CheckConnectionAfterNetworkChange);
+    }
+
     pub(super) fn rebind(&self) -> io::Result<()> {
         self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
 
