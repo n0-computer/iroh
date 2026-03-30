@@ -106,7 +106,6 @@ postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand_chacha = "0.10"
 chrono = "0.4.43"
-serial_test = "3.4.0"
 
 # *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
