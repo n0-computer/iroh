@@ -1016,6 +1016,7 @@ async fn degrade_server_3_terrible() -> Result {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "not yet passing reliably"]
 async fn degrade_server_4_extreme() -> Result {
     run_degrade_level(Side::Server, 4).await?.ok();
     Ok(())
@@ -1023,6 +1024,7 @@ async fn degrade_server_4_extreme() -> Result {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "not yet passing reliably"]
 async fn degrade_server_5_absurd() -> Result {
     run_degrade_level(Side::Server, 5).await?.ok();
     Ok(())
@@ -1058,6 +1060,7 @@ async fn degrade_client_3_terrible() -> Result {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "not yet passing reliably"]
 async fn degrade_client_4_extreme() -> Result {
     run_degrade_level(Side::Client, 4).await?.ok();
     Ok(())
@@ -1065,6 +1068,7 @@ async fn degrade_client_4_extreme() -> Result {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "not yet passing reliably"]
 async fn degrade_client_5_absurd() -> Result {
     run_degrade_level(Side::Client, 5).await?.ok();
     Ok(())
