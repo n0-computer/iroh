@@ -27,7 +27,7 @@ use std::time::Duration;
 use iroh::{TransportAddr, endpoint::Side};
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_tracing_test::traced_test;
-use patchbay::{Firewall, LinkCondition, LinkLimits, Nat, RouterPreset, TestGuard};
+use patchbay::{Firewall, LinkCondition, LinkDirection, LinkLimits, Nat, RouterPreset, TestGuard};
 use testdir::testdir;
 use tracing::info;
 
@@ -255,14 +255,16 @@ async fn change_ifaces() -> Result {
     // dev2 has two uplinks (wifi=Mobile3G on eth0, LAN on eth1). eth1 starts down.
     let dev1 = lab
         .add_device("dev1")
-        .iface("eth0", nat1.id(), None)
+        .iface("eth0", nat1.id())
         .build()
         .await?;
     let dev2 = lab
         .add_device("dev2")
-        .iface("eth0", nat2.id(), Some(LinkCondition::Mobile3G))
-        .iface("eth1", nat1.id(), None)
+        .iface("eth0", nat2.id())
+        .iface("eth1", nat1.id())
         .build()
+        .await?;
+    dev2.set_link_condition("eth0", Some(LinkCondition::Mobile3G), LinkDirection::Both)
         .await?;
     dev2.link_down("eth1").await?;
 
@@ -623,13 +625,17 @@ async fn holepunch_mobile_3g() -> Result {
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let dev1 = lab
         .add_device("dev1")
-        .iface("eth0", nat1.id(), Some(LinkCondition::Mobile3G))
+        .iface("eth0", nat1.id())
         .build()
         .await?;
     let dev2 = lab
         .add_device("dev2")
-        .iface("eth0", nat2.id(), Some(LinkCondition::Mobile3G))
+        .iface("eth0", nat2.id())
         .build()
+        .await?;
+    dev1.set_link_condition("eth0", Some(LinkCondition::Mobile3G), LinkDirection::Both)
+        .await?;
+    dev2.set_link_condition("eth0", Some(LinkCondition::Mobile3G), LinkDirection::Both)
         .await?;
     let timeout = Duration::from_secs(20);
     Pair::new(dev1, dev2, relay_map)
@@ -664,13 +670,17 @@ async fn holepunch_satellite() -> Result {
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let dev1 = lab
         .add_device("dev1")
-        .iface("eth0", nat1.id(), Some(LinkCondition::Satellite))
+        .iface("eth0", nat1.id())
         .build()
         .await?;
     let dev2 = lab
         .add_device("dev2")
-        .iface("eth0", nat2.id(), Some(LinkCondition::Satellite))
+        .iface("eth0", nat2.id())
         .build()
+        .await?;
+    dev1.set_link_condition("eth0", Some(LinkCondition::Satellite), LinkDirection::Both)
+        .await?;
+    dev2.set_link_condition("eth0", Some(LinkCondition::Satellite), LinkDirection::Both)
         .await?;
     let timeout = Duration::from_secs(20);
     Pair::new(dev1, dev2, relay_map)
@@ -796,13 +806,17 @@ async fn holepunch_asymmetric_links() -> Result {
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let dev1 = lab
         .add_device("dev1")
-        .iface("eth0", nat1.id(), Some(LinkCondition::Lan))
+        .iface("eth0", nat1.id())
         .build()
         .await?;
     let dev2 = lab
         .add_device("dev2")
-        .iface("eth0", nat2.id(), Some(LinkCondition::WifiBad))
+        .iface("eth0", nat2.id())
         .build()
+        .await?;
+    dev1.set_link_condition("eth0", Some(LinkCondition::Lan), LinkDirection::Both)
+        .await?;
+    dev2.set_link_condition("eth0", Some(LinkCondition::WifiBad), LinkDirection::Both)
         .await?;
     let timeout = Duration::from_secs(15);
     Pair::new(dev1, dev2, relay_map)
@@ -899,26 +913,30 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
 /// Run a single degradation level: create devices with the given impairment,
 /// try to holepunch and ping, return Ok if successful.
 async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuard> {
-    let limits = DEGRADE_LEVELS[level];
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let timeout = Duration::from_secs(20);
 
-    let impaired = Some(LinkCondition::Manual(limits));
-    let (server_cond, client_cond) = match impaired_side {
-        Side::Server => (impaired, None),
-        Side::Client => (None, impaired),
-    };
+    let limits = DEGRADE_LEVELS[level];
+    let link_condition = Some(LinkCondition::Manual(limits));
+
     let server = lab
         .add_device("server")
-        .iface("eth0", nat1.id(), server_cond)
+        .iface("eth0", nat1.id())
         .build()
         .await?;
     let client = lab
         .add_device("client")
-        .iface("eth0", nat2.id(), client_cond)
+        .iface("eth0", nat2.id())
         .build()
+        .await?;
+    let impaired_device = match impaired_side {
+        Side::Client => &client,
+        Side::Server => &server,
+    };
+    impaired_device
+        .set_link_condition("eth0", link_condition, LinkDirection::Both)
         .await?;
 
     let result = tokio::time::timeout(
@@ -971,83 +989,83 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_0_mild() -> Result {
-    run_degrade_level(Side::Server,0).await?.ok();
+    run_degrade_level(Side::Server, 0).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_1_poor() -> Result {
-    run_degrade_level(Side::Server,1).await?.ok();
+    run_degrade_level(Side::Server, 1).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_2_bad() -> Result {
-    run_degrade_level(Side::Server,2).await?.ok();
+    run_degrade_level(Side::Server, 2).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_3_terrible() -> Result {
-    run_degrade_level(Side::Server,3).await?.ok();
+    run_degrade_level(Side::Server, 3).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_4_extreme() -> Result {
-    run_degrade_level(Side::Server,4).await?.ok();
+    run_degrade_level(Side::Server, 4).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_5_absurd() -> Result {
-    run_degrade_level(Side::Server,5).await?.ok();
+    run_degrade_level(Side::Server, 5).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_0_mild() -> Result {
-    run_degrade_level(Side::Client,0).await?.ok();
+    run_degrade_level(Side::Client, 0).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_1_poor() -> Result {
-    run_degrade_level(Side::Client,1).await?.ok();
+    run_degrade_level(Side::Client, 1).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_2_bad() -> Result {
-    run_degrade_level(Side::Client,2).await?.ok();
+    run_degrade_level(Side::Client, 2).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_3_terrible() -> Result {
-    run_degrade_level(Side::Client,3).await?.ok();
+    run_degrade_level(Side::Client, 3).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_4_extreme() -> Result {
-    run_degrade_level(Side::Client,4).await?.ok();
+    run_degrade_level(Side::Client, 4).await?.ok();
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
 async fn degrade_client_5_absurd() -> Result {
-    run_degrade_level(Side::Client,5).await?.ok();
+    run_degrade_level(Side::Client, 5).await?.ok();
     Ok(())
 }

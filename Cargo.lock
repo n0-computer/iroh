@@ -3563,8 +3563,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "patchbay"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b50a3ddaf6b496f5ff309bb02f253a308e59b6e4fc48a9bb0ba9c19c2530d5e"
+source = "git+https://github.com/n0-computer/patchbay?branch=fix%2Flink-condition#ccb3e4894654bb531c18e18e158acfe8a90752d8"
 dependencies = [
  "anyhow",
  "chrono",
