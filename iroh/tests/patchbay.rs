@@ -264,7 +264,7 @@ async fn change_ifaces() -> Result {
         .iface("eth1", nat1.id())
         .build()
         .await?;
-    dev2.set_link_condition("eth0", Some(LinkCondition::Mobile3G), LinkDirection::Both)
+    dev2.set_link_condition("eth0", Some(LinkCondition::Mobile4G), LinkDirection::Both)
         .await?;
     dev2.link_down("eth1").await?;
 
