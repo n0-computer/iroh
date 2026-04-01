@@ -1,4 +1,4 @@
-use std::{future::Future, path::PathBuf, time::Duration};
+use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
 
 use iroh::{
     Endpoint, EndpointAddr, RelayMap, RelayMode, Watcher,
@@ -6,17 +6,17 @@ use iroh::{
     tls::CaRootsConfig,
 };
 use iroh_metrics::MetricsGroupSet;
-use n0_error::{Result, StdResultExt, anyerr, ensure_any};
-use n0_future::task::AbortOnDropHandle;
+use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
+use n0_future::{boxed::BoxFuture, task::AbortOnDropHandle};
 use patchbay::{Device, IpSupport, Lab, LabOpts, OutDir, TestGuard};
-use tokio::sync::oneshot;
-use tracing::{Instrument, debug, error_span};
+use tokio::sync::{Barrier, oneshot};
+use tracing::{Instrument, debug, error, error_span, info};
 
 use self::relay::run_relay_server;
 
 const TEST_ALPN: &[u8] = b"test";
 
-/// Creates a lab with a dual-stack relay server.
+/// Creates a lab with a relay server.
 ///
 /// Returns the lab, relay map, a drop guard that keeps the relay alive,
 /// and a [`TestGuard`] that records pass/fail.
@@ -36,6 +36,13 @@ pub async fn lab_with_relay(
     Ok((lab, relay_map, relay_guard, guard))
 }
 
+/// Creates a router `dc` and device `relay` and spawns a relay server on the device.
+///
+/// Also creates a lab-wide DNS entry `relay.test` that resolves to the relay server's
+/// IPv4 and IPv6 addresses.
+///
+/// Returns a [`RelayMap`] with an entry for the relay, and a drop handle that will
+/// stop the relay server once dropped.
 async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
     let dc = lab
         .add_router("dc")
@@ -61,127 +68,194 @@ async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
     Ok((relay_map, AbortOnDropHandle::new(task_relay)))
 }
 
-/// Manages two connected endpoints in the test lab.
+/// Type alias for boxed run functions used in [`Pair`].
+type RunFn = Box<dyn 'static + Send + FnOnce(Device, Endpoint, Connection) -> BoxFuture<Result>>;
+
+/// Builder for two connected endpoints in a lab.
+///
+/// Use this to quickly create two endpoints on two different devices and create a
+/// connection between them that starts as relay-only.
 pub struct Pair {
-    dev1: Device,
-    dev2: Device,
     relay_map: RelayMap,
+    server: Option<(Device, RunFn)>,
+    client: Option<(Device, RunFn)>,
 }
 
 impl Pair {
-    pub fn new(dev1: Device, dev2: Device, relay_map: RelayMap) -> Self {
+    /// Creates a new pair builder with a shared [`RelayMap`].
+    pub fn new(relay_map: RelayMap) -> Self {
         Self {
-            dev1,
-            dev2,
             relay_map,
+            server: None,
+            client: None,
         }
     }
 
-    /// Bind an endpoint on each device and establish a connection between them.
-    ///
-    /// `peer1` runs in `dev1`'s namespace as the accepting side.
-    /// `peer2` runs in `dev2`'s namespace as the connecting side.
-    ///
-    /// A connection is made from `peer1` to `peer2` with a relay-only
-    /// [`EndpointAddr`], and then the supplied functions are invoked, passing
-    /// the device, endpoint, and connection to user code.
-    ///
-    /// After a future complete, `peer1` awaits the connection to be closed,
-    /// whereas `peer2` closes the connection.
-    ///
-    /// Afterwards, both endpoints are closed and metrics are recorded through
-    /// [`Device::record_iroh_metrics`]. Will also emit a debug log with target
-    /// `patchbay::_events` with the result of the user-supplied work functions.
-    pub async fn run<F1, Fut1, F2, Fut2>(self, peer1: F1, peer2: F2) -> Result
+    /// Sets the server device and run function.
+    pub fn server<F, Fut>(mut self, device: Device, run_fn: F) -> Self
     where
-        F1: FnOnce(Device, Endpoint, Connection) -> Fut1 + Send + 'static,
-        Fut1: Future<Output = Result> + Send,
-        F2: FnOnce(Device, Endpoint, Connection) -> Fut2 + Send + 'static,
-        Fut2: Future<Output = Result> + Send,
+        F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
+        Fut: Future<Output = Result> + Send + 'static,
     {
+        let run_fn: RunFn =
+            Box::new(move |device, endpoint, conn| Box::pin(run_fn(device, endpoint, conn)));
+        self.server = Some((device, run_fn));
+        self
+    }
+
+    /// Sets the client device and run function.
+    pub fn client<F, Fut>(mut self, device: Device, run_fn: F) -> Self
+    where
+        F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
+        Fut: Future<Output = Result> + Send + 'static,
+    {
+        let run_fn: RunFn =
+            Box::new(move |device, endpoint, conn| Box::pin(run_fn(device, endpoint, conn)));
+        self.client = Some((device, run_fn));
+        self
+    }
+
+    /// Runs the pair to completion.
+    ///
+    /// This will bind an endpoint on each device, wait for the server endpoint to be online,
+    /// then send a relay-only [`EndpointAddr`] to the client task.
+    /// The client task will connect to the server, and the server will accept a connection.
+    /// Once a connection is established on either side, its run function is invoked.
+    /// Once both run functions completed, the endpoints are dropped without awaiting
+    /// [`Endpoint::close`], so the corresponding ERROR logs are exepcted.
+    ///
+    /// After completion, this will:
+    /// - log the result of the run functions
+    /// - record the endpoint metrics as a `patchbay::_metrics` tracing event
+    /// - emit an `iroh::_events::test::ok` or `::failed` event for each device
+    ///
+    /// Returns an error if any step or run function failed.
+    pub async fn run(mut self) -> Result {
+        let (server_device, server_run) = self
+            .server
+            .take()
+            .context("Missing server initialization")?;
+        let (client_device, client_run) = self
+            .client
+            .take()
+            .context("Missing client initialization")?;
+
         let (addr_tx, addr_rx) = oneshot::channel();
         let relay_map2 = self.relay_map.clone();
-        let task1 = self.dev1.spawn(move |dev| {
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier2 = barrier.clone();
+        let server_task = server_device.spawn(|dev| {
+            let barrier = barrier2;
             async move {
                 let endpoint = endpoint_builder(&dev, relay_map2).bind().await?;
+                info!(id=%endpoint.id().fmt_short(), bound_sockets=?endpoint.bound_sockets(), "server endpoint bound");
                 endpoint.online().await;
+                info!("endpoint online");
+                // Send address to client task. Make it a relay-only address, like in the default address lookup services.
                 addr_tx.send(addr_relay_only(endpoint.addr())).unwrap();
                 let conn = endpoint.accept().await.unwrap().accept().anyerr()?.await?;
+                info!(remote=%conn.remote_id().fmt_short(), "accepted, executing run function");
                 watch_selected_path(&conn);
-                peer1(dev.clone(), endpoint.clone(), conn.clone()).await?;
-                conn.closed().await;
-                endpoint.close().await;
+                let res = server_run(dev.clone(), endpoint.clone(), conn).await;
+                match &res {
+                    Ok(()) => info!("run function completed successfully"),
+                    Err(err)=> error!("run function failed: {err:#}"),
+                }
+                // Wait until the client run function completed before dropping the endpoint.
+                barrier.wait().await;
                 for group in endpoint.metrics().groups() {
                     dev.record_iroh_metrics(group);
                 }
-                n0_error::Ok(())
+                res
             }
-            .instrument(error_span!("ep-acpt"))
+            .instrument(error_span!("ep-server"))
         })?;
-        let task2 = self.dev2.spawn(move |dev| {
+        let client_task = client_device.spawn(move |dev| {
             async move {
                 let endpoint = endpoint_builder(&dev, self.relay_map).bind().await?;
-                let addr = addr_rx.await.unwrap();
+                info!(id=%endpoint.id().fmt_short(), bound_sockets=?endpoint.bound_sockets(), "client endpoint bound");
+                let addr = addr_rx.await.std_context("server did not send its address")?;
+                info!(?addr, "connecting to server");
                 let conn = endpoint.connect(addr, TEST_ALPN).await?;
                 watch_selected_path(&conn);
-                peer2(dev.clone(), endpoint.clone(), conn).await?;
-                endpoint.close().await;
+                info!(remote=%conn.remote_id().fmt_short(), "connected, executing run function");
+                let res = client_run(dev.clone(), endpoint.clone(), conn).await;
+                match &res {
+                    Ok(()) => info!("run function completed successfully"),
+                    Err(err)=> error!("run function failed: {err:#}"),
+                }
+                // Wait until the server run function completed before dropping the endpoint.
+                barrier.wait().await;
+                // endpoint.close().await;
                 for group in endpoint.metrics().groups() {
                     dev.record_iroh_metrics(group);
                 }
-                n0_error::Ok(())
+                res
             }
-            .instrument(error_span!("ep-cnct"))
+            .instrument(error_span!("ep-client"))
         })?;
 
-        let (res1, res2) = tokio::join!(task1, task2);
+        let (server_res, client_res) = tokio::join!(server_task, client_task);
 
         // Map the results to include the device name, and emit a tracing event within the device context.
-        let [res1, res2] = [(&self.dev1, res1), (&self.dev2, res2)].map(|(dev, res)| {
-            let res = match res {
-                Err(err) => Err(anyerr!(err, "device {} panicked", dev.name())),
-                Ok(Err(err)) => Err(anyerr!(err, "device {} failed", dev.name())),
-                Ok(Ok(())) => Ok(()),
-            };
-            let res_str = res.as_ref().map_err(|err| format!("{err:#}")).cloned();
-            dev.run_sync(move || {
-                match res_str {
-                    Ok(()) => {
-                        tracing::event!(
-                            target: "iroh::_events::test_ok",
-                            tracing::Level::INFO,
-                            msg = %"device ok"
-                        );
-                    }
-                    Err(error) => {
-                        tracing::event!(
-                            target: "iroh::_events::test_failed",
-                            tracing::Level::ERROR,
-                            error,
-                            msg = %"device failed"
-                        );
-                    }
-                }
-                Ok(())
-            })
-            .ok();
-            res
-        });
-        res1?;
-        res2?;
+        let [server_res, client_res] = [(&server_device, server_res), (&client_device, client_res)]
+            .map(|(dev, res)| {
+                let res = match res {
+                    Err(err) => Err(anyerr!(err, "device {} panicked", dev.name())),
+                    Ok(Err(err)) => Err(anyerr!(err, "device {} failed", dev.name())),
+                    Ok(Ok(())) => Ok(()),
+                };
+                let res_str = res.as_ref().map_err(|err| format!("{err:#}")).cloned();
+                log_result_on_device(dev, res_str);
+                res
+            });
+        server_res?;
+        client_res?;
         Ok(())
     }
+}
+
+fn log_result_on_device<E: std::fmt::Display + Send + 'static>(dev: &Device, res: Result<(), E>) {
+    let _ = dev.run_sync(move || {
+        match res {
+            Ok(_) => {
+                tracing::event!(
+                    target: "iroh::_events::test::ok",
+                    tracing::Level::INFO,
+                    msg = %"device ok"
+                );
+            }
+            Err(error) => {
+                tracing::event!(
+                    target: "iroh::_events::test::failed",
+                    tracing::Level::ERROR,
+                    %error,
+                    msg = %"device failed"
+                );
+            }
+        }
+        Ok(())
+    });
 }
 
 /// Extension methods on [`PathWatcher`] for common waiting patterns in tests.
 #[allow(unused)]
 pub trait PathWatcherExt {
+    /// Waits until the selected path fulfills a condition.
+    ///
+    /// Calls `f` with the currently-selected path, and again after each path update,
+    /// until `f` returns true or `timeout` elapses.
+    ///
+    /// Returns an error if the timeout elapses before `f` returned true.
     async fn wait_selected(
         &mut self,
         timeout: Duration,
         f: impl Fn(&PathInfo) -> bool,
     ) -> Result<PathInfo>;
 
+    /// Returns the currently selected path.
+    ///
+    /// Panics if no patch is marked as selected.
     fn selected(&mut self) -> PathInfo;
 
     /// Wait until the selected path is a direct (IP) path.
@@ -223,6 +297,7 @@ impl PathWatcherExt for PathWatcher {
     }
 }
 
+/// Opens a bidi stream, sends 8 bytes of data, and waits to receive the same data back.
 pub async fn ping_open(conn: &Connection, timeout: Duration) -> Result {
     tokio::time::timeout(timeout, async {
         let data: [u8; 8] = rand::random();
@@ -237,6 +312,7 @@ pub async fn ping_open(conn: &Connection, timeout: Duration) -> Result {
     .anyerr()?
 }
 
+/// Accepts a bidi stream, reads 8 bytes of data, and sends the same data back.
 pub async fn ping_accept(conn: &Connection, timeout: Duration) -> Result {
     tokio::time::timeout(timeout, async {
         let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
@@ -317,8 +393,10 @@ mod relay {
     };
 
     /// Spawn a relay server bound on `[::]` that accepts both IPv4 and IPv6.
-    /// Uses `https://relay.test` as the URL — callers must set up lab-wide DNS
-    /// entries for `relay.test` pointing to the relay's v4 and v6 addresses.
+    ///
+    /// The returned [`RelayMap`] uses `https://relay.test` as the relay URL.
+    /// Callers are responsible for ensuring that a DNS entry for `relay.test`
+    /// exists and points to the relay's IP addresses.
     pub async fn run_relay_server() -> Result<(RelayMap, Server), SpawnError> {
         let bind_ip: IpAddr = Ipv6Addr::UNSPECIFIED.into();
 

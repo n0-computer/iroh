@@ -12,7 +12,11 @@
 //!
 //! ```sh
 //! # On Linux (with user namespace support):
-//! cargo nextest run -p iroh --test patchbay -P patchbay
+//! cargo nextest run -p iroh --test patchbay --profile patchbay
+//! # or use the `cargo make` alias:
+//! cargo make patchbay
+//! # can also pass additional args:
+//! cargo make patchbay holepunch_simple --no-capture
 //!
 //! # On macOS (runs in container via patchbay CLI):
 //! patchbay test --release -p iroh --test patchbay
@@ -59,17 +63,16 @@ async fn holepunch_simple() -> Result {
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, _conn| Ok(()),
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "connection started relayed");
-                paths.wait_ip(timeout).await?;
-                info!("connection became direct");
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async |_dev, _ep, _conn| Ok(()))
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
+            paths.wait_ip(timeout).await?;
+            info!("connection became direct");
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -93,57 +96,53 @@ async fn switch_uplink() -> Result {
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "connection started relayed");
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
 
-                // Wait until a first direct path is established.
-                let first = paths.wait_ip(timeout).await?;
-                info!(addr=?first.remote_addr(), "connection became direct, waiting for path change");
+            // Wait until a first direct path is established.
+            let first = paths.wait_ip(timeout).await?;
+            info!(addr=?first.remote_addr(), "connection became direct, waiting for path change");
 
-                // Now wait until the direct path changes, which happens after the other endpoint
-                // changes its uplink. We check is_ip() explicitly to avoid triggering on a
-                // transient relay fallback during the network switch.
-                let second = paths
-                    .wait_selected(timeout, |p| {
-                        p.is_ip() && p.remote_addr() != first.remote_addr()
-                    })
-                    .await
-                    .context("did not switch paths")?;
-                info!(addr=?second.remote_addr(), "connection changed path, wait for ping");
+            // Now wait until the direct path changes, which happens after the other endpoint
+            // changes its uplink. We check is_ip() explicitly to avoid triggering on a
+            // transient relay fallback during the network switch.
+            let second = paths
+                .wait_selected(timeout, |p| {
+                    p.is_ip() && p.remote_addr() != first.remote_addr()
+                })
+                .await
+                .context("did not switch paths")?;
+            info!(addr=?second.remote_addr(), "connection changed path, wait for ping");
 
-                ping_accept(&conn, timeout).await?;
-                info!("ping done");
-                Ok(())
-            },
-            async move |dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "connection started relayed");
+            ping_accept(&conn, timeout).await?;
+            info!("ping done");
+            Ok(())
+        })
+        .client(dev2, async move |dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
 
-                // Wait for conn to become direct.
-                paths
-                    .wait_ip(timeout)
-                    .await
-                    .context("become direct")?;
+            // Wait for conn to become direct.
+            paths.wait_ip(timeout).await.context("become direct")?;
 
-                // Wait a little more and then switch wifis.
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                info!("switch IP uplink");
-                dev.replug_iface("eth0", nat3.id()).await?;
+            // Wait a little more and then switch wifis.
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            info!("switch IP uplink");
+            dev.replug_iface("eth0", nat3.id()).await?;
 
-                // We don't assert any path changes here, because the remote stays identical,
-                // and PathInfo does not contain info on local addrs. Instead, the remote
-                // only accepts our ping after the path changed.
-                info!("send ping");
-                ping_open(&conn, timeout)
-                    .await
-                    .context("failed at ping_open")?;
-                info!("ping done");
-                Ok(())
-            },
-        )
+            // We don't assert any path changes here, because the remote stays identical,
+            // and PathInfo does not contain info on local addrs. Instead, the remote
+            // only accepts our ping after the path changed.
+            info!("send ping");
+            ping_open(&conn, timeout)
+                .await
+                .context("failed at ping_open")?;
+            info!("ping done");
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -177,62 +176,60 @@ async fn switch_uplink_ipv6() -> Result {
     let dev1 = lab.add_device("dev1").uplink(public.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(home.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "connection started relayed");
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
 
-                // Wait until a first direct path is established.
-                let first = paths
-                    .wait_selected(timeout, |p| {
-                        matches!(p.remote_addr(), TransportAddr::Ip(addr) if addr.ip().is_ipv4())
-                    })
-                    .await
-                    .context("did not become direct")?;
-                info!(addr=?first.remote_addr(), "connection became direct, waiting for path change");
+            // Wait until a first direct path is established.
+            let first = paths
+                .wait_selected(
+                    timeout,
+                    |p| matches!(p.remote_addr(), TransportAddr::Ip(addr) if addr.ip().is_ipv4()),
+                )
+                .await
+                .context("did not become direct")?;
+            info!(addr=?first.remote_addr(), "connection became direct, waiting for path change");
 
-                // Now wait until the direct path changes, which happens after the other endpoint
-                // changes its uplink. We check is_ip() explicitly to avoid triggering on a
-                // transient relay fallback during the network switch.
-                let second = paths
-                    .wait_selected(timeout, |p| {
-                        matches!(p.remote_addr(), TransportAddr::Ip(addr) if addr.ip().is_ipv6())
-                    })
-                    .await
-                    .context("did not switch paths to v6")?;
-                info!(addr=?second.remote_addr(), "connection changed path, wait for ping");
+            // Now wait until the direct path changes, which happens after the other endpoint
+            // changes its uplink. We check is_ip() explicitly to avoid triggering on a
+            // transient relay fallback during the network switch.
+            let second = paths
+                .wait_selected(
+                    timeout,
+                    |p| matches!(p.remote_addr(), TransportAddr::Ip(addr) if addr.ip().is_ipv6()),
+                )
+                .await
+                .context("did not switch paths to v6")?;
+            info!(addr=?second.remote_addr(), "connection changed path, wait for ping");
 
-                ping_accept(&conn, timeout).await?;
-                info!("ping done");
-                Ok(())
-            },
-            async move |dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "connection started relayed");
+            ping_accept(&conn, timeout).await?;
+            info!("ping done");
+            Ok(())
+        })
+        .client(dev2, async move |dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
 
-                // Wait for conn to become direct.
-                paths
-                    .wait_ip(timeout)
-                    .await
-                    .context("become direct")?;
+            // Wait for conn to become direct.
+            paths.wait_ip(timeout).await.context("become direct")?;
 
-                // Wait a little more and then switch wifis.
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                info!("switch IP uplink");
-                dev.replug_iface("eth0", mobile.id()).await?;
+            // Wait a little more and then switch wifis.
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            info!("switch IP uplink");
+            dev.replug_iface("eth0", mobile.id()).await?;
 
-                // We don't assert any path changes here, because the remote stays identical,
-                // and PathInfo does not contain info on local addrs. Instead, the remote
-                // only accepts our ping after the path changed.
-                info!("send ping");
-                ping_open(&conn, timeout)
-                    .await
-                    .context("failed at ping_open")?;
-                info!("ping done");
-                Ok(())
-            },
-        )
+            // We don't assert any path changes here, because the remote stays identical,
+            // and PathInfo does not contain info on local addrs. Instead, the remote
+            // only accepts our ping after the path changed.
+            info!("send ping");
+            ping_open(&conn, timeout)
+                .await
+                .context("failed at ping_open")?;
+            info!("ping done");
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -269,45 +266,44 @@ async fn change_ifaces() -> Result {
     dev2.link_down("eth1").await?;
 
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout)
-                    .await
-                    .context("failed at ping_accept")?;
-                Ok(())
-            },
-            async move |dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "connection started relayed");
-                let first = paths
-                    .wait_ip(timeout)
-                    .await
-                    .context("did not become direct")?;
-                info!(addr=?first.remote_addr(), "connection became direct");
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout)
+                .await
+                .context("failed at ping_accept")?;
+            Ok(())
+        })
+        .client(dev2, async move |dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
+            let first = paths
+                .wait_ip(timeout)
+                .await
+                .context("did not become direct")?;
+            info!(addr=?first.remote_addr(), "connection became direct");
 
-                tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-                // Bring up the LAN interface to the other ep.
-                info!("bring up eth1");
-                dev.link_up("eth1").await?;
+            // Bring up the LAN interface to the other ep.
+            info!("bring up eth1");
+            dev.link_up("eth1").await?;
 
-                // Wait for a new direct path to be established. We check is_ip() explicitly
-                // to avoid triggering on a transient relay fallback during the switch.
-                let next = paths
-                    .wait_selected(timeout, |p| {
-                        p.is_ip() && p.remote_addr() != first.remote_addr()
-                    })
-                    .await
-                    .context("did not switch paths")?;
-                info!(addr=?next.remote_addr(), "new direct path established");
+            // Wait for a new direct path to be established. We check is_ip() explicitly
+            // to avoid triggering on a transient relay fallback during the switch.
+            let next = paths
+                .wait_selected(timeout, |p| {
+                    p.is_ip() && p.remote_addr() != first.remote_addr()
+                })
+                .await
+                .context("did not switch paths")?;
+            info!(addr=?next.remote_addr(), "new direct path established");
 
-                ping_open(&conn, timeout)
-                    .await
-                    .context("failed at ping_open")?;
-                Ok(())
-            },
-        )
+            ping_open(&conn, timeout)
+                .await
+                .context("failed at ping_open")?;
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -330,19 +326,18 @@ async fn holepunch_home_nat_one_side() -> Result {
     let dev1 = lab.add_device("dev1").uplink(nat.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(public.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                paths.wait_ip(timeout).await.context("did not holepunch")?;
-                ping_open(&conn, timeout).await?;
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            paths.wait_ip(timeout).await.context("did not holepunch")?;
+            ping_open(&conn, timeout).await?;
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -360,22 +355,21 @@ async fn holepunch_cgnat_both() -> Result {
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                paths
-                    .wait_ip(timeout)
-                    .await
-                    .context("did not holepunch through CGNAT")?;
-                ping_open(&conn, timeout).await?;
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("did not holepunch through CGNAT")?;
+            ping_open(&conn, timeout).await?;
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -393,22 +387,21 @@ async fn holepunch_full_cone_both() -> Result {
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                paths
-                    .wait_ip(timeout)
-                    .await
-                    .context("did not holepunch through full cone")?;
-                ping_open(&conn, timeout).await?;
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("did not holepunch through full cone")?;
+            ping_open(&conn, timeout).await?;
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -426,26 +419,25 @@ async fn symmetric_nat_stays_relayed() -> Result {
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "should start on relay");
-                // Ping to verify the relay path works.
-                ping_open(&conn, timeout).await?;
-                // Give holepunching time to attempt and fail.
-                tokio::time::sleep(Duration::from_secs(8)).await;
-                assert!(
-                    paths.selected().is_relay(),
-                    "should still be relayed — symmetric NAT blocks holepunching"
-                );
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "should start on relay");
+            // Ping to verify the relay path works.
+            ping_open(&conn, timeout).await?;
+            // Give holepunching time to attempt and fail.
+            tokio::time::sleep(Duration::from_secs(8)).await;
+            assert!(
+                paths.selected().is_relay(),
+                "should still be relayed — symmetric NAT blocks holepunching"
+            );
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -464,24 +456,23 @@ async fn mixed_home_vs_symmetric_stays_relayed() -> Result {
     let dev1 = lab.add_device("dev1").uplink(home.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(corp.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "should start on relay");
-                ping_open(&conn, timeout).await?;
-                tokio::time::sleep(Duration::from_secs(8)).await;
-                assert!(
-                    paths.selected().is_relay(),
-                    "should still be relayed — symmetric NAT on one side blocks holepunching"
-                );
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "should start on relay");
+            ping_open(&conn, timeout).await?;
+            tokio::time::sleep(Duration::from_secs(8)).await;
+            assert!(
+                paths.selected().is_relay(),
+                "should still be relayed — symmetric NAT on one side blocks holepunching"
+            );
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -499,24 +490,23 @@ async fn cloud_nat_stays_relayed() -> Result {
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "should start on relay");
-                ping_open(&conn, timeout).await?;
-                tokio::time::sleep(Duration::from_secs(8)).await;
-                assert!(
-                    paths.selected().is_relay(),
-                    "should still be relayed — cloud symmetric NAT blocks holepunching"
-                );
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "should start on relay");
+            ping_open(&conn, timeout).await?;
+            tokio::time::sleep(Duration::from_secs(8)).await;
+            assert!(
+                paths.selected().is_relay(),
+                "should still be relayed — cloud symmetric NAT blocks holepunching"
+            );
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -550,22 +540,21 @@ async fn holepunch_double_nat() -> Result {
     let dev1 = lab.add_device("dev1").uplink(home1.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(home2.id()).build().await?;
     let timeout = Duration::from_secs(15);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                paths
-                    .wait_ip(timeout)
-                    .await
-                    .context("did not holepunch through double NAT")?;
-                ping_open(&conn, timeout).await?;
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("did not holepunch through double NAT")?;
+            ping_open(&conn, timeout).await?;
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -591,24 +580,23 @@ async fn corporate_firewall_relay_only() -> Result {
     let dev1 = lab.add_device("dev1").uplink(fw.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(public.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "should start on relay");
-                ping_open(&conn, timeout).await?;
-                tokio::time::sleep(Duration::from_secs(8)).await;
-                assert!(
-                    paths.selected().is_relay(),
-                    "should still be relayed — corporate firewall blocks UDP"
-                );
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "should start on relay");
+            ping_open(&conn, timeout).await?;
+            tokio::time::sleep(Duration::from_secs(8)).await;
+            assert!(
+                paths.selected().is_relay(),
+                "should still be relayed — corporate firewall blocks UDP"
+            );
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -638,22 +626,21 @@ async fn holepunch_mobile_3g() -> Result {
     dev2.set_link_condition("eth0", Some(LinkCondition::Mobile3G), LinkDirection::Both)
         .await?;
     let timeout = Duration::from_secs(20);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                paths
-                    .wait_ip(timeout)
-                    .await
-                    .context("did not holepunch over 3G link")?;
-                ping_open(&conn, timeout).await?;
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("did not holepunch over 3G link")?;
+            ping_open(&conn, timeout).await?;
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -683,22 +670,21 @@ async fn holepunch_satellite() -> Result {
     dev2.set_link_condition("eth0", Some(LinkCondition::Satellite), LinkDirection::Both)
         .await?;
     let timeout = Duration::from_secs(20);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                paths
-                    .wait_ip(timeout)
-                    .await
-                    .context("did not holepunch over satellite link")?;
-                ping_open(&conn, timeout).await?;
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("did not holepunch over satellite link")?;
+            ping_open(&conn, timeout).await?;
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -717,40 +703,39 @@ async fn link_outage_recovery() -> Result {
     let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(15);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await.context("ping 1")?;
-                ping_accept(&conn, timeout).await.context("ping 2")?;
-                Ok(())
-            },
-            async move |dev, _ep, conn| {
-                let mut paths = conn.paths();
-                paths.wait_ip(timeout).await.context("initial holepunch")?;
-                info!("holepunched, now killing link for 2s");
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await.context("ping 1")?;
+            ping_accept(&conn, timeout).await.context("ping 2")?;
+            Ok(())
+        })
+        .client(dev2, async move |dev, _ep, conn| {
+            let mut paths = conn.paths();
+            paths.wait_ip(timeout).await.context("initial holepunch")?;
+            info!("holepunched, now killing link for 2s");
 
-                // Take the link down.
-                dev.link_down("eth0").await?;
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                dev.link_up("eth0").await?;
-                info!("link restored, waiting for recovery");
+            // Take the link down.
+            dev.link_down("eth0").await?;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            dev.link_up("eth0").await?;
+            info!("link restored, waiting for recovery");
 
-                // After link recovery, we should be able to ping — via relay
-                // fallback or re-established direct path.
-                ping_open(&conn, Duration::from_secs(20))
-                    .await
-                    .context("ping after link recovery")?;
-                info!("connection recovered after link outage");
+            // After link recovery, we should be able to ping — via relay
+            // fallback or re-established direct path.
+            ping_open(&conn, Duration::from_secs(20))
+                .await
+                .context("ping after link recovery")?;
+            info!("connection recovered after link outage");
 
-                // Eventually the direct path should come back.
-                paths
-                    .wait_ip(Duration::from_secs(20))
-                    .await
-                    .context("did not re-establish direct path")?;
-                ping_open(&conn, timeout).await.context("ping on direct")?;
-                Ok(())
-            },
-        )
+            // Eventually the direct path should come back.
+            paths
+                .wait_ip(Duration::from_secs(20))
+                .await
+                .context("did not re-establish direct path")?;
+            ping_open(&conn, timeout).await.context("ping on direct")?;
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -772,24 +757,23 @@ async fn hotel_wifi_relay_only() -> Result {
     let dev1 = lab.add_device("dev1").uplink(hotel.id()).build().await?;
     let dev2 = lab.add_device("dev2").uplink(public.id()).build().await?;
     let timeout = Duration::from_secs(10);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                assert!(paths.selected().is_relay(), "should start on relay");
-                ping_open(&conn, timeout).await?;
-                tokio::time::sleep(Duration::from_secs(8)).await;
-                assert!(
-                    paths.selected().is_relay(),
-                    "should still be relayed — hotel firewall blocks UDP"
-                );
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "should start on relay");
+            ping_open(&conn, timeout).await?;
+            tokio::time::sleep(Duration::from_secs(8)).await;
+            assert!(
+                paths.selected().is_relay(),
+                "should still be relayed — hotel firewall blocks UDP"
+            );
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -819,22 +803,21 @@ async fn holepunch_asymmetric_links() -> Result {
     dev2.set_link_condition("eth0", Some(LinkCondition::WifiBad), LinkDirection::Both)
         .await?;
     let timeout = Duration::from_secs(15);
-    Pair::new(dev1, dev2, relay_map)
-        .run(
-            async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
-                Ok(())
-            },
-            async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
-                paths
-                    .wait_ip(timeout)
-                    .await
-                    .context("did not holepunch with asymmetric links")?;
-                ping_open(&conn, timeout).await?;
-                Ok(())
-            },
-        )
+    Pair::new(relay_map)
+        .server(dev1, async move |_dev, _ep, conn| {
+            ping_accept(&conn, timeout).await?;
+            Ok(())
+        })
+        .client(dev2, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("did not holepunch with asymmetric links")?;
+            ping_open(&conn, timeout).await?;
+            Ok(())
+        })
+        .run()
         .await?;
     guard.ok();
     Ok(())
@@ -941,18 +924,18 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
 
     let result = tokio::time::timeout(
         timeout * 2,
-        Pair::new(server, client, relay_map).run(
-            async move |_dev, _ep, conn| {
+        Pair::new(relay_map)
+            .server(server, async move |_dev, _ep, conn| {
                 ping_accept(&conn, timeout).await?;
                 Ok(())
-            },
-            async move |_dev, _ep, conn| {
+            })
+            .client(client, async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
                 paths.wait_ip(timeout).await?;
                 ping_open(&conn, timeout).await?;
                 Ok(())
-            },
-        ),
+            })
+            .run(),
     )
     .await
     .std_context("pair timed out")
