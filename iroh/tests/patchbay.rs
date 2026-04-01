@@ -339,11 +339,11 @@ async fn link_outage_recovery() -> Result {
         .client(client, async move |dev, _ep, conn| {
             let mut paths = conn.paths();
             paths.wait_ip(timeout).await.context("initial holepunch")?;
-            info!("holepunched, now killing link for 2s");
-
+            let downtime = Duration::from_secs(5);
+            info!("holepunched, now killing link for {downtime:?}");
             // Take the link down.
             dev.link_down("eth0").await?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(downtime).await;
             dev.link_up("eth0").await?;
             info!("link restored, waiting for recovery");
 
