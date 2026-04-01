@@ -31,18 +31,17 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Install cargo-nextest
+      - name: Install cargo-make and cargo-nextest
         uses: taiki-e/install-action@v2
         with:
-          tool: nextest@${{ env.NEXTEST_VERSION }}
+          tool: nextest@${{ env.NEXTEST_VERSION }},cargo-make
 
       - name: Build patchbay tests
-        run: cargo nextest run -p iroh --test patchbay --profile patchbay --release --no-run
+        run: cargo make patchbay --no-run
 
       - name: Run patchbay tests
         id: tests
-        run: cargo nextest run -p iroh --test patchbay --profile patchbay --release
+        run: cargo make patchbay
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 

@@ -30,4 +30,4 @@ args = [
 [tasks.patchbay]
 workspace = false
 command = "cargo"
-args = ["nextest", "run", "-p", "iroh", "--test", "patchbay", "--profile", "patchbay", "${@}"]
+args = ["nextest", "run", "-p", "iroh", "--features", "qlog", "--test", "patchbay", "--profile", "patchbay", "${@}"]
