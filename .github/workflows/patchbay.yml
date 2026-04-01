@@ -43,7 +43,8 @@ jobs:
         id: tests
         run: cargo make patchbay
         env:
-          RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
+          RUST_LOG: ${{ runner.debug && 'trace' || 'debug' }}
+          PATCHBAY_LOG: trace
 
       - name: Upload test results
         if: always()
