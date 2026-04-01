@@ -19,10 +19,7 @@ env:
 jobs:
   patchbay_tests:
     name: Patchbay Tests
-    permissions:
-      contents: read
-      pull-requests: write
-    timeout-minutes: 45
+    timeout-minutes: 15
     runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
@@ -40,10 +37,20 @@ jobs:
         with:
           tool: nextest@${{ env.NEXTEST_VERSION }}
 
+      - name: Build patchbay tests
+        run: cargo nextest run -p iroh --test patchbay --profile patchbay --release --no-run
+
       - name: Run patchbay tests
         id: tests
-        run: cargo nextest run --profile patchbay --release --message-format libtest-json-plus > test-results.jsonl
+        run: cargo nextest run -p iroh --test patchbay --profile patchbay --release
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
-          NEXTEST_EXPERIMENTAL_LIBTEST_JSON: "1"
 
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patchbay-testdir-${{ github.sha }}
+          path: target/testdir-current/
+          retention-days: 7
+          if-no-files-found: ignore
