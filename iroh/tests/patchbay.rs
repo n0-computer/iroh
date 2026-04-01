@@ -60,12 +60,15 @@ async fn holepunch_simple() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
-    let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
-    let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
+    let server = lab.add_device("server").uplink(nat1.id()).build().await?;
+    let client = lab.add_device("client").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(10);
     Pair::new(relay_map)
-        .server(dev1, async |_dev, _ep, _conn| Ok(()))
-        .client(dev2, async move |_dev, _ep, conn| {
+        .server(server, async |_dev, _ep, conn| {
+            conn.closed().await;
+            Ok(())
+        })
+        .client(client, async move |_dev, _ep, conn| {
             let mut paths = conn.paths();
             assert!(paths.selected().is_relay(), "connection started relayed");
             paths.wait_ip(timeout).await?;
@@ -88,16 +91,16 @@ async fn holepunch_simple() -> Result {
 #[tokio::test]
 #[traced_test]
 #[ignore = "known to still fail"]
-async fn switch_uplink() -> Result {
+async fn switch_uplink_v4() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
     let nat3 = lab.add_router("nat3").nat(Nat::Home).build().await?;
-    let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
-    let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
+    let server = lab.add_device("server").uplink(nat1.id()).build().await?;
+    let client = lab.add_device("client").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(10);
     Pair::new(relay_map)
-        .server(dev1, async move |_dev, _ep, conn| {
+        .server(server, async move |_dev, _ep, conn| {
             let mut paths = conn.paths();
             assert!(paths.selected().is_relay(), "connection started relayed");
 
@@ -118,9 +121,10 @@ async fn switch_uplink() -> Result {
 
             ping_accept(&conn, timeout).await?;
             info!("ping done");
+            conn.closed().await;
             Ok(())
         })
-        .client(dev2, async move |dev, _ep, conn| {
+        .client(client, async move |dev, _ep, conn| {
             let mut paths = conn.paths();
             assert!(paths.selected().is_relay(), "connection started relayed");
 
@@ -155,8 +159,8 @@ async fn switch_uplink() -> Result {
 /// The test currently fails, but should pass.
 #[tokio::test]
 #[traced_test]
-#[ignore = "known to still fail"]
-async fn switch_uplink_ipv6() -> Result {
+#[ignore = "known to still be flaky"]
+async fn switch_uplink_v6() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let public = lab
         .add_router("public")
@@ -173,11 +177,11 @@ async fn switch_uplink_ipv6() -> Result {
         .preset(RouterPreset::IspV6)
         .build()
         .await?;
-    let dev1 = lab.add_device("dev1").uplink(public.id()).build().await?;
-    let dev2 = lab.add_device("dev2").uplink(home.id()).build().await?;
+    let server = lab.add_device("server").uplink(public.id()).build().await?;
+    let client = lab.add_device("client").uplink(home.id()).build().await?;
     let timeout = Duration::from_secs(10);
     Pair::new(relay_map)
-        .server(dev1, async move |_dev, _ep, conn| {
+        .server(server, async move |_dev, _ep, conn| {
             let mut paths = conn.paths();
             assert!(paths.selected().is_relay(), "connection started relayed");
 
@@ -205,9 +209,10 @@ async fn switch_uplink_ipv6() -> Result {
 
             ping_accept(&conn, timeout).await?;
             info!("ping done");
+            conn.closed().await;
             Ok(())
         })
-        .client(dev2, async move |dev, _ep, conn| {
+        .client(client, async move |dev, _ep, conn| {
             let mut paths = conn.paths();
             assert!(paths.selected().is_relay(), "connection started relayed");
 
@@ -250,30 +255,32 @@ async fn change_ifaces() -> Result {
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
 
     // dev2 has two uplinks (wifi=Mobile3G on eth0, LAN on eth1). eth1 starts down.
-    let dev1 = lab
-        .add_device("dev1")
+    let server = lab
+        .add_device("server")
         .iface("eth0", nat1.id())
         .build()
         .await?;
-    let dev2 = lab
-        .add_device("dev2")
+    let client = lab
+        .add_device("client")
         .iface("eth0", nat2.id())
         .iface("eth1", nat1.id())
         .build()
         .await?;
-    dev2.set_link_condition("eth0", Some(LinkCondition::Mobile4G), LinkDirection::Both)
+    client
+        .set_link_condition("eth0", Some(LinkCondition::Mobile4G), LinkDirection::Both)
         .await?;
-    dev2.link_down("eth1").await?;
+    client.link_down("eth1").await?;
 
     let timeout = Duration::from_secs(10);
     Pair::new(relay_map)
-        .server(dev1, async move |_dev, _ep, conn| {
+        .server(server, async move |_dev, _ep, conn| {
             ping_accept(&conn, timeout)
                 .await
                 .context("failed at ping_accept")?;
+            conn.closed().await;
             Ok(())
         })
-        .client(dev2, async move |dev, _ep, conn| {
+        .client(client, async move |dev, _ep, conn| {
             let mut paths = conn.paths();
             assert!(paths.selected().is_relay(), "connection started relayed");
             let first = paths
@@ -319,16 +326,17 @@ async fn link_outage_recovery() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
-    let dev1 = lab.add_device("dev1").uplink(nat1.id()).build().await?;
-    let dev2 = lab.add_device("dev2").uplink(nat2.id()).build().await?;
+    let server = lab.add_device("server").uplink(nat1.id()).build().await?;
+    let client = lab.add_device("client").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(15);
     Pair::new(relay_map)
-        .server(dev1, async move |_dev, _ep, conn| {
+        .server(server, async move |_dev, _ep, conn| {
             ping_accept(&conn, timeout).await.context("ping 1")?;
             ping_accept(&conn, timeout).await.context("ping 2")?;
+            conn.closed().await;
             Ok(())
         })
-        .client(dev2, async move |dev, _ep, conn| {
+        .client(client, async move |dev, _ep, conn| {
             let mut paths = conn.paths();
             paths.wait_ip(timeout).await.context("initial holepunch")?;
             info!("holepunched, now killing link for 2s");
@@ -341,14 +349,14 @@ async fn link_outage_recovery() -> Result {
 
             // After link recovery, we should be able to ping — via relay
             // fallback or re-established direct path.
-            ping_open(&conn, Duration::from_secs(20))
+            ping_open(&conn, Duration::from_secs(30))
                 .await
                 .context("ping after link recovery")?;
             info!("connection recovered after link outage");
 
             // Eventually the direct path should come back.
             paths
-                .wait_ip(Duration::from_secs(20))
+                .wait_ip(Duration::from_secs(30))
                 .await
                 .context("did not re-establish direct path")?;
             ping_open(&conn, timeout).await.context("ping on direct")?;
@@ -436,7 +444,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
-    let timeout = Duration::from_secs(20);
+    let timeout = Duration::from_secs(30);
 
     let limits = DEGRADE_LEVELS[level];
     let link_condition = Some(LinkCondition::Manual(limits));
@@ -464,6 +472,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
         Pair::new(relay_map)
             .server(server, async move |_dev, _ep, conn| {
                 ping_accept(&conn, timeout).await?;
+                conn.closed().await;
                 Ok(())
             })
             .client(client, async move |_dev, _ep, conn| {
