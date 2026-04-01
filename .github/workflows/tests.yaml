@@ -25,7 +25,7 @@ env:
   SCCACHE_CACHE_SIZE: "10G"
   CRATES_LIST: "iroh,iroh-bench,iroh-dns-server,iroh-relay"
   IROH_FORCE_STAGING_RELAYS: "1"
-  NEXTEST_VERSION: "0.9.132"
+  NEXTEST_VERSION: "0.9.80"
 
 jobs:
   build_and_test_nix:

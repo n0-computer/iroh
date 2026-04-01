@@ -83,9 +83,11 @@ async fn holepunch_simple() -> Result {
 
 /// Tests that changing the uplink of an interface works (i.e. switching wifis).
 ///
-/// For this we observe a change in the selected path's remote addr on the *other* side.
-/// Whether the side that changes interfaces opens a new path or does an RFC9000-style migration
-/// is an implementation detail which we won't test for.
+/// In this test, the client device switches the uplink of its network interface.
+/// We then observe a change in the selected path's remote addr on the server side.
+/// How this change carries through in iroh is an implementation detail we don't care for here
+/// (whether it's a new path or the same path) but the server must observe the client's
+/// new address as the selected path.
 ///
 /// The test currently fails, but should pass.
 #[tokio::test]
@@ -154,9 +156,9 @@ async fn switch_uplink_v4() -> Result {
 
 /// Tests that changing the uplink from IPv4 to IPv6 works.
 ///
-/// Similar to `switch_uplink` but switches to an IPv6 only network.
+/// Similar to [`switch_uplink_v4`] but switches to an IPv6 only network.
 ///
-/// The test currently fails, but should pass.
+/// The test currently fails in ~50% of runs, but should pass reliably.
 #[tokio::test]
 #[traced_test]
 #[ignore = "known to still be flaky"]

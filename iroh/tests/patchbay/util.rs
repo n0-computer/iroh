@@ -122,7 +122,7 @@ impl Pair {
     /// The client task will connect to the server, and the server will accept a connection.
     /// Once a connection is established on either side, its run function is invoked.
     /// Once both run functions completed, the endpoints are dropped without awaiting
-    /// [`Endpoint::close`], so the corresponding ERROR logs are exepcted.
+    /// [`Endpoint::close`], so the corresponding ERROR logs are expected.
     ///
     /// After completion, this will:
     /// - log the result of the run functions
