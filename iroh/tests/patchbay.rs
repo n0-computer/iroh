@@ -31,7 +31,7 @@ use std::time::Duration;
 use iroh::{TransportAddr, endpoint::Side};
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_tracing_test::traced_test;
-use patchbay::{LinkCondition, LinkDirection, LinkLimits, Nat, RouterPreset, TestGuard};
+use patchbay::{Firewall, LinkCondition, LinkDirection, LinkLimits, Nat, RouterPreset, TestGuard};
 use testdir::testdir;
 use tracing::info;
 
@@ -496,7 +496,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
 
     match &result {
         Ok(()) => tracing::event!(
-            target: "test::_events::ladder_pass",
+            target: "iroh::_events::test_ladder_pass",
             tracing::Level::INFO,
             level,
             latency_ms = limits.latency_ms,
@@ -506,7 +506,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
             "PASSED",
         ),
         Err(err) => tracing::event!(
-            target: "test::_events::ladder_fail",
+            target: "iroh::_events::test_ladder_fail",
             tracing::Level::WARN,
             level,
             latency_ms = limits.latency_ms,

@@ -128,6 +128,7 @@ n0-tracing-test = "0.3"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
+    "json",
 ] }
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
