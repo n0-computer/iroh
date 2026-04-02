@@ -101,6 +101,7 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 # target-common test/dev dependencies
 [dev-dependencies]
 console_error_panic_hook = "0.1"
+n0-error = { version = "0.1", features = ["anyhow"] }
 postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand_chacha = "0.10"
@@ -137,6 +138,12 @@ console = { version = "0.16" }
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
 wasm-tracing = "2.1.0"
 wasm-bindgen-test = "0.3.62"
+
+# patchbay netsim test dependencies (linux only)
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "0.6"
+patchbay = { version = "0.3", features = ["iroh-metrics"] }
+testdir = "0.10"
 
 [build-dependencies]
 cfg_aliases = { version = "0.2.1" }
