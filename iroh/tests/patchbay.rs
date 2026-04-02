@@ -52,8 +52,11 @@ fn userns_ctor() {
 // Holepunch tests
 // ---
 
-/// Simple holepunch: Two devices behind destination-independent NATs,
-/// establish via relay, upgrade to direct.
+/// Two devices behind destination-independent NATs holepunch a direct connection.
+///
+/// Both devices connect through a relay first, then upgrade to a direct path.
+/// The client asserts that the connection starts as relayed, then waits for
+/// a direct (IP) path to be selected.
 #[tokio::test]
 #[traced_test]
 async fn holepunch_simple() -> Result {
@@ -81,15 +84,14 @@ async fn holepunch_simple() -> Result {
     Ok(())
 }
 
-/// Tests that changing the uplink of an interface works (i.e. switching wifis).
+/// Switches the client's IPv4 uplink to a different NAT mid-connection.
 ///
-/// In this test, the client device switches the uplink of its network interface.
-/// We then observe a change in the selected path's remote addr on the server side.
-/// How this change carries through in iroh is an implementation detail we don't care for here
-/// (whether it's a new path or the same path) but the server must observe the client's
-/// new address as the selected path.
+/// The client starts behind `nat2`, holepunches a direct path, then replugs
+/// its interface to `nat3`. The server waits until a direct path with a new
+/// remote address is selected. We verify with a ping that the new path works.
 ///
-/// The test currently fails, but should pass.
+/// Currently ignored because iroh does not yet recover reliably from an
+/// uplink switch.
 #[tokio::test]
 #[traced_test]
 #[ignore = "known to still fail"]
@@ -154,11 +156,13 @@ async fn switch_uplink_v4() -> Result {
     Ok(())
 }
 
-/// Tests that changing the uplink from IPv4 to IPv6 works.
+/// Switches the client's uplink from an IPv4 NAT to an IPv6-only ISP network.
 ///
-/// Similar to [`switch_uplink_v4`] but switches to an IPv6 only network.
+/// Similar to [`switch_uplink_v4`], but the client replugs from a Home NAT
+/// to an IPv6-only ISP router. The server waits for the selected path to
+/// switch from an IPv4 to an IPv6 remote address.
 ///
-/// The test currently fails in ~50% of runs, but should pass reliably.
+/// Currently ignored because this fails in roughly half of runs.
 #[tokio::test]
 #[traced_test]
 #[ignore = "known to still be flaky"]
@@ -197,6 +201,8 @@ async fn switch_uplink_v6() -> Result {
                 .context("did not become direct")?;
             info!(addr=?first.remote_addr(), "connection became direct, waiting for path change");
 
+            ping_accept(&conn, timeout).await.context("ping_accept 1")?;
+
             // Now wait until the direct path changes, which happens after the other endpoint
             // changes its uplink. We check is_ip() explicitly to avoid triggering on a
             // transient relay fallback during the network switch.
@@ -209,7 +215,7 @@ async fn switch_uplink_v6() -> Result {
                 .context("did not switch paths to v6")?;
             info!(addr=?second.remote_addr(), "connection changed path, wait for ping");
 
-            ping_accept(&conn, timeout).await?;
+            ping_accept(&conn, timeout).await.context("ping_accept 2")?;
             info!("ping done");
             conn.closed().await;
             Ok(())
@@ -221,19 +227,15 @@ async fn switch_uplink_v6() -> Result {
             // Wait for conn to become direct.
             paths.wait_ip(timeout).await.context("become direct")?;
 
-            // Wait a little more and then switch wifis.
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            ping_open(&conn, timeout).await.context("ping_open 1")?;
+
             info!("switch IP uplink");
             dev.replug_iface("eth0", mobile.id()).await?;
 
             // We don't assert any path changes here, because the remote stays identical,
             // and PathInfo does not contain info on local addrs. Instead, the remote
             // only accepts our ping after the path changed.
-            info!("send ping");
-            ping_open(&conn, timeout)
-                .await
-                .context("failed at ping_open")?;
-            info!("ping done");
+            ping_open(&conn, timeout).await.context("ping_open 2")?;
             Ok(())
         })
         .run()
@@ -242,13 +244,13 @@ async fn switch_uplink_v6() -> Result {
     Ok(())
 }
 
-/// Test that switching to a faster link works.
+/// Adds a faster LAN interface and verifies the path becomes selected.
 ///
-/// Two devices, connected initially over holepunched NAT. Then mid connection
-/// device 2 plugs a cable into device 1's router, i.e. they now have a LAN
-/// connection.
-///
-/// Verify we switch to the LAN connection.
+/// The server sits on `nat1`. The client starts on `nat2` with a 4G-impaired
+/// link and has a second interface `eth1` connected to `nat1` (a LAN path),
+/// but `eth1` starts down. After holepunching over the impaired link, the test
+/// brings `eth1` up and waits for the selected path to change to the new,
+/// faster LAN address. A ping verifies the new path works.
 #[tokio::test]
 #[traced_test]
 async fn change_ifaces() -> Result {
@@ -256,7 +258,7 @@ async fn change_ifaces() -> Result {
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
 
-    // dev2 has two uplinks (wifi=Mobile3G on eth0, LAN on eth1). eth1 starts down.
+    // Client has two uplinks (eth0=4G via nat2, eth1=LAN via nat1). eth1 starts down.
     let server = lab
         .add_device("server")
         .iface("eth0", nat1.id())
@@ -276,9 +278,7 @@ async fn change_ifaces() -> Result {
     let timeout = Duration::from_secs(10);
     Pair::new(relay_map)
         .server(server, async move |_dev, _ep, conn| {
-            ping_accept(&conn, timeout)
-                .await
-                .context("failed at ping_accept")?;
+            ping_accept(&conn, timeout).await.context("ping_accept")?;
             conn.closed().await;
             Ok(())
         })
@@ -307,9 +307,7 @@ async fn change_ifaces() -> Result {
                 .context("did not switch paths")?;
             info!(addr=?next.remote_addr(), "new direct path established");
 
-            ping_open(&conn, timeout)
-                .await
-                .context("failed at ping_open")?;
+            ping_open(&conn, timeout).await.context("ping_open")?;
             Ok(())
         })
         .run()
@@ -318,10 +316,11 @@ async fn change_ifaces() -> Result {
     Ok(())
 }
 
-/// Brief link outage: after holepunching succeeds, the link goes down for 2
-/// seconds and comes back up. The connection should recover — either by
-/// falling back to relay during the outage or by re-establishing the direct
-/// path after recovery.
+/// Takes the client's link down for five seconds after holepunching, then brings it back.
+///
+/// After recovery, the test verifies that we can ping (via relay fallback or
+/// a re-established direct path), and then waits for a direct path to be
+/// selected again.
 #[tokio::test]
 #[traced_test]
 async fn link_outage_recovery() -> Result {
@@ -333,8 +332,8 @@ async fn link_outage_recovery() -> Result {
     let timeout = Duration::from_secs(15);
     Pair::new(relay_map)
         .server(server, async move |_dev, _ep, conn| {
-            ping_accept(&conn, timeout).await.context("ping 1")?;
-            ping_accept(&conn, timeout).await.context("ping 2")?;
+            ping_accept(&conn, timeout).await.context("ping_accept 1")?;
+            ping_accept(&conn, timeout).await.context("ping_accept 2")?;
             conn.closed().await;
             Ok(())
         })
@@ -349,11 +348,11 @@ async fn link_outage_recovery() -> Result {
             dev.link_up("eth0").await?;
             info!("link restored, waiting for recovery");
 
-            // After link recovery, we should be able to ping — via relay
+            // After link recovery, we should be able to ping, either via relay
             // fallback or re-established direct path.
             ping_open(&conn, Duration::from_secs(30))
                 .await
-                .context("ping after link recovery")?;
+                .context("ping_open after link_up")?;
             info!("connection recovered after link outage");
 
             // Eventually the direct path should come back.
@@ -361,7 +360,9 @@ async fn link_outage_recovery() -> Result {
                 .wait_ip(Duration::from_secs(30))
                 .await
                 .context("did not re-establish direct path")?;
-            ping_open(&conn, timeout).await.context("ping on direct")?;
+            ping_open(&conn, timeout)
+                .await
+                .context("ping_open after direct")?;
             Ok(())
         })
         .run()
@@ -374,11 +375,12 @@ async fn link_outage_recovery() -> Result {
 // Degradation ladder: find where holepunching breaks under worsening conditions
 // ---
 
-/// Increasingly degraded link on one side, clean link on the other.
-/// Each level adds more latency, loss, and reordering. The test runs each level
-/// twice: once with the impaired side accepting, once connecting.
+/// Increasingly degraded link conditions applied to one side of the connection.
+///
+/// Each level adds more latency, loss, and reordering. The levels are tested
+/// individually for both server-side and client-side impairment.
 const DEGRADE_LEVELS: &[LinkLimits] = &[
-    // 0: mild — good wifi
+    // 0: mild - good wifi
     LinkLimits {
         latency_ms: 10,
         jitter_ms: 5,
@@ -388,7 +390,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
         duplicate_pct: 0.0,
         corrupt_pct: 0.0,
     },
-    // 1: poor — bad wifi or 3G
+    // 1: poor - bad wifi or 3G
     LinkLimits {
         latency_ms: 100,
         jitter_ms: 30,
@@ -398,7 +400,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
         duplicate_pct: 0.0,
         corrupt_pct: 0.0,
     },
-    // 2: bad — congested 3G
+    // 2: bad - congested 3G
     LinkLimits {
         latency_ms: 200,
         jitter_ms: 60,
@@ -408,7 +410,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
         duplicate_pct: 0.0,
         corrupt_pct: 0.0,
     },
-    // 3: terrible — barely usable
+    // 3: terrible - barely usable
     LinkLimits {
         latency_ms: 300,
         jitter_ms: 80,
@@ -418,7 +420,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
         duplicate_pct: 0.0,
         corrupt_pct: 0.0,
     },
-    // 4: extreme — GEO satellite with heavy loss
+    // 4: extreme - GEO satellite with heavy loss
     LinkLimits {
         latency_ms: 500,
         jitter_ms: 100,
@@ -428,7 +430,7 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
         duplicate_pct: 0.0,
         corrupt_pct: 0.0,
     },
-    // 6: absurd — stress test
+    // 5: absurd - stress test
     LinkLimits {
         latency_ms: 800,
         jitter_ms: 200,
@@ -440,8 +442,11 @@ const DEGRADE_LEVELS: &[LinkLimits] = &[
     },
 ];
 
-/// Run a single degradation level: create devices with the given impairment,
-/// try to holepunch and ping, return Ok if successful.
+/// Runs a single degradation level.
+///
+/// Creates two devices behind Home NATs, applies the given [`LinkLimits`] to
+/// `impaired_side`, then attempts to holepunch and ping. Returns the
+/// [`TestGuard`] on success so the caller can mark it as passed.
 async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuard> {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -491,7 +496,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
 
     match &result {
         Ok(()) => tracing::event!(
-            target: "iroh::_events::test_ladder_pass",
+            target: "test::_events::ladder_pass",
             tracing::Level::INFO,
             level,
             latency_ms = limits.latency_ms,
@@ -501,7 +506,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
             "PASSED",
         ),
         Err(err) => tracing::event!(
-            target: "iroh::_events::test_ladder_fail",
+            target: "test::_events::ladder_fail",
             tracing::Level::WARN,
             level,
             latency_ms = limits.latency_ms,

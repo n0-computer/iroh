@@ -10,7 +10,7 @@ use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{boxed::BoxFuture, task::AbortOnDropHandle};
 use patchbay::{Device, IpSupport, Lab, LabOpts, OutDir, TestGuard};
 use tokio::sync::{Barrier, oneshot};
-use tracing::{Instrument, debug, error, error_span, info};
+use tracing::{Instrument, debug, error, error_span, event, info};
 
 use self::relay::run_relay_server;
 
@@ -127,7 +127,7 @@ impl Pair {
     /// After completion, this will:
     /// - log the result of the run functions
     /// - record the endpoint metrics as a `patchbay::_metrics` tracing event
-    /// - emit an `iroh::_events::test::ok` or `::failed` event for each device
+    /// - emit a `test::_events::pass` or `test::_events::fail` event for each device
     ///
     /// Returns an error if any step or run function failed.
     pub async fn run(mut self) -> Result {
@@ -218,21 +218,17 @@ impl Pair {
 fn log_result_on_device<E: std::fmt::Display + Send + 'static>(dev: &Device, res: Result<(), E>) {
     let _ = dev.run_sync(move || {
         match res {
-            Ok(_) => {
-                tracing::event!(
-                    target: "iroh::_events::test::ok",
-                    tracing::Level::INFO,
-                    msg = %"device ok"
-                );
-            }
-            Err(error) => {
-                tracing::event!(
-                    target: "iroh::_events::test::failed",
-                    tracing::Level::ERROR,
-                    %error,
-                    msg = %"device failed"
-                );
-            }
+            Ok(_) => event!(
+                target: "test::_events::pass",
+                tracing::Level::INFO,
+                msg = %"device passed"
+            ),
+            Err(error) => event!(
+                target: "test::_events::fail",
+                tracing::Level::ERROR,
+                %error,
+                msg = %"device failed"
+            ),
         }
         Ok(())
     });
@@ -255,7 +251,7 @@ pub trait PathWatcherExt {
 
     /// Returns the currently selected path.
     ///
-    /// Panics if no patch is marked as selected.
+    /// Panics if no path is marked as selected.
     fn selected(&mut self) -> PathInfo;
 
     /// Wait until the selected path is a direct (IP) path.
