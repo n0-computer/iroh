@@ -31,7 +31,7 @@ use std::time::Duration;
 use iroh::{TransportAddr, endpoint::Side};
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_tracing_test::traced_test;
-use patchbay::{Firewall, LinkCondition, LinkDirection, LinkLimits, Nat, RouterPreset, TestGuard};
+use patchbay::{LinkCondition, LinkDirection, LinkLimits, Nat, RouterPreset, TestGuard};
 use testdir::testdir;
 use tracing::info;
 
@@ -94,7 +94,6 @@ async fn holepunch_simple() -> Result {
 /// uplink switch.
 #[tokio::test]
 #[traced_test]
-#[ignore = "known to still fail"]
 async fn switch_uplink_v4() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -165,7 +164,6 @@ async fn switch_uplink_v4() -> Result {
 /// Currently ignored because this fails in roughly half of runs.
 #[tokio::test]
 #[traced_test]
-#[ignore = "known to still be flaky"]
 async fn switch_uplink_v6() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let public = lab
@@ -552,7 +550,6 @@ async fn degrade_server_3_terrible() -> Result {
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing reliably"]
 async fn degrade_server_4_extreme() -> Result {
     run_degrade_level(Side::Server, 4).await?.ok();
     Ok(())
@@ -560,7 +557,6 @@ async fn degrade_server_4_extreme() -> Result {
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing reliably"]
 async fn degrade_server_5_absurd() -> Result {
     run_degrade_level(Side::Server, 5).await?.ok();
     Ok(())
@@ -596,7 +592,6 @@ async fn degrade_client_3_terrible() -> Result {
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing reliably"]
 async fn degrade_client_4_extreme() -> Result {
     run_degrade_level(Side::Client, 4).await?.ok();
     Ok(())
@@ -604,7 +599,6 @@ async fn degrade_client_4_extreme() -> Result {
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing reliably"]
 async fn degrade_client_5_absurd() -> Result {
     run_degrade_level(Side::Client, 5).await?.ok();
     Ok(())
