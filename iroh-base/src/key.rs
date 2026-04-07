@@ -12,7 +12,6 @@ use std::{
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use n0_error::{e, ensure, stack_error};
-use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize, de, ser};
 
 /// A public key.
@@ -283,12 +282,18 @@ impl SecretKey {
 
     /// Generate a new [`SecretKey`] with a randomness generator.
     ///
-    /// ```rust
-    /// // use the OsRng option for OS dependent most secure RNG.
-    /// let _key = iroh_base::SecretKey::generate(&mut rand::rng());
+    /// This uses the default random number generator from the `rand` crate.
+    /// If you want to customize how the randomness is generated, use
+    /// [`Self::from_bytes`] instead and generate the 32 bytes yourself:
+    ///
     /// ```
-    pub fn generate<R: CryptoRng + ?Sized>(csprng: &mut R) -> Self {
-        let secret = SigningKey::generate(csprng);
+    /// // Create a random number generator.
+    /// let mut rng = rand::rng();
+    /// // Use it to generate the 32 bytes that make up a secret key.
+    /// let secret_key = SecretKey::from_bytes(rng.random());
+    /// ```
+    pub fn generate() -> Self {
+        let secret = SigningKey::generate(&mut rand::rng());
         Self(secret)
     }
 
@@ -464,7 +469,7 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
 #[cfg(test)]
 mod tests {
     use data_encoding::HEXLOWER;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
 
     use super::*;
 
@@ -499,7 +504,7 @@ mod tests {
     #[test]
     fn test_from_str() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let key = SecretKey::generate(&mut rng);
+        let key = SecretKey::from_bytes(&rng.random());
         assert_eq!(
             SecretKey::from_str(&HEXLOWER.encode(&key.to_bytes()))
                 .unwrap()
@@ -521,7 +526,7 @@ mod tests {
 
     #[test]
     fn signature_postcard() {
-        let key = SecretKey::generate(&mut rand::rng());
+        let key = SecretKey::generate();
         let signature = key.sign(b"hello world");
         let bytes = postcard::to_stdvec(&signature).unwrap();
         let signature2: Signature = postcard::from_bytes(&bytes).unwrap();

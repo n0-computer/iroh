@@ -310,7 +310,7 @@ mod tests {
     };
     use n0_error::StdResultExt;
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
 
     use crate::{http::HttpsConfig, server::Server};
 
@@ -333,7 +333,7 @@ mod tests {
 
         const RELAY_URL: &str = "https://relay.example./";
         let (name_z32, signed_packet) = {
-            let secret_key = SecretKey::generate(&mut rng);
+            let secret_key = SecretKey::from_bytes(&rng.random());
             let endpoint_id = secret_key.public();
             let relay_url: RelayUrl = RELAY_URL.parse().expect("valid url");
             let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());

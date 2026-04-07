@@ -55,7 +55,7 @@ use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 ///     .await?;
 ///
 /// // Sometime later add a RelayUrl for our endpoint.
-/// let id = SecretKey::generate(&mut rand::rng()).public();
+/// let id = SecretKey::generate().public();
 /// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
 /// address_lookup.add_endpoint_info(EndpointAddr {
 ///     id,

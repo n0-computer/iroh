@@ -201,9 +201,7 @@ impl Builder {
 
     /// Binds the endpoint.
     pub async fn bind(self) -> Result<Endpoint, BindError> {
-        let secret_key = self
-            .secret_key
-            .unwrap_or_else(|| SecretKey::generate(&mut rand::rng()));
+        let secret_key = self.secret_key.unwrap_or_else(|| SecretKey::generate());
 
         let crypto_provider = self
             .crypto_provider
@@ -1846,7 +1844,7 @@ mod tests {
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use noq::PathStats;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use rand_chacha::ChaCha8Rng;
     use tokio::sync::oneshot;
     use tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
@@ -1887,7 +1885,7 @@ mod tests {
     async fn endpoint_connect_close() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, relay_url, _guard) = run_relay_server().await?;
-        let server_secret_key = SecretKey::generate(&mut rng);
+        let server_secret_key = SecretKey::from_bytes(&rng.random());
         let server_peer_id = server_secret_key.public();
 
         let qlog = QlogFileGroup::from_env("endpoint_connect_close");
@@ -1994,7 +1992,7 @@ mod tests {
         let chunk_size = 100;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
-        let server_secret_key = SecretKey::generate(&mut rng);
+        let server_secret_key = SecretKey::from_bytes(&rng.random());
         let server_endpoint_id = server_secret_key.public();
 
         // Make sure the server is bound before having clients connect to it:
@@ -2062,7 +2060,7 @@ mod tests {
             for i in 0..n_clients {
                 let round_start = Instant::now();
                 info!("[client] round {i}");
-                let client_secret_key = SecretKey::generate(&mut rng);
+                let client_secret_key = SecretKey::from_bytes(&rng.random());
                 let ep = Endpoint::builder(presets::Minimal)
                     .relay_mode(RelayMode::Custom(relay_map.clone()))
                     .alpns(vec![TEST_ALPN.to_vec()])
@@ -2241,7 +2239,7 @@ mod tests {
             qlog: Arc<QlogFileGroup>,
         ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2288,7 +2286,7 @@ mod tests {
             qlog: Arc<QlogFileGroup>,
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2346,7 +2344,7 @@ mod tests {
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
         ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2389,7 +2387,7 @@ mod tests {
             node_addr_tx: oneshot::Sender<EndpointAddr>,
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -3425,7 +3423,7 @@ mod tests {
     async fn same_endpoint_id_relay() -> Result {
         let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
 
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -3579,7 +3577,7 @@ mod tests {
 
         info!("Connecting");
         let mut rng = ChaCha8Rng::seed_from_u64(41);
-        let ep_id = SecretKey::generate(&mut rng).public();
+        let ep_id = SecretKey::from_bytes(&rng.random()).public();
 
         // should likely be an error that states that the
         // endpoint is closed instead:
