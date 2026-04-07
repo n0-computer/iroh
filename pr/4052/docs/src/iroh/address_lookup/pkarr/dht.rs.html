@@ -357,7 +357,7 @@
 <a href=#357 id=357 data-nosnippet>357</a>    #[ignore = <span class="string">"flaky"</span>]
 <a href=#358 id=358 data-nosnippet>358</a>    #[traced_test]
 <a href=#359 id=359 data-nosnippet>359</a>    </span><span class="kw">async fn </span>dht_address_lookup_smoke() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#360 id=360 data-nosnippet>360</a>        <span class="kw">let </span>secret = SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::rng());
+<a href=#360 id=360 data-nosnippet>360</a>        <span class="kw">let </span>secret = SecretKey::generate();
 <a href=#361 id=361 data-nosnippet>361</a>        <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new_async(<span class="number">3</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
 <a href=#362 id=362 data-nosnippet>362</a>        <span class="kw">let </span>client = pkarr::Client::builder()
 <a href=#363 id=363 data-nosnippet>363</a>            .dht(|builder| builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap))

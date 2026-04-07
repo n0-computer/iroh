@@ -595,7 +595,7 @@
 <a href=#595 id=595 data-nosnippet>595</a>    <span class="kw">use </span>n0_error::{AnyError, <span class="prelude-ty">Result</span>, StackResultExt};
 <a href=#596 id=596 data-nosnippet>596</a>    <span class="kw">use </span>n0_future::{StreamExt, time};
 <a href=#597 id=597 data-nosnippet>597</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#598 id=598 data-nosnippet>598</a>    <span class="kw">use </span>rand::{CryptoRng, Rng, SeedableRng};
+<a href=#598 id=598 data-nosnippet>598</a>    <span class="kw">use </span>rand::{CryptoRng, RngExt, SeedableRng};
 <a href=#599 id=599 data-nosnippet>599</a>    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <a href=#600 id=600 data-nosnippet>600</a>
 <a href=#601 id=601 data-nosnippet>601</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
@@ -923,7 +923,7 @@
 <a href=#923 id=923 data-nosnippet>923</a>        rng: <span class="kw-2">&amp;mut </span>R,
 <a href=#924 id=924 data-nosnippet>924</a>        add_address_lookup: F,
 <a href=#925 id=925 data-nosnippet>925</a>    ) -&gt; (Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;) {
-<a href=#926 id=926 data-nosnippet>926</a>        <span class="kw">let </span>secret = SecretKey::generate(rng);
+<a href=#926 id=926 data-nosnippet>926</a>        <span class="kw">let </span>secret = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#927 id=927 data-nosnippet>927</a>
 <a href=#928 id=928 data-nosnippet>928</a>        <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
 <a href=#929 id=929 data-nosnippet>929</a>            .secret_key(secret)
@@ -974,7 +974,7 @@
 <a href=#974 id=974 data-nosnippet>974</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt};
 <a href=#975 id=975 data-nosnippet>975</a>    <span class="kw">use </span>n0_future::time::Duration;
 <a href=#976 id=976 data-nosnippet>976</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#977 id=977 data-nosnippet>977</a>    <span class="kw">use </span>rand::SeedableRng;
+<a href=#977 id=977 data-nosnippet>977</a>    <span class="kw">use </span>rand::{RngExt, SeedableRng};
 <a href=#978 id=978 data-nosnippet>978</a>
 <a href=#979 id=979 data-nosnippet>979</a>    <span class="kw">use crate</span>::{
 <a href=#980 id=980 data-nosnippet>980</a>        address_lookup::{EndpointData, PkarrPublisher},
@@ -995,7 +995,7 @@
 <a href=#995 id=995 data-nosnippet>995</a>            .<span class="kw">await
 <a href=#996 id=996 data-nosnippet>996</a>            </span>.context(<span class="string">"Running DNS server"</span>)<span class="question-mark">?</span>;
 <a href=#997 id=997 data-nosnippet>997</a>
-<a href=#998 id=998 data-nosnippet>998</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#998 id=998 data-nosnippet>998</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#999 id=999 data-nosnippet>999</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(secret_key.public())
 <a href=#1000 id=1000 data-nosnippet>1000</a>            .with_relay_url(<span class="string">"https://relay.example"</span>.parse().unwrap());
 <a href=#1001 id=1001 data-nosnippet>1001</a>        <span class="kw">let </span>signed_packet = endpoint_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
@@ -1023,7 +1023,7 @@
 <a href=#1023 id=1023 data-nosnippet>1023</a>            .<span class="kw">await
 <a href=#1024 id=1024 data-nosnippet>1024</a>            </span>.context(<span class="string">"DnsPkarrServer"</span>)<span class="question-mark">?</span>;
 <a href=#1025 id=1025 data-nosnippet>1025</a>
-<a href=#1026 id=1026 data-nosnippet>1026</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1026 id=1026 data-nosnippet>1026</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1027 id=1027 data-nosnippet>1027</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#1028 id=1028 data-nosnippet>1028</a>
 <a href=#1029 id=1029 data-nosnippet>1029</a>        <span class="kw">let </span>relay_url = <span class="prelude-val">Some</span>(TransportAddr::Relay(
@@ -1098,7 +1098,7 @@
 <a href=#1098 id=1098 data-nosnippet>1098</a>
 <a href=#1099 id=1099 data-nosnippet>1099</a>        <span class="kw">use crate</span>::{Endpoint, RelayMode, endpoint::presets};
 <a href=#1100 id=1100 data-nosnippet>1100</a>
-<a href=#1101 id=1101 data-nosnippet>1101</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
+<a href=#1101 id=1101 data-nosnippet>1101</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1102 id=1102 data-nosnippet>1102</a>        <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
 <a href=#1103 id=1103 data-nosnippet>1103</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#1104 id=1104 data-nosnippet>1104</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
