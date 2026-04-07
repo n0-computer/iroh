@@ -209,17 +209,17 @@
 <a href=#209 id=209 data-nosnippet>209</a>#[allow(missing_docs)]
 <a href=#210 id=210 data-nosnippet>210</a>#[non_exhaustive]
 <a href=#211 id=211 data-nosnippet>211</a></span><span class="kw">pub enum </span>KeyParsingError {
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="comment">// The encoded string could not be decoded.
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="doccomment">/// The input string could not be decoded as hex.
 <a href=#213 id=213 data-nosnippet>213</a>    </span><span class="attr">#[error(<span class="string">"failed to decode hex string"</span>)]
 <a href=#214 id=214 data-nosnippet>214</a>    </span>FailedToDecodeHex,
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="comment">// The encoded string could not be decoded.
+<a href=#215 id=215 data-nosnippet>215</a>    <span class="doccomment">/// The input string could not be decoded as base32.
 <a href=#216 id=216 data-nosnippet>216</a>    </span><span class="attr">#[error(<span class="string">"failed to decode base32 string"</span>)]
 <a href=#217 id=217 data-nosnippet>217</a>    </span>FailedToDecodeBase32,
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="doccomment">/// The encoded information had the wrong length.
+<a href=#218 id=218 data-nosnippet>218</a>    <span class="doccomment">/// The input has invalid length.
 <a href=#219 id=219 data-nosnippet>219</a>    </span><span class="attr">#[error(<span class="string">"invalid length"</span>)]
 <a href=#220 id=220 data-nosnippet>220</a>    </span>InvalidLength,
 <a href=#221 id=221 data-nosnippet>221</a>    <span class="doccomment">/// The decoded data is not a valid Ed25591 public key.
-<a href=#222 id=222 data-nosnippet>222</a>    </span><span class="attr">#[error(<span class="string">"decoded data is not a valid public key"</span>)]
+<a href=#222 id=222 data-nosnippet>222</a>    </span><span class="attr">#[error(<span class="string">"data is not a valid public key"</span>)]
 <a href=#223 id=223 data-nosnippet>223</a>    </span>InvalidKeyData,
 <a href=#224 id=224 data-nosnippet>224</a>}
 <a href=#225 id=225 data-nosnippet>225</a>
