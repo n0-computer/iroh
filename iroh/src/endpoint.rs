@@ -201,7 +201,7 @@ impl Builder {
 
     /// Binds the endpoint.
     pub async fn bind(self) -> Result<Endpoint, BindError> {
-        let secret_key = self.secret_key.unwrap_or_else(|| SecretKey::generate());
+        let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
 
         let crypto_provider = self
             .crypto_provider
