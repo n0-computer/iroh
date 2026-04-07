@@ -163,6 +163,14 @@ tracing-test = "0.2.5"
 tracing-subscriber-wasm = "0.1.0"
 wasm-bindgen-test = "0.3"
 
+# patchbay netsim test dependencies (linux only)
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "0.6"
+n0-error = { version = "0.1", features = ["anyhow"] }
+n0-tracing-test = "0.3"
+patchbay = { version = "0.5", features = ["iroh-metrics"] }
+testdir = "0.10"
+
 [build-dependencies]
 cfg_aliases = { version = "0.2.1" }
 
@@ -187,6 +195,11 @@ rustdoc-args = ["--cfg", "iroh_docsrs"]
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
+
+[[test]]
+name = "patchbay"
+path = "tests/patchbay.rs"
+required-features = ["test-utils"]
 
 [[example]]
 name = "listen"
