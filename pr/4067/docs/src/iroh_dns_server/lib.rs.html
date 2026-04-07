@@ -31,7 +31,7 @@
 <a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
 <a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">use </span>pkarr::{SignedPacket, Timestamp};
-<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">use </span>rand::{CryptoRng, RngExt, SeedableRng};
 <a href=#35 id=35 data-nosnippet>35</a>
 <a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">use crate</span>::{
 <a href=#37 id=37 data-nosnippet>37</a>        ZoneStore,
@@ -175,7 +175,7 @@
 <a href=#175 id=175 data-nosnippet>175</a>
 <a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#177 id=177 data-nosnippet>177</a>
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#180 id=180 data-nosnippet>180</a>        <span class="kw">let </span>tls_config = CaRootsConfig::default()
 <a href=#181 id=181 data-nosnippet>181</a>            .client_config(default_provider())
@@ -252,7 +252,7 @@
 <a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>origin = <span class="string">"irohdns.example."</span>;
 <a href=#253 id=253 data-nosnippet>253</a>
 <a href=#254 id=254 data-nosnippet>254</a>        <span class="comment">// create a signed packet
-<a href=#255 id=255 data-nosnippet>255</a>        </span><span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#255 id=255 data-nosnippet>255</a>        </span><span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#256 id=256 data-nosnippet>256</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
 <a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
@@ -282,7 +282,7 @@
 <a href=#282 id=282 data-nosnippet>282</a>    }
 <a href=#283 id=283 data-nosnippet>283</a>
 <a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">fn </span>random_signed_packet&lt;R: CryptoRng + <span class="question-mark">?</span>Sized&gt;(rng: <span class="kw-2">&amp;mut </span>R) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
-<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
 <a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
