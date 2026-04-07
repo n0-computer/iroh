@@ -473,7 +473,7 @@
 <a href=#473 id=473 data-nosnippet>473</a>        .<span class="kw">await
 <a href=#474 id=474 data-nosnippet>474</a>        </span>.std_context(<span class="string">"timeout waiting for A to unregister"</span>)<span class="question-mark">?</span>;
 <a href=#475 id=475 data-nosnippet>475</a>
-<a href=#476 id=476 data-nosnippet>476</a>        <span class="comment">// B should receive EndpointGone(a_key) — notifying B that A is gone
+<a href=#476 id=476 data-nosnippet>476</a>        <span class="comment">// B should receive EndpointGone(a_key): notifying B that A is gone
 <a href=#477 id=477 data-nosnippet>477</a>        </span><span class="kw">let </span>frame = recv_frame(FrameType::EndpointGone, <span class="kw-2">&amp;mut </span>b_rw).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#478 id=478 data-nosnippet>478</a>        <span class="macro">assert_eq!</span>(frame, RelayToClientMsg::EndpointGone(a_key));
 <a href=#479 id=479 data-nosnippet>479</a>
