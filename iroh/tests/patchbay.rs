@@ -76,6 +76,7 @@ async fn holepunch_simple() -> Result {
             assert!(paths.selected().is_relay(), "connection started relayed");
             paths.wait_ip(timeout).await?;
             info!("connection became direct");
+            conn.close(0u32.into(), b"bye!");
             Ok(())
         })
         .run()
@@ -147,6 +148,7 @@ async fn switch_uplink_v4() -> Result {
                 .await
                 .context("failed at ping_open")?;
             info!("ping done");
+            conn.close(0u32.into(), b"bye!");
             Ok(())
         })
         .run()
@@ -234,6 +236,7 @@ async fn switch_uplink_v6() -> Result {
             // and PathInfo does not contain info on local addrs. Instead, the remote
             // only accepts our ping after the path changed.
             ping_open(&conn, timeout).await.context("ping_open 2")?;
+            conn.close(0u32.into(), b"bye!");
             Ok(())
         })
         .run()
@@ -306,6 +309,7 @@ async fn change_ifaces() -> Result {
             info!(addr=?next.remote_addr(), "new direct path established");
 
             ping_open(&conn, timeout).await.context("ping_open")?;
+            conn.close(0u32.into(), b"bye!");
             Ok(())
         })
         .run()
@@ -361,6 +365,7 @@ async fn link_outage_recovery() -> Result {
             ping_open(&conn, timeout)
                 .await
                 .context("ping_open after direct")?;
+            conn.close(0u32.into(), b"bye!");
             Ok(())
         })
         .run()
@@ -484,6 +489,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
                 let mut paths = conn.paths();
                 paths.wait_ip(timeout).await?;
                 ping_open(&conn, timeout).await?;
+                conn.close(0u32.into(), b"bye!");
                 Ok(())
             })
             .run(),

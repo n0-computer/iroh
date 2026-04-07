@@ -1,4 +1,4 @@
-use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
+use std::{future::Future, path::PathBuf, time::Duration};
 
 use iroh::{
     Endpoint, EndpointAddr, RelayMap, RelayMode, Watcher,
@@ -9,7 +9,7 @@ use iroh_metrics::MetricsGroupSet;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{boxed::BoxFuture, task::AbortOnDropHandle};
 use patchbay::{Device, IpSupport, Lab, LabOpts, OutDir, TestGuard};
-use tokio::sync::{Barrier, oneshot};
+use tokio::sync::oneshot;
 use tracing::{Instrument, debug, error, error_span, event, info};
 
 use self::relay::run_relay_server;
@@ -142,10 +142,7 @@ impl Pair {
 
         let (addr_tx, addr_rx) = oneshot::channel();
         let relay_map2 = self.relay_map.clone();
-        let barrier = Arc::new(Barrier::new(2));
-        let barrier2 = barrier.clone();
         let server_task = server_device.spawn(|dev| {
-            let barrier = barrier2;
             async move {
                 let endpoint = endpoint_builder(&dev, relay_map2).bind().await?;
                 info!(id=%endpoint.id().fmt_short(), bound_sockets=?endpoint.bound_sockets(), "server endpoint bound");
@@ -161,8 +158,7 @@ impl Pair {
                     Ok(()) => info!("run function completed successfully"),
                     Err(err)=> error!("run function failed: {err:#}"),
                 }
-                // Wait until the client run function completed before dropping the endpoint.
-                barrier.wait().await;
+                endpoint.close().await;
                 for group in endpoint.metrics().groups() {
                     dev.record_iroh_metrics(group);
                 }
@@ -184,9 +180,7 @@ impl Pair {
                     Ok(()) => info!("run function completed successfully"),
                     Err(err)=> error!("run function failed: {err:#}"),
                 }
-                // Wait until the server run function completed before dropping the endpoint.
-                barrier.wait().await;
-                // endpoint.close().await;
+                endpoint.close().await;
                 for group in endpoint.metrics().groups() {
                     dev.record_iroh_metrics(group);
                 }
