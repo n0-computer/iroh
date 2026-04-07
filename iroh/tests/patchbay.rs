@@ -74,7 +74,7 @@ async fn holepunch_simple() -> Result {
         .client(client, async move |_dev, _ep, conn| {
             let mut paths = conn.paths();
             assert!(paths.selected().is_relay(), "connection started relayed");
-            paths.wait_ip(timeout).await?;
+            paths.wait_ip(timeout).await.context("holepunch to direct")?;
             info!("connection became direct");
             Ok(())
         })
@@ -133,7 +133,7 @@ async fn switch_uplink_v4() -> Result {
             assert!(paths.selected().is_relay(), "connection started relayed");
 
             // Wait for conn to become direct.
-            paths.wait_ip(timeout).await.context("become direct")?;
+            paths.wait_ip(timeout).await.context("holepunch to direct")?;
 
             // Wait a little more and then switch wifis.
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -225,17 +225,17 @@ async fn switch_uplink_v6() -> Result {
             assert!(paths.selected().is_relay(), "connection started relayed");
 
             // Wait for conn to become direct.
-            paths.wait_ip(timeout).await.context("become direct")?;
+            paths.wait_ip(timeout).await.context("holepunch to direct")?;
 
-            ping_open(&conn, timeout).await.context("ping_open 1")?;
+            ping_open(&conn, timeout).await.context("ping before switch")?;
 
-            info!("switch IP uplink");
+            info!("switch IP uplink to v6");
             dev.replug_iface("eth0", mobile.id()).await?;
 
             // We don't assert any path changes here, because the remote stays identical,
             // and PathInfo does not contain info on local addrs. Instead, the remote
             // only accepts our ping after the path changed.
-            ping_open(&conn, timeout).await.context("ping_open 2")?;
+            ping_open(&conn, timeout).await.context("ping after v6 switch")?;
             Ok(())
         })
         .run()
@@ -478,14 +478,16 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
         timeout * 2,
         Pair::new(relay_map)
             .server(server, async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
+                ping_accept(&conn, timeout).await.context("ping_accept")?;
                 conn.closed().await;
                 Ok(())
             })
             .client(client, async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                paths.wait_ip(timeout).await?;
-                ping_open(&conn, timeout).await?;
+                paths.wait_ip(timeout).await.context("holepunch to direct")?;
+                info!("direct path established, sending ping");
+                ping_open(&conn, timeout).await.context("ping_open")?;
+                info!("ping complete");
                 Ok(())
             })
             .run(),

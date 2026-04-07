@@ -57,6 +57,7 @@ async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
     let relay_v6 = dev_relay.ip6().expect("relay has IPv6");
     lab.dns_entry("relay.test", relay_v4.into())?;
     lab.dns_entry("relay.test", relay_v6.into())?;
+    info!(%relay_v4, %relay_v6, "DNS entries for relay.test registered");
 
     let (relay_map_tx, relay_map_rx) = oneshot::channel();
     let task_relay = dev_relay.spawn(async move |_ctx| {
@@ -147,13 +148,16 @@ impl Pair {
         let server_task = server_device.spawn(|dev| {
             let barrier = barrier2;
             async move {
-                let endpoint = endpoint_builder(&dev, relay_map2).bind().await?;
+                let endpoint = endpoint_builder(&dev, relay_map2).bind().await
+                    .context("server endpoint bind")?;
                 info!(id=%endpoint.id().fmt_short(), bound_sockets=?endpoint.bound_sockets(), "server endpoint bound");
                 endpoint.online().await;
                 info!("endpoint online");
                 // Send address to client task. Make it a relay-only address, like in the default address lookup services.
                 addr_tx.send(addr_relay_only(endpoint.addr())).unwrap();
-                let conn = endpoint.accept().await.unwrap().accept().anyerr()?.await?;
+                let incoming = endpoint.accept().await.context("server accept incoming")?;
+                let conn = incoming.accept().anyerr()?.await
+                    .context("server accept handshake")?;
                 info!(remote=%conn.remote_id().fmt_short(), "accepted, executing run function");
                 watch_selected_path(&conn);
                 let res = server_run(dev.clone(), endpoint.clone(), conn).await;
@@ -172,11 +176,13 @@ impl Pair {
         })?;
         let client_task = client_device.spawn(move |dev| {
             async move {
-                let endpoint = endpoint_builder(&dev, self.relay_map).bind().await?;
+                let endpoint = endpoint_builder(&dev, self.relay_map).bind().await
+                    .context("client endpoint bind")?;
                 info!(id=%endpoint.id().fmt_short(), bound_sockets=?endpoint.bound_sockets(), "client endpoint bound");
                 let addr = addr_rx.await.std_context("server did not send its address")?;
                 info!(?addr, "connecting to server");
-                let conn = endpoint.connect(addr, TEST_ALPN).await?;
+                let conn = endpoint.connect(addr, TEST_ALPN).await
+                    .context("client connect")?;
                 watch_selected_path(&conn);
                 info!(remote=%conn.remote_id().fmt_short(), "connected, executing run function");
                 let res = client_run(dev.clone(), endpoint.clone(), conn).await;
