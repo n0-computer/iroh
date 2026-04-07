@@ -148,6 +148,15 @@ impl Client {
         self.done.cancel();
     }
 
+    /// Schedules shutdown after a delay.
+    pub(super) fn shutdown_after(&self, delay: Duration) -> AbortOnDropHandle<()> {
+        let done = self.done.clone();
+        AbortOnDropHandle::new(tokio::task::spawn(async move {
+            tokio::time::sleep(delay).await;
+            done.cancel();
+        }))
+    }
+
     pub(super) fn try_send_packet(
         &self,
         src: EndpointId,

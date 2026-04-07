@@ -7,12 +7,14 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use dashmap::DashMap;
 use iroh_base::EndpointId;
 use n0_future::IterExt;
 use tokio::sync::mpsc::error::TrySendError;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
@@ -20,6 +22,9 @@ use crate::{
     protos::{relay::Datagrams, streams::BytesStreamSink},
     server::{client::SendError, metrics::Metrics},
 };
+
+/// How long an inactive client is kept alive before being shut down.
+const INACTIVE_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Manages the connections to all currently connected clients.
 #[derive(Debug, Default, Clone)]
@@ -42,14 +47,36 @@ struct Inner {
 #[derive(Debug)]
 struct ClientState {
     active: Client,
-    inactive: Vec<Client>,
+    inactive: Vec<InactiveClient>,
+}
+
+/// A client that has been replaced by a newer connection for the same endpoint.
+///
+/// Dropping this struct cancels the timer.
+#[derive(Debug)]
+struct InactiveClient {
+    /// The original client.
+    client: Client,
+    /// Dropping this cancels the delayed shutdown timer.
+    _shutdown_timer: AbortOnDropHandle<()>,
+}
+
+impl InactiveClient {
+    /// Shutsdown the passed in client, delayed by [`INACTIVE_CLIENT_TIMEOUT`].
+    fn new(client: Client) -> Self {
+        let timer = client.shutdown_after(INACTIVE_CLIENT_TIMEOUT);
+        Self {
+            client,
+            _shutdown_timer: timer,
+        }
+    }
 }
 
 impl ClientState {
     async fn shutdown_all(mut self) {
         [self.active]
             .into_iter()
-            .chain(self.inactive.drain(..))
+            .chain(self.inactive.drain(..).map(|ic| ic.client))
             .map(Client::shutdown)
             .join_all()
             .await;
@@ -90,7 +117,8 @@ impl Clients {
                 old_client
                     .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string())
                     .ok();
-                state.inactive.push(old_client);
+                let inactive_client = InactiveClient::new(old_client);
+                state.inactive.push(inactive_client);
             }
             dashmap::Entry::Vacant(entry) => {
                 entry.insert(ClientState {
@@ -119,9 +147,10 @@ impl Clients {
         self.0.clients.remove_if_mut(&endpoint_id, |_id, state| {
             if state.active.connection_id() == connection_id {
                 // The unregistering client is the currently active client
-                if let Some(last_inactive_client) = state.inactive.pop() {
+                if let Some(last_inactive) = state.inactive.pop() {
                     // There is an inactive client, promote to active again.
-                    state.active = last_inactive_client;
+                    // Dropping the InactiveClient cancels its shutdown timer.
+                    state.active = last_inactive.client;
                     // Don't remove the entry from client map.
                     false
                 } else {
@@ -152,7 +181,7 @@ impl Clients {
                 // The unregistering client is already inactive. Remove from the list of inactive clients.
                 state
                     .inactive
-                    .retain(|client| client.connection_id() != connection_id);
+                    .retain(|ic| ic.client.connection_id() != connection_id);
                 // Active client is unmodified: keep entry in map.
                 false
             }
