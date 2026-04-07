@@ -62,7 +62,7 @@ fn build_address_lookup(args: Args) -> iroh::address_lookup::pkarr::dht::Builder
 }
 
 async fn chat_server(args: Args) -> Result<()> {
-    let secret_key = iroh::SecretKey::generate(&mut rand::rng());
+    let secret_key = iroh::SecretKey::generate();
     let endpoint_id = secret_key.public();
     let address_lookup = build_address_lookup(args);
     let endpoint = Endpoint::builder(presets::N0)
@@ -108,7 +108,7 @@ async fn chat_server(args: Args) -> Result<()> {
 
 async fn chat_client(args: Args) -> Result<()> {
     let remote_endpoint_id = args.endpoint_id.unwrap();
-    let secret_key = iroh::SecretKey::generate(&mut rand::rng());
+    let secret_key = iroh::SecretKey::generate();
     let endpoint_id = secret_key.public();
     // note: we don't pass a secret key here, because we don't need to publish our address, don't spam the DHT
     let address_lookup = build_address_lookup(args).no_publish();

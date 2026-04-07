@@ -465,8 +465,8 @@ mod tests {
     #[traced_test]
     async fn test_custom_transport_only() -> Result<()> {
         let network = TestNetwork::new();
-        let s1 = SecretKey::generate(&mut rand::rng());
-        let s2 = SecretKey::generate(&mut rand::rng());
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
 
         let t1 = network.create_transport(s1.public())?;
         let t2 = network.create_transport(s2.public())?;
@@ -502,8 +502,8 @@ mod tests {
     #[traced_test]
     async fn test_custom_transport_wins_over_ip() -> Result<()> {
         let network = TestNetwork::new();
-        let s1 = SecretKey::generate(&mut rand::rng());
-        let s2 = SecretKey::generate(&mut rand::rng());
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
 
         let t1 = network.create_transport(s1.public())?;
         let t2 = network.create_transport(s2.public())?;
@@ -541,8 +541,8 @@ mod tests {
     #[traced_test]
     async fn test_ip_wins_over_custom() -> Result<()> {
         let network = TestNetwork::new();
-        let s1 = SecretKey::generate(&mut rand::rng());
-        let s2 = SecretKey::generate(&mut rand::rng());
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
 
         let t1 = network.create_transport(s1.public())?;
         let t2 = network.create_transport(s2.public())?;
@@ -585,8 +585,8 @@ mod tests {
     async fn test_custom_transport_wins_over_relay() -> Result<()> {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let network = TestNetwork::new();
-        let s1 = SecretKey::generate(&mut rand::rng());
-        let s2 = SecretKey::generate(&mut rand::rng());
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
 
         let t1 = network.create_transport(s1.public())?;
         let t2 = network.create_transport(s2.public())?;

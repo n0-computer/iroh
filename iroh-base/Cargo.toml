@@ -24,16 +24,19 @@ sha1 = { version = "=0.11.0-rc.5", optional = true }
 ed25519-dalek = { version = "=3.0.0-pre.6", features = ["serde", "rand_core", "zeroize"], optional = true }
 derive_more = { version = "2.0.1", features = ["debug", "display"], optional = true }
 url = { version = "2.5.3", features = ["serde"], optional = true }
-rand_core = { version = "0.10", optional = true }
+rand = { version = "0.10", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 n0-error = "0.1"
 zeroize = { version = "1.8.2", optional = true, features = ["derive"] }
 zeroize_derive = { version = "1.4.2", optional = true } # needed for minimal versions
 
+# wasm-in-browser dependencies
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"], optional = true }
+
 [dev-dependencies]
 postcard = { version = "1", features = ["use-std"] }
 proptest = "1.0.0"
-rand = "0.10"
 rand_chacha = "0.10"
 serde_json = "1"
 serde_test = "1"
@@ -49,7 +52,8 @@ key = [
   "dep:url",
   "dep:derive_more",
   "dep:data-encoding",
-  "dep:rand_core",
+  "dep:rand",
+  "dep:getrandom",
   "dep:zeroize",
   "dep:zeroize_derive",
   "relay",
