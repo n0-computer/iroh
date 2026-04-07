@@ -543,7 +543,7 @@ mod tests {
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (message_s, message_r) = mpsc::channel(10);
 
-        let endpoint_id = SecretKey::generate(&mut rng).public();
+        let endpoint_id = SecretKey::from_bytes(&rng.random()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Conn::test(io_rw);
         let stream = RelayedStream::test(io);
@@ -615,7 +615,7 @@ mod tests {
         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
         assert_eq!(frame, RelayToClientMsg::Pong(*data));
 
-        let target = SecretKey::generate(&mut rng).public();
+        let target = SecretKey::from_bytes(&rng.random()).public();
 
         // send packet
         println!("  send packet");
@@ -649,7 +649,7 @@ mod tests {
 
         // Prepare a frame to send, assert its size.
         let data = Datagrams::from(b"hello world!!!!!");
-        let target = SecretKey::generate(&mut rng).public();
+        let target = SecretKey::from_bytes(&rng.random()).public();
         let frame = ClientToRelayMsg::Datagrams {
             dst_endpoint_id: target,
             datagrams: data.clone(),

@@ -213,7 +213,7 @@ mod tests {
     use n0_error::{Result, StdResultExt};
     use n0_future::{Stream, StreamExt};
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
 
     use super::*;
     use crate::{
@@ -264,8 +264,8 @@ mod tests {
     #[traced_test]
     async fn test_clients() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let a_key = SecretKey::generate(&mut rng).public();
-        let b_key = SecretKey::generate(&mut rng).public();
+        let a_key = SecretKey::from_bytes(&rng.random()).public();
+        let b_key = SecretKey::from_bytes(&rng.random()).public();
 
         let (builder_a, mut a_rw) = test_client_builder(a_key);
 
@@ -312,8 +312,8 @@ mod tests {
     #[traced_test]
     async fn test_clients_same_endpoint_id() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let a_key = SecretKey::generate(&mut rng).public();
-        let b_key = SecretKey::generate(&mut rng).public();
+        let a_key = SecretKey::from_bytes(&rng.random()).public();
+        let b_key = SecretKey::from_bytes(&rng.random()).public();
 
         let (a1_builder, mut a1_rw) = test_client_builder(a_key);
 
