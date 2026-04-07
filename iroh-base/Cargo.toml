@@ -36,7 +36,7 @@ getrandom = { version = "0.4", features = ["wasm_js"], optional = true }
 
 [dev-dependencies]
 postcard = { version = "1", features = ["use-std"] }
-proptest = "1.0.0"
+proptest = "1.11.0"
 rand_chacha = "0.10"
 serde_json = "1"
 serde_test = "1"
