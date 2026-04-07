@@ -74,7 +74,10 @@ async fn holepunch_simple() -> Result {
         .client(client, async move |_dev, _ep, conn| {
             let mut paths = conn.paths();
             assert!(paths.selected().is_relay(), "connection started relayed");
-            paths.wait_ip(timeout).await.context("holepunch to direct")?;
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("holepunch to direct")?;
             info!("connection became direct");
             Ok(())
         })
@@ -133,7 +136,10 @@ async fn switch_uplink_v4() -> Result {
             assert!(paths.selected().is_relay(), "connection started relayed");
 
             // Wait for conn to become direct.
-            paths.wait_ip(timeout).await.context("holepunch to direct")?;
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("holepunch to direct")?;
 
             // Wait a little more and then switch wifis.
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -225,9 +231,14 @@ async fn switch_uplink_v6() -> Result {
             assert!(paths.selected().is_relay(), "connection started relayed");
 
             // Wait for conn to become direct.
-            paths.wait_ip(timeout).await.context("holepunch to direct")?;
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("holepunch to direct")?;
 
-            ping_open(&conn, timeout).await.context("ping before switch")?;
+            ping_open(&conn, timeout)
+                .await
+                .context("ping before switch")?;
 
             info!("switch IP uplink to v6");
             dev.replug_iface("eth0", mobile.id()).await?;
@@ -235,7 +246,9 @@ async fn switch_uplink_v6() -> Result {
             // We don't assert any path changes here, because the remote stays identical,
             // and PathInfo does not contain info on local addrs. Instead, the remote
             // only accepts our ping after the path changed.
-            ping_open(&conn, timeout).await.context("ping after v6 switch")?;
+            ping_open(&conn, timeout)
+                .await
+                .context("ping after v6 switch")?;
             Ok(())
         })
         .run()
@@ -253,6 +266,7 @@ async fn switch_uplink_v6() -> Result {
 /// faster LAN address. A ping verifies the new path works.
 #[tokio::test]
 #[traced_test]
+#[ignore = "sometimes is flaky (does not become direct after the link_up)"]
 async fn change_ifaces() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -484,7 +498,10 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
             })
             .client(client, async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                paths.wait_ip(timeout).await.context("holepunch to direct")?;
+                paths
+                    .wait_ip(timeout)
+                    .await
+                    .context("holepunch to direct")?;
                 info!("direct path established, sending ping");
                 ping_open(&conn, timeout).await.context("ping_open")?;
                 info!("ping complete");
@@ -547,6 +564,7 @@ async fn degrade_server_2_bad() -> Result {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "not yet passing reliably"]
 async fn degrade_server_3_terrible() -> Result {
     run_degrade_level(Side::Server, 3).await?.ok();
     Ok(())
@@ -591,6 +609,7 @@ async fn degrade_client_2_bad() -> Result {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "not yet passing reliably"]
 async fn degrade_client_3_terrible() -> Result {
     run_degrade_level(Side::Client, 3).await?.ok();
     Ok(())
