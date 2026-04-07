@@ -256,12 +256,16 @@ pub trait PathWatcherExt {
 
     /// Wait until the selected path is a direct (IP) path.
     async fn wait_ip(&mut self, timeout: Duration) -> Result<PathInfo> {
-        self.wait_selected(timeout, PathInfo::is_ip).await
+        self.wait_selected(timeout, PathInfo::is_ip)
+            .await
+            .context("wait_ip")
     }
 
     /// Wait until the selected path is a relay path.
     async fn wait_relay(&mut self, timeout: Duration) -> Result<PathInfo> {
-        self.wait_selected(timeout, PathInfo::is_relay).await
+        self.wait_selected(timeout, PathInfo::is_relay)
+            .await
+            .context("wait_relay")
     }
 }
 
@@ -289,7 +293,7 @@ impl PathWatcherExt for PathWatcher {
             }
         })
         .await
-        .anyerr()?
+        .std_context("wait_selected timed out")?
     }
 }
 
@@ -297,28 +301,37 @@ impl PathWatcherExt for PathWatcher {
 pub async fn ping_open(conn: &Connection, timeout: Duration) -> Result {
     tokio::time::timeout(timeout, async {
         let data: [u8; 8] = rand::random();
+        debug!("open_bi");
         let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        debug!("write_all");
         send.write_all(&data).await.anyerr()?;
         send.finish().anyerr()?;
+        debug!("read_to_end");
         let r = recv.read_to_end(8).await.anyerr()?;
         ensure_any!(r == data, "reply matches");
+        debug!("done");
         Ok(())
     })
     .await
-    .anyerr()?
+    .std_context("ping_open timed out")?
 }
 
 /// Accepts a bidi stream, reads 8 bytes of data, and sends the same data back.
 pub async fn ping_accept(conn: &Connection, timeout: Duration) -> Result {
     tokio::time::timeout(timeout, async {
+        debug!("accept_bi");
         let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
+        debug!("read_to_end");
         let data = recv.read_to_end(8).await.anyerr()?;
+        debug!("write_all");
         send.write_all(&data).await.anyerr()?;
         send.finish().anyerr()?;
+        debug!("done");
         Ok(())
     })
+    .instrument(error_span!("ping_accept"))
     .await
-    .anyerr()?
+    .std_context("ping_accept timed out")?
 }
 
 fn watch_selected_path(conn: &Connection) {

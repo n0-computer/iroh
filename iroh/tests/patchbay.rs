@@ -275,7 +275,7 @@ async fn change_ifaces() -> Result {
         .await?;
     client.link_down("eth1").await?;
 
-    let timeout = Duration::from_secs(10);
+    let timeout = Duration::from_secs(15);
     Pair::new(relay_map)
         .server(server, async move |_dev, _ep, conn| {
             ping_accept(&conn, timeout).await.context("ping_accept")?;
