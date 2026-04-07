@@ -30,6 +30,10 @@ n0-error = "0.1"
 zeroize = { version = "1.8.2", optional = true, features = ["derive"] }
 zeroize_derive = { version = "1.4.2", optional = true } # needed for minimal versions
 
+# wasm-in-browser dependencies
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"], optional = true }
+
 [dev-dependencies]
 postcard = { version = "1", features = ["use-std"] }
 proptest = "1.0.0"
@@ -49,6 +53,7 @@ key = [
   "dep:derive_more",
   "dep:data-encoding",
   "dep:rand",
+  "dep:getrandom",
   "dep:zeroize",
   "dep:zeroize_derive",
   "relay",
