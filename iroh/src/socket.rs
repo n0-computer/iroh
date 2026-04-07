@@ -1996,7 +1996,7 @@ mod tests {
 
     fn default_options(rng: &mut impl CryptoRng) -> Options {
         let crypto_provider = default_provider();
-        let secret_key = SecretKey::generate(rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let tls_config = tls::TlsConfig::new(
             secret_key.clone(),
             DEFAULT_MAX_TLS_TICKETS,
