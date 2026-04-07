@@ -1996,7 +1996,7 @@
 <a href=#1996 id=1996 data-nosnippet>1996</a>
 <a href=#1997 id=1997 data-nosnippet>1997</a>    <span class="kw">fn </span>default_options(rng: <span class="kw-2">&amp;mut </span><span class="kw">impl </span>CryptoRng) -&gt; Options {
 <a href=#1998 id=1998 data-nosnippet>1998</a>        <span class="kw">let </span>crypto_provider = default_provider();
-<a href=#1999 id=1999 data-nosnippet>1999</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
+<a href=#1999 id=1999 data-nosnippet>1999</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#2000 id=2000 data-nosnippet>2000</a>        <span class="kw">let </span>tls_config = tls::TlsConfig::new(
 <a href=#2001 id=2001 data-nosnippet>2001</a>            secret_key.clone(),
 <a href=#2002 id=2002 data-nosnippet>2002</a>            DEFAULT_MAX_TLS_TICKETS,

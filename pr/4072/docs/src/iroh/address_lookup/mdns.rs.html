@@ -611,7 +611,7 @@
 <a href=#611 id=611 data-nosnippet>611</a>        <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt, bail_any};
 <a href=#612 id=612 data-nosnippet>612</a>        <span class="kw">use </span>n0_future::StreamExt;
 <a href=#613 id=613 data-nosnippet>613</a>        <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#614 id=614 data-nosnippet>614</a>        <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="kw">use </span>rand::{CryptoRng, RngExt, SeedableRng};
 <a href=#615 id=615 data-nosnippet>615</a>
 <a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;
 <a href=#617 id=617 data-nosnippet>617</a>        <span class="kw">use </span><span class="kw">crate</span>::address_lookup::UserData;
@@ -828,19 +828,19 @@
 <a href=#828 id=828 data-nosnippet>828</a>
 <a href=#829 id=829 data-nosnippet>829</a>            <span class="comment">// Create an Address Lookupusing the default
 <a href=#830 id=830 data-nosnippet>830</a>            // service name
-<a href=#831 id=831 data-nosnippet>831</a>            </span><span class="kw">let </span>id_a = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#831 id=831 data-nosnippet>831</a>            </span><span class="kw">let </span>id_a = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#832 id=832 data-nosnippet>832</a>            <span class="kw">let </span>address_lookup_a = MdnsAddressLookup::builder().build(id_a)<span class="question-mark">?</span>;
 <a href=#833 id=833 data-nosnippet>833</a>
 <a href=#834 id=834 data-nosnippet>834</a>            <span class="comment">// Create a Address Lookupusing a custom
 <a href=#835 id=835 data-nosnippet>835</a>            // service name
-<a href=#836 id=836 data-nosnippet>836</a>            </span><span class="kw">let </span>id_b = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#836 id=836 data-nosnippet>836</a>            </span><span class="kw">let </span>id_b = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#837 id=837 data-nosnippet>837</a>            <span class="kw">let </span>address_lookup_b = MdnsAddressLookup::builder()
 <a href=#838 id=838 data-nosnippet>838</a>                .service_name(<span class="string">"different.name"</span>)
 <a href=#839 id=839 data-nosnippet>839</a>                .build(id_b)<span class="question-mark">?</span>;
 <a href=#840 id=840 data-nosnippet>840</a>
 <a href=#841 id=841 data-nosnippet>841</a>            <span class="comment">// Create an Address Lookupusing the same
 <a href=#842 id=842 data-nosnippet>842</a>            // custom service name
-<a href=#843 id=843 data-nosnippet>843</a>            </span><span class="kw">let </span>id_c = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#843 id=843 data-nosnippet>843</a>            </span><span class="kw">let </span>id_c = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#844 id=844 data-nosnippet>844</a>            <span class="kw">let </span>address_lookup_c = MdnsAddressLookup::builder()
 <a href=#845 id=845 data-nosnippet>845</a>                .service_name(<span class="string">"different.name"</span>)
 <a href=#846 id=846 data-nosnippet>846</a>                .build(id_c)<span class="question-mark">?</span>;
@@ -930,7 +930,7 @@
 <a href=#930 id=930 data-nosnippet>930</a>            rng: <span class="kw-2">&amp;mut </span>R,
 <a href=#931 id=931 data-nosnippet>931</a>            advertise: bool,
 <a href=#932 id=932 data-nosnippet>932</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, MdnsAddressLookup)&gt; {
-<a href=#933 id=933 data-nosnippet>933</a>            <span class="kw">let </span>endpoint_id = SecretKey::generate(rng).public();
+<a href=#933 id=933 data-nosnippet>933</a>            <span class="kw">let </span>endpoint_id = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#934 id=934 data-nosnippet>934</a>            <span class="prelude-val">Ok</span>((
 <a href=#935 id=935 data-nosnippet>935</a>                endpoint_id,
 <a href=#936 id=936 data-nosnippet>936</a>                MdnsAddressLookup::builder()

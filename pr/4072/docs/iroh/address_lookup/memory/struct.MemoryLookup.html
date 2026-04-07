@@ -21,7 +21,7 @@ retract endpoint addressing information that is otherwise out-of-band to iroh.</
     .<span class="kw">await</span><span class="question-mark">?</span>;
 
 <span class="comment">// Sometime later add a RelayUrl for our endpoint.
-</span><span class="kw">let </span>id = SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::rng()).public();
+</span><span class="kw">let </span>id = SecretKey::generate().public();
 <span class="comment">// You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
 </span>address_lookup.add_endpoint_info(EndpointAddr {
     id,
