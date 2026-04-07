@@ -786,7 +786,7 @@
 <a href=#786 id=786 data-nosnippet>786</a>    <span class="kw">use </span>n0_error::Result;
 <a href=#787 id=787 data-nosnippet>787</a>    <span class="kw">use </span>n0_future::{FutureExt, SinkExt, StreamExt};
 <a href=#788 id=788 data-nosnippet>788</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#789 id=789 data-nosnippet>789</a>    <span class="kw">use </span>rand::SeedableRng;
+<a href=#789 id=789 data-nosnippet>789</a>    <span class="kw">use </span>rand::{RngExt, SeedableRng};
 <a href=#790 id=790 data-nosnippet>790</a>    <span class="kw">use </span>tracing::{info, instrument};
 <a href=#791 id=791 data-nosnippet>791</a>
 <a href=#792 id=792 data-nosnippet>792</a>    <span class="kw">use super</span>::{
@@ -947,7 +947,7 @@
 <a href=#947 id=947 data-nosnippet>947</a>            .unwrap();
 <a href=#948 id=948 data-nosnippet>948</a>
 <a href=#949 id=949 data-nosnippet>949</a>        <span class="comment">// set up client a
-<a href=#950 id=950 data-nosnippet>950</a>        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#950 id=950 data-nosnippet>950</a>        </span><span class="kw">let </span>a_secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#951 id=951 data-nosnippet>951</a>        <span class="kw">let </span>a_key = a_secret_key.public();
 <a href=#952 id=952 data-nosnippet>952</a>        <span class="kw">let </span>resolver = dns_resolver();
 <a href=#953 id=953 data-nosnippet>953</a>        <span class="macro">info!</span>(<span class="string">"client a build &amp; connect"</span>);
@@ -957,7 +957,7 @@
 <a href=#957 id=957 data-nosnippet>957</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#958 id=958 data-nosnippet>958</a>
 <a href=#959 id=959 data-nosnippet>959</a>        <span class="comment">// set up client b
-<a href=#960 id=960 data-nosnippet>960</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#960 id=960 data-nosnippet>960</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#961 id=961 data-nosnippet>961</a>        <span class="kw">let </span>b_key = b_secret_key.public();
 <a href=#962 id=962 data-nosnippet>962</a>        <span class="macro">info!</span>(<span class="string">"client b build &amp; connect"</span>);
 <a href=#963 id=963 data-nosnippet>963</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
@@ -1011,7 +1011,7 @@
 <a href=#1011 id=1011 data-nosnippet>1011</a>            .client_config(default_provider())
 <a href=#1012 id=1012 data-nosnippet>1012</a>            .unwrap();
 <a href=#1013 id=1013 data-nosnippet>1013</a>
-<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="kw">let </span>a_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="kw">let </span>a_secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="kw">let </span>a_key = a_secret_key.public();
 <a href=#1016 id=1016 data-nosnippet>1016</a>
 <a href=#1017 id=1017 data-nosnippet>1017</a>        <span class="kw">let </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
@@ -1055,7 +1055,7 @@
 <a href=#1055 id=1055 data-nosnippet>1055</a>        <span class="comment">// test that another client has access
 <a href=#1056 id=1056 data-nosnippet>1056</a>
 <a href=#1057 id=1057 data-nosnippet>1057</a>        // set up client b
-<a href=#1058 id=1058 data-nosnippet>1058</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1058 id=1058 data-nosnippet>1058</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1059 id=1059 data-nosnippet>1059</a>        <span class="kw">let </span>b_key = b_secret_key.public();
 <a href=#1060 id=1060 data-nosnippet>1060</a>
 <a href=#1061 id=1061 data-nosnippet>1061</a>        <span class="kw">let </span>resolver = dns_resolver();
@@ -1065,7 +1065,7 @@
 <a href=#1065 id=1065 data-nosnippet>1065</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1066 id=1066 data-nosnippet>1066</a>
 <a href=#1067 id=1067 data-nosnippet>1067</a>        <span class="comment">// set up client c
-<a href=#1068 id=1068 data-nosnippet>1068</a>        </span><span class="kw">let </span>c_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1068 id=1068 data-nosnippet>1068</a>        </span><span class="kw">let </span>c_secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="kw">let </span>c_key = c_secret_key.public();
 <a href=#1070 id=1070 data-nosnippet>1070</a>
 <a href=#1071 id=1071 data-nosnippet>1071</a>        <span class="kw">let </span>resolver = dns_resolver();
@@ -1105,7 +1105,7 @@
 <a href=#1105 id=1105 data-nosnippet>1105</a>            .unwrap();
 <a href=#1106 id=1106 data-nosnippet>1106</a>
 <a href=#1107 id=1107 data-nosnippet>1107</a>        <span class="comment">// set up client a
-<a href=#1108 id=1108 data-nosnippet>1108</a>        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1108 id=1108 data-nosnippet>1108</a>        </span><span class="kw">let </span>a_secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1109 id=1109 data-nosnippet>1109</a>        <span class="kw">let </span>resolver = dns_resolver();
 <a href=#1110 id=1110 data-nosnippet>1110</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
 <a href=#1111 id=1111 data-nosnippet>1111</a>            .tls_client_config(client_config.clone())
@@ -1113,7 +1113,7 @@
 <a href=#1113 id=1113 data-nosnippet>1113</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1114 id=1114 data-nosnippet>1114</a>
 <a href=#1115 id=1115 data-nosnippet>1115</a>        <span class="comment">// set up client b
-<a href=#1116 id=1116 data-nosnippet>1116</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1116 id=1116 data-nosnippet>1116</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1117 id=1117 data-nosnippet>1117</a>        <span class="kw">let </span>b_key = b_secret_key.public();
 <a href=#1118 id=1118 data-nosnippet>1118</a>        <span class="kw">let </span>_client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
 <a href=#1119 id=1119 data-nosnippet>1119</a>            .tls_client_config(client_config)

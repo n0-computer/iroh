@@ -213,7 +213,7 @@
 <a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#214 id=214 data-nosnippet>214</a>    <span class="kw">use </span>n0_future::{Stream, StreamExt};
 <a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">use </span>rand::SeedableRng;
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">use </span>rand::{RngExt, SeedableRng};
 <a href=#217 id=217 data-nosnippet>217</a>
 <a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">use crate</span>::{
@@ -264,8 +264,8 @@
 <a href=#264 id=264 data-nosnippet>264</a>    #[traced_test]
 <a href=#265 id=265 data-nosnippet>265</a>    </span><span class="kw">async fn </span>test_clients() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#266 id=266 data-nosnippet>266</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#267 id=267 data-nosnippet>267</a>        <span class="kw">let </span>a_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">let </span>b_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#267 id=267 data-nosnippet>267</a>        <span class="kw">let </span>a_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">let </span>b_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#269 id=269 data-nosnippet>269</a>
 <a href=#270 id=270 data-nosnippet>270</a>        <span class="kw">let </span>(builder_a, <span class="kw-2">mut </span>a_rw) = test_client_builder(a_key);
 <a href=#271 id=271 data-nosnippet>271</a>
@@ -312,8 +312,8 @@
 <a href=#312 id=312 data-nosnippet>312</a>    #[traced_test]
 <a href=#313 id=313 data-nosnippet>313</a>    </span><span class="kw">async fn </span>test_clients_same_endpoint_id() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span>a_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>b_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span>a_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>b_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#317 id=317 data-nosnippet>317</a>
 <a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">let </span>(a1_builder, <span class="kw-2">mut </span>a1_rw) = test_client_builder(a_key);
 <a href=#319 id=319 data-nosnippet>319</a>

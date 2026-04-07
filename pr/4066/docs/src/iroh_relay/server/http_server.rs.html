@@ -1005,7 +1005,7 @@
 <a href=#1005 id=1005 data-nosnippet>1005</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, bail_any};
 <a href=#1006 id=1006 data-nosnippet>1006</a>    <span class="kw">use </span>n0_future::{SinkExt, StreamExt};
 <a href=#1007 id=1007 data-nosnippet>1007</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#1008 id=1008 data-nosnippet>1008</a>    <span class="kw">use </span>rand::SeedableRng;
+<a href=#1008 id=1008 data-nosnippet>1008</a>    <span class="kw">use </span>rand::{RngExt, SeedableRng};
 <a href=#1009 id=1009 data-nosnippet>1009</a>    <span class="kw">use </span>reqwest::Url;
 <a href=#1010 id=1010 data-nosnippet>1010</a>    <span class="kw">use </span>tracing::info;
 <a href=#1011 id=1011 data-nosnippet>1011</a>
@@ -1041,8 +1041,8 @@
 <a href=#1041 id=1041 data-nosnippet>1041</a>    </span><span class="kw">async fn </span>test_http_clients_and_server() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#1042 id=1042 data-nosnippet>1042</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#1043 id=1043 data-nosnippet>1043</a>
-<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="kw">let </span>a_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#1045 id=1045 data-nosnippet>1045</a>        <span class="kw">let </span>b_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="kw">let </span>a_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
+<a href=#1045 id=1045 data-nosnippet>1045</a>        <span class="kw">let </span>b_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1046 id=1046 data-nosnippet>1046</a>
 <a href=#1047 id=1047 data-nosnippet>1047</a>        <span class="comment">// start server
 <a href=#1048 id=1048 data-nosnippet>1048</a>        </span><span class="kw">let </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap())
@@ -1161,8 +1161,8 @@
 <a href=#1161 id=1161 data-nosnippet>1161</a>    </span><span class="kw">async fn </span>test_https_clients_and_server() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#1162 id=1162 data-nosnippet>1162</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#1163 id=1163 data-nosnippet>1163</a>
-<a href=#1164 id=1164 data-nosnippet>1164</a>        <span class="kw">let </span>a_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#1165 id=1165 data-nosnippet>1165</a>        <span class="kw">let </span>b_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1164 id=1164 data-nosnippet>1164</a>        <span class="kw">let </span>a_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
+<a href=#1165 id=1165 data-nosnippet>1165</a>        <span class="kw">let </span>b_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1166 id=1166 data-nosnippet>1166</a>
 <a href=#1167 id=1167 data-nosnippet>1167</a>        <span class="comment">// create tls_config
 <a href=#1168 id=1168 data-nosnippet>1168</a>        </span><span class="kw">let </span>tls_config = make_tls_config();
@@ -1264,7 +1264,7 @@
 <a href=#1264 id=1264 data-nosnippet>1264</a>        );
 <a href=#1265 id=1265 data-nosnippet>1265</a>
 <a href=#1266 id=1266 data-nosnippet>1266</a>        <span class="macro">info!</span>(<span class="string">"Create client A and connect it to the server."</span>);
-<a href=#1267 id=1267 data-nosnippet>1267</a>        <span class="kw">let </span>key_a = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1267 id=1267 data-nosnippet>1267</a>        <span class="kw">let </span>key_a = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1268 id=1268 data-nosnippet>1268</a>        <span class="kw">let </span>public_key_a = key_a.public();
 <a href=#1269 id=1269 data-nosnippet>1269</a>        <span class="kw">let </span>(client_a, rw_a) = tokio::io::duplex(<span class="number">10</span>);
 <a href=#1270 id=1270 data-nosnippet>1270</a>        <span class="kw">let </span>s = service.clone();
@@ -1274,7 +1274,7 @@
 <a href=#1274 id=1274 data-nosnippet>1274</a>        handler_task.<span class="kw">await</span>.std_context(<span class="string">"join"</span>)<span class="question-mark">??</span>;
 <a href=#1275 id=1275 data-nosnippet>1275</a>
 <a href=#1276 id=1276 data-nosnippet>1276</a>        <span class="macro">info!</span>(<span class="string">"Create client B and connect it to the server."</span>);
-<a href=#1277 id=1277 data-nosnippet>1277</a>        <span class="kw">let </span>key_b = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1277 id=1277 data-nosnippet>1277</a>        <span class="kw">let </span>key_b = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1278 id=1278 data-nosnippet>1278</a>        <span class="kw">let </span>public_key_b = key_b.public();
 <a href=#1279 id=1279 data-nosnippet>1279</a>        <span class="kw">let </span>(client_b, rw_b) = tokio::io::duplex(<span class="number">10</span>);
 <a href=#1280 id=1280 data-nosnippet>1280</a>        <span class="kw">let </span>s = service.clone();
@@ -1364,7 +1364,7 @@
 <a href=#1364 id=1364 data-nosnippet>1364</a>        );
 <a href=#1365 id=1365 data-nosnippet>1365</a>
 <a href=#1366 id=1366 data-nosnippet>1366</a>        <span class="macro">info!</span>(<span class="string">"Create client A and connect it to the server."</span>);
-<a href=#1367 id=1367 data-nosnippet>1367</a>        <span class="kw">let </span>key_a = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1367 id=1367 data-nosnippet>1367</a>        <span class="kw">let </span>key_a = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1368 id=1368 data-nosnippet>1368</a>        <span class="kw">let </span>public_key_a = key_a.public();
 <a href=#1369 id=1369 data-nosnippet>1369</a>        <span class="kw">let </span>(client_a, rw_a) = tokio::io::duplex(<span class="number">10</span>);
 <a href=#1370 id=1370 data-nosnippet>1370</a>        <span class="kw">let </span>s = service.clone();
@@ -1374,7 +1374,7 @@
 <a href=#1374 id=1374 data-nosnippet>1374</a>        handler_task.<span class="kw">await</span>.std_context(<span class="string">"join"</span>)<span class="question-mark">??</span>;
 <a href=#1375 id=1375 data-nosnippet>1375</a>
 <a href=#1376 id=1376 data-nosnippet>1376</a>        <span class="macro">info!</span>(<span class="string">"Create client B and connect it to the server."</span>);
-<a href=#1377 id=1377 data-nosnippet>1377</a>        <span class="kw">let </span>key_b = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1377 id=1377 data-nosnippet>1377</a>        <span class="kw">let </span>key_b = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1378 id=1378 data-nosnippet>1378</a>        <span class="kw">let </span>public_key_b = key_b.public();
 <a href=#1379 id=1379 data-nosnippet>1379</a>        <span class="kw">let </span>(client_b, rw_b) = tokio::io::duplex(<span class="number">10</span>);
 <a href=#1380 id=1380 data-nosnippet>1380</a>        <span class="kw">let </span>s = service.clone();
