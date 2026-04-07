@@ -141,7 +141,7 @@ wasm-bindgen-test = "0.3.62"
 
 # patchbay netsim test dependencies (linux only)
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-ctor = "0.6"
+ctor = "0.8"
 patchbay = { version = "0.3", features = ["iroh-metrics"] }
 testdir = "0.10"
 
