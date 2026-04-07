@@ -201,7 +201,7 @@
 <a href=#201 id=201 data-nosnippet>201</a>
 <a href=#202 id=202 data-nosnippet>202</a>    </span><span class="doccomment">/// Binds the endpoint.
 <a href=#203 id=203 data-nosnippet>203</a>    </span><span class="kw">pub async fn </span>bind(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint, BindError&gt; {
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">let </span>secret_key = <span class="self">self</span>.secret_key.unwrap_or_else(|| SecretKey::generate());
+<a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">let </span>secret_key = <span class="self">self</span>.secret_key.unwrap_or_else(SecretKey::generate);
 <a href=#205 id=205 data-nosnippet>205</a>
 <a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">let </span>crypto_provider = <span class="self">self
 <a href=#207 id=207 data-nosnippet>207</a>            </span>.crypto_provider
