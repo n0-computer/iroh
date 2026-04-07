@@ -116,6 +116,8 @@ impl Clients {
             connection_id, "unregistering client"
         );
 
+        let mut notify_peers = None;
+
         self.0.clients.remove_if_mut(&endpoint_id, |_id, state| {
             if state.active.connection_id() == connection_id {
                 // The unregistering client is the currently active client
@@ -125,26 +127,8 @@ impl Clients {
                     // Don't remove the entry from client map.
                     false
                 } else {
-                    // No inactive clients: Inform other peers that this peer is now gone.
-                    if let Some((_, sent_to)) = self.0.sent_to.remove(&endpoint_id) {
-                        for key in sent_to {
-                            match state.active.try_send_peer_gone(key) {
-                                Ok(_) => {}
-                                Err(TrySendError::Full(_)) => {
-                                    debug!(
-                                        dst = %key.fmt_short(),
-                                        "client too busy to receive packet, dropping packet"
-                                    );
-                                }
-                                Err(TrySendError::Closed(_)) => {
-                                    debug!(
-                                        dst = %key.fmt_short(),
-                                        "can no longer write to client, dropping packet"
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    // No inactive clients: collect sent_to set for peer-gone notifications.
+                    notify_peers = self.0.sent_to.remove(&endpoint_id).map(|(_, peers)| peers);
                     // Remove entry from the client map.
                     true
                 }
@@ -157,6 +141,30 @@ impl Clients {
                 false
             }
         });
+
+        // Inform peers that this endpoint is gone.
+        // Done outside the remove_if_mut closure to avoid DashMap deadlocks.
+        if let Some(peers) = notify_peers {
+            for peer_id in peers {
+                if let Some(peer) = self.0.clients.get(&peer_id) {
+                    match peer.active.try_send_peer_gone(endpoint_id) {
+                        Ok(_) => {}
+                        Err(TrySendError::Full(_)) => {
+                            debug!(
+                                dst = %peer_id.fmt_short(),
+                                "client too busy to receive peer gone notification, dropping"
+                            );
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            debug!(
+                                dst = %peer_id.fmt_short(),
+                                "can no longer write to client, dropping peer gone notification"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Attempt to send a packet to client with [`EndpointId`] `dst`.
@@ -414,6 +422,62 @@ mod tests {
 
         clients.shutdown().await;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_peer_gone_notification() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let a_key = SecretKey::from_bytes(&rng.random()).public();
+        let b_key = SecretKey::from_bytes(&rng.random()).public();
+
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+
+        // Register both clients
+        let (builder_a, _a_rw) = test_client_builder(a_key);
+        let (builder_b, mut b_rw) = test_client_builder(b_key);
+        clients.register(builder_a, metrics.clone());
+        clients.register(builder_b, metrics.clone());
+
+        // A sends a packet to B (records sent_to[A] = {B})
+        let data = b"hello b!";
+        clients.send_packet(b_key, Datagrams::from(&data[..]), a_key, &metrics)?;
+
+        // B receives the packet
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut b_rw).await?;
+        assert_eq!(
+            frame,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: a_key,
+                datagrams: data.to_vec().into(),
+            }
+        );
+
+        // Disconnect A
+        {
+            let client = clients.0.clients.get(&a_key).unwrap();
+            client.active.start_shutdown();
+        }
+
+        // Wait for A to unregister
+        tokio::time::timeout(Duration::from_secs(1), {
+            let clients = clients.clone();
+            async move {
+                while clients.0.clients.contains_key(&a_key) {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        })
+        .await
+        .std_context("timeout waiting for A to unregister")?;
+
+        // B should receive EndpointGone(a_key): notifying B that A is gone
+        let frame = recv_frame(FrameType::EndpointGone, &mut b_rw).await?;
+        assert_eq!(frame, RelayToClientMsg::EndpointGone(a_key));
+
+        clients.shutdown().await;
         Ok(())
     }
 }
