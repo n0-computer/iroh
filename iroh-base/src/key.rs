@@ -286,15 +286,16 @@ impl SecretKey {
     /// If you want to customize how the randomness is generated, use
     /// [`Self::from_bytes`] instead and generate the 32 bytes yourself:
     ///
-    /// ```
+    /// ```rust
+    /// # use iroh_base::SecretKey;
+    /// # use rand::RngExt;
     /// // Create a random number generator.
     /// let mut rng = rand::rng();
     /// // Use it to generate the 32 bytes that make up a secret key.
-    /// let secret_key = SecretKey::from_bytes(rng.random());
+    /// let secret_key = SecretKey::from_bytes(&rng.random());
     /// ```
     pub fn generate() -> Self {
-        let secret = SigningKey::generate(&mut rand::rng());
-        Self(secret)
+        Self::from_bytes(&rand::random())
     }
 
     /// Sign the given message and return a digital signature
