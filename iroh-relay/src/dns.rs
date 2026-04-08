@@ -3,7 +3,7 @@
 //! The main export is the [`DnsResolver`] struct. It provides methods to resolve domain names
 //! to IPv4 and IPv6 addresses. Additionally, the resolver features methods to resolve the
 //! [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
-//! See the [`endpoint_info`] module documentation for details on how iroh endpoint records
+//! See the [`crate::endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
 use std::{

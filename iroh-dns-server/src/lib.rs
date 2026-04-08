@@ -31,7 +31,7 @@ mod tests {
     use iroh_dns::{EndpointIdExt, pkarr::SignedPacket};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
-    use rand::{CryptoRng, SeedableRng};
+    use rand::{CryptoRng, Rng, SeedableRng};
 
     use crate::{
         ZoneStore,
@@ -57,7 +57,7 @@ mod tests {
         };
 
         // Build a DNS packet with various record types using simple_dns directly
-        let secret_key = SecretKey::generate(&mut rand::rng());
+        let secret_key = SecretKey::generate();
         let origin = secret_key.public().to_z32();
 
         let mut packet = Packet::new_reply(0);

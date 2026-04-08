@@ -330,7 +330,7 @@ mod tests {
     #[ignore = "flaky"]
     #[traced_test]
     async fn dht_address_lookup_smoke() -> Result {
-        let secret = SecretKey::generate(&mut rand::rng());
+        let secret = SecretKey::generate();
         let testnet = Testnet::new_async(3).await.anyerr()?;
         let mut dht_builder = DhtBuilder::default();
         dht_builder.bootstrap(&testnet.bootstrap);
