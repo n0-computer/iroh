@@ -933,7 +933,9 @@ impl RelayService {
     ///
     /// // Or serve with plain HTTP
     /// # let stream = TcpStream::connect("127.0.0.1:0").await?;
-    /// relay_service.handle_connection(stream, None, Duration::from_secs(30)).await;
+    /// relay_service
+    ///     .handle_connection(stream, None, Duration::from_secs(30))
+    ///     .await;
     /// # Ok(())
     /// # }
     /// ```
