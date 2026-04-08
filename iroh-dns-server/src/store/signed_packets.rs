@@ -174,7 +174,7 @@ impl Actor {
                     }
                     _ => false,
                 };
-                let value = serialize_for_storage(&packet);
+                let value = serialize(&packet);
                 tables
                     .signed_packets
                     .insert(key.as_bytes(), &value[..])
@@ -194,7 +194,7 @@ impl Actor {
                 trace!("remove {}", key);
                 let updated = match tables.signed_packets.remove(key.as_bytes()).anyerr()? {
                     Some(row) => {
-                        let packet = deserialize_from_storage(row.value())?;
+                        let packet = deserialize(row.value())?;
                         tables
                             .update_time
                             .remove(&packet.timestamp().to_be_bytes(), key.as_bytes())
@@ -382,7 +382,7 @@ impl SignedPacketStore {
 }
 
 /// Serialize a signed packet for storage: `<8 bytes last_seen><packet bytes>`.
-fn serialize_for_storage(packet: &SignedPacket) -> Vec<u8> {
+fn serialize(packet: &SignedPacket) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + packet.as_bytes().len());
     out.extend_from_slice(&timestamp_now().to_be_bytes());
     out.extend_from_slice(packet.as_bytes());
@@ -393,7 +393,7 @@ fn serialize_for_storage(packet: &SignedPacket) -> Vec<u8> {
 ///
 /// Handles backwards compatibility with older storage formats that didn't include
 /// the `last_seen` prefix.
-fn deserialize_from_storage(data: &[u8]) -> Result<SignedPacket> {
+fn deserialize(data: &[u8]) -> Result<SignedPacket> {
     // Try parsing as <8 bytes last_seen><packet> (pkarr v3 format)
     if data.len() >= 8
         && let Ok(packet) = SignedPacket::from_bytes_unchecked(&data[8..])
@@ -415,7 +415,7 @@ fn get_packet(
     else {
         return Ok(None);
     };
-    Ok(Some(deserialize_from_storage(row.value())?))
+    Ok(Some(deserialize(row.value())?))
 }
 
 async fn evict_task(send: mpsc::Sender<Message>, options: Options, cancel: CancellationToken) {

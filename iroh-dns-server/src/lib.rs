@@ -46,7 +46,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result {
-        use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata};
+        use simple_dns::{CLASS, Name as DnsName, Packet, ResourceRecord, rdata};
 
         let dir = tempfile::tempdir()?;
         let server = Server::spawn_for_tests(dir.path()).await?;
@@ -63,48 +63,48 @@ mod tests {
         let mut packet = Packet::new_reply(0);
         // record at root
         packet.answers.push(ResourceRecord::new(
-            Name::new_unchecked(&origin).into_owned(),
+            DnsName::new_unchecked(&origin).into_owned(),
             CLASS::IN,
             30,
             rdata::RData::TXT("hi0".try_into().unwrap()),
         ));
         // record at level one
         packet.answers.push(ResourceRecord::new(
-            Name::new_unchecked(&format!("_hello.{origin}")).into_owned(),
+            DnsName::new_unchecked(&format!("_hello.{origin}")).into_owned(),
             CLASS::IN,
             30,
             rdata::RData::TXT("hi1".try_into().unwrap()),
         ));
         // record at level two
         packet.answers.push(ResourceRecord::new(
-            Name::new_unchecked(&format!("_hello.world.{origin}")).into_owned(),
+            DnsName::new_unchecked(&format!("_hello.world.{origin}")).into_owned(),
             CLASS::IN,
             30,
             rdata::RData::TXT("hi2".try_into().unwrap()),
         ));
         // multiple records for same name
         packet.answers.push(ResourceRecord::new(
-            Name::new_unchecked(&format!("multiple.{origin}")).into_owned(),
+            DnsName::new_unchecked(&format!("multiple.{origin}")).into_owned(),
             CLASS::IN,
             30,
             rdata::RData::TXT("hi3".try_into().unwrap()),
         ));
         packet.answers.push(ResourceRecord::new(
-            Name::new_unchecked(&format!("multiple.{origin}")).into_owned(),
+            DnsName::new_unchecked(&format!("multiple.{origin}")).into_owned(),
             CLASS::IN,
             30,
             rdata::RData::TXT("hi4".try_into().unwrap()),
         ));
         // record of type A
         packet.answers.push(ResourceRecord::new(
-            Name::new_unchecked(&origin).into_owned(),
+            DnsName::new_unchecked(&origin).into_owned(),
             CLASS::IN,
             30,
             rdata::RData::A(Ipv4Addr::LOCALHOST.into()),
         ));
         // record of type AAAA
         packet.answers.push(ResourceRecord::new(
-            Name::new_unchecked(&format!("foo.bar.baz.{origin}")).into_owned(),
+            DnsName::new_unchecked(&format!("foo.bar.baz.{origin}")).into_owned(),
             CLASS::IN,
             30,
             rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
@@ -136,42 +136,42 @@ mod tests {
         let pkarr_client = PkarrRelayClient::new(pkarr_relay_url, tls_config);
         pkarr_client.publish(&signed_packet).await?;
 
-        use hickory_server::proto::rr::Name as HickoryName;
+        use hickory_server::proto::rr::Name;
         let pubkey = origin;
         let resolver = test_resolver(server.dns_addr());
 
         // resolve root record
-        let name = HickoryName::from_utf8(format!("{pubkey}.")).anyerr()?;
+        let name = Name::from_utf8(format!("{pubkey}.")).anyerr()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
         // resolve level one record
-        let name = HickoryName::from_utf8(format!("_hello.{pubkey}.")).anyerr()?;
+        let name = Name::from_utf8(format!("_hello.{pubkey}.")).anyerr()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi1".to_string()]);
 
         // resolve level two record
-        let name = HickoryName::from_utf8(format!("_hello.world.{pubkey}.")).anyerr()?;
+        let name = Name::from_utf8(format!("_hello.world.{pubkey}.")).anyerr()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
 
         // resolve multiple records for same name
-        let name = HickoryName::from_utf8(format!("multiple.{pubkey}.")).anyerr()?;
+        let name = Name::from_utf8(format!("multiple.{pubkey}.")).anyerr()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
         // resolve A record
-        let name = HickoryName::from_utf8(format!("{pubkey}.")).anyerr()?;
+        let name = Name::from_utf8(format!("{pubkey}.")).anyerr()?;
         let res = resolver.lookup_ipv4(name, DNS_TIMEOUT).await?;
         let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv4Addr::LOCALHOST]);
 
         // resolve AAAA record
-        let name = HickoryName::from_utf8(format!("foo.bar.baz.{pubkey}.")).anyerr()?;
+        let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}.")).anyerr()?;
         let res = resolver.lookup_ipv6(name, DNS_TIMEOUT).await?;
         let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv6Addr::LOCALHOST]);
