@@ -555,7 +555,7 @@
 <a href=#555 id=555 data-nosnippet>555</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#556 id=556 data-nosnippet>556</a>    <span class="kw">use </span>n0_future::{Sink, SinkExt, Stream, TryStreamExt};
 <a href=#557 id=557 data-nosnippet>557</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#558 id=558 data-nosnippet>558</a>    <span class="kw">use </span>rand::SeedableRng;
+<a href=#558 id=558 data-nosnippet>558</a>    <span class="kw">use </span>rand::{RngExt, SeedableRng};
 <a href=#559 id=559 data-nosnippet>559</a>    <span class="kw">use </span>tokio_util::codec::{Framed, LengthDelimitedCodec};
 <a href=#560 id=560 data-nosnippet>560</a>    <span class="kw">use </span>tracing::{Instrument, info_span};
 <a href=#561 id=561 data-nosnippet>561</a>
@@ -689,7 +689,7 @@
 <a href=#689 id=689 data-nosnippet>689</a>    </span><span class="kw">async fn </span>test_handshake_via_shared_secrets() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#691 id=691 data-nosnippet>691</a>
-<a href=#692 id=692 data-nosnippet>692</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#692 id=692 data-nosnippet>692</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#693 id=693 data-nosnippet>693</a>        <span class="kw">let </span>(client, server) = simulate_handshake(<span class="kw-2">&amp;</span>secret_key, <span class="prelude-val">Some</span>(<span class="number">42</span>), <span class="prelude-val">Some</span>(<span class="number">42</span>), <span class="prelude-val">None</span>).<span class="kw">await</span>;
 <a href=#694 id=694 data-nosnippet>694</a>        client<span class="question-mark">?</span>;
 <a href=#695 id=695 data-nosnippet>695</a>        <span class="kw">let </span>(public_key, auth) = server<span class="question-mark">?</span>;
@@ -703,7 +703,7 @@
 <a href=#703 id=703 data-nosnippet>703</a>    </span><span class="kw">async fn </span>test_handshake_via_challenge() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#705 id=705 data-nosnippet>705</a>
-<a href=#706 id=706 data-nosnippet>706</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#706 id=706 data-nosnippet>706</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#707 id=707 data-nosnippet>707</a>        <span class="kw">let </span>(client, server) = simulate_handshake(<span class="kw-2">&amp;</span>secret_key, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span>;
 <a href=#708 id=708 data-nosnippet>708</a>        client<span class="question-mark">?</span>;
 <a href=#709 id=709 data-nosnippet>709</a>        <span class="kw">let </span>(public_key, auth) = server<span class="question-mark">?</span>;
@@ -717,7 +717,7 @@
 <a href=#717 id=717 data-nosnippet>717</a>    </span><span class="kw">async fn </span>test_handshake_mismatching_shared_secrets() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#719 id=719 data-nosnippet>719</a>
-<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#721 id=721 data-nosnippet>721</a>        <span class="comment">// mismatching shared secrets *might* happen with HTTPS proxies that don't also middle-man the shared secret
 <a href=#722 id=722 data-nosnippet>722</a>        </span><span class="kw">let </span>(client, server) = simulate_handshake(<span class="kw-2">&amp;</span>secret_key, <span class="prelude-val">Some</span>(<span class="number">10</span>), <span class="prelude-val">Some</span>(<span class="number">99</span>), <span class="prelude-val">None</span>).<span class="kw">await</span>;
 <a href=#723 id=723 data-nosnippet>723</a>        client<span class="question-mark">?</span>;
@@ -731,7 +731,7 @@
 <a href=#731 id=731 data-nosnippet>731</a>    #[traced_test]
 <a href=#732 id=732 data-nosnippet>732</a>    </span><span class="kw">async fn </span>test_handshake_challenge_fallback() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#735 id=735 data-nosnippet>735</a>        <span class="comment">// clients might not have access to shared secrets
 <a href=#736 id=736 data-nosnippet>736</a>        </span><span class="kw">let </span>(client, server) = simulate_handshake(<span class="kw-2">&amp;</span>secret_key, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="number">99</span>), <span class="prelude-val">None</span>).<span class="kw">await</span>;
 <a href=#737 id=737 data-nosnippet>737</a>        client<span class="question-mark">?</span>;
@@ -745,7 +745,7 @@
 <a href=#745 id=745 data-nosnippet>745</a>    #[traced_test]
 <a href=#746 id=746 data-nosnippet>746</a>    </span><span class="kw">async fn </span>test_handshake_with_auth_positive() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#749 id=749 data-nosnippet>749</a>        <span class="kw">let </span>public_key = secret_key.public();
 <a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">let </span>(client, server) = simulate_handshake(<span class="kw-2">&amp;</span>secret_key, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(public_key)).<span class="kw">await</span>;
 <a href=#751 id=751 data-nosnippet>751</a>        client<span class="question-mark">?</span>;
@@ -758,9 +758,9 @@
 <a href=#758 id=758 data-nosnippet>758</a>    #[traced_test]
 <a href=#759 id=759 data-nosnippet>759</a>    </span><span class="kw">async fn </span>test_handshake_with_auth_negative() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#762 id=762 data-nosnippet>762</a>        <span class="kw">let </span>public_key = secret_key.public();
-<a href=#763 id=763 data-nosnippet>763</a>        <span class="kw">let </span>wrong_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#763 id=763 data-nosnippet>763</a>        <span class="kw">let </span>wrong_secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#764 id=764 data-nosnippet>764</a>        <span class="kw">let </span>(client, server) =
 <a href=#765 id=765 data-nosnippet>765</a>            simulate_handshake(<span class="kw-2">&amp;</span>wrong_secret_key, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(public_key)).<span class="kw">await</span>;
 <a href=#766 id=766 data-nosnippet>766</a>        <span class="macro">assert!</span>(client.is_err());
@@ -772,9 +772,9 @@
 <a href=#772 id=772 data-nosnippet>772</a>    #[traced_test]
 <a href=#773 id=773 data-nosnippet>773</a>    </span><span class="kw">async fn </span>test_handshake_via_shared_secret_with_auth_negative() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#774 id=774 data-nosnippet>774</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#775 id=775 data-nosnippet>775</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#775 id=775 data-nosnippet>775</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#776 id=776 data-nosnippet>776</a>        <span class="kw">let </span>public_key = secret_key.public();
-<a href=#777 id=777 data-nosnippet>777</a>        <span class="kw">let </span>wrong_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#777 id=777 data-nosnippet>777</a>        <span class="kw">let </span>wrong_secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#778 id=778 data-nosnippet>778</a>        <span class="kw">let </span>(client, server) =
 <a href=#779 id=779 data-nosnippet>779</a>            simulate_handshake(<span class="kw-2">&amp;</span>wrong_secret_key, <span class="prelude-val">Some</span>(<span class="number">42</span>), <span class="prelude-val">Some</span>(<span class="number">42</span>), <span class="prelude-val">Some</span>(public_key)).<span class="kw">await</span>;
 <a href=#780 id=780 data-nosnippet>780</a>        <span class="macro">assert!</span>(client.is_err());
@@ -785,7 +785,7 @@
 <a href=#785 id=785 data-nosnippet>785</a>    <span class="attr">#[test]
 <a href=#786 id=786 data-nosnippet>786</a>    </span><span class="kw">fn </span>test_client_auth_roundtrip() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#787 id=787 data-nosnippet>787</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#788 id=788 data-nosnippet>788</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#788 id=788 data-nosnippet>788</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#789 id=789 data-nosnippet>789</a>        <span class="kw">let </span>challenge = ServerChallenge::new(<span class="kw-2">&amp;mut </span>rng);
 <a href=#790 id=790 data-nosnippet>790</a>        <span class="kw">let </span>client_auth = ClientAuth::new(<span class="kw-2">&amp;</span>secret_key, <span class="kw-2">&amp;</span>challenge);
 <a href=#791 id=791 data-nosnippet>791</a>
@@ -801,7 +801,7 @@
 <a href=#801 id=801 data-nosnippet>801</a>    <span class="attr">#[test]
 <a href=#802 id=802 data-nosnippet>802</a>    </span><span class="kw">fn </span>test_km_client_auth_roundtrip() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#803 id=803 data-nosnippet>803</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#804 id=804 data-nosnippet>804</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#804 id=804 data-nosnippet>804</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#805 id=805 data-nosnippet>805</a>        <span class="kw">let </span>client_auth = KeyMaterialClientAuth::new(
 <a href=#806 id=806 data-nosnippet>806</a>            <span class="kw-2">&amp;</span>secret_key,
 <a href=#807 id=807 data-nosnippet>807</a>            <span class="kw-2">&amp;</span>TestKeyingMaterial {
@@ -823,7 +823,7 @@
 <a href=#823 id=823 data-nosnippet>823</a>    <span class="attr">#[test]
 <a href=#824 id=824 data-nosnippet>824</a>    </span><span class="kw">fn </span>test_challenge_verification() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#825 id=825 data-nosnippet>825</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#827 id=827 data-nosnippet>827</a>        <span class="kw">let </span>challenge = ServerChallenge::new(<span class="kw-2">&amp;mut </span>rng);
 <a href=#828 id=828 data-nosnippet>828</a>        <span class="kw">let </span>client_auth = ClientAuth::new(<span class="kw-2">&amp;</span>secret_key, <span class="kw-2">&amp;</span>challenge);
 <a href=#829 id=829 data-nosnippet>829</a>        <span class="macro">assert!</span>(client_auth.verify(<span class="kw-2">&amp;</span>challenge).is_ok());
@@ -834,7 +834,7 @@
 <a href=#834 id=834 data-nosnippet>834</a>    <span class="attr">#[test]
 <a href=#835 id=835 data-nosnippet>835</a>    </span><span class="kw">fn </span>test_key_material_verification() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#836 id=836 data-nosnippet>836</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#837 id=837 data-nosnippet>837</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#837 id=837 data-nosnippet>837</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#838 id=838 data-nosnippet>838</a>        <span class="kw">let </span>io = TestKeyingMaterial {
 <a href=#839 id=839 data-nosnippet>839</a>            inner: (),
 <a href=#840 id=840 data-nosnippet>840</a>            shared_secret: <span class="prelude-val">Some</span>(<span class="number">42</span>),

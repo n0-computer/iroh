@@ -728,182 +728,184 @@
 <a href=#728 id=728 data-nosnippet>728</a>
 <a href=#729 id=729 data-nosnippet>729</a><span class="attr">#[cfg(test)]
 <a href=#730 id=730 data-nosnippet>730</a></span><span class="kw">mod </span>tests {
-<a href=#731 id=731 data-nosnippet>731</a>    <span class="kw">use </span>std::{str::FromStr, sync::Arc};
+<a href=#731 id=731 data-nosnippet>731</a>    <span class="kw">use </span>std::str::FromStr;
 <a href=#732 id=732 data-nosnippet>732</a>
 <a href=#733 id=733 data-nosnippet>733</a>    <span class="kw">use </span>hickory_resolver::{
-<a href=#734 id=734 data-nosnippet>734</a>        Name,
-<a href=#735 id=735 data-nosnippet>735</a>        lookup::Lookup,
-<a href=#736 id=736 data-nosnippet>736</a>        proto::{
-<a href=#737 id=737 data-nosnippet>737</a>            op::Query,
-<a href=#738 id=738 data-nosnippet>738</a>            rr::{
-<a href=#739 id=739 data-nosnippet>739</a>                RData, Record, RecordType,
-<a href=#740 id=740 data-nosnippet>740</a>                rdata::{A, TXT},
-<a href=#741 id=741 data-nosnippet>741</a>            },
-<a href=#742 id=742 data-nosnippet>742</a>        },
-<a href=#743 id=743 data-nosnippet>743</a>    };
-<a href=#744 id=744 data-nosnippet>744</a>    <span class="kw">use </span>iroh_base::{EndpointId, SecretKey, TransportAddr};
-<a href=#745 id=745 data-nosnippet>745</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
-<a href=#746 id=746 data-nosnippet>746</a>
-<a href=#747 id=747 data-nosnippet>747</a>    <span class="kw">use super</span>::{EndpointData, EndpointIdExt, EndpointInfo};
-<a href=#748 id=748 data-nosnippet>748</a>    <span class="kw">use </span><span class="kw">crate</span>::dns::TxtRecordData;
-<a href=#749 id=749 data-nosnippet>749</a>
-<a href=#750 id=750 data-nosnippet>750</a>    <span class="attr">#[test]
-<a href=#751 id=751 data-nosnippet>751</a>    </span><span class="kw">fn </span>txt_attr_roundtrip() {
-<a href=#752 id=752 data-nosnippet>752</a>        <span class="kw">let </span>endpoint_data = EndpointData::from_iter([
-<a href=#753 id=753 data-nosnippet>753</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
-<a href=#754 id=754 data-nosnippet>754</a>            TransportAddr::Ip(<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()),
-<a href=#755 id=755 data-nosnippet>755</a>        ])
-<a href=#756 id=756 data-nosnippet>756</a>        .with_user_data(<span class="string">"foobar"</span>.parse().unwrap());
-<a href=#757 id=757 data-nosnippet>757</a>        <span class="kw">let </span>endpoint_id = <span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
-<a href=#758 id=758 data-nosnippet>758</a>            </span>.parse()
-<a href=#759 id=759 data-nosnippet>759</a>            .unwrap();
-<a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">let </span>expected = EndpointInfo::from_parts(endpoint_id, endpoint_data);
-<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>attrs = expected.to_attrs();
-<a href=#762 id=762 data-nosnippet>762</a>        <span class="kw">let </span>actual = EndpointInfo::from(<span class="kw-2">&amp;</span>attrs);
-<a href=#763 id=763 data-nosnippet>763</a>        <span class="macro">assert_eq!</span>(expected, actual);
-<a href=#764 id=764 data-nosnippet>764</a>    }
-<a href=#765 id=765 data-nosnippet>765</a>
-<a href=#766 id=766 data-nosnippet>766</a>    <span class="attr">#[test]
-<a href=#767 id=767 data-nosnippet>767</a>    </span><span class="kw">fn </span>signed_packet_roundtrip() {
-<a href=#768 id=768 data-nosnippet>768</a>        <span class="kw">let </span>secret_key =
-<a href=#769 id=769 data-nosnippet>769</a>            SecretKey::from_str(<span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"</span>).unwrap();
-<a href=#770 id=770 data-nosnippet>770</a>        <span class="kw">let </span>endpoint_data = EndpointData::from_iter([
-<a href=#771 id=771 data-nosnippet>771</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
-<a href=#772 id=772 data-nosnippet>772</a>            TransportAddr::Ip(<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()),
-<a href=#773 id=773 data-nosnippet>773</a>        ])
-<a href=#774 id=774 data-nosnippet>774</a>        .with_user_data(<span class="string">"foobar"</span>.parse().unwrap());
-<a href=#775 id=775 data-nosnippet>775</a>        <span class="kw">let </span>expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
-<a href=#776 id=776 data-nosnippet>776</a>        <span class="kw">let </span>packet = expected.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>).unwrap();
-<a href=#777 id=777 data-nosnippet>777</a>        <span class="kw">let </span>actual = EndpointInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>packet).unwrap();
-<a href=#778 id=778 data-nosnippet>778</a>        <span class="macro">assert_eq!</span>(expected, actual);
-<a href=#779 id=779 data-nosnippet>779</a>    }
-<a href=#780 id=780 data-nosnippet>780</a>
-<a href=#781 id=781 data-nosnippet>781</a>    <span class="attr">#[test]
-<a href=#782 id=782 data-nosnippet>782</a>    </span><span class="kw">fn </span>txt_attr_roundtrip_with_custom_addr() {
-<a href=#783 id=783 data-nosnippet>783</a>        <span class="kw">use </span>iroh_base::CustomAddr;
-<a href=#784 id=784 data-nosnippet>784</a>
-<a href=#785 id=785 data-nosnippet>785</a>        <span class="comment">// Bluetooth-like address (small id, 6 byte MAC)
-<a href=#786 id=786 data-nosnippet>786</a>        </span><span class="kw">let </span>bt_addr = CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
-<a href=#787 id=787 data-nosnippet>787</a>        <span class="comment">// Tor-like address (larger id, 32 byte pubkey)
-<a href=#788 id=788 data-nosnippet>788</a>        </span><span class="kw">let </span>tor_addr = CustomAddr::from_parts(<span class="number">42</span>, <span class="kw-2">&amp;</span>[<span class="number">0xab</span>; <span class="number">32</span>]);
-<a href=#789 id=789 data-nosnippet>789</a>
-<a href=#790 id=790 data-nosnippet>790</a>        <span class="kw">let </span>endpoint_data = EndpointData::from_iter([
-<a href=#791 id=791 data-nosnippet>791</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
-<a href=#792 id=792 data-nosnippet>792</a>            TransportAddr::Ip(<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()),
-<a href=#793 id=793 data-nosnippet>793</a>            TransportAddr::Custom(bt_addr),
-<a href=#794 id=794 data-nosnippet>794</a>            TransportAddr::Custom(tor_addr),
-<a href=#795 id=795 data-nosnippet>795</a>        ]);
-<a href=#796 id=796 data-nosnippet>796</a>        <span class="kw">let </span>endpoint_id = <span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
-<a href=#797 id=797 data-nosnippet>797</a>            </span>.parse()
-<a href=#798 id=798 data-nosnippet>798</a>            .unwrap();
-<a href=#799 id=799 data-nosnippet>799</a>        <span class="kw">let </span>expected = EndpointInfo::from_parts(endpoint_id, endpoint_data);
-<a href=#800 id=800 data-nosnippet>800</a>        <span class="kw">let </span>attrs = expected.to_attrs();
-<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw">let </span>actual = EndpointInfo::from(<span class="kw-2">&amp;</span>attrs);
-<a href=#802 id=802 data-nosnippet>802</a>        <span class="macro">assert_eq!</span>(expected, actual);
-<a href=#803 id=803 data-nosnippet>803</a>    }
-<a href=#804 id=804 data-nosnippet>804</a>
-<a href=#805 id=805 data-nosnippet>805</a>    <span class="attr">#[test]
-<a href=#806 id=806 data-nosnippet>806</a>    </span><span class="kw">fn </span>signed_packet_roundtrip_with_custom_addr() {
-<a href=#807 id=807 data-nosnippet>807</a>        <span class="kw">use </span>iroh_base::CustomAddr;
-<a href=#808 id=808 data-nosnippet>808</a>
-<a href=#809 id=809 data-nosnippet>809</a>        <span class="kw">let </span>secret_key =
-<a href=#810 id=810 data-nosnippet>810</a>            SecretKey::from_str(<span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"</span>).unwrap();
-<a href=#811 id=811 data-nosnippet>811</a>
-<a href=#812 id=812 data-nosnippet>812</a>        <span class="comment">// Bluetooth-like address (small id, 6 byte MAC)
-<a href=#813 id=813 data-nosnippet>813</a>        </span><span class="kw">let </span>bt_addr = CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
-<a href=#814 id=814 data-nosnippet>814</a>        <span class="comment">// Tor-like address (larger id, 32 byte pubkey)
-<a href=#815 id=815 data-nosnippet>815</a>        </span><span class="kw">let </span>tor_addr = CustomAddr::from_parts(<span class="number">42</span>, <span class="kw-2">&amp;</span>[<span class="number">0xab</span>; <span class="number">32</span>]);
-<a href=#816 id=816 data-nosnippet>816</a>
-<a href=#817 id=817 data-nosnippet>817</a>        <span class="kw">let </span>endpoint_data = EndpointData::from_iter([
-<a href=#818 id=818 data-nosnippet>818</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
-<a href=#819 id=819 data-nosnippet>819</a>            TransportAddr::Ip(<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()),
-<a href=#820 id=820 data-nosnippet>820</a>            TransportAddr::Custom(bt_addr),
-<a href=#821 id=821 data-nosnippet>821</a>            TransportAddr::Custom(tor_addr),
-<a href=#822 id=822 data-nosnippet>822</a>        ])
-<a href=#823 id=823 data-nosnippet>823</a>        .with_user_data(<span class="string">"foobar"</span>.parse().unwrap());
-<a href=#824 id=824 data-nosnippet>824</a>
-<a href=#825 id=825 data-nosnippet>825</a>        <span class="kw">let </span>expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
-<a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">let </span>packet = expected.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>).unwrap();
-<a href=#827 id=827 data-nosnippet>827</a>        <span class="kw">let </span>actual = EndpointInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>packet).unwrap();
-<a href=#828 id=828 data-nosnippet>828</a>        <span class="macro">assert_eq!</span>(expected, actual);
-<a href=#829 id=829 data-nosnippet>829</a>    }
-<a href=#830 id=830 data-nosnippet>830</a>
-<a href=#831 id=831 data-nosnippet>831</a>    <span class="doccomment">/// There used to be a bug where uploading an EndpointAddr with more than only exactly
-<a href=#832 id=832 data-nosnippet>832</a>    /// one relay URL or one publicly reachable IP addr would prevent connection
-<a href=#833 id=833 data-nosnippet>833</a>    /// establishment.
-<a href=#834 id=834 data-nosnippet>834</a>    ///
-<a href=#835 id=835 data-nosnippet>835</a>    /// The reason was that only the first address was parsed (e.g. 192.168.96.145 in
-<a href=#836 id=836 data-nosnippet>836</a>    /// this example), which could be a local, unreachable address.
-<a href=#837 id=837 data-nosnippet>837</a>    </span><span class="attr">#[test]
-<a href=#838 id=838 data-nosnippet>838</a>    </span><span class="kw">fn </span>test_from_hickory_lookup() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#839 id=839 data-nosnippet>839</a>        <span class="kw">let </span>name = Name::from_utf8(
-<a href=#840 id=840 data-nosnippet>840</a>            <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>,
-<a href=#841 id=841 data-nosnippet>841</a>        )
-<a href=#842 id=842 data-nosnippet>842</a>        .std_context(<span class="string">"dns name"</span>)<span class="question-mark">?</span>;
-<a href=#843 id=843 data-nosnippet>843</a>        <span class="kw">let </span>query = Query::query(name.clone(), RecordType::TXT);
-<a href=#844 id=844 data-nosnippet>844</a>        <span class="kw">let </span>records = [
-<a href=#845 id=845 data-nosnippet>845</a>            Record::from_rdata(
-<a href=#846 id=846 data-nosnippet>846</a>                name.clone(),
-<a href=#847 id=847 data-nosnippet>847</a>                <span class="number">30</span>,
-<a href=#848 id=848 data-nosnippet>848</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[<span class="string">"addr=192.168.96.145:60165"</span>.to_string()])),
-<a href=#849 id=849 data-nosnippet>849</a>            ),
-<a href=#850 id=850 data-nosnippet>850</a>            Record::from_rdata(
-<a href=#851 id=851 data-nosnippet>851</a>                name.clone(),
-<a href=#852 id=852 data-nosnippet>852</a>                <span class="number">30</span>,
-<a href=#853 id=853 data-nosnippet>853</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[<span class="string">"addr=213.208.157.87:60165"</span>.to_string()])),
-<a href=#854 id=854 data-nosnippet>854</a>            ),
-<a href=#855 id=855 data-nosnippet>855</a>            <span class="comment">// Test a record with mismatching record type (A instead of TXT). It should be filtered out.
-<a href=#856 id=856 data-nosnippet>856</a>            </span>Record::from_rdata(name.clone(), <span class="number">30</span>, RData::A(A::new(<span class="number">127</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>))),
-<a href=#857 id=857 data-nosnippet>857</a>            <span class="comment">// Test a record with a mismatching name
-<a href=#858 id=858 data-nosnippet>858</a>            </span>Record::from_rdata(
-<a href=#859 id=859 data-nosnippet>859</a>                {
-<a href=#860 id=860 data-nosnippet>860</a>                    <span class="comment">// Another EndpointId
-<a href=#861 id=861 data-nosnippet>861</a>                    </span><span class="kw">let </span>other_id = EndpointId::from_str(
-<a href=#862 id=862 data-nosnippet>862</a>                        <span class="string">"a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"</span>,
-<a href=#863 id=863 data-nosnippet>863</a>                    )<span class="question-mark">?</span>;
-<a href=#864 id=864 data-nosnippet>864</a>                    Name::from_utf8(<span class="macro">format!</span>(<span class="string">"_iroh.{}.dns.iroh.link."</span>, other_id.to_z32()))
-<a href=#865 id=865 data-nosnippet>865</a>                }
-<a href=#866 id=866 data-nosnippet>866</a>                .std_context(<span class="string">"name"</span>)<span class="question-mark">?</span>,
-<a href=#867 id=867 data-nosnippet>867</a>                <span class="number">30</span>,
-<a href=#868 id=868 data-nosnippet>868</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[
-<a href=#869 id=869 data-nosnippet>869</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string(),
-<a href=#870 id=870 data-nosnippet>870</a>                ])),
-<a href=#871 id=871 data-nosnippet>871</a>            ),
-<a href=#872 id=872 data-nosnippet>872</a>            <span class="comment">// Test a record with a completely different name
-<a href=#873 id=873 data-nosnippet>873</a>            </span>Record::from_rdata(
-<a href=#874 id=874 data-nosnippet>874</a>                Name::from_utf8(<span class="string">"dns.iroh.link."</span>).std_context(<span class="string">"name"</span>)<span class="question-mark">?</span>,
-<a href=#875 id=875 data-nosnippet>875</a>                <span class="number">30</span>,
-<a href=#876 id=876 data-nosnippet>876</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[
-<a href=#877 id=877 data-nosnippet>877</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string(),
-<a href=#878 id=878 data-nosnippet>878</a>                ])),
-<a href=#879 id=879 data-nosnippet>879</a>            ),
-<a href=#880 id=880 data-nosnippet>880</a>            Record::from_rdata(
-<a href=#881 id=881 data-nosnippet>881</a>                name.clone(),
-<a href=#882 id=882 data-nosnippet>882</a>                <span class="number">30</span>,
-<a href=#883 id=883 data-nosnippet>883</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[
-<a href=#884 id=884 data-nosnippet>884</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string(),
-<a href=#885 id=885 data-nosnippet>885</a>                ])),
-<a href=#886 id=886 data-nosnippet>886</a>            ),
-<a href=#887 id=887 data-nosnippet>887</a>        ];
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">let </span>lookup = Lookup::new_with_max_ttl(query, Arc::new(records));
-<a href=#889 id=889 data-nosnippet>889</a>        <span class="kw">let </span>lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
-<a href=#890 id=890 data-nosnippet>890</a>        <span class="kw">let </span>lookup = lookup
-<a href=#891 id=891 data-nosnippet>891</a>            .into_iter()
-<a href=#892 id=892 data-nosnippet>892</a>            .map(|txt| TxtRecordData::from_iter(txt.iter().cloned()));
-<a href=#893 id=893 data-nosnippet>893</a>
-<a href=#894 id=894 data-nosnippet>894</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::from_txt_lookup(name.to_string(), lookup)<span class="question-mark">?</span>;
+<a href=#734 id=734 data-nosnippet>734</a>        lookup::Lookup,
+<a href=#735 id=735 data-nosnippet>735</a>        proto::{
+<a href=#736 id=736 data-nosnippet>736</a>            op::Query,
+<a href=#737 id=737 data-nosnippet>737</a>            rr::{
+<a href=#738 id=738 data-nosnippet>738</a>                Name, RData, Record, RecordType,
+<a href=#739 id=739 data-nosnippet>739</a>                rdata::{A, TXT},
+<a href=#740 id=740 data-nosnippet>740</a>            },
+<a href=#741 id=741 data-nosnippet>741</a>        },
+<a href=#742 id=742 data-nosnippet>742</a>    };
+<a href=#743 id=743 data-nosnippet>743</a>    <span class="kw">use </span>iroh_base::{EndpointId, SecretKey, TransportAddr};
+<a href=#744 id=744 data-nosnippet>744</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
+<a href=#745 id=745 data-nosnippet>745</a>
+<a href=#746 id=746 data-nosnippet>746</a>    <span class="kw">use super</span>::{EndpointData, EndpointIdExt, EndpointInfo};
+<a href=#747 id=747 data-nosnippet>747</a>    <span class="kw">use </span><span class="kw">crate</span>::dns::TxtRecordData;
+<a href=#748 id=748 data-nosnippet>748</a>
+<a href=#749 id=749 data-nosnippet>749</a>    <span class="attr">#[test]
+<a href=#750 id=750 data-nosnippet>750</a>    </span><span class="kw">fn </span>txt_attr_roundtrip() {
+<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw">let </span>endpoint_data = EndpointData::from_iter([
+<a href=#752 id=752 data-nosnippet>752</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
+<a href=#753 id=753 data-nosnippet>753</a>            TransportAddr::Ip(<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()),
+<a href=#754 id=754 data-nosnippet>754</a>        ])
+<a href=#755 id=755 data-nosnippet>755</a>        .with_user_data(<span class="string">"foobar"</span>.parse().unwrap());
+<a href=#756 id=756 data-nosnippet>756</a>        <span class="kw">let </span>endpoint_id = <span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
+<a href=#757 id=757 data-nosnippet>757</a>            </span>.parse()
+<a href=#758 id=758 data-nosnippet>758</a>            .unwrap();
+<a href=#759 id=759 data-nosnippet>759</a>        <span class="kw">let </span>expected = EndpointInfo::from_parts(endpoint_id, endpoint_data);
+<a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">let </span>attrs = expected.to_attrs();
+<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>actual = EndpointInfo::from(<span class="kw-2">&amp;</span>attrs);
+<a href=#762 id=762 data-nosnippet>762</a>        <span class="macro">assert_eq!</span>(expected, actual);
+<a href=#763 id=763 data-nosnippet>763</a>    }
+<a href=#764 id=764 data-nosnippet>764</a>
+<a href=#765 id=765 data-nosnippet>765</a>    <span class="attr">#[test]
+<a href=#766 id=766 data-nosnippet>766</a>    </span><span class="kw">fn </span>signed_packet_roundtrip() {
+<a href=#767 id=767 data-nosnippet>767</a>        <span class="kw">let </span>secret_key =
+<a href=#768 id=768 data-nosnippet>768</a>            SecretKey::from_str(<span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"</span>).unwrap();
+<a href=#769 id=769 data-nosnippet>769</a>        <span class="kw">let </span>endpoint_data = EndpointData::from_iter([
+<a href=#770 id=770 data-nosnippet>770</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
+<a href=#771 id=771 data-nosnippet>771</a>            TransportAddr::Ip(<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()),
+<a href=#772 id=772 data-nosnippet>772</a>        ])
+<a href=#773 id=773 data-nosnippet>773</a>        .with_user_data(<span class="string">"foobar"</span>.parse().unwrap());
+<a href=#774 id=774 data-nosnippet>774</a>        <span class="kw">let </span>expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
+<a href=#775 id=775 data-nosnippet>775</a>        <span class="kw">let </span>packet = expected.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>).unwrap();
+<a href=#776 id=776 data-nosnippet>776</a>        <span class="kw">let </span>actual = EndpointInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>packet).unwrap();
+<a href=#777 id=777 data-nosnippet>777</a>        <span class="macro">assert_eq!</span>(expected, actual);
+<a href=#778 id=778 data-nosnippet>778</a>    }
+<a href=#779 id=779 data-nosnippet>779</a>
+<a href=#780 id=780 data-nosnippet>780</a>    <span class="attr">#[test]
+<a href=#781 id=781 data-nosnippet>781</a>    </span><span class="kw">fn </span>txt_attr_roundtrip_with_custom_addr() {
+<a href=#782 id=782 data-nosnippet>782</a>        <span class="kw">use </span>iroh_base::CustomAddr;
+<a href=#783 id=783 data-nosnippet>783</a>
+<a href=#784 id=784 data-nosnippet>784</a>        <span class="comment">// Bluetooth-like address (small id, 6 byte MAC)
+<a href=#785 id=785 data-nosnippet>785</a>        </span><span class="kw">let </span>bt_addr = CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
+<a href=#786 id=786 data-nosnippet>786</a>        <span class="comment">// Tor-like address (larger id, 32 byte pubkey)
+<a href=#787 id=787 data-nosnippet>787</a>        </span><span class="kw">let </span>tor_addr = CustomAddr::from_parts(<span class="number">42</span>, <span class="kw-2">&amp;</span>[<span class="number">0xab</span>; <span class="number">32</span>]);
+<a href=#788 id=788 data-nosnippet>788</a>
+<a href=#789 id=789 data-nosnippet>789</a>        <span class="kw">let </span>endpoint_data = EndpointData::from_iter([
+<a href=#790 id=790 data-nosnippet>790</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
+<a href=#791 id=791 data-nosnippet>791</a>            TransportAddr::Ip(<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()),
+<a href=#792 id=792 data-nosnippet>792</a>            TransportAddr::Custom(bt_addr),
+<a href=#793 id=793 data-nosnippet>793</a>            TransportAddr::Custom(tor_addr),
+<a href=#794 id=794 data-nosnippet>794</a>        ]);
+<a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span>endpoint_id = <span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
+<a href=#796 id=796 data-nosnippet>796</a>            </span>.parse()
+<a href=#797 id=797 data-nosnippet>797</a>            .unwrap();
+<a href=#798 id=798 data-nosnippet>798</a>        <span class="kw">let </span>expected = EndpointInfo::from_parts(endpoint_id, endpoint_data);
+<a href=#799 id=799 data-nosnippet>799</a>        <span class="kw">let </span>attrs = expected.to_attrs();
+<a href=#800 id=800 data-nosnippet>800</a>        <span class="kw">let </span>actual = EndpointInfo::from(<span class="kw-2">&amp;</span>attrs);
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="macro">assert_eq!</span>(expected, actual);
+<a href=#802 id=802 data-nosnippet>802</a>    }
+<a href=#803 id=803 data-nosnippet>803</a>
+<a href=#804 id=804 data-nosnippet>804</a>    <span class="attr">#[test]
+<a href=#805 id=805 data-nosnippet>805</a>    </span><span class="kw">fn </span>signed_packet_roundtrip_with_custom_addr() {
+<a href=#806 id=806 data-nosnippet>806</a>        <span class="kw">use </span>iroh_base::CustomAddr;
+<a href=#807 id=807 data-nosnippet>807</a>
+<a href=#808 id=808 data-nosnippet>808</a>        <span class="kw">let </span>secret_key =
+<a href=#809 id=809 data-nosnippet>809</a>            SecretKey::from_str(<span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"</span>).unwrap();
+<a href=#810 id=810 data-nosnippet>810</a>
+<a href=#811 id=811 data-nosnippet>811</a>        <span class="comment">// Bluetooth-like address (small id, 6 byte MAC)
+<a href=#812 id=812 data-nosnippet>812</a>        </span><span class="kw">let </span>bt_addr = CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
+<a href=#813 id=813 data-nosnippet>813</a>        <span class="comment">// Tor-like address (larger id, 32 byte pubkey)
+<a href=#814 id=814 data-nosnippet>814</a>        </span><span class="kw">let </span>tor_addr = CustomAddr::from_parts(<span class="number">42</span>, <span class="kw-2">&amp;</span>[<span class="number">0xab</span>; <span class="number">32</span>]);
+<a href=#815 id=815 data-nosnippet>815</a>
+<a href=#816 id=816 data-nosnippet>816</a>        <span class="kw">let </span>endpoint_data = EndpointData::from_iter([
+<a href=#817 id=817 data-nosnippet>817</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
+<a href=#818 id=818 data-nosnippet>818</a>            TransportAddr::Ip(<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()),
+<a href=#819 id=819 data-nosnippet>819</a>            TransportAddr::Custom(bt_addr),
+<a href=#820 id=820 data-nosnippet>820</a>            TransportAddr::Custom(tor_addr),
+<a href=#821 id=821 data-nosnippet>821</a>        ])
+<a href=#822 id=822 data-nosnippet>822</a>        .with_user_data(<span class="string">"foobar"</span>.parse().unwrap());
+<a href=#823 id=823 data-nosnippet>823</a>
+<a href=#824 id=824 data-nosnippet>824</a>        <span class="kw">let </span>expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
+<a href=#825 id=825 data-nosnippet>825</a>        <span class="kw">let </span>packet = expected.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>).unwrap();
+<a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">let </span>actual = EndpointInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>packet).unwrap();
+<a href=#827 id=827 data-nosnippet>827</a>        <span class="macro">assert_eq!</span>(expected, actual);
+<a href=#828 id=828 data-nosnippet>828</a>    }
+<a href=#829 id=829 data-nosnippet>829</a>
+<a href=#830 id=830 data-nosnippet>830</a>    <span class="doccomment">/// There used to be a bug where uploading an EndpointAddr with more than only exactly
+<a href=#831 id=831 data-nosnippet>831</a>    /// one relay URL or one publicly reachable IP addr would prevent connection
+<a href=#832 id=832 data-nosnippet>832</a>    /// establishment.
+<a href=#833 id=833 data-nosnippet>833</a>    ///
+<a href=#834 id=834 data-nosnippet>834</a>    /// The reason was that only the first address was parsed (e.g. 192.168.96.145 in
+<a href=#835 id=835 data-nosnippet>835</a>    /// this example), which could be a local, unreachable address.
+<a href=#836 id=836 data-nosnippet>836</a>    </span><span class="attr">#[test]
+<a href=#837 id=837 data-nosnippet>837</a>    </span><span class="kw">fn </span>test_from_hickory_lookup() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#838 id=838 data-nosnippet>838</a>        <span class="kw">let </span>name = Name::from_utf8(
+<a href=#839 id=839 data-nosnippet>839</a>            <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>,
+<a href=#840 id=840 data-nosnippet>840</a>        )
+<a href=#841 id=841 data-nosnippet>841</a>        .std_context(<span class="string">"dns name"</span>)<span class="question-mark">?</span>;
+<a href=#842 id=842 data-nosnippet>842</a>        <span class="kw">let </span>query = Query::query(name.clone(), RecordType::TXT);
+<a href=#843 id=843 data-nosnippet>843</a>        <span class="kw">let </span>records = [
+<a href=#844 id=844 data-nosnippet>844</a>            Record::from_rdata(
+<a href=#845 id=845 data-nosnippet>845</a>                name.clone(),
+<a href=#846 id=846 data-nosnippet>846</a>                <span class="number">30</span>,
+<a href=#847 id=847 data-nosnippet>847</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[<span class="string">"addr=192.168.96.145:60165"</span>.to_string()])),
+<a href=#848 id=848 data-nosnippet>848</a>            ),
+<a href=#849 id=849 data-nosnippet>849</a>            Record::from_rdata(
+<a href=#850 id=850 data-nosnippet>850</a>                name.clone(),
+<a href=#851 id=851 data-nosnippet>851</a>                <span class="number">30</span>,
+<a href=#852 id=852 data-nosnippet>852</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[<span class="string">"addr=213.208.157.87:60165"</span>.to_string()])),
+<a href=#853 id=853 data-nosnippet>853</a>            ),
+<a href=#854 id=854 data-nosnippet>854</a>            <span class="comment">// Test a record with mismatching record type (A instead of TXT). It should be filtered out.
+<a href=#855 id=855 data-nosnippet>855</a>            </span>Record::from_rdata(name.clone(), <span class="number">30</span>, RData::A(A::new(<span class="number">127</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>))),
+<a href=#856 id=856 data-nosnippet>856</a>            <span class="comment">// Test a record with a mismatching name
+<a href=#857 id=857 data-nosnippet>857</a>            </span>Record::from_rdata(
+<a href=#858 id=858 data-nosnippet>858</a>                {
+<a href=#859 id=859 data-nosnippet>859</a>                    <span class="comment">// Another EndpointId
+<a href=#860 id=860 data-nosnippet>860</a>                    </span><span class="kw">let </span>other_id = EndpointId::from_str(
+<a href=#861 id=861 data-nosnippet>861</a>                        <span class="string">"a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"</span>,
+<a href=#862 id=862 data-nosnippet>862</a>                    )<span class="question-mark">?</span>;
+<a href=#863 id=863 data-nosnippet>863</a>                    Name::from_utf8(<span class="macro">format!</span>(<span class="string">"_iroh.{}.dns.iroh.link."</span>, other_id.to_z32()))
+<a href=#864 id=864 data-nosnippet>864</a>                }
+<a href=#865 id=865 data-nosnippet>865</a>                .std_context(<span class="string">"name"</span>)<span class="question-mark">?</span>,
+<a href=#866 id=866 data-nosnippet>866</a>                <span class="number">30</span>,
+<a href=#867 id=867 data-nosnippet>867</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[
+<a href=#868 id=868 data-nosnippet>868</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string(),
+<a href=#869 id=869 data-nosnippet>869</a>                ])),
+<a href=#870 id=870 data-nosnippet>870</a>            ),
+<a href=#871 id=871 data-nosnippet>871</a>            <span class="comment">// Test a record with a completely different name
+<a href=#872 id=872 data-nosnippet>872</a>            </span>Record::from_rdata(
+<a href=#873 id=873 data-nosnippet>873</a>                Name::from_utf8(<span class="string">"dns.iroh.link."</span>).std_context(<span class="string">"name"</span>)<span class="question-mark">?</span>,
+<a href=#874 id=874 data-nosnippet>874</a>                <span class="number">30</span>,
+<a href=#875 id=875 data-nosnippet>875</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[
+<a href=#876 id=876 data-nosnippet>876</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string(),
+<a href=#877 id=877 data-nosnippet>877</a>                ])),
+<a href=#878 id=878 data-nosnippet>878</a>            ),
+<a href=#879 id=879 data-nosnippet>879</a>            Record::from_rdata(
+<a href=#880 id=880 data-nosnippet>880</a>                name.clone(),
+<a href=#881 id=881 data-nosnippet>881</a>                <span class="number">30</span>,
+<a href=#882 id=882 data-nosnippet>882</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[
+<a href=#883 id=883 data-nosnippet>883</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string(),
+<a href=#884 id=884 data-nosnippet>884</a>                ])),
+<a href=#885 id=885 data-nosnippet>885</a>            ),
+<a href=#886 id=886 data-nosnippet>886</a>        ];
+<a href=#887 id=887 data-nosnippet>887</a>        <span class="kw">let </span>lookup = Lookup::new_with_max_ttl(query, records);
+<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">let </span>lookup = lookup
+<a href=#889 id=889 data-nosnippet>889</a>            .answers()
+<a href=#890 id=890 data-nosnippet>890</a>            .iter()
+<a href=#891 id=891 data-nosnippet>891</a>            .filter_map(|record| <span class="kw">match </span>record.data() {
+<a href=#892 id=892 data-nosnippet>892</a>                RData::TXT(txt) =&gt; <span class="prelude-val">Some</span>(TxtRecordData::from(txt.txt_data().to_vec())),
+<a href=#893 id=893 data-nosnippet>893</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#894 id=894 data-nosnippet>894</a>            });
 <a href=#895 id=895 data-nosnippet>895</a>
-<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let </span>expected_endpoint_info = EndpointInfo::new(EndpointId::from_str(
-<a href=#897 id=897 data-nosnippet>897</a>            <span class="string">"1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"</span>,
-<a href=#898 id=898 data-nosnippet>898</a>        )<span class="question-mark">?</span>)
-<a href=#899 id=899 data-nosnippet>899</a>        .with_relay_url(<span class="string">"https://euw1-1.relay.iroh.network./"</span>.parse()<span class="question-mark">?</span>)
-<a href=#900 id=900 data-nosnippet>900</a>        .with_ip_addrs(<span class="macro">vec!</span>[
-<a href=#901 id=901 data-nosnippet>901</a>            <span class="string">"192.168.96.145:60165"</span>.parse().unwrap(),
-<a href=#902 id=902 data-nosnippet>902</a>            <span class="string">"213.208.157.87:60165"</span>.parse().unwrap(),
-<a href=#903 id=903 data-nosnippet>903</a>        ]);
-<a href=#904 id=904 data-nosnippet>904</a>
-<a href=#905 id=905 data-nosnippet>905</a>        <span class="macro">assert_eq!</span>(endpoint_info, expected_endpoint_info);
+<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::from_txt_lookup(name.to_string(), lookup)<span class="question-mark">?</span>;
+<a href=#897 id=897 data-nosnippet>897</a>
+<a href=#898 id=898 data-nosnippet>898</a>        <span class="kw">let </span>expected_endpoint_info = EndpointInfo::new(EndpointId::from_str(
+<a href=#899 id=899 data-nosnippet>899</a>            <span class="string">"1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"</span>,
+<a href=#900 id=900 data-nosnippet>900</a>        )<span class="question-mark">?</span>)
+<a href=#901 id=901 data-nosnippet>901</a>        .with_relay_url(<span class="string">"https://euw1-1.relay.iroh.network./"</span>.parse()<span class="question-mark">?</span>)
+<a href=#902 id=902 data-nosnippet>902</a>        .with_ip_addrs(<span class="macro">vec!</span>[
+<a href=#903 id=903 data-nosnippet>903</a>            <span class="string">"192.168.96.145:60165"</span>.parse().unwrap(),
+<a href=#904 id=904 data-nosnippet>904</a>            <span class="string">"213.208.157.87:60165"</span>.parse().unwrap(),
+<a href=#905 id=905 data-nosnippet>905</a>        ]);
 <a href=#906 id=906 data-nosnippet>906</a>
-<a href=#907 id=907 data-nosnippet>907</a>        <span class="prelude-val">Ok</span>(())
-<a href=#908 id=908 data-nosnippet>908</a>    }
-<a href=#909 id=909 data-nosnippet>909</a>}</code></pre></div></section></main></body></html>
+<a href=#907 id=907 data-nosnippet>907</a>        <span class="macro">assert_eq!</span>(endpoint_info, expected_endpoint_info);
+<a href=#908 id=908 data-nosnippet>908</a>
+<a href=#909 id=909 data-nosnippet>909</a>        <span class="prelude-val">Ok</span>(())
+<a href=#910 id=910 data-nosnippet>910</a>    }
+<a href=#911 id=911 data-nosnippet>911</a>}</code></pre></div></section></main></body></html>
