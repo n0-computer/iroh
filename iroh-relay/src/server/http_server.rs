@@ -658,9 +658,10 @@ pub struct RelayServiceWithNotify {
 }
 
 impl RelayServiceWithNotify {
-    /// Creates a new service wrapper that triggers `on_establish` once the connection is fully established.
+    /// Creates a new service wrapper for a connection.
     ///
-    /// When this struct is invoked via
+    /// The `on_establish` notification is triggered once the connection is passed to the
+    /// relay protocol, i.e. after a WebSocket request on /relay is received and established.
     pub fn new(service: RelayService, on_establish: Arc<Notify>) -> Self {
         Self {
             service,
@@ -925,28 +926,17 @@ impl RelayService {
 
         // This is the main connection future, driving the connection to completion.
         let serve_fut = async move {
-            let stream = match tls_config {
+            match tls_config {
                 Some(tls_config) => {
                     debug!("HTTPS: serve connection");
-                    match establish_tls(stream, tls_config).await? {
-                        Some(stream) => stream,
-                        None => {
-                            // TLS ACME validation request
-                            return Ok(());
-                        }
-                    }
+                    service.tls_serve_connection(stream, tls_config).await
                 }
                 None => {
                     debug!("HTTP: serve connection");
-                    MaybeTlsStream::Plain(stream)
+                    let stream = MaybeTlsStream::Plain(stream);
+                    service.serve_connection(stream).await
                 }
-            };
-
-            hyper::server::conn::http1::Builder::new()
-                .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-                .with_upgrades()
-                .await
-                .map_err(|err| e!(ServeConnectionError::ServeConnection, err))
+            }
         };
 
         // We set a timeout for the connection to limit lingering connections during establishment.
@@ -982,46 +972,57 @@ impl RelayService {
     }
 }
 
-/// Establshes a TLS session on `stream`, if `tls_config` is set.
-///
-/// Returns `None` if the TLS stream is an ACME validation connection that was already handled
-/// by the ACME acceptor.
-///
-/// Returns [`MaybeTlsStream`] otherwise.
-async fn establish_tls(
-    stream: TcpStream,
-    tls_config: TlsConfig,
-) -> Result<Option<MaybeTlsStream>, ServeConnectionError> {
-    let TlsConfig { acceptor, config } = tls_config;
-    match acceptor {
-        TlsAcceptor::LetsEncrypt(a) => {
-            match a
-                .accept(stream)
-                .await
-                .map_err(|err| e!(ServeConnectionError::LetsEncryptAccept, err))?
-            {
-                None => {
-                    info!("TLS[acme]: received TLS-ALPN-01 validation request");
-                    Ok(None)
-                }
-                Some(start_handshake) => {
-                    debug!("TLS[acme]: start handshake");
-                    let tls_stream = start_handshake
-                        .into_stream(config)
-                        .await
-                        .map_err(|err| e!(ServeConnectionError::TlsHandshake, err))?;
-                    Ok(Some(MaybeTlsStream::Tls(tls_stream)))
+impl RelayServiceWithNotify {
+    /// Serves a TLS connection.
+    async fn tls_serve_connection(
+        self,
+        stream: TcpStream,
+        tls_config: TlsConfig,
+    ) -> Result<(), ServeConnectionError> {
+        let TlsConfig { acceptor, config } = tls_config;
+        let stream = match acceptor {
+            TlsAcceptor::LetsEncrypt(a) => {
+                match a
+                    .accept(stream)
+                    .await
+                    .map_err(|err| e!(ServeConnectionError::LetsEncryptAccept, err))?
+                {
+                    None => {
+                        info!("TLS[acme]: received TLS-ALPN-01 validation request");
+                        return Ok(());
+                    }
+                    Some(start_handshake) => {
+                        debug!("TLS[acme]: start handshake");
+                        let tls_stream = start_handshake
+                            .into_stream(config)
+                            .await
+                            .map_err(|err| e!(ServeConnectionError::TlsHandshake, err))?;
+                        MaybeTlsStream::Tls(tls_stream)
+                    }
                 }
             }
-        }
-        TlsAcceptor::Manual(a) => {
-            debug!("TLS[manual]: accept");
-            let tls_stream = a
-                .accept(stream)
-                .await
-                .map_err(|err| e!(ServeConnectionError::ManualAccept, err))?;
-            Ok(Some(MaybeTlsStream::Tls(tls_stream)))
-        }
+            TlsAcceptor::Manual(a) => {
+                debug!("TLS[manual]: accept");
+                let tls_stream = a
+                    .accept(stream)
+                    .await
+                    .map_err(|err| e!(ServeConnectionError::ManualAccept, err))?;
+                MaybeTlsStream::Tls(tls_stream)
+            }
+        };
+        self.serve_connection(stream).await
+    }
+
+    /// Wrapper for the actual http connection (with upgrades)
+    async fn serve_connection<I>(self, io: I) -> Result<(), ServeConnectionError>
+    where
+        I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
+    {
+        hyper::server::conn::http1::Builder::new()
+            .serve_connection(hyper_util::rt::TokioIo::new(io), self)
+            .with_upgrades()
+            .await
+            .map_err(|err| e!(ServeConnectionError::ServeConnection, err))
     }
 }
 
