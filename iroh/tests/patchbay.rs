@@ -31,7 +31,7 @@ use std::time::Duration;
 use iroh::{TransportAddr, endpoint::Side};
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_tracing_test::traced_test;
-use patchbay::{LinkCondition, LinkDirection, LinkLimits, Nat, RouterPreset, TestGuard};
+use patchbay::{IpSupport, LinkCondition, LinkDirection, LinkLimits, Nat, RouterPreset, TestGuard};
 use testdir::testdir;
 use tracing::info;
 
@@ -182,6 +182,7 @@ async fn switch_uplink_v6() -> Result {
     let home = lab
         .add_router("nat2")
         .preset(RouterPreset::Home)
+        .ip_support(IpSupport::V4Only)
         .build()
         .await?;
     let mobile = lab
