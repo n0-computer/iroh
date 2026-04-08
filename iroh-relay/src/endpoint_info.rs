@@ -43,12 +43,9 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-pub use iroh_dns::{
-    DecodingError, EndpointIdExt,
-    endpoint_info::{
-        EncodingError, IROH_TXT_NAME, IrohAttr, ParseError, TxtAttrs, endpoint_id_from_txt_name,
-    },
-};
+pub use iroh_dns::{DecodingError, EndpointIdExt};
+pub use iroh_dns::endpoint_info::{EncodingError, IROH_TXT_NAME, ParseError};
+pub(crate) use iroh_dns::endpoint_info::{IrohAttr, TxtAttrs, endpoint_id_from_txt_name};
 use n0_error::{ensure, stack_error};
 use url::Url;
 
@@ -418,7 +415,7 @@ impl EndpointInfo {
     }
 
     /// Converts to TXT attributes.
-    pub fn to_attrs(&self) -> TxtAttrs<IrohAttr> {
+    pub(crate) fn to_attrs(&self) -> TxtAttrs<IrohAttr> {
         endpoint_info_to_attrs(self)
     }
 
@@ -474,19 +471,6 @@ impl EndpointInfo {
     /// Converts into a list of `{key}={value}` strings.
     pub fn to_txt_strings(&self) -> Vec<String> {
         self.to_attrs().to_txt_strings().collect()
-    }
-}
-
-impl std::ops::Deref for EndpointInfo {
-    type Target = EndpointData;
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl std::ops::DerefMut for EndpointInfo {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data
     }
 }
 
