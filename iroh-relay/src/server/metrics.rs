@@ -65,48 +65,60 @@ pub struct Metrics {
 
     /// Number of times a client was moved into the inactive state.
     ///
-    /// Number of inactive clients at any time is `clients_inactive_add` - `clients_inactive_remove`.
+    /// A client becomes inactive when a new client connects with the same endpoint id. An inactive
+    /// client can still send messages, but won't receive anything. If the currently-active client
+    /// disconnects, and if there are inactive clients, the most-recent inactive client becomes
+    /// active again.
     ///
-    /// Happens only when a new client with the same endpoint id connects.
-    pub clients_inactive_add: Counter,
+    /// The number of inactive clients at any time is `clients_inactive_added` - `clients_inactive_removed`.
+    pub clients_inactive_added: Counter,
 
     /// Number of times a client was removed from the inactive state.
     ///
-    /// Happens when a client disconnects while being inactive, or if a client is upgraded to be
+    /// This is increased whenever a client disconnects while being inactive, or if a client is upgraded to be
     /// active again (happens only when the currently-active client for that endpoint id disconnects).
-    pub clients_inactive_remove: Counter,
+    ///
+    /// See [`Self::clients_inactive_added`] for details on when a client becomes inactive.
+    pub clients_inactive_removed: Counter,
 
     // TODO: only important stat that we cannot track right now
     // pub average_queue_duration:
     //
     /// Number of incoming QUIC connections.
     ///
-    /// After completion, each is counted in either qad_incoming_disconnected or qad_accepted.
-    /// Thus the number of inflight incomings is qad_incoming - qad_incoming_disconnected - qad_accepted.
+    /// After completion, each is counted in either `qad_incoming_error` or `qad_connections`.
+    ///
+    /// Thus the number of inflight incomings is `qad_incoming` - `qad_incoming_error` - `qad_connections`.
     pub qad_incoming: Counter,
+
     /// Number of QAD QUIC connections that aborted before completing the handshake.
-    pub qad_incoming_disconnected: Counter,
+    pub qad_incoming_error: Counter,
+
     /// Number of accepted QAD QUIC connections.
     ///
-    /// After completion, each is counted in qad_accepted_disconnected.
-    /// The number of active connections is qad_accepted - qad_accepted_disconnected.
-    pub qad_accepted: Counter,
+    /// The number of active connections is `qad_connections` - `qad_connections_closed`.
+    pub qad_connections: Counter,
+
     /// Number of QAD QUIC connections that disconnected after being accepted.
-    pub qad_accepted_disconnected: Counter,
+    pub qad_connections_closed: Counter,
+
     /// Number of QAD QUIC connections that disconnected after being accepted, with an error.
     ///
-    /// The number is *included* in `qad_accepted_disconnected` (not in addition to).
-    pub qad_accepted_disconnected_error: Counter,
+    /// The number is *included* in `qad_connections_closed` (not in addition to).
+    pub qad_connections_errored: Counter,
+
     /// Number of accepted HTTP(S) connections.
     ///
-    /// The number of active connections at any time is `http_accepted` - `http_disconnected`
-    pub http_accepted: Counter,
+    /// The number of active connections at any time is `http_connections` - `http_connections_closed`
+    pub http_connections: Counter,
+
     /// Number of terminated HTTP(S) connections.
-    pub http_disconnected: Counter,
+    pub http_connections_closed: Counter,
+
     /// Number of HTTP(S) connections that terminated with an error.
     ///
-    /// The number is *included* in `http_disconnected` (not in addition to).
-    pub http_disconnected_error: Counter,
+    /// The number is *included* in `http_connections_closed` (not in addition to).
+    pub http_connections_errored: Counter,
 }
 
 /// All metrics tracked in the relay server.

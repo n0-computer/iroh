@@ -946,7 +946,7 @@ impl RelayService {
         establish_timeout: Duration,
     ) {
         let metrics = self.0.metrics.clone();
-        metrics.http_accepted.inc();
+        metrics.http_connections.inc();
         // We create a notification token to be triggered once the connection is fully established
         // and passed to the relay server.
         let on_establish = Arc::new(Notify::new());
@@ -976,7 +976,7 @@ impl RelayService {
             .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))
             .flatten();
 
-        metrics.http_disconnected.inc();
+        metrics.http_connections_closed.inc();
 
         if let Err(error) = res {
             match error {
@@ -995,7 +995,7 @@ impl RelayService {
                     debug!(reason=?source, "peer disconnected");
                 }
                 _ => {
-                    metrics.http_disconnected_error.inc();
+                    metrics.http_connections_errored.inc();
                     error!(?error, "failed to handle connection");
                 }
             }

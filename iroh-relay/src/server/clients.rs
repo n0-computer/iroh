@@ -91,7 +91,7 @@ impl Clients {
                     .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string())
                     .ok();
                 state.inactive.push(old_client);
-                metrics.clients_inactive_add.inc();
+                metrics.clients_inactive_added.inc();
             }
             dashmap::Entry::Vacant(entry) => {
                 entry.insert(ClientState {
@@ -128,7 +128,7 @@ impl Clients {
             if state.active.connection_id() == connection_id {
                 // The unregistering client is the currently active client
                 if let Some(last_inactive_client) = state.inactive.pop() {
-                    metrics.clients_inactive_remove.inc();
+                    metrics.clients_inactive_removed.inc();
                     // There is an inactive client, promote to active again.
                     state.active = last_inactive_client;
                     // Don't remove the entry from client map.
@@ -144,7 +144,7 @@ impl Clients {
                 state
                     .inactive
                     .retain(|client| client.connection_id() != connection_id);
-                metrics.clients_inactive_remove.inc();
+                metrics.clients_inactive_removed.inc();
                 // Active client is unmodified: keep entry in map.
                 false
             }

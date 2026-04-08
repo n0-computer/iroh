@@ -213,15 +213,15 @@ pub(crate) mod server {
             Ok(conn) => conn,
             Err(e) => {
                 debug!("establishing failed: {e:#}");
-                metrics.qad_incoming_disconnected.inc();
+                metrics.qad_incoming_error.inc();
                 return Err(e);
             }
         };
-        metrics.qad_accepted.inc();
+        metrics.qad_connections.inc();
         debug!("established");
         // wait for the client to close the connection
         let connection_err = connection.closed().await;
-        metrics.qad_accepted_disconnected.inc();
+        metrics.qad_connections_closed.inc();
         match connection_err {
             noq::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
                 if error_code == QUIC_ADDR_DISC_CLOSE_CODE =>
@@ -231,7 +231,7 @@ pub(crate) mod server {
             }
             _ => {
                 debug!("peer disconnected with {connection_err:#}");
-                metrics.qad_accepted_disconnected_error.inc();
+                metrics.qad_connections_errored.inc();
                 Err(connection_err)
             }
         }
