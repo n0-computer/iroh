@@ -242,11 +242,10 @@ impl DhtAddressLookup {
     }
 
     /// Periodically publishes the endpoint address to the DHT.
-    async fn publish_loop(self, public_key_bytes: [u8; 32], item: MutableItem) {
+    async fn publish_loop(self, signed_packet: SignedPacket) {
         let this = self;
-        let z32 = iroh_base::PublicKey::try_from(public_key_bytes.as_slice())
-            .expect("valid key")
-            .to_z32();
+        let z32 = signed_packet.public_key().to_z32();
+        let item = signed_packet_to_mutable_item(&signed_packet);
         loop {
             let res = this
                 .0
@@ -260,6 +259,12 @@ impl DhtAddressLookup {
                     tracing::debug!("pkarr publish success. published under {z32}");
                 }
                 Err(e) => {
+                    // we could do a smaller delay here, but in general DHT publish
+                    // not working is due to a network issue, and if the network changes
+                    // the task will be restarted anyway.
+                    //
+                    // Being unable to publish to the DHT is something that is expected
+                    // to happen from time to time, so this does not warrant a error log.
                     tracing::warn!("pkarr publish error: {}", e);
                 }
             }
@@ -289,10 +294,8 @@ impl AddressLookup for DhtAddressLookup {
             tracing::warn!("failed to create signed packet");
             return;
         };
-        let item = signed_packet_to_mutable_item(&signed_packet);
-        let public_key_bytes = *keypair.public().as_bytes();
         let this = self.clone();
-        let curr = task::spawn(this.publish_loop(public_key_bytes, item));
+        let curr = task::spawn(this.publish_loop(signed_packet));
         let mut task = self.0.task.lock().expect("poisoned");
         *task = Some(AbortOnDropHandle::new(curr));
     }
