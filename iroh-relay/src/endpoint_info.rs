@@ -33,7 +33,8 @@
 //! [`N0_DNS_ENDPOINT_ORIGIN_STAGING`]: crate::dns::N0_DNS_ENDPOINT_ORIGIN_STAGING
 
 use std::{
-    collections::BTreeSet,
+    borrow::Cow,
+    collections::{BTreeSet, HashSet},
     fmt::{self, Display},
     hash::Hash,
     net::SocketAddr,
@@ -64,7 +65,7 @@ use crate::pkarr;
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct EndpointData {
     /// addresses where this endpoint can be reached.
-    pub(crate) addrs: BTreeSet<TransportAddr>,
+    addrs: Vec<TransportAddr>,
     /// Optional user-defined [`UserData`] for this endpoint.
     user_data: Option<UserData>,
 }
@@ -403,7 +404,7 @@ impl EndpointInfo {
     pub fn to_endpoint_addr(&self) -> EndpointAddr {
         EndpointAddr {
             id: self.endpoint_id,
-            addrs: self.data.addrs.clone(),
+            addrs: self.data.addrs.iter().cloned().collect(),
         }
     }
 
@@ -419,6 +420,26 @@ impl EndpointInfo {
     /// Converts to TXT attributes.
     pub fn to_attrs(&self) -> TxtAttrs<IrohAttr> {
         endpoint_info_to_attrs(self)
+    }
+
+    /// Returns the transport addr information.
+    pub fn addrs(&self) -> impl Iterator<Item = &TransportAddr> {
+        self.data.addrs()
+    }
+
+    /// Returns the relay URL of the endpoint.
+    pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl> {
+        self.data.relay_urls()
+    }
+
+    /// Returns user data information, if set.
+    pub fn user_data(&self) -> Option<&UserData> {
+        self.data.user_data()
+    }
+
+    /// Returns the direct addresses of the endpoint.
+    pub fn ip_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
+        self.data.ip_addrs()
     }
 
     /// Parses a [`EndpointInfo`] from DNS TXT lookup results.
