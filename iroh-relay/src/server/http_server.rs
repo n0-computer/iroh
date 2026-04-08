@@ -1070,15 +1070,16 @@ async fn clearable_timeout<F: Future>(
     tokio::pin!(timeout);
     loop {
         tokio::select! {
+            biased;
             res = &mut fut => {
                 return Ok(res);
-            }
-            _ = &mut timeout => {
-                return Err(Elapsed);
             }
             _ = clear_timeout.notified() => {
                 timeout.as_mut().set_none();
             },
+            _ = &mut timeout => {
+                return Err(Elapsed);
+            }
         }
     }
 }
