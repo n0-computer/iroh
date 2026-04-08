@@ -38,8 +38,6 @@ use data_encoding::HEXLOWER;
 use derive_more::{Display, From};
 use indicatif::HumanBytes;
 use ipnet::{Ipv4Net, Ipv6Net};
-#[cfg(feature = "qlog")]
-use iroh::endpoint::QuicTransportConfig;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     Watcher,
@@ -50,8 +48,8 @@ use iroh::{
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{
-        BindOpts, Connection, ConnectionError, PathId, PathWatcher, RecvStream, SendStream, VarInt,
-        WriteError, presets,
+        BindOpts, Connection, ConnectionError, PathId, PathWatcher, QuicTransportConfig,
+        RecvStream, SendStream, VarInt, WriteError, presets,
     },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
@@ -327,6 +325,23 @@ struct EndpointArgs {
     /// Disable all default bind addresses.
     #[clap(long)]
     no_default_bind: bool,
+    /// Receive window size.
+    ///
+    /// This controls the maximum amount of data that may be inflight for any stream in the connection.
+    /// Increasing this value gives higher throughput at high latencies, at the cost of
+    /// more memory usage.
+    ///
+    /// The default is 1.25 MB, which gives a max throughput of 12.5 MB/s at 100ms RTT.
+    ///
+    /// Accepts values like "5M", "2000K", etc.
+    #[clap(long, value_parser = parse_byte_size, conflicts_with = "receive_window_rtt")]
+    receive_window: Option<u64>,
+    /// Receive window size derived from expected RTT in milliseconds.
+    ///
+    /// Calculates the receive window size for an expected RTT
+    /// and a desired max throughput of 12.5 MB/s.
+    #[clap(long, conflicts_with = "receive_window")]
+    receive_window_rtt: Option<u32>,
 }
 
 #[derive(Subcommand, Debug, derive_more::Display)]
@@ -536,21 +551,34 @@ impl EndpointArgs {
             builder = builder
                 .bind_addr_with_opts(addr, BindOpts::default().set_prefix_len(prefix_len))?;
         }
+
+        let mut cfg = QuicTransportConfig::builder();
+
+        // Adjust the receive window, if configured.
+        // By default noq and iroh set the connection-level receive window to VarInt::MAX, and
+        // the stream receive window to 1.25MB (for a throughput of 12.5 MB/s at 100ms latency).
+        // We leave the connection-level receive window at the default and adjust the
+        // stream-level receive window. The distinction between connection-level and stream-level
+        // doesn't matter here because we don't have concurrent data-intensive streams
+        // in the transfer protocol.
+        if let Some(size) = self.receive_window {
+            cfg = cfg.stream_receive_window((size as u32).into());
+        } else if let Some(expected_rtt) = self.receive_window_rtt {
+            const MAX_STREAM_BANDWIDTH: u32 = 12500 * 1000; // bytes/s
+            let stream_rwnd = MAX_STREAM_BANDWIDTH / 1000 * expected_rtt;
+            cfg = cfg.stream_receive_window(stream_rwnd.into());
+        }
+
         #[cfg(feature = "qlog")]
-        {
-            let cfg = match (std::env::var("QLOGDIR").ok(), log) {
-                (Some(dir), _) => QuicTransportConfig::builder()
-                    .qlog_from_path(dir, "transfer")
-                    .build(),
-                (_, Some(log)) if log.qlog => QuicTransportConfig::builder()
-                    .qlog_from_path(&log.dir, "")
-                    .build(),
-                _ => Default::default(),
-            };
-            builder = builder.transport_config(cfg)
+        match (std::env::var("QLOGDIR").ok(), log) {
+            (Some(dir), _) => cfg = cfg.qlog_from_path(dir, "transfer"),
+            (_, Some(log)) if log.qlog => cfg = cfg.qlog_from_path(&log.dir, ""),
+            _ => {}
         }
         #[cfg(not(feature = "qlog"))]
         let _ = log;
+
+        builder = builder.transport_config(cfg.build());
 
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
