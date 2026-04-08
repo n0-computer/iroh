@@ -1,5 +1,5 @@
 //! Exposes functions to quickly configure a server suitable for testing.
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, sync::Arc};
 
 use super::{AccessConfig, CertConfig, QuicConfig, RelayConfig, ServerConfig, TlsConfig};
 
@@ -44,6 +44,7 @@ pub fn tls_config() -> TlsConfig<()> {
         cert: CertConfig::<(), ()>::Manual { certs },
         https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
         quic_bind_addr: (Ipv4Addr::UNSPECIFIED, 0).into(),
+        crypto_provider: Arc::new(rustls::crypto::ring::default_provider()),
     }
 }
 

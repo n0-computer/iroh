@@ -18,6 +18,7 @@ use iroh_relay::{
         DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
     },
     server::{self as relay, ClientRateLimit, QuicConfig},
+    tls::CaRootsConfig,
 };
 use n0_error::{Result, StdResultExt, bail_any};
 use n0_future::FutureExt;
@@ -496,16 +497,6 @@ async fn main() -> Result<()> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    // Install `ring` as default crypto provider for rustls.
-    // This helps when both the tls-ring and tls-aws-lc-rs features are enabled,
-    // otherwise some crypto operations would panic because rustls can't determine
-    // a default provider.
-    // `ring` is enabled by the `tls-ring` feature, which is included in the `server` feature,
-    // which is required for the main.rs binary. Therefore, this does not need any feature flags.
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("failed to set default crypto provider");
-
     let cli = Cli::parse();
     let mut cfg = Config::load(&cli).await?;
     if cfg.enable_quic_addr_discovery && cfg.tls.is_none() {
@@ -544,12 +535,11 @@ async fn maybe_load_tls(
     let Some(ref tls) = cfg.tls else {
         return Ok(None);
     };
-    let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .expect("protocols supported by ring")
-    .with_no_client_auth();
+    let crypto_provider = Arc::new(rustls::crypto::ring::default_provider());
+    let server_config = rustls::ServerConfig::builder_with_provider(crypto_provider.clone())
+        .with_safe_default_protocol_versions()
+        .expect("protocols supported by ring")
+        .with_no_client_auth();
     let (cert_config, server_config) = match tls.cert_mode {
         CertMode::Manual => {
             let cert_path = tls.cert_path();
@@ -576,10 +566,14 @@ async fn maybe_load_tls(
                 .contact
                 .clone()
                 .std_context("LetsEncrypt needs a contact email")?;
-            let config = AcmeConfig::new(vec![hostname.clone()])
-                .contact([format!("mailto:{contact}")])
-                .cache_option(Some(DirCache::new(tls.cert_dir())))
-                .directory_lets_encrypt(tls.prod_tls);
+            let client_config = CaRootsConfig::default().client_config(crypto_provider.clone())?;
+            let config = AcmeConfig::new_with_client_tls_config(
+                vec![hostname.clone()],
+                Arc::new(client_config),
+            )
+            .contact([format!("mailto:{contact}")])
+            .cache_option(Some(DirCache::new(tls.cert_dir())))
+            .directory_lets_encrypt(tls.prod_tls);
             let state = config.state();
             let resolver = state.resolver().clone();
             let server_config = server_config.with_cert_resolver(resolver);
@@ -628,6 +622,7 @@ async fn maybe_load_tls(
         cert: cert_config,
         server_config,
         quic_bind_addr: tls.quic_bind_addr(cfg),
+        crypto_provider,
     }))
 }
 

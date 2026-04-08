@@ -5222,8 +5222,7 @@ dependencies = [
 [[package]]
 name = "tokio-rustls-acme"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c31fcc374ec87d754358a5d0709ed1ab7671d51e0f70ddc3b17a11ac36604cfa"
+source = "git+https://github.com/n0-computer/tokio-rustls-acme?branch=Frando%2Fcrypto-provider#bba7615c920ae0858904a41bf1a6c9ba7a20b9b5"
 dependencies = [
  "async-trait",
  "axum-server",
