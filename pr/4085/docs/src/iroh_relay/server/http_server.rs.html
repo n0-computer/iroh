@@ -878,7 +878,7 @@
 <a href=#878 id=878 data-nosnippet>878</a>    /// ```
 <a href=#879 id=879 data-nosnippet>879</a>    </span><span class="kw">pub async fn </span>handle_connection(<span class="self">self</span>, stream: TcpStream, tls_config: <span class="prelude-ty">Option</span>&lt;TlsConfig&gt;) {
 <a href=#880 id=880 data-nosnippet>880</a>        <span class="kw">let </span>metrics = <span class="self">self</span>.<span class="number">0</span>.metrics.clone();
-<a href=#881 id=881 data-nosnippet>881</a>        metrics.tcp_accepted.inc();
+<a href=#881 id=881 data-nosnippet>881</a>        metrics.http_accepted.inc();
 <a href=#882 id=882 data-nosnippet>882</a>        <span class="kw">let </span>res = <span class="kw">match </span>tls_config {
 <a href=#883 id=883 data-nosnippet>883</a>            <span class="prelude-val">Some</span>(tls_config) =&gt; {
 <a href=#884 id=884 data-nosnippet>884</a>                <span class="macro">debug!</span>(<span class="string">"HTTPS: serve connection"</span>);
@@ -891,7 +891,7 @@
 <a href=#891 id=891 data-nosnippet>891</a>                    </span>.map_err(|err| <span class="macro">e!</span>(ServeConnectionError::Http, err))
 <a href=#892 id=892 data-nosnippet>892</a>            }
 <a href=#893 id=893 data-nosnippet>893</a>        };
-<a href=#894 id=894 data-nosnippet>894</a>        metrics.tcp_disconnected.inc();
+<a href=#894 id=894 data-nosnippet>894</a>        metrics.http_disconnected.inc();
 <a href=#895 id=895 data-nosnippet>895</a>        <span class="kw">match </span>res {
 <a href=#896 id=896 data-nosnippet>896</a>            <span class="prelude-val">Ok</span>(()) =&gt; {}
 <a href=#897 id=897 data-nosnippet>897</a>            <span class="prelude-val">Err</span>(error) =&gt; <span class="kw">match </span>error {
@@ -910,7 +910,7 @@
 <a href=#910 id=910 data-nosnippet>910</a>                    <span class="macro">debug!</span>(reason=<span class="question-mark">?</span>source, <span class="string">"peer disconnected"</span>);
 <a href=#911 id=911 data-nosnippet>911</a>                }
 <a href=#912 id=912 data-nosnippet>912</a>                <span class="kw">_ </span>=&gt; {
-<a href=#913 id=913 data-nosnippet>913</a>                    metrics.tcp_disconnected_error.inc();
+<a href=#913 id=913 data-nosnippet>913</a>                    metrics.http_disconnected_error.inc();
 <a href=#914 id=914 data-nosnippet>914</a>                    <span class="macro">error!</span>(<span class="question-mark">?</span>error, <span class="string">"failed to handle connection"</span>);
 <a href=#915 id=915 data-nosnippet>915</a>                }
 <a href=#916 id=916 data-nosnippet>916</a>            },

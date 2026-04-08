@@ -76,44 +76,43 @@
 <a href=#76 id=76 data-nosnippet>76</a>    /// active again (happens only when the currently-active client for that endpoint id disconnects).
 <a href=#77 id=77 data-nosnippet>77</a>    </span><span class="kw">pub </span>clients_inactive_remove: Counter,
 <a href=#78 id=78 data-nosnippet>78</a>
-<a href=#79 id=79 data-nosnippet>79</a>    <span class="comment">// TODO: enable when we can have multiple connections for one endpoint id
-<a href=#80 id=80 data-nosnippet>80</a>    // pub duplicate_client_keys: Counter,
-<a href=#81 id=81 data-nosnippet>81</a>    // pub duplicate_client_conns: Counter,
-<a href=#82 id=82 data-nosnippet>82</a>    // TODO: only important stat that we cannot track right now
-<a href=#83 id=83 data-nosnippet>83</a>    // pub average_queue_duration:
-<a href=#84 id=84 data-nosnippet>84</a>    //
-<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="doccomment">/// Number of incoming QUIC connections.
-<a href=#86 id=86 data-nosnippet>86</a>    ///
-<a href=#87 id=87 data-nosnippet>87</a>    /// After completion, each is counted in either quic_incoming_disconnected or quic_accepted.
-<a href=#88 id=88 data-nosnippet>88</a>    /// Thus the number of inflight incomings is quic_incoming - quic_incoming_disconnected - quic_accepted.
-<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub </span>quic_incoming: Counter,
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// Number of QUIC connections that aborted before completing the handshake.
-<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="kw">pub </span>quic_incoming_disconnnected: Counter,
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// Number of accepted QUIC connections.
-<a href=#93 id=93 data-nosnippet>93</a>    ///
-<a href=#94 id=94 data-nosnippet>94</a>    /// After completion, each is counted in quic_accepted_disconnected.
-<a href=#95 id=95 data-nosnippet>95</a>    /// The number of active connections is quic_accepted - quic_accepted_disconnected.
-<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="kw">pub </span>quic_accepted: Counter,
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// Number of QUIC connections that disconnected after being accepted.
-<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">pub </span>quic_accepted_disconnected: Counter,
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="doccomment">/// Number of QUIC connections that disconnected after being accepted, with an error.
-<a href=#100 id=100 data-nosnippet>100</a>    ///
-<a href=#101 id=101 data-nosnippet>101</a>    /// The number is *included* in `quic_accepted_disconnected` (not in addition to).
-<a href=#102 id=102 data-nosnippet>102</a>    </span><span class="kw">pub </span>quic_accepted_disconnected_error: Counter,
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="doccomment">/// Number of accepted TCP connections.
-<a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">pub </span>tcp_accepted: Counter,
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="doccomment">/// Number of terminated TCP connections.
-<a href=#106 id=106 data-nosnippet>106</a>    </span><span class="kw">pub </span>tcp_disconnected: Counter,
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="doccomment">/// Number of TCP connections that terminated with an error.
-<a href=#108 id=108 data-nosnippet>108</a>    ///
-<a href=#109 id=109 data-nosnippet>109</a>    /// The number is *included* in `tcp_disconnected` (not in addition to).
-<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">pub </span>tcp_disconnected_error: Counter,
-<a href=#111 id=111 data-nosnippet>111</a>}
-<a href=#112 id=112 data-nosnippet>112</a>
-<a href=#113 id=113 data-nosnippet>113</a><span class="doccomment">/// All metrics tracked in the relay server.
-<a href=#114 id=114 data-nosnippet>114</a></span><span class="attr">#[derive(Debug, Default, Clone, MetricsGroupSet)]
-<a href=#115 id=115 data-nosnippet>115</a>#[metrics(name = <span class="string">"relay"</span>)]
-<a href=#116 id=116 data-nosnippet>116</a></span><span class="kw">pub struct </span>RelayMetrics {
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Metrics tracked for the relay server.
-<a href=#118 id=118 data-nosnippet>118</a>    </span><span class="kw">pub </span>server: Arc&lt;Metrics&gt;,
-<a href=#119 id=119 data-nosnippet>119</a>}</code></pre></div></section></main></body></html>
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="comment">// TODO: only important stat that we cannot track right now
+<a href=#80 id=80 data-nosnippet>80</a>    // pub average_queue_duration:
+<a href=#81 id=81 data-nosnippet>81</a>    //
+<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="doccomment">/// Number of incoming QUIC connections.
+<a href=#83 id=83 data-nosnippet>83</a>    ///
+<a href=#84 id=84 data-nosnippet>84</a>    /// After completion, each is counted in either qad_incoming_disconnected or qad_accepted.
+<a href=#85 id=85 data-nosnippet>85</a>    /// Thus the number of inflight incomings is qad_incoming - qad_incoming_disconnected - qad_accepted.
+<a href=#86 id=86 data-nosnippet>86</a>    </span><span class="kw">pub </span>qad_incoming: Counter,
+<a href=#87 id=87 data-nosnippet>87</a>    <span class="doccomment">/// Number of QAD QUIC connections that aborted before completing the handshake.
+<a href=#88 id=88 data-nosnippet>88</a>    </span><span class="kw">pub </span>qad_incoming_disconnected: Counter,
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// Number of accepted QAD QUIC connections.
+<a href=#90 id=90 data-nosnippet>90</a>    ///
+<a href=#91 id=91 data-nosnippet>91</a>    /// After completion, each is counted in qad_accepted_disconnected.
+<a href=#92 id=92 data-nosnippet>92</a>    /// The number of active connections is qad_accepted - qad_accepted_disconnected.
+<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">pub </span>qad_accepted: Counter,
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// Number of QAD QUIC connections that disconnected after being accepted.
+<a href=#95 id=95 data-nosnippet>95</a>    </span><span class="kw">pub </span>qad_accepted_disconnected: Counter,
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="doccomment">/// Number of QAD QUIC connections that disconnected after being accepted, with an error.
+<a href=#97 id=97 data-nosnippet>97</a>    ///
+<a href=#98 id=98 data-nosnippet>98</a>    /// The number is *included* in `qad_accepted_disconnected` (not in addition to).
+<a href=#99 id=99 data-nosnippet>99</a>    </span><span class="kw">pub </span>qad_accepted_disconnected_error: Counter,
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="doccomment">/// Number of accepted HTTP(S) connections.
+<a href=#101 id=101 data-nosnippet>101</a>    ///
+<a href=#102 id=102 data-nosnippet>102</a>    /// The number of active connections at any time is `http_accepted` - `http_disconnected`
+<a href=#103 id=103 data-nosnippet>103</a>    </span><span class="kw">pub </span>http_accepted: Counter,
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="doccomment">/// Number of terminated HTTP(S) connections.
+<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">pub </span>http_disconnected: Counter,
+<a href=#106 id=106 data-nosnippet>106</a>    <span class="doccomment">/// Number of HTTP(S) connections that terminated with an error.
+<a href=#107 id=107 data-nosnippet>107</a>    ///
+<a href=#108 id=108 data-nosnippet>108</a>    /// The number is *included* in `http_disconnected` (not in addition to).
+<a href=#109 id=109 data-nosnippet>109</a>    </span><span class="kw">pub </span>http_disconnected_error: Counter,
+<a href=#110 id=110 data-nosnippet>110</a>}
+<a href=#111 id=111 data-nosnippet>111</a>
+<a href=#112 id=112 data-nosnippet>112</a><span class="doccomment">/// All metrics tracked in the relay server.
+<a href=#113 id=113 data-nosnippet>113</a></span><span class="attr">#[derive(Debug, Default, Clone, MetricsGroupSet)]
+<a href=#114 id=114 data-nosnippet>114</a>#[metrics(name = <span class="string">"relay"</span>)]
+<a href=#115 id=115 data-nosnippet>115</a></span><span class="kw">pub struct </span>RelayMetrics {
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="doccomment">/// Metrics tracked for the relay server.
+<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="kw">pub </span>server: Arc&lt;Metrics&gt;,
+<a href=#118 id=118 data-nosnippet>118</a>}</code></pre></div></section></main></body></html>
