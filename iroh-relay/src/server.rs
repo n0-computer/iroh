@@ -786,7 +786,7 @@ mod tests {
     use n0_error::Result;
     use n0_future::{FutureExt, SinkExt, StreamExt};
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use tracing::{info, instrument};
 
     use super::{
@@ -947,7 +947,7 @@ mod tests {
             .unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate(&mut rng);
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
         let a_key = a_secret_key.public();
         let resolver = dns_resolver();
         info!("client a build & connect");
@@ -957,7 +957,7 @@ mod tests {
             .await?;
 
         // set up client b
-        let b_secret_key = SecretKey::generate(&mut rng);
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
         info!("client b build & connect");
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
@@ -1011,7 +1011,7 @@ mod tests {
             .client_config(default_provider())
             .unwrap();
 
-        let a_secret_key = SecretKey::generate(&mut rng);
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
         let a_key = a_secret_key.public();
 
         let server = Server::spawn(ServerConfig::<(), ()> {
@@ -1055,7 +1055,7 @@ mod tests {
         // test that another client has access
 
         // set up client b
-        let b_secret_key = SecretKey::generate(&mut rng);
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
 
         let resolver = dns_resolver();
@@ -1065,7 +1065,7 @@ mod tests {
             .await?;
 
         // set up client c
-        let c_secret_key = SecretKey::generate(&mut rng);
+        let c_secret_key = SecretKey::from_bytes(&rng.random());
         let c_key = c_secret_key.public();
 
         let resolver = dns_resolver();
@@ -1105,7 +1105,7 @@ mod tests {
             .unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate(&mut rng);
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
         let resolver = dns_resolver();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
             .tls_client_config(client_config.clone())
@@ -1113,7 +1113,7 @@ mod tests {
             .await?;
 
         // set up client b
-        let b_secret_key = SecretKey::generate(&mut rng);
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
         let _client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
             .tls_client_config(client_config)

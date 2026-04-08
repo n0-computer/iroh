@@ -595,7 +595,7 @@ mod tests {
     use n0_error::{AnyError, Result, StackResultExt};
     use n0_future::{StreamExt, time};
     use n0_tracing_test::traced_test;
-    use rand::{CryptoRng, Rng, SeedableRng};
+    use rand::{CryptoRng, RngExt, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
@@ -923,7 +923,7 @@ mod tests {
         rng: &mut R,
         add_address_lookup: F,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
-        let secret = SecretKey::generate(rng);
+        let secret = SecretKey::from_bytes(&rng.random());
 
         let ep = Endpoint::builder(presets::Minimal)
             .secret_key(secret)
@@ -974,7 +974,7 @@ mod test_dns_pkarr {
     use n0_error::{Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
 
     use crate::{
         address_lookup::{EndpointData, PkarrPublisher},
@@ -995,7 +995,7 @@ mod test_dns_pkarr {
             .await
             .context("Running DNS server")?;
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let endpoint_info = EndpointInfo::new(secret_key.public())
             .with_relay_url("https://relay.example".parse().unwrap());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
@@ -1023,7 +1023,7 @@ mod test_dns_pkarr {
             .await
             .context("DnsPkarrServer")?;
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let endpoint_id = secret_key.public();
 
         let relay_url = Some(TransportAddr::Relay(
@@ -1098,7 +1098,7 @@ mod test_dns_pkarr {
 
         use crate::{Endpoint, RelayMode, endpoint::presets};
 
-        let secret_key = SecretKey::generate(rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())

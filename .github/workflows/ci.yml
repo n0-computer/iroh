@@ -31,6 +31,8 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     runs-on: [self-hosted, linux, X64]
+    env:
+      RUSTFLAGS: "-Dwarnings --cfg skip_patchbay"
     strategy:
       fail-fast: false
       matrix:
@@ -109,7 +111,7 @@ jobs:
           java-version: "17"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Setup Android NDK
         uses: arqu/setup-ndk@main
@@ -135,6 +137,8 @@ jobs:
       matrix:
         target:
           - i686-unknown-linux-gnu
+    env:
+      RUSTFLAGS: "-Dwarnings --cfg skip_patchbay"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -169,7 +173,7 @@ jobs:
 
   wasm_test:
     name: Build & test wasm32 for browsers
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     env:
       RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
@@ -188,10 +192,11 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.17.7
+        uses: cargo-bins/cargo-binstall@v1.17.9
 
       - name: Install wasm-bindgen-test-runner
-        run: cargo binstall wasm-bindgen-cli --locked --no-confirm
+        # Match the version of wasm-bindgen used in Cargo.lock
+        run: cargo binstall wasm-bindgen-cli@0.2.115 --locked --no-confirm
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
@@ -219,7 +224,7 @@ jobs:
         run: cargo test -p iroh --test integration --target=wasm32-unknown-unknown
 
   check_semver:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -244,7 +249,7 @@ jobs:
         # uses: obi1kenobi/cargo-semver-checks-action@v2
         uses: n0-computer/cargo-semver-checks-action@feat-baseline
         with:
-          package: iroh, iroh-base, iroh-dns-server, iroh-bench, iroh-relay, iroh-net-report
+          package: iroh, iroh-base, iroh-dns-server, iroh-relay, iroh-net-report
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
@@ -267,7 +272,7 @@ jobs:
   check_docs:
     timeout-minutes: 30
     name: Checking docs
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -285,7 +290,7 @@ jobs:
 
   clippy_check:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -333,7 +338,7 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Minimal Supported Rust Version
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"

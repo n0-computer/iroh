@@ -307,7 +307,7 @@ mod tests {
     };
 
     use iroh_base::{RelayUrl, SecretKey};
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
 
     use super::*;
 
@@ -488,7 +488,7 @@ mod tests {
             .into();
         // Add 10 relay addresses
         for _ in 0..10 {
-            let id = SecretKey::generate(&mut rng).public();
+            let id = SecretKey::from_bytes(&rng.random()).public();
             let relay_addr = transports::Addr::Relay(relay_url.clone(), id);
             paths.insert(relay_addr, PathState::default());
         }

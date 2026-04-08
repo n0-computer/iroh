@@ -1005,7 +1005,7 @@ mod tests {
     use n0_error::{Result, StdResultExt, bail_any};
     use n0_future::{SinkExt, StreamExt};
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use reqwest::Url;
     use tracing::info;
 
@@ -1041,8 +1041,8 @@ mod tests {
     async fn test_http_clients_and_server() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let a_key = SecretKey::generate(&mut rng);
-        let b_key = SecretKey::generate(&mut rng);
+        let a_key = SecretKey::from_bytes(&rng.random());
+        let b_key = SecretKey::from_bytes(&rng.random());
 
         // start server
         let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
@@ -1161,8 +1161,8 @@ mod tests {
     async fn test_https_clients_and_server() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let a_key = SecretKey::generate(&mut rng);
-        let b_key = SecretKey::generate(&mut rng);
+        let a_key = SecretKey::from_bytes(&rng.random());
+        let b_key = SecretKey::from_bytes(&rng.random());
 
         // create tls_config
         let tls_config = make_tls_config();
@@ -1264,7 +1264,7 @@ mod tests {
         );
 
         info!("Create client A and connect it to the server.");
-        let key_a = SecretKey::generate(&mut rng);
+        let key_a = SecretKey::from_bytes(&rng.random());
         let public_key_a = key_a.public();
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
@@ -1274,7 +1274,7 @@ mod tests {
         handler_task.await.std_context("join")??;
 
         info!("Create client B and connect it to the server.");
-        let key_b = SecretKey::generate(&mut rng);
+        let key_b = SecretKey::from_bytes(&rng.random());
         let public_key_b = key_b.public();
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
@@ -1364,7 +1364,7 @@ mod tests {
         );
 
         info!("Create client A and connect it to the server.");
-        let key_a = SecretKey::generate(&mut rng);
+        let key_a = SecretKey::from_bytes(&rng.random());
         let public_key_a = key_a.public();
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
@@ -1374,7 +1374,7 @@ mod tests {
         handler_task.await.std_context("join")??;
 
         info!("Create client B and connect it to the server.");
-        let key_b = SecretKey::generate(&mut rng);
+        let key_b = SecretKey::from_bytes(&rng.random());
         let public_key_b = key_b.public();
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
