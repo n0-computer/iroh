@@ -5,7 +5,6 @@ use std::{net::SocketAddr, sync::Arc};
 use n0_error::stack_error;
 use n0_future::time::Duration;
 use noq::{VarInt, crypto::rustls::QuicClientConfig};
-use tokio::sync::watch;
 
 /// ALPN for our quic addr discovery
 pub const ALPN_QUIC_ADDR_DISC: &[u8] = b"/iroh-qad/0";
@@ -237,11 +236,7 @@ pub enum Error {
         #[error(std_err)]
         source: noq::ConnectionError,
     },
-    #[error(transparent)]
-    WatchRecv {
-        #[error(std_err)]
-        source: watch::error::RecvError,
-    },
+    NoObservedAddr,
 }
 
 /// Handles the client side of QUIC address discovery.
@@ -302,6 +297,7 @@ impl QuicClient {
         server_addr: SocketAddr,
         host: &str,
     ) -> Result<(SocketAddr, std::time::Duration), Error> {
+        use n0_future::StreamExt;
         use noq_proto::PathId;
 
         let connecting = self
@@ -324,15 +320,9 @@ impl QuicClient {
         //         Ok((addr, latency))
         //     }
 
-        let res = match external_addresses.wait_for(|addr| addr.is_some()).await {
-            Ok(res) => res,
-            Err(err) => {
-                // attempt to gracefully close the connections
-                conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-                return Err(err.into());
-            }
+        let Some(mut observed_addr) = external_addresses.next().await else {
+            n0_error::bail!(Error::NoObservedAddr);
         };
-        let mut observed_addr = res.expect("checked");
         // if we've sent to an ipv4 address, but received an observed address
         // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
         observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());

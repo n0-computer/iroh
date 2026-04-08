@@ -1,6 +1,6 @@
 use ctutils::CtEq;
 use noq_proto::crypto;
-use rand::Rng;
+use rand::RngExt;
 use rustls::crypto::cipher::{
     AeadKey, InboundOpaqueMessage, Iv, NONCE_LEN, OutboundPlainMessage, Tls13AeadAlgorithm,
 };
