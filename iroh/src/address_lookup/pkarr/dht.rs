@@ -357,7 +357,7 @@ mod tests {
     #[ignore = "flaky"]
     #[traced_test]
     async fn dht_address_lookup_smoke() -> Result {
-        let secret = SecretKey::generate(&mut rand::rng());
+        let secret = SecretKey::generate();
         let testnet = pkarr::mainline::Testnet::new_async(3).await.anyerr()?;
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))

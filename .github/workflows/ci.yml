@@ -173,7 +173,7 @@ jobs:
 
   wasm_test:
     name: Build & test wasm32 for browsers
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     env:
       RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
@@ -224,7 +224,7 @@ jobs:
         run: cargo test -p iroh --test integration --target=wasm32-unknown-unknown
 
   check_semver:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -272,7 +272,7 @@ jobs:
   check_docs:
     timeout-minutes: 30
     name: Checking docs
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -290,7 +290,7 @@ jobs:
 
   clippy_check:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -338,7 +338,7 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Minimal Supported Rust Version
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"

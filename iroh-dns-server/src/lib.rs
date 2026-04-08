@@ -31,7 +31,7 @@ mod tests {
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
     use pkarr::{SignedPacket, Timestamp};
-    use rand::{CryptoRng, SeedableRng};
+    use rand::{CryptoRng, RngExt, SeedableRng};
 
     use crate::{
         ZoneStore,
@@ -175,7 +175,7 @@ mod tests {
 
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let endpoint_id = secret_key.public();
         let tls_config = CaRootsConfig::default()
             .client_config(default_provider())
@@ -252,7 +252,7 @@ mod tests {
         let origin = "irohdns.example.";
 
         // create a signed packet
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let endpoint_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
@@ -282,7 +282,7 @@ mod tests {
     }
 
     fn random_signed_packet<R: CryptoRng + ?Sized>(rng: &mut R) -> Result<SignedPacket> {
-        let secret_key = SecretKey::generate(rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let endpoint_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());

@@ -12,7 +12,6 @@ use std::{
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use n0_error::{e, ensure, stack_error};
-use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize, de, ser};
 
 /// A public key.
@@ -114,7 +113,8 @@ impl PublicKey {
     /// a valid `ed25519_dalek` curve point. Will never fail for bytes return from [`Self::as_bytes`].
     /// See [`VerifyingKey::from_bytes`] for details.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, KeyParsingError> {
-        let key = VerifyingKey::from_bytes(bytes)?;
+        let key =
+            VerifyingKey::from_bytes(bytes).map_err(|_| e!(KeyParsingError::InvalidKeyData))?;
         let y = CompressedEdwardsY(key.to_bytes());
         Ok(Self(y))
     }
@@ -167,7 +167,7 @@ impl TryFrom<&[u8]> for PublicKey {
 
     #[inline]
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        let vk = VerifyingKey::try_from(bytes)?;
+        let vk = VerifyingKey::try_from(bytes).map_err(|_| e!(KeyParsingError::InvalidKeyData))?;
         Ok(Self(CompressedEdwardsY(vk.to_bytes())))
     }
 }
@@ -206,16 +206,20 @@ impl Display for PublicKey {
 /// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
 #[stack_error(derive, add_meta, from_sources, std_sources)]
 #[allow(missing_docs)]
+#[non_exhaustive]
 pub enum KeyParsingError {
-    /// Error when decoding.
-    #[error(transparent)]
-    Decode(data_encoding::DecodeError),
-    /// Error when decoding the public key.
-    #[error(transparent)]
-    Key(ed25519_dalek::SignatureError),
-    /// The encoded information had the wrong length.
+    /// The input string could not be decoded as hex.
+    #[error("failed to decode hex string")]
+    FailedToDecodeHex,
+    /// The input string could not be decoded as base32.
+    #[error("failed to decode base32 string")]
+    FailedToDecodeBase32,
+    /// The input has invalid length.
     #[error("invalid length")]
-    DecodeInvalidLength,
+    InvalidLength,
+    /// The decoded data is not a valid Ed25591 public key.
+    #[error("data is not a valid public key")]
+    InvalidKeyData,
 }
 
 /// Deserialises the [`PublicKey`] from it's base32 encoding.
@@ -278,13 +282,20 @@ impl SecretKey {
 
     /// Generate a new [`SecretKey`] with a randomness generator.
     ///
+    /// This uses the default random number generator from the `rand` crate.
+    /// If you want to customize how the randomness is generated, use
+    /// [`Self::from_bytes`] instead and generate the 32 bytes yourself:
+    ///
     /// ```rust
-    /// // use the OsRng option for OS dependent most secure RNG.
-    /// let _key = iroh_base::SecretKey::generate(&mut rand::rng());
+    /// # use iroh_base::SecretKey;
+    /// # use rand::RngExt;
+    /// // Create a random number generator.
+    /// let mut rng = rand::rng();
+    /// // Use it to generate the 32 bytes that make up a secret key.
+    /// let secret_key = SecretKey::from_bytes(&rng.random());
     /// ```
-    pub fn generate<R: CryptoRng + ?Sized>(csprng: &mut R) -> Self {
-        let secret = SigningKey::generate(csprng);
-        Self(secret)
+    pub fn generate() -> Self {
+        Self::from_bytes(&rand::random())
     }
 
     /// Sign the given message and return a digital signature
@@ -325,7 +336,10 @@ impl TryFrom<&[u8]> for SecretKey {
 
     #[inline]
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        let secret = SigningKey::try_from(bytes)?;
+        let bytes: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| e!(KeyParsingError::InvalidLength))?;
+        let secret = SigningKey::from_bytes(&bytes);
         Ok(Self(secret))
     }
 }
@@ -433,34 +447,30 @@ pub struct SignatureError {}
 fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
     let mut bytes = [0u8; 32];
 
-    let res = if s.len() == PublicKey::LENGTH * 2 {
+    let len = if s.len() == PublicKey::LENGTH * 2 {
         // hex
-        data_encoding::HEXLOWER.decode_mut(s.as_bytes(), &mut bytes)
+        data_encoding::HEXLOWER
+            .decode_mut(s.as_bytes(), &mut bytes)
+            .map_err(|_| e!(KeyParsingError::FailedToDecodeHex))?
     } else {
         let input = s.to_ascii_uppercase();
         let input = input.as_bytes();
         ensure!(
-            data_encoding::BASE32_NOPAD.decode_len(input.len())? == bytes.len(),
-            KeyParsingError::DecodeInvalidLength
+            data_encoding::BASE32_NOPAD.decode_len(input.len()) == Ok(bytes.len()),
+            KeyParsingError::InvalidLength
         );
-        data_encoding::BASE32_NOPAD.decode_mut(input, &mut bytes)
+        data_encoding::BASE32_NOPAD
+            .decode_mut(input, &mut bytes)
+            .map_err(|_| e!(KeyParsingError::FailedToDecodeBase32))?
     };
-    match res {
-        Ok(len) => {
-            ensure!(
-                len == PublicKey::LENGTH,
-                KeyParsingError::DecodeInvalidLength
-            );
-        }
-        Err(partial) => return Err(partial.error.into()),
-    }
+    ensure!(len == PublicKey::LENGTH, KeyParsingError::InvalidLength);
     Ok(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use data_encoding::HEXLOWER;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
 
     use super::*;
 
@@ -495,7 +505,7 @@ mod tests {
     #[test]
     fn test_from_str() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let key = SecretKey::generate(&mut rng);
+        let key = SecretKey::from_bytes(&rng.random());
         assert_eq!(
             SecretKey::from_str(&HEXLOWER.encode(&key.to_bytes()))
                 .unwrap()
@@ -517,7 +527,7 @@ mod tests {
 
     #[test]
     fn signature_postcard() {
-        let key = SecretKey::generate(&mut rand::rng());
+        let key = SecretKey::generate();
         let signature = key.sign(b"hello world");
         let bytes = postcard::to_stdvec(&signature).unwrap();
         let signature2: Signature = postcard::from_bytes(&bytes).unwrap();

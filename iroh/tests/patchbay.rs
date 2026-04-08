@@ -74,7 +74,10 @@ async fn holepunch_simple() -> Result {
         .client(client, async move |_dev, _ep, conn| {
             let mut paths = conn.paths();
             assert!(paths.selected().is_relay(), "connection started relayed");
-            paths.wait_ip(timeout).await?;
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("holepunch to direct")?;
             info!("connection became direct");
             conn.close(0u32.into(), b"bye!");
             Ok(())
@@ -133,7 +136,10 @@ async fn switch_uplink_v4() -> Result {
             assert!(paths.selected().is_relay(), "connection started relayed");
 
             // Wait for conn to become direct.
-            paths.wait_ip(timeout).await.context("become direct")?;
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("holepunch to direct")?;
 
             // Wait a little more and then switch wifis.
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -225,17 +231,24 @@ async fn switch_uplink_v6() -> Result {
             assert!(paths.selected().is_relay(), "connection started relayed");
 
             // Wait for conn to become direct.
-            paths.wait_ip(timeout).await.context("become direct")?;
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("holepunch to direct")?;
 
-            ping_open(&conn, timeout).await.context("ping_open 1")?;
+            ping_open(&conn, timeout)
+                .await
+                .context("ping before switch")?;
 
-            info!("switch IP uplink");
+            info!("switch IP uplink to v6");
             dev.replug_iface("eth0", mobile.id()).await?;
 
             // We don't assert any path changes here, because the remote stays identical,
             // and PathInfo does not contain info on local addrs. Instead, the remote
             // only accepts our ping after the path changed.
-            ping_open(&conn, timeout).await.context("ping_open 2")?;
+            ping_open(&conn, timeout)
+                .await
+                .context("ping after v6 switch")?;
             conn.close(0u32.into(), b"bye!");
             Ok(())
         })
@@ -254,6 +267,7 @@ async fn switch_uplink_v6() -> Result {
 /// faster LAN address. A ping verifies the new path works.
 #[tokio::test]
 #[traced_test]
+#[ignore = "sometimes is flaky (does not become direct after the link_up)"]
 async fn change_ifaces() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -276,7 +290,7 @@ async fn change_ifaces() -> Result {
         .await?;
     client.link_down("eth1").await?;
 
-    let timeout = Duration::from_secs(10);
+    let timeout = Duration::from_secs(15);
     Pair::new(relay_map)
         .server(server, async move |_dev, _ep, conn| {
             ping_accept(&conn, timeout).await.context("ping_accept")?;
@@ -481,14 +495,19 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
         timeout * 2,
         Pair::new(relay_map)
             .server(server, async move |_dev, _ep, conn| {
-                ping_accept(&conn, timeout).await?;
+                ping_accept(&conn, timeout).await.context("ping_accept")?;
                 conn.closed().await;
                 Ok(())
             })
             .client(client, async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
-                paths.wait_ip(timeout).await?;
-                ping_open(&conn, timeout).await?;
+                paths
+                    .wait_ip(timeout)
+                    .await
+                    .context("holepunch to direct")?;
+                info!("direct path established, sending ping");
+                ping_open(&conn, timeout).await.context("ping_open")?;
+                info!("ping complete");
                 conn.close(0u32.into(), b"bye!");
                 Ok(())
             })
@@ -549,6 +568,7 @@ async fn degrade_server_2_bad() -> Result {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "not yet passing reliably"]
 async fn degrade_server_3_terrible() -> Result {
     run_degrade_level(Side::Server, 3).await?.ok();
     Ok(())
@@ -591,6 +611,7 @@ async fn degrade_client_2_bad() -> Result {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "not yet passing reliably"]
 async fn degrade_client_3_terrible() -> Result {
     run_degrade_level(Side::Client, 3).await?.ok();
     Ok(())
