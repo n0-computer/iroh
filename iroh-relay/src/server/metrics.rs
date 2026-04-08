@@ -62,19 +62,31 @@ pub struct Metrics {
 
     /// Number of unique client keys per day
     pub unique_client_keys: Counter,
+
     // TODO: enable when we can have multiple connections for one endpoint id
     // pub duplicate_client_keys: Counter,
     // pub duplicate_client_conns: Counter,
     // TODO: only important stat that we cannot track right now
     // pub average_queue_duration:
-    /// Number of accepted QUIC connections.
-    pub quic_accepted: Counter,
-    /// Number of terminated QUIC connections.
-    pub quic_disconnected: Counter,
-    /// Number of QUIC connections that terminated with an error.
+    //
+    /// Number of incoming QUIC connections.
     ///
-    /// The number is *included* in `quic_disconnected` (not in addition to).
-    pub quic_disconnected_error: Counter,
+    /// After completion, each is counted in either quic_incoming_disconnected or quic_accepted.
+    /// Thus the number of inflight incomings is quic_incoming - quic_incoming_disconnected - quic_accepted.
+    pub quic_incoming: Counter,
+    /// Number of QUIC connections that aborted before completing the handshake.
+    pub quic_incoming_disconnnected: Counter,
+    /// Number of accepted QUIC connections.
+    ///
+    /// After completion, each is counted in quic_accepted_disconnected.
+    /// The number of active connections is quic_accepted - quic_accepted_disconnected.
+    pub quic_accepted: Counter,
+    /// Number of QUIC connections that disconnected after being accepted.
+    pub quic_accepted_disconnected: Counter,
+    /// Number of QUIC connections that disconnected after being accepted, with an error.
+    ///
+    /// The number is *included* in `quic_accepted_disconnected` (not in addition to).
+    pub quic_accepted_disconnected_error: Counter,
     /// Number of accepted TCP connections.
     pub tcp_accepted: Counter,
     /// Number of terminated TCP connections.

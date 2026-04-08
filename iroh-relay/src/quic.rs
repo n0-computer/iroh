@@ -131,28 +131,19 @@ pub(crate) mod server {
                                 break;
                             }
                             Some(res) = set.join_next() => {
-                                metrics.quic_disconnected.inc();
-                                match res {
-                                    Err(err) => {
-                                        if err.is_panic() {
-                                            panic!("quic task panicked: {err:#?}");
-                                        } else {
-                                            debug!("quic task cancelled: {err:#?}");
-                                        }
-                                    },
-                                    Ok(Err(_)) => {
-                                        metrics.quic_disconnected_error.inc();
-                                    },
-                                    Ok(Ok(())) => {}
+                                if let Err(err) = res {
+                                    if err.is_panic() {
+                                        panic!("quic task panicked: {err:#?}");
+                                    } else {
+                                        debug!("quic task cancelled: {err:#?}");
+                                    }
                                 }
                             }
                             res = endpoint.accept() => match res {
                                 Some(incoming) => {
-                                     metrics.quic_accepted.inc();
                                      let remote_addr = incoming.remote_address();
-                                     debug!(%remote_addr, "accepting connection");
                                      set.spawn(
-                                         handle_connection(incoming).instrument(info_span!("qad-conn", %remote_addr))
+                                         handle_connection(incoming, metrics.clone()).instrument(info_span!("qad-conn", %remote_addr))
                                      );                                }
                                 None => {
                                     debug!("endpoint closed");
@@ -212,16 +203,25 @@ pub(crate) mod server {
     }
 
     /// Handle the connection from the client.
-    async fn handle_connection(incoming: noq::Incoming) -> Result<(), ConnectionError> {
+    async fn handle_connection(
+        incoming: noq::Incoming,
+        metrics: Arc<Metrics>,
+    ) -> Result<(), ConnectionError> {
+        metrics.quic_incoming.inc();
+        debug!("incoming");
         let connection = match incoming.await {
             Ok(conn) => conn,
             Err(e) => {
+                debug!("establishing failed: {e:#}");
+                metrics.quic_incoming_disconnnected.inc();
                 return Err(e);
             }
         };
+        metrics.quic_accepted.inc();
         debug!("established");
         // wait for the client to close the connection
         let connection_err = connection.closed().await;
+        metrics.quic_accepted_disconnected.inc();
         match connection_err {
             noq::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
                 if error_code == QUIC_ADDR_DISC_CLOSE_CODE =>
@@ -231,6 +231,7 @@ pub(crate) mod server {
             }
             _ => {
                 debug!("peer disconnected with {connection_err:#}");
+                metrics.quic_accepted_disconnected_error.inc();
                 Err(connection_err)
             }
         }
