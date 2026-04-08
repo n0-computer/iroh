@@ -945,6 +945,8 @@ impl RelayService {
         tls_config: Option<TlsConfig>,
         establish_timeout: Duration,
     ) {
+        let metrics = self.0.metrics.clone();
+        metrics.tcp_accepted.inc();
         // We create a notification token to be triggered once the connection is fully established
         // and passed to the relay server.
         let on_establish = Arc::new(Notify::new());
@@ -974,6 +976,8 @@ impl RelayService {
             .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))
             .flatten();
 
+        metrics.tcp_disconnected.inc();
+
         if let Err(error) = res {
             match error {
                 ServeConnectionError::ManualAccept { source, .. }
@@ -991,6 +995,7 @@ impl RelayService {
                     debug!(reason=?source, "peer disconnected");
                 }
                 _ => {
+                    metrics.tcp_disconnected_error.inc();
                     error!(?error, "failed to handle connection");
                 }
             }

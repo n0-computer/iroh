@@ -67,6 +67,22 @@ pub struct Metrics {
     // pub duplicate_client_conns: Counter,
     // TODO: only important stat that we cannot track right now
     // pub average_queue_duration:
+    /// Number of accepted QUIC connections.
+    pub quic_accepted: Counter,
+    /// Number of terminated QUIC connections.
+    pub quic_disconnected: Counter,
+    /// Number of QUIC connections that terminated with an error.
+    ///
+    /// The number is *included* in `quic_disconnected` (not in addition to).
+    pub quic_disconnected_error: Counter,
+    /// Number of accepted TCP connections.
+    pub tcp_accepted: Counter,
+    /// Number of terminated TCP connections.
+    pub tcp_disconnected: Counter,
+    /// Number of TCP connections that terminated with an error.
+    ///
+    /// The number is *included* in `tcp_disconnected` (not in addition to).
+    pub tcp_disconnected_error: Counter,
 }
 
 /// All metrics tracked in the relay server.
