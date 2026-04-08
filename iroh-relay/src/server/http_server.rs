@@ -6,9 +6,7 @@
 //!
 //! For a complete relay server implementation, see the parent [`server`](super) module.
 
-use std::{
-    collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use derive_more::Debug;
@@ -640,7 +638,7 @@ impl RelayService {
 impl Service<Request<Incoming>> for RelayService {
     type Response = Response<BytesBody>;
     type Error = HyperError;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
 
     fn call(&self, req: Request<Incoming>) -> Self::Future {
         // Create a client if the request hits the relay endpoint.
@@ -648,7 +646,7 @@ impl Service<Request<Incoming>> for RelayService {
             (req.method(), req.uri().path()),
             (&hyper::Method::GET, RELAY_PATH)
         ) {
-            let res = match self.handle_relay_ws_upgrade(req) {
+            let response = match self.handle_relay_ws_upgrade(req) {
                 Ok(response) => Ok(response),
                 // It's convention to send back the version(s) we *do* support
                 Err(e @ RelayUpgradeReqError::UnsupportedWebsocketVersion { .. }) => self
@@ -662,19 +660,20 @@ impl Service<Request<Incoming>> for RelayService {
                     .body(body_full(e.to_string())),
             }
             .map_err(Into::into);
-            return Box::pin(async move { res });
+            return std::future::ready(response);
         }
         // Otherwise handle the relay connection as normal.
 
         // Check all other possible endpoints.
         let uri = req.uri().clone();
-        if let Some(res) = self.0.handlers.get(&(req.method().clone(), uri.path())) {
-            let f = res(req, self.0.default_response());
-            return Box::pin(async move { f });
+        if let Some(handler) = self.0.handlers.get(&(req.method().clone(), uri.path())) {
+            let response = handler(req, self.0.default_response());
+            return std::future::ready(response);
         }
+
         // Otherwise return 404
-        let res = self.0.not_found_fn(req, self.0.default_response());
-        Box::pin(async move { res })
+        let response = self.0.not_found_fn(req, self.0.default_response());
+        std::future::ready(response)
     }
 }
 
