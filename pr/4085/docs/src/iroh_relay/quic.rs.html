@@ -213,15 +213,15 @@
 <a href=#213 id=213 data-nosnippet>213</a>            <span class="prelude-val">Ok</span>(conn) =&gt; conn,
 <a href=#214 id=214 data-nosnippet>214</a>            <span class="prelude-val">Err</span>(e) =&gt; {
 <a href=#215 id=215 data-nosnippet>215</a>                <span class="macro">debug!</span>(<span class="string">"establishing failed: {e:#}"</span>);
-<a href=#216 id=216 data-nosnippet>216</a>                metrics.qad_incoming_disconnected.inc();
+<a href=#216 id=216 data-nosnippet>216</a>                metrics.qad_incoming_error.inc();
 <a href=#217 id=217 data-nosnippet>217</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(e);
 <a href=#218 id=218 data-nosnippet>218</a>            }
 <a href=#219 id=219 data-nosnippet>219</a>        };
-<a href=#220 id=220 data-nosnippet>220</a>        metrics.qad_accepted.inc();
+<a href=#220 id=220 data-nosnippet>220</a>        metrics.qad_connections.inc();
 <a href=#221 id=221 data-nosnippet>221</a>        <span class="macro">debug!</span>(<span class="string">"established"</span>);
 <a href=#222 id=222 data-nosnippet>222</a>        <span class="comment">// wait for the client to close the connection
 <a href=#223 id=223 data-nosnippet>223</a>        </span><span class="kw">let </span>connection_err = connection.closed().<span class="kw">await</span>;
-<a href=#224 id=224 data-nosnippet>224</a>        metrics.qad_accepted_disconnected.inc();
+<a href=#224 id=224 data-nosnippet>224</a>        metrics.qad_connections_closed.inc();
 <a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">match </span>connection_err {
 <a href=#226 id=226 data-nosnippet>226</a>            noq::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
 <a href=#227 id=227 data-nosnippet>227</a>                <span class="kw">if </span>error_code == QUIC_ADDR_DISC_CLOSE_CODE =&gt;
@@ -231,7 +231,7 @@
 <a href=#231 id=231 data-nosnippet>231</a>            }
 <a href=#232 id=232 data-nosnippet>232</a>            <span class="kw">_ </span>=&gt; {
 <a href=#233 id=233 data-nosnippet>233</a>                <span class="macro">debug!</span>(<span class="string">"peer disconnected with {connection_err:#}"</span>);
-<a href=#234 id=234 data-nosnippet>234</a>                metrics.qad_accepted_disconnected_error.inc();
+<a href=#234 id=234 data-nosnippet>234</a>                metrics.qad_connections_errored.inc();
 <a href=#235 id=235 data-nosnippet>235</a>                <span class="prelude-val">Err</span>(connection_err)
 <a href=#236 id=236 data-nosnippet>236</a>            }
 <a href=#237 id=237 data-nosnippet>237</a>        }

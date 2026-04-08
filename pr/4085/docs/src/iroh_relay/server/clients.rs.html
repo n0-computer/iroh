@@ -91,7 +91,7 @@
 <a href=#91 id=91 data-nosnippet>91</a>                    .try_send_health(<span class="string">"Another endpoint connected with the same endpoint id. No more messages will be received"</span>.to_string())
 <a href=#92 id=92 data-nosnippet>92</a>                    .ok();
 <a href=#93 id=93 data-nosnippet>93</a>                state.inactive.push(old_client);
-<a href=#94 id=94 data-nosnippet>94</a>                metrics.clients_inactive_add.inc();
+<a href=#94 id=94 data-nosnippet>94</a>                metrics.clients_inactive_added.inc();
 <a href=#95 id=95 data-nosnippet>95</a>            }
 <a href=#96 id=96 data-nosnippet>96</a>            dashmap::Entry::Vacant(entry) =&gt; {
 <a href=#97 id=97 data-nosnippet>97</a>                entry.insert(ClientState {
@@ -128,7 +128,7 @@
 <a href=#128 id=128 data-nosnippet>128</a>            <span class="kw">if </span>state.active.connection_id() == connection_id {
 <a href=#129 id=129 data-nosnippet>129</a>                <span class="comment">// The unregistering client is the currently active client
 <a href=#130 id=130 data-nosnippet>130</a>                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(last_inactive_client) = state.inactive.pop() {
-<a href=#131 id=131 data-nosnippet>131</a>                    metrics.clients_inactive_remove.inc();
+<a href=#131 id=131 data-nosnippet>131</a>                    metrics.clients_inactive_removed.inc();
 <a href=#132 id=132 data-nosnippet>132</a>                    <span class="comment">// There is an inactive client, promote to active again.
 <a href=#133 id=133 data-nosnippet>133</a>                    </span>state.active = last_inactive_client;
 <a href=#134 id=134 data-nosnippet>134</a>                    <span class="comment">// Don't remove the entry from client map.
@@ -144,7 +144,7 @@
 <a href=#144 id=144 data-nosnippet>144</a>                </span>state
 <a href=#145 id=145 data-nosnippet>145</a>                    .inactive
 <a href=#146 id=146 data-nosnippet>146</a>                    .retain(|client| client.connection_id() != connection_id);
-<a href=#147 id=147 data-nosnippet>147</a>                metrics.clients_inactive_remove.inc();
+<a href=#147 id=147 data-nosnippet>147</a>                metrics.clients_inactive_removed.inc();
 <a href=#148 id=148 data-nosnippet>148</a>                <span class="comment">// Active client is unmodified: keep entry in map.
 <a href=#149 id=149 data-nosnippet>149</a>                </span><span class="bool-val">false
 <a href=#150 id=150 data-nosnippet>150</a>            </span>}
