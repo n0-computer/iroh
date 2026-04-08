@@ -23,7 +23,10 @@ use hyper::{
 };
 use n0_error::{e, ensure, stack_error};
 use n0_future::MaybeFuture;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::Notify,
+};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
@@ -62,16 +65,11 @@ type HyperHandler = Box<
 /// WebSocket GUID needed for accepting websocket connections, see RFC 6455 (<https://www.rfc-editor.org/rfc/rfc6455>) section 1.3
 const SEC_WEBSOCKET_ACCEPT_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-/// Timeout for completing the TLS handshake on incoming connections.
+/// Timeout for a connection to finish the TLS and WebSocket upgrade handshakes.
 ///
-/// The connection is aborted if the timeout elapses before the TLS handshake completes.
-const ESTABLISH_TLS_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Timeout for completing the WebSocket upgrade handshake after the connection is established.
-///
-/// The connection is aborted if the timeout elapses before a WebSocket request
-/// comes in and completes the handshake.
-const ESTABLISH_WS_TIMEOUT: Duration = Duration::from_secs(30);
+/// The connection is aborted if the connection does not complete the TLS handshake
+/// and establishes relay protocol WebSocket stream within this timeout.
+const ESTABLISH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Derives the accept key for WebSocket handshake according to RFC 6455.
 /// Takes the client's Sec-WebSocket-Key value and returns the calculated accept key.
@@ -288,10 +286,8 @@ pub enum ServeConnectionError {
         #[error(std_err)]
         source: hyper::Error,
     },
-    #[error("TLS handshake not completed within timeout")]
-    TlsHandshakeTimeout,
-    #[error("WebSocket request not received and handshaked within timeout")]
-    WsEstablishTimeout,
+    #[error("Connection did not reach established state within timeout")]
+    EstablishTimeout,
 }
 
 /// Server accept errors.
@@ -548,7 +544,7 @@ impl RelayService {
     fn handle_relay_ws_upgrade(
         &self,
         mut req: Request<Incoming>,
-        clear_establish_timeout: CancellationToken,
+        on_establish: Arc<Notify>,
     ) -> Result<Response<BytesBody>, RelayUpgradeReqError> {
         fn expect_header(
             req: &Request<Incoming>,
@@ -617,15 +613,15 @@ impl RelayService {
                         {
                             warn!("error accepting upgraded connection: {err:#}",);
                         } else {
+                            // We have passed the connection to the relay protocol handler,
+                            // thus we trigger the on_establish notification so that timeouts
+                            // on the upper layer will be cleared.
+                            on_establish.notify_waiters();
                             debug!("upgraded connection completed");
                         };
                     }
                     Err(err) => warn!("upgrade error: {err:#}"),
                 }
-                // Once `relay_connection_handler` completes, liveness is watched
-                // by the relay protocol, thus we clear the establish timeout
-                // (i.e. don't abort the connection at the upper level anymore).
-                clear_establish_timeout.cancel();
             }
             .instrument(warn_span!("handler"))
         });
@@ -650,12 +646,15 @@ impl RelayService {
     }
 }
 
-struct RelayServiceWithTimeout {
+/// Combines [`RelayService`] with a `on_establish` notification token.
+///
+/// The `on_establish` token is triggered once the relay connection is fully established.
+struct RelayServiceWithNotify {
     service: RelayService,
-    clear_timeout: CancellationToken,
+    on_establish: Arc<Notify>,
 }
 
-impl Service<Request<Incoming>> for RelayServiceWithTimeout {
+impl Service<Request<Incoming>> for RelayServiceWithNotify {
     type Response = Response<BytesBody>;
     type Error = HyperError;
     type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
@@ -668,7 +667,7 @@ impl Service<Request<Incoming>> for RelayServiceWithTimeout {
         ) {
             let response = match self
                 .service
-                .handle_relay_ws_upgrade(req, self.clear_timeout.clone())
+                .handle_relay_ws_upgrade(req, self.on_establish.clone())
             {
                 Ok(response) => Ok(response),
                 // It's convention to send back the version(s) we *do* support
@@ -909,16 +908,38 @@ impl RelayService {
     /// # }
     /// ```
     pub async fn handle_connection(self, stream: TcpStream, tls_config: Option<TlsConfig>) {
-        let res = match tls_config {
-            Some(tls_config) => {
-                debug!("HTTPS: serve connection");
-                self.tls_serve_connection(stream, tls_config).await
-            }
-            None => {
-                debug!("HTTP: serve connection");
-                self.serve_connection(MaybeTlsStream::Plain(stream)).await
+        // We create a notification token to be triggered once the connection is fully established
+        // and passed to the relay server.
+        let on_establish = Arc::new(Notify::new());
+
+        // This is the main connection future, driving the connection to completion.
+        let serve_fut = {
+            let on_establish = on_establish.clone();
+            async move {
+                match tls_config {
+                    Some(tls_config) => {
+                        debug!("HTTPS: serve connection");
+                        self.tls_serve_connection(stream, tls_config, on_establish)
+                            .await
+                    }
+                    None => {
+                        debug!("HTTP: serve connection");
+                        self.serve_connection(MaybeTlsStream::Plain(stream), on_establish)
+                            .await
+                    }
+                }
             }
         };
+
+        // We set a timeout for the connection to limit lingering connections during establishment.
+        // The timeout is cleared once the connection has completed the TLS and WebSocket
+        // handshakes and has been passed over to the relay protocol handler.
+        // If the timeout expires before that happens, the connection is aborted.
+        let res = match clearable_timeout(ESTABLISH_TIMEOUT, on_establish, serve_fut).await {
+            Err(_elapsed) => Err(e!(ServeConnectionError::EstablishTimeout)),
+            Ok(res) => res,
+        };
+
         match res {
             Ok(()) => {}
             Err(error) => match error {
@@ -943,12 +964,15 @@ impl RelayService {
         }
     }
 
-    async fn tls_accept_connection(
+    /// Serve the tls connection
+    async fn tls_serve_connection(
+        self,
         stream: TcpStream,
         tls_config: TlsConfig,
-    ) -> Result<Option<MaybeTlsStream>, ServeConnectionError> {
+        on_establish: Arc<Notify>,
+    ) -> Result<(), ServeConnectionError> {
         let TlsConfig { acceptor, config } = tls_config;
-        match acceptor {
+        let stream = match acceptor {
             TlsAcceptor::LetsEncrypt(a) => {
                 match a
                     .accept(stream)
@@ -957,7 +981,7 @@ impl RelayService {
                 {
                     None => {
                         info!("TLS[acme]: received TLS-ALPN-01 validation request");
-                        Ok(None)
+                        return Ok(());
                     }
                     Some(start_handshake) => {
                         debug!("TLS[acme]: start handshake");
@@ -965,7 +989,7 @@ impl RelayService {
                             .into_stream(config)
                             .await
                             .map_err(|err| e!(ServeConnectionError::TlsHandshake, err))?;
-                        Ok(Some(MaybeTlsStream::Tls(tls_stream)))
+                        MaybeTlsStream::Tls(tls_stream)
                     }
                 }
             }
@@ -975,62 +999,30 @@ impl RelayService {
                     .accept(stream)
                     .await
                     .map_err(|err| e!(ServeConnectionError::ManualAccept, err))?;
-                Ok(Some(MaybeTlsStream::Tls(tls_stream)))
+                MaybeTlsStream::Tls(tls_stream)
             }
-        }
-    }
-
-    /// Serve the tls connection
-    async fn tls_serve_connection(
-        self,
-        stream: TcpStream,
-        tls_config: TlsConfig,
-    ) -> Result<(), ServeConnectionError> {
-        let stream = tokio::time::timeout(
-            ESTABLISH_TLS_TIMEOUT,
-            Self::tls_accept_connection(stream, tls_config),
-        )
-        .await
-        .map_err(|_timeout| e!(ServeConnectionError::TlsHandshakeTimeout))??;
-        match stream {
-            None => {
-                // ACME TLS validation
-                Ok(())
-            }
-            Some(stream) => self.serve_connection(stream).await,
-        }
+        };
+        self.serve_connection(stream, on_establish).await
     }
 
     /// Wrapper for the actual http connection (with upgrades)
-    async fn serve_connection<I>(self, io: I) -> Result<(), ServeConnectionError>
+    async fn serve_connection<I>(
+        self,
+        io: I,
+        on_establish: Arc<Notify>,
+    ) -> Result<(), ServeConnectionError>
     where
         I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
     {
-        let clear_timeout = CancellationToken::new();
-        let establish_timeout = MaybeFuture::Some(tokio::time::sleep(ESTABLISH_WS_TIMEOUT));
-        tokio::pin!(establish_timeout);
-
-        let service_with_timeout = RelayServiceWithTimeout {
+        let service = RelayServiceWithNotify {
             service: self,
-            clear_timeout: clear_timeout.clone(),
+            on_establish,
         };
-        let mut serve_fut = hyper::server::conn::http1::Builder::new()
-            .serve_connection(hyper_util::rt::TokioIo::new(io), service_with_timeout)
-            .with_upgrades();
-
-        loop {
-            tokio::select! {
-                res = &mut serve_fut => {
-                    return res.map_err(|err| e!(ServeConnectionError::ServeConnection, err));
-                }
-                _ = &mut establish_timeout => {
-                    return Err(e!(ServeConnectionError::WsEstablishTimeout));
-                }
-                _ = clear_timeout.cancelled() => {
-                    establish_timeout.as_mut().set_none();
-                },
-            }
-        }
+        hyper::server::conn::http1::Builder::new()
+            .serve_connection(hyper_util::rt::TokioIo::new(io), service)
+            .with_upgrades()
+            .await
+            .map_err(|err| e!(ServeConnectionError::ServeConnection, err))
     }
 }
 
@@ -1061,6 +1053,39 @@ impl std::ops::DerefMut for Handlers {
         &mut self.0
     }
 }
+
+/// Requires a future to complete before the specified duration elapses, unless the timeout is cleared.
+///
+/// If the future completes before the duration has elapsed, then the completed value is returned.
+/// Otherwise, an error is returned and the future is canceled.
+///
+/// If `clear_timeout` is triggered, the timeout is cleared and the future is always run to completion.
+async fn clearable_timeout<F: Future>(
+    timeout: Duration,
+    clear_timeout: Arc<Notify>,
+    fut: F,
+) -> Result<F::Output, Elapsed> {
+    tokio::pin!(fut);
+    let timeout = MaybeFuture::Some(tokio::time::sleep(timeout));
+    tokio::pin!(timeout);
+    loop {
+        tokio::select! {
+            res = &mut fut => {
+                return Ok(res);
+            }
+            _ = &mut timeout => {
+                return Err(Elapsed);
+            }
+            _ = clear_timeout.notified() => {
+                timeout.as_mut().set_none();
+            },
+        }
+    }
+}
+
+#[stack_error(derive)]
+#[error("Timeout elapsed")]
+struct Elapsed;
 
 #[cfg(test)]
 mod tests {
