@@ -22,6 +22,7 @@ use hyper::{
     upgrade::Upgraded,
 };
 use n0_error::{e, ensure, stack_error};
+use n0_future::MaybeFuture;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -539,6 +540,7 @@ impl RelayService {
     fn handle_relay_ws_upgrade(
         &self,
         mut req: Request<Incoming>,
+        clear_establish_timeout: CancellationToken,
     ) -> Result<Response<BytesBody>, RelayUpgradeReqError> {
         fn expect_header(
             req: &Request<Incoming>,
@@ -612,6 +614,10 @@ impl RelayService {
                     }
                     Err(err) => warn!("upgrade error: {err:#}"),
                 }
+                // Once `relay_connection_handler` completes, liveness is watched
+                // by the relay protocol, thus we clear the establish timeout
+                // (i.e. don't abort the connection at the upper level anymore).
+                clear_establish_timeout.cancel();
             }
             .instrument(warn_span!("handler"))
         });
@@ -652,8 +658,10 @@ impl Service<Request<Incoming>> for RelayServiceWithTimeout {
             (req.method(), req.uri().path()),
             (&hyper::Method::GET, RELAY_PATH)
         ) {
-            self.clear_timeout.cancel();
-            let response = match self.service.handle_relay_ws_upgrade(req) {
+            let response = match self
+                .service
+                .handle_relay_ws_upgrade(req, self.clear_timeout.clone())
+            {
                 Ok(response) => Ok(response),
                 // It's convention to send back the version(s) we *do* support
                 Err(e @ RelayUpgradeReqError::UnsupportedWebsocketVersion { .. }) => self
@@ -990,26 +998,29 @@ impl RelayService {
     where
         I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
     {
-        let establish_timeout = tokio::time::sleep(ESTABLISH_WS_TIMEOUT);
-        tokio::pin!(establish_timeout);
         let clear_timeout = CancellationToken::new();
         let service_with_timeout = RelayServiceWithTimeout {
             service: self,
             clear_timeout: clear_timeout.clone(),
         };
-        let mut future = hyper::server::conn::http1::Builder::new()
+        let mut serve_fut = hyper::server::conn::http1::Builder::new()
             .serve_connection(hyper_util::rt::TokioIo::new(io), service_with_timeout)
             .with_upgrades();
 
+        let timeout = MaybeFuture::Some(tokio::time::sleep(ESTABLISH_WS_TIMEOUT));
+        tokio::pin!(timeout);
+
         loop {
             tokio::select! {
-                res = &mut future => {
+                res = &mut serve_fut => {
                     return res.map_err(|err| e!(ServeConnectionError::ServeConnection, err));
                 }
-                _ = clear_timeout.cancelled() => {},
-                _ = &mut establish_timeout, if !clear_timeout.is_cancelled() => {
+                _ = &mut timeout => {
                     return Err(e!(ServeConnectionError::WsEstablishTimeout));
                 }
+                _ = clear_timeout.cancelled() => {
+                    timeout.as_mut().set_none();
+                },
             }
         }
     }
