@@ -1258,9 +1258,9 @@ dependencies = [
 
 [[package]]
 name = "dlopen2"
-version = "0.5.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09b4f5f101177ff01b8ec4ecc81eead416a8aa42819a2869311b3420fa114ffa"
+checksum = "5e2c5bd4158e66d1e215c49b837e11d62f3267b30c92f1d171c4d3105e3dc4d4"
 dependencies = [
  "libc",
  "once_cell",
@@ -2127,7 +2127,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2394,7 +2394,7 @@ dependencies = [
  "n0-future",
  "n0-tracing-test",
  "n0-watcher",
- "netwatch 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "netwatch",
  "noq",
  "noq-proto",
  "noq-udp",
@@ -3049,9 +3049,9 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
 name = "netdev"
-version = "0.40.1"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b0a0096d9613ee878dba89bbe595f079d373e3f1960d882e4f2f78ff9c30a0a"
+checksum = "395f1acaf7a073f756fc22068e0b526d2cf22d09f5e13802b516ef8eeaeee5eb"
 dependencies = [
  "block2",
  "dispatch2",
@@ -3066,7 +3066,7 @@ dependencies = [
  "objc2-system-configuration",
  "once_cell",
  "plist",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3132,43 +3132,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b1b27babe89ef9f2237bc6c028bea24fa84163a1b6f8f17ff93573ebd7d861f"
-dependencies = [
- "atomic-waker",
- "bytes",
- "cfg_aliases",
- "derive_more",
- "js-sys",
- "libc",
- "n0-error",
- "n0-future",
- "n0-watcher",
- "netdev",
- "netlink-packet-core",
- "netlink-packet-route 0.29.0",
- "netlink-proto",
- "netlink-sys",
- "noq-udp",
- "objc2-core-foundation",
- "objc2-system-configuration",
- "pin-project-lite",
- "serde",
- "socket2 0.6.3",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "web-sys",
- "windows",
- "windows-result",
- "wmi",
-]
-
-[[package]]
-name = "netwatch"
-version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#651556c5c5fe5cc8f42963fcd603f88db856faad"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#2cdaf61858f15d9a9d89cb2214fa38fd4c04aca8"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3246,7 +3210,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -3290,7 +3254,7 @@ source = "git+https://github.com/n0-computer/noq?branch=main#b212bbcaccaa82089cc
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -3760,7 +3724,7 @@ dependencies = [
 [[package]]
 name = "portmapper"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#651556c5c5fe5cc8f42963fcd603f88db856faad"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#2cdaf61858f15d9a9d89cb2214fa38fd4c04aca8"
 dependencies = [
  "base64",
  "bytes",
@@ -3772,7 +3736,7 @@ dependencies = [
  "iroh-metrics",
  "libc",
  "n0-error",
- "netwatch 0.15.0 (git+https://github.com/n0-computer/net-tools?branch=main)",
+ "netwatch",
  "num_enum",
  "rand 0.10.0",
  "serde",
@@ -3956,7 +3920,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3993,7 +3957,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -5976,7 +5940,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
