@@ -23,7 +23,7 @@ struct Args {
 }
 
 async fn chat_server() -> Result<()> {
-    let secret_key = iroh::SecretKey::generate(&mut rand::rng());
+    let secret_key = iroh::SecretKey::generate();
     let endpoint_id = secret_key.public();
     let address_lookup = iroh::address_lookup::DhtAddressLookup::builder()
         .addr_filter(iroh::address_lookup::AddrFilter::unfiltered());

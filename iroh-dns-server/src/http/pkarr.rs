@@ -5,7 +5,7 @@ use axum::{
 use bytes::Bytes;
 use http::{StatusCode, header};
 use iroh_base::PublicKey;
-use iroh_relay::{endpoint_info::EndpointIdExt, pkarr::SignedPacket};
+use iroh_dns::{EndpointIdExt, pkarr::SignedPacket};
 use tracing::info;
 
 use super::error::AppError;

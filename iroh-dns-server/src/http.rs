@@ -310,7 +310,7 @@ mod tests {
     };
     use n0_error::StdResultExt;
     use n0_tracing_test::traced_test;
-    use rand::{RngExt, SeedableRng};
+    use rand::{Rng, SeedableRng};
 
     use crate::{http::HttpsConfig, server::Server};
 
