@@ -174,7 +174,7 @@
 <a href=#174 id=174 data-nosnippet>174</a>                    }
 <a href=#175 id=175 data-nosnippet>175</a>                    <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
 <a href=#176 id=176 data-nosnippet>176</a>                };
-<a href=#177 id=177 data-nosnippet>177</a>                <span class="kw">let </span>value = serialize_for_storage(<span class="kw-2">&amp;</span>packet);
+<a href=#177 id=177 data-nosnippet>177</a>                <span class="kw">let </span>value = serialize(<span class="kw-2">&amp;</span>packet);
 <a href=#178 id=178 data-nosnippet>178</a>                tables
 <a href=#179 id=179 data-nosnippet>179</a>                    .signed_packets
 <a href=#180 id=180 data-nosnippet>180</a>                    .insert(key.as_bytes(), <span class="kw-2">&amp;</span>value[..])
@@ -194,7 +194,7 @@
 <a href=#194 id=194 data-nosnippet>194</a>                <span class="macro">trace!</span>(<span class="string">"remove {}"</span>, key);
 <a href=#195 id=195 data-nosnippet>195</a>                <span class="kw">let </span>updated = <span class="kw">match </span>tables.signed_packets.remove(key.as_bytes()).anyerr()<span class="question-mark">? </span>{
 <a href=#196 id=196 data-nosnippet>196</a>                    <span class="prelude-val">Some</span>(row) =&gt; {
-<a href=#197 id=197 data-nosnippet>197</a>                        <span class="kw">let </span>packet = deserialize_from_storage(row.value())<span class="question-mark">?</span>;
+<a href=#197 id=197 data-nosnippet>197</a>                        <span class="kw">let </span>packet = deserialize(row.value())<span class="question-mark">?</span>;
 <a href=#198 id=198 data-nosnippet>198</a>                        tables
 <a href=#199 id=199 data-nosnippet>199</a>                            .update_time
 <a href=#200 id=200 data-nosnippet>200</a>                            .remove(<span class="kw-2">&amp;</span>packet.timestamp().to_be_bytes(), key.as_bytes())
@@ -382,7 +382,7 @@
 <a href=#382 id=382 data-nosnippet>382</a>}
 <a href=#383 id=383 data-nosnippet>383</a>
 <a href=#384 id=384 data-nosnippet>384</a><span class="doccomment">/// Serialize a signed packet for storage: `&lt;8 bytes last_seen&gt;&lt;packet bytes&gt;`.
-<a href=#385 id=385 data-nosnippet>385</a></span><span class="kw">fn </span>serialize_for_storage(packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; Vec&lt;u8&gt; {
+<a href=#385 id=385 data-nosnippet>385</a></span><span class="kw">fn </span>serialize(packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; Vec&lt;u8&gt; {
 <a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::with_capacity(<span class="number">8 </span>+ packet.as_bytes().len());
 <a href=#387 id=387 data-nosnippet>387</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>timestamp_now().to_be_bytes());
 <a href=#388 id=388 data-nosnippet>388</a>    out.extend_from_slice(packet.as_bytes());
@@ -393,7 +393,7 @@
 <a href=#393 id=393 data-nosnippet>393</a>///
 <a href=#394 id=394 data-nosnippet>394</a>/// Handles backwards compatibility with older storage formats that didn't include
 <a href=#395 id=395 data-nosnippet>395</a>/// the `last_seen` prefix.
-<a href=#396 id=396 data-nosnippet>396</a></span><span class="kw">fn </span>deserialize_from_storage(data: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
+<a href=#396 id=396 data-nosnippet>396</a></span><span class="kw">fn </span>deserialize(data: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
 <a href=#397 id=397 data-nosnippet>397</a>    <span class="comment">// Try parsing as &lt;8 bytes last_seen&gt;&lt;packet&gt; (pkarr v3 format)
 <a href=#398 id=398 data-nosnippet>398</a>    </span><span class="kw">if </span>data.len() &gt;= <span class="number">8
 <a href=#399 id=399 data-nosnippet>399</a>        </span>&amp;&amp; <span class="kw">let </span><span class="prelude-val">Ok</span>(packet) = SignedPacket::from_bytes_unchecked(<span class="kw-2">&amp;</span>data[<span class="number">8</span>..])
@@ -415,7 +415,7 @@
 <a href=#415 id=415 data-nosnippet>415</a>    </span><span class="kw">else </span>{
 <a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
 <a href=#417 id=417 data-nosnippet>417</a>    };
-<a href=#418 id=418 data-nosnippet>418</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(deserialize_from_storage(row.value())<span class="question-mark">?</span>))
+<a href=#418 id=418 data-nosnippet>418</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(deserialize(row.value())<span class="question-mark">?</span>))
 <a href=#419 id=419 data-nosnippet>419</a>}
 <a href=#420 id=420 data-nosnippet>420</a>
 <a href=#421 id=421 data-nosnippet>421</a><span class="kw">async fn </span>evict_task(send: mpsc::Sender&lt;Message&gt;, options: Options, cancel: CancellationToken) {
