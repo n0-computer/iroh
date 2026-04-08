@@ -3203,7 +3203,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "0.17.0"
-source = "git+https://github.com/n0-computer/noq?branch=fix-order-ips#8e0bd4e3b49c8b9ff8828c379e54ad64398cb0df"
+source = "git+https://github.com/n0-computer/noq?branch=fix-order-ips#21da20810dba118120be1bcb523d2023b520b6b9"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3224,7 +3224,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "0.16.0"
-source = "git+https://github.com/n0-computer/noq?branch=fix-order-ips#8e0bd4e3b49c8b9ff8828c379e54ad64398cb0df"
+source = "git+https://github.com/n0-computer/noq?branch=fix-order-ips#21da20810dba118120be1bcb523d2023b520b6b9"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3254,7 +3254,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "0.9.0"
-source = "git+https://github.com/n0-computer/noq?branch=fix-order-ips#8e0bd4e3b49c8b9ff8828c379e54ad64398cb0df"
+source = "git+https://github.com/n0-computer/noq?branch=fix-order-ips#21da20810dba118120be1bcb523d2023b520b6b9"
 dependencies = [
  "cfg_aliases",
  "libc",

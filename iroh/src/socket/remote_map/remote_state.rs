@@ -455,11 +455,13 @@ impl RemoteStateActor {
             ));
             self.connections_close.push(OnClosed::new(&conn));
 
-            // Add local addrs to the connection in priority order
-            let mut sorted: Vec<_> = self.local_direct_addrs.get().iter().cloned().collect();
-            sorted.sort_by_key(|da| da.typ.priority());
-            let sorted_addrs: Vec<SocketAddr> = sorted.iter().map(|da| da.addr).collect();
-            Self::update_qnt_candidates(&conn, &sorted_addrs);
+            let addrs: Vec<_> = self
+                .local_direct_addrs
+                .get()
+                .iter()
+                .map(|da| (da.addr, da.typ.priority()))
+                .collect();
+            Self::update_qnt_candidates(&conn, &addrs);
 
             // Store the connection
             let conn_state = self
@@ -633,43 +635,40 @@ impl RemoteStateActor {
     /// Each connection needs to have the local direct addresses to use as QNT address
     /// candidates.
     fn update_local_direct_address(&mut self) {
-        let direct_addrs = self.local_direct_addrs.get();
-        // Sort by priority: public/portmapped first, local last.
-        let mut sorted: Vec<_> = direct_addrs.iter().cloned().collect();
-        sorted.sort_by_key(|da| da.typ.priority());
-        let sorted_addrs: Vec<SocketAddr> = sorted.iter().map(|da| da.addr).collect();
-
+        let addrs: Vec<_> = self
+            .local_direct_addrs
+            .get()
+            .iter()
+            .map(|da| (da.addr, da.typ.priority()))
+            .collect();
         for conn in self.connections.values().filter_map(|s| s.handle.upgrade()) {
-            Self::update_qnt_candidates(&conn, &sorted_addrs);
+            Self::update_qnt_candidates(&conn, &addrs);
         }
     }
 
-    /// Updates QNT's candidate addresses to match the given set.
-    ///
-    /// Addresses are added in the order provided (priority order).
-    fn update_qnt_candidates(conn: &noq::Connection, direct_addrs: &[SocketAddr]) {
-        let noq_candidates: BTreeSet<SocketAddr> = match conn.get_local_nat_traversal_addresses() {
-            Ok(addrs) => BTreeSet::from_iter(addrs),
+    /// Replaces QNT's candidate addresses with the given set and priorities.
+    fn update_qnt_candidates(conn: &noq::Connection, addrs: &[(SocketAddr, u8)]) {
+        let noq_candidates = match conn.get_local_nat_traversal_addresses() {
+            Ok(addrs) => addrs,
             Err(err) => {
                 warn!("failed to get local nat candidates: {err:#}");
                 return;
             }
         };
-        let desired: BTreeSet<SocketAddr> = direct_addrs.iter().copied().collect();
-        // Remove addresses no longer in our set
-        for addr in noq_candidates.difference(&desired) {
-            if let Err(err) = conn.remove_nat_traversal_address(*addr) {
+        let desired: BTreeSet<SocketAddr> = addrs.iter().map(|(a, _)| *a).collect();
+        for addr in noq_candidates {
+            if !desired.contains(&addr)
+                && let Err(err) = conn.remove_nat_traversal_address(addr)
+            {
                 warn!("failed removing local addr: {err:#}");
             }
         }
-        for addr in direct_addrs {
-            if !noq_candidates.contains(addr)
-                && let Err(err) = conn.add_nat_traversal_address(*addr)
-            {
+        for (addr, priority) in addrs {
+            if let Err(err) = conn.add_nat_traversal_address(*addr, *priority) {
                 warn!("failed adding local addr: {err:#}");
             }
         }
-        trace!(?direct_addrs, "updated local QNT addresses");
+        trace!(?addrs, "updated local QNT addresses");
     }
 
     /// Triggers holepunching to the remote endpoint.
