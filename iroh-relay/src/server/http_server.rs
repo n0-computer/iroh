@@ -531,10 +531,10 @@ enum RelayUpgradeReqError {
     },
 }
 
-impl RelayService {
+impl RelayServiceWithNotify {
     fn build_response(&self) -> http::response::Builder {
         let mut res = Response::builder();
-        for (key, value) in self.0.headers.iter() {
+        for (key, value) in self.service.0.headers.iter() {
             res = res.header(key, value);
         }
         res
@@ -544,7 +544,6 @@ impl RelayService {
     fn handle_relay_ws_upgrade(
         &self,
         mut req: Request<Incoming>,
-        on_establish: Arc<Notify>,
     ) -> Result<Response<BytesBody>, RelayUpgradeReqError> {
         fn expect_header(
             req: &Request<Incoming>,
@@ -607,6 +606,7 @@ impl RelayService {
                 match hyper::upgrade::on(&mut req).await {
                     Ok(upgraded) => {
                         if let Err(err) = this
+                            .service
                             .0
                             .relay_connection_handler(upgraded, client_auth_header)
                             .await
@@ -616,7 +616,7 @@ impl RelayService {
                             // We have passed the connection to the relay protocol handler,
                             // thus we trigger the on_establish notification so that timeouts
                             // on the upper layer will be cleared.
-                            on_establish.notify_waiters();
+                            this.on_establish.notify_waiters();
                             debug!("upgraded connection completed");
                         };
                     }
@@ -646,12 +646,27 @@ impl RelayService {
     }
 }
 
-/// Combines [`RelayService`] with a `on_establish` notification token.
+/// Combines [`RelayService`] with a notification token.
 ///
-/// The `on_establish` token is triggered once the relay connection is fully established.
-struct RelayServiceWithNotify {
+/// This struct implements [`Service`].
+///
+/// The notification token is triggered once the relay connection is fully established.
+#[derive(Debug, Clone)]
+pub struct RelayServiceWithNotify {
     service: RelayService,
     on_establish: Arc<Notify>,
+}
+
+impl RelayServiceWithNotify {
+    /// Creates a new service wrapper that triggers `on_establish` once the connection is fully established.
+    ///
+    /// When this struct is invoked via
+    pub fn new(service: RelayService, on_establish: Arc<Notify>) -> Self {
+        Self {
+            service,
+            on_establish,
+        }
+    }
 }
 
 impl Service<Request<Incoming>> for RelayServiceWithNotify {
@@ -665,20 +680,15 @@ impl Service<Request<Incoming>> for RelayServiceWithNotify {
             (req.method(), req.uri().path()),
             (&hyper::Method::GET, RELAY_PATH)
         ) {
-            let response = match self
-                .service
-                .handle_relay_ws_upgrade(req, self.on_establish.clone())
-            {
+            let response = match self.handle_relay_ws_upgrade(req) {
                 Ok(response) => Ok(response),
                 // It's convention to send back the version(s) we *do* support
                 Err(e @ RelayUpgradeReqError::UnsupportedWebsocketVersion { .. }) => self
-                    .service
                     .build_response()
                     .status(StatusCode::BAD_REQUEST)
                     .header(SEC_WEBSOCKET_VERSION, SUPPORTED_WEBSOCKET_VERSION)
                     .body(body_full(e.to_string())),
                 Err(e) => self
-                    .service
                     .build_response()
                     .status(StatusCode::BAD_REQUEST)
                     .body(body_full(e.to_string())),
@@ -911,38 +921,45 @@ impl RelayService {
         // We create a notification token to be triggered once the connection is fully established
         // and passed to the relay server.
         let on_establish = Arc::new(Notify::new());
+        let service = RelayServiceWithNotify::new(self, on_establish.clone());
 
         // This is the main connection future, driving the connection to completion.
-        let serve_fut = {
-            let on_establish = on_establish.clone();
-            async move {
-                match tls_config {
-                    Some(tls_config) => {
-                        debug!("HTTPS: serve connection");
-                        self.tls_serve_connection(stream, tls_config, on_establish)
-                            .await
-                    }
-                    None => {
-                        debug!("HTTP: serve connection");
-                        self.serve_connection(MaybeTlsStream::Plain(stream), on_establish)
-                            .await
+        let serve_fut = async move {
+            let stream = match tls_config {
+                Some(tls_config) => {
+                    debug!("HTTPS: serve connection");
+                    match establish_tls(stream, tls_config).await? {
+                        Some(stream) => stream,
+                        None => {
+                            // TLS ACME validation request
+                            return Ok(());
+                        }
                     }
                 }
-            }
+                None => {
+                    debug!("HTTP: serve connection");
+                    MaybeTlsStream::Plain(stream)
+                }
+            };
+
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                .with_upgrades()
+                .await
+                .map_err(|err| e!(ServeConnectionError::ServeConnection, err))
         };
 
         // We set a timeout for the connection to limit lingering connections during establishment.
         // The timeout is cleared once the connection has completed the TLS and WebSocket
         // handshakes and has been passed over to the relay protocol handler.
         // If the timeout expires before that happens, the connection is aborted.
-        let res = match clearable_timeout(ESTABLISH_TIMEOUT, on_establish, serve_fut).await {
-            Err(_elapsed) => Err(e!(ServeConnectionError::EstablishTimeout)),
-            Ok(res) => res,
-        };
+        let res = clearable_timeout(ESTABLISH_TIMEOUT, on_establish, serve_fut)
+            .await
+            .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))
+            .flatten();
 
-        match res {
-            Ok(()) => {}
-            Err(error) => match error {
+        if let Err(error) = res {
+            match error {
                 ServeConnectionError::ManualAccept { source, .. }
                 | ServeConnectionError::LetsEncryptAccept { source, .. }
                     if source.kind() == std::io::ErrorKind::UnexpectedEof =>
@@ -960,69 +977,51 @@ impl RelayService {
                 _ => {
                     error!(?error, "failed to handle connection");
                 }
-            },
+            }
         }
     }
+}
 
-    /// Serve the tls connection
-    async fn tls_serve_connection(
-        self,
-        stream: TcpStream,
-        tls_config: TlsConfig,
-        on_establish: Arc<Notify>,
-    ) -> Result<(), ServeConnectionError> {
-        let TlsConfig { acceptor, config } = tls_config;
-        let stream = match acceptor {
-            TlsAcceptor::LetsEncrypt(a) => {
-                match a
-                    .accept(stream)
-                    .await
-                    .map_err(|err| e!(ServeConnectionError::LetsEncryptAccept, err))?
-                {
-                    None => {
-                        info!("TLS[acme]: received TLS-ALPN-01 validation request");
-                        return Ok(());
-                    }
-                    Some(start_handshake) => {
-                        debug!("TLS[acme]: start handshake");
-                        let tls_stream = start_handshake
-                            .into_stream(config)
-                            .await
-                            .map_err(|err| e!(ServeConnectionError::TlsHandshake, err))?;
-                        MaybeTlsStream::Tls(tls_stream)
-                    }
+/// Establshes a TLS session on `stream`, if `tls_config` is set.
+///
+/// Returns `None` if the TLS stream is an ACME validation connection that was already handled
+/// by the ACME acceptor.
+///
+/// Returns [`MaybeTlsStream`] otherwise.
+async fn establish_tls(
+    stream: TcpStream,
+    tls_config: TlsConfig,
+) -> Result<Option<MaybeTlsStream>, ServeConnectionError> {
+    let TlsConfig { acceptor, config } = tls_config;
+    match acceptor {
+        TlsAcceptor::LetsEncrypt(a) => {
+            match a
+                .accept(stream)
+                .await
+                .map_err(|err| e!(ServeConnectionError::LetsEncryptAccept, err))?
+            {
+                None => {
+                    info!("TLS[acme]: received TLS-ALPN-01 validation request");
+                    Ok(None)
+                }
+                Some(start_handshake) => {
+                    debug!("TLS[acme]: start handshake");
+                    let tls_stream = start_handshake
+                        .into_stream(config)
+                        .await
+                        .map_err(|err| e!(ServeConnectionError::TlsHandshake, err))?;
+                    Ok(Some(MaybeTlsStream::Tls(tls_stream)))
                 }
             }
-            TlsAcceptor::Manual(a) => {
-                debug!("TLS[manual]: accept");
-                let tls_stream = a
-                    .accept(stream)
-                    .await
-                    .map_err(|err| e!(ServeConnectionError::ManualAccept, err))?;
-                MaybeTlsStream::Tls(tls_stream)
-            }
-        };
-        self.serve_connection(stream, on_establish).await
-    }
-
-    /// Wrapper for the actual http connection (with upgrades)
-    async fn serve_connection<I>(
-        self,
-        io: I,
-        on_establish: Arc<Notify>,
-    ) -> Result<(), ServeConnectionError>
-    where
-        I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
-    {
-        let service = RelayServiceWithNotify {
-            service: self,
-            on_establish,
-        };
-        hyper::server::conn::http1::Builder::new()
-            .serve_connection(hyper_util::rt::TokioIo::new(io), service)
-            .with_upgrades()
-            .await
-            .map_err(|err| e!(ServeConnectionError::ServeConnection, err))
+        }
+        TlsAcceptor::Manual(a) => {
+            debug!("TLS[manual]: accept");
+            let tls_stream = a
+                .accept(stream)
+                .await
+                .map_err(|err| e!(ServeConnectionError::ManualAccept, err))?;
+            Ok(Some(MaybeTlsStream::Tls(tls_stream)))
+        }
     }
 }
 
