@@ -9,12 +9,7 @@
 //!
 //! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
 
-use std::{
-    collections::BTreeMap,
-    fmt::Display,
-    hash::Hash,
-    str::FromStr,
-};
+use std::{collections::BTreeMap, fmt::Display, hash::Hash, str::FromStr};
 
 use iroh_base::{EndpointId, SecretKey};
 use n0_error::{e, stack_error};
@@ -106,10 +101,7 @@ pub struct TxtAttrs<T> {
 
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates [`TxtAttrs`] from an endpoint id and an iterator of key-value pairs.
-    pub fn from_parts(
-        endpoint_id: EndpointId,
-        pairs: impl Iterator<Item = (T, String)>,
-    ) -> Self {
+    pub fn from_parts(endpoint_id: EndpointId, pairs: impl Iterator<Item = (T, String)>) -> Self {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for (k, v) in pairs {
             attrs.entry(k).or_default().push(v);
@@ -162,9 +154,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Parses a [`pkarr::SignedPacket`].
-    pub fn from_pkarr_signed_packet(
-        packet: &pkarr::SignedPacket,
-    ) -> Result<Self, ParseError> {
+    pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self, ParseError> {
         let pubkey = packet.public_key();
         let endpoint_id = EndpointId::from_bytes(pubkey.as_bytes()).expect("valid key");
         let txt_strs = packet.txt_records(IROH_TXT_NAME);
@@ -196,5 +186,3 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(signed_packet)
     }
 }
-
-

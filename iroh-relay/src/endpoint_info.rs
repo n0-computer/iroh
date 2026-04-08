@@ -42,14 +42,14 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+pub use iroh_dns::{
+    DecodingError, EndpointIdExt,
+    endpoint_info::{
+        EncodingError, IROH_TXT_NAME, IrohAttr, ParseError, TxtAttrs, endpoint_id_from_txt_name,
+    },
+};
 use n0_error::{ensure, stack_error};
 use url::Url;
-
-pub use iroh_dns::endpoint_info::{
-    EncodingError, IrohAttr, IROH_TXT_NAME, ParseError, TxtAttrs,
-    endpoint_id_from_txt_name,
-};
-pub use iroh_dns::{DecodingError, EndpointIdExt};
 
 use crate::pkarr;
 
