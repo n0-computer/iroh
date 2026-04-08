@@ -31,7 +31,7 @@ mod tests {
     use iroh_dns::{EndpointIdExt, pkarr::SignedPacket};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
-    use rand::{CryptoRng, Rng, SeedableRng};
+    use rand::{CryptoRng, RngExt, SeedableRng};
 
     use crate::{
         ZoneStore,
