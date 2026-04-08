@@ -343,6 +343,7 @@ pub(super) struct ServerBuilder {
     /// Access config for endpoints.
     access: AccessConfig,
     metrics: Option<Arc<Metrics>>,
+    establish_timeout: Duration,
 }
 
 impl ServerBuilder {
@@ -357,6 +358,7 @@ impl ServerBuilder {
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
             access: AccessConfig::Everyone,
             metrics: None,
+            establish_timeout: ESTABLISH_TIMEOUT,
         }
     }
 
@@ -375,6 +377,20 @@ impl ServerBuilder {
     /// Serves all requests content using TLS.
     pub(super) fn tls_config(mut self, config: Option<TlsConfig>) -> Self {
         self.tls_config = config;
+        self
+    }
+
+    /// Sets the timeout after which connections are aborted if they don't become fully established.
+    ///
+    /// The timeout is started immediately after a TCP connection comes in, and cleared once
+    /// the connection has finished the TLS handshake and fully processed the WebSocket request
+    /// to initiate the relay protocol. If the timeout expires before being cleared, the
+    /// connection is aborted.
+    ///
+    /// Defaults to 30s.
+    #[cfg(test)]
+    pub(super) fn establish_timeout(mut self, timeout: Duration) -> Self {
+        self.establish_timeout = timeout;
         self
     }
 
@@ -466,7 +482,7 @@ impl ServerBuilder {
                                 // spawn a task to handle the connection
                                 set.spawn(async move {
                                     service
-                                        .handle_connection(stream, tls_config)
+                                        .handle_connection(stream, tls_config, self.establish_timeout)
                                         .await
                                 }.instrument(info_span!("conn", peer = %peer_addr)));
                             }
@@ -869,10 +885,13 @@ impl RelayService {
     ///
     /// If a `tls_config` is given, will serve the connection using HTTPS, otherwise HTTP.
     ///
+    /// If the connection did not fully upgrade to a relay WebSocket connection after
+    /// `establish_timeout`, the connection is aborted.
+    ///
     /// # Example
     ///
     /// ```no_run
-    /// # use std::sync::Arc;
+    /// # use std::{sync::Arc, time::Duration};
     /// # use tokio::net::TcpStream;
     /// # use http::HeaderMap;
     /// # use iroh_relay::server::http_server::{Handlers, RelayService, TlsConfig};
@@ -909,16 +928,21 @@ impl RelayService {
     /// let tls_config = TlsConfig::new(server_config);
     /// relay_service
     ///     .clone()
-    ///     .handle_connection(stream, Some(tls_config))
+    ///     .handle_connection(stream, Some(tls_config), Duration::from_secs(30))
     ///     .await;
     ///
     /// // Or serve with plain HTTP
     /// # let stream = TcpStream::connect("127.0.0.1:0").await?;
-    /// relay_service.handle_connection(stream, None).await;
+    /// relay_service.handle_connection(stream, None, Duration::from_secs(30)).await;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn handle_connection(self, stream: TcpStream, tls_config: Option<TlsConfig>) {
+    pub async fn handle_connection(
+        self,
+        stream: TcpStream,
+        tls_config: Option<TlsConfig>,
+        establish_timeout: Duration,
+    ) {
         // We create a notification token to be triggered once the connection is fully established
         // and passed to the relay server.
         let on_establish = Arc::new(Notify::new());
@@ -943,7 +967,7 @@ impl RelayService {
         // The timeout is cleared once the connection has completed the TLS and WebSocket
         // handshakes and has been passed over to the relay protocol handler.
         // If the timeout expires before that happens, the connection is aborted.
-        let res = clearable_timeout(ESTABLISH_TIMEOUT, on_establish, serve_fut)
+        let res = clearable_timeout(establish_timeout, on_establish, serve_fut)
             .await
             .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))
             .flatten();
@@ -1098,6 +1122,7 @@ mod tests {
     use n0_tracing_test::traced_test;
     use rand::{RngExt, SeedableRng};
     use reqwest::Url;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tracing::info;
 
     use super::*;
@@ -1580,6 +1605,63 @@ mod tests {
             .await;
         assert!(res.is_err());
         assert!(new_client_b.next().await.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_establish_timeout() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
+
+        // Start server with a very short establish timeout.
+        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            .establish_timeout(Duration::from_millis(500))
+            .spawn()
+            .await?;
+
+        let addr = server.addr();
+        let port = addr.port();
+        let addr = if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
+            ipv4_addr
+        } else {
+            bail_any!("cannot get ipv4 addr from socket addr {addr:?}");
+        };
+        let relay_url: Url = format!("http://{addr}:{port}").parse().unwrap();
+
+        // 1. A lingering connection that never upgrades should be aborted by the timeout.
+        info!("opening lingering TCP connection (no upgrade)");
+        let mut lingering = TcpStream::connect(format!("{addr}:{port}")).await?;
+        // Write a partial HTTP request but never complete the upgrade.
+        lingering
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n")
+            .await?;
+        // Wait for the server to abort this connection.
+        let mut buf = [0u8; 1];
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let read = tokio::time::timeout_at(deadline, lingering.read(&mut buf)).await;
+        // The server should close the connection, resulting in a read of 0 bytes or an error.
+        match read {
+            Ok(Ok(0)) => info!("lingering connection closed by server (EOF)"),
+            Ok(Err(e)) => info!("lingering connection closed by server (error: {e})"),
+            other => bail_any!("expected lingering connection to be closed, got {other:?}"),
+        }
+
+        // 2. A properly established client should NOT be aborted by the timeout.
+        info!("connecting a proper relay client");
+        let key = SecretKey::from_bytes(&rng.random());
+        let (_, mut client) = create_test_client(key, relay_url).await?;
+
+        // Wait longer than the establish timeout to prove the connection survives.
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        // Ping should still work.
+        client.send(ClientToRelayMsg::Ping([7u8; 8])).await?;
+        let pong = client.next().await.expect("expected pong")?;
+        assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
+        info!("established connection survived past the timeout");
+
+        client.close().await?;
+        server.shutdown();
         Ok(())
     }
 }
