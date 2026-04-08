@@ -76,38 +76,37 @@ pub struct Metrics {
     /// active again (happens only when the currently-active client for that endpoint id disconnects).
     pub clients_inactive_remove: Counter,
 
-    // TODO: enable when we can have multiple connections for one endpoint id
-    // pub duplicate_client_keys: Counter,
-    // pub duplicate_client_conns: Counter,
     // TODO: only important stat that we cannot track right now
     // pub average_queue_duration:
     //
     /// Number of incoming QUIC connections.
     ///
-    /// After completion, each is counted in either quic_incoming_disconnected or quic_accepted.
-    /// Thus the number of inflight incomings is quic_incoming - quic_incoming_disconnected - quic_accepted.
-    pub quic_incoming: Counter,
-    /// Number of QUIC connections that aborted before completing the handshake.
-    pub quic_incoming_disconnnected: Counter,
-    /// Number of accepted QUIC connections.
+    /// After completion, each is counted in either qad_incoming_disconnected or qad_accepted.
+    /// Thus the number of inflight incomings is qad_incoming - qad_incoming_disconnected - qad_accepted.
+    pub qad_incoming: Counter,
+    /// Number of QAD QUIC connections that aborted before completing the handshake.
+    pub qad_incoming_disconnected: Counter,
+    /// Number of accepted QAD QUIC connections.
     ///
-    /// After completion, each is counted in quic_accepted_disconnected.
-    /// The number of active connections is quic_accepted - quic_accepted_disconnected.
-    pub quic_accepted: Counter,
-    /// Number of QUIC connections that disconnected after being accepted.
-    pub quic_accepted_disconnected: Counter,
-    /// Number of QUIC connections that disconnected after being accepted, with an error.
+    /// After completion, each is counted in qad_accepted_disconnected.
+    /// The number of active connections is qad_accepted - qad_accepted_disconnected.
+    pub qad_accepted: Counter,
+    /// Number of QAD QUIC connections that disconnected after being accepted.
+    pub qad_accepted_disconnected: Counter,
+    /// Number of QAD QUIC connections that disconnected after being accepted, with an error.
     ///
-    /// The number is *included* in `quic_accepted_disconnected` (not in addition to).
-    pub quic_accepted_disconnected_error: Counter,
-    /// Number of accepted TCP connections.
-    pub tcp_accepted: Counter,
-    /// Number of terminated TCP connections.
-    pub tcp_disconnected: Counter,
-    /// Number of TCP connections that terminated with an error.
+    /// The number is *included* in `qad_accepted_disconnected` (not in addition to).
+    pub qad_accepted_disconnected_error: Counter,
+    /// Number of accepted HTTP(S) connections.
     ///
-    /// The number is *included* in `tcp_disconnected` (not in addition to).
-    pub tcp_disconnected_error: Counter,
+    /// The number of active connections at any time is `http_accepted` - `http_disconnected`
+    pub http_accepted: Counter,
+    /// Number of terminated HTTP(S) connections.
+    pub http_disconnected: Counter,
+    /// Number of HTTP(S) connections that terminated with an error.
+    ///
+    /// The number is *included* in `http_disconnected` (not in addition to).
+    pub http_disconnected_error: Counter,
 }
 
 /// All metrics tracked in the relay server.
