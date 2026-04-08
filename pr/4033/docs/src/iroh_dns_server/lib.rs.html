@@ -31,7 +31,7 @@
 <a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">use </span>iroh_dns::{EndpointIdExt, pkarr::SignedPacket};
 <a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">use </span>rand::{CryptoRng, Rng, SeedableRng};
 <a href=#35 id=35 data-nosnippet>35</a>
 <a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">use crate</span>::{
 <a href=#37 id=37 data-nosnippet>37</a>        ZoneStore,
@@ -57,7 +57,7 @@
 <a href=#57 id=57 data-nosnippet>57</a>        };
 <a href=#58 id=58 data-nosnippet>58</a>
 <a href=#59 id=59 data-nosnippet>59</a>        <span class="comment">// Build a DNS packet with various record types using simple_dns directly
-<a href=#60 id=60 data-nosnippet>60</a>        </span><span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::rng());
+<a href=#60 id=60 data-nosnippet>60</a>        </span><span class="kw">let </span>secret_key = SecretKey::generate();
 <a href=#61 id=61 data-nosnippet>61</a>        <span class="kw">let </span>origin = secret_key.public().to_z32();
 <a href=#62 id=62 data-nosnippet>62</a>
 <a href=#63 id=63 data-nosnippet>63</a>        <span class="kw">let </span><span class="kw-2">mut </span>packet = Packet::new_reply(<span class="number">0</span>);
