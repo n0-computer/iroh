@@ -242,6 +242,24 @@ impl SignedPacket {
             .collect()
     }
 
+    /// Reconstruct a signed packet from its raw parts without verifying the signature.
+    ///
+    /// This is useful for reconstructing a packet from storage or DHT mutable items
+    /// where the components are stored separately.
+    pub fn from_parts_unchecked(
+        public_key: &[u8],
+        signature: &[u8],
+        timestamp: u64,
+        encoded_packet: &[u8],
+    ) -> Result<Self, SignedPacketVerifyError> {
+        let mut bytes = Vec::with_capacity(HEADER_SIZE + encoded_packet.len());
+        bytes.extend_from_slice(public_key);
+        bytes.extend_from_slice(signature);
+        bytes.extend_from_slice(&timestamp.to_be_bytes());
+        bytes.extend_from_slice(encoded_packet);
+        Self::from_bytes_unchecked(&bytes)
+    }
+
     /// Return whether this packet is more recent than another.
     pub fn more_recent_than(&self, other: &SignedPacket) -> bool {
         if self.timestamp() == other.timestamp() {

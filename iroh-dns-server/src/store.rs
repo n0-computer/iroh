@@ -144,7 +144,7 @@ impl ZoneStore {
                 .get_mutable_most_recent(pubkey.as_bytes(), None)
                 .await;
             if let Some(item) = maybe_item
-                && let Some(packet) = mutable_item_to_signed_packet(&item)
+                && let Ok(packet) = mutable_item_to_signed_packet(&item)
             {
                 debug!("DHT resolve successful {:?}", packet);
                 return self
@@ -185,13 +185,15 @@ impl ZoneStore {
 }
 
 /// Convert a mainline [`MutableItem`] to a [`SignedPacket`].
-fn mutable_item_to_signed_packet(item: &MutableItem) -> Option<SignedPacket> {
-    let mut bytes = Vec::with_capacity(104 + item.value().len());
-    bytes.extend_from_slice(item.key());
-    bytes.extend_from_slice(item.signature());
-    bytes.extend_from_slice(&(item.seq() as u64).to_be_bytes());
-    bytes.extend_from_slice(item.value());
-    SignedPacket::from_bytes_unchecked(&bytes).ok()
+fn mutable_item_to_signed_packet(
+    item: &MutableItem,
+) -> Result<SignedPacket, iroh_dns::pkarr::SignedPacketVerifyError> {
+    SignedPacket::from_parts_unchecked(
+        item.key(),
+        item.signature(),
+        item.seq() as u64,
+        item.value(),
+    )
 }
 
 #[derive(derive_more::Debug)]

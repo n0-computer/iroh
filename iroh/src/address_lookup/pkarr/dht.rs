@@ -44,13 +44,15 @@ fn signed_packet_to_mutable_item(packet: &SignedPacket) -> MutableItem {
 }
 
 /// Convert a mainline [`MutableItem`] to a [`SignedPacket`].
-fn mutable_item_to_signed_packet(item: &MutableItem) -> Option<SignedPacket> {
-    let mut bytes = Vec::with_capacity(104 + item.value().len());
-    bytes.extend_from_slice(item.key());
-    bytes.extend_from_slice(item.signature());
-    bytes.extend_from_slice(&(item.seq() as u64).to_be_bytes());
-    bytes.extend_from_slice(item.value());
-    SignedPacket::from_bytes_unchecked(&bytes).ok()
+fn mutable_item_to_signed_packet(
+    item: &MutableItem,
+) -> Result<SignedPacket, iroh_relay::pkarr::SignedPacketVerifyError> {
+    SignedPacket::from_parts_unchecked(
+        item.key(),
+        item.signature(),
+        item.seq() as u64,
+        item.value(),
+    )
 }
 
 /// Pkarr Mainline DHT and relay server address lookup.
@@ -109,9 +111,12 @@ impl Inner {
             .await;
         match maybe_item {
             Some(item) => {
-                let Some(signed_packet) = mutable_item_to_signed_packet(&item) else {
-                    tracing::debug!("failed to parse mutable item as signed packet");
-                    return None;
+                let signed_packet = match mutable_item_to_signed_packet(&item) {
+                    Ok(packet) => packet,
+                    Err(err) => {
+                        tracing::debug!("failed to parse mutable item as signed packet: {err}");
+                        return None;
+                    }
                 };
                 match EndpointInfo::from_pkarr_signed_packet(&signed_packet) {
                     Ok(endpoint_info) => {
