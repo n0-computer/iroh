@@ -497,9 +497,11 @@ async fn main() -> Result<()> {
         .init();
 
     // Install `ring` as default crypto provider for rustls.
-    // `ring` is enabled by the `tls-ring` feature, which is included in the `server`
-    // feature, which is required for the main.rs binary.
-    // Therefore, this does not need any feature flags.
+    // This helps when both the tls-ring and tls-aws-lc-rs features are enabled,
+    // otherwise some crypto operations would panic because rustls can't determine
+    // a default provider.
+    // `ring` is enabled by the `tls-ring` feature, which is included in the `server` feature,
+    // which is required for the main.rs binary. Therefore, this does not need any feature flags.
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("failed to set default crypto provider");
