@@ -599,19 +599,33 @@ impl RelayService {
         tokio::task::spawn({
             let this = self.clone();
             async move {
-                match hyper::upgrade::on(&mut req).await {
-                    Ok(upgraded) => {
-                        if let Err(err) = this
-                            .0
-                            .relay_connection_handler(upgraded, client_auth_header)
-                            .await
-                        {
-                            warn!("error accepting upgraded connection: {err:#}",);
-                        } else {
-                            debug!("upgraded connection completed");
-                        };
+                // Timeout for the upgrade + handshake phase.
+                // Once the connection is registered as a Client, the Actor's own
+                // ping/pong mechanism handles liveness. But before that point
+                // there is no timeout — a peer that completes the HTTP upgrade
+                // but never sends the relay handshake frame will hold a TCP
+                // socket open forever. 30 s is generous for a handshake.
+                const UPGRADE_TIMEOUT: Duration = Duration::from_secs(30);
+
+                let res = tokio::time::timeout(UPGRADE_TIMEOUT, async {
+                    match hyper::upgrade::on(&mut req).await {
+                        Ok(upgraded) => {
+                            if let Err(err) = this
+                                .0
+                                .relay_connection_handler(upgraded, client_auth_header)
+                                .await
+                            {
+                                warn!("error accepting upgraded connection: {err:#}",);
+                            } else {
+                                debug!("upgraded connection completed");
+                            };
+                        }
+                        Err(err) => warn!("upgrade error: {err:#}"),
                     }
-                    Err(err) => warn!("upgrade error: {err:#}"),
+                })
+                .await;
+                if res.is_err() {
+                    warn!("upgrade/handshake timed out, dropping connection");
                 }
             }
             .instrument(warn_span!("handler"))
