@@ -620,7 +620,7 @@ impl Resolver for HickoryResolver {
                             // I don't know a way of avoiding this deep copy, even if it's agonizing.
                             // The representation of `TxtRecrodData` and `hickory_proto::rr::rdata::TXT`
                             // is identical.
-                            Some(TxtRecordData::from(txt.txt_data.to_vec()))
+                            Some(TxtRecordData::from(txt.txt_data().to_vec()))
                         }
                         _ => None,
                     }
