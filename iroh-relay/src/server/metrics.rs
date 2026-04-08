@@ -63,6 +63,19 @@ pub struct Metrics {
     /// Number of unique client keys per day
     pub unique_client_keys: Counter,
 
+    /// Number of times a client was moved into the inactive state.
+    ///
+    /// Number of inactive clients at any time is `clients_inactive_add` - `clients_inactive_remove`.
+    ///
+    /// Happens only when a new client with the same endpoint id connects.
+    pub clients_inactive_add: Counter,
+
+    /// Number of times a client was removed from the inactive state.
+    ///
+    /// Happens when a client disconnects while being inactive, or if a client is upgraded to be
+    /// active again (happens only when the currently-active client for that endpoint id disconnects).
+    pub clients_inactive_remove: Counter,
+
     // TODO: enable when we can have multiple connections for one endpoint id
     // pub duplicate_client_keys: Counter,
     // pub duplicate_client_conns: Counter,
