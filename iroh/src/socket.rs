@@ -1952,6 +1952,19 @@ pub enum DirectAddrType {
     Qad4LocalPort,
 }
 
+impl DirectAddrType {
+    /// Priority for NAT traversal probing. Lower = probed first.
+    pub(crate) fn priority(self) -> u8 {
+        match self {
+            Self::Portmapped => 0,
+            Self::Qad => 1,
+            Self::Qad4LocalPort => 2,
+            Self::Local => 3,
+            Self::Unknown => 4,
+        }
+    }
+}
+
 impl Display for DirectAddrType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

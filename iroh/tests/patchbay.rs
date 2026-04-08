@@ -35,7 +35,9 @@ use patchbay::{IpSupport, LinkCondition, LinkDirection, LinkLimits, Nat, RouterP
 use testdir::testdir;
 use tracing::info;
 
-use self::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
+use self::util::{
+    Pair, PathWatcherExt, add_unreachable_addrs, lab_with_relay, ping_accept, ping_open,
+};
 
 #[path = "patchbay/util.rs"]
 mod util;
@@ -78,6 +80,43 @@ async fn holepunch_simple() -> Result {
                 .wait_ip(timeout)
                 .await
                 .context("holepunch to direct")?;
+            info!("connection became direct");
+            Ok(())
+        })
+        .run()
+        .await?;
+    guard.ok();
+    Ok(())
+}
+
+/// Holepunching succeeds despite many unreachable local addresses (Docker, VPN, etc).
+#[tokio::test]
+#[traced_test]
+async fn holepunch_many_addrs() -> Result {
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
+    let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
+    let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
+    let server = lab.add_device("server").uplink(nat1.id()).build().await?;
+    let client = lab.add_device("client").uplink(nat2.id()).build().await?;
+
+    // Add unreachable veth interfaces on the client.
+    // iroh discovers these as Local candidates and advertises them via REACH_OUT.
+    // The server's noq must probe through these to find the real address.
+    add_unreachable_addrs(&client, 8)?;
+
+    let timeout = Duration::from_secs(15);
+    Pair::new(relay_map)
+        .server(server, async |_dev, _ep, conn| {
+            conn.closed().await;
+            Ok(())
+        })
+        .client(client, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("holepunch to direct with many addrs")?;
             info!("connection became direct");
             Ok(())
         })

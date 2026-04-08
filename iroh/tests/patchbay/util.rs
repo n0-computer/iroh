@@ -1,4 +1,4 @@
-use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
+use std::{future::Future, path::PathBuf, process::Command, sync::Arc, time::Duration};
 
 use iroh::{
     Endpoint, EndpointAddr, RelayMap, RelayMode, Watcher,
@@ -449,4 +449,32 @@ mod relay {
 
         Ok((relay_map, server))
     }
+}
+
+/// Adds `count` veth interfaces with unreachable IPs in the `10.200.x.x/24` range.
+pub fn add_unreachable_addrs(device: &Device, count: u8) -> Result {
+    for i in 0..count {
+        let veth = format!("veth{i}");
+        let peer = format!("vpeer{i}");
+        let ip = format!("10.{}.{}.1/24", 200 + i, i);
+        let mut cmd = Command::new("ip");
+        cmd.args(["link", "add", &veth, "type", "veth", "peer", "name", &peer]);
+        device
+            .spawn_command_sync(cmd)?
+            .wait()
+            .context("ip link add veth")?;
+        let mut cmd = Command::new("ip");
+        cmd.args(["addr", "add", &ip, "dev", &veth]);
+        device
+            .spawn_command_sync(cmd)?
+            .wait()
+            .context("ip addr add")?;
+        let mut cmd = Command::new("ip");
+        cmd.args(["link", "set", &veth, "up"]);
+        device
+            .spawn_command_sync(cmd)?
+            .wait()
+            .context("ip link set up")?;
+    }
+    Ok(())
 }
