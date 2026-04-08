@@ -62,7 +62,15 @@ type HyperHandler = Box<
 /// WebSocket GUID needed for accepting websocket connections, see RFC 6455 (<https://www.rfc-editor.org/rfc/rfc6455>) section 1.3
 const SEC_WEBSOCKET_ACCEPT_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
+/// Timeout for completing the TLS handshake on incoming connections.
+///
+/// The connection is aborted if the timeout elapses before the TLS handshake completes.
 const ESTABLISH_TLS_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Timeout for completing the WebSocket upgrade handshake after the connection is established.
+///
+/// The connection is aborted if the timeout elapses before a WebSocket request
+/// comes in and completes the handshake.
 const ESTABLISH_WS_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Derives the accept key for WebSocket handshake according to RFC 6455.
@@ -282,7 +290,7 @@ pub enum ServeConnectionError {
     },
     #[error("TLS handshake not completed within timeout")]
     TlsHandshakeTimeout,
-    #[error("WebSocket upgrade not completed within timeout")]
+    #[error("WebSocket request not received and handshaked within timeout")]
     WsEstablishTimeout,
 }
 
@@ -999,6 +1007,9 @@ impl RelayService {
         I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
     {
         let clear_timeout = CancellationToken::new();
+        let establish_timeout = MaybeFuture::Some(tokio::time::sleep(ESTABLISH_WS_TIMEOUT));
+        tokio::pin!(establish_timeout);
+
         let service_with_timeout = RelayServiceWithTimeout {
             service: self,
             clear_timeout: clear_timeout.clone(),
@@ -1007,19 +1018,16 @@ impl RelayService {
             .serve_connection(hyper_util::rt::TokioIo::new(io), service_with_timeout)
             .with_upgrades();
 
-        let timeout = MaybeFuture::Some(tokio::time::sleep(ESTABLISH_WS_TIMEOUT));
-        tokio::pin!(timeout);
-
         loop {
             tokio::select! {
                 res = &mut serve_fut => {
                     return res.map_err(|err| e!(ServeConnectionError::ServeConnection, err));
                 }
-                _ = &mut timeout => {
+                _ = &mut establish_timeout => {
                     return Err(e!(ServeConnectionError::WsEstablishTimeout));
                 }
                 _ = clear_timeout.cancelled() => {
-                    timeout.as_mut().set_none();
+                    establish_timeout.as_mut().set_none();
                 },
             }
         }
