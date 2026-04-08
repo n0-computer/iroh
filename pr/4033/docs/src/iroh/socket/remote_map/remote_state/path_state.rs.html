@@ -307,7 +307,7 @@
 <a href=#307 id=307 data-nosnippet>307</a>    };
 <a href=#308 id=308 data-nosnippet>308</a>
 <a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">use </span>iroh_base::{RelayUrl, SecretKey};
-<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">use </span>rand::SeedableRng;
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">use </span>rand::{RngExt, SeedableRng};
 <a href=#311 id=311 data-nosnippet>311</a>
 <a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#313 id=313 data-nosnippet>313</a>
@@ -488,7 +488,7 @@
 <a href=#488 id=488 data-nosnippet>488</a>            .into();
 <a href=#489 id=489 data-nosnippet>489</a>        <span class="comment">// Add 10 relay addresses
 <a href=#490 id=490 data-nosnippet>490</a>        </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">10 </span>{
-<a href=#491 id=491 data-nosnippet>491</a>            <span class="kw">let </span>id = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#491 id=491 data-nosnippet>491</a>            <span class="kw">let </span>id = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#492 id=492 data-nosnippet>492</a>            <span class="kw">let </span>relay_addr = transports::Addr::Relay(relay_url.clone(), id);
 <a href=#493 id=493 data-nosnippet>493</a>            paths.insert(relay_addr, PathState::default());
 <a href=#494 id=494 data-nosnippet>494</a>        }

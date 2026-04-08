@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>iroh_base::EndpointId;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>n0_error::{e, stack_error};
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>n0_future::{SinkExt, StreamExt};
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>rand::Rng;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>rand::RngExt;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>time::{Date, OffsetDateTime};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>tokio::{
 <a href=#11 id=11 data-nosnippet>11</a>    sync::mpsc::{<span class="self">self</span>, error::TrySendError},
@@ -543,7 +543,7 @@
 <a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">let </span>(send_queue_s, send_queue_r) = mpsc::channel(<span class="number">10</span>);
 <a href=#544 id=544 data-nosnippet>544</a>        <span class="kw">let </span>(message_s, message_r) = mpsc::channel(<span class="number">10</span>);
 <a href=#545 id=545 data-nosnippet>545</a>
-<a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">let </span>endpoint_id = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">let </span>endpoint_id = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
 <a href=#548 id=548 data-nosnippet>548</a>        <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Conn::test(io_rw);
 <a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">let </span>stream = RelayedStream::test(io);
@@ -615,7 +615,7 @@
 <a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">let </span>frame = recv_frame(FrameType::Pong, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#616 id=616 data-nosnippet>616</a>        <span class="macro">assert_eq!</span>(frame, RelayToClientMsg::Pong(<span class="kw-2">*</span>data));
 <a href=#617 id=617 data-nosnippet>617</a>
-<a href=#618 id=618 data-nosnippet>618</a>        <span class="kw">let </span>target = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#618 id=618 data-nosnippet>618</a>        <span class="kw">let </span>target = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#619 id=619 data-nosnippet>619</a>
 <a href=#620 id=620 data-nosnippet>620</a>        <span class="comment">// send packet
 <a href=#621 id=621 data-nosnippet>621</a>        </span><span class="macro">println!</span>(<span class="string">"  send packet"</span>);
@@ -649,7 +649,7 @@
 <a href=#649 id=649 data-nosnippet>649</a>
 <a href=#650 id=650 data-nosnippet>650</a>        <span class="comment">// Prepare a frame to send, assert its size.
 <a href=#651 id=651 data-nosnippet>651</a>        </span><span class="kw">let </span>data = Datagrams::from(<span class="string">b"hello world!!!!!"</span>);
-<a href=#652 id=652 data-nosnippet>652</a>        <span class="kw">let </span>target = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#652 id=652 data-nosnippet>652</a>        <span class="kw">let </span>target = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#653 id=653 data-nosnippet>653</a>        <span class="kw">let </span>frame = ClientToRelayMsg::Datagrams {
 <a href=#654 id=654 data-nosnippet>654</a>            dst_endpoint_id: target,
 <a href=#655 id=655 data-nosnippet>655</a>            datagrams: data.clone(),

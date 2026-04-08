@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["default_provider"],"struct":["CaRootsConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["TlsConfigError"],"fn":["default_provider"],"struct":["CaRootsConfig"]};

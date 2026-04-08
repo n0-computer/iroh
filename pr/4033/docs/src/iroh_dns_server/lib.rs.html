@@ -196,14 +196,14 @@
 <a href=#196 id=196 data-nosnippet>196</a>
 <a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#198 id=198 data-nosnippet>198</a>
-<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">let </span>tls_config = CaRootsConfig::default()
 <a href=#202 id=202 data-nosnippet>202</a>            .client_config(default_provider())
 <a href=#203 id=203 data-nosnippet>203</a>            .expect(<span class="string">"infallible"</span>);
 <a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">let </span>pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
 <a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
+<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
 <a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">let </span>signed_packet = endpoint_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
 <a href=#208 id=208 data-nosnippet>208</a>
 <a href=#209 id=209 data-nosnippet>209</a>        pkarr.publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -273,10 +273,10 @@
 <a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">let </span>origin = <span class="string">"irohdns.example."</span>;
 <a href=#274 id=274 data-nosnippet>274</a>
 <a href=#275 id=275 data-nosnippet>275</a>        <span class="comment">// create a signed packet
-<a href=#276 id=276 data-nosnippet>276</a>        </span><span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#276 id=276 data-nosnippet>276</a>        </span><span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#277 id=277 data-nosnippet>277</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
-<a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
+<a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
 <a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">let </span>signed_packet = endpoint_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
 <a href=#281 id=281 data-nosnippet>281</a>
 <a href=#282 id=282 data-nosnippet>282</a>        <span class="comment">// publish to DHT using mainline directly
@@ -312,10 +312,10 @@
 <a href=#312 id=312 data-nosnippet>312</a>    }
 <a href=#313 id=313 data-nosnippet>313</a>
 <a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">fn </span>random_signed_packet&lt;R: CryptoRng + <span class="question-mark">?</span>Sized&gt;(rng: <span class="kw-2">&amp;mut </span>R) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
-<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
 <a href=#319 id=319 data-nosnippet>319</a>        <span class="kw">let </span>packet = endpoint_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
 <a href=#320 id=320 data-nosnippet>320</a>        <span class="prelude-val">Ok</span>(packet)
 <a href=#321 id=321 data-nosnippet>321</a>    }
