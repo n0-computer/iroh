@@ -43,10 +43,10 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-pub(crate) use iroh_dns::endpoint_info::{IrohAttr, TxtAttrs};
+pub(crate) use iroh_dns::attrs::{IrohAttr, TxtAttrs};
 pub use iroh_dns::{
     DecodingError, EndpointIdExt,
-    endpoint_info::{EncodingError, IROH_TXT_NAME, ParseError},
+    attrs::{EncodingError, IROH_TXT_NAME, ParseError},
 };
 use n0_error::{ensure, stack_error};
 use url::Url;
