@@ -31,7 +31,7 @@ use std::time::Duration;
 use iroh::{TransportAddr, endpoint::Side};
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_tracing_test::traced_test;
-use patchbay::{LinkCondition, LinkDirection, LinkLimits, Nat, RouterPreset, TestGuard};
+use patchbay::{IpSupport, LinkCondition, LinkDirection, LinkLimits, Nat, RouterPreset, TestGuard};
 use testdir::testdir;
 use tracing::info;
 
@@ -97,7 +97,6 @@ async fn holepunch_simple() -> Result {
 /// uplink switch.
 #[tokio::test]
 #[traced_test]
-#[ignore = "known to still fail"]
 async fn switch_uplink_v4() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -171,7 +170,6 @@ async fn switch_uplink_v4() -> Result {
 /// Currently ignored because this fails in roughly half of runs.
 #[tokio::test]
 #[traced_test]
-#[ignore = "known to still be flaky"]
 async fn switch_uplink_v6() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let public = lab
@@ -182,6 +180,7 @@ async fn switch_uplink_v6() -> Result {
     let home = lab
         .add_router("nat2")
         .preset(RouterPreset::Home)
+        .ip_support(IpSupport::V4Only)
         .build()
         .await?;
     let mobile = lab
@@ -199,19 +198,15 @@ async fn switch_uplink_v6() -> Result {
 
             // Wait until a first direct path is established.
             let first = paths
-                .wait_selected(
-                    timeout,
-                    |p| matches!(p.remote_addr(), TransportAddr::Ip(addr) if addr.ip().is_ipv4()),
-                )
+                .wait_ip(timeout)
                 .await
                 .context("did not become direct")?;
             info!(addr=?first.remote_addr(), "connection became direct, waiting for path change");
 
             ping_accept(&conn, timeout).await.context("ping_accept 1")?;
 
-            // Now wait until the direct path changes, which happens after the other endpoint
-            // changes its uplink. We check is_ip() explicitly to avoid triggering on a
-            // transient relay fallback during the network switch.
+            // Now wait until the direct path switches to an IPv6 address, which happens
+            // after the other endpoint replugs to the v6-only ISP router.
             let second = paths
                 .wait_selected(
                     timeout,
@@ -266,7 +261,6 @@ async fn switch_uplink_v6() -> Result {
 /// faster LAN address. A ping verifies the new path works.
 #[tokio::test]
 #[traced_test]
-#[ignore = "sometimes is flaky (does not become direct after the link_up)"]
 async fn change_ifaces() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
@@ -564,7 +558,6 @@ async fn degrade_server_2_bad() -> Result {
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing reliably"]
 async fn degrade_server_3_terrible() -> Result {
     run_degrade_level(Side::Server, 3).await?.ok();
     Ok(())
@@ -609,7 +602,6 @@ async fn degrade_client_2_bad() -> Result {
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing reliably"]
 async fn degrade_client_3_terrible() -> Result {
     run_degrade_level(Side::Client, 3).await?.ok();
     Ok(())
