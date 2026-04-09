@@ -44,14 +44,13 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 pub(crate) use iroh_dns::attrs::{IrohAttr, TxtAttrs};
+use iroh_dns::pkarr;
 pub use iroh_dns::{
     DecodingError, EndpointIdExt,
     attrs::{EncodingError, IROH_TXT_NAME, ParseError},
 };
 use n0_error::{ensure, stack_error};
 use url::Url;
-
-use crate::pkarr;
 
 /// Data about an endpoint that may be published to and resolved from discovery services.
 ///

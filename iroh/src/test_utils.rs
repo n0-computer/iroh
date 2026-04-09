@@ -337,7 +337,7 @@ pub(crate) mod pkarr_relay {
         body: Bytes,
     ) -> Result<impl IntoResponse, AppError> {
         let key = EndpointId::from_z32(&key).map_err(std::io::Error::other)?;
-        let signed_packet = iroh_relay::pkarr::SignedPacket::from_relay_payload(&key, &body)
+        let signed_packet = iroh_dns::pkarr::SignedPacket::from_relay_payload(&key, &body)
             .map_err(std::io::Error::other)?;
         let _updated = state.upsert(signed_packet)?;
         Ok(http::StatusCode::NO_CONTENT)
@@ -367,10 +367,8 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use iroh_base::EndpointId;
-    use iroh_relay::{
-        endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME},
-        pkarr::SignedPacket,
-    };
+    use iroh_dns::pkarr::SignedPacket;
+    use iroh_relay::endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME};
     use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;

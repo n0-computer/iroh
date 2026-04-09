@@ -2368,6 +2368,7 @@ dependencies = [
  "indicatif",
  "ipnet",
  "iroh-base",
+ "iroh-dns",
  "iroh-metrics",
  "iroh-relay",
  "mainline",
