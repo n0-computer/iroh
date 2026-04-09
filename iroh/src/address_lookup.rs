@@ -978,7 +978,7 @@ mod test_dns_pkarr {
 
     use crate::{
         address_lookup::{EndpointData, PkarrPublisher},
-        dns::DnsResolver,
+        dns::{DnsResolver, DnsResolverExt},
         endpoint_info::EndpointInfo,
         test_utils::{DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State},
     };

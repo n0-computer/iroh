@@ -14,8 +14,28 @@ workspace = true
 
 [dependencies]
 data-encoding = "2.6.0"
-iroh-base = { version = "0.97.0", path = "../iroh-base", default-features = false, features = ["key"] }
+derive_more = { version = "2.0.1", features = ["debug"] }
+hickory-resolver = { version = "=0.26.0-beta.1", features = ["tokio", "system-config"] }
+iroh-base = { version = "0.97.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 n0-error = "0.1"
 n0-future = "0.3"
+rand = "0.10"
+reqwest = { version = "0.13", default-features = false }
+rustls = { version = "0.23.33", default-features = false }
 simple-dns = "0.9"
 strum = { version = "0.28", features = ["derive"] }
+tokio = { version = "1", features = ["sync"] }
+tracing = "0.1"
+url = "2.5.3"
+
+[build-dependencies]
+cfg_aliases = "0.2.1"
+
+[features]
+default = ["tls-ring"]
+tls-ring = ["rustls/ring", "hickory-resolver/https-ring"]
+tls-aws-lc-rs = ["rustls/aws-lc-rs", "hickory-resolver/https-aws-lc-rs"]
+
+[dev-dependencies]
+n0-tracing-test = "0.3"
+tokio = { version = "1", features = ["macros", "rt"] }

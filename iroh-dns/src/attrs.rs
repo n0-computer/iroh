@@ -55,7 +55,7 @@ pub enum ParseError {
 ///
 /// Takes a DNS name and expects the first label to be [`IROH_TXT_NAME`] and the second
 /// label to be a z32 encoded [`EndpointId`]. Ignores subsequent labels.
-pub fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
+pub(crate) fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
     let num_labels = name.split(".").count();
     if num_labels < 2 {
         return Err(e!(ParseError::NumLabels { num_labels }));

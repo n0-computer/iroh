@@ -4,6 +4,8 @@
 //! information via DNS, using the [pkarr](https://pkarr.org) signed packet format.
 
 pub mod attrs;
+#[cfg(not(wasm_browser))]
+pub mod dns;
 pub mod pkarr;
 
 use std::sync::LazyLock;

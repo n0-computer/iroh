@@ -2465,12 +2465,22 @@ dependencies = [
 name = "iroh-dns"
 version = "0.97.0"
 dependencies = [
+ "cfg_aliases",
  "data-encoding",
+ "derive_more",
+ "hickory-resolver 0.26.0-beta.1",
  "iroh-base",
  "n0-error",
  "n0-future",
+ "n0-tracing-test",
+ "rand 0.10.0",
+ "reqwest 0.13.2",
+ "rustls",
  "simple-dns",
  "strum 0.28.0",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

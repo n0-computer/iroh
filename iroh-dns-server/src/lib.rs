@@ -24,7 +24,7 @@ mod tests {
     use iroh::{
         RelayUrl, SecretKey,
         address_lookup::PkarrRelayClient,
-        dns::DnsResolver,
+        dns::{DnsResolver, DnsResolverExt},
         endpoint_info::EndpointInfo,
         tls::{CaRootsConfig, default_provider},
     };
