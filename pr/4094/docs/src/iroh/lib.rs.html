@@ -284,11 +284,12 @@
 <a href=#284 id=284 data-nosnippet>284</a>    EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 <a href=#285 id=285 data-nosnippet>285</a>    Signature, SignatureError, TransportAddr,
 <a href=#286 id=286 data-nosnippet>286</a>};
-<a href=#287 id=287 data-nosnippet>287</a><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#288 id=288 data-nosnippet>288</a></span><span class="kw">pub use </span>iroh_relay::dns;
-<a href=#289 id=289 data-nosnippet>289</a><span class="kw">pub use </span>iroh_relay::{RelayConfig, RelayMap, endpoint_info};
-<a href=#290 id=290 data-nosnippet>290</a><span class="kw">pub use </span>n0_watcher::Watcher;
-<a href=#291 id=291 data-nosnippet>291</a><span class="kw">pub use </span>net_report::{Report <span class="kw">as </span>NetReport, TIMEOUT <span class="kw">as </span>NET_REPORT_TIMEOUT};
-<a href=#292 id=292 data-nosnippet>292</a>
-<a href=#293 id=293 data-nosnippet>293</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#294 id=294 data-nosnippet>294</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>
+<a href=#287 id=287 data-nosnippet>287</a><span class="kw">pub use </span>iroh_dns::endpoint_info;
+<a href=#288 id=288 data-nosnippet>288</a><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#289 id=289 data-nosnippet>289</a></span><span class="kw">pub use </span>iroh_relay::dns;
+<a href=#290 id=290 data-nosnippet>290</a><span class="kw">pub use </span>iroh_relay::{RelayConfig, RelayMap};
+<a href=#291 id=291 data-nosnippet>291</a><span class="kw">pub use </span>n0_watcher::Watcher;
+<a href=#292 id=292 data-nosnippet>292</a><span class="kw">pub use </span>net_report::{Report <span class="kw">as </span>NetReport, TIMEOUT <span class="kw">as </span>NET_REPORT_TIMEOUT};
+<a href=#293 id=293 data-nosnippet>293</a>
+<a href=#294 id=294 data-nosnippet>294</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#295 id=295 data-nosnippet>295</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>
