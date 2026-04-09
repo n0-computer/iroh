@@ -9,7 +9,11 @@
 //!
 //! To see what is going on, run with `RUST_LOG=iroh_pkarr_address_lookup=debug`.
 use clap::Parser;
-use iroh::{Endpoint, EndpointId, address_lookup::{AddrFilter, DhtAddressLookup}, endpoint::presets};
+use iroh::{
+    Endpoint, EndpointId,
+    address_lookup::{AddrFilter, DhtAddressLookup},
+    endpoint::presets,
+};
 use iroh_relay::endpoint_info::EndpointIdExt;
 use n0_error::{Result, StdResultExt};
 use tracing::warn;
@@ -25,8 +29,7 @@ struct Args {
 async fn chat_server() -> Result<()> {
     let secret_key = iroh::SecretKey::generate();
     let endpoint_id = secret_key.public();
-    let address_lookup = DhtAddressLookup::builder()
-        .addr_filter(AddrFilter::unfiltered());
+    let address_lookup = DhtAddressLookup::builder().addr_filter(AddrFilter::unfiltered());
     let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![CHAT_ALPN.to_vec()])
         .secret_key(secret_key)
