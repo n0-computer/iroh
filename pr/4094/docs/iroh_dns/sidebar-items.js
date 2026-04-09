@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DecodingError"],"mod":["attrs","dns","pkarr"],"trait":["EndpointIdExt"]};
+window.SIDEBAR_ITEMS = {"enum":["DecodingError"],"mod":["attrs","dns","endpoint_info","pkarr"],"trait":["EndpointIdExt"]};

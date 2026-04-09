@@ -79,7 +79,7 @@
 <a href=#79 id=79 data-nosnippet>79</a>    Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
 <a href=#80 id=80 data-nosnippet>80</a>)]
 <a href=#81 id=81 data-nosnippet>81</a>#[strum(serialize_all = <span class="string">"kebab-case"</span>)]
-<a href=#82 id=82 data-nosnippet>82</a></span><span class="kw">pub enum </span>IrohAttr {
+<a href=#82 id=82 data-nosnippet>82</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>IrohAttr {
 <a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// URL of home relay.
 <a href=#84 id=84 data-nosnippet>84</a>    </span>Relay,
 <a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// Address (IP or custom transport).
@@ -94,7 +94,7 @@
 <a href=#94 id=94 data-nosnippet>94</a>/// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
 <a href=#95 id=95 data-nosnippet>95</a>/// [`Display`].
 <a href=#96 id=96 data-nosnippet>96</a></span><span class="attr">#[derive(Debug)]
-<a href=#97 id=97 data-nosnippet>97</a></span><span class="kw">pub struct </span>TxtAttrs&lt;T&gt; {
+<a href=#97 id=97 data-nosnippet>97</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>TxtAttrs&lt;T&gt; {
 <a href=#98 id=98 data-nosnippet>98</a>    endpoint_id: EndpointId,
 <a href=#99 id=99 data-nosnippet>99</a>    attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt;,
 <a href=#100 id=100 data-nosnippet>100</a>}
