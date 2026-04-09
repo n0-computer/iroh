@@ -4,6 +4,7 @@ use iroh_base::EndpointId;
 use iroh_relay::dns::DnsResolver;
 pub use iroh_relay::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
+use tracing::{Instrument, debug, debug_span, trace};
 
 use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 use crate::{
@@ -12,7 +13,11 @@ use crate::{
     endpoint::force_staging_infra,
 };
 
-pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
+/// Delays after which additional DNS lookup calls are issued.
+///
+/// Each query has its own timeout of 3s. This means that a lookup will finally
+/// abort after 6 seconds.
+pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300, 600, 1000, 2000, 3000];
 
 /// DNS endpoint discovery
 ///
@@ -109,13 +114,19 @@ impl Discovery for DnsDiscovery {
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let resolver = self.dns_resolver.clone();
         let origin_domain = self.origin_domain.clone();
+        let span =
+            debug_span!("DnsAddressLookup", lookup_id=%endpoint_id.fmt_short(), %origin_domain);
         let fut = async move {
+            trace!("starting DNS lookup");
             let endpoint_info = resolver
                 .lookup_endpoint_by_id_staggered(&endpoint_id, &origin_domain, DNS_STAGGERING_MS)
                 .await
+                .inspect_err(|err| debug!("DNS lookup failed: {err:#}"))
                 .map_err(|e| DiscoveryError::from_err_any("dns", e))?;
+            debug!(info=?endpoint_info, "DNS lookup success");
             Ok(DiscoveryItem::new(endpoint_info, "dns", None))
-        };
+        }
+        .instrument(span);
         let stream = n0_future::stream::once_future(fut);
         Some(Box::pin(stream))
     }
