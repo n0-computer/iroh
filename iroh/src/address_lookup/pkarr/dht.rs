@@ -98,16 +98,15 @@ struct Inner {
 impl Inner {
     async fn resolve_dht(
         &self,
-        public_key: &[u8; 32],
+        public_key: EndpointId,
     ) -> Option<Result<AddressLookupItem, AddressLookupError>> {
-        let pk = iroh_base::PublicKey::try_from(public_key.as_slice()).ok()?;
-        tracing::info!("resolving {} from DHT", pk.to_z32());
+        tracing::info!("resolving {} from DHT", public_key.to_z32());
 
         let maybe_item = self
             .dht
             .clone()
             .as_async()
-            .get_mutable_most_recent(public_key, None)
+            .get_mutable_most_recent(public_key.as_bytes(), None)
             .await;
         match maybe_item {
             Some(item) => {
@@ -312,12 +311,12 @@ impl AddressLookup for DhtAddressLookup {
         let z32 = endpoint_id.to_z32();
         tracing::info!("resolving {} as {}", endpoint_id, z32);
         let address_lookup = self.0.clone();
-        let public_key_bytes = *endpoint_id.as_bytes();
-        let stream = n0_future::stream::once_future(async move {
-            address_lookup.resolve_dht(&public_key_bytes).await
-        })
-        .filter_map(|x| x)
-        .boxed();
+        let stream =
+            n0_future::stream::once_future(
+                async move { address_lookup.resolve_dht(endpoint_id).await },
+            )
+            .filter_map(|x| x)
+            .boxed();
         Some(stream)
     }
 }

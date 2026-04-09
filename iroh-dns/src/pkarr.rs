@@ -4,7 +4,10 @@
 //!
 //! [pkarr]: https://pkarr.org
 
-use std::fmt::{self, Debug, Display, Formatter};
+use std::{
+    fmt::{self, Debug, Display, Formatter},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use iroh_base::{PublicKey, SecretKey, Signature};
 use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata::RData};
@@ -325,20 +328,42 @@ fn normalize_name(origin: &str, name: String) -> String {
 /// publish must have a strictly higher timestamp than the previous one, or DHT
 /// nodes will reject the update.
 ///
-/// Currently uses `SystemTime::now()`. If monotonicity across NTP clock
-/// corrections becomes a concern, this is the single place to add it.
+/// [`Timestamp::now`] is guaranteed to be strictly monotonic: it will never
+/// return the same value twice and will never go backward, even if the system
+/// clock is corrected by NTP. This is achieved by tracking the last returned
+/// value and ensuring each call returns at least `last + 1`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Timestamp(u64);
 
+/// Tracks the last timestamp returned by [`Timestamp::now`] to ensure monotonicity.
+static LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
+
 impl Timestamp {
-    /// Returns the current timestamp.
+    /// Returns a strictly monotonic timestamp.
+    ///
+    /// Guaranteed to return a value greater than any previous call, even if the
+    /// system clock jumps backward (e.g. due to NTP correction).
     pub fn now() -> Self {
         use n0_future::time::SystemTime;
         let micros = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("system time before UNIX epoch")
             .as_micros() as u64;
-        Self(micros)
+        // Ensure strictly monotonic: if the clock went backward or two calls
+        // land in the same microsecond, we increment from the last value.
+        let mut last = LAST_TIMESTAMP.load(Ordering::Relaxed);
+        loop {
+            let next = micros.max(last + 1);
+            match LAST_TIMESTAMP.compare_exchange_weak(
+                last,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Self(next),
+                Err(actual) => last = actual,
+            }
+        }
     }
 
     /// Creates a timestamp from a raw microseconds value.
