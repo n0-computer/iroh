@@ -133,7 +133,7 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId};
-pub use iroh_relay::endpoint_info::AddrFilter;
+pub use iroh_dns::endpoint_info::AddrFilter;
 use n0_error::{AnyError, e, stack_error};
 use n0_future::boxed::BoxStream;
 

@@ -58,7 +58,11 @@ use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError};
-use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointIdExt, EndpointInfo};
+use iroh_dns::{
+    EndpointIdExt,
+    attrs::EncodingError,
+    endpoint_info::{AddrFilter, EndpointInfo},
+};
 use n0_error::{e, stack_error};
 use n0_future::{
     boxed::BoxStream,
