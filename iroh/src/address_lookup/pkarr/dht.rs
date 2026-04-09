@@ -8,7 +8,10 @@
 use std::sync::{Arc, Mutex};
 
 use iroh_base::{EndpointId, SecretKey};
-use iroh_relay::{endpoint_info::EndpointIdExt, pkarr::SignedPacket};
+use iroh_relay::{
+    endpoint_info::EndpointIdExt,
+    pkarr::{SignedPacket, SignedPacketVerifyError, Timestamp},
+};
 use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_future::{
     boxed::BoxStream,
@@ -46,11 +49,11 @@ fn signed_packet_to_mutable_item(packet: &SignedPacket) -> MutableItem {
 /// Convert a mainline [`MutableItem`] to a [`SignedPacket`].
 fn mutable_item_to_signed_packet(
     item: &MutableItem,
-) -> Result<SignedPacket, iroh_relay::pkarr::SignedPacketVerifyError> {
+) -> Result<SignedPacket, SignedPacketVerifyError> {
     SignedPacket::from_parts_unchecked(
         item.key(),
         item.signature(),
-        iroh_relay::pkarr::Timestamp::from_micros(item.seq() as u64),
+        Timestamp::from_micros(item.seq() as u64),
         item.value(),
     )
 }

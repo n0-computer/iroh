@@ -467,7 +467,9 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
                         continue;
                     }
                 };
-                let key = PublicKeyBytes::new(key.value());
+                // Safety: bytes were originally written from a validated PublicKey.
+                // If the database is corrupt, to_z32() may panic downstream.
+                let key = PublicKeyBytes::new_unchecked(key.value());
 
                 debug!("evicting expired packet {} {}", fmt_time(time), key);
                 send.send(Message::CheckExpired { time, key })
