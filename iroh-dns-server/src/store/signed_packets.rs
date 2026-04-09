@@ -215,8 +215,9 @@ impl Actor {
                 match get_packet(&tables.signed_packets, &key)? {
                     Some(packet) => {
                         let expiry_us = self.options.eviction.as_micros() as u64;
-                        let expired =
-                            Timestamp::from_micros(Timestamp::now().as_micros().saturating_sub(expiry_us));
+                        let expired = Timestamp::from_micros(
+                            Timestamp::now().as_micros().saturating_sub(expiry_us),
+                        );
                         if packet.timestamp() < expired {
                             tables
                                 .update_time
@@ -435,7 +436,8 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
         // if we can't get the snapshot we exit the loop, main actor dead
         let snapshot = rx.await.std_context("failed to get snapshot")?;
 
-        let expired = Timestamp::from_micros(Timestamp::now().as_micros().saturating_sub(expiry_us));
+        let expired =
+            Timestamp::from_micros(Timestamp::now().as_micros().saturating_sub(expiry_us));
         trace!("evicting packets older than {}", fmt_time(expired));
         // if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
@@ -550,5 +552,35 @@ impl<T> PeekableReceiver<T> {
         } else {
             Err(msg)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iroh_base::SecretKey;
+
+    use super::*;
+
+    fn test_signed_packet() -> SignedPacket {
+        let secret_key = SecretKey::generate();
+        SignedPacket::from_txt_strings(&secret_key, "_iroh", ["relay=https://example.com"], 30)
+            .expect("valid packet")
+    }
+
+    #[test]
+    fn serialize_deserialize_roundtrip() {
+        let packet = test_signed_packet();
+        let serialized = serialize(&packet);
+        let deserialized = deserialize(&serialized).expect("roundtrip should succeed");
+        assert_eq!(packet.as_bytes(), deserialized.as_bytes());
+    }
+
+    #[test]
+    fn deserialize_old_format_without_last_seen_prefix() {
+        // Pre-v0.35 format: raw SignedPacket bytes without the 8-byte last_seen prefix
+        let packet = test_signed_packet();
+        let old_format = packet.as_bytes().to_vec();
+        let deserialized = deserialize(&old_format).expect("old format should be readable");
+        assert_eq!(packet.as_bytes(), deserialized.as_bytes());
     }
 }
