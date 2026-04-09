@@ -216,7 +216,7 @@ impl Actor {
                     Some(packet) => {
                         let expiry_us = self.options.eviction.as_micros() as u64;
                         let expired =
-                            Timestamp::from_micros(Timestamp::now().as_micros() - expiry_us);
+                            Timestamp::from_micros(Timestamp::now().as_micros().saturating_sub(expiry_us));
                         if packet.timestamp() < expired {
                             tables
                                 .update_time
@@ -435,7 +435,7 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
         // if we can't get the snapshot we exit the loop, main actor dead
         let snapshot = rx.await.std_context("failed to get snapshot")?;
 
-        let expired = Timestamp::from_micros(Timestamp::now().as_micros() - expiry_us);
+        let expired = Timestamp::from_micros(Timestamp::now().as_micros().saturating_sub(expiry_us));
         trace!("evicting packets older than {}", fmt_time(expired));
         // if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
