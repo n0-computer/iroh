@@ -144,7 +144,7 @@
 <a href=#144 id=144 data-nosnippet>144</a>                .get_mutable_most_recent(pubkey.as_bytes(), <span class="prelude-val">None</span>)
 <a href=#145 id=145 data-nosnippet>145</a>                .<span class="kw">await</span>;
 <a href=#146 id=146 data-nosnippet>146</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(item) = maybe_item
-<a href=#147 id=147 data-nosnippet>147</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(packet) = mutable_item_to_signed_packet(<span class="kw-2">&amp;</span>item)
+<a href=#147 id=147 data-nosnippet>147</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Ok</span>(packet) = mutable_item_to_signed_packet(<span class="kw-2">&amp;</span>item)
 <a href=#148 id=148 data-nosnippet>148</a>            {
 <a href=#149 id=149 data-nosnippet>149</a>                <span class="macro">debug!</span>(<span class="string">"DHT resolve successful {:?}"</span>, packet);
 <a href=#150 id=150 data-nosnippet>150</a>                <span class="kw">return </span><span class="self">self
@@ -185,123 +185,125 @@
 <a href=#185 id=185 data-nosnippet>185</a>}
 <a href=#186 id=186 data-nosnippet>186</a>
 <a href=#187 id=187 data-nosnippet>187</a><span class="doccomment">/// Convert a mainline [`MutableItem`] to a [`SignedPacket`].
-<a href=#188 id=188 data-nosnippet>188</a></span><span class="kw">fn </span>mutable_item_to_signed_packet(item: <span class="kw-2">&amp;</span>MutableItem) -&gt; <span class="prelude-ty">Option</span>&lt;SignedPacket&gt; {
-<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">let </span><span class="kw-2">mut </span>bytes = Vec::with_capacity(<span class="number">104 </span>+ item.value().len());
-<a href=#190 id=190 data-nosnippet>190</a>    bytes.extend_from_slice(item.key());
-<a href=#191 id=191 data-nosnippet>191</a>    bytes.extend_from_slice(item.signature());
-<a href=#192 id=192 data-nosnippet>192</a>    bytes.extend_from_slice(<span class="kw-2">&amp;</span>(item.seq() <span class="kw">as </span>u64).to_be_bytes());
-<a href=#193 id=193 data-nosnippet>193</a>    bytes.extend_from_slice(item.value());
-<a href=#194 id=194 data-nosnippet>194</a>    SignedPacket::from_bytes_unchecked(<span class="kw-2">&amp;</span>bytes).ok()
-<a href=#195 id=195 data-nosnippet>195</a>}
-<a href=#196 id=196 data-nosnippet>196</a>
-<a href=#197 id=197 data-nosnippet>197</a><span class="attr">#[derive(derive_more::Debug)]
-<a href=#198 id=198 data-nosnippet>198</a></span><span class="kw">struct </span>ZoneCache {
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="doccomment">/// Cache for explicitly added entries
-<a href=#200 id=200 data-nosnippet>200</a>    </span>cache: LruCache&lt;PublicKeyBytes, CachedZone&gt;,
-<a href=#201 id=201 data-nosnippet>201</a>    <span class="doccomment">/// Cache for DHT entries, this must have a finite TTL
-<a href=#202 id=202 data-nosnippet>202</a>    /// so we don't cache stale entries indefinitely.
-<a href=#203 id=203 data-nosnippet>203</a>    </span><span class="attr">#[debug(<span class="string">"dht_cache"</span>)]
-<a href=#204 id=204 data-nosnippet>204</a>    </span>dht_cache: TtlCache&lt;PublicKeyBytes, CachedZone&gt;,
-<a href=#205 id=205 data-nosnippet>205</a>}
-<a href=#206 id=206 data-nosnippet>206</a>
-<a href=#207 id=207 data-nosnippet>207</a><span class="kw">impl </span>ZoneCache {
-<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">fn </span>new(cap: usize) -&gt; <span class="self">Self </span>{
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>cache = LruCache::new(NonZeroUsize::new(cap).expect(<span class="string">"capacity must be larger than 0"</span>));
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span>dht_cache = TtlCache::new(cap);
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="self">Self </span>{ cache, dht_cache }
-<a href=#212 id=212 data-nosnippet>212</a>    }
-<a href=#213 id=213 data-nosnippet>213</a>
-<a href=#214 id=214 data-nosnippet>214</a>    <span class="kw">fn </span>resolve(
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#216 id=216 data-nosnippet>216</a>        pubkey: <span class="kw-2">&amp;</span>PublicKeyBytes,
-<a href=#217 id=217 data-nosnippet>217</a>        name: <span class="kw-2">&amp;</span>Name,
-<a href=#218 id=218 data-nosnippet>218</a>        record_type: RecordType,
-<a href=#219 id=219 data-nosnippet>219</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt; {
-<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">let </span>zone = <span class="kw">if let </span><span class="prelude-val">Some</span>(zone) = <span class="self">self</span>.cache.get(pubkey) {
-<a href=#221 id=221 data-nosnippet>221</a>            <span class="macro">trace!</span>(<span class="string">"cache hit {}"</span>, pubkey.to_z32());
-<a href=#222 id=222 data-nosnippet>222</a>            zone
-<a href=#223 id=223 data-nosnippet>223</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(zone) = <span class="self">self</span>.dht_cache.get(pubkey) {
-<a href=#224 id=224 data-nosnippet>224</a>            <span class="macro">trace!</span>(<span class="string">"dht cache hit {}"</span>, pubkey.to_z32());
-<a href=#225 id=225 data-nosnippet>225</a>            zone
-<a href=#226 id=226 data-nosnippet>226</a>        } <span class="kw">else </span>{
-<a href=#227 id=227 data-nosnippet>227</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#228 id=228 data-nosnippet>228</a>        };
-<a href=#229 id=229 data-nosnippet>229</a>        zone.resolve(name, record_type)
-<a href=#230 id=230 data-nosnippet>230</a>    }
-<a href=#231 id=231 data-nosnippet>231</a>
-<a href=#232 id=232 data-nosnippet>232</a>    <span class="kw">fn </span>insert_and_resolve(
-<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#234 id=234 data-nosnippet>234</a>        signed_packet: <span class="kw-2">&amp;</span>SignedPacket,
-<a href=#235 id=235 data-nosnippet>235</a>        name: <span class="kw-2">&amp;</span>Name,
-<a href=#236 id=236 data-nosnippet>236</a>        record_type: RecordType,
-<a href=#237 id=237 data-nosnippet>237</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt;&gt; {
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="self">self</span>.insert(signed_packet)<span class="question-mark">?</span>;
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.resolve(<span class="kw-2">&amp;</span>pubkey, name, record_type))
-<a href=#241 id=241 data-nosnippet>241</a>    }
-<a href=#242 id=242 data-nosnippet>242</a>
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">fn </span>insert_and_resolve_dht(
-<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#245 id=245 data-nosnippet>245</a>        signed_packet: <span class="kw-2">&amp;</span>SignedPacket,
-<a href=#246 id=246 data-nosnippet>246</a>        name: <span class="kw-2">&amp;</span>Name,
-<a href=#247 id=247 data-nosnippet>247</a>        record_type: RecordType,
-<a href=#248 id=248 data-nosnippet>248</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt;&gt; {
-<a href=#249 id=249 data-nosnippet>249</a>        <span class="kw">let </span>pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
-<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">let </span>zone = CachedZone::from_signed_packet(signed_packet).anyerr()<span class="question-mark">?</span>;
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>res = zone.resolve(name, record_type);
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="self">self</span>.dht_cache.insert(pubkey, zone, DHT_CACHE_TTL);
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="prelude-val">Ok</span>(res)
-<a href=#254 id=254 data-nosnippet>254</a>    }
-<a href=#255 id=255 data-nosnippet>255</a>
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">fn </span>insert(<span class="kw-2">&amp;mut </span><span class="self">self</span>, signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">let </span>pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
-<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">if </span><span class="self">self
-<a href=#259 id=259 data-nosnippet>259</a>            </span>.cache
-<a href=#260 id=260 data-nosnippet>260</a>            .peek(<span class="kw-2">&amp;</span>pubkey)
-<a href=#261 id=261 data-nosnippet>261</a>            .map(|old| old.is_newer_than(signed_packet))
-<a href=#262 id=262 data-nosnippet>262</a>            .unwrap_or(<span class="bool-val">false</span>)
-<a href=#263 id=263 data-nosnippet>263</a>        {
-<a href=#264 id=264 data-nosnippet>264</a>            <span class="macro">trace!</span>(<span class="string">"insert skip: cached is newer"</span>);
-<a href=#265 id=265 data-nosnippet>265</a>            <span class="prelude-val">Ok</span>(())
-<a href=#266 id=266 data-nosnippet>266</a>        } <span class="kw">else </span>{
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="self">self</span>.cache.put(
-<a href=#268 id=268 data-nosnippet>268</a>                pubkey,
-<a href=#269 id=269 data-nosnippet>269</a>                CachedZone::from_signed_packet(signed_packet).anyerr()<span class="question-mark">?</span>,
-<a href=#270 id=270 data-nosnippet>270</a>            );
-<a href=#271 id=271 data-nosnippet>271</a>            <span class="macro">trace!</span>(<span class="string">"inserted into cache"</span>);
-<a href=#272 id=272 data-nosnippet>272</a>            <span class="prelude-val">Ok</span>(())
-<a href=#273 id=273 data-nosnippet>273</a>        }
-<a href=#274 id=274 data-nosnippet>274</a>    }
-<a href=#275 id=275 data-nosnippet>275</a>
-<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, pubkey: <span class="kw-2">&amp;</span>PublicKeyBytes) {
-<a href=#277 id=277 data-nosnippet>277</a>        <span class="self">self</span>.cache.pop(pubkey);
-<a href=#278 id=278 data-nosnippet>278</a>        <span class="self">self</span>.dht_cache.remove(pubkey);
-<a href=#279 id=279 data-nosnippet>279</a>    }
-<a href=#280 id=280 data-nosnippet>280</a>}
-<a href=#281 id=281 data-nosnippet>281</a>
-<a href=#282 id=282 data-nosnippet>282</a><span class="attr">#[derive(Debug)]
-<a href=#283 id=283 data-nosnippet>283</a></span><span class="kw">struct </span>CachedZone {
-<a href=#284 id=284 data-nosnippet>284</a>    timestamp: u64,
-<a href=#285 id=285 data-nosnippet>285</a>    records: BTreeMap&lt;RrKey, Arc&lt;RecordSet&gt;&gt;,
-<a href=#286 id=286 data-nosnippet>286</a>}
-<a href=#287 id=287 data-nosnippet>287</a>
-<a href=#288 id=288 data-nosnippet>288</a><span class="kw">impl </span>CachedZone {
-<a href=#289 id=289 data-nosnippet>289</a>    <span class="kw">fn </span>from_signed_packet(signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ProtoError&gt; {
-<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">let </span>(_label, records) =
-<a href=#291 id=291 data-nosnippet>291</a>            signed_packet_to_hickory_records_without_origin(signed_packet, |<span class="kw">_</span>| <span class="bool-val">true</span>)<span class="question-mark">?</span>;
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#293 id=293 data-nosnippet>293</a>            records,
-<a href=#294 id=294 data-nosnippet>294</a>            timestamp: signed_packet.timestamp(),
-<a href=#295 id=295 data-nosnippet>295</a>        })
-<a href=#296 id=296 data-nosnippet>296</a>    }
-<a href=#297 id=297 data-nosnippet>297</a>
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">fn </span>is_newer_than(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; bool {
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="self">self</span>.timestamp &gt; signed_packet.timestamp()
-<a href=#300 id=300 data-nosnippet>300</a>    }
-<a href=#301 id=301 data-nosnippet>301</a>
-<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>Name, record_type: RecordType) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt; {
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="macro">trace!</span>(name=%name, typ=%record_type, <span class="string">"resolve in zone"</span>);
-<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">let </span>key = RrKey::new(name.into(), record_type);
-<a href=#305 id=305 data-nosnippet>305</a>        <span class="self">self</span>.records.get(<span class="kw-2">&amp;</span>key).cloned()
-<a href=#306 id=306 data-nosnippet>306</a>    }
-<a href=#307 id=307 data-nosnippet>307</a>}</code></pre></div></section></main></body></html>
+<a href=#188 id=188 data-nosnippet>188</a></span><span class="kw">fn </span>mutable_item_to_signed_packet(
+<a href=#189 id=189 data-nosnippet>189</a>    item: <span class="kw-2">&amp;</span>MutableItem,
+<a href=#190 id=190 data-nosnippet>190</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket, iroh_dns::pkarr::SignedPacketVerifyError&gt; {
+<a href=#191 id=191 data-nosnippet>191</a>    SignedPacket::from_parts_unchecked(
+<a href=#192 id=192 data-nosnippet>192</a>        item.key(),
+<a href=#193 id=193 data-nosnippet>193</a>        item.signature(),
+<a href=#194 id=194 data-nosnippet>194</a>        iroh_dns::pkarr::Timestamp::from_micros(item.seq() <span class="kw">as </span>u64),
+<a href=#195 id=195 data-nosnippet>195</a>        item.value(),
+<a href=#196 id=196 data-nosnippet>196</a>    )
+<a href=#197 id=197 data-nosnippet>197</a>}
+<a href=#198 id=198 data-nosnippet>198</a>
+<a href=#199 id=199 data-nosnippet>199</a><span class="attr">#[derive(derive_more::Debug)]
+<a href=#200 id=200 data-nosnippet>200</a></span><span class="kw">struct </span>ZoneCache {
+<a href=#201 id=201 data-nosnippet>201</a>    <span class="doccomment">/// Cache for explicitly added entries
+<a href=#202 id=202 data-nosnippet>202</a>    </span>cache: LruCache&lt;PublicKeyBytes, CachedZone&gt;,
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="doccomment">/// Cache for DHT entries, this must have a finite TTL
+<a href=#204 id=204 data-nosnippet>204</a>    /// so we don't cache stale entries indefinitely.
+<a href=#205 id=205 data-nosnippet>205</a>    </span><span class="attr">#[debug(<span class="string">"dht_cache"</span>)]
+<a href=#206 id=206 data-nosnippet>206</a>    </span>dht_cache: TtlCache&lt;PublicKeyBytes, CachedZone&gt;,
+<a href=#207 id=207 data-nosnippet>207</a>}
+<a href=#208 id=208 data-nosnippet>208</a>
+<a href=#209 id=209 data-nosnippet>209</a><span class="kw">impl </span>ZoneCache {
+<a href=#210 id=210 data-nosnippet>210</a>    <span class="kw">fn </span>new(cap: usize) -&gt; <span class="self">Self </span>{
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>cache = LruCache::new(NonZeroUsize::new(cap).expect(<span class="string">"capacity must be larger than 0"</span>));
+<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>dht_cache = TtlCache::new(cap);
+<a href=#213 id=213 data-nosnippet>213</a>        <span class="self">Self </span>{ cache, dht_cache }
+<a href=#214 id=214 data-nosnippet>214</a>    }
+<a href=#215 id=215 data-nosnippet>215</a>
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">fn </span>resolve(
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#218 id=218 data-nosnippet>218</a>        pubkey: <span class="kw-2">&amp;</span>PublicKeyBytes,
+<a href=#219 id=219 data-nosnippet>219</a>        name: <span class="kw-2">&amp;</span>Name,
+<a href=#220 id=220 data-nosnippet>220</a>        record_type: RecordType,
+<a href=#221 id=221 data-nosnippet>221</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt; {
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">let </span>zone = <span class="kw">if let </span><span class="prelude-val">Some</span>(zone) = <span class="self">self</span>.cache.get(pubkey) {
+<a href=#223 id=223 data-nosnippet>223</a>            <span class="macro">trace!</span>(<span class="string">"cache hit {}"</span>, pubkey.to_z32());
+<a href=#224 id=224 data-nosnippet>224</a>            zone
+<a href=#225 id=225 data-nosnippet>225</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(zone) = <span class="self">self</span>.dht_cache.get(pubkey) {
+<a href=#226 id=226 data-nosnippet>226</a>            <span class="macro">trace!</span>(<span class="string">"dht cache hit {}"</span>, pubkey.to_z32());
+<a href=#227 id=227 data-nosnippet>227</a>            zone
+<a href=#228 id=228 data-nosnippet>228</a>        } <span class="kw">else </span>{
+<a href=#229 id=229 data-nosnippet>229</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#230 id=230 data-nosnippet>230</a>        };
+<a href=#231 id=231 data-nosnippet>231</a>        zone.resolve(name, record_type)
+<a href=#232 id=232 data-nosnippet>232</a>    }
+<a href=#233 id=233 data-nosnippet>233</a>
+<a href=#234 id=234 data-nosnippet>234</a>    <span class="kw">fn </span>insert_and_resolve(
+<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#236 id=236 data-nosnippet>236</a>        signed_packet: <span class="kw-2">&amp;</span>SignedPacket,
+<a href=#237 id=237 data-nosnippet>237</a>        name: <span class="kw-2">&amp;</span>Name,
+<a href=#238 id=238 data-nosnippet>238</a>        record_type: RecordType,
+<a href=#239 id=239 data-nosnippet>239</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt;&gt; {
+<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">let </span>pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="self">self</span>.insert(signed_packet)<span class="question-mark">?</span>;
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.resolve(<span class="kw-2">&amp;</span>pubkey, name, record_type))
+<a href=#243 id=243 data-nosnippet>243</a>    }
+<a href=#244 id=244 data-nosnippet>244</a>
+<a href=#245 id=245 data-nosnippet>245</a>    <span class="kw">fn </span>insert_and_resolve_dht(
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#247 id=247 data-nosnippet>247</a>        signed_packet: <span class="kw-2">&amp;</span>SignedPacket,
+<a href=#248 id=248 data-nosnippet>248</a>        name: <span class="kw-2">&amp;</span>Name,
+<a href=#249 id=249 data-nosnippet>249</a>        record_type: RecordType,
+<a href=#250 id=250 data-nosnippet>250</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt;&gt; {
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>zone = CachedZone::from_signed_packet(signed_packet).anyerr()<span class="question-mark">?</span>;
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>res = zone.resolve(name, record_type);
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="self">self</span>.dht_cache.insert(pubkey, zone, DHT_CACHE_TTL);
+<a href=#255 id=255 data-nosnippet>255</a>        <span class="prelude-val">Ok</span>(res)
+<a href=#256 id=256 data-nosnippet>256</a>    }
+<a href=#257 id=257 data-nosnippet>257</a>
+<a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">fn </span>insert(<span class="kw-2">&amp;mut </span><span class="self">self</span>, signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#259 id=259 data-nosnippet>259</a>        <span class="kw">let </span>pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
+<a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">if </span><span class="self">self
+<a href=#261 id=261 data-nosnippet>261</a>            </span>.cache
+<a href=#262 id=262 data-nosnippet>262</a>            .peek(<span class="kw-2">&amp;</span>pubkey)
+<a href=#263 id=263 data-nosnippet>263</a>            .map(|old| old.is_newer_than(signed_packet))
+<a href=#264 id=264 data-nosnippet>264</a>            .unwrap_or(<span class="bool-val">false</span>)
+<a href=#265 id=265 data-nosnippet>265</a>        {
+<a href=#266 id=266 data-nosnippet>266</a>            <span class="macro">trace!</span>(<span class="string">"insert skip: cached is newer"</span>);
+<a href=#267 id=267 data-nosnippet>267</a>            <span class="prelude-val">Ok</span>(())
+<a href=#268 id=268 data-nosnippet>268</a>        } <span class="kw">else </span>{
+<a href=#269 id=269 data-nosnippet>269</a>            <span class="self">self</span>.cache.put(
+<a href=#270 id=270 data-nosnippet>270</a>                pubkey,
+<a href=#271 id=271 data-nosnippet>271</a>                CachedZone::from_signed_packet(signed_packet).anyerr()<span class="question-mark">?</span>,
+<a href=#272 id=272 data-nosnippet>272</a>            );
+<a href=#273 id=273 data-nosnippet>273</a>            <span class="macro">trace!</span>(<span class="string">"inserted into cache"</span>);
+<a href=#274 id=274 data-nosnippet>274</a>            <span class="prelude-val">Ok</span>(())
+<a href=#275 id=275 data-nosnippet>275</a>        }
+<a href=#276 id=276 data-nosnippet>276</a>    }
+<a href=#277 id=277 data-nosnippet>277</a>
+<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, pubkey: <span class="kw-2">&amp;</span>PublicKeyBytes) {
+<a href=#279 id=279 data-nosnippet>279</a>        <span class="self">self</span>.cache.pop(pubkey);
+<a href=#280 id=280 data-nosnippet>280</a>        <span class="self">self</span>.dht_cache.remove(pubkey);
+<a href=#281 id=281 data-nosnippet>281</a>    }
+<a href=#282 id=282 data-nosnippet>282</a>}
+<a href=#283 id=283 data-nosnippet>283</a>
+<a href=#284 id=284 data-nosnippet>284</a><span class="attr">#[derive(Debug)]
+<a href=#285 id=285 data-nosnippet>285</a></span><span class="kw">struct </span>CachedZone {
+<a href=#286 id=286 data-nosnippet>286</a>    timestamp: iroh_dns::pkarr::Timestamp,
+<a href=#287 id=287 data-nosnippet>287</a>    records: BTreeMap&lt;RrKey, Arc&lt;RecordSet&gt;&gt;,
+<a href=#288 id=288 data-nosnippet>288</a>}
+<a href=#289 id=289 data-nosnippet>289</a>
+<a href=#290 id=290 data-nosnippet>290</a><span class="kw">impl </span>CachedZone {
+<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">fn </span>from_signed_packet(signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ProtoError&gt; {
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>(_label, records) =
+<a href=#293 id=293 data-nosnippet>293</a>            signed_packet_to_hickory_records_without_origin(signed_packet, |<span class="kw">_</span>| <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+<a href=#294 id=294 data-nosnippet>294</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#295 id=295 data-nosnippet>295</a>            records,
+<a href=#296 id=296 data-nosnippet>296</a>            timestamp: signed_packet.timestamp(),
+<a href=#297 id=297 data-nosnippet>297</a>        })
+<a href=#298 id=298 data-nosnippet>298</a>    }
+<a href=#299 id=299 data-nosnippet>299</a>
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">fn </span>is_newer_than(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; bool {
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="self">self</span>.timestamp &gt; signed_packet.timestamp()
+<a href=#302 id=302 data-nosnippet>302</a>    }
+<a href=#303 id=303 data-nosnippet>303</a>
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>Name, record_type: RecordType) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt; {
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="macro">trace!</span>(name=%name, typ=%record_type, <span class="string">"resolve in zone"</span>);
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span>key = RrKey::new(name.into(), record_type);
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="self">self</span>.records.get(<span class="kw-2">&amp;</span>key).cloned()
+<a href=#308 id=308 data-nosnippet>308</a>    }
+<a href=#309 id=309 data-nosnippet>309</a>}</code></pre></div></section></main></body></html>

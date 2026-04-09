@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AcceptError","ConnectionHandlerError","ServeConnectionError"],"struct":["Handlers","RelayService","TlsConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["AcceptError","ConnectionHandlerError","ServeConnectionError"],"struct":["Handlers","RelayService","RelayServiceWithNotify","TlsConfig"]};

@@ -287,7 +287,7 @@
 <a href=#287 id=287 data-nosnippet>287</a>            <span class="kw-2">*</span>secret_key.public().as_bytes(),
 <a href=#288 id=288 data-nosnippet>288</a>            signed_packet.signature().to_bytes(),
 <a href=#289 id=289 data-nosnippet>289</a>            signed_packet.encoded_packet(),
-<a href=#290 id=290 data-nosnippet>290</a>            signed_packet.timestamp() <span class="kw">as </span>i64,
+<a href=#290 id=290 data-nosnippet>290</a>            signed_packet.timestamp().as_micros() <span class="kw">as </span>i64,
 <a href=#291 id=291 data-nosnippet>291</a>            <span class="prelude-val">None</span>,
 <a href=#292 id=292 data-nosnippet>292</a>        );
 <a href=#293 id=293 data-nosnippet>293</a>        dht.clone()
