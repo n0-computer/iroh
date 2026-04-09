@@ -45,6 +45,7 @@ jobs:
           cargo make patchbay 2>&1 | tee "$RUNNER_TEMP/logs.txt"
         env:
           PATCHBAY_LOG: trace
+          RUST_LOG: trace
 
       - name: Upload test results
         if: always()
