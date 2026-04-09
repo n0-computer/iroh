@@ -21,8 +21,8 @@
 <a href=#21 id=21 data-nosnippet>21</a><span class="doccomment">/// A lightweight `[u8; 32]` wrapper used as a key for caches and database lookups.
 <a href=#22 id=22 data-nosnippet>22</a>///
 <a href=#23 id=23 data-nosnippet>23</a>/// Does not validate that the bytes are a valid public key on construction.
-<a href=#24 id=24 data-nosnippet>24</a>/// If constructed from invalid bytes, methods like [`Display`] and [`Self::to_z32`]
-<a href=#25 id=25 data-nosnippet>25</a>/// will panic. In practice, bytes always originate from a validated [`PublicKey`]
+<a href=#24 id=24 data-nosnippet>24</a>/// If constructed from invalid bytes, methods like `Display` and `to_z32`
+<a href=#25 id=25 data-nosnippet>25</a>/// will panic. In practice, bytes always originate from a validated `PublicKey`
 <a href=#26 id=26 data-nosnippet>26</a>/// or a database that was written from one.
 <a href=#27 id=27 data-nosnippet>27</a></span><span class="attr">#[derive(derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy)]
 <a href=#28 id=28 data-nosnippet>28</a></span><span class="kw">pub struct </span>PublicKeyBytes([u8; <span class="number">32</span>]);
@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>    /// # Safety (logical)
 <a href=#42 id=42 data-nosnippet>42</a>    ///
 <a href=#43 id=43 data-nosnippet>43</a>    /// The caller must ensure the bytes represent a valid Ed25519 public key.
-<a href=#44 id=44 data-nosnippet>44</a>    /// Passing invalid bytes will cause panics in [`Display`], [`Debug`], and [`Self::to_z32`].
+<a href=#44 id=44 data-nosnippet>44</a>    /// Passing invalid bytes will cause panics in `Display`, `Debug`, and `to_z32`.
 <a href=#45 id=45 data-nosnippet>45</a>    </span><span class="kw">pub fn </span>new_unchecked(bytes: [u8; <span class="number">32</span>]) -&gt; <span class="self">Self </span>{
 <a href=#46 id=46 data-nosnippet>46</a>        <span class="self">Self</span>(bytes)
 <a href=#47 id=47 data-nosnippet>47</a>    }
