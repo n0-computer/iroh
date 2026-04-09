@@ -967,10 +967,8 @@ mod tests {
 #[cfg(test)]
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-    use iroh_relay::{
-        endpoint_info::UserData,
-        tls::{CaRootsConfig, default_provider},
-    };
+    use iroh_dns::endpoint_info::UserData;
+    use iroh_relay::tls::{CaRootsConfig, default_provider};
     use n0_error::{Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;

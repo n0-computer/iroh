@@ -46,8 +46,14 @@ use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use n0_error::{ensure, stack_error};
 use url::Url;
 
+// Re-export commonly used items so they're accessible via iroh::endpoint_info::*
+pub use crate::{
+    DecodingError, EndpointIdExt,
+    attrs::{EncodingError, IROH_TXT_NAME, ParseError},
+};
+
 use crate::{
-    attrs::{EncodingError, IrohAttr, ParseError, TxtAttrs},
+    attrs::{IrohAttr, TxtAttrs},
     pkarr,
 };
 

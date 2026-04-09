@@ -1838,7 +1838,8 @@ mod tests {
     };
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-    use iroh_relay::{endpoint_info::UserData, tls::CaRootsConfig};
+    use iroh_dns::endpoint_info::UserData;
+    use iroh_relay::tls::CaRootsConfig;
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
