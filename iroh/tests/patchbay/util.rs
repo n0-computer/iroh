@@ -143,10 +143,9 @@ impl Pair {
 
         let (addr_tx, addr_rx) = oneshot::channel();
         let relay_map2 = self.relay_map.clone();
-        let barrier = Arc::new(Barrier::new(2));
-        let barrier2 = barrier.clone();
+        let barrier_server = Arc::new(Barrier::new(2));
+        let barrier_client = barrier_server.clone();
         let server_task = server_device.spawn(|dev| {
-            let barrier = barrier2;
             async move {
                 let endpoint = endpoint_builder(&dev, relay_map2).bind().await
                     .context("server endpoint bind")?;
@@ -166,7 +165,7 @@ impl Pair {
                     Err(err)=> error!("run function failed: {err:#}"),
                 }
                 // Wait until the client run function completed before dropping the endpoint.
-                barrier.wait().await;
+                barrier_server.wait().await;
                 for group in endpoint.metrics().groups() {
                     dev.record_iroh_metrics(group);
                 }
@@ -191,8 +190,7 @@ impl Pair {
                     Err(err)=> error!("run function failed: {err:#}"),
                 }
                 // Wait until the server run function completed before dropping the endpoint.
-                barrier.wait().await;
-                // endpoint.close().await;
+                barrier_client.wait().await;
                 for group in endpoint.metrics().groups() {
                     dev.record_iroh_metrics(group);
                 }
