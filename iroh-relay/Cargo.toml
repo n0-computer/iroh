@@ -34,7 +34,7 @@ http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 iroh-base = { version = "0.97.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
-iroh-dns = { version = "0.97.0", path = "../iroh-dns" }
+iroh-dns = { version = "0.97.0", path = "../iroh-dns", default-features = false }
 iroh-metrics = { version = "0.38", default-features = false }
 lru = "0.16.3"
 n0-error = "0.1"
@@ -161,6 +161,7 @@ tls-ring = [
     "tokio-rustls/ring",
     "tokio-websockets/ring",
     "hickory-resolver/https-ring",
+    "iroh-dns/tls-ring",
 ]
 tls-aws-lc-rs = [
     "noq/aws-lc-rs",
@@ -168,6 +169,7 @@ tls-aws-lc-rs = [
     "tokio-rustls/aws-lc-rs",
     "tokio-websockets/aws_lc_rs",
     "hickory-resolver/https-aws-lc-rs",
+    "iroh-dns/tls-aws-lc-rs",
 ]
 
 [[bin]]

@@ -31,7 +31,7 @@ ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "ze
 http = "1"
 ipnet = "2"
 iroh-base = { version = "0.97.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
-iroh-dns = { version = "0.97", path = "../iroh-dns" }
+iroh-dns = { version = "0.97", path = "../iroh-dns", default-features = false }
 iroh-relay = { version = "0.97", path = "../iroh-relay", default-features = false }
 n0-future = "0.3"
 n0-error = "0.1"
@@ -162,9 +162,9 @@ qlog = ["noq/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["noq/fast-apple-datapath"]
 # Use ring as the crypto backend.
-tls-ring = ["noq/ring", "iroh-relay/tls-ring", "webpki/ring"]
+tls-ring = ["noq/ring", "iroh-relay/tls-ring", "iroh-dns/tls-ring", "webpki/ring"]
 # Use aws-lc-rs as the crypto backend, unless `ring` is also enabled.
-tls-aws-lc-rs = ["noq/aws-lc-rs", "iroh-relay/tls-aws-lc-rs", "webpki/aws-lc-rs"]
+tls-aws-lc-rs = ["noq/aws-lc-rs", "iroh-relay/tls-aws-lc-rs", "iroh-dns/tls-aws-lc-rs", "webpki/aws-lc-rs"]
 # Unstable: Custom transport API (may change without notice)
 unstable-custom-transports = []
 

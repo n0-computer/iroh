@@ -35,7 +35,7 @@ hickory-resolver = { version = "=0.26.0-beta.1", features = ["tokio", "system-co
 cfg_aliases = "0.2.1"
 
 [features]
-default = ["tls-ring"]
+default = []
 tls-ring = ["rustls/ring", "hickory-resolver/https-ring"]
 tls-aws-lc-rs = ["rustls/aws-lc-rs", "hickory-resolver/https-aws-lc-rs"]
 
