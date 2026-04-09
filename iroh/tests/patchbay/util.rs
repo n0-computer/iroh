@@ -147,31 +147,41 @@ impl Pair {
         // Create an in-memory synchronization barrier to wait for both run functions to complete
         // before dropping endpoints. We use this to guarantee completion without awaiting
         // `Endpoint::close` on both sides. `Endpoint::close` often takes several seconds,
-        // which increases test runtime for all tests signficantly, and closing behavior
+        // which increases test runtime for all tests significantly, and closing behavior
         // should be tested for separately from the tests that use `Pair`.
         let barrier_server = Arc::new(Barrier::new(2));
         let barrier_client = barrier_server.clone();
 
         let server_task = server_device.spawn(|dev| {
             async move {
-                let endpoint = endpoint_builder(&dev, relay_map2).bind().await
+                let endpoint = endpoint_builder(&dev, relay_map2)
+                    .bind()
+                    .await
                     .context("server endpoint bind")?;
-                info!(id=%endpoint.id().fmt_short(), bound_sockets=?endpoint.bound_sockets(), "server endpoint bound");
+                info!(
+                    id=%endpoint.id().fmt_short(),
+                    bound_sockets=?endpoint.bound_sockets(),
+                    "server endpoint bound",
+                );
                 endpoint.online().await;
                 info!("endpoint online");
 
-                // Send address to client task. Make it a relay-only address, like in the default address lookup services.
+                // Send address to client task. Make it a relay-only address,
+                // like in the default address lookup services.
                 addr_tx.send(addr_relay_only(endpoint.addr())).unwrap();
                 let incoming = endpoint.accept().await.context("server accept incoming")?;
-                let conn = incoming.accept().anyerr()?.await
+                let conn = incoming
+                    .accept()
+                    .anyerr()?
+                    .await
                     .context("server accept handshake")?;
+
                 info!(remote=%conn.remote_id().fmt_short(), "accepted, executing run function");
                 watch_selected_path(&conn);
-
                 let res = server_run(dev.clone(), endpoint.clone(), conn).await;
                 match &res {
                     Ok(()) => info!("run function completed successfully"),
-                    Err(err)=> error!("run function failed: {err:#}"),
+                    Err(err) => error!("run function failed: {err:#}"),
                 }
 
                 // Wait until the client run function completed before dropping the endpoint.
@@ -185,22 +195,36 @@ impl Pair {
         })?;
         let client_task = client_device.spawn(move |dev| {
             async move {
-                let endpoint = endpoint_builder(&dev, self.relay_map).bind().await
+                let endpoint = endpoint_builder(&dev, self.relay_map)
+                    .bind()
+                    .await
                     .context("client endpoint bind")?;
-                info!(id=%endpoint.id().fmt_short(), bound_sockets=?endpoint.bound_sockets(), "client endpoint bound");
+                info!(
+                    id=%endpoint.id().fmt_short(),
+                    bound_sockets=?endpoint.bound_sockets(),
+                    "client endpoint bound",
+                );
 
-                let addr = addr_rx.await.std_context("server did not send its address")?;
+                let addr = addr_rx
+                    .await
+                    .std_context("server did not send its address")?;
                 info!(?addr, "connecting to server");
-                let conn = endpoint.connect(addr, TEST_ALPN).await
+                let conn = endpoint
+                    .connect(addr, TEST_ALPN)
+                    .await
                     .context("client connect")?;
                 watch_selected_path(&conn);
-                info!(remote=%conn.remote_id().fmt_short(), "connected, executing run function");
+                info!(
+                    remote=%conn.remote_id().fmt_short(),
+                    "connected, executing run function",
+                );
 
                 let res = client_run(dev.clone(), endpoint.clone(), conn).await;
                 match &res {
                     Ok(()) => info!("run function completed successfully"),
-                    Err(err)=> error!("run function failed: {err:#}"),
+                    Err(err) => error!("run function failed: {err:#}"),
                 }
+
                 // Wait until the server run function completed before dropping the endpoint.
                 barrier_client.wait().await;
                 for group in endpoint.metrics().groups() {
