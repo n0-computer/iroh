@@ -2,9 +2,7 @@
 
 use iroh_base::EndpointId;
 use iroh_relay::dns::DnsResolver;
-pub use iroh_relay::dns::{
-    DnsResolverExt, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING,
-};
+pub use iroh_relay::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
 use tracing::{Instrument, debug, debug_span, trace};
 

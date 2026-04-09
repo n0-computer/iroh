@@ -79,7 +79,7 @@ pub(crate) fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseE
     Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
 )]
 #[strum(serialize_all = "kebab-case")]
-pub enum IrohAttr {
+pub(crate) enum IrohAttr {
     /// URL of home relay.
     Relay,
     /// Address (IP or custom transport).
@@ -94,7 +94,7 @@ pub enum IrohAttr {
 /// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
 /// [`Display`].
 #[derive(Debug)]
-pub struct TxtAttrs<T> {
+pub(crate) struct TxtAttrs<T> {
     endpoint_id: EndpointId,
     attrs: BTreeMap<T, Vec<String>>,
 }

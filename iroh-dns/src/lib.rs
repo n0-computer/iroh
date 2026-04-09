@@ -6,6 +6,7 @@
 pub mod attrs;
 #[cfg(not(wasm_browser))]
 pub mod dns;
+pub mod endpoint_info;
 pub mod pkarr;
 
 use std::sync::LazyLock;

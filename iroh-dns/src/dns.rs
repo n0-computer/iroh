@@ -412,6 +412,58 @@ impl DnsResolver {
         let f = || self.lookup_ipv4_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms).await
     }
+
+    /// Looks up endpoint info by [`EndpointId`] and origin domain name.
+    ///
+    /// To lookup endpoints that published their endpoint info to the DNS servers run by n0,
+    /// pass [`N0_DNS_ENDPOINT_ORIGIN_PROD`] as `origin`.
+    pub async fn lookup_endpoint_by_id(
+        &self,
+        endpoint_id: &iroh_base::EndpointId,
+        origin: &str,
+    ) -> Result<crate::endpoint_info::EndpointInfo, LookupError> {
+        use crate::EndpointIdExt;
+        let name = format!("_iroh.{}.{}", endpoint_id.to_z32(), origin);
+        let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
+        let info = crate::endpoint_info::EndpointInfo::from_txt_lookup(name, lookup)?;
+        Ok(info)
+    }
+
+    /// Looks up endpoint info by DNS name.
+    pub async fn lookup_endpoint_by_domain_name(
+        &self,
+        name: &str,
+    ) -> Result<crate::endpoint_info::EndpointInfo, LookupError> {
+        let name = if name.starts_with("_iroh.") {
+            name.to_string()
+        } else {
+            format!("_iroh.{name}")
+        };
+        let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
+        let info = crate::endpoint_info::EndpointInfo::from_txt_lookup(name, lookup)?;
+        Ok(info)
+    }
+
+    /// Looks up endpoint info by DNS name in a staggered fashion.
+    pub async fn lookup_endpoint_by_domain_name_staggered(
+        &self,
+        name: &str,
+        delays_ms: &[u64],
+    ) -> Result<crate::endpoint_info::EndpointInfo, StaggeredError<LookupError>> {
+        let f = || self.lookup_endpoint_by_domain_name(name);
+        stagger_call(f, delays_ms).await
+    }
+
+    /// Looks up endpoint info by [`EndpointId`] and origin domain name in a staggered fashion.
+    pub async fn lookup_endpoint_by_id_staggered(
+        &self,
+        endpoint_id: &iroh_base::EndpointId,
+        origin: &str,
+        delays_ms: &[u64],
+    ) -> Result<crate::endpoint_info::EndpointInfo, StaggeredError<LookupError>> {
+        let f = || self.lookup_endpoint_by_id(endpoint_id, origin);
+        stagger_call(f, delays_ms).await
+    }
 }
 
 impl Default for DnsResolver {
@@ -654,7 +706,7 @@ impl<A: Iterator<Item = IpAddr>, B: Iterator<Item = IpAddr>> Iterator for Lookup
 ///
 /// The first call is performed immediately. The first call to succeed generates an Ok result
 /// ignoring any previous error. If all calls fail, an error summarizing all errors is returned.
-pub async fn stagger_call<
+async fn stagger_call<
     T,
     E: StackError + 'static,
     F: Fn() -> Fut,
