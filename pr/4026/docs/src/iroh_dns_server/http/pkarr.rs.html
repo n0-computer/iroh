@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>IntoResponse, AppError&gt; {
 <a href=#19 id=19 data-nosnippet>19</a>    <span class="kw">let </span>public_key = PublicKey::from_z32(<span class="kw-2">&amp;</span>key)
 <a href=#20 id=20 data-nosnippet>20</a>        .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, <span class="prelude-val">Some</span>(<span class="macro">format!</span>(<span class="string">"invalid key: {e}"</span>))))<span class="question-mark">?</span>;
-<a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">let </span>label = <span class="kw-2">&amp;</span>key[..<span class="number">10</span>.min(key.len())];
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">let </span>label = key.get(..<span class="number">10</span>).unwrap_or(<span class="kw-2">&amp;</span>key);
 <a href=#22 id=22 data-nosnippet>22</a>    <span class="kw">let </span>signed_packet = SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>body).map_err(|e| {
 <a href=#23 id=23 data-nosnippet>23</a>        AppError::new(
 <a href=#24 id=24 data-nosnippet>24</a>            StatusCode::BAD_REQUEST,
