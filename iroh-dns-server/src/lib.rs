@@ -29,6 +29,7 @@ mod tests {
         tls::{CaRootsConfig, default_provider},
     };
     use iroh_dns::{EndpointIdExt, pkarr::SignedPacket};
+    use mainline::{DhtBuilder, MutableItem, Testnet};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
     use rand::{CryptoRng, RngExt, SeedableRng};
@@ -258,7 +259,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         // run a mainline testnet
-        let testnet = mainline::Testnet::new_async(5).await.anyerr()?;
+        let testnet = Testnet::new_async(5).await.anyerr()?;
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
@@ -280,10 +281,10 @@ mod tests {
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         // publish to DHT using mainline directly
-        let mut dht_builder = mainline::DhtBuilder::default();
+        let mut dht_builder = DhtBuilder::default();
         dht_builder.bootstrap(&bootstrap);
         let dht = dht_builder.build().anyerr()?;
-        let item = mainline::MutableItem::new_signed_unchecked(
+        let item = MutableItem::new_signed_unchecked(
             *secret_key.public().as_bytes(),
             signed_packet.signature().to_bytes(),
             signed_packet.encoded_packet(),

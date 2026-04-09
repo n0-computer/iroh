@@ -6,7 +6,7 @@ use hickory_server::proto::{
     ProtoError,
     rr::{Name, RecordSet, RecordType, RrKey},
 };
-use iroh_dns::pkarr::SignedPacket;
+use iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError, Timestamp};
 use lru::LruCache;
 use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_error::{Result, StdResultExt};
@@ -187,11 +187,11 @@ impl ZoneStore {
 /// Convert a mainline [`MutableItem`] to a [`SignedPacket`].
 fn mutable_item_to_signed_packet(
     item: &MutableItem,
-) -> Result<SignedPacket, iroh_dns::pkarr::SignedPacketVerifyError> {
+) -> Result<SignedPacket, SignedPacketVerifyError> {
     SignedPacket::from_parts_unchecked(
         item.key(),
         item.signature(),
-        iroh_dns::pkarr::Timestamp::from_micros(item.seq() as u64),
+        Timestamp::from_micros(item.seq() as u64),
         item.value(),
     )
 }
@@ -283,7 +283,7 @@ impl ZoneCache {
 
 #[derive(Debug)]
 struct CachedZone {
-    timestamp: iroh_dns::pkarr::Timestamp,
+    timestamp: Timestamp,
     records: BTreeMap<RrKey, Arc<RecordSet>>,
 }
 
