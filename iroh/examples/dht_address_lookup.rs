@@ -9,7 +9,7 @@
 //!
 //! To see what is going on, run with `RUST_LOG=iroh_pkarr_address_lookup=debug`.
 use clap::Parser;
-use iroh::{Endpoint, EndpointId, endpoint::presets};
+use iroh::{Endpoint, EndpointId, address_lookup::{AddrFilter, DhtAddressLookup}, endpoint::presets};
 use iroh_relay::endpoint_info::EndpointIdExt;
 use n0_error::{Result, StdResultExt};
 use tracing::warn;
@@ -25,8 +25,8 @@ struct Args {
 async fn chat_server() -> Result<()> {
     let secret_key = iroh::SecretKey::generate();
     let endpoint_id = secret_key.public();
-    let address_lookup = iroh::address_lookup::DhtAddressLookup::builder()
-        .addr_filter(iroh::address_lookup::AddrFilter::unfiltered());
+    let address_lookup = DhtAddressLookup::builder()
+        .addr_filter(AddrFilter::unfiltered());
     let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![CHAT_ALPN.to_vec()])
         .secret_key(secret_key)
@@ -71,7 +71,7 @@ async fn chat_client(args: Args) -> Result<()> {
     let secret_key = iroh::SecretKey::generate();
     let endpoint_id = secret_key.public();
     // note: we don't pass a secret key here, because we don't need to publish our address, don't spam the DHT
-    let address_lookup = iroh::address_lookup::DhtAddressLookup::builder().no_publish();
+    let address_lookup = DhtAddressLookup::builder().no_publish();
     // we do not need to specify the alpn here, because we are not going to accept connections
     let endpoint = Endpoint::builder(presets::N0)
         .secret_key(secret_key)

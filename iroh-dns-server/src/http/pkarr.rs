@@ -18,7 +18,7 @@ pub async fn put(
 ) -> Result<impl IntoResponse, AppError> {
     let public_key = PublicKey::from_z32(&key)
         .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, Some(format!("invalid key: {e}"))))?;
-    let label = &key[..10.min(key.len())];
+    let label = key.get(..10).unwrap_or(&key);
     let signed_packet = SignedPacket::from_relay_payload(&public_key, &body).map_err(|e| {
         AppError::new(
             StatusCode::BAD_REQUEST,
