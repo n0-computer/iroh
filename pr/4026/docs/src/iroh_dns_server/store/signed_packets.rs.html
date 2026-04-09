@@ -216,7 +216,7 @@
 <a href=#216 id=216 data-nosnippet>216</a>                    <span class="prelude-val">Some</span>(packet) =&gt; {
 <a href=#217 id=217 data-nosnippet>217</a>                        <span class="kw">let </span>expiry_us = <span class="self">self</span>.options.eviction.as_micros() <span class="kw">as </span>u64;
 <a href=#218 id=218 data-nosnippet>218</a>                        <span class="kw">let </span>expired =
-<a href=#219 id=219 data-nosnippet>219</a>                            Timestamp::from_micros(Timestamp::now().as_micros() - expiry_us);
+<a href=#219 id=219 data-nosnippet>219</a>                            Timestamp::from_micros(Timestamp::now().as_micros().saturating_sub(expiry_us));
 <a href=#220 id=220 data-nosnippet>220</a>                        <span class="kw">if </span>packet.timestamp() &lt; expired {
 <a href=#221 id=221 data-nosnippet>221</a>                            tables
 <a href=#222 id=222 data-nosnippet>222</a>                                .update_time
@@ -435,7 +435,7 @@
 <a href=#435 id=435 data-nosnippet>435</a>        <span class="comment">// if we can't get the snapshot we exit the loop, main actor dead
 <a href=#436 id=436 data-nosnippet>436</a>        </span><span class="kw">let </span>snapshot = rx.<span class="kw">await</span>.std_context(<span class="string">"failed to get snapshot"</span>)<span class="question-mark">?</span>;
 <a href=#437 id=437 data-nosnippet>437</a>
-<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">let </span>expired = Timestamp::from_micros(Timestamp::now().as_micros() - expiry_us);
+<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">let </span>expired = Timestamp::from_micros(Timestamp::now().as_micros().saturating_sub(expiry_us));
 <a href=#439 id=439 data-nosnippet>439</a>        <span class="macro">trace!</span>(<span class="string">"evicting packets older than {}"</span>, fmt_time(expired));
 <a href=#440 id=440 data-nosnippet>440</a>        <span class="comment">// if getting the range fails we exit the loop and shut down
 <a href=#441 id=441 data-nosnippet>441</a>        // if individual reads fail we log the error and limp on
