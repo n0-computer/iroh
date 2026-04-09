@@ -38,7 +38,7 @@ fn signed_packet_to_mutable_item(packet: &SignedPacket) -> MutableItem {
         *packet.public_key().as_bytes(),
         packet.signature().to_bytes(),
         packet.encoded_packet(),
-        packet.timestamp() as i64,
+        packet.timestamp().as_micros() as i64,
         None,
     )
 }
@@ -50,7 +50,7 @@ fn mutable_item_to_signed_packet(
     SignedPacket::from_parts_unchecked(
         item.key(),
         item.signature(),
-        item.seq() as u64,
+        iroh_relay::pkarr::Timestamp::from_micros(item.seq() as u64),
         item.value(),
     )
 }

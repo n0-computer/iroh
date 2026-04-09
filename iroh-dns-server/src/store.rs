@@ -191,7 +191,7 @@ fn mutable_item_to_signed_packet(
     SignedPacket::from_parts_unchecked(
         item.key(),
         item.signature(),
-        item.seq() as u64,
+        iroh_dns::pkarr::Timestamp::from_micros(item.seq() as u64),
         item.value(),
     )
 }
@@ -283,7 +283,7 @@ impl ZoneCache {
 
 #[derive(Debug)]
 struct CachedZone {
-    timestamp: u64,
+    timestamp: iroh_dns::pkarr::Timestamp,
     records: BTreeMap<RrKey, Arc<RecordSet>>,
 }
 

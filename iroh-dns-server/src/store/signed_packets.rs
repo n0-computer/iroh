@@ -215,7 +215,8 @@ impl Actor {
                 match get_packet(&tables.signed_packets, &key)? {
                     Some(packet) => {
                         let expiry_us = self.options.eviction.as_micros() as u64;
-                        let expired = timestamp_now() - expiry_us;
+                        let expired =
+                            iroh_dns::pkarr::Timestamp::from_micros(timestamp_now() - expiry_us);
                         if packet.timestamp() < expired {
                             tables
                                 .update_time

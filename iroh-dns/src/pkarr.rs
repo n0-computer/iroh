@@ -69,8 +69,8 @@ impl SignedPacket {
             return Err(SignedPacketBuildError::PacketTooLarge(encoded_packet.len()));
         }
 
-        let timestamp = timestamp_now();
-        let signature = secret_key.sign(&signable(timestamp, &encoded_packet));
+        let timestamp = Timestamp::now();
+        let signature = secret_key.sign(&signable(timestamp.as_micros(), &encoded_packet));
 
         let mut bytes = Vec::with_capacity(HEADER_SIZE + encoded_packet.len());
         bytes.extend_from_slice(public_key.as_bytes());
@@ -162,9 +162,9 @@ impl SignedPacket {
         )
     }
 
-    /// Return the timestamp in microseconds since UNIX epoch.
-    pub fn timestamp(&self) -> u64 {
-        u64::from_be_bytes(
+    /// Return the timestamp.
+    pub fn timestamp(&self) -> Timestamp {
+        Timestamp::from_be_bytes(
             self.bytes[96..104]
                 .try_into()
                 .expect("8 bytes for timestamp"),
@@ -249,7 +249,7 @@ impl SignedPacket {
     pub fn from_parts_unchecked(
         public_key: &[u8],
         signature: &[u8],
-        timestamp: u64,
+        timestamp: Timestamp,
         encoded_packet: &[u8],
     ) -> Result<Self, SignedPacketVerifyError> {
         let mut bytes = Vec::with_capacity(HEADER_SIZE + encoded_packet.len());
@@ -319,12 +319,59 @@ fn normalize_name(origin: &str, name: String) -> String {
     format!("{name}.{origin}")
 }
 
-fn timestamp_now() -> u64 {
-    use n0_future::time::SystemTime;
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("system time before UNIX epoch")
-        .as_micros() as u64
+/// A pkarr timestamp in microseconds since the UNIX epoch.
+///
+/// Used as the `seq` field in BEP_0044 DHT mutable items. Per the spec, a new
+/// publish must have a strictly higher timestamp than the previous one, or DHT
+/// nodes will reject the update.
+///
+/// Currently uses `SystemTime::now()`. If monotonicity across NTP clock
+/// corrections becomes a concern, this is the single place to add it.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Timestamp(u64);
+
+impl Timestamp {
+    /// Returns the current timestamp.
+    pub fn now() -> Self {
+        use n0_future::time::SystemTime;
+        let micros = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system time before UNIX epoch")
+            .as_micros() as u64;
+        Self(micros)
+    }
+
+    /// Creates a timestamp from a raw microseconds value.
+    pub fn from_micros(micros: u64) -> Self {
+        Self(micros)
+    }
+
+    /// Returns the raw microseconds value.
+    pub fn as_micros(self) -> u64 {
+        self.0
+    }
+
+    /// Returns the big-endian byte representation.
+    pub fn to_be_bytes(self) -> [u8; 8] {
+        self.0.to_be_bytes()
+    }
+
+    /// Parses from big-endian bytes.
+    pub fn from_be_bytes(bytes: [u8; 8]) -> Self {
+        Self(u64::from_be_bytes(bytes))
+    }
+}
+
+impl fmt::Debug for Timestamp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Timestamp({}µs)", self.0)
+    }
+}
+
+impl fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 /// Error building a signed packet.

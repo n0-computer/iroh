@@ -287,7 +287,7 @@ mod tests {
             *secret_key.public().as_bytes(),
             signed_packet.signature().to_bytes(),
             signed_packet.encoded_packet(),
-            signed_packet.timestamp() as i64,
+            signed_packet.timestamp().as_micros() as i64,
             None,
         );
         dht.clone()
