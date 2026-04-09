@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use iroh_dns::pkarr::SignedPacket;
+use iroh_dns::pkarr::{SignedPacket, Timestamp};
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
 use redb::{
     Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition,
@@ -59,7 +59,7 @@ enum Message {
         res: oneshot::Sender<Snapshot>,
     },
     CheckExpired {
-        time: u64,
+        time: Timestamp,
         key: PublicKeyBytes,
     },
 }
@@ -216,7 +216,7 @@ impl Actor {
                     Some(packet) => {
                         let expiry_us = self.options.eviction.as_micros() as u64;
                         let expired =
-                            iroh_dns::pkarr::Timestamp::from_micros(timestamp_now() - expiry_us);
+                            Timestamp::from_micros(Timestamp::now().as_micros() - expiry_us);
                         if packet.timestamp() < expired {
                             tables
                                 .update_time
@@ -249,16 +249,9 @@ impl Actor {
     }
 }
 
-fn fmt_time(t: u64) -> String {
-    let duration = std::time::Duration::from_micros(t);
+fn fmt_time(t: Timestamp) -> String {
+    let duration = std::time::Duration::from_micros(t.as_micros());
     humantime::format_rfc3339_micros(SystemTime::UNIX_EPOCH + duration).to_string()
-}
-
-fn timestamp_now() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("system time before UNIX epoch")
-        .as_micros() as u64
 }
 
 /// A struct similar to [`redb::Table`] but for all tables that make up the
@@ -385,7 +378,7 @@ impl SignedPacketStore {
 /// Serialize a signed packet for storage: `<8 bytes last_seen><packet bytes>`.
 fn serialize(packet: &SignedPacket) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + packet.as_bytes().len());
-    out.extend_from_slice(&timestamp_now().to_be_bytes());
+    out.extend_from_slice(&Timestamp::now().to_be_bytes());
     out.extend_from_slice(packet.as_bytes());
     out
 }
@@ -442,7 +435,7 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
         // if we can't get the snapshot we exit the loop, main actor dead
         let snapshot = rx.await.std_context("failed to get snapshot")?;
 
-        let expired = timestamp_now() - expiry_us;
+        let expired = Timestamp::from_micros(Timestamp::now().as_micros() - expiry_us);
         trace!("evicting packets older than {}", fmt_time(expired));
         // if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
@@ -458,7 +451,7 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
                     continue;
                 }
             };
-            let time = u64::from_be_bytes(time.value());
+            let time = Timestamp::from_be_bytes(time.value());
             trace!("evicting expired packets at {}", fmt_time(time));
             for item in keys {
                 let key = match item {
