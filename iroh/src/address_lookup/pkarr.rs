@@ -300,7 +300,7 @@ impl PkarrPublisher {
     /// Creates a new [`PkarrPublisher`] with a custom TTL and republish intervals.
     ///
     /// This allows creating the publisher with custom time-to-live values of the
-    /// [`SignedPacket`](iroh_relay::pkarr::SignedPacket)s as well as a custom republish interval.
+    /// [`SignedPacket`]s as well as a custom republish interval.
     fn new(
         secret_key: SecretKey,
         pkarr_relay: Url,
@@ -561,7 +561,7 @@ impl AddressLookup for PkarrResolver {
     }
 }
 
-/// A [pkarr](https://pkarr.org) client to publish [`SignedPacket`](iroh_relay::pkarr::SignedPacket)s to a pkarr relay.
+/// A [pkarr](https://pkarr.org) client to publish [`SignedPacket`]s to a pkarr relay.
 ///
 /// [pkarr]: https://pkarr.org
 #[derive(Debug, Clone)]

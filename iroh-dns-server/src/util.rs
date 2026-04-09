@@ -21,8 +21,8 @@ use n0_error::{e, stack_error};
 /// A lightweight `[u8; 32]` wrapper used as a key for caches and database lookups.
 ///
 /// Does not validate that the bytes are a valid public key on construction.
-/// If constructed from invalid bytes, methods like [`Display`] and [`Self::to_z32`]
-/// will panic. In practice, bytes always originate from a validated [`PublicKey`]
+/// If constructed from invalid bytes, methods like `Display` and `to_z32`
+/// will panic. In practice, bytes always originate from a validated `PublicKey`
 /// or a database that was written from one.
 #[derive(derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy)]
 pub struct PublicKeyBytes([u8; 32]);
@@ -41,7 +41,7 @@ impl PublicKeyBytes {
     /// # Safety (logical)
     ///
     /// The caller must ensure the bytes represent a valid Ed25519 public key.
-    /// Passing invalid bytes will cause panics in [`Display`], [`Debug`], and [`Self::to_z32`].
+    /// Passing invalid bytes will cause panics in `Display`, `Debug`, and `to_z32`.
     pub fn new_unchecked(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
