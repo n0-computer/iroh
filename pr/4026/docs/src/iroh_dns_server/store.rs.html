@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>    ProtoError,
 <a href=#7 id=7 data-nosnippet>7</a>    rr::{Name, RecordSet, RecordType, RrKey},
 <a href=#8 id=8 data-nosnippet>8</a>};
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>iroh_dns::pkarr::SignedPacket;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError, Timestamp};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>lru::LruCache;
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>mainline::{Dht, DhtBuilder, MutableItem};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
@@ -187,11 +187,11 @@
 <a href=#187 id=187 data-nosnippet>187</a><span class="doccomment">/// Convert a mainline [`MutableItem`] to a [`SignedPacket`].
 <a href=#188 id=188 data-nosnippet>188</a></span><span class="kw">fn </span>mutable_item_to_signed_packet(
 <a href=#189 id=189 data-nosnippet>189</a>    item: <span class="kw-2">&amp;</span>MutableItem,
-<a href=#190 id=190 data-nosnippet>190</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket, iroh_dns::pkarr::SignedPacketVerifyError&gt; {
+<a href=#190 id=190 data-nosnippet>190</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket, SignedPacketVerifyError&gt; {
 <a href=#191 id=191 data-nosnippet>191</a>    SignedPacket::from_parts_unchecked(
 <a href=#192 id=192 data-nosnippet>192</a>        item.key(),
 <a href=#193 id=193 data-nosnippet>193</a>        item.signature(),
-<a href=#194 id=194 data-nosnippet>194</a>        iroh_dns::pkarr::Timestamp::from_micros(item.seq() <span class="kw">as </span>u64),
+<a href=#194 id=194 data-nosnippet>194</a>        Timestamp::from_micros(item.seq() <span class="kw">as </span>u64),
 <a href=#195 id=195 data-nosnippet>195</a>        item.value(),
 <a href=#196 id=196 data-nosnippet>196</a>    )
 <a href=#197 id=197 data-nosnippet>197</a>}
@@ -283,7 +283,7 @@
 <a href=#283 id=283 data-nosnippet>283</a>
 <a href=#284 id=284 data-nosnippet>284</a><span class="attr">#[derive(Debug)]
 <a href=#285 id=285 data-nosnippet>285</a></span><span class="kw">struct </span>CachedZone {
-<a href=#286 id=286 data-nosnippet>286</a>    timestamp: iroh_dns::pkarr::Timestamp,
+<a href=#286 id=286 data-nosnippet>286</a>    timestamp: Timestamp,
 <a href=#287 id=287 data-nosnippet>287</a>    records: BTreeMap&lt;RrKey, Arc&lt;RecordSet&gt;&gt;,
 <a href=#288 id=288 data-nosnippet>288</a>}
 <a href=#289 id=289 data-nosnippet>289</a>
