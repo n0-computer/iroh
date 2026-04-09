@@ -51,7 +51,6 @@ pub use crate::{
     DecodingError, EndpointIdExt,
     attrs::{EncodingError, IROH_TXT_NAME, ParseError},
 };
-
 use crate::{
     attrs::{IrohAttr, TxtAttrs},
     pkarr,
