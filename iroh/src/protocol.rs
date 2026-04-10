@@ -43,7 +43,6 @@
 use std::{
     collections::BTreeMap,
     future::Future,
-    net::SocketAddr,
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -59,7 +58,7 @@ use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
-    endpoint::{Accepting, Connection, IncomingAddr, RemoteEndpointIdError, VarInt, quic},
+    endpoint::{Accepting, Connection, RemoteEndpointIdError, VarInt, quic},
 };
 
 /// The built router.
@@ -104,11 +103,12 @@ pub struct Router {
 }
 
 /// Builder for creating a [`Router`] for accepting protocols.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct RouterBuilder {
     endpoint: Endpoint,
     protocols: ProtocolMap,
-    connection_filter: Option<Arc<dyn ConnectionFilter>>,
+    #[debug(skip)]
+    connection_filter: Option<ConnectionFilter>,
 }
 
 #[allow(missing_docs)]
@@ -231,32 +231,25 @@ impl AcceptAlpnOutcome {
     }
 }
 
-/// A filter that allows rejecting incoming connections early, based on socket
-/// address, endpoint ID, or ALPN.
-pub trait ConnectionFilter: std::fmt::Debug + Send + Sync + 'static {
-    /// Accept an incoming connection by its socket address.
-    ///
-    /// If `validated` is false, this is just the socket address in the UDP packet,
-    /// which might be spoofed. If `validated` is true, the remote has responded
-    /// to a retry and we know that the socket address is correct.
-    fn accept_addr(&self, _addr: SocketAddr, _validated: bool) -> AcceptAddrOutcome {
-        AcceptAddrOutcome::Accept
-    }
-
-    /// Accept an incoming connection by its endpoint ID.
-    fn accept_endpoint_id(&self, _endpoint_id: EndpointId) -> AcceptOutcome {
-        AcceptOutcome::Accept
-    }
-
-    /// Accept an incoming connection by its ALPN. This can be used to implement
-    /// protocol level access control without having to wrap the protocol handler.
-    ///
-    /// This is called after the connection is fully established, so the filter
-    /// can provide a close error code and reason.
-    fn accept_alpn(&self, _endpoint_id: EndpointId, _alpn: &[u8]) -> AcceptAlpnOutcome {
-        AcceptAlpnOutcome::Accept
-    }
-}
+/// A filter that decides whether to accept an incoming connection before the
+/// TLS handshake completes.
+///
+/// The filter is called with the raw [`Incoming`] for each connection attempt
+/// and returns an [`AcceptAddrOutcome`] that determines what happens next.
+///
+/// Implementors have full access to the [`Incoming`] and can use any of its
+/// methods (including [`Incoming::decrypt`]) to make their decision. Note that
+/// `decrypt()` is relatively expensive, so filters should reject based on
+/// cheaper signals (e.g. remote address) first.
+///
+/// For a higher-level filter API that splits the decision into named methods
+/// (e.g. by socket address or endpoint id, or by proposed ALPNs from the
+/// ClientHello), see the `connection-filter` example.
+///
+/// [`Incoming`]: crate::endpoint::Incoming
+/// [`Incoming::decrypt`]: crate::endpoint::Incoming::decrypt
+pub type ConnectionFilter =
+    Arc<dyn Fn(&crate::endpoint::Incoming) -> AcceptAddrOutcome + Send + Sync + 'static>;
 
 /// Handler for incoming connections.
 ///
@@ -501,7 +494,7 @@ impl RouterBuilder {
     }
 
     /// Sets a [`ConnectionFilter`] for the router.
-    pub fn connection_filter(mut self, filter: Arc<dyn ConnectionFilter>) -> Self {
+    pub fn connection_filter(mut self, filter: ConnectionFilter) -> Self {
         self.connection_filter = Some(filter);
         self
     }
@@ -591,59 +584,33 @@ impl RouterBuilder {
                             break; // Endpoint is closed.
                         };
 
-                        let addr = incoming.remote_addr();
                         if let Some(filter) = &connection_filter {
-                            match &addr {
-                                // Addr filter: direct connections only.
-                                IncomingAddr::Ip(socket_addr) => {
-                                    let validated = incoming.remote_addr_validated();
-                                    match filter.accept_addr(*socket_addr, validated) {
-                                        AcceptAddrOutcome::Accept => {}
-                                        AcceptAddrOutcome::Retry => {
-                                            if validated {
-                                                incoming.refuse();
-                                            } else if let Err(err) = incoming.retry() {
-                                                err.into_incoming().refuse();
-                                            }
-                                            continue;
-                                        }
-                                        AcceptAddrOutcome::Reject => {
-                                            incoming.refuse();
-                                            continue;
-                                        }
-                                        AcceptAddrOutcome::Ignore => {
-                                            incoming.ignore();
-                                            continue;
-                                        }
+                            match filter(&incoming) {
+                                AcceptAddrOutcome::Accept => {}
+                                AcceptAddrOutcome::Retry => {
+                                    if incoming.remote_addr_validated() {
+                                        incoming.refuse();
+                                    } else if let Err(err) = incoming.retry() {
+                                        err.into_incoming().refuse();
                                     }
+                                    continue;
                                 }
-                                // Endpoint ID filter: relay connections only.
-                                // We have the endpoint ID from the relay frame,
-                                // before the TLS handshake.
-                                IncomingAddr::Relay { endpoint_id, .. } => {
-                                    match filter.accept_endpoint_id(*endpoint_id) {
-                                        AcceptOutcome::Accept => {}
-                                        AcceptOutcome::Reject => {
-                                            incoming.refuse();
-                                            continue;
-                                        }
-                                        AcceptOutcome::Ignore => {
-                                            incoming.ignore();
-                                            continue;
-                                        }
-                                    }
+                                AcceptAddrOutcome::Reject => {
+                                    incoming.refuse();
+                                    continue;
                                 }
-                                // Custom transports: no pre-handshake filtering possible.
-                                IncomingAddr::Custom(_) => {}
+                                AcceptAddrOutcome::Ignore => {
+                                    incoming.ignore();
+                                    continue;
+                                }
                             }
                         }
 
                         let protocols = protocols.clone();
-                        let filter = connection_filter.clone();
                         let token = handler_cancel_token.child_token();
                         let span = info_span!("router.accept", me=%endpoint.id().fmt_short(), remote=Empty, alpn=Empty);
                         join_set.spawn(async move {
-                            token.run_until_cancelled(handle_connection(incoming, protocols, filter)).await
+                            token.run_until_cancelled(handle_connection(incoming, protocols)).await
                         }.instrument(span));
                     },
                 }
@@ -677,11 +644,7 @@ impl RouterBuilder {
     }
 }
 
-async fn handle_connection(
-    incoming: crate::endpoint::Incoming,
-    protocols: Arc<ProtocolMap>,
-    filter: Option<Arc<dyn ConnectionFilter>>,
-) {
+async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
     let mut accepting = match incoming.accept() {
         Ok(conn) => conn,
         Err(err) => {
@@ -708,22 +671,6 @@ async fn handle_connection(
                 "remote",
                 tracing::field::display(connection.remote_id().fmt_short()),
             );
-
-            // ALPN filter: runs after the connection is established for both
-            // relay and direct connections.
-            if let Some(filter) = &filter {
-                match filter.accept_alpn(connection.remote_id(), &alpn) {
-                    AcceptAlpnOutcome::Accept => {}
-                    AcceptAlpnOutcome::Close { error_code, reason } => {
-                        trace!(
-                            "Connection rejected by ALPN filter: endpoint {}",
-                            connection.remote_id().fmt_short()
-                        );
-                        connection.close(error_code, &reason);
-                        return;
-                    }
-                }
-            }
 
             if let Err(err) = handler.accept(connection).await {
                 warn!("Handling incoming connection ended with error: {err}");
