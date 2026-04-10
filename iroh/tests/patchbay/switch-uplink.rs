@@ -161,7 +161,7 @@ async fn run_switch_uplink(switching_side: Side, kind: SwitchKind) -> Result {
             .context("ping_open before switch")?;
         paths
             .wait_selected(timeout, |p| {
-                kind.path_switched(&first.remote_addr(), &p.remote_addr())
+                kind.path_switched(first.remote_addr(), p.remote_addr())
             })
             .await
             .context("path did not switch")?;
