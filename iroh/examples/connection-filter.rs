@@ -25,6 +25,24 @@
 //!
 //! Each kind of check has its own rate limit using the `governor` crate.
 //!
+//! ## What each layer is for
+//!
+//! The first two layers (socket address and endpoint id) are **adversarial
+//! defenses**. They drop connection attempts as cheaply as possible from
+//! sources that are flooding the endpoint. The address layer in particular
+//! uses retry tokens to prevent spoofing.
+//!
+//! The third layer (proposed ALPNs) is **fairness/QoS for legitimate clients**
+//! under load. It assumes the connection has already passed the cheaper
+//! adversarial checks. It is *not* a defense — a multi-ALPN ClientHello can
+//! consume multiple tokens, which an adversary could exploit if they could
+//! reach this stage. They can't, though, because the address/endpoint-id
+//! layers stop them first.
+//!
+//! In short:
+//! - First two layers: **stop adversaries**.
+//! - Third layer: **prioritize between honest clients** when load is high.
+//!
 //! ## Usage
 //!
 //! ```sh
@@ -166,8 +184,15 @@ impl RateLimitedFilter {
             return AcceptAddrOutcome::Ignore;
         };
         let Some(alpns) = decrypted.alpns() else {
-            // No ALPN extension in the ClientHello — accept by default.
-            return AcceptAddrOutcome::Accept;
+            // ALPN extraction failed. Iroh always sends ALPNs in a single
+            // Initial packet today, so this means either a non-iroh client
+            // or a malformed handshake. Reject.
+            //
+            // Note: this would need to change if iroh adopts post-quantum
+            // key exchange, since PQ key shares can push the ClientHello
+            // past a single Initial packet.
+            println!("✗ No ALPNs in ClientHello");
+            return AcceptAddrOutcome::Reject;
         };
         for alpn in alpns {
             let Ok(alpn) = alpn else {
