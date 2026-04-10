@@ -793,9 +793,10 @@ mod tests {
         Access, AccessConfig, NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER, RelayConfig,
         Server, ServerConfig, SpawnError,
     };
+    use iroh_dns::dns::DnsResolver;
+
     use crate::{
         client::{ClientBuilder, ConnectError},
-        dns::DnsResolver,
         protos::{
             handshake,
             relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},

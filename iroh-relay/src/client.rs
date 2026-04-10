@@ -21,8 +21,6 @@ use tracing::{Level, debug, event, trace};
 use url::Url;
 
 pub use self::conn::{RecvError, SendError};
-#[cfg(not(wasm_browser))]
-use crate::dns::{DnsError, DnsResolver};
 use crate::{
     KeyCache,
     http::RELAY_PATH,
@@ -31,6 +29,8 @@ use crate::{
         relay::{ClientToRelayMsg, RelayToClientMsg},
     },
 };
+#[cfg(not(wasm_browser))]
+use iroh_dns::dns::{DnsError, DnsResolver};
 
 pub(crate) mod conn;
 #[cfg(not(wasm_browser))]

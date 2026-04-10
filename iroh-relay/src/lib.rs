@@ -45,9 +45,6 @@ mod key_cache;
 mod relay_map;
 pub use key_cache::KeyCache;
 
-#[cfg(not(wasm_browser))]
-pub mod dns;
-
 pub use protos::relay::MAX_PACKET_SIZE;
 
 pub use self::{

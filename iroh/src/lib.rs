@@ -284,9 +284,9 @@ pub use iroh_base::{
     EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
     Signature, SignatureError, TransportAddr,
 };
-pub use iroh_dns::endpoint_info;
 #[cfg(not(wasm_browser))]
-pub use iroh_relay::dns;
+pub use iroh_dns::dns;
+pub use iroh_dns::endpoint_info;
 pub use iroh_relay::{RelayConfig, RelayMap};
 pub use n0_watcher::Watcher;
 pub use net_report::{Report as NetReport, TIMEOUT as NET_REPORT_TIMEOUT};

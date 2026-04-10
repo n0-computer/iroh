@@ -22,9 +22,9 @@ use defaults::timeouts::PROBES_TIMEOUT;
 pub use defaults::timeouts::TIMEOUT;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
-use iroh_relay::RelayConfig;
+use iroh_dns::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
-use iroh_relay::dns::DnsResolver;
+use iroh_relay::RelayConfig;
 #[cfg(not(wasm_browser))]
 use iroh_relay::quic::QuicClient;
 use iroh_relay::{
@@ -953,10 +953,8 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use iroh_base::RelayUrl;
-    use iroh_relay::{
-        dns::DnsResolver,
-        tls::{CaRootsConfig, default_provider},
-    };
+    use iroh_dns::dns::DnsResolver;
+    use iroh_relay::tls::{CaRootsConfig, default_provider};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
     use tokio_util::sync::CancellationToken;

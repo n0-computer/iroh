@@ -1127,10 +1127,11 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tracing::info;
 
+    use iroh_dns::dns::DnsResolver;
+
     use super::*;
     use crate::{
         client::{Client, ClientBuilder, ConnectError, conn::Conn},
-        dns::DnsResolver,
         protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         tls::{CaRootsConfig, default_provider},
     };
