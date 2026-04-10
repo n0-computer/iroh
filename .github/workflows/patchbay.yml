@@ -40,17 +40,20 @@ jobs:
         run: cargo make patchbay --no-run
 
       - name: Run patchbay tests
-        id: tests
-        run: cargo make patchbay
+        run: |
+          set -o pipefail
+          cargo make patchbay 2>&1 | tee "$RUNNER_TEMP/logs.txt"
         env:
-          RUST_LOG: ${{ runner.debug && 'trace' || 'debug' }}
           PATCHBAY_LOG: trace
+          RUST_LOG: trace
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: patchbay-testdir-${{ github.sha }}
-          path: target/testdir-current/
+          path: |
+            target/testdir-current/
+            ${{ runner.temp }}/logs.txt
           retention-days: 7
           if-no-files-found: ignore
