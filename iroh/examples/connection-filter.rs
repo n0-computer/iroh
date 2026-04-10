@@ -4,7 +4,7 @@
 //!
 //! ```ignore
 //! pub type ConnectionFilter =
-//!     Arc<dyn Fn(&Incoming) -> AcceptAddrOutcome + Send + Sync + 'static>;
+//!     Arc<dyn Fn(&Incoming) -> IncomingFilterOutcome + Send + Sync + 'static>;
 //! ```
 //!
 //! That gives you full control but doesn't structure the decision in any way.
@@ -59,7 +59,7 @@ use governor::{Quota, RateLimiter, clock::DefaultClock, state::keyed::DashMapSta
 use iroh::{
     Endpoint, EndpointId,
     endpoint::{Connection, Incoming, IncomingAddr, presets},
-    protocol::{AcceptAddrOutcome, AcceptError, ProtocolHandler, Router},
+    protocol::{AcceptError, IncomingFilterOutcome, ProtocolHandler, Router},
 };
 use n0_error::{Result, StdResultExt};
 
@@ -129,16 +129,16 @@ impl RateLimitedFilter {
     ///
     /// `validated` is `true` if the remote has already responded to a retry
     /// packet, proving it owns the address.
-    fn accept_addr(&self, addr: SocketAddr, validated: bool) -> AcceptAddrOutcome {
+    fn accept_addr(&self, addr: SocketAddr, validated: bool) -> IncomingFilterOutcome {
         if validated {
             match self.validated_limiter.check_key(&addr) {
                 Ok(_) => {
                     println!("✓ Validated address accepted: {addr}");
-                    AcceptAddrOutcome::Accept
+                    IncomingFilterOutcome::Accept
                 }
                 Err(_) => {
                     println!("✗ Validated address rate-limited: {addr}");
-                    AcceptAddrOutcome::Reject
+                    IncomingFilterOutcome::Reject
                 }
             }
         } else {
@@ -146,26 +146,26 @@ impl RateLimitedFilter {
             match self.addr_limiter.check_key(&addr) {
                 Ok(_) => {
                     println!("⟳ Address requires validation: {addr}");
-                    AcceptAddrOutcome::Retry
+                    IncomingFilterOutcome::Retry
                 }
                 Err(_) => {
                     println!("✗ Unvalidated address rate-limited (ignored): {addr}");
-                    AcceptAddrOutcome::Ignore
+                    IncomingFilterOutcome::Ignore
                 }
             }
         }
     }
 
     /// Decide whether to accept a relay connection by endpoint id.
-    fn accept_endpoint_id(&self, endpoint_id: EndpointId) -> AcceptAddrOutcome {
+    fn accept_endpoint_id(&self, endpoint_id: EndpointId) -> IncomingFilterOutcome {
         match self.endpoint_limiter.check_key(&endpoint_id) {
             Ok(_) => {
                 println!("✓ Endpoint id accepted: {endpoint_id}");
-                AcceptAddrOutcome::Accept
+                IncomingFilterOutcome::Accept
             }
             Err(_) => {
                 println!("✗ Endpoint id rate-limited: {endpoint_id}");
-                AcceptAddrOutcome::Reject
+                IncomingFilterOutcome::Reject
             }
         }
     }
@@ -177,11 +177,11 @@ impl RateLimitedFilter {
     /// is relatively expensive (~1200 bytes copied + decrypted), so this is
     /// only worth it if you actually need to make a decision based on the
     /// proposed ALPNs.
-    fn accept_handshake_alpns(&self, incoming: &Incoming) -> AcceptAddrOutcome {
+    fn accept_handshake_alpns(&self, incoming: &Incoming) -> IncomingFilterOutcome {
         let Some(decrypted) = incoming.decrypt() else {
             // Decrypt failed — best to drop silently.
             println!("✗ Failed to decrypt initial");
-            return AcceptAddrOutcome::Ignore;
+            return IncomingFilterOutcome::Ignore;
         };
         let Some(alpns) = decrypted.alpns() else {
             // ALPN extraction failed. Iroh always sends ALPNs in a single
@@ -192,12 +192,12 @@ impl RateLimitedFilter {
             // key exchange, since PQ key shares can push the ClientHello
             // past a single Initial packet.
             println!("✗ No ALPNs in ClientHello");
-            return AcceptAddrOutcome::Reject;
+            return IncomingFilterOutcome::Reject;
         };
         for alpn in alpns {
             let Ok(alpn) = alpn else {
                 println!("✗ Failed to parse ALPN");
-                return AcceptAddrOutcome::Reject;
+                return IncomingFilterOutcome::Reject;
             };
             let alpn_vec = alpn.to_vec();
             if self.alpn_limiter.check_key(&alpn_vec).is_err() {
@@ -205,11 +205,11 @@ impl RateLimitedFilter {
                     "✗ ALPN rate-limited: {}",
                     String::from_utf8_lossy(&alpn_vec)
                 );
-                return AcceptAddrOutcome::Reject;
+                return IncomingFilterOutcome::Reject;
             }
             println!("✓ ALPN accepted: {}", String::from_utf8_lossy(&alpn_vec));
         }
-        AcceptAddrOutcome::Accept
+        IncomingFilterOutcome::Accept
     }
 }
 
@@ -219,7 +219,7 @@ impl RateLimitedFilter {
 /// hook signature. It handles the address/endpoint-id dispatch and chains
 /// the cheaper checks first (address or endpoint id) before the expensive
 /// `decrypt()`-based ALPN check.
-fn dispatch(filter: &RateLimitedFilter, incoming: &Incoming) -> AcceptAddrOutcome {
+fn dispatch(filter: &RateLimitedFilter, incoming: &Incoming) -> IncomingFilterOutcome {
     // First: cheap pre-decrypt checks.
     let outcome = match incoming.remote_addr() {
         IncomingAddr::Ip(addr) => {
@@ -229,9 +229,9 @@ fn dispatch(filter: &RateLimitedFilter, incoming: &Incoming) -> AcceptAddrOutcom
         IncomingAddr::Relay { endpoint_id, .. } => filter.accept_endpoint_id(endpoint_id),
         // Custom transports and any future variants: no pre-handshake info
         // to filter on.
-        _ => AcceptAddrOutcome::Accept,
+        _ => IncomingFilterOutcome::Accept,
     };
-    if !matches!(outcome, AcceptAddrOutcome::Accept) {
+    if !matches!(outcome, IncomingFilterOutcome::Accept) {
         return outcome;
     }
     // Then: expensive ALPN check.
@@ -246,7 +246,7 @@ async fn main() -> Result<()> {
 
     // Wrap the filter struct in a closure that the framework can call.
     let filter = Arc::new(RateLimitedFilter::new());
-    let connection_filter: Arc<dyn Fn(&Incoming) -> AcceptAddrOutcome + Send + Sync + 'static> = {
+    let connection_filter: Arc<dyn Fn(&Incoming) -> IncomingFilterOutcome + Send + Sync + 'static> = {
         let filter = filter.clone();
         Arc::new(move |incoming| dispatch(&filter, incoming))
     };
