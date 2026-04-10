@@ -80,13 +80,77 @@ impl ProtocolHandler for Echo {
     }
 }
 
+// -- Friendly filter trait --
+//
+// The framework's `ConnectionFilter` is a single closure that takes
+// `&Incoming`. That gives full power but no structure. This trait is a
+// **copy-paste reference** that splits the decision into named methods, one
+// per kind of pre-handshake check. It is not part of the framework — it
+// lives in this example so users can adapt it to their own needs.
+
+/// A friendlier filter trait with named decision points.
+///
+/// All decision methods have a default impl that accepts. Override only
+/// what you care about. The [`apply`](AddrConnectionFilter::apply) method
+/// turns any implementation into the verdict the framework expects,
+/// calling the cheap checks before paying the cost of `decrypt()`.
+trait AddrConnectionFilter: Send + Sync + 'static {
+    /// Decide whether to accept a direct (UDP) connection by socket address.
+    ///
+    /// `validated` is `true` if the remote has already responded to a retry
+    /// packet, proving it owns the address.
+    fn accept_addr(&self, _addr: SocketAddr, _validated: bool) -> IncomingFilterOutcome {
+        IncomingFilterOutcome::Accept
+    }
+
+    /// Decide whether to accept a relay connection by endpoint id.
+    ///
+    /// We know the endpoint id from the relay frame before the TLS
+    /// handshake starts.
+    fn accept_endpoint_id(&self, _endpoint_id: EndpointId) -> IncomingFilterOutcome {
+        IncomingFilterOutcome::Accept
+    }
+
+    /// Decide whether to accept a connection based on the ALPNs it proposes
+    /// in its TLS ClientHello.
+    ///
+    /// This is called only after the cheaper checks above pass, since it
+    /// requires decrypting the Initial packet (~1200 bytes copied +
+    /// decrypted). Override only if you actually want to filter on
+    /// proposed ALPNs.
+    fn accept_handshake_alpns(&self, _incoming: &Incoming) -> IncomingFilterOutcome {
+        IncomingFilterOutcome::Accept
+    }
+
+    /// Dispatch the decision through the named methods above.
+    ///
+    /// This is the bridge from the friendly trait to the framework's
+    /// `ConnectionFilter` closure signature. It picks the right method
+    /// based on the connection type and chains the cheap checks first
+    /// before the expensive `decrypt()`-based ALPN check.
+    fn apply(&self, incoming: &Incoming) -> IncomingFilterOutcome {
+        // First: cheap pre-decrypt checks.
+        let outcome = match incoming.remote_addr() {
+            IncomingAddr::Ip(addr) => {
+                let validated = incoming.remote_addr_validated();
+                self.accept_addr(addr, validated)
+            }
+            IncomingAddr::Relay { endpoint_id, .. } => self.accept_endpoint_id(endpoint_id),
+            // Custom transports and any future variants: no pre-handshake
+            // info to filter on.
+            _ => IncomingFilterOutcome::Accept,
+        };
+        if !matches!(outcome, IncomingFilterOutcome::Accept) {
+            return outcome;
+        }
+        // Then: expensive ALPN check.
+        self.accept_handshake_alpns(incoming)
+    }
+}
+
 // -- Rate limited filter --
 
-/// Rate-limited filter with named decision points.
-///
-/// This type doesn't implement any framework trait — it's just an ordinary
-/// struct with methods for each check. The `dispatch` method below is what
-/// turns it into a [`ConnectionFilter`].
+/// Rate-limited filter that implements [`AddrConnectionFilter`].
 #[derive(Debug)]
 struct RateLimitedFilter {
     /// Rate limiter for initial (unvalidated) addresses.
@@ -124,11 +188,9 @@ impl RateLimitedFilter {
             alpn_limiter,
         }
     }
+}
 
-    /// Decide whether to accept a direct connection by socket address.
-    ///
-    /// `validated` is `true` if the remote has already responded to a retry
-    /// packet, proving it owns the address.
+impl AddrConnectionFilter for RateLimitedFilter {
     fn accept_addr(&self, addr: SocketAddr, validated: bool) -> IncomingFilterOutcome {
         if validated {
             match self.validated_limiter.check_key(&addr) {
@@ -156,7 +218,6 @@ impl RateLimitedFilter {
         }
     }
 
-    /// Decide whether to accept a relay connection by endpoint id.
     fn accept_endpoint_id(&self, endpoint_id: EndpointId) -> IncomingFilterOutcome {
         match self.endpoint_limiter.check_key(&endpoint_id) {
             Ok(_) => {
@@ -170,13 +231,6 @@ impl RateLimitedFilter {
         }
     }
 
-    /// Decide whether to accept a connection based on the ALPNs it proposes.
-    ///
-    /// This peeks at the TLS ClientHello, so it can filter on the protocols
-    /// the client is offering *before* the handshake completes. The decrypt
-    /// is relatively expensive (~1200 bytes copied + decrypted), so this is
-    /// only worth it if you actually need to make a decision based on the
-    /// proposed ALPNs.
     fn accept_handshake_alpns(&self, incoming: &Incoming) -> IncomingFilterOutcome {
         let Some(decrypted) = incoming.decrypt() else {
             // Decrypt failed — best to drop silently.
@@ -213,42 +267,19 @@ impl RateLimitedFilter {
     }
 }
 
-/// Dispatch an incoming connection through the rate-limited filter.
-///
-/// This is the bridge from the filter struct to the [`ConnectionFilter`]
-/// hook signature. It handles the address/endpoint-id dispatch and chains
-/// the cheaper checks first (address or endpoint id) before the expensive
-/// `decrypt()`-based ALPN check.
-fn dispatch(filter: &RateLimitedFilter, incoming: &Incoming) -> IncomingFilterOutcome {
-    // First: cheap pre-decrypt checks.
-    let outcome = match incoming.remote_addr() {
-        IncomingAddr::Ip(addr) => {
-            let validated = incoming.remote_addr_validated();
-            filter.accept_addr(addr, validated)
-        }
-        IncomingAddr::Relay { endpoint_id, .. } => filter.accept_endpoint_id(endpoint_id),
-        // Custom transports and any future variants: no pre-handshake info
-        // to filter on.
-        _ => IncomingFilterOutcome::Accept,
-    };
-    if !matches!(outcome, IncomingFilterOutcome::Accept) {
-        return outcome;
-    }
-    // Then: expensive ALPN check.
-    filter.accept_handshake_alpns(incoming)
-}
-
 // -- Main --
 
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("Starting connection filter example with rate limiting\n");
 
-    // Wrap the filter struct in a closure that the framework can call.
+    // Build the rate-limited filter and wrap it in a closure for the
+    // framework. `AddrConnectionFilter::apply` handles the address /
+    // endpoint-id / ALPN dispatch.
     let filter = Arc::new(RateLimitedFilter::new());
     let connection_filter: Arc<dyn Fn(&Incoming) -> IncomingFilterOutcome + Send + Sync + 'static> = {
         let filter = filter.clone();
-        Arc::new(move |incoming| dispatch(&filter, incoming))
+        Arc::new(move |incoming| filter.apply(incoming))
     };
 
     // Create endpoint and router

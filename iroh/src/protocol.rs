@@ -215,7 +215,7 @@ pub enum IncomingFilterOutcome {
 /// The filter is called with the raw [`Incoming`] for each connection attempt
 /// and returns an [`IncomingFilterOutcome`] that determines what happens next.
 ///
-/// Implementors have full access to the [`Incoming`] and can use any of its
+/// Implementers have full access to the [`Incoming`] and can use any of its
 /// methods (including [`Incoming::decrypt`]) to make their decision. Note that
 /// `decrypt()` is relatively expensive, so filters should reject based on
 /// cheaper signals (e.g. remote address) first.
@@ -566,9 +566,11 @@ impl RouterBuilder {
                             match filter(&incoming) {
                                 IncomingFilterOutcome::Accept => {}
                                 IncomingFilterOutcome::Retry => {
-                                    if incoming.remote_addr_validated() {
-                                        incoming.refuse();
-                                    } else if let Err(err) = incoming.retry() {
+                                    debug_assert!(
+                                        !incoming.remote_addr_validated(),
+                                        "filter returned Retry for an already validated connection",
+                                    );
+                                    if let Err(err) = incoming.retry() {
                                         err.into_incoming().refuse();
                                     }
                                     continue;
