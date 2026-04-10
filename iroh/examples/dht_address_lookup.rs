@@ -11,7 +11,7 @@
 use std::str::FromStr;
 
 use clap::Parser;
-use iroh::{Endpoint, EndpointId};
+use iroh::{Endpoint, EndpointId, endpoint::presets};
 use n0_error::{Result, StdResultExt};
 use tracing::warn;
 use url::Url;
@@ -62,10 +62,10 @@ fn build_address_lookup(args: Args) -> iroh::address_lookup::pkarr::dht::Builder
 }
 
 async fn chat_server(args: Args) -> Result<()> {
-    let secret_key = iroh::SecretKey::generate(&mut rand::rng());
+    let secret_key = iroh::SecretKey::generate();
     let endpoint_id = secret_key.public();
     let address_lookup = build_address_lookup(args);
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![CHAT_ALPN.to_vec()])
         .secret_key(secret_key)
         .address_lookup(address_lookup)
@@ -108,12 +108,12 @@ async fn chat_server(args: Args) -> Result<()> {
 
 async fn chat_client(args: Args) -> Result<()> {
     let remote_endpoint_id = args.endpoint_id.unwrap();
-    let secret_key = iroh::SecretKey::generate(&mut rand::rng());
+    let secret_key = iroh::SecretKey::generate();
     let endpoint_id = secret_key.public();
     // note: we don't pass a secret key here, because we don't need to publish our address, don't spam the DHT
     let address_lookup = build_address_lookup(args).no_publish();
     // we do not need to specify the alpn here, because we are not going to accept connections
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         .secret_key(secret_key)
         .address_lookup(address_lookup)
         .bind()

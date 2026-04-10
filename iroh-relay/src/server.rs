@@ -779,14 +779,14 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, time::Duration};
+    use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
     use http::StatusCode;
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use n0_error::Result;
     use n0_future::{FutureExt, SinkExt, StreamExt};
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use tracing::{info, instrument};
 
     use super::{
@@ -800,6 +800,7 @@ mod tests {
             handshake,
             relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         },
+        tls::{CaRootsConfig, default_provider},
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
@@ -846,6 +847,16 @@ mod tests {
         DnsResolver::new()
     }
 
+    fn ring_config() -> rustls::ClientConfig {
+        rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(rustls::RootCertStore::empty())
+        .with_no_client_auth()
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn test_no_services() {
@@ -888,7 +899,10 @@ mod tests {
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
-        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let client = reqwest::Client::builder()
+            .use_preconfigured_tls(ring_config())
+            .build()
+            .unwrap();
         let response = client.get(&url).send().await.unwrap();
         assert_eq!(response.status(), 200);
         let body = response.text().await.unwrap();
@@ -902,7 +916,10 @@ mod tests {
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";
 
-        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let client = reqwest::Client::builder()
+            .use_preconfigured_tls(ring_config())
+            .build()
+            .unwrap();
         let response = client
             .get(&url)
             .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
@@ -925,20 +942,26 @@ mod tests {
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse()?;
 
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
         // set up client a
-        let a_secret_key = SecretKey::generate(&mut rng);
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
         let a_key = a_secret_key.public();
         let resolver = dns_resolver();
         info!("client a build & connect");
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .tls_client_config(client_config.clone())
             .connect()
             .await?;
 
         // set up client b
-        let b_secret_key = SecretKey::generate(&mut rng);
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
         info!("client b build & connect");
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .tls_client_config(client_config)
             .connect()
             .await?;
 
@@ -984,7 +1007,11 @@ mod tests {
         let current_span = tracing::info_span!("this is a test");
         let _guard = current_span.enter();
 
-        let a_secret_key = SecretKey::generate(&mut rng);
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
         let a_key = a_secret_key.public();
 
         let server = Server::spawn(ServerConfig::<(), ()> {
@@ -1017,6 +1044,7 @@ mod tests {
         // set up client a
         let resolver = dns_resolver();
         let result = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+            .tls_client_config(client_config.clone())
             .connect()
             .await;
 
@@ -1027,20 +1055,22 @@ mod tests {
         // test that another client has access
 
         // set up client b
-        let b_secret_key = SecretKey::generate(&mut rng);
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
 
         let resolver = dns_resolver();
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
+            .tls_client_config(client_config.clone())
             .connect()
             .await?;
 
         // set up client c
-        let c_secret_key = SecretKey::generate(&mut rng);
+        let c_secret_key = SecretKey::from_bytes(&rng.random());
         let c_key = c_secret_key.public();
 
         let resolver = dns_resolver();
         let mut client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
+            .tls_client_config(client_config)
             .connect()
             .await?;
 
@@ -1070,17 +1100,23 @@ mod tests {
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
         // set up client a
-        let a_secret_key = SecretKey::generate(&mut rng);
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
         let resolver = dns_resolver();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .tls_client_config(client_config.clone())
             .connect()
             .await?;
 
         // set up client b
-        let b_secret_key = SecretKey::generate(&mut rng);
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
         let _client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .tls_client_config(client_config)
             .connect()
             .await?;
 

@@ -49,8 +49,6 @@ use url::Host;
 
 #[cfg(not(wasm_browser))]
 use super::defaults::timeouts::DNS_TIMEOUT;
-#[cfg(wasm_browser)]
-use super::portmapper; // We stub the library
 use super::{
     Report,
     probes::{Probe, ProbePlan},
@@ -249,7 +247,7 @@ impl Actor {
 
                         // If all probes are done & we have_udp cancel captive
                         if num_probes == 0 {
-                            debug!("all regular probes done");
+                            trace!("all regular probes done");
                             debug_assert!(probes.len() <= 1, "{} probes", probes.len());
 
                             if have_udp {
@@ -409,7 +407,7 @@ impl Actor {
                         "run-probe",
                         ?proto,
                         ?delay,
-                        ?relay,
+                        relay=%relay.url,
                     )),
                 );
             }
@@ -486,8 +484,8 @@ pub(super) enum QuicError {
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct QuicConfig {
     /// A QUIC Endpoint
-    #[debug("quinn::Endpoint")]
-    pub(crate) ep: quinn::Endpoint,
+    #[debug("noq::Endpoint")]
+    pub(crate) ep: noq::Endpoint,
     /// A client config.
     pub(crate) client_config: rustls::ClientConfig,
     /// Enable ipv4 QUIC address discovery probes
@@ -509,9 +507,9 @@ impl Probe {
             trace!("delaying probe");
             time::sleep(delay).await;
         }
-        debug!("starting probe");
+        trace!("starting probe");
 
-        match self {
+        let report = match self {
             Probe::Https => {
                 match run_https_probe(
                     #[cfg(not(wasm_browser))]
@@ -528,7 +526,9 @@ impl Probe {
             }
             #[cfg(not(wasm_browser))]
             Probe::QadIpv4 | Probe::QadIpv6 => unreachable!("must not be used"),
-        }
+        };
+        debug!(?report, "probe finished");
+        report
     }
 }
 
@@ -577,7 +577,7 @@ async fn check_captive_portal(
         None => {
             let urls: Vec<_> = dm.urls();
             if urls.is_empty() {
-                debug!("No suitable relay for captive portal check");
+                trace!("No suitable relay for captive portal check");
                 return Ok(false);
             }
 
@@ -628,7 +628,7 @@ async fn check_captive_portal(
         .map(|s| s.to_str().unwrap_or_default())
         == Some(&expected_response);
 
-    debug!(
+    trace!(
         "check_captive_portal url={} status_code={} valid_response={}",
         res.url(),
         res.status(),
@@ -878,7 +878,7 @@ async fn run_https_probe(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::net::Ipv4Addr;
 
@@ -915,9 +915,8 @@ mod tests {
     async fn test_qad_probe_v4() -> Result {
         let (server, relay) = test_utils::relay().await;
         let relay = Arc::new(relay);
-        let client_config = iroh_relay::client::make_dangerous_client_config();
-        let ep =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
+        let client_config = iroh_relay::tls::make_dangerous_client_config();
+        let ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
         let client_addr = ep.local_addr().anyerr()?;
 
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);

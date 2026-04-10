@@ -36,12 +36,14 @@ missing_debug_implementations = "warn"
 # do.  To enable for a crate set `#![cfg_attr(iroh_docsrs,
 # feature(doc_cfg))]` in the crate.
 # We also have our own `iroh_loom` cfg to enable tokio-rs/loom testing.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_loom)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_loom)", "cfg(skip_patchbay)"] }
 
 [workspace.lints.clippy]
 unused-async = "warn"
 
 [patch.crates-io]
-iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "main" }
-iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "main" }
-iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "main" }
+portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
+netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
+noq = { git = "https://github.com/n0-computer/noq", branch = "main" }
+noq-udp = { git = "https://github.com/n0-computer/noq", branch = "main" }
+noq-proto = { git = "https://github.com/n0-computer/noq", branch = "main" }

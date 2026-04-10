@@ -5,7 +5,7 @@ use data_encoding::HEXLOWER;
 use iroh::{
     EndpointId, SecretKey,
     address_lookup::AddressLookup,
-    endpoint::{RecvStream, SendStream, ZeroRttStatus},
+    endpoint::{RecvStream, SendStream, ZeroRttStatus, presets},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::StreamExt;
@@ -33,7 +33,7 @@ pub fn get_or_generate_secret_key() -> Result<SecretKey> {
         SecretKey::from_str(&secret).context("Invalid secret key format")
     } else {
         // Generate a new random key
-        let secret_key = SecretKey::generate(&mut rand::rng());
+        let secret_key = SecretKey::generate();
         println!(
             "Generated new secret key: {}",
             HEXLOWER.encode(&secret_key.to_bytes())
@@ -64,7 +64,7 @@ async fn pong(mut recv: RecvStream, x: u64) -> Result<()> {
 
 async fn connect(args: Args) -> Result<()> {
     let remote_id = args.endpoint_id.unwrap();
-    let endpoint = iroh::Endpoint::builder()
+    let endpoint = iroh::Endpoint::builder(presets::N0)
         .relay_mode(iroh::RelayMode::Disabled)
         .keylog(true)
         .bind()
@@ -134,7 +134,7 @@ async fn connect(args: Args) -> Result<()> {
 
 async fn accept(_args: Args) -> Result<()> {
     let secret_key = get_or_generate_secret_key()?;
-    let endpoint = iroh::Endpoint::builder()
+    let endpoint = iroh::Endpoint::builder(presets::N0)
         .alpns(vec![PINGPONG_ALPN.to_vec()])
         .secret_key(secret_key)
         .relay_mode(iroh::RelayMode::Disabled)

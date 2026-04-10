@@ -119,7 +119,7 @@ jobs:
 
       - name: upload results
         if: ${{ failure() && inputs.flaky }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
           path: output
@@ -221,6 +221,18 @@ jobs:
         with:
           release: false
 
+      - name: Install aws-lc-sys build dependencies
+        shell: powershell
+        run: |
+          $chocoPath = "$Env:ProgramData\chocolatey\bin\choco.exe"
+          if (!(Test-Path $chocoPath)) {
+            $chocoPath = "$Env:SystemDrive\ProgramData\chocolatey\bin\choco.exe"
+          }
+          & $chocoPath install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          & $chocoPath install nasm -y
+          echo "C:\Program Files\CMake\bin" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Program Files\NASM" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: build tests
         run: |
           cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --no-run
@@ -239,7 +251,7 @@ jobs:
 
       - name: upload results
         if: ${{ failure() && inputs.flaky }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
           path: output
@@ -308,6 +320,18 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           release: false
+
+      - name: Install aws-lc-sys build dependencies
+        shell: powershell
+        run: |
+          $chocoPath = "$Env:ProgramData\chocolatey\bin\choco.exe"
+          if (!(Test-Path $chocoPath)) {
+            $chocoPath = "$Env:SystemDrive\ProgramData\chocolatey\bin\choco.exe"
+          }
+          & $chocoPath install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          & $chocoPath install nasm -y
+          echo "C:\Program Files\CMake\bin" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Program Files\NASM" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: cargo check
         run: |

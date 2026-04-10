@@ -9,6 +9,7 @@ use iroh::{
 };
 use iroh_dns_server::{ZoneStore, config::Config, metrics::Metrics, server::Server};
 use n0_error::Result;
+use rand::RngExt;
 use rand_chacha::rand_core::SeedableRng;
 use tokio::runtime::Runtime;
 
@@ -37,7 +38,7 @@ fn benchmark_dns_server(c: &mut Criterion) {
                     let server = start_dns_server(config).await.unwrap();
 
                     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-                    let secret_key = SecretKey::generate(&mut rng);
+                    let secret_key = SecretKey::from_bytes(&rng.random());
                     let endpoint_id = secret_key.public();
 
                     let tls_config = CaRootsConfig::default()
@@ -46,8 +47,7 @@ fn benchmark_dns_server(c: &mut Criterion) {
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
                     let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
                     let relay_url = "http://localhost:8080".parse().unwrap();
-                    let endpoint_info =
-                        EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url));
+                    let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url);
                     let signed_packet = endpoint_info
                         .to_pkarr_signed_packet(&secret_key, 30)
                         .unwrap();

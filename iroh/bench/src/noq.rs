@@ -6,7 +6,7 @@ use std::{
 
 use bytes::Bytes;
 use n0_error::{Result, StdResultExt};
-use quinn::{
+use noq::{
     Connection, Endpoint, RecvStream, SendStream, TransportConfig, crypto::rustls::QuicClientConfig,
 };
 use rustls::{
@@ -19,7 +19,7 @@ use crate::{
     ClientStats, ConnectionSelector, EndpointSelector, Opt, client_handler, stats::TransferResult,
 };
 
-pub const ALPN: &[u8] = b"n0/quinn-bench/0";
+pub const ALPN: &[u8] = b"n0/noq-bench/0";
 
 /// Creates a server endpoint which runs on the given runtime
 pub fn server_endpoint(
@@ -27,9 +27,9 @@ pub fn server_endpoint(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
     opt: &Opt,
-) -> (SocketAddr, quinn::Endpoint) {
+) -> (SocketAddr, noq::Endpoint) {
     let cert_chain = vec![cert];
-    let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
+    let mut server_config = noq::ServerConfig::with_single_cert(cert_chain, key).unwrap();
     server_config.transport = Arc::new(transport_config(opt.max_streams, opt.initial_mtu));
 
     let addr = if opt.use_ipv6 {
@@ -40,7 +40,7 @@ pub fn server_endpoint(
 
     let endpoint = {
         let _guard = rt.enter();
-        quinn::Endpoint::server(server_config, SocketAddr::new(addr, 0)).unwrap()
+        noq::Endpoint::server(server_config, SocketAddr::new(addr, 0)).unwrap()
     };
     let server_addr = endpoint.local_addr().unwrap();
     (server_addr, endpoint)
@@ -56,8 +56,8 @@ pub async fn client(
     let (endpoint, connection) = connect_client(server_addr, server_cert, opt).await?;
     let client_connect_time = client_start.elapsed();
     let mut res = client_handler(
-        EndpointSelector::Quinn(endpoint),
-        ConnectionSelector::Quinn(connection),
+        EndpointSelector::Noq(endpoint),
+        ConnectionSelector::Noq(connection),
         opt,
     )
     .await?;
@@ -70,14 +70,14 @@ pub async fn connect_client(
     server_addr: SocketAddr,
     server_cert: CertificateDer<'_>,
     opt: Opt,
-) -> Result<(::quinn::Endpoint, Connection)> {
+) -> Result<(::noq::Endpoint, Connection)> {
     let addr = if opt.use_ipv6 {
         IpAddr::V6(Ipv6Addr::LOCALHOST)
     } else {
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     };
 
-    let endpoint = quinn::Endpoint::client(SocketAddr::new(addr, 0)).unwrap();
+    let endpoint = noq::Endpoint::client(SocketAddr::new(addr, 0)).unwrap();
 
     let mut roots = RootCertStore::empty();
     roots.add(server_cert).anyerr()?;
@@ -91,7 +91,7 @@ pub async fn connect_client(
         .with_no_client_auth();
 
     let mut client_config =
-        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).anyerr()?));
+        noq::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).anyerr()?));
     client_config.transport_config(Arc::new(transport_config(opt.max_streams, opt.initial_mtu)));
 
     let connection = endpoint
@@ -112,7 +112,7 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> TransportConfig
     config.initial_mtu(initial_mtu);
     config.max_concurrent_multipath_paths(16);
 
-    let mut acks = quinn::AckFrequencyConfig::default();
+    let mut acks = noq::AckFrequencyConfig::default();
     acks.ack_eliciting_threshold(10u32.into());
     config.ack_frequency_config(Some(acks));
 
@@ -245,7 +245,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
         server_tasks.push(tokio::spawn(async move {
             loop {
                 let (mut send_stream, recv_stream) = match connection.accept_bi().await {
-                    Err(::quinn::ConnectionError::ApplicationClosed(_)) => break,
+                    Err(::noq::ConnectionError::ApplicationClosed(_)) => break,
                     Err(e) => {
                         eprintln!("accepting stream failed: {e:?}");
                         break;

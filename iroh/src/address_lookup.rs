@@ -20,6 +20,16 @@
 //! The [`Builder::address_lookup`] method is used to add an address lookup mechanism to an
 //! [`Endpoint`].
 //!
+//! Each address lookup service receives the full set of transport addresses when publishing,
+//! but may only publish a subset of them based on its own constraints.
+//!
+//! To control which addresses are published to a particular service, you can supply an
+//! [`AddrFilter`] on its builder (e.g. [`PkarrPublisherBuilder::addr_filter`]).  The filter
+//! receives the full set of addresses and returns an ordered [`Vec`], allowing you to both
+//! remove addresses you don't want published and prioritize the ones you do. Each service
+//! may apply additional filtering on top based on its own constraints, but will not publish
+//! addresses outside of what the filter returns.  See each service's documentation for details.
+//!
 //! Some generally useful Address Lookup implementations are provided:
 //!
 //! - [`MemoryLookup`] which allows application to add and remove out-of-band addressing
@@ -43,15 +53,15 @@
 //! This will use [`ConcurrentAddressLookup`] under the hood, which performs lookups to all
 //! Address Lookupsystems at the same time.
 //!
-//! [`Builder::address_lookup`] takes any type that implements [`IntoAddressLookup`]. You can
+//! [`Builder::address_lookup`] takes any type that implements [`AddressLookupBuilder`]. You can
 //! implement that trait on a builder struct if your Address Lookup needs information
 //! from the endpoint it is mounted on. After endpoint construction, your Address Lookup
-//! is built by calling [`IntoAddressLookup::into_address_lookup`], passing the finished [`Endpoint`] to your
+//! is built by calling [`AddressLookupBuilder::into_address_lookup`], passing the finished [`Endpoint`] to your
 //! builder.
 //!
 //! If your Address Lookupdoes not need any information from its endpoint, you can
 //! pass the Address Lookupservice directly to [`Builder::address_lookup`]: All types that
-//! implement [`AddressLookup`] also have a blanket implementation of [`IntoAddressLookup`].
+//! implement [`AddressLookup`] also have a blanket implementation of [`AddressLookupBuilder`].
 //!
 //! # Examples
 //!
@@ -59,19 +69,23 @@
 //! [`PkarrPublisher`] and [`address_lookup::DnsAddressLookup`]:
 //!
 //! ```no_run
+//! # #[cfg(with_crypto_provider)]
+//! # {
 //! use iroh::{
 //!     Endpoint, SecretKey,
-//!     address_lookup::{self, PkarrPublisher},
-//!     endpoint::RelayMode,
+//!     address_lookup::{self, AddrFilter, PkarrPublisher},
+//!     endpoint::{RelayMode, presets},
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::empty_builder(RelayMode::Default)
+//! let ep = Endpoint::builder(presets::Minimal)
+//!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
 //!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 //!
@@ -81,13 +95,15 @@
 //! #[cfg(feature = "address-lookup-mdns")]
 //! # {
 //! # use iroh::{
-//! #    address_lookup::{self, PkarrPublisher},
-//! #    endpoint::RelayMode,
+//! #    address_lookup::{self, AddrFilter, PkarrPublisher},
+//! #    endpoint::{presets, RelayMode},
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::empty_builder(RelayMode::Default)
+//! let ep = Endpoint::builder(presets::Minimal)
+//!     .relay_mode(RelayMode::Default)
+//!     .addr_filter(AddrFilter::relay_only())
 //!     .address_lookup(PkarrPublisher::n0_dns())
 //!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
 //!     .address_lookup(address_lookup::MdnsAddressLookup::builder())
@@ -105,14 +121,19 @@
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
+//! [`PkarrPublisherBuilder::addr_filter`]: pkarr::PkarrPublisherBuilder::addr_filter
 //! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
 //! [pkarr relay servers]: https://pkarr.org/#servers
 //! [`address_lookup::MdnsAddressLookup`]: crate::address_lookup::MdnsAddressLookup
 //! [`MemoryLookup`]: memory::MemoryLookup
 
-use std::sync::{Arc, RwLock};
+use std::{
+    borrow::{Borrow, Cow},
+    sync::{Arc, RwLock},
+};
 
 use iroh_base::{EndpointAddr, EndpointId};
+pub use iroh_relay::endpoint_info::AddrFilter;
 use n0_error::{AnyError, e, stack_error};
 use n0_future::boxed::BoxStream;
 
@@ -140,58 +161,97 @@ pub use pkarr::*;
 /// This trait is implemented on builders for Address Lookup's. Any type that implements this
 /// trait can be added as a Address Lookup in [`Builder::address_lookup`].
 ///
-/// Any type that implements [`AddressLookup`] also implements [`IntoAddressLookup`].
+/// Any type that implements [`AddressLookup`] also implements [`AddressLookupBuilder`].
 ///
 /// Iroh uses this trait to allow configuring the set of address lookup services on
 /// the endpoint builder, while also providing them access to information about the
-/// endpoint to [`IntoAddressLookup::into_address_lookup`].
+/// endpoint to [`AddressLookupBuilder::into_address_lookup`].
 ///
 /// [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
-pub trait IntoAddressLookup: Send + Sync + std::fmt::Debug + 'static {
-    /// Turns this AddressLookup builder into a ready-to-use Address Lookup.
+pub trait AddressLookupBuilder: Send + Sync + std::fmt::Debug + 'static {
+    /// Turns this builder into a ready-to-use [`AddressLookup`].
     ///
     /// If an error is returned, building the endpoint will fail with this error.
     fn into_address_lookup(
         self,
         endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError>;
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError>;
 }
 
-/// Blanket no-op impl of `IntoAddressLookup` for `T: AddressLookup`.
-impl<T: AddressLookup> IntoAddressLookup for T {
+/// An [`AddressLookup`] wrapper that filters addresses before publishing.
+#[derive(Debug, Clone)]
+pub struct FilteredAddressLookup<T> {
+    inner: T,
+    filter: AddrFilter,
+}
+
+impl<T> FilteredAddressLookup<T> {
+    /// Wraps an address lookup with an address filter.
+    ///
+    /// The filter allows to specify which addresses the address
+    /// lookup service will publish.
+    pub fn new(inner: T, filter: AddrFilter) -> Self {
+        Self { inner, filter }
+    }
+
+    /// Removes the filter wrapper and returns the inner address lookup.
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+}
+
+impl<T> AsRef<T> for FilteredAddressLookup<T> {
+    fn as_ref(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T: AddressLookup> AddressLookup for FilteredAddressLookup<T> {
+    fn publish(&self, data: &EndpointData) {
+        let data = data.apply_filter(&self.filter);
+        self.inner.publish(data.borrow());
+    }
+
+    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
+        self.inner.resolve(endpoint_id)
+    }
+}
+
+/// Blanket no-op impl of `AddressLookupBuilder` for `T: AddressLookup`.
+impl<T: AddressLookup> AddressLookupBuilder for T {
     fn into_address_lookup(
         self,
         _endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         Ok(self)
     }
 }
 
-/// Non-public dyn-compatible version of [`IntoAddressLookup`], used in [`crate::endpoint::Builder`].
-pub(crate) trait DynIntoAddressLookup: Send + Sync + std::fmt::Debug + 'static {
-    /// See [`IntoAddressLookup::into_address_lookup`]
+/// Non-public dyn-compatible version of [`AddressLookupBuilder`], used in [`crate::endpoint::Builder`].
+pub(crate) trait DynAddressLookupBuilder: Send + Sync + std::fmt::Debug + 'static {
+    /// See [`AddressLookupBuilder::into_address_lookup`]
     fn into_address_lookup(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn AddressLookup>, IntoAddressLookupError>;
+    ) -> Result<Box<dyn AddressLookup>, AddressLookupBuilderError>;
 }
 
-impl<T: IntoAddressLookup> DynIntoAddressLookup for T {
+impl<T: AddressLookupBuilder> DynAddressLookupBuilder for T {
     fn into_address_lookup(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn AddressLookup>, IntoAddressLookupError> {
+    ) -> Result<Box<dyn AddressLookup>, AddressLookupBuilderError> {
         let addr_lookup: Box<dyn AddressLookup> =
-            Box::new(IntoAddressLookup::into_address_lookup(*self, endpoint)?);
+            Box::new(AddressLookupBuilder::into_address_lookup(*self, endpoint)?);
         Ok(addr_lookup)
     }
 }
 
-/// [`IntoAddressLookup`] errors
+/// [`AddressLookupBuilder`] errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
-pub enum IntoAddressLookupError {
+pub enum AddressLookupBuilderError {
     #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
@@ -201,13 +261,13 @@ pub enum IntoAddressLookupError {
     EndpointClosed { source: EndpointError },
 }
 
-impl IntoAddressLookupError {
+impl AddressLookupBuilderError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
         provenance: &'static str,
         source: T,
     ) -> Self {
-        e!(IntoAddressLookupError::User {
+        e!(AddressLookupBuilderError::User {
             provenance,
             source: AnyError::from_std(source)
         })
@@ -218,7 +278,7 @@ impl IntoAddressLookupError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        e!(IntoAddressLookupError::User {
+        e!(AddressLookupBuilderError::User {
             provenance,
             source: AnyError::from_std_box(source)
         })
@@ -415,6 +475,8 @@ pub struct ConcurrentAddressLookup {
     services: Arc<RwLock<Vec<Box<dyn AddressLookup>>>>,
     /// The data last published, used to publish when adding a new service.
     last_data: Arc<RwLock<Option<EndpointData>>>,
+    /// Optional filter applied to all data before publishing to any service.
+    addr_filter: Arc<RwLock<Option<AddrFilter>>>,
 }
 
 impl ConcurrentAddressLookup {
@@ -428,7 +490,17 @@ impl ConcurrentAddressLookup {
         Self {
             services: Arc::new(RwLock::new(services)),
             last_data: Default::default(),
+            addr_filter: Default::default(),
         }
+    }
+
+    /// Sets the address filter applied before publishing to any service.
+    ///
+    /// When set, all address data is filtered once before being distributed
+    /// to the individual address lookup services. This ensures consistent
+    /// filtering regardless of how many services are configured.
+    pub fn set_addr_filter(&self, filter: AddrFilter) {
+        *self.addr_filter.write().expect("poisoned") = Some(filter);
     }
 
     /// Adds an [`AddressLookup`] service.
@@ -477,21 +549,26 @@ where
         Self {
             services: Arc::new(RwLock::new(services)),
             last_data: Default::default(),
+            addr_filter: Default::default(),
         }
     }
 }
 
 impl AddressLookup for ConcurrentAddressLookup {
     fn publish(&self, data: &EndpointData) {
+        let data = match &*self.addr_filter.read().expect("poisoned") {
+            Some(filter) => data.apply_filter(filter),
+            None => Cow::Borrowed(data),
+        };
         let services = self.services.read().expect("poisoned");
         for service in &*services {
-            service.publish(data);
+            service.publish(&data);
         }
 
         self.last_data
             .write()
             .expect("poisoned")
-            .replace(data.clone());
+            .replace(data.into_owned());
     }
 
     fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
@@ -505,7 +582,7 @@ impl AddressLookup for ConcurrentAddressLookup {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{
         collections::HashMap,
@@ -518,13 +595,13 @@ mod tests {
     use n0_error::{AnyError, Result, StackResultExt};
     use n0_future::{StreamExt, time};
     use n0_tracing_test::traced_test;
-    use rand::{CryptoRng, Rng, SeedableRng};
+    use rand::{CryptoRng, RngExt, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
     use crate::{
-        Endpoint, RelayMode,
-        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig},
+        Endpoint,
+        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig, presets},
     };
 
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
@@ -584,7 +661,7 @@ mod tests {
                 let port: u16 = rand::rng().random_range(10_000..20_000);
                 // "240.0.0.0/4" is reserved and unreachable
                 let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                let data = EndpointData::new([TransportAddr::Ip(addr)]);
+                let data = EndpointData::from_iter([TransportAddr::Ip(addr)]);
                 Some((data, ts))
             } else {
                 self.shared
@@ -788,6 +865,47 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn concurrent_address_lookup_addr_filter() {
+        use iroh_base::RelayUrl;
+
+        // Create a service that records what it receives.
+        #[derive(Debug, Clone, Default)]
+        struct RecordingLookup {
+            published: Arc<Mutex<Vec<EndpointData>>>,
+        }
+        impl AddressLookup for RecordingLookup {
+            fn publish(&self, data: &EndpointData) {
+                self.published.lock().unwrap().push(data.clone());
+            }
+            fn resolve(&self, _endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
+                None
+            }
+        }
+
+        let recorder = RecordingLookup::default();
+        let lookup = ConcurrentAddressLookup::empty();
+        lookup.set_addr_filter(AddrFilter::relay_only());
+        lookup.add(recorder.clone());
+
+        let relay_url: RelayUrl = "https://relay.example.com".parse().unwrap();
+        let ip_addr: SocketAddr = "1.2.3.4:1234".parse().unwrap();
+        let data = EndpointData::from_iter([
+            TransportAddr::Relay(relay_url.clone()),
+            TransportAddr::Ip(ip_addr),
+        ]);
+        lookup.publish(&data);
+
+        let published = recorder.published.lock().unwrap();
+        assert_eq!(published.len(), 1);
+        let addrs: Vec<_> = published[0].addrs().cloned().collect();
+        assert_eq!(addrs, vec![TransportAddr::Relay(relay_url)]);
+        assert!(
+            !addrs.contains(&TransportAddr::Ip(ip_addr)),
+            "IP address should have been filtered out"
+        );
+    }
+
     async fn new_endpoint<R: CryptoRng, D: AddressLookup + 'static, F: FnOnce(&Endpoint) -> D>(
         rng: &mut R,
         create_address_lookup: F,
@@ -805,9 +923,9 @@ mod tests {
         rng: &mut R,
         add_address_lookup: F,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
-        let secret = SecretKey::generate(rng);
+        let secret = SecretKey::from_bytes(&rng.random());
 
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::builder(presets::Minimal)
             .secret_key(secret)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -850,24 +968,19 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_relay::{
-        RelayMap,
         endpoint_info::UserData,
         tls::{CaRootsConfig, default_provider},
     };
-    use n0_error::{AnyError, Result, StackResultExt};
+    use n0_error::{Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
-    use rand::{CryptoRng, SeedableRng};
-    use tokio_util::task::AbortOnDropHandle;
+    use rand::{RngExt, SeedableRng};
 
     use crate::{
-        Endpoint, RelayMode,
         address_lookup::{EndpointData, PkarrPublisher},
         dns::DnsResolver,
         endpoint_info::EndpointInfo,
-        test_utils::{
-            DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
-        },
+        test_utils::{DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State},
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -882,9 +995,9 @@ mod test_dns_pkarr {
             .await
             .context("Running DNS server")?;
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let endpoint_info = EndpointInfo::new(secret_key.public())
-            .with_relay_url(Some("https://relay.example".parse().unwrap()));
+            .with_relay_url("https://relay.example".parse().unwrap());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state
             .upsert(signed_packet)
@@ -910,7 +1023,7 @@ mod test_dns_pkarr {
             .await
             .context("DnsPkarrServer")?;
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let endpoint_id = secret_key.public();
 
         let relay_url = Some(TransportAddr::Relay(
@@ -924,7 +1037,7 @@ mod test_dns_pkarr {
         let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
             .build(secret_key, tls_config);
         let user_data: UserData = "foobar".parse().unwrap();
-        let data = EndpointData::new(relay_url.clone()).with_user_data(Some(user_data.clone()));
+        let data = EndpointData::from_iter(relay_url.clone()).with_user_data(user_data.clone());
         // does not block, update happens in background task
         publisher.update_endpoint_data(&data);
         // wait until our shared state received the update from pkarr publishing
@@ -944,15 +1057,17 @@ mod test_dns_pkarr {
         Ok(())
     }
 
+    #[cfg(with_crypto_provider)]
     const TEST_ALPN: &[u8] = b"TEST";
 
+    #[cfg(with_crypto_provider)]
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_address_lookup() -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, _relay_guard) = crate::test_utils::run_relay_server().await?;
 
         let (ep1, _guard1) =
             ep_with_address_lookup(&mut rng, &relay_map, &dns_pkarr_server).await?;
@@ -970,13 +1085,22 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    async fn ep_with_address_lookup<R: CryptoRng + ?Sized>(
+    #[cfg(with_crypto_provider)]
+    async fn ep_with_address_lookup<R: rand::CryptoRng + ?Sized>(
         rng: &mut R,
-        relay_map: &RelayMap,
+        relay_map: &iroh_relay::RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
-    ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
-        let secret_key = SecretKey::generate(rng);
-        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+    ) -> Result<(
+        crate::Endpoint,
+        n0_future::task::AbortOnDropHandle<Result<()>>,
+    )> {
+        use n0_future::task::AbortOnDropHandle;
+
+        use crate::{Endpoint, RelayMode, endpoint::presets};
+
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -988,6 +1112,8 @@ mod test_dns_pkarr {
             let ep = ep.clone();
             async move {
                 // we skip accept() errors, they can be caused by retransmits
+
+                use n0_error::AnyError;
                 while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     let _conn = accepting.await.context("accepting")?;
                     // Just accept incoming connections, but don't do anything with them.

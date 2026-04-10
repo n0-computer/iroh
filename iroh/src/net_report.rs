@@ -58,25 +58,6 @@ mod reportgen;
 
 mod options;
 
-/// We "vendor" what we need of the library in browsers for simplicity.
-///
-/// We could consider making `portmapper` compile to wasm in the future,
-/// but what we need is so little it's likely not worth it.
-#[cfg(wasm_browser)]
-pub(crate) mod portmapper {
-    /// Output of a port mapping probe.
-    #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-    #[display("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
-    pub struct ProbeOutput {
-        /// If UPnP can be considered available.
-        pub upnp: bool,
-        /// If PCP can be considered available.
-        pub pcp: bool,
-        /// If PMP can be considered available.
-        pub nat_pmp: bool,
-    }
-}
-
 pub(crate) use self::reportgen::IfStateDetails;
 #[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
@@ -151,7 +132,7 @@ impl QadConns {
         {
             // grab latest rtt
 
-            use quinn_proto::PathId;
+            use noq_proto::PathId;
             if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
                 r.latency = latency;
             }
@@ -166,7 +147,7 @@ impl QadConns {
         {
             // grab latest rtt
 
-            use quinn_proto::PathId;
+            use noq_proto::PathId;
             if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
                 r.latency = latency;
             }
@@ -198,7 +179,7 @@ impl QadConns {
 #[cfg(not(wasm_browser))]
 #[derive(Debug)]
 struct QadConn {
-    conn: quinn::Connection,
+    conn: noq::Connection,
     observer: Watchable<Option<QadProbeReport>>,
     _handle: AbortOnDropHandle<Option<()>>,
 }
@@ -402,8 +383,8 @@ impl Client {
         self.add_report_history_and_set_preferred_relay(&mut report);
         debug!(
             ?report,
-            "generated report in {:02}ms",
-            now.elapsed().as_millis()
+            duration = ?now.elapsed(),
+            "net_report generated",
         );
 
         report
@@ -474,7 +455,7 @@ impl Client {
         let relays = self.relay_map.relays::<Vec<_>>();
         for relay in relays.into_iter().take(MAX_RELAYS) {
             if if_state.have_v4 && needs_v4_probe {
-                debug!(?relay.url, "v4 QAD probe");
+                trace!(?relay.url, "v4 QAD probe starting");
                 let relay = relay.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
@@ -491,7 +472,7 @@ impl Client {
                 );
             }
             if if_state.have_v6 && needs_v6_probe {
-                debug!(?relay.url, "v6 QAD probe");
+                trace!(?relay.url, "v6 QAD probe starting");
                 let relay = relay.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
@@ -799,7 +780,7 @@ async fn run_probe_v4(
     dns_resolver: DnsResolver,
     shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-    use quinn_proto::PathId;
+    use noq_proto::PathId;
 
     let relay_addr = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay)
         .await
@@ -815,14 +796,13 @@ async fn run_probe_v4(
         .await
         .map_err(|source| e!(QadProbeError::Quic { source }))?;
 
-    let mut receiver = conn.observed_external_addr();
+    let mut watcher = conn.observed_external_addr();
 
     // wait for an addr
-    let addr = receiver
-        .wait_for(|addr| addr.is_some())
+    let addr = watcher
+        .next()
         .await
-        .map_err(|_| e!(QadProbeError::ReceiverDropped))?
-        .expect("known");
+        .ok_or_else(|| e!(QadProbeError::ReceiverDropped))?;
     let report = QadProbeReport {
         relay: relay.url.clone(),
         addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
@@ -835,22 +815,18 @@ async fn run_probe_v4(
         let conn = conn.clone();
         let observer = observer.clone();
         async move {
-            loop {
-                let val = *receiver.borrow();
+            while let Some(val) = watcher.next().await {
                 // if we've sent to an ipv4 address, but received an observed address
                 // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-                let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
+                let val = SocketAddr::new(val.ip().to_canonical(), val.port());
                 let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
                 observer
-                    .set(val.map(|addr| QadProbeReport {
+                    .set(Some(QadProbeReport {
                         relay: endpoint.clone(),
-                        addr,
+                        addr: val,
                         latency,
                     }))
                     .ok();
-                if receiver.changed().await.is_err() {
-                    break;
-                }
             }
         }
     }));
@@ -873,7 +849,7 @@ async fn run_probe_v6(
     dns_resolver: DnsResolver,
     shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-    use quinn_proto::PathId;
+    use noq_proto::PathId;
 
     let relay_addr = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay)
         .await
@@ -889,14 +865,13 @@ async fn run_probe_v6(
         .await
         .map_err(|source| e!(QadProbeError::Quic { source }))?;
 
-    let mut receiver = conn.observed_external_addr();
+    let mut watcher = conn.observed_external_addr();
 
     // wait for an addr
-    let addr = receiver
-        .wait_for(|addr| addr.is_some())
+    let addr = watcher
+        .next()
         .await
-        .map_err(|_| e!(QadProbeError::ReceiverDropped))?
-        .expect("known");
+        .ok_or_else(|| e!(QadProbeError::ReceiverDropped))?;
     let report = QadProbeReport {
         relay: relay.url.clone(),
         addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
@@ -909,22 +884,18 @@ async fn run_probe_v6(
         let observer = observer.clone();
         let conn = conn.clone();
         async move {
-            loop {
-                let val = *receiver.borrow();
+            while let Some(val) = watcher.next().await {
                 // if we've sent to an ipv4 address, but received an observed address
                 // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-                let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
+                let val = SocketAddr::new(val.ip().to_canonical(), val.port());
                 let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
                 observer
-                    .set(val.map(|addr| QadProbeReport {
+                    .set(Some(QadProbeReport {
                         relay: endpoint.clone(),
-                        addr,
+                        addr: val,
                         latency,
                     }))
                     .ok();
-                if receiver.changed().await.is_err() {
-                    break;
-                }
             }
         }
     }));
@@ -977,7 +948,7 @@ mod test_utils {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
@@ -997,9 +968,8 @@ mod tests {
     #[traced_test]
     async fn test_basic() -> Result<()> {
         let (server, relay) = test_utils::relay().await;
-        let client_config = iroh_relay::client::make_dangerous_client_config();
-        let ep =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
+        let client_config = iroh_relay::tls::make_dangerous_client_config();
+        let ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
         let quic_addr_disc = QuicConfig {
             ep: ep.clone(),
             client_config,

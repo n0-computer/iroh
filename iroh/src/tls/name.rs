@@ -38,12 +38,12 @@ pub(crate) fn decode(name: &str) -> Option<EndpointId> {
 #[cfg(test)]
 mod tests {
     use iroh_base::SecretKey;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
 
     #[test]
     fn test_roundtrip() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let key = SecretKey::generate(&mut rng);
+        let key = SecretKey::from_bytes(&rng.random());
         let endpoint_id = key.public();
         println!("{}", super::encode(endpoint_id));
         assert_eq!(

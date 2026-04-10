@@ -34,13 +34,16 @@ impl RemoteInfo {
     /// You can use this to construct an [`EndpointAddr`] for this remote:
     ///
     /// ```no_run
-    /// # use iroh::{Endpoint, EndpointId, EndpointAddr};
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
+    /// # use iroh::{Endpoint, EndpointId, EndpointAddr, endpoint::presets};
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let endpoint = Endpoint::bind().await.unwrap();
+    /// # let endpoint = Endpoint::bind(presets::N0).await.unwrap();
     /// # let remote_id = EndpointId::from_bytes(&[0u8; 32]).unwrap();
     /// let info = endpoint.remote_info(remote_id).await.unwrap();
     /// let addr = EndpointAddr::from_parts(info.id(), info.into_addrs().map(|addr| addr.into_addr()));
+    /// # }
     /// # }
     /// ```
     ///

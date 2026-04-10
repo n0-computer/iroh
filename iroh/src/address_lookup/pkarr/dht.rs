@@ -20,8 +20,8 @@ use url::Url;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddressLookup, EndpointData, Error as AddressLookupError, IntoAddressLookup,
-        IntoAddressLookupError, Item as AddressLookupItem,
+        AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
+        Error as AddressLookupError, Item as AddressLookupItem,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
     endpoint_info::EndpointInfo,
@@ -42,15 +42,16 @@ const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 /// be used as both a publisher and resolver.  Calling [`DhtAddressLookup::publish`] will start
 /// a background task that periodically publishes the endpoint address.
 ///
+/// [`DhtAddressLookup`] filters published addresses: only relay addresses are published by default.
+/// To change this behavior, use [`Builder::addr_filter`] and set it to e.g. [`AddrFilter::unfiltered`].
+/// This can be useful to enable publishing IP addresses if the iroh endpoint is reachable via public
+/// IP addresses.
+///
 /// [pkarr module]: super
+/// [`AddrFilter::relay_only`]: crate::address_lookup::AddrFilter::relay_only
+/// [`AddrFilter::unfiltered`]: crate::address_lookup::AddrFilter::unfiltered
 #[derive(Debug, Clone)]
 pub struct DhtAddressLookup(Arc<Inner>);
-
-impl Default for DhtAddressLookup {
-    fn default() -> Self {
-        Self::builder().build().expect("valid builder")
-    }
-}
 
 #[derive(derive_more::Debug)]
 struct Inner {
@@ -68,10 +69,10 @@ struct Inner {
     relay_url: Option<Url>,
     /// Time-to-live value for the DNS packets.
     ttl: u32,
-    /// True to include the direct addresses in the DNS packet.
-    include_direct_addresses: bool,
     /// Republish delay for the DHT.
     republish_delay: Duration,
+    /// User supplied filter to filter and reorder addresses for publishing
+    filter: AddrFilter,
 }
 
 impl Inner {
@@ -115,9 +116,9 @@ pub struct Builder {
     ttl: Option<u32>,
     pkarr_relay: Option<Url>,
     dht: bool,
-    include_direct_addresses: bool,
     republish_delay: Duration,
     enable_publish: bool,
+    addr_filter: AddrFilter,
 }
 
 impl Default for Builder {
@@ -128,9 +129,9 @@ impl Default for Builder {
             ttl: None,
             pkarr_relay: None,
             dht: true,
-            include_direct_addresses: false,
             republish_delay: REPUBLISH_DELAY,
             enable_publish: true,
+            addr_filter: AddrFilter::relay_only(),
         }
     }
 }
@@ -181,12 +182,6 @@ impl Builder {
         self
     }
 
-    /// Sets whether to include the direct addresses in the DNS packet.
-    pub fn include_direct_addresses(mut self, include_direct_addresses: bool) -> Self {
-        self.include_direct_addresses = include_direct_addresses;
-        self
-    }
-
     /// Sets the republish delay for the DHT.
     pub fn republish_delay(mut self, republish_delay: Duration) -> Self {
         self.republish_delay = republish_delay;
@@ -199,10 +194,25 @@ impl Builder {
         self
     }
 
+    /// Sets the address filter to control which addresses are published to the DHT.
+    ///
+    /// By default [`AddrFilter::relay_only`] is used. This avoids leaking IP addresses
+    /// to the public DHT.
+    ///
+    /// It can be useful to override this with [`AddrFilter::unfiltered`], if this is
+    /// not a concern, e.g. when this endpoint runs on a machine with public IP
+    /// addresses and without a firewall. In such cases connecting to this endpoint
+    /// with just an [`EndpointId`] and DHT lookup can become faster and potentially
+    /// even bypass a relay connection entirely.
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
+        self.addr_filter = filter;
+        self
+    }
+
     /// Builds the address lookup mechanism.
-    pub fn build(self) -> Result<DhtAddressLookup, IntoAddressLookupError> {
+    pub fn build(self) -> Result<DhtAddressLookup, AddressLookupBuilderError> {
         if !(self.dht || self.pkarr_relay.is_some()) {
-            return Err(IntoAddressLookupError::from_err(
+            return Err(AddressLookupBuilderError::from_err(
                 "pkarr",
                 std::io::Error::other("at least one of DHT or relay must be enabled"),
             ));
@@ -218,34 +228,33 @@ impl Builder {
                 if let Some(url) = &self.pkarr_relay {
                     builder
                         .relays(std::slice::from_ref(url))
-                        .map_err(|e| IntoAddressLookupError::from_err("pkarr", e))?;
+                        .map_err(|e| AddressLookupBuilderError::from_err("pkarr", e))?;
                 }
                 builder
                     .build()
-                    .map_err(|e| IntoAddressLookupError::from_err("pkarr", e))?
+                    .map_err(|e| AddressLookupBuilderError::from_err("pkarr", e))?
             }
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
-        let include_direct_addresses = self.include_direct_addresses;
         let secret_key = self.secret_key.filter(|_| self.enable_publish);
 
         Ok(DhtAddressLookup(Arc::new(Inner {
             pkarr,
             ttl,
             relay_url: self.pkarr_relay,
-            include_direct_addresses,
             secret_key,
             republish_delay: self.republish_delay,
             task: Default::default(),
+            filter: self.addr_filter,
         })))
     }
 }
 
-impl IntoAddressLookup for Builder {
+impl AddressLookupBuilder for Builder {
     fn into_address_lookup(
         self,
         endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
@@ -296,15 +305,17 @@ impl AddressLookup for DhtAddressLookup {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
+
+        // apply user-supplied filter
+        let data = data.apply_filter(&self.0.filter).into_owned();
+
         if !data.has_addrs() {
             tracing::debug!("no relay url or direct addresses in endpoint data, not publishing");
             return;
         }
+
         tracing::debug!("publishing {data:?}");
-        let mut info = EndpointInfo::from_parts(keypair.public(), data.clone());
-        if !self.0.include_direct_addresses {
-            info.clear_ip_addrs();
-        }
+        let info = EndpointInfo::from_parts(keypair.public(), data);
         let Ok(signed_packet) = info.to_pkarr_signed_packet(keypair, self.0.ttl) else {
             tracing::warn!("failed to create signed packet");
             return;
@@ -336,7 +347,7 @@ impl AddressLookup for DhtAddressLookup {
 mod tests {
     use std::collections::BTreeSet;
 
-    use iroh_base::RelayUrl;
+    use iroh_base::{RelayUrl, TransportAddr};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
 
@@ -346,7 +357,7 @@ mod tests {
     #[ignore = "flaky"]
     #[traced_test]
     async fn dht_address_lookup_smoke() -> Result {
-        let secret = SecretKey::generate(&mut rand::rng());
+        let secret = SecretKey::generate();
         let testnet = pkarr::mainline::Testnet::new_async(3).await.anyerr()?;
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
@@ -355,11 +366,12 @@ mod tests {
         let address_lookup = DhtAddressLookup::builder()
             .secret_key(secret.clone())
             .client(client)
+            .addr_filter(AddrFilter::unfiltered())
             .build()?;
 
         let relay_url: RelayUrl = Url::parse("https://example.com").anyerr()?.into();
 
-        let data = EndpointData::default().with_relay_url(Some(relay_url.clone()));
+        let data = EndpointData::from_iter([TransportAddr::Relay(relay_url.clone())]);
         address_lookup.publish(&data);
 
         // publish is fire and forget, so we have no way to wait until it is done.

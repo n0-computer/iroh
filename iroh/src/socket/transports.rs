@@ -6,22 +6,28 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use bytes::Bytes;
-use iroh_base::{EndpointId, RelayUrl, TransportAddr};
+use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
+use noq_proto::PathStatus;
 use relay::{RelayNetworkChangeSender, RelaySender};
+use rustc_hash::FxHashMap;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
 use super::{Socket, mapped_addrs::MultipathMappedAddr};
 use crate::{metrics::EndpointMetrics, net_report::Report};
 
+pub(crate) mod custom;
 #[cfg(not(wasm_browser))]
 mod ip;
 mod relay;
+
+use custom::{CustomEndpoint, CustomSender, CustomTransport};
 
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::Config as IpConfig;
@@ -35,32 +41,38 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: IpTransports,
     relay: Vec<RelayTransport>,
+    custom: Vec<Box<dyn CustomEndpoint>>,
 
     poll_recv_counter: usize,
     /// Cache for source addrs, to speed up access
-    source_addrs: [Addr; quinn_udp::BATCH_SIZE],
+    source_addrs: [Addr; noq_udp::BATCH_SIZE],
 }
 
+/// Combined watcher type for all ip transports
+type IpTransportsWatcher = n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>;
+/// Combined watcher type for all custom transports
+type CustomTransportsWatcher =
+    n0_watcher::Join<Vec<CustomAddr>, n0_watcher::Direct<Vec<CustomAddr>>>;
+/// Combined watcher type for all relay transports
+type RelayTransportsWatcher = n0_watcher::Join<
+    Option<(RelayUrl, EndpointId)>,
+    n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
+>;
+
 #[cfg(not(wasm_browser))]
+/// Combined watcher type for all transports, custom, relay and ip
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     n0_watcher::Tuple<
-        n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
-        n0_watcher::Join<
-            Option<(RelayUrl, EndpointId)>,
-            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
-        >,
+        n0_watcher::Tuple<IpTransportsWatcher, CustomTransportsWatcher>,
+        RelayTransportsWatcher,
     >,
     Vec<Addr>,
 >;
 
+/// Type for watching relay and custom transports only, no ip
 #[cfg(wasm_browser)]
-pub(crate) type LocalAddrsWatch = n0_watcher::Map<
-    n0_watcher::Join<
-        Option<(RelayUrl, EndpointId)>,
-        n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
-    >,
-    Vec<Addr>,
->;
+pub(crate) type LocalAddrsWatch =
+    n0_watcher::Map<n0_watcher::Tuple<CustomTransportsWatcher, RelayTransportsWatcher>, Vec<Addr>>;
 
 /// Available transport configurations.
 #[derive(Debug, Clone)]
@@ -81,6 +93,9 @@ pub(crate) enum TransportConfig {
         /// Was this added explicitly by the user.
         is_user_defined: bool,
     },
+    /// Custom transport factory.
+    #[cfg_attr(not(feature = "unstable-custom-transports"), allow(dead_code))]
+    Custom(Arc<dyn CustomTransport>),
 }
 
 impl TransportConfig {
@@ -89,7 +104,7 @@ impl TransportConfig {
     pub(crate) fn default_ipv4() -> Self {
         use std::net::Ipv4Addr;
 
-        use netdev::ipnet::Ipv4Net;
+        use ipnet::Ipv4Net;
 
         Self::Ip {
             config: ip::Config::V4 {
@@ -105,7 +120,7 @@ impl TransportConfig {
     /// Configures a default IPv6 transport, listening on `[::]:0`.
     #[cfg(not(wasm_browser))]
     pub(crate) fn default_ipv6() -> Self {
-        use netdev::ipnet::Ipv6Net;
+        use ipnet::Ipv6Net;
 
         Self::Ip {
             config: ip::Config::V6 {
@@ -147,6 +162,7 @@ impl TransportConfig {
             Self::Relay {
                 is_user_defined, ..
             } => *is_user_defined,
+            Self::Custom(_) => true,
         }
     }
 }
@@ -196,10 +212,23 @@ impl Transports {
             .map(|_c| RelayTransport::new(relay_actor_config.clone(), shutdown_token.child_token()))
             .collect();
 
+        let mut custom = Vec::new();
+        for config in configs.iter().filter_map(|t| {
+            if let TransportConfig::Custom(config) = t {
+                Some(config)
+            } else {
+                None
+            }
+        }) {
+            let transport = config.bind()?;
+            custom.push(transport);
+        }
+
         Ok(Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            custom,
             poll_recv_counter: Default::default(),
             source_addrs: Default::default(),
         })
@@ -209,11 +238,11 @@ impl Transports {
         &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
         sock: &Socket,
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        debug_assert!(bufs.len() <= quinn_udp::BATCH_SIZE, "too many buffers");
+        debug_assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
         if sock.is_closing() {
             return Poll::Pending;
         }
@@ -232,7 +261,7 @@ impl Transports {
         &mut self,
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
@@ -255,10 +284,16 @@ impl Transports {
             #[cfg(not(wasm_browser))]
             poll_transport!(&mut self.ip);
 
-            for transport in &mut self.relay {
+            for transport in self.relay.iter_mut() {
+                poll_transport!(transport);
+            }
+            for transport in self.custom.iter_mut() {
                 poll_transport!(transport);
             }
         } else {
+            for transport in self.custom.iter_mut().rev() {
+                poll_transport!(transport);
+            }
             for transport in self.relay.iter_mut().rev() {
                 poll_transport!(transport);
             }
@@ -277,30 +312,37 @@ impl Transports {
         self.local_addrs_watch().get()
     }
 
-    /// Watch for all currently known local addresses.
     #[cfg(not(wasm_browser))]
+    /// Watch for all currently known local addresses, including IP based transports.
     pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
         let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
+        let custom = n0_watcher::Join::new(self.custom.iter().map(|t| t.watch_local_addrs()));
 
-        ips.or(relays).map(|(ips, relays)| {
-            ips.into_iter()
-                .map(Addr::from)
-                .chain(
-                    relays
-                        .into_iter()
-                        .flatten()
-                        .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id)),
-                )
-                .collect()
+        ips.or(custom).or(relays).map(|((ips, custom), relays)| {
+            let ips = ips.into_iter().map(Addr::from);
+            let custom = custom.into_iter().flatten().map(Addr::from);
+            let relays = relays
+                .into_iter()
+                .flatten()
+                .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id));
+            ips.chain(custom).chain(relays).collect()
         })
     }
 
     #[cfg(wasm_browser)]
+    /// Watch for all currently known local addresses, excluding IP based transports.
     pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
-        let relays = self.relay.iter().map(|t| t.local_addr_watch());
-        n0_watcher::Join::new(relays)
-            .map(|relays| relays.into_iter().flatten().map(Addr::from).collect())
+        let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
+        let custom = n0_watcher::Join::new(self.custom.iter().map(|t| t.watch_local_addrs()));
+        custom.or(relays).map(|(custom, relays)| {
+            let custom = custom.into_iter().flatten().map(Addr::from);
+            let relays = relays
+                .into_iter()
+                .flatten()
+                .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id));
+            custom.chain(relays).collect()
+        })
     }
 
     /// Returns the bound addresses for IP based transports
@@ -311,19 +353,24 @@ impl Transports {
 
     #[cfg(not(wasm_browser))]
     pub(crate) fn max_transmit_segments(&self) -> NonZeroUsize {
-        let res = self.ip.iter().map(|t| t.max_transmit_segments()).min();
-        res.unwrap_or(NonZeroUsize::MIN)
+        let ip = self.ip.iter().map(|t| t.max_transmit_segments());
+        let custom = self.custom.iter().map(|t| t.max_transmit_segments());
+        ip.chain(custom).min().unwrap_or(NonZeroUsize::MIN)
     }
 
     #[cfg(wasm_browser)]
     pub(crate) fn max_transmit_segments(&self) -> NonZeroUsize {
-        NonZeroUsize::MIN
+        self.custom
+            .iter()
+            .map(|t| t.max_transmit_segments())
+            .min()
+            .unwrap_or(NonZeroUsize::MIN)
     }
 
     #[cfg(not(wasm_browser))]
     pub(crate) fn max_receive_segments(&self) -> NonZeroUsize {
         // `max_receive_segments` controls the size of the `RecvMeta` buffer
-        // that quinn creates. Having buffers slightly bigger than necessary
+        // that noq creates. Having buffers slightly bigger than necessary
         // isn't terrible, and makes sure a single socket can read the maximum
         // amount with a single poll. We considered adding these numbers instead,
         // but we never get data from both sockets at the same time in `poll_recv`
@@ -353,12 +400,14 @@ impl Transports {
         let ip = self.ip.create_sender();
 
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
+        let custom = self.custom.iter().map(|t| t.create_sender()).collect();
         let max_transmit_segments = self.max_transmit_segments();
 
         TransportsSender {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            custom,
             max_transmit_segments,
         }
     }
@@ -400,6 +449,15 @@ impl NetworkChangeSender {
         }
     }
 
+    /// Triggers an immediate relay connection health check after a network change.
+    ///
+    /// Uses RTT-based timeout for faster detection of broken connections.
+    pub(crate) fn check_relay_connection(&self) {
+        for relay in &self.relay {
+            relay.check_connection_after_network_change();
+        }
+    }
+
     /// Rebinds underlying connections, if necessary.
     pub(crate) fn rebind(&self) -> std::io::Result<()> {
         let mut res = Ok(());
@@ -424,22 +482,33 @@ impl NetworkChangeSender {
 
 /// An outgoing packet
 #[derive(Debug, Clone)]
-pub(crate) struct Transmit<'a> {
-    pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
-    pub(crate) contents: &'a [u8],
-    pub(crate) segment_size: Option<usize>,
+pub struct Transmit<'a> {
+    pub(crate) ecn: Option<noq_udp::EcnCodepoint>,
+    /// Packet contents
+    pub contents: &'a [u8],
+    /// Optional segment size for GSO
+    pub segment_size: Option<usize>,
+}
+
+impl<'a> Transmit<'a> {
+    fn datagram_count(&self) -> usize {
+        match self.segment_size {
+            None => 1,
+            Some(size) => self.contents.len().div_ceil(size),
+        }
+    }
 }
 
 /// An outgoing packet that can be sent across channels.
 #[derive(Debug, Clone)]
 pub(crate) struct OwnedTransmit {
-    pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
+    pub(crate) ecn: Option<noq_udp::EcnCodepoint>,
     pub(crate) contents: Bytes,
     pub(crate) segment_size: Option<usize>,
 }
 
-impl From<&quinn_udp::Transmit<'_>> for OwnedTransmit {
-    fn from(source: &quinn_udp::Transmit<'_>) -> Self {
+impl From<&noq_udp::Transmit<'_>> for OwnedTransmit {
+    fn from(source: &noq_udp::Transmit<'_>) -> Self {
         Self {
             ecn: source.ecn,
             contents: Bytes::copy_from_slice(source.contents),
@@ -450,11 +519,13 @@ impl From<&quinn_udp::Transmit<'_>> for OwnedTransmit {
 
 /// Transports address.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum Addr {
+pub enum Addr {
     /// An IP address, should always be stored in its canonical form.
     Ip(SocketAddr),
     /// A relay address.
     Relay(RelayUrl, EndpointId),
+    /// A custom transport address.
+    Custom(CustomAddr),
 }
 
 impl fmt::Debug for Addr {
@@ -462,6 +533,7 @@ impl fmt::Debug for Addr {
         match self {
             Addr::Ip(addr) => write!(f, "Ip({addr})"),
             Addr::Relay(url, node_id) => write!(f, "Relay({url}, {})", node_id.fmt_short()),
+            Addr::Custom(custom_addr) => write!(f, "Custom({custom_addr:?})"),
         }
     }
 }
@@ -499,6 +571,12 @@ impl From<&SocketAddr> for Addr {
     }
 }
 
+impl From<CustomAddr> for Addr {
+    fn from(value: CustomAddr) -> Self {
+        Self::Custom(value)
+    }
+}
+
 impl From<(RelayUrl, EndpointId)> for Addr {
     fn from(value: (RelayUrl, EndpointId)) -> Self {
         Self::Relay(value.0, value.1)
@@ -510,6 +588,7 @@ impl From<Addr> for TransportAddr {
         match value {
             Addr::Ip(addr) => TransportAddr::Ip(addr),
             Addr::Relay(url, _) => TransportAddr::Relay(url),
+            Addr::Custom(custom_addr) => TransportAddr::Custom(custom_addr),
         }
     }
 }
@@ -528,7 +607,209 @@ impl Addr {
         match self {
             Self::Ip(ip) => Some(ip),
             Self::Relay(..) => None,
+            Self::Custom(..) => None,
         }
+    }
+
+    /// Returns the kind of address, for configuring bias.
+    pub(crate) fn addr_kind(&self) -> AddrKind {
+        match self {
+            Self::Ip(addr) => match addr {
+                SocketAddr::V4(_) => AddrKind::IpV4,
+                SocketAddr::V6(_) => AddrKind::IpV6,
+            },
+            Self::Relay(_, _) => AddrKind::Relay,
+            Self::Custom(addr) => AddrKind::Custom(addr.id()),
+        }
+    }
+}
+
+/// The kind of a transport address, used for configuring bias.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AddrKind {
+    /// An IPv4 address.
+    IpV4,
+    /// An IPv6 address.
+    IpV6,
+    /// A relay address.
+    Relay,
+    /// A custom transport address with the given id.
+    Custom(u64),
+}
+
+/// The type of transport, either primary or backup.
+///
+/// Primary transports compete with each other based on biased RTT measurements.
+/// Backup transports are only used when no primary transport is available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum TransportType {
+    /// A transport that has the potential to be the primary transport.
+    ///
+    /// It will compete with other Primary transports such as IP based
+    /// transports based on biased RTT measurements.
+    Primary,
+    /// A transport that is only used as a backup transport.
+    ///
+    /// It will only compete with other backup transports such as the relay
+    /// transport based on biased RTT measurements.
+    Backup,
+}
+
+impl TransportType {
+    /// Converts to the corresponding QUIC path status.
+    pub(super) fn to_path_status(self) -> PathStatus {
+        match self {
+            Self::Primary => PathStatus::Available,
+            Self::Backup => PathStatus::Backup,
+        }
+    }
+}
+
+/// Bias configuration for a transport type.
+///
+/// This controls how a transport is prioritized during path selection.
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Duration;
+///
+/// use iroh::endpoint::transports::TransportBias;
+///
+/// // A primary transport with 100ms RTT advantage (will be preferred)
+/// let bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
+///
+/// // A primary transport with 50ms RTT disadvantage (will be less preferred)
+/// let bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(50));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TransportBias {
+    /// Whether this is a primary or backup transport.
+    pub(crate) transport_type: TransportType,
+    /// RTT bias in nanoseconds. Negative values make this transport more preferred.
+    pub(crate) rtt_bias: i128,
+}
+
+impl TransportBias {
+    /// Creates a primary transport bias with no RTT advantage.
+    ///
+    /// Primary transports compete with each other based on biased RTT measurements.
+    pub fn primary() -> Self {
+        Self {
+            transport_type: TransportType::Primary,
+            rtt_bias: 0,
+        }
+    }
+
+    /// Creates a backup transport bias with no RTT advantage.
+    ///
+    /// Backup transports are only used when no primary transport is available.
+    pub(crate) fn backup() -> Self {
+        Self {
+            transport_type: TransportType::Backup,
+            rtt_bias: 0,
+        }
+    }
+
+    /// Adds an RTT advantage to this transport, making it more preferred.
+    ///
+    /// The advantage is subtracted from the measured RTT during path selection,
+    /// so a transport with a 100ms advantage will be preferred over one with
+    /// the same measured RTT but no advantage.
+    pub fn with_rtt_advantage(mut self, advantage: Duration) -> Self {
+        self.rtt_bias -= advantage.as_nanos() as i128;
+        self
+    }
+
+    /// Adds an RTT disadvantage to this transport, making it less preferred.
+    ///
+    /// The disadvantage is added to the measured RTT during path selection,
+    /// so a transport with a 100ms disadvantage will be avoided in favor of
+    /// one with the same measured RTT but no disadvantage.
+    pub fn with_rtt_disadvantage(mut self, disadvantage: Duration) -> Self {
+        self.rtt_bias += disadvantage.as_nanos() as i128;
+        self
+    }
+}
+
+/// A map from address kinds to their transport bias configuration.
+///
+/// This controls how different transport types are prioritized during path selection.
+/// By default:
+/// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
+/// - Relay is a backup transport (only used when no primary transport is available)
+#[derive(Debug, Clone)]
+pub struct TransportBiasMap {
+    map: Arc<FxHashMap<AddrKind, TransportBias>>,
+}
+
+/// How much do we prefer IPv6 over IPv4.
+pub(super) const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
+
+impl Default for TransportBiasMap {
+    fn default() -> Self {
+        let mut map = FxHashMap::default();
+        map.insert(AddrKind::IpV4, TransportBias::primary());
+        map.insert(
+            AddrKind::IpV6,
+            TransportBias::primary().with_rtt_advantage(IPV6_RTT_ADVANTAGE),
+        );
+        map.insert(AddrKind::Relay, TransportBias::backup());
+        Self { map: Arc::new(map) }
+    }
+}
+
+impl TransportBiasMap {
+    /// Returns a new map with the given bias added or updated.
+    pub fn with_bias(self, kind: AddrKind, bias: TransportBias) -> Self {
+        let mut map = (*self.map).clone();
+        map.insert(kind, bias);
+        Self { map: Arc::new(map) }
+    }
+
+    /// Gets the bias for the given address.
+    ///
+    /// Returns a primary transport with no RTT bias if no specific bias is configured.
+    pub fn get(&self, addr: &Addr) -> TransportBias {
+        self.map
+            .get(&addr.addr_kind())
+            .cloned()
+            .unwrap_or_else(TransportBias::primary)
+    }
+
+    /// Computes path selection data for a given address and RTT.
+    pub fn path_selection_data(&self, addr: &Addr, rtt: Duration) -> PathSelectionData {
+        let bias = self.get(addr);
+        let tpe = bias.transport_type;
+        let biased_rtt = rtt.as_nanos() as i128 + bias.rtt_bias;
+        PathSelectionData {
+            transport_type: tpe,
+            rtt,
+            biased_rtt,
+        }
+    }
+}
+
+/// Data used during path selection.
+#[derive(Debug)]
+pub struct PathSelectionData {
+    /// Type of the transport.
+    pub transport_type: TransportType,
+    /// Measured RTT for path selection.
+    pub rtt: Duration,
+    /// Biased RTT for path selection.
+    ///
+    /// This is an i128 so we can subtract an advantage for e.g. IPv6 without underflowing.
+    pub biased_rtt: i128,
+}
+
+impl PathSelectionData {
+    /// Key for sorting paths. Lower is better.
+    ///
+    /// First part is the status, 0 for Available, 1 for Backup.
+    /// Second part is the biased RTT.
+    pub fn sort_key(&self) -> (u8, i128) {
+        (self.transport_type as u8, self.biased_rtt)
     }
 }
 
@@ -541,6 +822,9 @@ impl PartialEq<TransportAddr> for Addr {
             Addr::Relay(relay_url, _) => {
                 matches!(other, TransportAddr::Relay(a) if a == relay_url)
             }
+            Addr::Custom(custom_addr) => {
+                matches!(other, TransportAddr::Custom(a) if a == custom_addr)
+            }
         }
     }
 }
@@ -551,6 +835,7 @@ pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
     ip: IpTransportsSender,
     relay: Vec<RelaySender>,
+    custom: Vec<Arc<dyn CustomSender>>,
     max_transmit_segments: NonZeroUsize,
 }
 
@@ -616,6 +901,16 @@ impl TransportsSender {
                     return Poll::Pending;
                 }
             }
+            Addr::Custom(addr) => {
+                for sender in &mut self.custom {
+                    if sender.is_valid_send_addr(addr) {
+                        match sender.poll_send(cx, addr, transmit) {
+                            Poll::Pending => {}
+                            Poll::Ready(res) => return Poll::Ready(res),
+                        }
+                    }
+                }
+            }
         }
 
         // We "blackhole" data that we have not found any usable transport for on
@@ -627,7 +922,7 @@ impl TransportsSender {
 
 /// A [`Transports`] that works with [`MultipathMappedAddr`]s and their IPv6 representation.
 ///
-/// The [`MultipathMappedAddr`]s have an IPv6 representation that Quinn uses.  This struct
+/// The [`MultipathMappedAddr`]s have an IPv6 representation that Noq uses.  This struct
 /// knows about these and maps them back to the transport [`Addr`]s used by the wrapped
 /// [`Transports`].
 #[derive(Debug)]
@@ -642,8 +937,8 @@ impl Transport {
     }
 }
 
-impl quinn::AsyncUdpSocket for Transport {
-    fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
+impl noq::AsyncUdpSocket for Transport {
+    fn create_sender(&self) -> Pin<Box<dyn noq::UdpSender>> {
         Box::pin(Sender {
             sock: self.sock.clone(),
             sender: self.transports.create_sender(),
@@ -654,7 +949,7 @@ impl quinn::AsyncUdpSocket for Transport {
         &mut self,
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
-        meta: &mut [quinn_udp::RecvMeta],
+        meta: &mut [noq_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         self.transports.poll_recv(cx, bufs, meta, &self.sock)
     }
@@ -670,6 +965,7 @@ impl quinn::AsyncUdpSocket for Transport {
                 match addr {
                     Addr::Ip(addr) => addr,
                     Addr::Relay(..) => DEFAULT_FAKE_ADDR.into(),
+                    Addr::Custom(_) => DEFAULT_FAKE_ADDR.into(),
                 }
             })
             .collect();
@@ -684,6 +980,12 @@ impl quinn::AsyncUdpSocket for Transport {
         }
 
         if !self.transports.relay.is_empty() {
+            // pretend we have an address to make sure things are not too sad during startup
+            use crate::socket::mapped_addrs::DEFAULT_FAKE_ADDR;
+
+            return Ok(DEFAULT_FAKE_ADDR.into());
+        }
+        if !self.transports.custom.is_empty() {
             // pretend we have an address to make sure things are not too sad during startup
             use crate::socket::mapped_addrs::DEFAULT_FAKE_ADDR;
 
@@ -721,12 +1023,12 @@ pub(crate) struct Sender {
 }
 
 impl Sender {
-    /// Extracts the right [`Addr`] from the [`quinn_udp::Transmit`].
+    /// Extracts the right [`Addr`] from the [`noq_udp::Transmit`].
     ///
-    /// Because Quinn does only know about IP transports we map other transports to private
+    /// Because Noq does only know about IP transports we map other transports to private
     /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the
     /// transmit's destination.
-    fn mapped_addr(&self, transmit: &quinn_udp::Transmit) -> io::Result<MultipathMappedAddr> {
+    fn mapped_addr(&self, transmit: &noq_udp::Transmit) -> io::Result<MultipathMappedAddr> {
         if self.sock.is_closed() {
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
@@ -738,19 +1040,19 @@ impl Sender {
     }
 }
 
-impl quinn::UdpSender for Sender {
+impl noq::UdpSender for Sender {
     fn poll_send(
         self: Pin<&mut Self>,
-        quinn_transmit: &quinn_udp::Transmit,
+        noq_transmit: &noq_udp::Transmit,
         cx: &mut Context,
     ) -> Poll<io::Result<()>> {
-        // On errors this methods prefers returning Ok(()) to Quinn.  Returning an error
+        // On errors this methods prefers returning Ok(()) to Noq.  Returning an error
         // should only happen if the error is permanent and fatal and it will never be
-        // possible to send anything again.  Doing so kills the Quinn EndpointDriver.  Most
+        // possible to send anything again.  Doing so kills the Noq EndpointDriver.  Most
         // send errors are intermittent errors, returning Ok(()) in those cases will mean
-        // Quinn eventually considers the packets that had send errors as lost and will try
+        // Noq eventually considers the packets that had send errors as lost and will try
         // and re-send them.
-        let mapped_addr = self.mapped_addr(quinn_transmit)?;
+        let mapped_addr = self.mapped_addr(noq_transmit)?;
 
         let transport_addr = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
@@ -760,10 +1062,10 @@ impl quinn::UdpSender for Sender {
                     return Poll::Ready(Ok(()));
                 };
 
-                // Note we drop the src_ip set in the Quinn Transmit.  This is only the
+                // Note we drop the src_ip set in the Noq Transmit.  This is only the
                 // Initial packet we are sending, so we do not yet have an src address we
                 // need to respond from.
-                if let Some(src_ip) = quinn_transmit.src_ip {
+                if let Some(src_ip) = noq_transmit.src_ip {
                     warn!(dst = ?mapped_addr, ?src_ip, dst_endpoint = %endpoint_id.fmt_short(),
                         "oops, flub didn't think this would happen");
                 }
@@ -772,7 +1074,7 @@ impl quinn::UdpSender for Sender {
                     endpoint_id,
                     super::RemoteStateMessage::SendDatagram(
                         Box::new(self.sender.clone()),
-                        OwnedTransmit::from(quinn_transmit),
+                        OwnedTransmit::from(noq_transmit),
                     ),
                 ) {
                     Ok(()) => {
@@ -781,7 +1083,7 @@ impl quinn::UdpSender for Sender {
                     }
                     Err(msg) => {
                         // We do not want to block the next send which might be on a
-                        // different transport.  Instead we let Quinn handle this as
+                        // different transport.  Instead we let Noq handle this as
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
                         debug!(
@@ -808,6 +1110,20 @@ impl quinn::UdpSender for Sender {
                     }
                 }
             }
+            MultipathMappedAddr::Custom(custom_mapped_addr) => {
+                match self
+                    .sock
+                    .mapped_addrs
+                    .custom_addrs
+                    .lookup(&custom_mapped_addr)
+                {
+                    Some(addr) => Addr::Custom(addr),
+                    None => {
+                        error!("unknown CustomMappedAddr, dropped transmit");
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+            }
             MultipathMappedAddr::Ip(socket_addr) => {
                 // Ensure IPv6 mapped addresses are converted back
                 let socket_addr =
@@ -817,27 +1133,35 @@ impl quinn::UdpSender for Sender {
         };
 
         let transmit = Transmit {
-            ecn: quinn_transmit.ecn,
-            contents: quinn_transmit.contents,
-            segment_size: quinn_transmit.segment_size,
+            ecn: noq_transmit.ecn,
+            contents: noq_transmit.contents,
+            segment_size: noq_transmit.segment_size,
         };
         let this = self.project();
 
         match this
             .sender
-            .poll_send(cx, &transport_addr, quinn_transmit.src_ip, &transmit)
+            .poll_send(cx, &transport_addr, noq_transmit.src_ip, &transmit)
         {
-            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+            Poll::Ready(Ok(())) => {
+                trace!(
+                    dst = ?transport_addr,
+                    len = transmit.contents.len(),
+                    datagram_count = transmit.datagram_count(),
+                    "sent transmit"
+                );
+                Poll::Ready(Ok(()))
+            }
             Poll::Ready(Err(ref err)) => {
-                warn!(?transport_addr, "dropped transmit: {err:#}");
+                warn!(dst=?transport_addr, "dropped transmit: {err:#}");
                 Poll::Ready(Ok(()))
             }
             Poll::Pending => {
                 // We do not want to block the next send which might be on a
-                // different transport.  Instead we let Quinn handle this as a lost
+                // different transport.  Instead we let Noq handle this as a lost
                 // datagram.
                 // TODO: Revisit this: we might want to do something better.
-                trace!(?transport_addr, "transport pending, dropped transmit");
+                trace!(dst=?transport_addr, "transport pending, dropped transmit");
                 Poll::Ready(Ok(()))
             }
         }
@@ -845,5 +1169,87 @@ impl quinn::UdpSender for Sender {
 
     fn max_transmit_segments(&self) -> NonZeroUsize {
         self.sender.max_transmit_segments
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+
+    use iroh_base::{EndpointId, RelayUrl};
+
+    use super::*;
+
+    fn v4(port: u16) -> Addr {
+        Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
+    }
+
+    fn v6(port: u16) -> Addr {
+        Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::LOCALHOST,
+            port,
+            0,
+            0,
+        )))
+    }
+
+    fn relay(port: u16) -> Addr {
+        let url = format!("https://relay{port}.iroh.computer")
+            .parse::<RelayUrl>()
+            .unwrap();
+        Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap())
+    }
+
+    #[test]
+    fn test_transport_bias_map_default() {
+        let bias_map = TransportBiasMap::default();
+
+        // IPv4 should be Primary with no bias
+        let v4_bias = bias_map.get(&v4(1));
+        assert_eq!(v4_bias.transport_type, TransportType::Primary);
+        assert_eq!(v4_bias.rtt_bias, 0);
+
+        // IPv6 should be Primary with negative bias (preferred)
+        let v6_bias = bias_map.get(&v6(1));
+        assert_eq!(v6_bias.transport_type, TransportType::Primary);
+        assert_eq!(v6_bias.rtt_bias, -(IPV6_RTT_ADVANTAGE.as_nanos() as i128));
+
+        // Relay should be Backup with no bias
+        let relay_bias = bias_map.get(&relay(1));
+        assert_eq!(relay_bias.transport_type, TransportType::Backup);
+        assert_eq!(relay_bias.rtt_bias, 0);
+    }
+
+    #[test]
+    fn test_ipv6_bias_gives_advantage() {
+        let bias_map = TransportBiasMap::default();
+
+        // With equal RTTs, IPv6 should have a lower biased_rtt
+        let rtt = Duration::from_millis(50);
+        let v4_bias = bias_map.get(&v4(1));
+        let v6_bias = bias_map.get(&v6(1));
+
+        let v4_biased_rtt = rtt.as_nanos() as i128 + v4_bias.rtt_bias;
+        let v6_biased_rtt = rtt.as_nanos() as i128 + v6_bias.rtt_bias;
+
+        // IPv6 should have lower biased RTT (more preferred)
+        assert!(v6_biased_rtt < v4_biased_rtt);
+        assert_eq!(
+            v4_biased_rtt - v6_biased_rtt,
+            IPV6_RTT_ADVANTAGE.as_nanos() as i128
+        );
+    }
+
+    #[test]
+    fn test_relay_is_backup() {
+        let bias_map = TransportBiasMap::default();
+
+        // Relay should be Backup, which means it won't compete with Primary transports
+        let relay_bias = bias_map.get(&relay(1));
+        assert_eq!(relay_bias.transport_type, TransportType::Backup);
+
+        // Primary transports (IPv4/IPv6) should be preferred over Backup
+        let v4_bias = bias_map.get(&v4(1));
+        assert!(v4_bias.transport_type < relay_bias.transport_type);
     }
 }

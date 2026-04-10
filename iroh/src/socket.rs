@@ -28,8 +28,10 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
+use mapped_addrs::MultipathMappedAddr;
 use n0_error::{bail, e, stack_error};
 use n0_future::{
+    MaybeFuture,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -37,15 +39,19 @@ use n0_watcher::{self, Watchable, Watcher};
 #[cfg(not(wasm_browser))]
 use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
-use quinn::WeakConnectionHandle;
-use rand::Rng;
+use noq::{
+    NetworkChangeHint, WeakConnectionHandle,
+    crypto::rustls::{QuicClientConfig, QuicServerConfig},
+};
+use rand::RngExt;
+use rustc_hash::FxHashSet;
 use tokio::sync::{
     Mutex as AsyncMutex,
     mpsc::{self},
     oneshot,
 };
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
-use tracing::{Instrument, Level, debug, event, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, Transport, TransportConfig};
 use url::Url;
 
@@ -63,12 +69,17 @@ use crate::{
     endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
+    portmapper,
     runtime::Runtime,
     socket::{
         concurrent_read_map::ReadOnlyMap,
         remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
+        transports::TransportBiasMap,
     },
-    tls,
+    tls::{
+        self,
+        misc::{Blake3HmacKey, RustlsTokenKey},
+    },
 };
 
 mod metrics;
@@ -94,9 +105,23 @@ pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The maximum time a path can stay idle before being closed.
 ///
-/// This is [`HEARTBEAT_INTERVAL`] + 1.5s.  This gives us a chance to send a PING frame and
-/// some retries.
-pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
+/// 15s gives 3x [`HEARTBEAT_INTERVAL`] (5s) for multiple retry chances, and enough
+/// margin for real-world outages (WiFi reconnect 2-5s, cellular handoff 2-10s).
+/// iroh 0.35 used 10s at the QUIC level; tailscale uses 45s at the WireGuard session
+/// level with 3s heartbeats.
+pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The maximum time a relay path can stay idle before being closed.
+///
+/// Relay paths need a longer idle timeout than direct paths because the relay actor
+/// manages the WebSocket connection and transparently reconnects after network changes
+/// or relay server restarts. During network outages the interface may be down for
+/// 5-15s, during which no relay traffic flows. Once the interface recovers, the relay
+/// actor reconnects (DNS + TCP + TLS + WebSocket upgrade), which adds another 1-2s.
+///
+/// Set to match the connection-level idle timeout (30s) so the relay path survives
+/// as long as the connection itself.
+pub(crate) const RELAY_PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
@@ -142,10 +167,12 @@ pub(crate) struct Options {
     pub(crate) tls_config: rustls::ClientConfig,
 
     /// ServerConfig for the internal QUIC endpoint
-    pub(crate) server_config: quinn_proto::ServerConfig,
+    pub(crate) server_config: noq_proto::ServerConfig,
 
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
+    pub(crate) transport_bias: TransportBiasMap,
+    pub(crate) portmapper_config: portmapper::PortmapperConfig,
 
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
@@ -162,9 +189,9 @@ pub(crate) struct EndpointInner {
     actor_task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Channel to send to the internal actor.
     actor_sender: mpsc::Sender<ActorMessage>,
-    // quinn endpoint
-    endpoint: quinn::Endpoint,
-    // Runtime used by quinn
+    // noq endpoint
+    endpoint: noq::Endpoint,
+    // Runtime used by noq
     runtime: Arc<Runtime>,
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
@@ -182,25 +209,43 @@ impl Drop for EndpointInner {
     }
 }
 
-/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
-#[derive(Debug)]
+/// Configuration for a [`noq::Endpoint`] that cannot be changed at runtime.
+#[derive(derive_more::Debug)]
 pub(crate) struct StaticConfig {
     pub(crate) tls_config: tls::TlsConfig,
+    #[debug("QuicServerConifg")]
+    pub(crate) server_config: QuicServerConfig,
+    #[debug("QuicClientConfig")]
+    pub(crate) client_config: QuicClientConfig,
+    #[debug("Arc<RustlsTokenKey>")]
+    pub(crate) token_key: Arc<RustlsTokenKey>,
     pub(crate) transport_config: QuicTransportConfig,
-    pub(crate) keylog: bool,
 }
 
 impl StaticConfig {
-    /// Create a [`quinn_proto::ServerConfig`] with the specified ALPN protocols.
+    /// Create a [`noq_proto::ServerConfig`] with the specified ALPN protocols.
     pub(crate) fn create_server_config(
         &self,
         alpn_protocols: Vec<Vec<u8>>,
-    ) -> quinn_proto::ServerConfig {
-        let quic_server_config = self
-            .tls_config
-            .make_server_config(alpn_protocols, self.keylog);
-        let mut inner = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+    ) -> noq_proto::ServerConfig {
+        let mut quic_server_config = self.server_config.clone();
+        quic_server_config.set_alpn_protocols(alpn_protocols);
+        let mut inner =
+            noq::ServerConfig::new(Arc::new(quic_server_config), self.token_key.clone());
         inner.transport_config(self.transport_config.to_inner_arc());
+        inner
+    }
+
+    /// Create a [`noq_proto::ClientConfig`] with the specified ALPN protocols.
+    pub(crate) fn create_client_config(
+        &self,
+        alpn_protocols: Vec<Vec<u8>>,
+        transport_config: Arc<noq::TransportConfig>,
+    ) -> noq_proto::ClientConfig {
+        let mut quic_client_config = self.client_config.clone();
+        quic_client_config.set_alpn_protocols(alpn_protocols);
+        let mut inner = noq::ClientConfig::new(Arc::new(quic_client_config));
+        inner.transport_config(transport_config);
         inner
     }
 }
@@ -215,7 +260,7 @@ struct ShutdownState {
     ///
     /// Currently cancelled from [`EndpointInner::close`].
     at_close_start: CancellationToken,
-    /// Token that is cancelled once the [`quinn::Endpoint`] is drained.
+    /// Token that is cancelled once the [`noq::Endpoint`] is drained.
     ///
     /// Only 100ms after this is cancelled will the [`Actor`] task be cancelled, it should
     /// have exited already by then as it is considered an error if it was still running.
@@ -307,14 +352,11 @@ pub(crate) struct Socket {
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
+    /// Tracing span for this endpoint.
+    pub(crate) span: Span,
 }
 
 impl Socket {
-    /// Creates a [`Socket`] listening.
-    pub(crate) async fn spawn(opts: Options) -> Result<EndpointInner, BindError> {
-        EndpointInner::new(opts).await
-    }
-
     /// Returns the relay endpoint we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay endpoints.
@@ -459,10 +501,12 @@ impl Socket {
     /// If you call this with a mapped address for which no mapping exists,
     /// it will return the address as an `Addr::Ip`.
     pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> transports::Addr {
-        self.mapped_addrs
-            .relay_addrs
-            .to_transport_addr(addr)
-            .unwrap_or(transports::Addr::Ip(addr))
+        remote_map::to_transport_addr(
+            addr,
+            &self.mapped_addrs.relay_addrs,
+            &self.mapped_addrs.custom_addrs,
+        )
+        .unwrap_or(transports::Addr::Ip(addr))
     }
 
     /// Reference to the internal Address Lookup
@@ -494,7 +538,7 @@ impl Socket {
     fn process_datagrams(
         &self,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
         source_addrs: &[transports::Addr],
     ) {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
@@ -506,51 +550,54 @@ impl Socket {
 
         // zip is slow :(
         for i in 0..metas.len() {
-            let quinn_meta = &mut metas[i];
+            let noq_meta = &mut metas[i];
             let source_addr = &source_addrs[i];
 
-            let datagram_count = quinn_meta.len.div_ceil(quinn_meta.stride);
+            let datagram_count = noq_meta.len.div_ceil(noq_meta.stride);
             self.metrics
                 .socket
                 .recv_datagrams
                 .inc_by(datagram_count as _);
-            if quinn_meta.len > quinn_meta.stride {
+            if noq_meta.len > noq_meta.stride {
                 trace!(
                     src = ?source_addr,
-                    len = quinn_meta.len,
-                    stride = %quinn_meta.stride,
-                    datagram_count = quinn_meta.len.div_ceil(quinn_meta.stride),
+                    len = noq_meta.len,
+                    stride = %noq_meta.stride,
+                    datagram_count = noq_meta.len.div_ceil(noq_meta.stride),
                     "GRO datagram received",
                 );
                 self.metrics.socket.recv_gro_datagrams.inc();
             } else {
-                trace!(src = ?source_addr, len = quinn_meta.len, "datagram received");
+                trace!(src = ?source_addr, len = noq_meta.len, "datagram received");
             }
             match source_addr {
                 transports::Addr::Ip(SocketAddr::V4(..)) => {
-                    self.metrics
-                        .socket
-                        .recv_data_ipv4
-                        .inc_by(quinn_meta.len as _);
+                    self.metrics.socket.recv_data_ipv4.inc_by(noq_meta.len as _);
                 }
                 transports::Addr::Ip(SocketAddr::V6(..)) => {
-                    self.metrics
-                        .socket
-                        .recv_data_ipv6
-                        .inc_by(quinn_meta.len as _);
+                    self.metrics.socket.recv_data_ipv6.inc_by(noq_meta.len as _);
                 }
                 transports::Addr::Relay(src_url, src_node) => {
                     self.metrics
                         .socket
                         .recv_data_relay
-                        .inc_by(quinn_meta.len as _);
+                        .inc_by(noq_meta.len as _);
 
                     // Fill in the correct mapped address
                     let mapped_addr = self
                         .mapped_addrs
                         .relay_addrs
                         .get(&(src_url.clone(), *src_node));
-                    quinn_meta.addr = mapped_addr.private_socket_addr();
+                    noq_meta.addr = mapped_addr.private_socket_addr();
+                }
+                transports::Addr::Custom(addr) => {
+                    self.metrics
+                        .socket
+                        .recv_data_custom
+                        .inc_by(noq_meta.len as _);
+                    // Fill in the correct mapped address
+                    let mapped_addr = self.mapped_addrs.custom_addrs.get(addr);
+                    noq_meta.addr = mapped_addr.private_socket_addr();
                 }
             }
         }
@@ -561,7 +608,7 @@ impl Socket {
     /// Called whenever our addresses or home relay endpoint changes.
     fn publish_my_addr(&self) {
         let relay_url = self.my_relay();
-        let mut addrs: BTreeSet<_> = self
+        let mut addrs: Vec<_> = self
             .direct_addrs
             .sockaddrs()
             .map(TransportAddr::Ip)
@@ -577,10 +624,11 @@ impl Socket {
             return;
         }
         if let Some(url) = relay_url {
-            addrs.insert(TransportAddr::Relay(url));
+            addrs.push(TransportAddr::Relay(url));
         }
 
-        let data = EndpointData::new(addrs).with_user_data(user_data);
+        let mut data = EndpointData::new(addrs);
+        data.set_user_data(user_data);
         self.address_lookup.publish(&data);
     }
 }
@@ -596,7 +644,6 @@ struct DirectAddrUpdateState {
     /// If set, start a new update as soon as the current one is finished.
     want_update: Option<UpdateReason>,
     sock: Arc<Socket>,
-    #[cfg(not(wasm_browser))]
     port_mapper: portmapper::Client,
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     net_reporter: Arc<AsyncMutex<net_report::Client>>,
@@ -626,7 +673,7 @@ impl UpdateReason {
 impl DirectAddrUpdateState {
     fn new(
         sock: Arc<Socket>,
-        #[cfg(not(wasm_browser))] port_mapper: portmapper::Client,
+        port_mapper: portmapper::Client,
         net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
         run_done: mpsc::Sender<()>,
@@ -634,7 +681,6 @@ impl DirectAddrUpdateState {
     ) -> Self {
         DirectAddrUpdateState {
             want_update: Default::default(),
-            #[cfg(not(wasm_browser))]
             port_mapper,
             net_reporter,
             sock,
@@ -684,7 +730,6 @@ impl DirectAddrUpdateState {
         if self.shutdown_token.is_cancelled() {
             debug!("skipping net_report, socket is shutting down");
             // deactivate portmapper
-            #[cfg(not(wasm_browser))]
             self.port_mapper.deactivate();
             return;
         }
@@ -694,7 +739,6 @@ impl DirectAddrUpdateState {
             return;
         }
 
-        #[cfg(not(wasm_browser))]
         self.port_mapper.procure_mapping();
 
         debug!("requesting net_report report");
@@ -750,13 +794,25 @@ pub enum BindError {
     #[error("Failed to create an address lookup service")]
     AddressLookup {
         #[error(from)]
-        source: crate::address_lookup::IntoAddressLookupError,
+        source: crate::address_lookup::AddressLookupBuilderError,
+    },
+    #[error("Missing or incompatible rustls crypto provider configured")]
+    InvalidCryptoProvider,
+    #[error("Error constructing TLS configuration")]
+    TlsConfigError {
+        #[error(from)]
+        source: tls::TlsConfigError,
     },
 }
 
 impl EndpointInner {
-    /// Creates a [`Socket`].
-    async fn new(opts: Options) -> Result<Self, BindError> {
+    /// Creates a [`EndpointInner`].
+    pub(crate) async fn bind(opts: Options) -> Result<Self, BindError> {
+        // Use the current span as the main span for all tasks spawned in this endpoint.
+        // `EndpointInner::bind` is not public and only called from `crate::endpoint::Builder::bind`,
+        // which instruments the call with a span created for this purpose.
+        let span = tracing::Span::current();
+
         let Options {
             secret_key,
             transports: transport_configs,
@@ -768,13 +824,13 @@ impl EndpointInner {
             tls_config,
             metrics,
             hooks,
+            transport_bias,
+            portmapper_config,
             static_config,
         } = opts;
 
         let address_lookup = address_lookup::ConcurrentAddressLookup::default();
-        #[cfg(not(wasm_browser))]
-        let port_mapper =
-            portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
+        let port_mapper = portmapper::create_client(&metrics, &portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs
             .iter()
@@ -823,22 +879,19 @@ impl EndpointInner {
         )
         .map_err(|err| e!(BindError::Sockets, err))?;
 
-        #[cfg(not(wasm_browser))]
-        {
-            if let Some(v4_port) = transports.local_addrs().into_iter().find_map(|t| {
-                if let transports::Addr::Ip(SocketAddr::V4(addr)) = t {
-                    Some(addr.port())
-                } else {
-                    None
+        if let Some(v4_port) = transports.local_addrs().into_iter().find_map(|t| {
+            if let transports::Addr::Ip(SocketAddr::V4(addr)) = t {
+                Some(addr.port())
+            } else {
+                None
+            }
+        }) {
+            // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
+            match v4_port.try_into() {
+                Ok(non_zero_port) => {
+                    port_mapper.update_local_port(non_zero_port);
                 }
-            }) {
-                // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
-                match v4_port.try_into() {
-                    Ok(non_zero_port) => {
-                        port_mapper.update_local_port(non_zero_port);
-                    }
-                    Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
-                }
+                Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
             }
         }
 
@@ -857,11 +910,12 @@ impl EndpointInner {
 
         let remote_map = {
             RemoteMap::new(
-                secret_key.public(),
                 metrics.socket.clone(),
                 direct_addrs.addrs.watch(),
                 address_lookup.clone(),
                 shutdown_token.child_token(),
+                transport_bias,
+                span.clone(),
             )
         };
 
@@ -884,13 +938,15 @@ impl EndpointInner {
             ip_bind_addrs: transports.ip_bind_addrs(),
             tls_config: tls_config.clone(),
             hooks,
+            span: span.clone(),
         });
 
-        let mut endpoint_config = quinn::EndpointConfig::default();
-        // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
+        let mut endpoint_config =
+            noq::EndpointConfig::new(Arc::new(Blake3HmacKey::new(&mut rand::rng())));
+        // Setting this to false means that noq will ignore packets that have the QUIC fixed bit
         // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
         // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
-        // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
+        // through to noq. We set the first byte of the packet to zero, which makes noq ignore
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
 
@@ -899,7 +955,7 @@ impl EndpointInner {
 
         let runtime = Arc::new(Runtime::new(secret_key.public()));
 
-        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+        let endpoint = noq::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
             Box::new(Transport::new(sock.clone(), transports)),
@@ -916,7 +972,7 @@ impl EndpointInner {
             // Set a `QuicConfig` for address discovery (QAD), but only if we have IP transports.
             //
             // If there are no IP transports configured, then we don't set a QuicConfig.
-            // If we would, the `quinn::Endpoint` passed along will not have IP connectivity,
+            // If we would, the `noq::Endpoint` passed along will not have IP connectivity,
             // and the QAD probes that connect to the relay's QUIC endpoints would time out
             // because all outgoing packets to IP destinations would be dropped.
             let qad_config = has_ip_transports.then(|| QuicConfig {
@@ -942,7 +998,6 @@ impl EndpointInner {
         let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
         let direct_addr_update_state = DirectAddrUpdateState::new(
             sock.clone(),
-            #[cfg(not(wasm_browser))]
             port_mapper,
             Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
@@ -954,6 +1009,7 @@ impl EndpointInner {
 
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
+            endpoint: endpoint.clone(),
             sock: sock.clone(),
             remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
@@ -962,6 +1018,7 @@ impl EndpointInner {
             direct_addr_update_state,
             transports_network_change,
             direct_addr_done_rx,
+            call_notify_quic_network_change: None,
         };
         // Initialize addresses
         #[cfg(not(wasm_browser))]
@@ -974,7 +1031,7 @@ impl EndpointInner {
                     shutdown_token.child_token(),
                     local_addrs_watch,
                 )
-                .instrument(info_span!("actor")),
+                .instrument(info_span!(parent: span, "actor")),
         );
 
         let actor_task = Mutex::new(Some(AbortOnDropHandle::new(actor_task)));
@@ -989,19 +1046,19 @@ impl EndpointInner {
         })
     }
 
-    /// Returns a reference to the underlying [`quinn::Endpoint`].
-    pub(crate) fn quinn_endpoint(&self) -> &quinn::Endpoint {
+    /// Returns a reference to the underlying [`noq::Endpoint`].
+    pub(crate) fn noq_endpoint(&self) -> &noq::Endpoint {
         &self.endpoint
     }
 
     /// Closes the iroh endpoint.
     ///
     /// Only the first close does anything. Any later closes return nil.  Polling the socket
-    /// ([`quinn::AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`] indefinitely
+    /// ([`noq::AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`] indefinitely
     /// after this call.
     ///
     /// [`Poll::Pending`]: std::task::Poll::Pending
-    #[instrument(skip_all)]
+    #[instrument(skip_all, parent = self.sock.span.clone())]
     pub(crate) async fn close(&self) {
         if self.sock.is_closed() || self.sock.is_closing() {
             return;
@@ -1015,7 +1072,7 @@ impl EndpointInner {
         self.sock.address_lookup().clear();
 
         // Initiate closing all connections, and refuse future connections.
-        self.quinn_endpoint().close(0u16.into(), b"");
+        self.noq_endpoint().close(0u16.into(), b"");
 
         // In the history of this code, this call had been
         // - removed: https://github.com/n0-computer/iroh/pull/1753
@@ -1028,12 +1085,12 @@ impl EndpointInner {
         // *and acknowledged* (or time out with the "probe timeout" of usually 3 seconds).
         // This allows the other endpoints for these connections to be notified to release
         // their resources, or - depending on the protocol - that all data was received.
-        // With the current quinn API, this is the only way to ensure protocol code can use
+        // With the current noq API, this is the only way to ensure protocol code can use
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
         trace!("wait_idle start");
-        self.quinn_endpoint().wait_idle().await;
+        self.noq_endpoint().wait_idle().await;
         trace!("wait_idle done");
 
         // Start cancellation of all actors.
@@ -1059,7 +1116,7 @@ impl EndpointInner {
         }
 
         // Waits for the EndpointDriver and all ConnectionDrivers to shut down
-        // Expects that the `quinn::Endpoint` has been closed before this call,
+        // Expects that the `noq::Endpoint` has been closed before this call,
         // otherwise, the runtime will never shutdown.
         self.runtime.shutdown().await;
 
@@ -1135,7 +1192,7 @@ impl EndpointInner {
             .ok();
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, with_crypto_provider))]
     async fn force_network_change(&self, is_major: bool) {
         self.actor_sender
             .send(ActorMessage::ForceNetworkChange(is_major))
@@ -1155,7 +1212,7 @@ impl EndpointInner {
     ///
     /// Returns `Ok(Err(address_lookup_error))` if there are no known paths to the remote and Address Lookup
     /// failed or produced no results. This means that we don't have any transport address for
-    /// the remote, thus there is no point in trying to connect over the quinn endpoint.
+    /// the remote, thus there is no point in trying to connect over the noq endpoint.
     ///
     /// Returns `Err(RemoteStateActorStoppedError)` if the `RemoteStateActor` for the remote has stopped,
     /// which may never happen and thus is a bug if it does.
@@ -1230,11 +1287,67 @@ enum ActorMessage {
     ),
     #[debug("RemoteInfo(..)")]
     RemoteInfo(EndpointId, oneshot::Sender<RemoteInfo>),
-    #[cfg(test)]
+    #[cfg(all(test, with_crypto_provider))]
     ForceNetworkChange(bool),
 }
 
+/// State for polling until a default route is available after a network change.
+///
+/// When a network change is detected but no default route exists yet (e.g.,
+/// interface just came up but gateway not assigned), we poll with exponential
+/// backoff until the gateway appears. This avoids the fixed 2s delay that was
+/// too slow for interface recovery scenarios.
+struct PendingNetworkChangeNotify {
+    /// Next time to check for default route.
+    next_check: Instant,
+    /// Current backoff interval.
+    interval: Duration,
+    /// Whether this was a major change.
+    is_major: bool,
+    /// When we started polling (to enforce a max wait).
+    started: Instant,
+}
+
+impl PendingNetworkChangeNotify {
+    const INITIAL_INTERVAL: Duration = Duration::from_millis(100);
+    const MAX_INTERVAL: Duration = Duration::from_secs(1);
+    const MAX_WAIT: Duration = Duration::from_secs(5);
+
+    fn new(is_major: bool) -> Self {
+        Self {
+            next_check: Instant::now() + Self::INITIAL_INTERVAL,
+            interval: Self::INITIAL_INTERVAL,
+            is_major,
+            started: Instant::now(),
+        }
+    }
+
+    /// Advance to the next check interval (exponential backoff, capped).
+    fn advance(&mut self) {
+        self.interval = (self.interval * 2).min(Self::MAX_INTERVAL);
+        self.next_check = Instant::now() + self.interval;
+    }
+
+    /// Whether we've exceeded the maximum wait time.
+    fn expired(&self) -> bool {
+        self.started.elapsed() >= Self::MAX_WAIT
+    }
+}
+
 struct Actor {
+    /// A clone of the quinn Endpoint.
+    ///
+    /// The task of this actor is currently owned by the [`crate::Endpoint`] and wrapped in
+    /// an [`AbortOnDropHandle`]. When [`crate::Endpoint::close`] is called various
+    /// subsystems are being stopped. Then, when [`ShutdownState::at_endpoint_closed`] is
+    /// called by [`crate::Endpoint::close`], this actor itself is stopped via it's
+    /// [`CancellationToken`] and we will drop this clone of the endpoint. The endpoint is
+    /// then finally dropped when the [`crate::Endpoint`] itself is dropped.
+    ///
+    /// All of this to say: keeping the quinn endpoint alive here does not impact the
+    /// lifetime of it since it's lifetime is shorter than that one that's stored in the
+    /// [`crate::Endpoint`].
+    endpoint: noq::Endpoint,
     /// Shared state between an awful lot of iroh subsystems.
     ///
     /// In particular both the [`EndpointInner`] as well as this actor itself have a
@@ -1254,6 +1367,13 @@ struct Actor {
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
+    /// Polling state for [`Actor::notify_quic_network_change`].
+    ///
+    /// When a network change is detected but no default route is available yet,
+    /// we poll with exponential backoff (100ms, 200ms, 400ms, 800ms, 1s, 1s, ...)
+    /// until the gateway appears. Once it does, we notify immediately.
+    /// After 5s total we notify anyway even without a gateway.
+    call_notify_quic_network_change: Option<PendingNetworkChangeNotify>,
 }
 
 impl Actor {
@@ -1266,14 +1386,12 @@ impl Actor {
         // Setup network monitoring
         let mut current_netmon_state = self.local_interfaces_watcher.get();
 
-        #[cfg(not(wasm_browser))]
         let mut portmap_watcher = self
             .direct_addr_update_state
             .port_mapper
             .watch_external_address();
 
         let mut receiver_closed = false;
-        #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
 
         let mut net_report_watcher = self.sock.net_report.watch();
@@ -1283,10 +1401,15 @@ impl Actor {
 
         while !shutdown_token.is_cancelled() {
             self.sock.metrics.socket.actor_tick_main.inc();
-            #[cfg(not(wasm_browser))]
             let portmap_watcher_changed = portmap_watcher.changed();
-            #[cfg(wasm_browser)]
-            let portmap_watcher_changed = n0_future::future::pending();
+
+            let notify_quic_network_change = match &self.call_notify_quic_network_change {
+                Some(pending) => {
+                    MaybeFuture::Some(n0_future::time::sleep_until(pending.next_check))
+                }
+                None => MaybeFuture::None,
+            };
+            n0_future::pin!(notify_quic_network_change);
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
@@ -1351,24 +1474,19 @@ impl Actor {
                     }
                 }
                 change = portmap_watcher_changed, if !portmap_watcher_closed => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        if change.is_err() {
-                            trace!("tick: portmap watcher closed");
-                            self.sock.metrics.socket.actor_tick_other.inc();
+                    if change.is_err() {
+                        trace!("tick: portmap watcher closed");
+                        self.sock.metrics.socket.actor_tick_other.inc();
 
-                            portmap_watcher_closed = true;
-                            continue;
-                        }
-
-                        trace!("tick: portmap changed");
-                        self.sock.metrics.socket.actor_tick_portmap_changed.inc();
-                        let new_external_address = *portmap_watcher.borrow();
-                        debug!("external address updated: {new_external_address:?}");
-                        self.re_stun(UpdateReason::PortmapUpdated);
+                        portmap_watcher_closed = true;
+                        continue;
                     }
-                    #[cfg(wasm_browser)]
-                    let _unused_in_browsers = change;
+
+                    trace!("tick: portmap changed");
+                    self.sock.metrics.socket.actor_tick_portmap_changed.inc();
+                    let new_external_address = *portmap_watcher.borrow();
+                    debug!("external address updated: {new_external_address:?}");
+                    self.re_stun(UpdateReason::PortmapUpdated);
                 },
                 state = self.local_interfaces_watcher.updated() => {
                     let Ok(state) = state else {
@@ -1390,10 +1508,44 @@ impl Actor {
                 eid = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
                     trace!(%eid, "cleaned up RemoteStateActor");
                 }
+                _ = &mut notify_quic_network_change => {
+                    let has_network = self.has_usable_network();
+                    let Some(pending) = self.call_notify_quic_network_change.as_mut() else {
+                        continue;
+                    };
+                    if has_network || pending.expired() {
+                        // Gateway appeared or we've waited long enough, notify now.
+                        let is_major = pending.is_major;
+                        self.call_notify_quic_network_change = None;
+                        self.notify_quic_network_change(is_major);
+                    } else {
+                        // No gateway yet, back off and try again.
+                        trace!(
+                            interval = ?pending.interval,
+                            elapsed = ?pending.started.elapsed(),
+                            "no default route yet, retrying"
+                        );
+                        pending.advance();
+                    }
+                }
                 else => {
                     trace!("tick: else");
                 }
             }
+        }
+    }
+
+    /// Whether the local network has a default route and at least one IP address.
+    fn has_usable_network(&mut self) -> bool {
+        #[cfg(target_family = "wasm")]
+        {
+            true
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let interfaces = self.local_interfaces_watcher.get();
+            interfaces.default_route_interface.is_some()
+                && (interfaces.have_v4 || interfaces.have_v6)
         }
     }
 
@@ -1408,6 +1560,7 @@ impl Actor {
             if let Err(err) = self.transports_network_change.rebind() {
                 warn!("failed to rebind transports: {err:?}");
             }
+            self.transports_network_change.check_relay_connection();
 
             #[cfg(not(wasm_browser))]
             self.sock.dns_resolver.reset().await;
@@ -1416,6 +1569,89 @@ impl Actor {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
 
+        if self.has_usable_network() {
+            // This is considered a usable network change, propagate it to the QUIC stack
+            // right away.
+            self.call_notify_quic_network_change = None;
+            self.notify_quic_network_change(is_major);
+        } else {
+            // No default route yet (e.g., interface just came up but gateway not
+            // assigned). Poll with exponential backoff until the gateway appears.
+            match &mut self.call_notify_quic_network_change {
+                Some(pending) => {
+                    // Update is_major if this change is more severe.
+                    pending.is_major |= is_major;
+                }
+                None => {
+                    self.call_notify_quic_network_change =
+                        Some(PendingNetworkChangeNotify::new(is_major));
+                }
+            }
+        }
+    }
+
+    /// Notifies the QUIC stack of the network change we observed.
+    ///
+    /// This is decoupled from receiving the network change, because we try to debounce
+    /// network changes as they often arrive in groups.
+    fn notify_quic_network_change(&mut self, is_major: bool) {
+        #[derive(Debug)]
+        struct Hint {
+            local_addrs: FxHashSet<IpAddr>,
+        }
+
+        impl NetworkChangeHint for Hint {
+            fn is_path_recoverable(
+                &self,
+                _path_id: noq::PathId,
+                network_path: noq_proto::FourTuple,
+            ) -> bool {
+                match MultipathMappedAddr::from(network_path.remote()) {
+                    MultipathMappedAddr::Mixed(_) => {
+                        // This address is only ever used to send an Initial packet to, it
+                        // should never appear as an established path.
+                        error!("A mixed address can not be used for network changes");
+                        false
+                    }
+                    MultipathMappedAddr::Relay(_) => {
+                        // We pretend the relay path is never affected by link changes. The
+                        // relay actor transparently reconnects and the addresses never
+                        // change.
+                        true
+                    }
+                    MultipathMappedAddr::Ip(_) => {
+                        // If we no longer have a valid interface to send from for a local
+                        // IP then it can not be recovered.
+                        match network_path.local_ip() {
+                            Some(local_ip) => self.local_addrs.contains(&local_ip),
+                            None => true,
+                        }
+                    }
+                    MultipathMappedAddr::Custom(_) => {
+                        // Assume it is unrecoverable for now
+                        false
+                    }
+                }
+            }
+        }
+
+        let hint = Hint {
+            #[cfg(not(wasm_browser))]
+            local_addrs: {
+                let interfaces = self.local_interfaces_watcher.get();
+                interfaces
+                    .local_addresses
+                    .regular
+                    .iter()
+                    .chain(interfaces.local_addresses.loopback.iter())
+                    .copied()
+                    .collect()
+            },
+            #[cfg(wasm_browser)]
+            local_addrs: Default::default(),
+        };
+
+        self.endpoint.handle_network_change(Some(Arc::new(hint)));
         self.remote_map.on_network_change(is_major);
     }
 
@@ -1453,7 +1689,7 @@ impl Actor {
                     tx.send(watcher).ok();
                 }
             }
-            #[cfg(test)]
+            #[cfg(all(test, with_crypto_provider))]
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major).await;
             }
@@ -1470,17 +1706,16 @@ impl Actor {
     /// - The local interfaces IP addresses.
     #[cfg(not(wasm_browser))]
     fn update_direct_addresses(&mut self, net_report_report: Option<&net_report::Report>) {
-        let portmap_watcher = self
-            .direct_addr_update_state
-            .port_mapper
-            .watch_external_address();
-
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
         // this as a map of SocketAddr -> DirectAddrType.  At the end we will construct a
         // DirectAddr from each entry.
         let mut addrs: BTreeMap<SocketAddr, DirectAddrType> = BTreeMap::new();
 
         // First add PortMapper provided addresses.
+        let portmap_watcher = self
+            .direct_addr_update_state
+            .port_mapper
+            .watch_external_address();
         let maybe_port_mapped = *portmap_watcher.borrow();
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
             addrs
@@ -1729,7 +1964,7 @@ impl Display for DirectAddrType {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{net::SocketAddrV4, sync::Arc, time::Duration};
 
@@ -1740,31 +1975,39 @@ mod tests {
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use rand::{CryptoRng, Rng, RngCore, SeedableRng};
+    use rand::{CryptoRng, Rng, RngExt, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
 
     use super::Options;
     use crate::{
-        Endpoint, RelayMode, SecretKey,
+        Endpoint, SecretKey,
         address_lookup::memory::MemoryLookup,
         dns::DnsResolver,
-        endpoint::QuicTransportConfig,
+        endpoint::{QuicTransportConfig, presets},
         socket::{
-            EndpointInner, Socket, StaticConfig, TransportConfig,
+            EndpointInner, StaticConfig, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
         },
-        tls::{self, DEFAULT_MAX_TLS_TICKETS},
+        tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
     };
 
     const ALPN: &[u8] = b"n0/test/1";
 
-    fn default_options<R: CryptoRng + ?Sized>(rng: &mut R) -> Options {
-        let secret_key = SecretKey::generate(rng);
+    fn default_options(rng: &mut impl CryptoRng) -> Options {
+        let crypto_provider = default_provider();
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let tls_config = tls::TlsConfig::new(
+            secret_key.clone(),
+            DEFAULT_MAX_TLS_TICKETS,
+            crypto_provider.clone(),
+        );
         let static_config = StaticConfig {
-            tls_config: tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            server_config: tls_config.make_server_config(false).unwrap(),
+            client_config: tls_config.make_client_config(false).unwrap(),
+            tls_config,
+            token_key: Arc::new(RustlsTokenKey::new(rng, &crypto_provider).unwrap()),
             transport_config: QuicTransportConfig::default(),
-            keylog: false,
         };
         let server_config = static_config.create_server_config(vec![]);
         Options {
@@ -1777,12 +2020,14 @@ mod tests {
             dns_resolver: DnsResolver::new(),
             server_config,
             tls_config: CaRootsConfig::default()
-                .client_config(default_provider())
+                .client_config(crypto_provider.clone())
                 .unwrap(),
             #[cfg(any(test, feature = "test-utils"))]
             address_lookup_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
+            transport_bias: Default::default(),
+            portmapper_config: Default::default(),
             static_config,
         }
     }
@@ -1826,7 +2071,7 @@ mod tests {
 
         conn.closed().await;
         info!("closed");
-        ep.inner()?.quinn_endpoint().wait_idle().await;
+        ep.inner()?.noq_endpoint().wait_idle().await;
         info!("idle");
 
         Ok(())
@@ -1880,7 +2125,7 @@ mod tests {
 
         conn.close(0u32.into(), b"done");
         info!("closed");
-        ep.inner()?.quinn_endpoint().wait_idle().await;
+        ep.inner()?.noq_endpoint().wait_idle().await;
         info!("idle");
         Ok(())
     }
@@ -1943,13 +2188,13 @@ mod tests {
     /// the endpoints rebind.
     async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
         let address_lookup = MemoryLookup::new();
-        let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep1 = Endpoint::builder(presets::Minimal)
             .alpns(vec![ALPN.to_vec()])
             .address_lookup(address_lookup.clone())
             .bind()
             .await
             .unwrap();
-        let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep2 = Endpoint::builder(presets::Minimal)
             .alpns(vec![ALPN.to_vec()])
             .address_lookup(address_lookup.clone())
             .bind()
@@ -1972,7 +2217,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_small() -> Result {
+    async fn test_two_devices_roundtrip_noq_small() -> Result {
         let (_guard, m1, m2) = endpoint_pair().await;
 
         run_roundtrip(
@@ -1994,7 +2239,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_large() -> Result {
+    async fn test_two_devices_roundtrip_noq_large() -> Result {
         let (_guard, m1, m2) = endpoint_pair().await;
         let mut data = vec![0u8; 10 * 1024];
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
@@ -2042,7 +2287,7 @@ mod tests {
         Duration::from_millis(delay * 50)
     }
 
-    /// Same structure as `test_two_devices_roundtrip_quinn`, but interrupts regularly
+    /// Same structure as `test_two_devices_roundtrip_noq`, but interrupts regularly
     /// with (simulated) network changes.
     /// Regular network changes to m1 only.
     #[tokio::test(flavor = "multi_thread")]
@@ -2134,7 +2379,9 @@ mod tests {
     #[traced_test]
     async fn test_direct_addresses() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let sock = EndpointInner::new(default_options(&mut rng)).await.unwrap();
+        let sock = EndpointInner::bind(default_options(&mut rng))
+            .await
+            .unwrap();
 
         // See if we can get endpoints.
         let eps0 = sock.ip_addrs().get();
@@ -2147,7 +2394,7 @@ mod tests {
         assert_eq!(eps0, eps1);
     }
 
-    /// Creates a new [`quinn::Endpoint`] hooked up to a [`Socket`].
+    /// Creates a new [`noq::Endpoint`] hooked up to a [`Socket`].
     ///
     /// This is without involving [`crate::endpoint::Endpoint`].  The socket will accept
     /// connections using [`ALPN`].
@@ -2155,10 +2402,19 @@ mod tests {
     /// Use [`socket_connect`] to establish connections.
     #[instrument(name = "ep", skip_all, fields(me = %secret_key.public().fmt_short()))]
     async fn socket_ep(secret_key: SecretKey) -> Result<EndpointInner> {
+        let crypto_provider = default_provider();
+        let tls_config = tls::TlsConfig::new(
+            secret_key.clone(),
+            DEFAULT_MAX_TLS_TICKETS,
+            crypto_provider.clone(),
+        );
+        let keylog = true;
         let static_config = StaticConfig {
-            tls_config: tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS),
+            server_config: tls_config.make_server_config(keylog).unwrap(),
+            client_config: tls_config.make_client_config(keylog).unwrap(),
+            tls_config,
+            token_key: Arc::new(RustlsTokenKey::new(&mut rand::rng(), &crypto_provider).unwrap()),
             transport_config: QuicTransportConfig::default(),
-            keylog: true,
         };
         let server_config = static_config.create_server_config(vec![ALPN.to_vec()]);
 
@@ -2174,13 +2430,15 @@ mod tests {
             proxy_url: None,
             server_config,
             tls_config: CaRootsConfig::default()
-                .client_config(default_provider())
+                .client_config(crypto_provider.clone())
                 .unwrap(),
             metrics: Default::default(),
             hooks: Default::default(),
+            transport_bias: Default::default(),
+            portmapper_config: Default::default(),
             static_config,
         };
-        let sock = Socket::spawn(opts).await?;
+        let sock = EndpointInner::bind(opts).await?;
         Ok(sock)
     }
 
@@ -2189,13 +2447,13 @@ mod tests {
     /// Uses [`ALPN`], `endpoint_id`, must match `addr`.
     #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
     async fn socket_connect(
-        ep: quinn::Endpoint,
+        ep: noq::Endpoint,
         ep_secret_key: SecretKey,
         addr: EndpointIdMappedAddr,
         endpoint_id: EndpointId,
-    ) -> Result<quinn::Connection> {
+    ) -> Result<noq::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
-        let mut transport_config = quinn::TransportConfig::default();
+        let mut transport_config = noq::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
         socket_connect_with_transport_config(
@@ -2215,17 +2473,20 @@ mod tests {
     /// Uses [`ALPN`], `endpoint_id`, must match `addr`.
     #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
     async fn socket_connect_with_transport_config(
-        ep: quinn::Endpoint,
+        ep: noq::Endpoint,
         ep_secret_key: SecretKey,
         mapped_addr: EndpointIdMappedAddr,
         endpoint_id: EndpointId,
-        transport_config: Arc<quinn::TransportConfig>,
-    ) -> Result<quinn::Connection> {
-        let alpns = vec![ALPN.to_vec()];
-        let quic_client_config =
-            tls::TlsConfig::new(ep_secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
-                .make_client_config(alpns, true);
-        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
+        transport_config: Arc<noq::TransportConfig>,
+    ) -> Result<noq::Connection> {
+        let mut quic_client_config = tls::TlsConfig::new(
+            ep_secret_key.clone(),
+            DEFAULT_MAX_TLS_TICKETS,
+            default_provider(),
+        )
+        .make_client_config(true)?;
+        quic_client_config.set_alpn_protocols(vec![ALPN.to_vec()]);
+        let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep
             .connect_with(
@@ -2262,7 +2523,7 @@ mod tests {
         let res = tokio::time::timeout(
             Duration::from_millis(500),
             socket_connect(
-                sock_1.quinn_endpoint().clone(),
+                sock_1.noq_endpoint().clone(),
                 secret_key_1.clone(),
                 bad_addr,
                 endpoint_id_missing_endpoint,
@@ -2276,7 +2537,7 @@ mod tests {
 
         // This needs an accept task
         let accept_task = tokio::spawn({
-            async fn accept(ep: quinn::Endpoint) -> Result<()> {
+            async fn accept(ep: noq::Endpoint) -> Result<()> {
                 let incoming = ep.accept().await.std_context("no incoming")?;
                 let _conn = incoming
                     .accept()
@@ -2289,7 +2550,7 @@ mod tests {
                 info!("accept finished");
                 Ok(())
             }
-            let ep = sock_2.quinn_endpoint().clone();
+            let ep = sock_2.noq_endpoint().clone();
             async move {
                 if let Err(err) = accept(ep).await {
                     error!("{err:#}");
@@ -2313,7 +2574,7 @@ mod tests {
         let res = tokio::time::timeout(
             Duration::from_secs(10),
             socket_connect(
-                sock_1.quinn_endpoint().clone(),
+                sock_1.noq_endpoint().clone(),
                 secret_key_1.clone(),
                 addr,
                 endpoint_id_2,
@@ -2341,11 +2602,11 @@ mod tests {
 
         let sock_1 = socket_ep(secret_key_1.clone()).await.unwrap();
         let sock_2 = socket_ep(secret_key_2.clone()).await.unwrap();
-        let ep_2 = sock_2.quinn_endpoint().clone();
+        let ep_2 = sock_2.noq_endpoint().clone();
 
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
-            async fn accept(ep: quinn::Endpoint) -> Result<()> {
+            async fn accept(ep: noq::Endpoint) -> Result<()> {
                 let incoming = ep.accept().await.std_context("no incoming")?;
                 let conn = incoming
                     .accept()
@@ -2379,20 +2640,20 @@ mod tests {
         );
         let addr_2 = sock_1.resolve_remote(empty_addr_2).await.unwrap().unwrap();
 
-        // Set a low max_idle_timeout so quinn gives up on this quickly and our test does
+        // Set a low max_idle_timeout so noq gives up on this quickly and our test does
         // not take forever.  You need to check the log output to verify this is really
         // triggering the correct error.
         // In test_try_send_no_send_addr() above you may have noticed we used
         // tokio::time::timeout() on the connection attempt instead.  Here however we want
-        // Quinn itself to have fully given up on the connection attempt because we will
-        // later connect to **the same** endpoint.  If Quinn did not give up on the connection
+        // Noq itself to have fully given up on the connection attempt because we will
+        // later connect to **the same** endpoint.  If Noq did not give up on the connection
         // we'd close it on drop, and the retransmits of the close packets would interfere
         // with the next handshake, closing it during the handshake.  This makes the test a
         // little slower though.
-        let mut transport_config = quinn::TransportConfig::default();
+        let mut transport_config = noq::TransportConfig::default();
         transport_config.max_idle_timeout(Some(Duration::from_millis(200).try_into().unwrap()));
         let res = socket_connect_with_transport_config(
-            sock_1.quinn_endpoint().clone(),
+            sock_1.noq_endpoint().clone(),
             secret_key_1.clone(),
             addr_2,
             endpoint_id_2,
@@ -2422,7 +2683,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async move {
             info!("establishing new connection");
             let conn = socket_connect(
-                sock_1.quinn_endpoint().clone(),
+                sock_1.noq_endpoint().clone(),
                 secret_key_1.clone(),
                 addr_2,
                 endpoint_id_2,

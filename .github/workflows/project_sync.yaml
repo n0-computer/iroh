@@ -6,14 +6,14 @@ on:
   workflow_dispatch:
 
 env:
-  REPOS_LIST: "iroh tools n0.computer ops iroh.computer quic-rpc chuck abao bao-tree iroh-examples iroh.network tokio-rustls-acme iroh-ffi iroh-car iroh-io iroh-blake3 dumbpipe.dev dumbpipe sendme swarmie iroh-c-ffi willow-store quinn iroh-experiments willow-rs iroh-gossip iroh-doctor iroh-blobs iroh-docs iroh-doctor-server iroh-willow iroh-metrics net-tools iroh-node-util workflows ips iroh-roq"
+  REPOS_LIST: "iroh tools n0.computer ops iroh.computer quic-rpc chuck abao bao-tree iroh-examples iroh.network tokio-rustls-acme iroh-ffi iroh-car iroh-io iroh-blake3 dumbpipe.dev dumbpipe sendme swarmie iroh-c-ffi willow-store noq iroh-experiments willow-rs iroh-gossip iroh-doctor iroh-blobs iroh-docs iroh-doctor-server iroh-willow iroh-metrics net-tools iroh-node-util workflows ips iroh-roq"
 
 jobs:
   add-to-project:
     name: Add to project board
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         id: app-token
         with:
           app-id: ${{ secrets.N0_BOT_APP_ID }}

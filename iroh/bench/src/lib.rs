@@ -16,7 +16,7 @@ use tracing::info;
 
 pub mod iroh;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-pub mod quinn;
+pub mod noq;
 pub mod s2n;
 pub mod stats;
 
@@ -25,7 +25,7 @@ pub mod stats;
 pub enum Commands {
     Iroh(Opt),
     #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-    Quinn(Opt),
+    Noq(Opt),
     S2n(s2n::Opt),
 }
 
@@ -76,12 +76,27 @@ pub struct Opt {
     pub only_relay: bool,
     #[clap(long, default_value_t = false)]
     pub use_ipv6: bool,
+
+    /// How many tokio worker threads to use for each endpoint in the benchmark.
+    ///
+    /// Defaults to 1, a single-threaded runtime.
+    /// Set this to 0 to have each endpoint use a full multi-threaded tokio runtime with as many
+    /// workers as CPU parallelism detected.
+    ///
+    /// Setting this to 2 is a very reasonable value.
+    /// When quinn runs a single connection, it can run one task (the EndpointDriver) for all
+    /// receive-based work, and one task (the ConnectionDriver) for all send-based tasks.
+    /// If quinn is only given a single worker, then work distribution may be unfair, resulting
+    /// in acknowledgements not being processed timely enough, causing congestion control issues,
+    /// although ideally that problem is fixed in some other way in quinn.
+    #[clap(long, default_value_t = 1)]
+    pub workers_per_ep: usize,
 }
 
 pub enum EndpointSelector {
     Iroh(::iroh::Endpoint),
     #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-    Quinn(::quinn::Endpoint),
+    Noq(::noq::Endpoint),
 }
 
 impl EndpointSelector {
@@ -91,7 +106,7 @@ impl EndpointSelector {
                 endpoint.close().await;
             }
             #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-            EndpointSelector::Quinn(endpoint) => {
+            EndpointSelector::Noq(endpoint) => {
                 endpoint.close(0u32.into(), b"");
                 endpoint.wait_idle().await;
             }
@@ -102,7 +117,7 @@ impl EndpointSelector {
 pub enum ConnectionSelector {
     Iroh(::iroh::endpoint::Connection),
     #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-    Quinn(::quinn::Connection),
+    Noq(::noq::Connection),
 }
 
 impl ConnectionSelector {
@@ -112,7 +127,7 @@ impl ConnectionSelector {
                 println!("{:#?}", connection.stats());
             }
             #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-            ConnectionSelector::Quinn(connection) => {
+            ConnectionSelector::Noq(connection) => {
                 println!("{:#?}", connection.stats());
             }
         }
@@ -124,7 +139,7 @@ impl ConnectionSelector {
                 connection.close(error_code.into(), reason);
             }
             #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-            ConnectionSelector::Quinn(connection) => {
+            ConnectionSelector::Noq(connection) => {
                 connection.close(error_code.into(), reason);
             }
         }
@@ -140,8 +155,18 @@ pub fn configure_tracing_subscriber() {
     .unwrap();
 }
 
-pub fn rt() -> Runtime {
-    Builder::new_current_thread().enable_all().build().unwrap()
+pub fn rt(workers: usize) -> Runtime {
+    let mut builder = match workers {
+        // 0 means "use as many threads as detected CPU parallelism" implicitly.
+        0 => Builder::new_multi_thread(),
+        1 => Builder::new_current_thread(),
+        workers => {
+            let mut b = Builder::new_multi_thread();
+            b.worker_threads(workers);
+            b
+        }
+    };
+    builder.enable_all().build().unwrap()
 }
 
 fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
@@ -221,9 +246,8 @@ pub async fn client_handler(
                     target_os = "openbsd",
                     target_os = "netbsd"
                 )))]
-                ConnectionSelector::Quinn(connection) => {
-                    quinn::handle_client_stream(connection, opt.upload_size, opt.read_unordered)
-                        .await
+                ConnectionSelector::Noq(connection) => {
+                    noq::handle_client_stream(connection, opt.upload_size, opt.read_unordered).await
                 }
             };
             // handle_client_stream(connection, opt.upload_size, opt.read_unordered).await;

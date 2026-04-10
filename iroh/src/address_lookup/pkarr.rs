@@ -19,6 +19,11 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
+//! [`PkarrPublisher`] filters published addresses: only relay addresses are published by default.
+//! To change this behavior, use [`PkarrPublisherBuilder::addr_filter`] and set it to e.g. [`AddrFilter::unfiltered`].
+//! This can be useful to enable publishing IP addresses if the iroh endpoint is reachable via public
+//! IP addresses.
+//!
 //! For address lookup in iroh the pkarr Resource Records contain the addressing information,
 //! providing endpoints which retrieve the pkarr Resource Record with enough detail
 //! to contact the iroh endpoint.
@@ -43,11 +48,16 @@
 //! [`EndpointId`]: crate::EndpointId
 //! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
 //! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
+//! [`N0` preset]: crate::endpoint::presets::N0
+//! [`AddrFilter`]: crate::address_lookup::AddrFilter
+//! [`AddrFilter::relay_only`]: crate::address_lookup::AddrFilter::relay_only
+//! [`AddrFilter::unfiltered`]: crate::address_lookup::AddrFilter::unfiltered
+//! [`PkarrPublisherBuilder::addr_filter`]: PkarrPublisherBuilder::addr_filter
 
 use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
-use iroh_relay::endpoint_info::{EncodingError, EndpointInfo};
+use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointInfo};
 use n0_error::{e, stack_error};
 use n0_future::{
     boxed::BoxStream,
@@ -59,7 +69,7 @@ use pkarr::{
     SignedPacket,
     errors::{PublicKeyError, SignedPacketVerifyError},
 };
-use tracing::{Instrument, debug, error_span, warn};
+use tracing::{Instrument, debug, error_span, trace, warn};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -67,8 +77,8 @@ use crate::dns::DnsResolver;
 use crate::{
     Endpoint,
     address_lookup::{
-        AddressLookup, EndpointData, Error as AddressLookupError, IntoAddressLookup,
-        IntoAddressLookupError, Item as AddressLookupItem,
+        AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
+        Error as AddressLookupError, Item as AddressLookupItem,
     },
     endpoint::force_staging_infra,
     util::reqwest_client_builder,
@@ -152,6 +162,7 @@ pub struct PkarrPublisherBuilder {
     pkarr_relay: Url,
     ttl: u32,
     republish_interval: Duration,
+    filter: AddrFilter,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
 }
@@ -163,6 +174,7 @@ impl PkarrPublisherBuilder {
             pkarr_relay,
             ttl: DEFAULT_PKARR_TTL,
             republish_interval: DEFAULT_REPUBLISH_INTERVAL,
+            filter: AddrFilter::relay_only(),
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
         }
@@ -202,6 +214,20 @@ impl PkarrPublisherBuilder {
         self
     }
 
+    /// Sets the address filter to control which addresses are published to the pkarr server.
+    ///
+    /// By default [`AddrFilter::relay_only`] is used. This avoids leaking IP addresses to the
+    /// public pkarr server.
+    ///
+    /// However, enabling IP address publishing can be useful, e.g. when iroh runs on a machine
+    /// connected to the internet via public IP addresses without a firewall.
+    /// In such cases, publishing them can make dialing such endpoints via DNS or Pkarr lookup
+    /// faster, potentially skipping a relay connection altogether.
+    pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
+        self.filter = filter;
+        self
+    }
+
     /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
     ///
     /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
@@ -214,15 +240,16 @@ impl PkarrPublisherBuilder {
             #[cfg(not(wasm_browser))]
             self.dns_resolver,
             tls_config,
+            self.filter,
         )
     }
 }
 
-impl IntoAddressLookup for PkarrPublisherBuilder {
+impl AddressLookupBuilder for PkarrPublisherBuilder {
     fn into_address_lookup(
         mut self,
         endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
@@ -251,6 +278,7 @@ impl IntoAddressLookup for PkarrPublisherBuilder {
 pub struct PkarrPublisher {
     endpoint_id: EndpointId,
     watchable: Watchable<Option<EndpointInfo>>,
+    addr_filter: AddrFilter,
     _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
 
@@ -261,7 +289,7 @@ impl PkarrPublisher {
     /// time-to-live value for the published packets, and it will republish Address Lookup information
     /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
     ///
-    /// [`PkarrPublisherBuilder`] implements [`IntoAddressLookup`], so it can be passed to [`address_lookup`].
+    /// [`PkarrPublisherBuilder`] implements [`AddressLookupBuilder`], so it can be passed to [`address_lookup`].
     /// It will then use the endpoint's secret key to sign published packets.
     ///
     /// [`address_lookup`]:  crate::endpoint::Builder::address_lookup
@@ -281,6 +309,7 @@ impl PkarrPublisher {
         republish_interval: Duration,
         #[cfg(not(wasm_browser))] dns_resolver: Option<DnsResolver>,
         tls_config: rustls::ClientConfig,
+        addr_filter: AddrFilter,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let endpoint_id = secret_key.public();
@@ -289,11 +318,9 @@ impl PkarrPublisher {
         let pkarr_client = PkarrRelayClient::new(pkarr_relay, tls_config);
 
         #[cfg(not(wasm_browser))]
-        let pkarr_client = if let Some(dns_resolver) = dns_resolver {
-            PkarrRelayClient::with_dns_resovler(pkarr_relay, tls_config, dns_resolver)
-        } else {
-            PkarrRelayClient::new(pkarr_relay, tls_config)
-        };
+        let pkarr_client = PkarrRelayClient::builder(pkarr_relay, tls_config)
+            .set_dns_resolver(dns_resolver)
+            .build();
 
         let watchable = Watchable::default();
         let service = PublisherService {
@@ -311,6 +338,7 @@ impl PkarrPublisher {
         Self {
             watchable,
             endpoint_id,
+            addr_filter,
             _drop_guard: Arc::new(AbortOnDropHandle::new(join_handle)),
         }
     }
@@ -333,11 +361,7 @@ impl PkarrPublisher {
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_endpoint_data(&self, data: &EndpointData) {
-        let mut data = data.clone();
-        if data.relay_urls().next().is_some() {
-            // If relay url is set: only publish relay url, and no  addrs.
-            data.clear_ip_addrs();
-        }
+        let data = data.apply_filter(&self.addr_filter).into_owned();
         let info = EndpointInfo::from_parts(self.endpoint_id, data);
         self.watchable.set(Some(info)).ok();
     }
@@ -385,7 +409,7 @@ impl PublisherService {
                             "Failed to publish to pkarr",
                         );
                     }
-                    _ => {
+                    Ok(()) => {
                         failed_attempts = 0;
                         // Republish after fixed interval
                         republish
@@ -409,12 +433,17 @@ impl PublisherService {
         debug!(
             data = ?info.data,
             pkarr_relay = %self.pkarr_client.pkarr_relay_url,
-            "Publish endpoint info to pkarr"
+            "Publishing endpoint info to pkarr"
         );
         let signed_packet = info
             .to_pkarr_signed_packet(&self.secret_key, self.ttl)
             .map_err(|err| e!(PkarrError::Encoding, err))?;
         self.pkarr_client.publish(&signed_packet).await?;
+        trace!(
+            data = ?info.data,
+            pkarr_relay = %self.pkarr_client.pkarr_relay_url,
+            "Published endpoint info to pkarr"
+        );
         Ok(())
     }
 }
@@ -443,21 +472,19 @@ impl PkarrResolverBuilder {
         let pkarr_client = PkarrRelayClient::new(self.pkarr_relay, tls_config);
 
         #[cfg(not(wasm_browser))]
-        let pkarr_client = if let Some(dns_resolver) = self.dns_resolver {
-            PkarrRelayClient::with_dns_resovler(self.pkarr_relay, tls_config, dns_resolver)
-        } else {
-            PkarrRelayClient::new(self.pkarr_relay, tls_config)
-        };
+        let pkarr_client = PkarrRelayClient::builder(self.pkarr_relay, tls_config)
+            .set_dns_resolver(self.dns_resolver)
+            .build();
 
         PkarrResolver { pkarr_client }
     }
 }
 
-impl IntoAddressLookup for PkarrResolverBuilder {
+impl AddressLookupBuilder for PkarrResolverBuilder {
     fn into_address_lookup(
         mut self,
         endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
+    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
@@ -487,7 +514,7 @@ pub struct PkarrResolver {
 impl PkarrResolver {
     /// Creates a new resolver builder using the pkarr relay server at the URL.
     ///
-    /// The builder implements [`IntoAddressLookup`].
+    /// The builder implements [`AddressLookupBuilder`].
     pub fn builder(pkarr_relay: Url) -> PkarrResolverBuilder {
         PkarrResolverBuilder {
             pkarr_relay,
@@ -544,32 +571,71 @@ pub struct PkarrRelayClient {
     pkarr_relay_url: Url,
 }
 
+/// A builder for the [`PkarrRelayClient`]
+#[derive(Debug, Clone)]
+pub struct PkarrRelayClientBuilder {
+    pkarr_relay_url: Url,
+    #[cfg(not(wasm_browser))]
+    dns_relay_resolver: Option<DnsResolver>,
+    tls_config: rustls::ClientConfig,
+}
+
+impl PkarrRelayClientBuilder {
+    fn new(pkarr_relay_url: Url, tls_config: rustls::ClientConfig) -> Self {
+        Self {
+            pkarr_relay_url,
+            #[cfg(not(wasm_browser))]
+            dns_relay_resolver: None,
+            tls_config,
+        }
+    }
+
+    /// Passes an optional DNS resolver for the client to use.
+    #[cfg(not(wasm_browser))]
+    pub fn set_dns_resolver(mut self, dns_resolver: Option<DnsResolver>) -> Self {
+        self.dns_relay_resolver = dns_resolver;
+        self
+    }
+
+    /// Build a [`PkarrRelayClient`].
+    pub fn build(self) -> PkarrRelayClient {
+        let mut http_client = reqwest_client_builder(Some(self.tls_config));
+
+        #[cfg(not(wasm_browser))]
+        if let Some(dns_resolver) = self.dns_relay_resolver {
+            http_client = http_client.dns_resolver(Arc::new(dns_resolver));
+        };
+
+        let http_client = http_client
+            .build()
+            .expect("failed to create request client");
+        PkarrRelayClient {
+            http_client,
+            pkarr_relay_url: self.pkarr_relay_url,
+        }
+    }
+}
+
 impl PkarrRelayClient {
-    /// Creates a new client.
+    /// Create a new [`PkarrRelayClient`] with default settings.
+    ///
+    /// Use the [`PkarrRelayClient::builder`] to get a builder that allows for
+    /// adding custom settings.
     pub fn new(pkarr_relay_url: Url, tls_config: rustls::ClientConfig) -> Self {
         Self {
             http_client: reqwest_client_builder(Some(tls_config))
                 .build()
-                .expect("failed to create reqwest client"),
+                .expect("failed to create request client"),
             pkarr_relay_url,
         }
     }
 
-    /// Creates a new client while passing a DNS resolver to use.
-    #[cfg(not(wasm_browser))]
-    pub fn with_dns_resovler(
+    /// Create a [`PkarrRelayClientBuilder`].
+    pub fn builder(
         pkarr_relay_url: Url,
         tls_config: rustls::ClientConfig,
-        dns_resolver: crate::dns::DnsResolver,
-    ) -> Self {
-        let http_client = reqwest_client_builder(Some(tls_config))
-            .dns_resolver(Arc::new(dns_resolver))
-            .build()
-            .expect("failed to create request client");
-        Self {
-            http_client,
-            pkarr_relay_url,
-        }
+    ) -> PkarrRelayClientBuilder {
+        PkarrRelayClientBuilder::new(pkarr_relay_url, tls_config)
     }
 
     /// Resolves a [`SignedPacket`] for the given [`EndpointId`].

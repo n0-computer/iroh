@@ -8,7 +8,9 @@
 use std::net::SocketAddr;
 
 use clap::Parser;
-use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey, TransportAddr};
+use iroh::{
+    Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey, TransportAddr, endpoint::presets,
+};
 use n0_error::{Result, StdResultExt};
 use tracing::info;
 
@@ -33,11 +35,11 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nconnect example!\n");
     let args = Cli::parse();
-    let secret_key = SecretKey::generate(&mut rand::rng());
+    let secret_key = SecretKey::generate();
     println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as endpoint identifiers, uses QUIC for directly connecting to other endpoints, and uses the relay protocol and relay servers to holepunch direct connections between endpoints when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         // The secret key is used to authenticate with other endpoints. The PublicKey portion of this secret key is how we identify endpoints, often referred to as the `endpoint_id` in our codebase.
         .secret_key(secret_key)
         // Set the ALPN protocols this endpoint will accept on incoming connections
@@ -76,11 +78,11 @@ async fn main() -> Result<()> {
     let addr = EndpointAddr::from_parts(args.endpoint_id, addrs);
 
     // Attempt to connect, over the given ALPN.
-    // Returns a Quinn connection.
+    // Returns a Noq connection.
     let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
     info!("connected");
 
-    // Use the Quinn API to send and recv content.
+    // Use the Noq API to send and recv content.
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
 
     let message = format!("{me} is saying 'hello!'");

@@ -8,7 +8,7 @@
 use std::net::SocketAddr;
 
 use clap::Parser;
-use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey};
+use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey, endpoint::presets};
 use iroh_base::TransportAddr;
 use n0_error::{Result, StdResultExt};
 use tracing::info;
@@ -34,11 +34,11 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nconnect (unreliable) example!\n");
     let args = Cli::parse();
-    let secret_key = SecretKey::generate(&mut rand::rng());
+    let secret_key = SecretKey::from_bytes(&rand::random());
     println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as endpoint identifiers, uses QUIC for directly connecting to other endpoints, and uses the relay protocol and relay servers to holepunch direct connections between endpoints when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         // The secret key is used to authenticate with other endpoints. The PublicKey portion of this secret key is how we identify endpoints, often referred to as the `endpoint_id` in our codebase.
         .secret_key(secret_key)
         // Set the ALPN protocols this endpoint will accept on incoming connections
