@@ -12,8 +12,6 @@ use std::{
 use iroh_base::{PublicKey, SecretKey, Signature};
 use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata::RData};
 
-use crate::EndpointIdExt;
-
 /// Maximum size of the encoded DNS packet within a signed packet.
 const MAX_DNS_PACKET_SIZE: usize = 1000;
 

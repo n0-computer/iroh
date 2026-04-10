@@ -295,7 +295,6 @@ pub(crate) mod pkarr_relay {
     };
     use bytes::Bytes;
     use iroh_base::EndpointId;
-    use iroh_dns::EndpointIdExt;
     use tokio::sync::oneshot;
     use tracing::{debug, error, warn};
     use url::Url;
@@ -367,9 +366,7 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use iroh_base::EndpointId;
-    use iroh_dns::{
-        EndpointIdExt, attrs::IROH_TXT_NAME, endpoint_info::EndpointInfo, pkarr::SignedPacket,
-    };
+    use iroh_dns::{attrs::IROH_TXT_NAME, endpoint_info::EndpointInfo, pkarr::SignedPacket};
     use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;

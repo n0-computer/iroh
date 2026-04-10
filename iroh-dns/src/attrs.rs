@@ -14,7 +14,7 @@ use std::{collections::BTreeMap, fmt::Display, hash::Hash, str::FromStr};
 use iroh_base::{EndpointId, SecretKey};
 use n0_error::{e, stack_error};
 
-use crate::{EndpointIdExt, pkarr};
+use crate::pkarr;
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
@@ -48,7 +48,7 @@ pub enum ParseError {
     #[error("Record is not an `iroh` record, expected `_iroh`, got `{label}`")]
     NotAnIrohRecord { label: String },
     #[error(transparent)]
-    DecodingError { source: crate::DecodingError },
+    DecodingError { source: iroh_base::KeyParsingError },
 }
 
 /// Parses a [`EndpointId`] from iroh DNS name.
@@ -68,7 +68,7 @@ pub(crate) fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseE
         }));
     }
     let label = labels.next().expect("checked above");
-    let endpoint_id = <EndpointId as EndpointIdExt>::from_z32(label)?;
+    let endpoint_id = EndpointId::from_z32(label)?;
     Ok(endpoint_id)
 }
 

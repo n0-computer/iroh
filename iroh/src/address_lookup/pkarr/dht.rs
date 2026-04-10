@@ -8,10 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use iroh_base::{EndpointId, SecretKey};
-use iroh_dns::{
-    EndpointIdExt,
-    pkarr::{SignedPacket, SignedPacketVerifyError, Timestamp},
-};
+use iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError, Timestamp};
 use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_future::{
     boxed::BoxStream,

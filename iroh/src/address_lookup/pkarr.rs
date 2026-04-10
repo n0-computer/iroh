@@ -58,7 +58,6 @@ use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_dns::{
-    EndpointIdExt,
     attrs::EncodingError,
     endpoint_info::{AddrFilter, EndpointInfo},
     pkarr::{SignedPacket, SignedPacketVerifyError},

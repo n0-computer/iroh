@@ -47,10 +47,7 @@ use n0_error::{ensure, stack_error};
 use url::Url;
 
 // Re-export commonly used items so they're accessible via iroh::endpoint_info::*
-pub use crate::{
-    DecodingError, EndpointIdExt,
-    attrs::{EncodingError, IROH_TXT_NAME, ParseError},
-};
+pub use crate::attrs::{EncodingError, IROH_TXT_NAME, ParseError};
 use crate::{
     attrs::{IrohAttr, TxtAttrs},
     pkarr,
@@ -554,7 +551,7 @@ mod tests {
     use n0_error::{Result, StdResultExt};
 
     use super::{EndpointData, EndpointInfo};
-    use crate::{EndpointIdExt, dns::TxtRecordData};
+    use crate::dns::TxtRecordData;
 
     #[test]
     fn txt_attr_roundtrip() {

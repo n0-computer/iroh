@@ -28,7 +28,7 @@ mod tests {
         endpoint_info::EndpointInfo,
         tls::{CaRootsConfig, default_provider},
     };
-    use iroh_dns::{EndpointIdExt, pkarr::SignedPacket};
+    use iroh_dns::pkarr::SignedPacket;
     use mainline::{DhtBuilder, MutableItem, Testnet};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;

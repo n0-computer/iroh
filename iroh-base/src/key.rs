@@ -10,9 +10,16 @@ use std::{
 };
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
+use data_encoding::Encoding;
+use data_encoding_macro::new_encoding;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use n0_error::{e, ensure, stack_error};
 use serde::{Deserialize, Serialize, de, ser};
+
+/// z-base-32 encoding as used by [pkarr](https://pkarr.org).
+const Z_BASE_32: Encoding = new_encoding! {
+    symbols: "ybndrfg8ejkmcpqxot1uwisza345h769",
+};
 
 /// A public key.
 ///
@@ -103,6 +110,21 @@ impl PublicKey {
     /// Get this public key as a byte array.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
+    }
+
+    /// Encodes this public key in [z-base-32](https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt) encoding.
+    ///
+    /// This is the encoding used by [pkarr](https://pkarr.org) domain names.
+    pub fn to_z32(&self) -> String {
+        Z_BASE_32.encode(self.as_bytes())
+    }
+
+    /// Parses a [`PublicKey`] from [z-base-32](https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt) encoding.
+    pub fn from_z32(s: &str) -> Result<PublicKey, KeyParsingError> {
+        let bytes = Z_BASE_32
+            .decode(s.as_bytes())
+            .map_err(|_| e!(KeyParsingError::FailedToDecodeBase32))?;
+        PublicKey::try_from(bytes.as_slice())
     }
 
     /// Construct a `PublicKey` from a slice of bytes.

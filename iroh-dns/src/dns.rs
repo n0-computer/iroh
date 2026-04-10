@@ -422,7 +422,6 @@ impl DnsResolver {
         endpoint_id: &iroh_base::EndpointId,
         origin: &str,
     ) -> Result<crate::endpoint_info::EndpointInfo, LookupError> {
-        use crate::EndpointIdExt;
         let name = format!("_iroh.{}.{}", endpoint_id.to_z32(), origin);
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
         let info = crate::endpoint_info::EndpointInfo::from_txt_lookup(name, lookup)?;
