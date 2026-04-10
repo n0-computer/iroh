@@ -3134,7 +3134,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#2cdaf61858f15d9a9d89cb2214fa38fd4c04aca8"
+source = "git+https://github.com/n0-computer/net-tools?branch=fix%2Fv6-default-route#42d8b42b66fb2d2804bf5a20fe07b918ba0d98c2"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3203,7 +3203,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "0.17.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#44387fda1bccf2872e1961f3f44561ff07dcefae"
+source = "git+https://github.com/n0-computer/noq?branch=Frando%2Fserver-network-change#699227476d5d870956ae3c5f436ec068c19e5deb"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3224,7 +3224,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "0.16.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#44387fda1bccf2872e1961f3f44561ff07dcefae"
+source = "git+https://github.com/n0-computer/noq?branch=Frando%2Fserver-network-change#699227476d5d870956ae3c5f436ec068c19e5deb"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3253,7 +3253,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "0.9.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#44387fda1bccf2872e1961f3f44561ff07dcefae"
+source = "git+https://github.com/n0-computer/noq?branch=Frando%2Fserver-network-change#699227476d5d870956ae3c5f436ec068c19e5deb"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -3721,7 +3721,7 @@ dependencies = [
 [[package]]
 name = "portmapper"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#2cdaf61858f15d9a9d89cb2214fa38fd4c04aca8"
+source = "git+https://github.com/n0-computer/net-tools?branch=fix%2Fv6-default-route#42d8b42b66fb2d2804bf5a20fe07b918ba0d98c2"
 dependencies = [
  "base64",
  "bytes",
