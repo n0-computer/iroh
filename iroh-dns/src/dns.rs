@@ -413,7 +413,7 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Looks up endpoint info by [`EndpointId`] and origin domain name.
+    /// Looks up endpoint info by `EndpointId` and origin domain name.
     ///
     /// To lookup endpoints that published their endpoint info to the DNS servers run by n0,
     /// pass [`N0_DNS_ENDPOINT_ORIGIN_PROD`] as `origin`.
@@ -453,7 +453,7 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Looks up endpoint info by [`EndpointId`] and origin domain name in a staggered fashion.
+    /// Looks up endpoint info by `EndpointId` and origin domain name in a staggered fashion.
     pub async fn lookup_endpoint_by_id_staggered(
         &self,
         endpoint_id: &iroh_base::EndpointId,

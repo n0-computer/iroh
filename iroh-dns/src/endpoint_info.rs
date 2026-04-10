@@ -1,36 +1,11 @@
-//! Support for handling DNS resource records for dialing by [`EndpointId`].
+//! Endpoint discovery information.
 //!
-//! Dialing by [`EndpointId`] is supported by iroh endpoints publishing [Pkarr] records to DNS
-//! servers or the Mainline DHT.  This module supports creating and parsing these records.
+//! [`EndpointInfo`] combines an [`iroh_base::EndpointId`] with [`EndpointData`] —
+//! the addressing and metadata that discovery services publish and resolve.
+//! Discovery services use [`AddrFilter`] to control which addresses are published.
 //!
-//! DNS records are published under the following names:
-//!
-//! `_iroh.<z32-endpoint-id>.<origin-domain> TXT`
-//!
-//! - `_iroh` is the record name as defined by [`IROH_TXT_NAME`].
-//!
-//! - `<z32-endpoint-id>` is the [z-base-32] encoding of the [`EndpointId`].
-//!
-//! - `<origin-domain>` is the domain name of the publishing DNS server,
-//!   [`N0_DNS_ENDPOINT_ORIGIN_PROD`] is the server operated by number0 for production.
-//!   [`N0_DNS_ENDPOINT_ORIGIN_STAGING`] is the server operated by number0 for testing.
-//!
-//! - `TXT` is the DNS record type.
-//!
-//! The returned TXT records must contain a string value of the form `key=value` as defined
-//! in [RFC1464].  The following attributes are defined:
-//!
-//! - `relay=<url>`: The home [`RelayUrl`] of this endpoint.
-//!
-//! - `addr=<addr> <addr>`: A space-separated list of sockets addresses for this iroh endpoint.
-//!   Each address is an IPv4 or IPv6 address with a port.
-//!
-//! [Pkarr]: https://app.pkarr.org
-//! [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-//! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
-//! [`RelayUrl`]: iroh_base::RelayUrl
-//! [`N0_DNS_ENDPOINT_ORIGIN_PROD`]: crate::dns::N0_DNS_ENDPOINT_ORIGIN_PROD
-//! [`N0_DNS_ENDPOINT_ORIGIN_STAGING`]: crate::dns::N0_DNS_ENDPOINT_ORIGIN_STAGING
+//! This module also provides serialization to and from pkarr signed packets and
+//! DNS TXT records. See the [`crate::attrs`] module for the on-the-wire format.
 
 use std::{
     borrow::Cow,
