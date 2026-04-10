@@ -2,7 +2,7 @@
 TLS handshake completes.</p>
 <p>The filter is called with the raw <a href="../endpoint/struct.Incoming.html" title="struct iroh::endpoint::Incoming"><code>Incoming</code></a> for each connection attempt
 and returns an <a href="enum.IncomingFilterOutcome.html" title="enum iroh::protocol::IncomingFilterOutcome"><code>IncomingFilterOutcome</code></a> that determines what happens next.</p>
-<p>Implementors have full access to the <a href="../endpoint/struct.Incoming.html" title="struct iroh::endpoint::Incoming"><code>Incoming</code></a> and can use any of its
+<p>Implementers have full access to the <a href="../endpoint/struct.Incoming.html" title="struct iroh::endpoint::Incoming"><code>Incoming</code></a> and can use any of its
 methods (including <a href="../endpoint/struct.Incoming.html#method.decrypt" title="method iroh::endpoint::Incoming::decrypt"><code>Incoming::decrypt</code></a>) to make their decision. Note that
 <code>decrypt()</code> is relatively expensive, so filters should reject based on
 cheaper signals (e.g. remote address) first.</p>
