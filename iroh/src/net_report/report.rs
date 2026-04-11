@@ -9,7 +9,9 @@ use iroh_base::RelayUrl;
 use serde::{Deserialize, Serialize};
 use tracing::{trace, warn};
 
-use super::{ProbeReport, probes::Probe};
+#[cfg(not(wasm_browser))]
+use super::reportgen::QadProbeReport;
+use super::{probes::Probe, reportgen::HttpsProbeReport};
 
 /// A net_report report.
 #[derive(Default, Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -61,69 +63,63 @@ impl Report {
         }
     }
 
-    /// Updates a net_report [`Report`] with a new [`ProbeReport`].
-    pub(super) fn update(&mut self, report: &ProbeReport) {
-        match report {
-            ProbeReport::Https(report) => {
-                self.relay_latency
-                    .update_relay(report.relay.clone(), report.latency, Probe::Https);
-            }
-            #[cfg(not(wasm_browser))]
-            ProbeReport::QadIpv4(report) => {
-                self.relay_latency.update_relay(
-                    report.relay.clone(),
-                    report.latency,
-                    Probe::QadIpv4,
-                );
-                let SocketAddr::V4(ipp) = report.addr else {
-                    warn!("received IPv6 address from IPv4 QAD: {}", report.addr);
-                    return;
-                };
+    /// Updates the report with an HTTPS latency measurement.
+    pub(super) fn update_https(&mut self, report: &HttpsProbeReport) {
+        self.relay_latency
+            .update_relay(report.relay.clone(), report.latency, Probe::Https);
+    }
 
-                self.udp_v4 = true;
+    /// Updates the report with a QAD IPv4 probe result.
+    #[cfg(not(wasm_browser))]
+    pub(super) fn update_qad_v4(&mut self, report: &QadProbeReport) {
+        self.relay_latency
+            .update_relay(report.relay.clone(), report.latency, Probe::QadIpv4);
+        let SocketAddr::V4(ipp) = report.addr else {
+            warn!("received IPv6 address from IPv4 QAD: {}", report.addr);
+            return;
+        };
 
-                if let Some(global) = self.global_v4 {
-                    if global == ipp {
-                        if self.mapping_varies_by_dest_ipv4.is_none() {
-                            self.mapping_varies_by_dest_ipv4 = Some(false);
-                        }
-                    } else {
-                        self.mapping_varies_by_dest_ipv4 = Some(true);
-                        warn!("IPv4 address detected by QAD varies by destination");
-                    }
-                } else {
-                    self.global_v4 = Some(ipp);
+        self.udp_v4 = true;
+
+        if let Some(global) = self.global_v4 {
+            if global == ipp {
+                if self.mapping_varies_by_dest_ipv4.is_none() {
+                    self.mapping_varies_by_dest_ipv4 = Some(false);
                 }
-                trace!(?self.global_v4, ?self.mapping_varies_by_dest_ipv4, %ipp, "stored report");
+            } else {
+                self.mapping_varies_by_dest_ipv4 = Some(true);
+                warn!("IPv4 address detected by QAD varies by destination");
             }
-            #[cfg(not(wasm_browser))]
-            ProbeReport::QadIpv6(report) => {
-                self.relay_latency.update_relay(
-                    report.relay.clone(),
-                    report.latency,
-                    Probe::QadIpv6,
-                );
-                let SocketAddr::V6(ipp) = report.addr else {
-                    warn!("received IPv4 address from IPv6 QAD: {}", report.addr);
-                    return;
-                };
-
-                self.udp_v6 = true;
-                if let Some(global) = self.global_v6 {
-                    if global == ipp {
-                        if self.mapping_varies_by_dest_ipv6.is_none() {
-                            self.mapping_varies_by_dest_ipv6 = Some(false);
-                        }
-                    } else {
-                        self.mapping_varies_by_dest_ipv6 = Some(true);
-                        warn!("IPv6 address detected by QAD varies by destination");
-                    }
-                } else {
-                    self.global_v6 = Some(ipp);
-                }
-                trace!(?self.global_v6, ?self.mapping_varies_by_dest_ipv6, %ipp, "stored report");
-            }
+        } else {
+            self.global_v4 = Some(ipp);
         }
+        trace!(?self.global_v4, ?self.mapping_varies_by_dest_ipv4, %ipp, "stored report");
+    }
+
+    /// Updates the report with a QAD IPv6 probe result.
+    #[cfg(not(wasm_browser))]
+    pub(super) fn update_qad_v6(&mut self, report: &QadProbeReport) {
+        self.relay_latency
+            .update_relay(report.relay.clone(), report.latency, Probe::QadIpv6);
+        let SocketAddr::V6(ipp) = report.addr else {
+            warn!("received IPv4 address from IPv6 QAD: {}", report.addr);
+            return;
+        };
+
+        self.udp_v6 = true;
+        if let Some(global) = self.global_v6 {
+            if global == ipp {
+                if self.mapping_varies_by_dest_ipv6.is_none() {
+                    self.mapping_varies_by_dest_ipv6 = Some(false);
+                }
+            } else {
+                self.mapping_varies_by_dest_ipv6 = Some(true);
+                warn!("IPv6 address detected by QAD varies by destination");
+            }
+        } else {
+            self.global_v6 = Some(ipp);
+        }
+        trace!(?self.global_v6, ?self.mapping_varies_by_dest_ipv6, %ipp, "stored report");
     }
 }
 

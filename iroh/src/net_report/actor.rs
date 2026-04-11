@@ -43,7 +43,7 @@ use super::{
     metrics::Metrics,
     probes::{Probe, ProbePlan},
     report::RelayLatencies,
-    reportgen::{ProbeReport, ProbesError},
+    reportgen::{HttpsProbeReport, ProbesError},
 };
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
@@ -119,7 +119,7 @@ enum ProbeResult {
     #[cfg(not(wasm_browser))]
     QadV6(Result<(QadProbeReport, QadConn), QadProbeError>),
     /// Completed HTTPS latency probe.
-    Https(Result<ProbeReport, ProbesError>),
+    Https(Result<HttpsProbeReport, ProbesError>),
     /// Completed captive portal detection check.
     #[cfg(not(wasm_browser))]
     CaptivePortal(Option<bool>),
@@ -308,12 +308,12 @@ impl NetReportActor {
                     {
                         if let Some(r) = v4 {
                             trace!(?r, "QAD v4 address update from existing conn");
-                            self.current_report.update(&ProbeReport::QadIpv4(r));
+                            self.current_report.update_qad_v4(&r);
                             self.maybe_emit();
                         }
                         if let Some(r) = v6 {
                             trace!(?r, "QAD v6 address update from existing conn");
-                            self.current_report.update(&ProbeReport::QadIpv6(r));
+                            self.current_report.update_qad_v6(&r);
                             self.maybe_emit();
                         }
                     }
@@ -404,8 +404,7 @@ impl NetReportActor {
             #[cfg(not(wasm_browser))]
             ProbeResult::QadV4(Ok((report, conn))) => {
                 debug!(?report, "QAD v4 probe completed");
-                self.current_report
-                    .update(&ProbeReport::QadIpv4(report.clone()));
+                self.current_report.update_qad_v4(&report);
                 let url = report.relay;
                 if self.qad_conns.v4.is_none() {
                     self.qad_conns.v4 = Some((url, conn));
@@ -421,8 +420,7 @@ impl NetReportActor {
             #[cfg(not(wasm_browser))]
             ProbeResult::QadV6(Ok((report, conn))) => {
                 debug!(?report, "QAD v6 probe completed");
-                self.current_report
-                    .update(&ProbeReport::QadIpv6(report.clone()));
+                self.current_report.update_qad_v6(&report);
                 let url = report.relay;
                 if self.qad_conns.v6.is_none() {
                     self.qad_conns.v6 = Some((url, conn));
@@ -443,9 +441,9 @@ impl NetReportActor {
             ProbeResult::QadV6(Err(e)) => {
                 debug!("QAD v6 probe failed: {e:#}");
             }
-            ProbeResult::Https(Ok(probe_report)) => {
-                debug!(?probe_report, "HTTPS probe completed");
-                self.current_report.update(&probe_report);
+            ProbeResult::Https(Ok(report)) => {
+                debug!(?report, "HTTPS probe completed");
+                self.current_report.update_https(&report);
                 // If we have latency data for all relays, cancel remaining HTTPS probes.
                 if self.have_all_relay_latencies() {
                     self.cancel_https.cancel();
@@ -555,11 +553,11 @@ impl NetReportActor {
         let v4_report = self.qad_conns.current_v4();
         let v6_report = self.qad_conns.current_v6();
 
-        if let Some(r) = v4_report {
-            self.current_report.update(&r);
+        if let Some(ref r) = v4_report {
+            self.current_report.update_qad_v4(r);
         }
-        if let Some(r) = v6_report {
-            self.current_report.update(&r);
+        if let Some(ref r) = v6_report {
+            self.current_report.update_qad_v6(r);
         }
 
         let needs_v4 = self.qad_conns.v4.is_none() && if_state.have_v4;
@@ -644,7 +642,6 @@ impl NetReportActor {
         trace!(%plan, "probe plan");
 
         for probe_set in plan.iter() {
-            let proto = probe_set.proto();
             for (delay, relay) in probe_set.params() {
                 let delay = *delay;
                 let relay = relay.clone();
@@ -655,17 +652,19 @@ impl NetReportActor {
                 let tls_config = self.tls_config.clone();
                 self.probes.spawn(async move {
                     let result = cancel
-                        .run_until_cancelled(time::timeout(
-                            PROBES_TIMEOUT,
-                            proto.run(
-                                delay,
-                                relay,
+                        .run_until_cancelled(time::timeout(PROBES_TIMEOUT, async move {
+                            if !delay.is_zero() {
+                                time::sleep(delay).await;
+                            }
+                            super::reportgen::run_https_probe(
                                 #[cfg(not(wasm_browser))]
-                                socket_state,
+                                &socket_state.dns_resolver,
+                                relay.url.clone(),
                                 #[cfg(not(wasm_browser))]
                                 tls_config,
-                            ),
-                        ))
+                            )
+                            .await
+                        }))
                         .await;
                     Some(match result {
                         Some(Ok(Ok(report))) => ProbeResult::Https(Ok(report)),

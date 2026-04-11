@@ -4,12 +4,9 @@
 //! This module provides the probe report types, individual probe execution
 //! functions (HTTPS, captive portal), and supporting types.
 
+use std::net::{IpAddr, SocketAddr};
 #[cfg(not(wasm_browser))]
 use std::net::{SocketAddrV4, SocketAddrV6};
-use std::{
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-};
 
 use http::StatusCode;
 use iroh_base::RelayUrl;
@@ -25,15 +22,14 @@ use n0_error::{e, stack_error};
 use n0_future::future::Pending;
 use n0_future::{
     StreamExt as _,
-    time::{self, Duration, Instant},
+    time::{Duration, Instant},
 };
 use rand::seq::IteratorRandom;
-use tracing::{debug, trace};
+use tracing::trace;
 use url::Host;
 
 #[cfg(not(wasm_browser))]
 use super::defaults::timeouts::DNS_TIMEOUT;
-use super::probes::Probe;
 #[cfg(not(wasm_browser))]
 use crate::address_lookup::DNS_STAGGERING_MS;
 use crate::util::reqwest_client_builder;
@@ -82,37 +78,12 @@ pub(super) struct SocketState {
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub(super) enum ProbesError {
-    #[error("Probe failed")]
-    ProbeFailure { source: ProbeError },
-    #[error("All probes failed")]
-    AllProbesFailed,
+    #[error("HTTPS probe failed")]
+    ProbeFailure { source: MeasureHttpsLatencyError },
     #[error("Probe cancelled")]
     Cancelled,
     #[error("Probe timed out")]
     Timeout,
-}
-
-/// The result of running a probe.
-#[derive(Debug, Clone)]
-pub(super) enum ProbeReport {
-    #[cfg(not(wasm_browser))]
-    QadIpv4(QadProbeReport),
-    #[cfg(not(wasm_browser))]
-    QadIpv6(QadProbeReport),
-    Https(HttpsProbeReport),
-}
-
-impl ProbeReport {
-    #[cfg(not(wasm_browser))]
-    #[allow(dead_code)] // may be useful for future probe logic
-    pub(super) fn is_udp(&self) -> bool {
-        matches!(self, Self::QadIpv4(_) | Self::QadIpv6(_))
-    }
-
-    #[cfg(wasm_browser)]
-    pub(super) fn is_udp(&self) -> bool {
-        false
-    }
 }
 
 #[cfg(not(wasm_browser))]
@@ -134,28 +105,6 @@ pub(super) struct HttpsProbeReport {
     pub(super) latency: Duration,
 }
 
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub(super) enum ProbeError {
-    #[error("Client is gone")]
-    ClientGone,
-    #[error("Probe is no longer useful")]
-    NotUseful,
-    #[error("Failed to run HTTPS probe")]
-    Https { source: MeasureHttpsLatencyError },
-}
-
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub(super) enum QuicError {
-    #[error("No relay available")]
-    NoRelay,
-    #[error("URL must have 'host' to use QUIC address discovery probes")]
-    InvalidUrl,
-}
-
 /// Pieces needed to do QUIC address discovery.
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct QuicConfig {
@@ -168,44 +117,6 @@ pub(crate) struct QuicConfig {
     pub(crate) ipv4: bool,
     /// Enable ipv6 QUIC address discovery probes
     pub(crate) ipv6: bool,
-}
-
-impl Probe {
-    /// Executes this particular [`Probe`], including using a delayed start if needed.
-    pub(super) async fn run(
-        self,
-        delay: Duration,
-        relay: Arc<RelayConfig>,
-        #[cfg(not(wasm_browser))] socket_state: SocketState,
-        #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
-    ) -> Result<ProbeReport, ProbeError> {
-        if !delay.is_zero() {
-            trace!("delaying probe");
-            time::sleep(delay).await;
-        }
-        trace!("starting probe");
-
-        let report = match self {
-            Probe::Https => {
-                match run_https_probe(
-                    #[cfg(not(wasm_browser))]
-                    &socket_state.dns_resolver,
-                    relay.url.clone(),
-                    #[cfg(not(wasm_browser))]
-                    tls_config,
-                )
-                .await
-                {
-                    Ok(report) => Ok(ProbeReport::Https(report)),
-                    Err(err) => Err(e!(ProbeError::Https, err)),
-                }
-            }
-            #[cfg(not(wasm_browser))]
-            Probe::QadIpv4 | Probe::QadIpv6 => unreachable!("must not be used"),
-        };
-        debug!(?report, "probe finished");
-        report
-    }
 }
 
 #[cfg(not(wasm_browser))]
@@ -483,7 +394,7 @@ pub(super) enum MeasureHttpsLatencyError {
 /// If `certs` is provided they will be added to the trusted root certificates, allowing the
 /// use of self-signed certificates for servers.  Currently this is used for testing.
 #[allow(clippy::unused_async)]
-async fn run_https_probe(
+pub(super) async fn run_https_probe(
     #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
     relay: RelayUrl,
     #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
@@ -556,7 +467,10 @@ async fn run_https_probe(
 
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
-    use std::net::{Ipv4Addr, SocketAddr};
+    use std::{
+        net::{Ipv4Addr, SocketAddr},
+        sync::Arc,
+    };
 
     use iroh_dns::dns::DnsResolver;
     use iroh_relay::tls::{CaRootsConfig, default_provider};

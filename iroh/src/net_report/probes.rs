@@ -59,10 +59,6 @@ impl ProbeSet {
         }
     }
 
-    pub(super) fn proto(&self) -> Probe {
-        self.proto
-    }
-
     fn push(&mut self, delay: Duration, endpoint: Arc<RelayConfig>) {
         self.probes.push((delay, endpoint));
     }
