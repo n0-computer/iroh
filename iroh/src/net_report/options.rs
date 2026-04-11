@@ -6,7 +6,7 @@ pub(crate) use imp::Options;
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::net_report::{QuicConfig, probes::Probe};
+    use crate::net_report::{probes::Probe, qad::QuicConfig};
 
     /// Options for running probes
     ///

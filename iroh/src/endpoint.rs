@@ -1248,9 +1248,9 @@ impl Endpoint {
     /// If no relays are configured, this will pend forever.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
-    /// timeout. We recommend using a timeout close to
-    /// [`crate::NET_REPORT_TIMEOUT`]s, so you can be sure that at least one
-    /// [`crate::NetReport`] has been attempted.
+    /// timeout. A relay handshake can take longer than the first
+    /// [`crate::NET_REPORT_TIMEOUT`] seconds, so pick a user-facing budget
+    /// that fits your application rather than the net-report deadline.
     ///
     /// To understand if the endpoint has gone back "offline",
     /// you must use the [`Endpoint::watch_addr`] method, to

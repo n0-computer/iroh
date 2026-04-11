@@ -4,16 +4,15 @@
 //! [`NetReportActor`] owns all probe state (QAD connections, report
 //! history) and coordinates three probe types:
 //!
-//! - **QAD** (QUIC Address Discovery): discovers the endpoint's public address.
-//! - **HTTPS**: measures latency to each relay server.
-//! - **Captive portal**: detects HTTP-intercepting networks.
+//! - QAD (QUIC Address Discovery): discovers the endpoint's public address.
+//! - HTTPS: measures latency to each relay server.
+//! - Captive portal: detects HTTP-intercepting networks.
 //!
 //! Probe results are emitted via a [`Watchable`] as they arrive, so
-//! consumers see address updates within milliseconds of discovery. Two
-//! deadlines bound each cycle: [`REPORT_TIMEOUT`] guarantees a report
-//! is emitted within three seconds, and [`ABORT_TIMEOUT`] cancels
-//! remaining HTTPS probes while letting QAD probes finish on degraded
-//! links.
+//! consumers see address updates within milliseconds of discovery.
+//! [`REPORT_TIMEOUT`] bounds the time to first emission;
+//! [`ABORT_TIMEOUT`] bounds total HTTPS activity while letting QAD probes
+//! run to their own per-probe deadline.
 
 use std::{collections::BTreeSet, sync::Arc};
 
@@ -22,30 +21,30 @@ use iroh_relay::RelayMap;
 use iroh_relay::quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON};
 use n0_future::{
     MaybeFuture,
+    task::JoinSet,
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
 #[cfg(not(wasm_browser))]
-use super::reportgen::QadProbeReport;
-#[cfg(not(wasm_browser))]
+use super::qad::{QadConn, QadConns, QadProbeError, QadProbeReport};
 use super::{
-    QadConn, QadConns, QadProbeError, defaults::timeouts::QAD_PROBE_TIMEOUT, reportgen::SocketState,
-};
-use super::{
-    Report,
+    IfStateDetails, Report,
     defaults::timeouts::{
         ABORT_TIMEOUT, CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, PROBES_TIMEOUT, REPORT_TIMEOUT,
     },
+    https::{HttpsProbeReport, ProbesError},
     metrics::Metrics,
     probes::{Probe, ProbePlan},
     report::RelayLatencies,
-    reportgen::{HttpsProbeReport, ProbesError},
 };
+#[cfg(not(wasm_browser))]
+use super::{SocketState, defaults::timeouts::QAD_PROBE_TIMEOUT};
 
+/// Force a full (non-incremental) probe cycle after this much time has
+/// passed since the last full cycle.
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// A coalesced probe request waiting to be picked up by the actor.
@@ -54,14 +53,12 @@ const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// between actor ticks merge into a single request. The `is_major` flag
 /// is sticky: once set, it stays set until the actor consumes the request.
 pub(super) struct PendingProbeRequest {
-    pub if_state: super::reportgen::IfStateDetails,
+    pub if_state: IfStateDetails,
     pub is_major: bool,
 }
 
 /// Shared slot for delivering probe requests from [`Client`](super::Client)
 /// to the [`NetReportActor`].
-///
-/// Debug output omits the slot contents to avoid locking.
 ///
 /// Writers merge into the existing request (if any), preserving the
 /// `is_major` flag via OR. The actor takes the request atomically.
@@ -84,12 +81,12 @@ impl ProbeRequestSlot {
         }
     }
 
-    /// Merge a probe request into the slot.
+    /// Merges a probe request into the slot.
     ///
     /// If a request is already pending, `is_major` is OR-ed in and
     /// `if_state` is overwritten with the latest value. If no request
     /// is pending, a new one is created.
-    pub(super) fn request(&self, if_state: super::reportgen::IfStateDetails, is_major: bool) {
+    pub(super) fn request(&self, if_state: IfStateDetails, is_major: bool) {
         let mut guard = self.slot.lock().expect("not poisoned");
         match guard.as_mut() {
             Some(pending) => {
@@ -104,7 +101,7 @@ impl ProbeRequestSlot {
         self.notify.notify_one();
     }
 
-    /// Take the pending request, leaving the slot empty.
+    /// Takes the pending request, leaving the slot empty.
     fn take(&self) -> Option<PendingProbeRequest> {
         self.slot.lock().expect("not poisoned").take()
     }
@@ -112,15 +109,12 @@ impl ProbeRequestSlot {
 
 /// Outcome of a single probe task in the actor's [`JoinSet`].
 enum ProbeResult {
-    /// Completed QAD IPv4 probe with connection for reuse.
     #[cfg(not(wasm_browser))]
     QadV4(Result<(QadProbeReport, QadConn), QadProbeError>),
-    /// Completed QAD IPv6 probe with connection for reuse.
     #[cfg(not(wasm_browser))]
     QadV6(Result<(QadProbeReport, QadConn), QadProbeError>),
-    /// Completed HTTPS latency probe.
     Https(Result<HttpsProbeReport, ProbesError>),
-    /// Completed captive portal detection check.
+    /// `None` when the check was cancelled or timed out.
     #[cfg(not(wasm_browser))]
     CaptivePortal(Option<bool>),
 }
@@ -155,14 +149,12 @@ impl Default for Reports {
 /// See the [module documentation](self) for an overview of the probe
 /// lifecycle and timeout strategy.
 pub(super) struct NetReportActor {
-    // -- probe tasks --
     probes: JoinSet<Option<ProbeResult>>,
 
-    // -- QAD connection state --
+    /// Winning QAD connections, reused across probe cycles.
     #[cfg(not(wasm_browser))]
     qad_conns: QadConns,
 
-    // -- configuration --
     relay_map: RelayMap,
     #[cfg(not(wasm_browser))]
     socket_state: SocketState,
@@ -170,36 +162,36 @@ pub(super) struct NetReportActor {
     tls_config: rustls::ClientConfig,
     protocols: BTreeSet<Probe>,
 
-    // -- report state --
+    /// The report being assembled during the current probe cycle.
     current_report: Report,
+    /// Historical reports used for preferred relay selection.
     reports: Reports,
+    /// Sink for publishing report updates to consumers.
     report_out: Watchable<Option<Report>>,
 
     /// When the current probe cycle started, or `None` if idle.
     cycle_start: Option<Instant>,
 
-    /// Fires at [`REPORT_TIMEOUT`] after a cycle starts. Forces a report
-    /// emission even if no probes have completed, so consumers always get
-    /// a report within a bounded time. `None` when no cycle is active or
-    /// after the deadline has already fired.
+    /// Deadline at [`REPORT_TIMEOUT`] for emitting a report even when
+    /// probes are still running. `None` while idle.
     report_deadline: Option<Instant>,
 
-    /// Fires at [`ABORT_TIMEOUT`] after a cycle starts. Cancels remaining
-    /// HTTPS probes to bound total network activity. QAD probes are
-    /// unaffected and keep running until [`QAD_PROBE_TIMEOUT`]. `None`
-    /// when no cycle is active or after it has already fired.
+    /// Deadline at [`ABORT_TIMEOUT`] for aborting remaining probes to cap
+    /// network activity per cycle. `None` while idle.
     abort_deadline: Option<Instant>,
 
-    // -- probe cancellation --
+    /// Cancelled once one IPv4 QAD probe succeeds.
     #[cfg(not(wasm_browser))]
     cancel_qad_v4: CancellationToken,
+    /// Cancelled once one IPv6 QAD probe succeeds.
     #[cfg(not(wasm_browser))]
     cancel_qad_v6: CancellationToken,
+    /// Cancelled when every relay has at least one latency sample.
     cancel_https: CancellationToken,
+    /// Cancelled when a QAD probe confirms UDP works.
     #[cfg(not(wasm_browser))]
-    captive_portal_cancel: CancellationToken,
+    cancel_captive_portal: CancellationToken,
 
-    // -- input / lifecycle --
     probe_requests: Arc<ProbeRequestSlot>,
     shutdown: CancellationToken,
     metrics: Arc<Metrics>,
@@ -239,7 +231,7 @@ impl NetReportActor {
             cancel_qad_v6: CancellationToken::new(),
             cancel_https: CancellationToken::new(),
             #[cfg(not(wasm_browser))]
-            captive_portal_cancel: CancellationToken::new(),
+            cancel_captive_portal: CancellationToken::new(),
             probe_requests,
             shutdown,
             metrics,
@@ -258,7 +250,8 @@ impl NetReportActor {
             #[cfg(not(wasm_browser))]
             let mut qad_watch = self.qad_conns.watch();
             #[cfg(wasm_browser)]
-            let mut qad_watch = n0_watcher::Watchable::new((None, None)).watch();
+            let mut qad_watch =
+                n0_watcher::Watchable::<(Option<()>, Option<()>)>::new((None, None)).watch();
 
             let report_deadline = match self.report_deadline {
                 Some(t) => MaybeFuture::Some(time::sleep_until(t)),
@@ -291,16 +284,17 @@ impl NetReportActor {
                 _ = &mut report_deadline => {
                     debug!("report deadline fired, emitting current report");
                     self.report_deadline = None;
-                    self.force_emit();
+                    // Deliberately does not emit if current_report is still
+                    // empty: an empty report would clobber previously good
+                    // addresses downstream. Consumers can continue waiting.
+                    self.maybe_emit();
                 }
 
-                // Abort deadline: cancel remaining HTTPS probes. QAD
-                // probes are unaffected and keep running until
-                // QAD_PROBE_TIMEOUT.
+                // Abort deadline: kill all remaining probes.
                 _ = &mut abort_deadline => {
-                    debug!("abort deadline fired, cancelling HTTPS probes");
+                    debug!("abort deadline fired, aborting all probes");
                     self.abort_deadline = None;
-                    self.cancel_https.cancel();
+                    self.probes.abort_all();
                 }
 
                 Ok((v4, v6)) = qad_watch.updated() => {
@@ -342,10 +336,13 @@ impl NetReportActor {
         }
 
         if is_major {
-            self.probes.abort_all();
+            // Replace the JoinSet outright so any already-completed but
+            // undrained results from the previous cycle are discarded.
+            // abort_all() leaves ready results behind, which would leak
+            // into the new cycle's current_report.
+            self.probes = JoinSet::new();
         }
 
-        // Full vs incremental determination
         let now = Instant::now();
         let do_full = is_major
             || self.reports.next_full
@@ -394,12 +391,34 @@ impl NetReportActor {
     ///
     /// Updates `current_report`, stores QAD connections, cancels redundant
     /// probes, and triggers report emission.
-    fn handle_probe_result(&mut self, result: Result<Option<ProbeResult>, tokio::task::JoinError>) {
-        let Ok(Some(result)) = result else {
-            // JoinError or cancelled (None).
-            return;
+    fn handle_probe_result(
+        &mut self,
+        result: Result<Option<ProbeResult>, n0_future::task::JoinError>,
+    ) {
+        let probe = match result {
+            Err(e) if e.is_panic() => {
+                warn!("probe task panicked: {e:#}");
+                None
+            }
+            Err(_) | Ok(None) => None,
+            Ok(Some(r)) => Some(r),
         };
 
+        if let Some(result) = probe {
+            self.dispatch_probe_result(result);
+        }
+
+        // Cycle complete when all probes finished, regardless of how the last
+        // task exited. Without this check on cancelled/panicked tasks, a cycle
+        // that ends with cancelled QAD probes (after a winner) would never
+        // commit to history.
+        if self.probes.is_empty() && self.cycle_start.is_some() {
+            self.finalize_cycle();
+        }
+    }
+
+    /// Applies a single successful probe task's output to the current report.
+    fn dispatch_probe_result(&mut self, result: ProbeResult) {
         match result {
             #[cfg(not(wasm_browser))]
             ProbeResult::QadV4(Ok((report, conn))) => {
@@ -414,7 +433,7 @@ impl NetReportActor {
                     conn.conn
                         .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
                 }
-                self.captive_portal_cancel.cancel();
+                self.cancel_captive_portal.cancel();
                 self.maybe_emit();
             }
             #[cfg(not(wasm_browser))]
@@ -430,7 +449,7 @@ impl NetReportActor {
                     conn.conn
                         .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
                 }
-                self.captive_portal_cancel.cancel();
+                self.cancel_captive_portal.cancel();
                 self.maybe_emit();
             }
             #[cfg(not(wasm_browser))]
@@ -460,11 +479,6 @@ impl NetReportActor {
                 self.maybe_emit();
             }
         }
-
-        // Cycle complete when all probes finished.
-        if self.probes.is_empty() && self.cycle_start.is_some() {
-            self.finalize_cycle();
-        }
     }
 
     /// Publishes the current report if it contains meaningful probe data.
@@ -484,22 +498,12 @@ impl NetReportActor {
         self.report_out.set(Some(self.current_report.clone())).ok();
     }
 
-    /// Unconditionally publishes the current report, even if empty.
-    fn force_emit(&mut self) {
-        self.report_out.set(Some(self.current_report.clone())).ok();
-    }
-
-    /// Finalizes the current probe cycle.
-    ///
-    /// Called when the [`JoinSet`] is empty (all probes completed or timed
-    /// out). Commits the report to history, selects the preferred relay,
+    /// Commits the current cycle to history, selects the preferred relay,
     /// and emits the final report.
     fn finalize_cycle(&mut self) {
         let mut report = std::mem::take(&mut self.current_report);
-        self.add_report_history_and_set_preferred_relay(&mut report);
+        update_report_history(&mut self.reports, &mut report);
         self.current_report = report;
-
-        // Final emission with preferred_relay set.
         self.report_out.set(Some(self.current_report.clone())).ok();
 
         debug!(
@@ -529,7 +533,7 @@ impl NetReportActor {
     /// Spawns QAD probes for IPv4 and IPv6 if needed. Reuses existing
     /// connections when available, and validates that they are still alive.
     #[cfg(not(wasm_browser))]
-    fn spawn_qad_probes(&mut self, if_state: &super::reportgen::IfStateDetails) {
+    fn spawn_qad_probes(&mut self, if_state: &IfStateDetails) {
         use tracing::{Instrument, warn_span};
 
         let Some(ref quic_client) = self.socket_state.quic_client else {
@@ -561,7 +565,7 @@ impl NetReportActor {
         }
 
         let needs_v4 = self.qad_conns.v4.is_none() && if_state.have_v4;
-        let needs_v6 = (self.qad_conns.v6.is_some() != if_state.have_v6) && if_state.have_v6;
+        let needs_v6 = self.qad_conns.v6.is_none() && if_state.have_v6;
 
         if !needs_v4 && !needs_v6 {
             return;
@@ -584,7 +588,12 @@ impl NetReportActor {
                         .run_until_cancelled_owned(async move {
                             match time::timeout(
                                 QAD_PROBE_TIMEOUT,
-                                super::run_probe_v4(relay, quic_client, dns_resolver, inner_token),
+                                super::qad::run_probe_v4(
+                                    relay,
+                                    quic_client,
+                                    dns_resolver,
+                                    inner_token,
+                                ),
                             )
                             .await
                             {
@@ -612,7 +621,12 @@ impl NetReportActor {
                         .run_until_cancelled_owned(async move {
                             match time::timeout(
                                 QAD_PROBE_TIMEOUT,
-                                super::run_probe_v6(relay, quic_client, dns_resolver, inner_token),
+                                super::qad::run_probe_v6(
+                                    relay,
+                                    quic_client,
+                                    dns_resolver,
+                                    inner_token,
+                                ),
                             )
                             .await
                             {
@@ -656,7 +670,7 @@ impl NetReportActor {
                             if !delay.is_zero() {
                                 time::sleep(delay).await;
                             }
-                            super::reportgen::run_https_probe(
+                            super::https::run_https_probe(
                                 #[cfg(not(wasm_browser))]
                                 &socket_state.dns_resolver,
                                 relay.url.clone(),
@@ -684,8 +698,8 @@ impl NetReportActor {
     /// and cancelled if QAD confirms UDP connectivity.
     #[cfg(not(wasm_browser))]
     fn spawn_captive_portal(&mut self) {
-        self.captive_portal_cancel = CancellationToken::new();
-        let cancel = self.captive_portal_cancel.clone();
+        self.cancel_captive_portal = CancellationToken::new();
+        let cancel = self.cancel_captive_portal.clone();
         let dns = self.socket_state.dns_resolver.clone();
         let relay_map = self.relay_map.clone();
         let tls = self.tls_config.clone();
@@ -702,7 +716,7 @@ impl NetReportActor {
             }
             let result = time::timeout(
                 CAPTIVE_PORTAL_TIMEOUT,
-                super::reportgen::check_captive_portal(&dns, &relay_map, preferred, tls),
+                super::captive_portal::check_captive_portal(&dns, &relay_map, preferred, tls),
             )
             .await;
             Some(match result {
@@ -718,22 +732,13 @@ impl NetReportActor {
             })
         });
     }
-
-    /// Delegates to [`update_report_history`].
-    fn add_report_history_and_set_preferred_relay(&mut self, r: &mut Report) {
-        update_report_history(&mut self.reports, r);
-    }
 }
 
-/// Adds a report to the history and selects a preferred relay.
+/// Records `r` in the history and sets `r.preferred_relay` to the best
+/// candidate across the last five minutes of reports.
 ///
-/// Merges latency data from the last five minutes of reports to find the
-/// relay with the best recent performance. Applies hysteresis: the
-/// preferred relay only changes when the new candidate is at least 33%
-/// faster than the current one.
-///
-/// This is a free function (rather than a method on [`NetReportActor`])
-/// so the relay selection logic can be tested independently.
+/// Applies hysteresis: the preferred relay only changes when the new
+/// candidate is at least 33% faster than the current one.
 fn update_report_history(reports: &mut Reports, r: &mut Report) {
     let mut prev_relay = None;
     if let Some(ref last) = reports.last {

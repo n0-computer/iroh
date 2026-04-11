@@ -10,31 +10,37 @@ use serde::{Deserialize, Serialize};
 use tracing::{trace, warn};
 
 #[cfg(not(wasm_browser))]
-use super::reportgen::QadProbeReport;
-use super::{probes::Probe, reportgen::HttpsProbeReport};
+use super::qad::QadProbeReport;
+use super::{https::HttpsProbeReport, probes::Probe};
 
-/// A net_report report.
+/// Snapshot of the host's network conditions as determined by probe results.
+///
+/// Populated incrementally during a probe cycle and published via the
+/// report watcher. Fields start at their `Default` values and are filled
+/// in as individual probes complete.
 #[derive(Default, Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct Report {
-    /// A QAD IPv4 round trip completed.
+    /// Whether a QAD IPv4 round trip succeeded.
     pub udp_v4: bool,
-    /// A QAD IPv6 round trip completed.
+    /// Whether a QAD IPv6 round trip succeeded.
     pub udp_v6: bool,
-    /// Whether the reported public address differs when probing different servers (on IPv4).
+    /// Whether the observed public IPv4 address differs across relay servers.
+    /// `None` until at least two relays have reported.
     pub mapping_varies_by_dest_ipv4: Option<bool>,
-    /// Whether the reported public address differs when probing different servers (on IPv6).
+    /// Whether the observed public IPv6 address differs across relay servers.
+    /// `None` until at least two relays have reported.
     pub mapping_varies_by_dest_ipv6: Option<bool>,
-    /// Probe indicating the presence of port mapping protocols on the LAN.
-    /// `None` for unknown
+    /// The relay with the lowest recent latency, chosen with hysteresis.
+    /// `None` until at least one latency measurement exists.
     pub preferred_relay: Option<RelayUrl>,
-    /// keyed by relay Url
+    /// Best observed latency to each relay, keyed by relay URL.
     pub relay_latency: RelayLatencies,
-    /// ip:port of global IPv4
+    /// Public IPv4 address and port as observed by relay servers.
     pub global_v4: Option<SocketAddrV4>,
-    /// `[ip]:port` of global IPv6
+    /// Public IPv6 address and port as observed by relay servers.
     pub global_v6: Option<SocketAddrV6>,
-    /// CaptivePortal is set when we think there's a captive portal that is
-    /// intercepting HTTP traffic.
+    /// Whether a captive portal was detected. `None` if the check was
+    /// skipped, cancelled, or has not yet completed.
     pub captive_portal: Option<bool>,
 }
 
@@ -63,13 +69,17 @@ impl Report {
         }
     }
 
-    /// Updates the report with an HTTPS latency measurement.
+    /// Incorporates an HTTPS probe result into the report's relay latencies.
     pub(super) fn update_https(&mut self, report: &HttpsProbeReport) {
         self.relay_latency
             .update_relay(report.relay.clone(), report.latency, Probe::Https);
     }
 
-    /// Updates the report with a QAD IPv4 probe result.
+    /// Incorporates a QAD IPv4 probe result into the report.
+    ///
+    /// Updates relay latencies, sets `udp_v4` to true, and records or
+    /// compares the observed global IPv4 address. When multiple relays
+    /// report different addresses, `mapping_varies_by_dest_ipv4` is set.
     #[cfg(not(wasm_browser))]
     pub(super) fn update_qad_v4(&mut self, report: &QadProbeReport) {
         self.relay_latency
@@ -96,7 +106,11 @@ impl Report {
         trace!(?self.global_v4, ?self.mapping_varies_by_dest_ipv4, %ipp, "stored report");
     }
 
-    /// Updates the report with a QAD IPv6 probe result.
+    /// Incorporates a QAD IPv6 probe result into the report.
+    ///
+    /// Updates relay latencies, sets `udp_v6` to true, and records or
+    /// compares the observed global IPv6 address. When multiple relays
+    /// report different addresses, `mapping_varies_by_dest_ipv6` is set.
     #[cfg(not(wasm_browser))]
     pub(super) fn update_qad_v6(&mut self, report: &QadProbeReport) {
         self.relay_latency
@@ -123,13 +137,20 @@ impl Report {
     }
 }
 
-/// Latencies per relay endpoint.
+/// Best observed latency to each relay, bucketed by probe type.
+///
+/// Keeps separate maps for IPv4, IPv6, and HTTPS so the caller can
+/// reason about per-protocol reachability. The [`get`](Self::get) method
+/// returns the minimum across all protocol maps for a given relay.
 #[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct RelayLatencies {
+    /// Best QAD IPv4 latency per relay.
     #[cfg(not(wasm_browser))]
     ipv4: BTreeMap<RelayUrl, Duration>,
+    /// Best QAD IPv6 latency per relay.
     #[cfg(not(wasm_browser))]
     ipv6: BTreeMap<RelayUrl, Duration>,
+    /// Best HTTPS latency per relay.
     https: BTreeMap<RelayUrl, Duration>,
 }
 

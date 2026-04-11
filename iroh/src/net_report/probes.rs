@@ -78,10 +78,10 @@ impl ProbeSet {
 /// Generally the first probe of of a set which completes aborts the remaining probes of a
 /// set.  Sometimes a failing probe can also abort the remaining probes of a set.
 ///
-/// The [`reportgen`] actor will also abort all the remaining [`ProbeSet`]s once it has
+/// The [`actor`] will also abort all the remaining [`ProbeSet`]s once it has
 /// sufficient information for a report.
 ///
-/// [`reportgen`]: crate::net_report::reportgen
+/// [`actor`]: crate::net_report::actor
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct ProbePlan {
     set: BTreeSet<ProbeSet>,
