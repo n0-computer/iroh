@@ -176,6 +176,9 @@ pub(crate) struct Options {
 
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
+
+    /// Explicitly configured external addresses to advertise.
+    pub(crate) configured_addrs: BTreeSet<SocketAddr>,
 }
 
 /// Inner state for an iroh [`crate::Endpoint`].
@@ -346,6 +349,8 @@ pub(crate) struct Socket {
     address_lookup: address_lookup::ConcurrentAddressLookup,
     /// Optional user-defined discover data.
     address_lookup_user_data: RwLock<Option<UserData>>,
+    /// Explicitly configured external addresses to advertise.
+    configured_addrs: RwLock<BTreeSet<SocketAddr>>,
 
     pub(crate) tls_config: rustls::ClientConfig,
 
@@ -827,6 +832,7 @@ impl EndpointInner {
             transport_bias,
             portmapper_config,
             static_config,
+            configured_addrs,
         } = opts;
 
         let address_lookup = address_lookup::ConcurrentAddressLookup::default();
@@ -928,6 +934,7 @@ impl EndpointInner {
             address_lookup,
             relay_map: relay_map.clone(),
             address_lookup_user_data: RwLock::new(address_lookup_user_data),
+            configured_addrs: RwLock::new(configured_addrs),
             direct_addrs,
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
@@ -1184,6 +1191,36 @@ impl EndpointInner {
         res
     }
 
+    /// Adds an external address to advertise to peers.
+    pub(crate) async fn add_external_addr(&self, addr: SocketAddr) {
+        self.sock
+            .configured_addrs
+            .write()
+            .expect("poisoned")
+            .insert(addr);
+        self.actor_sender
+            .send(ActorMessage::DirectAddrRefresh)
+            .await
+            .ok();
+    }
+
+    /// Removes a configured external address. Returns `true` if it was present.
+    pub(crate) async fn remove_external_addr(&self, addr: &SocketAddr) -> bool {
+        let removed = self
+            .sock
+            .configured_addrs
+            .write()
+            .expect("poisoned")
+            .remove(addr);
+        if removed {
+            self.actor_sender
+                .send(ActorMessage::DirectAddrRefresh)
+                .await
+                .ok();
+        }
+        removed
+    }
+
     /// Call to notify the system of potential network changes.
     pub(crate) async fn network_change(&self) {
         self.actor_sender
@@ -1287,6 +1324,8 @@ enum ActorMessage {
     ),
     #[debug("RemoteInfo(..)")]
     RemoteInfo(EndpointId, oneshot::Sender<RemoteInfo>),
+    /// Re-evaluate direct addresses, e.g. after configured external addresses changed.
+    DirectAddrRefresh,
     #[cfg(all(test, with_crypto_provider))]
     ForceNetworkChange(bool),
 }
@@ -1689,6 +1728,13 @@ impl Actor {
                     tx.send(watcher).ok();
                 }
             }
+            ActorMessage::DirectAddrRefresh => {
+                #[cfg(not(wasm_browser))]
+                {
+                    let (report, _reason) = self.sock.net_report.get();
+                    self.update_direct_addresses(report.as_ref());
+                }
+            }
             #[cfg(all(test, with_crypto_provider))]
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major).await;
@@ -1758,6 +1804,17 @@ impl Actor {
         }
 
         self.collect_local_addresses(&mut addrs);
+
+        // Add configured external addresses.
+        for addr in self
+            .sock
+            .configured_addrs
+            .read()
+            .expect("poisoned")
+            .iter()
+        {
+            addrs.entry(*addr).or_insert(DirectAddrType::Config);
+        }
 
         // Finally create and store store all these direct addresses and send any
         // queued call-me-maybe messages.
@@ -1950,6 +2007,8 @@ pub enum DirectAddrType {
     /// configure the router to forward this port to the iroh endpoint.  This indicates a
     /// situation like this, which still uses QAD to discover the public address.
     Qad4LocalPort,
+    /// An address explicitly provided by the user via configuration.
+    Config,
 }
 
 impl Display for DirectAddrType {
@@ -1960,6 +2019,7 @@ impl Display for DirectAddrType {
             DirectAddrType::Qad => write!(f, "qad"),
             DirectAddrType::Portmapped => write!(f, "portmap"),
             DirectAddrType::Qad4LocalPort => write!(f, "qad4localport"),
+            DirectAddrType::Config => write!(f, "config"),
         }
     }
 }
@@ -2029,6 +2089,7 @@ mod tests {
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
             static_config,
+            configured_addrs: Default::default(),
         }
     }
 
@@ -2437,6 +2498,7 @@ mod tests {
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
             static_config,
+            configured_addrs: Default::default(),
         };
         let sock = EndpointInner::bind(opts).await?;
         Ok(sock)
