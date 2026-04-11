@@ -30,7 +30,7 @@ use tracing::trace;
 
 use self::actor::{NetReportActor, ProbeRequestSlot};
 #[cfg(not(wasm_browser))]
-use self::reportgen::{ProbeReport, QadProbeReport, SocketState};
+use self::reportgen::{QadProbeReport, SocketState};
 #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 pub use self::{
     // exported primarily for use in documentation
@@ -145,7 +145,7 @@ impl QadConns {
         }
     }
 
-    fn current_v4(&self) -> Option<ProbeReport> {
+    fn current_v4(&self) -> Option<QadProbeReport> {
         if let Some((_, ref conn)) = self.v4
             && let Some(mut r) = conn.observer.get()
         {
@@ -153,12 +153,12 @@ impl QadConns {
             if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
                 r.latency = latency;
             }
-            return Some(ProbeReport::QadIpv4(r));
+            return Some(r);
         }
         None
     }
 
-    fn current_v6(&self) -> Option<ProbeReport> {
+    fn current_v6(&self) -> Option<QadProbeReport> {
         if let Some((_, ref conn)) = self.v6
             && let Some(mut r) = conn.observer.get()
         {
@@ -166,7 +166,7 @@ impl QadConns {
             if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
                 r.latency = latency;
             }
-            return Some(ProbeReport::QadIpv6(r));
+            return Some(r);
         }
         None
     }
