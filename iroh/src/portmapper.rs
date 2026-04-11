@@ -83,6 +83,7 @@ impl Client {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn deactivate(&self) {
         match self {
             #[cfg(all(not(wasm_browser), feature = "portmapper"))]
