@@ -1806,13 +1806,7 @@ impl Actor {
         self.collect_local_addresses(&mut addrs);
 
         // Add configured external addresses.
-        for addr in self
-            .sock
-            .configured_addrs
-            .read()
-            .expect("poisoned")
-            .iter()
-        {
+        for addr in self.sock.configured_addrs.read().expect("poisoned").iter() {
             addrs.entry(*addr).or_insert(DirectAddrType::Config);
         }
 

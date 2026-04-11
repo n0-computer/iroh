@@ -2807,8 +2807,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_external_addr() -> Result {
-        let configured_addr =
-            SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 12345));
+        let configured_addr = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 12345));
 
         // Test builder-configured external address
         let ep = Endpoint::builder(presets::Minimal)
@@ -2823,8 +2822,7 @@ mod tests {
         );
 
         // Test runtime add
-        let runtime_addr =
-            SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(5, 6, 7, 8), 54321));
+        let runtime_addr = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(5, 6, 7, 8), 54321));
         ep.add_external_addr(runtime_addr).await;
 
         // Give the actor time to process the refresh
