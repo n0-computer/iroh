@@ -4,16 +4,15 @@
 //! [`NetReportActor`] owns all probe state (QAD connections, report
 //! history) and coordinates three probe types:
 //!
-//! - **QAD** (QUIC Address Discovery): discovers the endpoint's public address.
-//! - **HTTPS**: measures latency to each relay server.
-//! - **Captive portal**: detects HTTP-intercepting networks.
+//! - QAD (QUIC Address Discovery): discovers the endpoint's public address.
+//! - HTTPS: measures latency to each relay server.
+//! - Captive portal: detects HTTP-intercepting networks.
 //!
 //! Probe results are emitted via a [`Watchable`] as they arrive, so
-//! consumers see address updates within milliseconds of discovery. Two
-//! deadlines bound each cycle: [`REPORT_TIMEOUT`] guarantees a report
-//! is emitted within three seconds, and [`ABORT_TIMEOUT`] cancels
-//! remaining HTTPS probes while letting QAD probes finish on degraded
-//! links.
+//! consumers see address updates within milliseconds of discovery.
+//! [`REPORT_TIMEOUT`] bounds the time to first emission;
+//! [`ABORT_TIMEOUT`] bounds total HTTPS activity while letting QAD probes
+//! run to their own per-probe deadline.
 
 use std::{collections::BTreeSet, sync::Arc};
 
@@ -22,31 +21,28 @@ use iroh_relay::RelayMap;
 use iroh_relay::quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON};
 use n0_future::{
     MaybeFuture,
+    task::JoinSet,
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 #[cfg(not(wasm_browser))]
-use super::reportgen::QadProbeReport;
-#[cfg(not(wasm_browser))]
+use super::qad::{AddrFamily, QadConn, QadConns, QadProbeError, QadProbeReport, QadUpdate};
 use super::{
-    QadConn, QadConns, QadProbeError, defaults::timeouts::QAD_PROBE_TIMEOUT, reportgen::SocketState,
-};
-use super::{
-    Report,
+    IfStateDetails, Report,
     defaults::timeouts::{
-        ABORT_TIMEOUT, CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, PROBES_TIMEOUT, REPORT_TIMEOUT,
+        ABORT_TIMEOUT, CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, FULL_REPORT_INTERVAL,
+        PROBES_TIMEOUT, REPORT_TIMEOUT,
     },
+    https::{HttpsProbeReport, ProbesError},
     metrics::Metrics,
     probes::{Probe, ProbePlan},
     report::RelayLatencies,
-    reportgen::{HttpsProbeReport, ProbesError},
 };
-
-const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
+#[cfg(not(wasm_browser))]
+use super::{SocketState, defaults::timeouts::QAD_PROBE_TIMEOUT};
 
 /// A coalesced probe request waiting to be picked up by the actor.
 ///
@@ -54,14 +50,12 @@ const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// between actor ticks merge into a single request. The `is_major` flag
 /// is sticky: once set, it stays set until the actor consumes the request.
 pub(super) struct PendingProbeRequest {
-    pub if_state: super::reportgen::IfStateDetails,
+    pub if_state: IfStateDetails,
     pub is_major: bool,
 }
 
 /// Shared slot for delivering probe requests from [`Client`](super::Client)
 /// to the [`NetReportActor`].
-///
-/// Debug output omits the slot contents to avoid locking.
 ///
 /// Writers merge into the existing request (if any), preserving the
 /// `is_major` flag via OR. The actor takes the request atomically.
@@ -84,12 +78,12 @@ impl ProbeRequestSlot {
         }
     }
 
-    /// Merge a probe request into the slot.
+    /// Merges a probe request into the slot.
     ///
     /// If a request is already pending, `is_major` is OR-ed in and
     /// `if_state` is overwritten with the latest value. If no request
     /// is pending, a new one is created.
-    pub(super) fn request(&self, if_state: super::reportgen::IfStateDetails, is_major: bool) {
+    pub(super) fn request(&self, if_state: IfStateDetails, is_major: bool) {
         let mut guard = self.slot.lock().expect("not poisoned");
         match guard.as_mut() {
             Some(pending) => {
@@ -104,7 +98,7 @@ impl ProbeRequestSlot {
         self.notify.notify_one();
     }
 
-    /// Take the pending request, leaving the slot empty.
+    /// Takes the pending request, leaving the slot empty.
     fn take(&self) -> Option<PendingProbeRequest> {
         self.slot.lock().expect("not poisoned").take()
     }
@@ -112,25 +106,21 @@ impl ProbeRequestSlot {
 
 /// Outcome of a single probe task in the actor's [`JoinSet`].
 enum ProbeResult {
-    /// Completed QAD IPv4 probe with connection for reuse.
     #[cfg(not(wasm_browser))]
-    QadV4(Result<(QadProbeReport, QadConn), QadProbeError>),
-    /// Completed QAD IPv6 probe with connection for reuse.
-    #[cfg(not(wasm_browser))]
-    QadV6(Result<(QadProbeReport, QadConn), QadProbeError>),
-    /// Completed HTTPS latency probe.
+    Qad(AddrFamily, Result<(QadProbeReport, QadConn), QadProbeError>),
     Https(Result<HttpsProbeReport, ProbesError>),
-    /// Completed captive portal detection check.
+    /// `None` when the check was cancelled or timed out.
     #[cfg(not(wasm_browser))]
     CaptivePortal(Option<bool>),
 }
 
-/// Tracks report history across cycles.
+/// Tracks recent reports for preferred-relay selection and full-cycle
+/// cadence.
 #[derive(Debug)]
-struct Reports {
-    /// Force a full report on the next cycle.
+struct ReportHistory {
+    /// When true, the next cycle runs as a full (non-incremental) probe.
     next_full: bool,
-    /// Recent reports keyed by time.
+    /// Reports from the last five minutes, keyed by completion time.
     prev: std::collections::BTreeMap<Instant, Report>,
     /// The most recent completed report.
     last: Option<Report>,
@@ -138,7 +128,7 @@ struct Reports {
     last_full: Instant,
 }
 
-impl Default for Reports {
+impl Default for ReportHistory {
     fn default() -> Self {
         Self {
             next_full: true,
@@ -149,20 +139,84 @@ impl Default for Reports {
     }
 }
 
+impl ReportHistory {
+    /// Records `r` and sets `r.preferred_relay` to the best candidate
+    /// across the last five minutes of reports.
+    ///
+    /// Applies hysteresis: the preferred relay only changes when the new
+    /// candidate is at least 33% faster than the current one.
+    fn record(&mut self, r: &mut Report) {
+        let mut prev_relay = None;
+        if let Some(ref last) = self.last {
+            prev_relay.clone_from(&last.preferred_relay);
+
+            if r.mapping_varies_by_dest_ipv4.is_none() {
+                r.mapping_varies_by_dest_ipv4 = last.mapping_varies_by_dest_ipv4;
+            }
+            if r.mapping_varies_by_dest_ipv6.is_none() {
+                r.mapping_varies_by_dest_ipv6 = last.mapping_varies_by_dest_ipv6;
+            }
+        }
+
+        let now = Instant::now();
+        const MAX_AGE: Duration = Duration::from_secs(5 * 60);
+
+        let mut best_recent = RelayLatencies::default();
+
+        let mut to_remove = Vec::new();
+        for (t, pr) in self.prev.iter() {
+            if now.duration_since(*t) > MAX_AGE {
+                to_remove.push(*t);
+                continue;
+            }
+            best_recent.merge(&pr.relay_latency);
+        }
+        best_recent.merge(&r.relay_latency);
+
+        for t in to_remove {
+            self.prev.remove(&t);
+        }
+
+        let mut best_any = Duration::default();
+        let mut old_relay_cur_latency = Duration::default();
+        for (_, url, duration) in r.relay_latency.iter() {
+            if Some(url) == prev_relay.as_ref() {
+                old_relay_cur_latency = duration;
+            }
+            if let Some(best) = best_recent.get(url)
+                && (r.preferred_relay.is_none() || best < best_any)
+            {
+                best_any = best;
+                r.preferred_relay.replace(url.clone());
+            }
+        }
+
+        // Hysteresis: don't switch if the new relay isn't much better.
+        if prev_relay.is_some()
+            && r.preferred_relay != prev_relay
+            && !old_relay_cur_latency.is_zero()
+            && best_any > old_relay_cur_latency / 3 * 2
+        {
+            r.preferred_relay = prev_relay;
+        }
+
+        self.prev.insert(now, r.clone());
+        self.last = Some(r.clone());
+    }
+}
+
 /// Actor that owns all probe state and emits report updates via
 /// `report_out` as probe results arrive.
 ///
 /// See the [module documentation](self) for an overview of the probe
 /// lifecycle and timeout strategy.
 pub(super) struct NetReportActor {
-    // -- probe tasks --
     probes: JoinSet<Option<ProbeResult>>,
 
-    // -- QAD connection state --
+    /// Winning QAD connections, reused across probe cycles.
     #[cfg(not(wasm_browser))]
     qad_conns: QadConns,
 
-    // -- configuration --
     relay_map: RelayMap,
     #[cfg(not(wasm_browser))]
     socket_state: SocketState,
@@ -173,36 +227,30 @@ pub(super) struct NetReportActor {
     #[cfg(not(wasm_browser))]
     captive_portal_check: bool,
 
-    // -- report state --
+    /// The report being assembled during the current probe cycle.
     current_report: Report,
-    reports: Reports,
+    /// Historical reports used for preferred relay selection.
+    reports: ReportHistory,
+    /// Sink for publishing report updates to consumers.
     report_out: Watchable<Option<Report>>,
 
     /// When the current probe cycle started, or `None` if idle.
     cycle_start: Option<Instant>,
 
-    /// Fires at [`REPORT_TIMEOUT`] after a cycle starts. Forces a report
-    /// emission even if no probes have completed, so consumers always get
-    /// a report within a bounded time. `None` when no cycle is active or
-    /// after the deadline has already fired.
+    /// Deadline at [`REPORT_TIMEOUT`] for emitting a report even when
+    /// probes are still running. `None` while idle.
     report_deadline: Option<Instant>,
 
-    /// Fires at [`ABORT_TIMEOUT`] after a cycle starts. Cancels remaining
-    /// HTTPS probes to bound total network activity. QAD probes are
-    /// unaffected and keep running until [`QAD_PROBE_TIMEOUT`]. `None`
-    /// when no cycle is active or after it has already fired.
+    /// Deadline at [`ABORT_TIMEOUT`] for aborting remaining probes to cap
+    /// network activity per cycle. `None` while idle.
     abort_deadline: Option<Instant>,
 
-    // -- probe cancellation --
-    #[cfg(not(wasm_browser))]
-    cancel_qad_v4: CancellationToken,
-    #[cfg(not(wasm_browser))]
-    cancel_qad_v6: CancellationToken,
+    /// Cancelled when every relay has at least one latency sample.
     cancel_https: CancellationToken,
+    /// Cancelled when a QAD probe confirms UDP works.
     #[cfg(not(wasm_browser))]
-    captive_portal_cancel: CancellationToken,
+    cancel_captive_portal: CancellationToken,
 
-    // -- input / lifecycle --
     probe_requests: Arc<ProbeRequestSlot>,
     shutdown: CancellationToken,
     metrics: Arc<Metrics>,
@@ -234,18 +282,14 @@ impl NetReportActor {
             #[cfg(not(wasm_browser))]
             captive_portal_check,
             current_report: Report::default(),
-            reports: Reports::default(),
+            reports: ReportHistory::default(),
             report_out,
             cycle_start: None,
             report_deadline: None,
             abort_deadline: None,
-            #[cfg(not(wasm_browser))]
-            cancel_qad_v4: CancellationToken::new(),
-            #[cfg(not(wasm_browser))]
-            cancel_qad_v6: CancellationToken::new(),
             cancel_https: CancellationToken::new(),
             #[cfg(not(wasm_browser))]
-            captive_portal_cancel: CancellationToken::new(),
+            cancel_captive_portal: CancellationToken::new(),
             probe_requests,
             shutdown,
             metrics,
@@ -258,13 +302,14 @@ impl NetReportActor {
     /// and watches existing QAD connections for address changes.
     pub(super) async fn run(mut self) {
         loop {
-            // Recreate QAD watcher each iteration. This is cheap (just
-            // clones watcher handles) and avoids tracking whether
-            // connections changed since the last iteration.
+            // Recreate the QAD watcher each iteration. Building it is
+            // cheap (just cloning Arc handles) and sidesteps tracking
+            // whether the QAD connection slots changed since last loop.
+            // On wasm, QAD is disabled; use a watcher that never fires.
             #[cfg(not(wasm_browser))]
             let mut qad_watch = self.qad_conns.watch();
             #[cfg(wasm_browser)]
-            let mut qad_watch = n0_watcher::Watchable::new((None, None)).watch();
+            let mut qad_watch = n0_watcher::Watchable::<()>::default().watch();
 
             let report_deadline = match self.report_deadline {
                 Some(t) => MaybeFuture::Some(time::sleep_until(t)),
@@ -292,39 +337,43 @@ impl NetReportActor {
                     self.handle_probe_result(result);
                 }
 
-                // Report deadline: emit whatever we have so consumers
-                // get a report within REPORT_TIMEOUT (3s).
+                // Report deadline: publish any partial data we have so
+                // consumers see a report within REPORT_TIMEOUT.
                 _ = &mut report_deadline => {
-                    debug!("report deadline fired, emitting current report");
+                    debug!("report deadline fired");
                     self.report_deadline = None;
-                    self.force_emit();
+                    // maybe_publish does nothing when current_report is
+                    // still empty: an empty report would clobber
+                    // previously good addresses downstream.
+                    self.maybe_publish();
                 }
 
-                // Abort deadline: cancel remaining HTTPS probes. QAD
-                // probes are unaffected and keep running until
-                // QAD_PROBE_TIMEOUT.
+                // Abort deadline: kill all remaining probes.
                 _ = &mut abort_deadline => {
-                    debug!("abort deadline fired, cancelling HTTPS probes");
+                    debug!("abort deadline fired, aborting all probes");
                     self.abort_deadline = None;
-                    self.cancel_https.cancel();
+                    self.probes.abort_all();
                 }
 
-                Ok((v4, v6)) = qad_watch.updated() => {
+                Ok(_update) = qad_watch.updated() => {
                     #[cfg(not(wasm_browser))]
-                    {
-                        if let Some(r) = v4 {
-                            trace!(?r, "QAD v4 address update from existing conn");
-                            self.current_report.update_qad_v4(&r);
-                            self.maybe_emit();
-                        }
-                        if let Some(r) = v6 {
-                            trace!(?r, "QAD v6 address update from existing conn");
-                            self.current_report.update_qad_v6(&r);
-                            self.maybe_emit();
-                        }
-                    }
+                    self.apply_qad_update(_update);
                 }
             }
+        }
+    }
+
+    #[cfg(not(wasm_browser))]
+    fn apply_qad_update(&mut self, update: QadUpdate) {
+        if let Some(r) = update.v4 {
+            trace!(?r, "QAD v4 address update from existing conn");
+            self.current_report.update_qad_v4(&r);
+            self.maybe_publish();
+        }
+        if let Some(r) = update.v6 {
+            trace!(?r, "QAD v6 address update from existing conn");
+            self.current_report.update_qad_v6(&r);
+            self.maybe_publish();
         }
     }
 
@@ -348,10 +397,13 @@ impl NetReportActor {
         }
 
         if is_major {
-            self.probes.abort_all();
+            // Replace the JoinSet outright so any already-completed but
+            // undrained results from the previous cycle are discarded.
+            // abort_all() leaves ready results behind, which would leak
+            // into the new cycle's current_report.
+            self.probes = JoinSet::new();
         }
 
-        // Full vs incremental determination
         let now = Instant::now();
         let do_full = is_major
             || self.reports.next_full
@@ -378,14 +430,6 @@ impl NetReportActor {
         self.abort_deadline = Some(now + ABORT_TIMEOUT);
         self.current_report = Report::default();
 
-        // Reset cancellation tokens for the new cycle.
-        #[cfg(not(wasm_browser))]
-        {
-            self.cancel_qad_v4 = CancellationToken::new();
-            self.cancel_qad_v6 = CancellationToken::new();
-        }
-        self.cancel_https = CancellationToken::new();
-
         #[cfg(not(wasm_browser))]
         self.spawn_qad_probes(&if_state);
         self.spawn_https_probes();
@@ -400,76 +444,79 @@ impl NetReportActor {
     ///
     /// Updates `current_report`, stores QAD connections, cancels redundant
     /// probes, and triggers report emission.
-    fn handle_probe_result(&mut self, result: Result<Option<ProbeResult>, tokio::task::JoinError>) {
-        let Ok(Some(result)) = result else {
-            // JoinError or cancelled (None).
-            return;
+    fn handle_probe_result(
+        &mut self,
+        result: Result<Option<ProbeResult>, n0_future::task::JoinError>,
+    ) {
+        let probe = match result {
+            Ok(probe) => probe,
+            Err(err) if err.is_panic() => {
+                error!("probe task panicked: {err:#}");
+                None
+            }
+            Err(err) if err.is_cancelled() => None,
+            Err(err) => {
+                warn!("probe task join failed: {err:#}");
+                None
+            }
         };
 
+        if let Some(result) = probe {
+            self.apply_probe_result(result);
+        }
+
+        // Cycle complete when all probes finished, regardless of how the last
+        // task exited. Without this check on cancelled/panicked tasks, a cycle
+        // that ends with cancelled QAD probes (after a winner) would never
+        // commit to history.
+        if self.probes.is_empty() && self.cycle_start.is_some() {
+            self.finalize_cycle();
+        }
+    }
+
+    /// Applies a single successful probe task's output to the current report.
+    fn apply_probe_result(&mut self, result: ProbeResult) {
         match result {
             #[cfg(not(wasm_browser))]
-            ProbeResult::QadV4(Ok((report, conn))) => {
-                debug!(?report, "QAD v4 probe completed");
-                self.current_report.update_qad_v4(&report);
-                let url = report.relay;
-                if self.qad_conns.v4.is_none() {
-                    self.qad_conns.v4 = Some((url, conn));
-                    // Cancel remaining v4 QAD probes, we have a winner.
-                    self.cancel_qad_v4.cancel();
+            ProbeResult::Qad(family, Ok((report, conn))) => {
+                debug!(?family, ?report, "QAD probe completed");
+                match family {
+                    AddrFamily::V4 => self.current_report.update_qad_v4(&report),
+                    AddrFamily::V6 => self.current_report.update_qad_v6(&report),
+                };
+                let slot = self.qad_conns.slot_mut(family);
+                if slot.is_none() {
+                    *slot = Some((report.relay_url, conn));
+                    // Cancel remaining probes for this family now that we have a winner.
+                    self.qad_conns.cancel(family).cancel();
                 } else {
                     conn.conn
                         .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
                 }
-                self.captive_portal_cancel.cancel();
-                self.maybe_emit();
+                self.cancel_captive_portal.cancel();
+                self.maybe_publish();
             }
             #[cfg(not(wasm_browser))]
-            ProbeResult::QadV6(Ok((report, conn))) => {
-                debug!(?report, "QAD v6 probe completed");
-                self.current_report.update_qad_v6(&report);
-                let url = report.relay;
-                if self.qad_conns.v6.is_none() {
-                    self.qad_conns.v6 = Some((url, conn));
-                    // Cancel remaining v6 QAD probes, we have a winner.
-                    self.cancel_qad_v6.cancel();
-                } else {
-                    conn.conn
-                        .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-                }
-                self.captive_portal_cancel.cancel();
-                self.maybe_emit();
-            }
-            #[cfg(not(wasm_browser))]
-            ProbeResult::QadV4(Err(e)) => {
-                debug!("QAD v4 probe failed: {e:#}");
-            }
-            #[cfg(not(wasm_browser))]
-            ProbeResult::QadV6(Err(e)) => {
-                debug!("QAD v6 probe failed: {e:#}");
+            ProbeResult::Qad(family, Err(e)) => {
+                debug!(?family, "QAD probe failed: {e:#}");
             }
             ProbeResult::Https(Ok(report)) => {
                 debug!(?report, "HTTPS probe completed");
                 self.current_report.update_https(&report);
-                // If we have latency data for all relays, cancel remaining HTTPS probes.
                 if self.have_all_relay_latencies() {
                     self.cancel_https.cancel();
                 }
-                self.maybe_emit();
+                self.maybe_publish();
             }
             ProbeResult::Https(Err(e)) => {
-                trace!("HTTPS probe error: {e:?}");
+                debug!("HTTPS probe failed: {e:#}");
             }
             #[cfg(not(wasm_browser))]
             ProbeResult::CaptivePortal(result) => {
                 debug!(?result, "captive portal check completed");
                 self.current_report.captive_portal = result;
-                self.maybe_emit();
+                self.maybe_publish();
             }
-        }
-
-        // Cycle complete when all probes finished.
-        if self.probes.is_empty() && self.cycle_start.is_some() {
-            self.finalize_cycle();
         }
     }
 
@@ -477,7 +524,7 @@ impl NetReportActor {
     ///
     /// The underlying [`Watchable`] deduplicates, so calling this with an
     /// unchanged report is a no-op.
-    fn maybe_emit(&mut self) {
+    fn maybe_publish(&mut self) {
         let has_data = self.current_report.global_v4.is_some()
             || self.current_report.global_v6.is_some()
             || self.current_report.has_udp()
@@ -490,22 +537,12 @@ impl NetReportActor {
         self.report_out.set(Some(self.current_report.clone())).ok();
     }
 
-    /// Unconditionally publishes the current report, even if empty.
-    fn force_emit(&mut self) {
-        self.report_out.set(Some(self.current_report.clone())).ok();
-    }
-
-    /// Finalizes the current probe cycle.
-    ///
-    /// Called when the [`JoinSet`] is empty (all probes completed or timed
-    /// out). Commits the report to history, selects the preferred relay,
+    /// Commits the current cycle to history, selects the preferred relay,
     /// and emits the final report.
     fn finalize_cycle(&mut self) {
         let mut report = std::mem::take(&mut self.current_report);
-        self.add_report_history_and_set_preferred_relay(&mut report);
+        self.reports.record(&mut report);
         self.current_report = report;
-
-        // Final emission with preferred_relay set.
         self.report_out.set(Some(self.current_report.clone())).ok();
 
         debug!(
@@ -532,157 +569,139 @@ impl NetReportActor {
         seen.len() >= num_relays
     }
 
-    /// Spawns QAD probes for IPv4 and IPv6 if needed. Reuses existing
-    /// connections when available, and validates that they are still alive.
+    /// Spawns QAD probes for IPv4 and IPv6 if needed, reusing existing
+    /// connections when they are still alive.
     #[cfg(not(wasm_browser))]
-    fn spawn_qad_probes(&mut self, if_state: &super::reportgen::IfStateDetails) {
-        use tracing::{Instrument, warn_span};
-
-        let Some(ref quic_client) = self.socket_state.quic_client else {
+    fn spawn_qad_probes(&mut self, if_state: &IfStateDetails) {
+        let Some(quic_client) = self.socket_state.quic_client.clone() else {
             return;
         };
 
-        // Validate existing connections
-        if let Some((url, conn)) = &self.qad_conns.v4
-            && let Some(reason) = conn.conn.close_reason()
-        {
-            trace!(?url, "QAD v4 conn closed: {}", reason);
-            self.qad_conns.v4.take();
-        }
-        if let Some((url, conn)) = &self.qad_conns.v6
-            && let Some(reason) = conn.conn.close_reason()
-        {
-            trace!(?url, "QAD v6 conn closed: {}", reason);
-            self.qad_conns.v6.take();
-        }
-
-        let v4_report = self.qad_conns.current_v4();
-        let v6_report = self.qad_conns.current_v6();
-
-        if let Some(ref r) = v4_report {
-            self.current_report.update_qad_v4(r);
-        }
-        if let Some(ref r) = v6_report {
-            self.current_report.update_qad_v6(r);
+        // Drop any existing winner whose connection has closed, and
+        // surface the latest observed address from any retained one.
+        for family in [AddrFamily::V4, AddrFamily::V6] {
+            if let Some((url, conn)) = self.qad_conns.slot(family)
+                && let Some(reason) = conn.conn.close_reason()
+            {
+                trace!(?family, ?url, "QAD conn closed: {reason}");
+                self.qad_conns.slot_mut(family).take();
+            }
+            if let Some(r) = self.qad_conns.current(family) {
+                match family {
+                    AddrFamily::V4 => self.current_report.update_qad_v4(&r),
+                    AddrFamily::V6 => self.current_report.update_qad_v6(&r),
+                }
+            }
         }
 
-        let needs_v4 = self.qad_conns.v4.is_none() && if_state.have_v4;
-        let needs_v6 = (self.qad_conns.v6.is_some() != if_state.have_v6) && if_state.have_v6;
+        self.qad_conns.reset_cancels();
 
-        if !needs_v4 && !needs_v6 {
+        let families = [
+            (
+                AddrFamily::V4,
+                self.qad_conns.v4.is_none() && if_state.have_v4,
+            ),
+            (
+                AddrFamily::V6,
+                self.qad_conns.v6.is_none() && if_state.have_v6,
+            ),
+        ];
+        if families.iter().all(|(_, needed)| !*needed) {
             return;
         }
 
-        trace!(needs_v4, needs_v6, "spawning QAD probes");
-
         const MAX_RELAYS: usize = 5;
-        let relays = self.relay_map.relays::<Vec<_>>();
-        for relay in relays.into_iter().take(MAX_RELAYS) {
-            if needs_v4 {
-                let relay = relay.clone();
-                let dns_resolver = self.socket_state.dns_resolver.clone();
-                let quic_client = quic_client.clone();
-                let relay_url = relay.url.clone();
-                let inner_token = self.shutdown.child_token();
-                let cancel = self.cancel_qad_v4.child_token();
-                self.probes.spawn(
-                    cancel
-                        .run_until_cancelled_owned(async move {
-                            match time::timeout(
-                                QAD_PROBE_TIMEOUT,
-                                super::run_probe_v4(relay, quic_client, dns_resolver, inner_token),
-                            )
-                            .await
-                            {
-                                Ok(result) => ProbeResult::QadV4(result),
-                                Err(_) => {
-                                    debug!("QAD v4 probe timed out");
-                                    ProbeResult::QadV4(Err(n0_error::e!(
-                                        QadProbeError::ReceiverDropped
-                                    )))
-                                }
-                            }
-                        })
-                        .instrument(warn_span!("QADv4", %relay_url)),
-                );
-            }
-            if needs_v6 {
-                let relay = relay.clone();
-                let dns_resolver = self.socket_state.dns_resolver.clone();
-                let quic_client = quic_client.clone();
-                let relay_url = relay.url.clone();
-                let inner_token = self.shutdown.child_token();
-                let cancel = self.cancel_qad_v6.child_token();
-                self.probes.spawn(
-                    cancel
-                        .run_until_cancelled_owned(async move {
-                            match time::timeout(
-                                QAD_PROBE_TIMEOUT,
-                                super::run_probe_v6(relay, quic_client, dns_resolver, inner_token),
-                            )
-                            .await
-                            {
-                                Ok(result) => ProbeResult::QadV6(result),
-                                Err(_) => {
-                                    debug!("QAD v6 probe timed out");
-                                    ProbeResult::QadV6(Err(n0_error::e!(
-                                        QadProbeError::ReceiverDropped
-                                    )))
-                                }
-                            }
-                        })
-                        .instrument(warn_span!("QADv6", %relay_url)),
-                );
+        for relay in self
+            .relay_map
+            .relays::<Vec<_>>()
+            .into_iter()
+            .take(MAX_RELAYS)
+        {
+            for (family, needed) in families {
+                if needed {
+                    self.spawn_qad_probe(family, relay.clone(), quic_client.clone());
+                }
             }
         }
     }
 
+    #[cfg(not(wasm_browser))]
+    fn spawn_qad_probe(
+        &mut self,
+        family: AddrFamily,
+        relay: Arc<iroh_relay::RelayConfig>,
+        quic_client: iroh_relay::quic::QuicClient,
+    ) {
+        use tracing::{Instrument, warn_span};
+
+        let dns_resolver = self.socket_state.dns_resolver.clone();
+        let relay_url = relay.url.clone();
+        let shutdown = self.shutdown.child_token();
+        let cancel = self.qad_conns.cancel(family).child_token();
+        let span = warn_span!("QAD", ?family, %relay_url);
+        self.probes.spawn(
+            cancel
+                .run_until_cancelled_owned(async move {
+                    let result = time::timeout(
+                        QAD_PROBE_TIMEOUT,
+                        super::qad::run_probe(family, relay, quic_client, dns_resolver, shutdown),
+                    )
+                    .await
+                    .unwrap_or_else(|_| Err(n0_error::e!(QadProbeError::Timeout)));
+                    ProbeResult::Qad(family, result)
+                })
+                .instrument(span),
+        );
+    }
+
     /// Spawns HTTPS latency probes according to the current [`ProbePlan`].
     fn spawn_https_probes(&mut self) {
+        self.cancel_https = CancellationToken::new();
         let plan = match self.reports.last {
             Some(ref report) => {
                 ProbePlan::with_last_report(&self.relay_map, report, &self.protocols)
             }
             None => ProbePlan::initial(&self.relay_map, &self.protocols),
         };
-        trace!(%plan, "probe plan");
+        trace!(%plan, "HTTPS probe plan");
 
         for probe_set in plan.iter() {
             for (delay, relay) in probe_set.params() {
-                let delay = *delay;
-                let relay = relay.clone();
-                let cancel = self.cancel_https.child_token();
-                #[cfg(not(wasm_browser))]
-                let socket_state = self.socket_state.clone();
-                #[cfg(not(wasm_browser))]
-                let tls_config = self.tls_config.clone();
-                self.probes.spawn(async move {
-                    let result = cancel
-                        .run_until_cancelled(time::timeout(PROBES_TIMEOUT, async move {
-                            if !delay.is_zero() {
-                                time::sleep(delay).await;
-                            }
-                            super::reportgen::run_https_probe(
-                                #[cfg(not(wasm_browser))]
-                                &socket_state.dns_resolver,
-                                relay.url.clone(),
-                                #[cfg(not(wasm_browser))]
-                                tls_config,
-                            )
-                            .await
-                        }))
-                        .await;
-                    Some(match result {
-                        Some(Ok(Ok(report))) => ProbeResult::Https(Ok(report)),
-                        Some(Ok(Err(e))) => {
-                            ProbeResult::Https(Err(n0_error::e!(ProbesError::ProbeFailure, e)))
-                        }
-                        Some(Err(_)) => ProbeResult::Https(Err(n0_error::e!(ProbesError::Timeout))),
-                        None => ProbeResult::Https(Err(n0_error::e!(ProbesError::Cancelled))),
-                    })
-                });
+                self.spawn_https_probe(*delay, Arc::clone(relay));
             }
         }
+    }
+
+    fn spawn_https_probe(&mut self, delay: Duration, relay: Arc<iroh_relay::RelayConfig>) {
+        let cancel = self.cancel_https.child_token();
+        #[cfg(not(wasm_browser))]
+        let socket_state = self.socket_state.clone();
+        #[cfg(not(wasm_browser))]
+        let tls_config = self.tls_config.clone();
+        self.probes.spawn(async move {
+            let result = cancel
+                .run_until_cancelled(time::timeout(PROBES_TIMEOUT, async move {
+                    if !delay.is_zero() {
+                        time::sleep(delay).await;
+                    }
+                    super::https::run_https_probe(
+                        #[cfg(not(wasm_browser))]
+                        &socket_state.dns_resolver,
+                        relay.url.clone(),
+                        #[cfg(not(wasm_browser))]
+                        tls_config,
+                    )
+                    .await
+                }))
+                .await;
+            let probe = match result {
+                Some(Ok(Ok(r))) => Ok(r),
+                Some(Ok(Err(e))) => Err(n0_error::e!(ProbesError::ProbeFailure, e)),
+                Some(Err(_)) => Err(n0_error::e!(ProbesError::Timeout)),
+                None => Err(n0_error::e!(ProbesError::Cancelled)),
+            };
+            Some(ProbeResult::Https(probe))
+        });
     }
 
     /// Spawns a captive portal detection check. Delayed by
@@ -690,8 +709,8 @@ impl NetReportActor {
     /// and cancelled if QAD confirms UDP connectivity.
     #[cfg(not(wasm_browser))]
     fn spawn_captive_portal(&mut self) {
-        self.captive_portal_cancel = CancellationToken::new();
-        let cancel = self.captive_portal_cancel.clone();
+        self.cancel_captive_portal = CancellationToken::new();
+        let cancel = self.cancel_captive_portal.clone();
         let dns = self.socket_state.dns_resolver.clone();
         let relay_map = self.relay_map.clone();
         let tls = self.tls_config.clone();
@@ -702,101 +721,29 @@ impl NetReportActor {
             .and_then(|r| r.preferred_relay.clone());
 
         self.probes.spawn(async move {
+            trace!("captive portal check scheduled");
             time::sleep(CAPTIVE_PORTAL_DELAY).await;
             if cancel.is_cancelled() {
                 return Some(ProbeResult::CaptivePortal(None));
             }
             let result = time::timeout(
                 CAPTIVE_PORTAL_TIMEOUT,
-                super::reportgen::check_captive_portal(&dns, &relay_map, preferred, tls),
+                super::captive_portal::check_captive_portal(&dns, &relay_map, preferred, tls),
             )
             .await;
             Some(match result {
                 Ok(Ok(found)) => ProbeResult::CaptivePortal(Some(found)),
                 Ok(Err(e)) => {
-                    warn!("captive portal check error: {e:#}");
+                    debug!("captive portal check failed: {e:#}");
                     ProbeResult::CaptivePortal(None)
                 }
                 Err(_) => {
-                    warn!("captive portal check timed out");
+                    debug!("captive portal check timed out");
                     ProbeResult::CaptivePortal(None)
                 }
             })
         });
     }
-
-    /// Delegates to [`update_report_history`].
-    fn add_report_history_and_set_preferred_relay(&mut self, r: &mut Report) {
-        update_report_history(&mut self.reports, r);
-    }
-}
-
-/// Adds a report to the history and selects a preferred relay.
-///
-/// Merges latency data from the last five minutes of reports to find the
-/// relay with the best recent performance. Applies hysteresis: the
-/// preferred relay only changes when the new candidate is at least 33%
-/// faster than the current one.
-///
-/// This is a free function (rather than a method on [`NetReportActor`])
-/// so the relay selection logic can be tested independently.
-fn update_report_history(reports: &mut Reports, r: &mut Report) {
-    let mut prev_relay = None;
-    if let Some(ref last) = reports.last {
-        prev_relay.clone_from(&last.preferred_relay);
-
-        if r.mapping_varies_by_dest_ipv4.is_none() {
-            r.mapping_varies_by_dest_ipv4 = last.mapping_varies_by_dest_ipv4;
-        }
-        if r.mapping_varies_by_dest_ipv6.is_none() {
-            r.mapping_varies_by_dest_ipv6 = last.mapping_varies_by_dest_ipv6;
-        }
-    }
-
-    let now = Instant::now();
-    const MAX_AGE: Duration = Duration::from_secs(5 * 60);
-
-    let mut best_recent = RelayLatencies::default();
-
-    let mut to_remove = Vec::new();
-    for (t, pr) in reports.prev.iter() {
-        if now.duration_since(*t) > MAX_AGE {
-            to_remove.push(*t);
-            continue;
-        }
-        best_recent.merge(&pr.relay_latency);
-    }
-    best_recent.merge(&r.relay_latency);
-
-    for t in to_remove {
-        reports.prev.remove(&t);
-    }
-
-    let mut best_any = Duration::default();
-    let mut old_relay_cur_latency = Duration::default();
-    for (_, url, duration) in r.relay_latency.iter() {
-        if Some(url) == prev_relay.as_ref() {
-            old_relay_cur_latency = duration;
-        }
-        if let Some(best) = best_recent.get(url)
-            && (r.preferred_relay.is_none() || best < best_any)
-        {
-            best_any = best;
-            r.preferred_relay.replace(url.clone());
-        }
-    }
-
-    // Hysteresis: don't switch if the new relay isn't much better.
-    if prev_relay.is_some()
-        && r.preferred_relay != prev_relay
-        && !old_relay_cur_latency.is_zero()
-        && best_any > old_relay_cur_latency / 3 * 2
-    {
-        r.preferred_relay = prev_relay;
-    }
-
-    reports.prev.insert(now, r.clone());
-    reports.last = Some(r.clone());
 }
 
 #[cfg(all(test, with_crypto_provider))]
@@ -968,10 +915,10 @@ mod tests {
 
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut reports = Reports::default();
+            let mut reports = ReportHistory::default();
             for s in &mut tt.steps {
                 tokio::time::advance(Duration::from_secs(s.after)).await;
-                update_report_history(&mut reports, s.r.as_mut().unwrap());
+                reports.record(s.r.as_mut().unwrap());
             }
             let last_report = tt.steps.last().unwrap().r.clone().unwrap();
             assert_eq!(reports.prev.len(), tt.want_prev_len, "prev length");

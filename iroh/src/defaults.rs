@@ -119,9 +119,6 @@ pub mod staging {
     }
 }
 
-/// Contains all timeouts that we use in `iroh`.
-pub(crate) mod timeouts {}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use std::time::Duration;
