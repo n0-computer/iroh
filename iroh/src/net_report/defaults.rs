@@ -6,21 +6,31 @@ pub(crate) mod timeouts {
 
     // Timeouts for net_report
 
-    /// The maximum amount of time, in seconds, the net_report will spend gathering a single report.
-    // This is separated from `OVERALL_REPORT_TIMEOUT` to use as a reference
-    // in documentation outside of this crate. `OVERALL_REPORT_TIMEOUT` is a
-    // duration and rustdoc cannot calculate it at runtime, and so cannot be
-    // used directly for documentation purposes.
-    pub const TIMEOUT: u64 = 5;
+    /// The maximum amount of time, in seconds, before a net report is
+    /// guaranteed to be emitted. Exposed for use in documentation.
+    pub const TIMEOUT: u64 = 3;
 
-    /// The maximum amount of time net_report will spend gathering a single report.
-    pub(crate) const OVERALL_REPORT_TIMEOUT: Duration = Duration::from_secs(TIMEOUT);
+    /// Time after which the actor emits a report even if probes are
+    /// still running. This guarantees consumers see results quickly.
+    /// HTTPS and captive portal probes continue running beyond this.
+    pub(crate) const REPORT_TIMEOUT: Duration = Duration::from_secs(TIMEOUT);
 
-    /// The total time we wait for all the probes.
+    /// Time after which remaining HTTPS probes are cancelled.
     ///
-    /// This includes the QAD and HTTPS probes, which will all
-    /// start at different times based on the ProbePlan.
+    /// QAD probes are not affected by this timeout and keep running
+    /// until [`QAD_PROBE_TIMEOUT`]. This bounds the total network
+    /// activity per cycle while allowing degraded-link QAD probes to
+    /// complete.
+    pub(crate) const ABORT_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// Per-probe timeout for HTTPS latency measurements.
     pub(crate) const PROBES_TIMEOUT: Duration = Duration::from_secs(3);
+
+    /// Max time for an individual QAD probe to complete.
+    ///
+    /// Longer than [`PROBES_TIMEOUT`] so that probes on degraded links can
+    /// complete after the initial report deadline and still be picked up.
+    pub(crate) const QAD_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
     /// How long to await for a captive-portal result.
     ///
