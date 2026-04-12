@@ -394,7 +394,7 @@ impl Bucket {
 
         self.fill = self
             .fill
-            .saturating_add(refill_periods as i64 * self.refill);
+            .saturating_add((refill_periods as i64).saturating_mul(self.refill));
         self.fill = std::cmp::min(self.fill, self.max);
         self.last_fill += self.refill_period * refill_periods;
     }

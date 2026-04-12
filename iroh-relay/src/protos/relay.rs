@@ -180,7 +180,7 @@ impl Datagrams {
         };
 
         let usize_segment_size = usize::from(u16::from(segment_size));
-        let max_content_len = num_segments * usize_segment_size;
+        let max_content_len = num_segments.saturating_mul(usize_segment_size);
         let contents = self
             .contents
             .split_to(std::cmp::min(max_content_len, self.contents.len()));
@@ -297,8 +297,8 @@ impl RelayToClientMsg {
                 reconnect_in,
                 try_for,
             } => {
-                dst.put_u32(reconnect_in.as_millis() as u32);
-                dst.put_u32(try_for.as_millis() as u32);
+                dst.put_u32(u32::try_from(reconnect_in.as_millis()).unwrap_or(u32::MAX));
+                dst.put_u32(u32::try_from(try_for.as_millis()).unwrap_or(u32::MAX));
             }
         }
         dst
