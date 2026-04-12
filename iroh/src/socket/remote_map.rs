@@ -200,10 +200,15 @@ impl RemoteMap {
                     self.senders.insert(eid, sender);
                 }
                 Err(err) => {
-                    if let Ok(panic) = err.try_into_panic() {
-                        error!("RemoteStateActor panicked.");
-                        std::panic::resume_unwind(panic);
+                    if err.is_panic() {
+                        error!("RemoteStateActor panicked. \
+                               This is a bug — please report it.");
+                    } else {
+                        error!("RemoteStateActor terminated unexpectedly: {err}");
                     }
+                    // We can't recover the EndpointId from a JoinError, so we
+                    // can't clean up the sender here. The next message sent to
+                    // this actor will fail on the dead channel and be dropped.
                 }
             }
         }
