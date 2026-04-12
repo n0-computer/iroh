@@ -128,6 +128,13 @@ pub(crate) const RELAY_PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(30)
 /// Pretty arbitrary and high right now.
 pub(crate) const MAX_MULTIPATH_PATHS: u32 = 12;
 
+/// Maximum number of incoming connections in the pre-handshake state.
+///
+/// This limits memory consumption from incomplete QUIC handshakes. The noq default
+/// is 65536, which is excessive for a peer-to-peer application and allows an attacker
+/// to exhaust memory with Initial packets from many source addresses.
+pub(crate) const MAX_INCOMING: usize = 256;
+
 /// Error returned when the endpoint state actor stopped while waiting for a reply.
 #[stack_error(add_meta, derive)]
 #[error("endpoint state actor stopped")]
@@ -233,6 +240,7 @@ impl StaticConfig {
         let mut inner =
             noq::ServerConfig::new(Arc::new(quic_server_config), self.token_key.clone());
         inner.transport_config(self.transport_config.to_inner_arc());
+        inner.max_incoming(MAX_INCOMING);
         inner
     }
 
