@@ -149,6 +149,16 @@ impl RelayTransport {
             meta_out.ecn = None;
             meta_out.dst_ip = None;
 
+            // SAFETY(trust model): The mapped address is set from relay-provided data
+            // (relay URL + claimed source EndpointId) before the QUIC handshake verifies
+            // the peer's identity. This is required for packet routing — noq needs the
+            // address to deliver the Initial packet to the correct connection.
+            //
+            // A compromised relay could send datagrams claiming arbitrary endpoint IDs,
+            // creating spurious address mappings. This does NOT bypass authentication
+            // (the TLS handshake will reject mismatched identities), but it can pollute
+            // the address map with entries for endpoints that never complete a handshake.
+            // These entries are cleaned up by the remote map's idle timeout (15-30s).
             *addr = (dm.url, dm.src).into();
             num_msgs += 1;
         }
