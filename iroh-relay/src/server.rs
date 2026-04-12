@@ -197,7 +197,6 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 }
 
 /// Rate limits.
-// TODO: accept_conn_limit and accept_conn_burst are not currently implemented.
 #[derive(Debug, Default)]
 pub struct Limits {
     /// Rate limit for accepting new connection. Unlimited if not set.
@@ -386,6 +385,10 @@ impl Server {
                     .request_handler(Method::GET, "/healthz", Box::new(healthz_handler));
                 if let Some(cfg) = relay_config.limits.client_rx {
                     builder = builder.client_rx_ratelimit(cfg);
+                }
+                if let Some(limit) = relay_config.limits.accept_conn_limit {
+                    let burst = relay_config.limits.accept_conn_burst.unwrap_or(limit.ceil() as usize);
+                    builder = builder.accept_conn_ratelimit(limit, burst);
                 }
                 let http_addr = match relay_config.tls {
                     Some(tls_config) => {

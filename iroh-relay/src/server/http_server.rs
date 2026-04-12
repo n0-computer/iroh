@@ -338,6 +338,10 @@ pub(super) struct ServerBuilder {
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
     client_rx_ratelimit: Option<ClientRateLimit>,
+    /// Rate limit for accepting new connections (connections per second).
+    accept_conn_limit: Option<f64>,
+    /// Burst limit for accepting new connections.
+    accept_conn_burst: Option<usize>,
     /// The capacity of the key cache.
     key_cache_capacity: usize,
     /// Access config for endpoints.
@@ -355,6 +359,8 @@ impl ServerBuilder {
             handlers: Default::default(),
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
+            accept_conn_limit: None,
+            accept_conn_burst: None,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
             access: AccessConfig::Everyone,
             metrics: None,
@@ -400,6 +406,16 @@ impl ServerBuilder {
     /// no rate limit is enforced.
     pub(super) fn client_rx_ratelimit(mut self, config: ClientRateLimit) -> Self {
         self.client_rx_ratelimit = Some(config);
+        self
+    }
+
+    /// Sets the rate limit for accepting new connections.
+    ///
+    /// `limit` is the sustained rate in connections per second.
+    /// `burst` is the maximum number of connections accepted in a burst.
+    pub(super) fn accept_conn_ratelimit(mut self, limit: f64, burst: usize) -> Self {
+        self.accept_conn_limit = Some(limit);
+        self.accept_conn_burst = Some(burst);
         self
     }
 
@@ -457,10 +473,25 @@ impl ServerBuilder {
         info!("[{http_str}] relay: serving on {addr}");
 
         let cancel = cancel_token.clone();
+        let accept_conn_limit = self.accept_conn_limit;
+        let accept_conn_burst = self.accept_conn_burst.unwrap_or(1);
         let task = tokio::task::spawn(
             async move {
                 // create a join set to track all our connection tasks
                 let mut set = tokio::task::JoinSet::new();
+
+                // Accept rate limiter: simple token bucket.
+                // `tokens` starts at `burst` and is refilled at `limit` per second.
+                let mut tokens: f64 = accept_conn_burst as f64;
+                let mut refill_interval = accept_conn_limit.map(|limit| {
+                    let period = std::time::Duration::from_secs_f64(1.0 / limit);
+                    tokio::time::interval(period)
+                });
+                // Skip the first immediate tick.
+                if let Some(ref mut interval) = refill_interval {
+                    interval.tick().await;
+                }
+
                 loop {
                     tokio::select! {
                         biased;
@@ -474,8 +505,25 @@ impl ServerBuilder {
                                 panic!("task panicked: {err:#?}");
                             }
                         }
+                        _ = async {
+                            match refill_interval.as_mut() {
+                                Some(interval) => interval.tick().await,
+                                // If no rate limit, never resolve (let accept handle it).
+                                None => std::future::pending().await,
+                            }
+                        } => {
+                            tokens = (tokens + 1.0).min(accept_conn_burst as f64);
+                        }
                         res = listener.accept() => match res {
                             Ok((stream, peer_addr)) => {
+                                // Check rate limit
+                                if refill_interval.is_some() && tokens < 1.0 {
+                                    debug!("rate-limited connection from {peer_addr}, dropping");
+                                    drop(stream);
+                                    continue;
+                                }
+                                tokens -= 1.0;
+
                                 debug!("connection opened from {peer_addr}");
                                 let tls_config = tls_config.clone();
                                 let service = service.clone();
