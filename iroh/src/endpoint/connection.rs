@@ -619,25 +619,26 @@ impl Accepting {
     /// See also documentation for [`Connecting::into_0rtt`].
     ///
     /// [`RecvStream::is_0rtt`]: crate::endpoint::RecvStream::is_0rtt
-    pub fn into_0rtt(self) -> IncomingZeroRttConnection {
-        let (noq_conn, zrtt_accepted) = self
-            .inner
-            .into_0rtt()
-            .expect("incoming connections can always be converted to 0-RTT");
+    #[allow(clippy::result_large_err)]
+    pub fn into_0rtt(self) -> Result<IncomingZeroRttConnection, Accepting> {
+        match self.inner.into_0rtt() {
+            Ok((noq_conn, zrtt_accepted)) => {
+                let accepted: BoxFuture<_> = Box::pin({
+                    let noq_conn = noq_conn.clone();
+                    async move {
+                        let _ = zrtt_accepted.await;
+                        let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
+                        Ok(conn)
+                    }
+                });
+                let accepted = accepted.shared();
 
-        let accepted: BoxFuture<_> = Box::pin({
-            let noq_conn = noq_conn.clone();
-            async move {
-                let _ = zrtt_accepted.await;
-                let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
-                Ok(conn)
+                Ok(IncomingZeroRttConnection {
+                    inner: noq_conn,
+                    data: IncomingZeroRttData { accepted },
+                })
             }
-        });
-        let accepted = accepted.shared();
-
-        IncomingZeroRttConnection {
-            inner: noq_conn,
-            data: IncomingZeroRttData { accepted },
+            Err(inner) => Err(Self { inner, ..self }),
         }
     }
 
@@ -1299,7 +1300,9 @@ mod tests {
                 .std_context("Failed to accept incoming connection")?;
 
             // accept a possible 0-RTT connection
-            let zrtt_conn = accepting.into_0rtt();
+            let zrtt_conn = accepting
+                .into_0rtt()
+                .expect("incoming connections can always be converted to 0-RTT");
 
             let (mut send, mut recv) = zrtt_conn
                 .accept_bi()
