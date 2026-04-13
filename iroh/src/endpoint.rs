@@ -2804,7 +2804,7 @@ mod tests {
 
     /// Test that configured external addresses are included in the endpoint's
     /// direct addresses, both when set via builder and at runtime.
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
     #[traced_test]
     async fn test_external_addr() -> Result {
         let configured_addr = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 12345));
@@ -2824,8 +2824,6 @@ mod tests {
         // Test runtime add
         let runtime_addr = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(5, 6, 7, 8), 54321));
         ep.add_external_addr(runtime_addr).await;
-
-        // Give the actor time to process the refresh
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let addr = ep.addr();
@@ -2837,7 +2835,6 @@ mod tests {
         // Test runtime remove
         let removed = ep.remove_external_addr(&runtime_addr).await;
         assert!(removed);
-
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let addr = ep.addr();
@@ -2845,11 +2842,9 @@ mod tests {
             !addr.ip_addrs().any(|a| *a == runtime_addr),
             "removed external addr {runtime_addr} still found in endpoint addr: {addr:?}"
         );
-
-        // Original configured addr should still be there
         assert!(
             addr.ip_addrs().any(|a| *a == configured_addr),
-            "builder-configured external addr {configured_addr} should still be present after removing runtime addr: {addr:?}"
+            "builder-configured external addr should still be present: {addr:?}"
         );
 
         ep.close().await;
