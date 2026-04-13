@@ -84,7 +84,7 @@ pub struct Metrics {
     // TODO: only important stat that we cannot track right now
     // pub average_queue_duration:
     //
-    /// Number of incoming QUIC connections.
+    /// Number of incoming QAD connections.
     ///
     /// After completion, each is counted in either `qad_incoming_error` or `qad_connections`.
     ///
