@@ -37,6 +37,7 @@
 //!             DiscoveryEvent::Expired { endpoint_id } => {
 //!                 println!("MDNS expired: {endpoint_id}");
 //!             }
+//!             _ => {}
 //!         }
 //!     }
 //! }
@@ -242,6 +243,7 @@ impl AddressLookupBuilder for MdnsAddressLookupBuilder {
 
 /// An event emitted from the [`MdnsAddressLookup`] service.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum DiscoveryEvent {
     /// A peer was discovered or it's information was updated.
     Discovered {
