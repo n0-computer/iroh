@@ -643,65 +643,63 @@
 <a href=#643 id=643 data-nosnippet>643</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#644 id=644 data-nosnippet>644</a>        endpoint_id: EndpointId,
 <a href=#645 id=645 data-nosnippet>645</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket, AddressLookupError&gt; {
-<a href=#646 id=646 data-nosnippet>646</a>        <span class="kw">let </span>public_key = endpoint_id;
-<a href=#647 id=647 data-nosnippet>647</a>
-<a href=#648 id=648 data-nosnippet>648</a>        <span class="kw">let </span><span class="kw-2">mut </span>url = <span class="self">self</span>.pkarr_relay_url.clone();
-<a href=#649 id=649 data-nosnippet>649</a>        url.path_segments_mut()
-<a href=#650 id=650 data-nosnippet>650</a>            .map_err(|<span class="kw">_</span>| {
-<a href=#651 id=651 data-nosnippet>651</a>                <span class="macro">e!</span>(PkarrError::InvalidRelayUrl {
-<a href=#652 id=652 data-nosnippet>652</a>                    url: <span class="self">self</span>.pkarr_relay_url.clone().into()
-<a href=#653 id=653 data-nosnippet>653</a>                })
-<a href=#654 id=654 data-nosnippet>654</a>            })<span class="question-mark">?
-<a href=#655 id=655 data-nosnippet>655</a>            </span>.push(<span class="kw-2">&amp;</span>public_key.to_z32());
-<a href=#656 id=656 data-nosnippet>656</a>
-<a href=#657 id=657 data-nosnippet>657</a>        <span class="kw">let </span>response = <span class="self">self
-<a href=#658 id=658 data-nosnippet>658</a>            </span>.http_client
-<a href=#659 id=659 data-nosnippet>659</a>            .get(url)
-<a href=#660 id=660 data-nosnippet>660</a>            .send()
-<a href=#661 id=661 data-nosnippet>661</a>            .<span class="kw">await
-<a href=#662 id=662 data-nosnippet>662</a>            </span>.map_err(|err| <span class="macro">e!</span>(PkarrError::HttpSend, err))<span class="question-mark">?</span>;
-<a href=#663 id=663 data-nosnippet>663</a>
-<a href=#664 id=664 data-nosnippet>664</a>        <span class="kw">if </span>!response.status().is_success() {
-<a href=#665 id=665 data-nosnippet>665</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(PkarrError::HttpRequest {
-<a href=#666 id=666 data-nosnippet>666</a>                status: response.status()
-<a href=#667 id=667 data-nosnippet>667</a>            })
-<a href=#668 id=668 data-nosnippet>668</a>            .into());
-<a href=#669 id=669 data-nosnippet>669</a>        }
-<a href=#670 id=670 data-nosnippet>670</a>
-<a href=#671 id=671 data-nosnippet>671</a>        <span class="kw">let </span>payload = response
-<a href=#672 id=672 data-nosnippet>672</a>            .bytes()
-<a href=#673 id=673 data-nosnippet>673</a>            .<span class="kw">await
-<a href=#674 id=674 data-nosnippet>674</a>            </span>.map_err(|source| <span class="macro">e!</span>(PkarrError::HttpPayload { source }))<span class="question-mark">?</span>;
-<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">let </span>packet = SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>payload)
-<a href=#676 id=676 data-nosnippet>676</a>            .map_err(|err| <span class="macro">e!</span>(PkarrError::Verify, err))<span class="question-mark">?</span>;
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="prelude-val">Ok</span>(packet)
-<a href=#678 id=678 data-nosnippet>678</a>    }
-<a href=#679 id=679 data-nosnippet>679</a>
-<a href=#680 id=680 data-nosnippet>680</a>    <span class="doccomment">/// Publishes a [`SignedPacket`].
-<a href=#681 id=681 data-nosnippet>681</a>    </span><span class="kw">pub async fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;(), PkarrError&gt; {
-<a href=#682 id=682 data-nosnippet>682</a>        <span class="kw">let </span><span class="kw-2">mut </span>url = <span class="self">self</span>.pkarr_relay_url.clone();
-<a href=#683 id=683 data-nosnippet>683</a>        url.path_segments_mut()
-<a href=#684 id=684 data-nosnippet>684</a>            .map_err(|<span class="kw">_</span>| {
-<a href=#685 id=685 data-nosnippet>685</a>                <span class="macro">e!</span>(PkarrError::InvalidRelayUrl {
-<a href=#686 id=686 data-nosnippet>686</a>                    url: <span class="self">self</span>.pkarr_relay_url.clone().into()
-<a href=#687 id=687 data-nosnippet>687</a>                })
-<a href=#688 id=688 data-nosnippet>688</a>            })<span class="question-mark">?
-<a href=#689 id=689 data-nosnippet>689</a>            </span>.push(<span class="kw-2">&amp;</span>signed_packet.public_key().to_z32());
-<a href=#690 id=690 data-nosnippet>690</a>
-<a href=#691 id=691 data-nosnippet>691</a>        <span class="kw">let </span>response = <span class="self">self
-<a href=#692 id=692 data-nosnippet>692</a>            </span>.http_client
-<a href=#693 id=693 data-nosnippet>693</a>            .put(url)
-<a href=#694 id=694 data-nosnippet>694</a>            .body(signed_packet.to_relay_payload())
-<a href=#695 id=695 data-nosnippet>695</a>            .send()
-<a href=#696 id=696 data-nosnippet>696</a>            .<span class="kw">await
-<a href=#697 id=697 data-nosnippet>697</a>            </span>.map_err(|source| <span class="macro">e!</span>(PkarrError::HttpSend { source }))<span class="question-mark">?</span>;
-<a href=#698 id=698 data-nosnippet>698</a>
-<a href=#699 id=699 data-nosnippet>699</a>        <span class="kw">if </span>!response.status().is_success() {
-<a href=#700 id=700 data-nosnippet>700</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(PkarrError::HttpRequest {
-<a href=#701 id=701 data-nosnippet>701</a>                status: response.status()
-<a href=#702 id=702 data-nosnippet>702</a>            }));
-<a href=#703 id=703 data-nosnippet>703</a>        }
-<a href=#704 id=704 data-nosnippet>704</a>
-<a href=#705 id=705 data-nosnippet>705</a>        <span class="prelude-val">Ok</span>(())
-<a href=#706 id=706 data-nosnippet>706</a>    }
-<a href=#707 id=707 data-nosnippet>707</a>}</code></pre></div></section></main></body></html>
+<a href=#646 id=646 data-nosnippet>646</a>        <span class="kw">let </span><span class="kw-2">mut </span>url = <span class="self">self</span>.pkarr_relay_url.clone();
+<a href=#647 id=647 data-nosnippet>647</a>        url.path_segments_mut()
+<a href=#648 id=648 data-nosnippet>648</a>            .map_err(|<span class="kw">_</span>| {
+<a href=#649 id=649 data-nosnippet>649</a>                <span class="macro">e!</span>(PkarrError::InvalidRelayUrl {
+<a href=#650 id=650 data-nosnippet>650</a>                    url: <span class="self">self</span>.pkarr_relay_url.clone().into()
+<a href=#651 id=651 data-nosnippet>651</a>                })
+<a href=#652 id=652 data-nosnippet>652</a>            })<span class="question-mark">?
+<a href=#653 id=653 data-nosnippet>653</a>            </span>.push(<span class="kw-2">&amp;</span>endpoint_id.to_z32());
+<a href=#654 id=654 data-nosnippet>654</a>
+<a href=#655 id=655 data-nosnippet>655</a>        <span class="kw">let </span>response = <span class="self">self
+<a href=#656 id=656 data-nosnippet>656</a>            </span>.http_client
+<a href=#657 id=657 data-nosnippet>657</a>            .get(url)
+<a href=#658 id=658 data-nosnippet>658</a>            .send()
+<a href=#659 id=659 data-nosnippet>659</a>            .<span class="kw">await
+<a href=#660 id=660 data-nosnippet>660</a>            </span>.map_err(|err| <span class="macro">e!</span>(PkarrError::HttpSend, err))<span class="question-mark">?</span>;
+<a href=#661 id=661 data-nosnippet>661</a>
+<a href=#662 id=662 data-nosnippet>662</a>        <span class="kw">if </span>!response.status().is_success() {
+<a href=#663 id=663 data-nosnippet>663</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(PkarrError::HttpRequest {
+<a href=#664 id=664 data-nosnippet>664</a>                status: response.status()
+<a href=#665 id=665 data-nosnippet>665</a>            })
+<a href=#666 id=666 data-nosnippet>666</a>            .into());
+<a href=#667 id=667 data-nosnippet>667</a>        }
+<a href=#668 id=668 data-nosnippet>668</a>
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>payload = response
+<a href=#670 id=670 data-nosnippet>670</a>            .bytes()
+<a href=#671 id=671 data-nosnippet>671</a>            .<span class="kw">await
+<a href=#672 id=672 data-nosnippet>672</a>            </span>.map_err(|source| <span class="macro">e!</span>(PkarrError::HttpPayload { source }))<span class="question-mark">?</span>;
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="kw">let </span>packet = SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>endpoint_id, <span class="kw-2">&amp;</span>payload)
+<a href=#674 id=674 data-nosnippet>674</a>            .map_err(|err| <span class="macro">e!</span>(PkarrError::Verify, err))<span class="question-mark">?</span>;
+<a href=#675 id=675 data-nosnippet>675</a>        <span class="prelude-val">Ok</span>(packet)
+<a href=#676 id=676 data-nosnippet>676</a>    }
+<a href=#677 id=677 data-nosnippet>677</a>
+<a href=#678 id=678 data-nosnippet>678</a>    <span class="doccomment">/// Publishes a [`SignedPacket`].
+<a href=#679 id=679 data-nosnippet>679</a>    </span><span class="kw">pub async fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;(), PkarrError&gt; {
+<a href=#680 id=680 data-nosnippet>680</a>        <span class="kw">let </span><span class="kw-2">mut </span>url = <span class="self">self</span>.pkarr_relay_url.clone();
+<a href=#681 id=681 data-nosnippet>681</a>        url.path_segments_mut()
+<a href=#682 id=682 data-nosnippet>682</a>            .map_err(|<span class="kw">_</span>| {
+<a href=#683 id=683 data-nosnippet>683</a>                <span class="macro">e!</span>(PkarrError::InvalidRelayUrl {
+<a href=#684 id=684 data-nosnippet>684</a>                    url: <span class="self">self</span>.pkarr_relay_url.clone().into()
+<a href=#685 id=685 data-nosnippet>685</a>                })
+<a href=#686 id=686 data-nosnippet>686</a>            })<span class="question-mark">?
+<a href=#687 id=687 data-nosnippet>687</a>            </span>.push(<span class="kw-2">&amp;</span>signed_packet.public_key().to_z32());
+<a href=#688 id=688 data-nosnippet>688</a>
+<a href=#689 id=689 data-nosnippet>689</a>        <span class="kw">let </span>response = <span class="self">self
+<a href=#690 id=690 data-nosnippet>690</a>            </span>.http_client
+<a href=#691 id=691 data-nosnippet>691</a>            .put(url)
+<a href=#692 id=692 data-nosnippet>692</a>            .body(signed_packet.to_relay_payload())
+<a href=#693 id=693 data-nosnippet>693</a>            .send()
+<a href=#694 id=694 data-nosnippet>694</a>            .<span class="kw">await
+<a href=#695 id=695 data-nosnippet>695</a>            </span>.map_err(|source| <span class="macro">e!</span>(PkarrError::HttpSend { source }))<span class="question-mark">?</span>;
+<a href=#696 id=696 data-nosnippet>696</a>
+<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">if </span>!response.status().is_success() {
+<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(PkarrError::HttpRequest {
+<a href=#699 id=699 data-nosnippet>699</a>                status: response.status()
+<a href=#700 id=700 data-nosnippet>700</a>            }));
+<a href=#701 id=701 data-nosnippet>701</a>        }
+<a href=#702 id=702 data-nosnippet>702</a>
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="prelude-val">Ok</span>(())
+<a href=#704 id=704 data-nosnippet>704</a>    }
+<a href=#705 id=705 data-nosnippet>705</a>}</code></pre></div></section></main></body></html>
