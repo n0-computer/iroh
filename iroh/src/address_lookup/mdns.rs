@@ -37,6 +37,7 @@
 //!             DiscoveryEvent::Expired { endpoint_id } => {
 //!                 println!("MDNS expired: {endpoint_id}");
 //!             }
+//!             _ => {}
 //!         }
 //!     }
 //! }

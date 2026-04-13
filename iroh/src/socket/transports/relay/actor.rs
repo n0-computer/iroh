@@ -688,7 +688,7 @@ impl ActiveRelayActor {
                 trace!("Ignoring {msg:?}")
             }
             _ => {
-                trace!("Ignoring unknown relay message: {msg:?}")
+                warn!("Ignoring unknown relay message: {msg:?}")
             }
         }
     }
