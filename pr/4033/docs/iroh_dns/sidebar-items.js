@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["DecodingError"],"mod":["endpoint_info","pkarr"],"trait":["EndpointIdExt"]};
