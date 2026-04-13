@@ -11,7 +11,7 @@ the source address, actively refuse the connection, or silently drop it.</p>
 <p>What this does depends on the connection type:</p>
 <ul>
 <li>
-<p><strong>Direct (UDP) connections</strong> — this is QUIC source address
+<p><strong>Direct (UDP) connections</strong> : this is QUIC source address
 validation. If the socket address was spoofed, the retry token is
 sent to the spoofed address, so we never hear from the attacker
 again. If the address was real, the client repeats the connection
@@ -20,14 +20,14 @@ attempt with the token, and the next <a href="../endpoint/struct.Incoming.html" 
 bound to the source address.</p>
 </li>
 <li>
-<p><strong>Relay connections</strong> — there is no source address to validate
+<p><strong>Relay connections</strong> : there is no source address to validate
 (the relay already vouches for the packet origin), so the
 “validation” itself has no security meaning. However, the retry
 still imposes a real cost on the client: an extra round trip
 through the relay plus the work of sending a fresh ClientHello
-with the token. This filters out spray-and-pray clients that
-don’t bother to handle retry tokens, and adds latency for any
-client whose attempts you want to slow down. The next
+with the token. This filters out adversarial clients that
+don’t bother to handle retry tokens, and adds latency before
+we get to the more expensive part of the handshake. The next
 <a href="../endpoint/struct.Incoming.html" title="struct iroh::endpoint::Incoming"><code>Incoming</code></a> for that flow will also have
 <a href="../endpoint/struct.Incoming.html#method.remote_addr_validated" title="method iroh::endpoint::Incoming::remote_addr_validated"><code>Incoming::remote_addr_validated</code></a> set to <code>true</code>, but again,
 that just means the client cooperated with the retry.</p>
