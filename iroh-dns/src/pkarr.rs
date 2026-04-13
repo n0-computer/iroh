@@ -5,11 +5,12 @@
 //! [pkarr]: https://pkarr.org
 
 use std::{
-    fmt::{self, Debug, Display, Formatter},
+    fmt::{self, Display, Formatter},
     sync::atomic::{AtomicU64, Ordering},
 };
 
 use iroh_base::{PublicKey, SecretKey, Signature};
+use n0_error::{e, stack_error};
 use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata::RData};
 
 /// Maximum size of the encoded DNS packet within a signed packet.
@@ -26,7 +27,8 @@ pub const MAX_SIGNED_PACKET_SIZE: usize = HEADER_SIZE + MAX_DNS_PACKET_SIZE;
 /// Wire format: `<32 bytes pubkey><64 bytes signature><8 bytes BE timestamp><DNS wire format>`
 ///
 /// The DNS packet must be at most 1000 bytes. Total max size is 1104 bytes.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, derive_more::Debug)]
+#[debug("SignedPacket {{ public_key: {}, timestamp: {:?} }}", self.public_key(), self.timestamp())]
 pub struct SignedPacket {
     bytes: Vec<u8>,
 }
@@ -53,7 +55,7 @@ impl SignedPacket {
         for value in values {
             let mut txt = simple_dns::rdata::TXT::new();
             txt.add_string(value.as_ref())
-                .map_err(|e| SignedPacketBuildError::DnsError(e.to_string()))?;
+                .map_err(|e| e!(SignedPacketBuildError::DnsError, e))?;
             packet.answers.push(ResourceRecord::new(
                 dns_name.clone(),
                 CLASS::IN,
@@ -64,10 +66,12 @@ impl SignedPacket {
 
         let encoded_packet = packet
             .build_bytes_vec_compressed()
-            .map_err(|e| SignedPacketBuildError::DnsError(e.to_string()))?;
+            .map_err(|e| e!(SignedPacketBuildError::DnsError, e))?;
 
         if encoded_packet.len() > MAX_DNS_PACKET_SIZE {
-            return Err(SignedPacketBuildError::PacketTooLarge(encoded_packet.len()));
+            return Err(e!(SignedPacketBuildError::PacketTooLarge {
+                len: encoded_packet.len()
+            }));
         }
 
         let timestamp = Timestamp::now();
@@ -85,14 +89,14 @@ impl SignedPacket {
     /// Parse and verify a signed packet from its wire representation.
     pub fn from_bytes(bytes: &[u8]) -> Result<SignedPacket, SignedPacketVerifyError> {
         if bytes.len() < HEADER_SIZE {
-            return Err(SignedPacketVerifyError::TooShort(bytes.len()));
+            return Err(e!(SignedPacketVerifyError::TooShort { len: bytes.len() }));
         }
         if bytes.len() > MAX_SIGNED_PACKET_SIZE {
-            return Err(SignedPacketVerifyError::TooLarge(bytes.len()));
+            return Err(e!(SignedPacketVerifyError::TooLarge { len: bytes.len() }));
         }
 
         let public_key = PublicKey::try_from(&bytes[..32])
-            .map_err(|e| SignedPacketVerifyError::InvalidKey(e.to_string()))?;
+            .map_err(|e| e!(SignedPacketVerifyError::InvalidKey, e))?;
         let signature =
             Signature::from_bytes(bytes[32..96].try_into().expect("64 bytes for signature"));
         let timestamp =
@@ -101,10 +105,9 @@ impl SignedPacket {
 
         public_key
             .verify(&signable(timestamp, encoded_packet), &signature)
-            .map_err(|e| SignedPacketVerifyError::SignatureError(e.to_string()))?;
+            .map_err(|e| e!(SignedPacketVerifyError::SignatureError, e))?;
 
-        Packet::parse(encoded_packet)
-            .map_err(|e| SignedPacketVerifyError::DnsError(e.to_string()))?;
+        Packet::parse(encoded_packet).map_err(|e| e!(SignedPacketVerifyError::DnsError, e))?;
 
         Ok(SignedPacket {
             bytes: bytes.to_vec(),
@@ -127,13 +130,12 @@ impl SignedPacket {
     /// Still validates minimum length and DNS parsing.
     pub fn from_bytes_unchecked(bytes: &[u8]) -> Result<SignedPacket, SignedPacketVerifyError> {
         if bytes.len() < HEADER_SIZE {
-            return Err(SignedPacketVerifyError::TooShort(bytes.len()));
+            return Err(e!(SignedPacketVerifyError::TooShort { len: bytes.len() }));
         }
         if bytes.len() > MAX_SIGNED_PACKET_SIZE {
-            return Err(SignedPacketVerifyError::TooLarge(bytes.len()));
+            return Err(e!(SignedPacketVerifyError::TooLarge { len: bytes.len() }));
         }
-        Packet::parse(&bytes[104..])
-            .map_err(|e| SignedPacketVerifyError::DnsError(e.to_string()))?;
+        Packet::parse(&bytes[104..]).map_err(|e| e!(SignedPacketVerifyError::DnsError, e))?;
         Ok(SignedPacket {
             bytes: bytes.to_vec(),
         })
@@ -271,19 +273,10 @@ impl SignedPacket {
     }
 }
 
-impl Debug for SignedPacket {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SignedPacket")
-            .field("public_key", &self.public_key())
-            .field("timestamp", &self.timestamp())
-            .finish()
-    }
-}
-
 impl Display for SignedPacket {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(f, "SignedPacket ({}):", self.public_key().to_z32())?;
-        writeln!(f, "  timestamp: {}", &self.timestamp())?;
+        writeln!(f, "  timestamp: {}µs", self.timestamp().as_micros())?;
         for (name, value) in self.all_txt_records() {
             writeln!(f, "  {name} TXT \"{value}\"")?;
         }
@@ -330,7 +323,8 @@ fn normalize_name(origin: &str, name: String) -> String {
 /// return the same value twice and will never go backward, even if the system
 /// clock is corrected by NTP. This is achieved by tracking the last returned
 /// value and ensuring each call returns at least `last + 1`.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Debug)]
+#[debug("Timestamp({}µs)", _0)]
 pub struct Timestamp(u64);
 
 /// Tracks the last timestamp returned by [`Timestamp::now`] to ensure monotonicity.
@@ -385,68 +379,39 @@ impl Timestamp {
     }
 }
 
-impl fmt::Debug for Timestamp {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Timestamp({}µs)", self.0)
-    }
-}
-
-impl fmt::Display for Timestamp {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 /// Error building a signed packet.
-#[derive(Debug)]
 #[allow(missing_docs)]
+#[stack_error(derive, add_meta)]
+#[non_exhaustive]
 pub enum SignedPacketBuildError {
-    PacketTooLarge(usize),
-    DnsError(String),
+    #[error("DNS packet too large: {len} bytes (max {MAX_DNS_PACKET_SIZE})")]
+    PacketTooLarge { len: usize },
+    #[error("DNS encoding error")]
+    DnsError {
+        #[error(std_err)]
+        source: simple_dns::SimpleDnsError,
+    },
 }
-
-impl fmt::Display for SignedPacketBuildError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::PacketTooLarge(n) => {
-                write!(
-                    f,
-                    "DNS packet too large: {n} bytes (max {MAX_DNS_PACKET_SIZE})"
-                )
-            }
-            Self::DnsError(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl std::error::Error for SignedPacketBuildError {}
 
 /// Error verifying a signed packet.
-#[derive(Debug)]
 #[allow(missing_docs)]
+#[stack_error(derive, add_meta)]
+#[non_exhaustive]
 pub enum SignedPacketVerifyError {
-    TooShort(usize),
-    TooLarge(usize),
-    SignatureError(String),
-    DnsError(String),
-    InvalidKey(String),
+    #[error("Signed packet too short: {len} bytes (min {HEADER_SIZE})")]
+    TooShort { len: usize },
+    #[error("Signed packet too large: {len} bytes (max {MAX_SIGNED_PACKET_SIZE})")]
+    TooLarge { len: usize },
+    #[error("Invalid signature")]
+    SignatureError {
+        #[error(std_err)]
+        source: iroh_base::SignatureError,
+    },
+    #[error("DNS decoding error")]
+    DnsError {
+        #[error(std_err)]
+        source: simple_dns::SimpleDnsError,
+    },
+    #[error("Invalid public key")]
+    InvalidKey { source: iroh_base::KeyParsingError },
 }
-
-impl fmt::Display for SignedPacketVerifyError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TooShort(n) => {
-                write!(f, "Signed packet too short: {n} bytes (min {HEADER_SIZE})")
-            }
-            Self::TooLarge(n) => write!(
-                f,
-                "Signed packet too large: {n} bytes (max {MAX_SIGNED_PACKET_SIZE})"
-            ),
-            Self::SignatureError(e) => write!(f, "Invalid signature: {e}"),
-            Self::DnsError(e) => write!(f, "{e}"),
-            Self::InvalidKey(e) => write!(f, "Invalid public key: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for SignedPacketVerifyError {}

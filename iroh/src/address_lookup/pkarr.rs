@@ -643,8 +643,6 @@ impl PkarrRelayClient {
         &self,
         endpoint_id: EndpointId,
     ) -> Result<SignedPacket, AddressLookupError> {
-        let public_key = endpoint_id;
-
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
             .map_err(|_| {
@@ -652,7 +650,7 @@ impl PkarrRelayClient {
                     url: self.pkarr_relay_url.clone().into()
                 })
             })?
-            .push(&public_key.to_z32());
+            .push(&endpoint_id.to_z32());
 
         let response = self
             .http_client
@@ -672,7 +670,7 @@ impl PkarrRelayClient {
             .bytes()
             .await
             .map_err(|source| e!(PkarrError::HttpPayload { source }))?;
-        let packet = SignedPacket::from_relay_payload(&public_key, &payload)
+        let packet = SignedPacket::from_relay_payload(&endpoint_id, &payload)
             .map_err(|err| e!(PkarrError::Verify, err))?;
         Ok(packet)
     }
