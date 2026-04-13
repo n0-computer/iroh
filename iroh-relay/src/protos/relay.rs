@@ -72,6 +72,7 @@ pub enum Error {
 
 /// The messages that a relay sends to clients or the clients receive from the relay.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RelayToClientMsg {
     /// Represents datagrams sent from relays (originally sent to them by another client).
     Datagrams {
@@ -114,6 +115,7 @@ pub enum RelayToClientMsg {
 
 /// Messages that clients send to relays.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ClientToRelayMsg {
     /// Request from the client to the server to reply to the
     /// other side with a [`RelayToClientMsg::Pong`] with the given payload.

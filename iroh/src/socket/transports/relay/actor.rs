@@ -687,6 +687,9 @@ impl ActiveRelayActor {
             RelayToClientMsg::Restarting { .. } => {
                 trace!("Ignoring {msg:?}")
             }
+            _ => {
+                trace!("Ignoring unknown relay message: {msg:?}")
+            }
         }
     }
 

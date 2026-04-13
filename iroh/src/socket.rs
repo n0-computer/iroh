@@ -1980,6 +1980,7 @@ pub struct DirectAddr {
 /// These are the various sources or origins from which an iroh endpoint might have found a
 /// possible [`DirectAddr`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum DirectAddrType {
     /// Not yet determined..
     Unknown,
