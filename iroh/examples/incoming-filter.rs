@@ -1,7 +1,13 @@
 //! Example demonstrating the [`IncomingFilter`] hook.
 //!
 //! This example requires all direct (UDP) connections to pass QUIC address
-//! validation via a retry token before being accepted. Relay connections are
+//! validation via a retry token before being accepted.
+//!
+//! QUIC address validation ensures that a client truly owns its claimed IP
+//! address before proceeding with the more expensive part of the handshake,
+//! preventing denial-of-service attacks via spoofed source IPs.
+//!
+//! Relay connections are
 //! accepted without validation since the relay already vouches for the source.
 //!
 //! ## Usage
