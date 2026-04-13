@@ -874,7 +874,7 @@ mod tests {
         use std::{
             sync::{
                 Arc,
-                atomic::{AtomicUsize, Ordering},
+                atomic::{AtomicBool, Ordering::Relaxed},
             },
             time::Duration,
         };
@@ -884,14 +884,12 @@ mod tests {
 
         use crate::{
             Endpoint, EndpointAddr,
-            endpoint::{ConnectError, IncomingAddr, presets},
+            endpoint::presets,
             protocol::{
                 IncomingFilterOutcome, Router,
                 tests::{ECHO_ALPN, Echo},
             },
         };
-
-        // -- Setup helpers --
 
         /// Two direct endpoints with a filtered router on the first.
         ///
@@ -921,9 +919,13 @@ mod tests {
             Ok((r1, e2, addr))
         }
 
-        /// Two relay-only endpoints and a relay-only address for the server.
-        async fn relay_endpoints()
-        -> Result<(Endpoint, Endpoint, crate::RelayUrl, impl std::any::Any)> {
+        /// Two relay-only endpoints with a filtered router on the first.
+        async fn relay_pair<F>(
+            filter: F,
+        ) -> Result<(Router, Endpoint, EndpointAddr, impl std::any::Any)>
+        where
+            F: Fn(&crate::endpoint::Incoming) -> IncomingFilterOutcome + Send + Sync + 'static,
+        {
             let (_relay_map, relay_url, guard) =
                 crate::test_utils::run_relay_server().await.anyerr()?;
             let relay_mode = crate::RelayMode::Custom(crate::RelayMap::from(relay_url.clone()));
@@ -933,15 +935,18 @@ mod tests {
                 .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
                 .bind()
                 .await?;
+            let r1 = Router::builder(e1.clone())
+                .incoming_filter(Arc::new(filter))
+                .accept(ECHO_ALPN, Echo)
+                .spawn();
+            let addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
             let e2 = Endpoint::builder(presets::Minimal)
                 .relay_mode(relay_mode)
                 .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
                 .bind()
                 .await?;
-            Ok((e1, e2, relay_url, guard))
+            Ok((r1, e2, addr, guard))
         }
-
-        // -- Address-based tests (direct connections) --
 
         #[tokio::test]
         #[traced_test]
@@ -977,28 +982,11 @@ mod tests {
             Ok(())
         }
 
-        // -- Endpoint id tests (relay connections) --
-
         #[tokio::test]
         #[traced_test]
-        async fn endpoint_id_reject() -> Result {
-            let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
-            let target_id = e2.id();
-            let r1 = Router::builder(e1.clone())
-                .incoming_filter(Arc::new(move |incoming: &crate::endpoint::Incoming| {
-                    if let IncomingAddr::Relay { endpoint_id, .. } = incoming.remote_addr()
-                        && endpoint_id == target_id
-                    {
-                        return IncomingFilterOutcome::Reject;
-                    }
-                    IncomingFilterOutcome::Accept
-                }))
-                .accept(ECHO_ALPN, Echo)
-                .spawn();
-            let addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
-
-            let result: Result<_, ConnectError> = e2.connect(addr, ECHO_ALPN).await;
-            assert!(result.is_err());
+        async fn relay_reject() -> Result {
+            let (r1, e2, addr, _guard) = relay_pair(|_| IncomingFilterOutcome::Reject).await?;
+            assert!(e2.connect(addr, ECHO_ALPN).await.is_err());
             r1.shutdown().await.anyerr()?;
             e2.close().await;
             Ok(())
@@ -1006,22 +994,8 @@ mod tests {
 
         #[tokio::test]
         #[traced_test]
-        async fn endpoint_id_ignore() -> Result {
-            let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
-            let target_id = e2.id();
-            let r1 = Router::builder(e1.clone())
-                .incoming_filter(Arc::new(move |incoming: &crate::endpoint::Incoming| {
-                    if let IncomingAddr::Relay { endpoint_id, .. } = incoming.remote_addr()
-                        && endpoint_id == target_id
-                    {
-                        return IncomingFilterOutcome::Ignore;
-                    }
-                    IncomingFilterOutcome::Accept
-                }))
-                .accept(ECHO_ALPN, Echo)
-                .spawn();
-            let addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
-
+        async fn relay_ignore() -> Result {
+            let (r1, e2, addr, _guard) = relay_pair(|_| IncomingFilterOutcome::Ignore).await?;
             let result =
                 tokio::time::timeout(Duration::from_millis(500), e2.connect(addr, ECHO_ALPN)).await;
             assert!(result.is_err(), "expected timeout");
@@ -1030,24 +1004,21 @@ mod tests {
             Ok(())
         }
 
-        // -- Retry validation tests --
-
         /// Verify that returning `Retry` for a direct connection causes the
         /// remote to retry with a token, after which `validated` is true.
         #[tokio::test]
         #[traced_test]
         async fn addr_retry_then_validated() -> Result {
-            let validated_count = Arc::new(AtomicUsize::new(0));
-            let unvalidated_count = Arc::new(AtomicUsize::new(0));
-            let (validated_count2, unvalidated_count2) =
-                (validated_count.clone(), unvalidated_count.clone());
+            let saw_validated = Arc::<AtomicBool>::default();
+            let saw_unvalidated = Arc::<AtomicBool>::default();
+            let (sv, su) = (saw_validated.clone(), saw_unvalidated.clone());
 
             let (r1, e2, addr) = direct_pair(move |incoming| {
                 if incoming.remote_addr_validated() {
-                    validated_count2.fetch_add(1, Ordering::SeqCst);
+                    sv.store(true, Relaxed);
                     IncomingFilterOutcome::Accept
                 } else {
-                    unvalidated_count2.fetch_add(1, Ordering::SeqCst);
+                    su.store(true, Relaxed);
                     IncomingFilterOutcome::Retry
                 }
             })
@@ -1058,8 +1029,8 @@ mod tests {
             // validated and accepted.
             let _conn = e2.connect(addr, ECHO_ALPN).await?;
 
-            assert!(unvalidated_count.load(Ordering::SeqCst) >= 1);
-            assert!(validated_count.load(Ordering::SeqCst) >= 1);
+            assert!(saw_unvalidated.load(Relaxed));
+            assert!(saw_validated.load(Relaxed));
 
             r1.shutdown().await.anyerr()?;
             e2.close().await;
@@ -1073,36 +1044,30 @@ mod tests {
         #[tokio::test]
         #[traced_test]
         async fn relay_retry_then_validated() -> Result {
-            let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
+            let saw_validated = Arc::<AtomicBool>::default();
+            let saw_unvalidated = Arc::<AtomicBool>::default();
+            let (sv, su) = (saw_validated.clone(), saw_unvalidated.clone());
 
-            let validated_count = Arc::new(AtomicUsize::new(0));
-            let unvalidated_count = Arc::new(AtomicUsize::new(0));
-            let (validated_count2, unvalidated_count2) =
-                (validated_count.clone(), unvalidated_count.clone());
+            let (r1, e2, addr, _guard) = relay_pair(move |incoming| {
+                if incoming.remote_addr_validated() {
+                    sv.store(true, Relaxed);
+                    IncomingFilterOutcome::Accept
+                } else {
+                    su.store(true, Relaxed);
+                    IncomingFilterOutcome::Retry
+                }
+            })
+            .await?;
 
-            let r1 = Router::builder(e1.clone())
-                .incoming_filter(Arc::new(move |incoming: &crate::endpoint::Incoming| {
-                    if incoming.remote_addr_validated() {
-                        validated_count2.fetch_add(1, Ordering::SeqCst);
-                        IncomingFilterOutcome::Accept
-                    } else {
-                        unvalidated_count2.fetch_add(1, Ordering::SeqCst);
-                        IncomingFilterOutcome::Retry
-                    }
-                }))
-                .accept(ECHO_ALPN, Echo)
-                .spawn();
-
-            let addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
             let _conn = e2.connect(addr, ECHO_ALPN).await?;
 
             assert!(
-                unvalidated_count.load(Ordering::SeqCst) >= 1,
-                "expected at least one unvalidated incoming",
+                saw_unvalidated.load(Relaxed),
+                "expected unvalidated incoming"
             );
             assert!(
-                validated_count.load(Ordering::SeqCst) >= 1,
-                "expected at least one validated incoming after retry",
+                saw_validated.load(Relaxed),
+                "expected validated incoming after retry"
             );
 
             r1.shutdown().await.anyerr()?;
