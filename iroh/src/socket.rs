@@ -1823,7 +1823,7 @@ impl Actor {
         let stored_addrs = addrs
             .into_iter()
             .filter_map(|(addr, (typ, flags))| {
-                // Filter out depreacted IPs
+                // Filter out deprecated IPs
                 let is_deprecated = flags.map(|f| f.deprecated).unwrap_or(false);
                 if is_deprecated {
                     return None;
