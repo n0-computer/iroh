@@ -222,7 +222,7 @@ pub enum IncomingFilterOutcome {
 ///
 /// For a higher-level filter API that splits the decision into named methods
 /// (e.g. by socket address or endpoint id, or by proposed ALPNs from the
-/// ClientHello), see the `connection-filter` example.
+/// ClientHello), see the `incoming-filter` example.
 ///
 /// [`Incoming`]: crate::endpoint::Incoming
 /// [`Incoming::decrypt`]: crate::endpoint::Incoming::decrypt
@@ -718,6 +718,7 @@ mod tests {
     use std::{sync::Mutex, time::Duration};
 
     use n0_error::{Result, StdResultExt};
+    use n0_tracing_test::traced_test;
 
     use super::*;
     use crate::endpoint::{
@@ -835,6 +836,7 @@ mod tests {
 
     /// Test that `Accepting::remote_addr()` is consistent with `Incoming::remote_addr()`.
     #[tokio::test]
+    #[traced_test]
     async fn test_accepting_remote_addr() -> Result {
         use crate::endpoint::{IncomingAddr, presets};
 
@@ -878,6 +880,7 @@ mod tests {
         };
 
         use n0_error::{Result, StdResultExt};
+        use n0_tracing_test::traced_test;
 
         use crate::{
             Endpoint, EndpointAddr,
@@ -928,6 +931,7 @@ mod tests {
         // -- Address-based tests (direct connections) --
 
         #[tokio::test]
+        #[traced_test]
         async fn addr_retry() -> Result {
             let (r1, e2, addr) = direct_pair(|_| IncomingFilterOutcome::Retry).await?;
             // Server sends retry (unvalidated), then refuses (validated).
@@ -938,6 +942,7 @@ mod tests {
         }
 
         #[tokio::test]
+        #[traced_test]
         async fn addr_reject() -> Result {
             let (r1, e2, addr) = direct_pair(|_| IncomingFilterOutcome::Reject).await?;
             assert!(e2.connect(addr, ECHO_ALPN).await.is_err());
@@ -947,6 +952,7 @@ mod tests {
         }
 
         #[tokio::test]
+        #[traced_test]
         async fn addr_ignore() -> Result {
             let (r1, e2, addr) = direct_pair(|_| IncomingFilterOutcome::Ignore).await?;
             // No response at all — connect times out.
@@ -961,6 +967,7 @@ mod tests {
         // -- Endpoint id tests (relay connections) --
 
         #[tokio::test]
+        #[traced_test]
         async fn endpoint_id_reject() -> Result {
             let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
             let target_id = e2.id();
@@ -985,6 +992,7 @@ mod tests {
         }
 
         #[tokio::test]
+        #[traced_test]
         async fn endpoint_id_ignore() -> Result {
             let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
             let target_id = e2.id();
@@ -1014,6 +1022,7 @@ mod tests {
         /// Verify that returning `Retry` for a direct connection causes the
         /// remote to retry with a token, after which `validated` is true.
         #[tokio::test]
+        #[traced_test]
         async fn addr_retry_then_validated() -> Result {
             let validated_count = Arc::new(AtomicUsize::new(0));
             let unvalidated_count = Arc::new(AtomicUsize::new(0));
@@ -1049,6 +1058,7 @@ mod tests {
         /// security meaning over a relay, but it does impose a round-trip
         /// cost on the client.
         #[tokio::test]
+        #[traced_test]
         async fn relay_retry_then_validated() -> Result {
             let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
 
