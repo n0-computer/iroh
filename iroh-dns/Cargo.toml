@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 data-encoding = "2.6.0"
+data-encoding-macro = "0.1.19"
 derive_more = { version = "2.0.1", features = ["debug"] }
 iroh-base = { version = "0.97.0", path = "../iroh-base", default-features = false, features = ["key"] }
 n0-error = "0.1"

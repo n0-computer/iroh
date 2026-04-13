@@ -46,7 +46,7 @@ use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 pub(crate) use iroh_dns::attrs::{IrohAttr, TxtAttrs};
 use iroh_dns::pkarr;
 pub use iroh_dns::{
-    DecodingError, EndpointIdExt,
+    EndpointIdExt,
     attrs::{EncodingError, IROH_TXT_NAME, ParseError},
 };
 use n0_error::{ensure, stack_error};
