@@ -617,7 +617,10 @@ impl Builder {
         self
     }
 
-    /// Adds an external address to advertise to peers as directly reachable.
+    /// Adds an external address on which this endpoint is directly reachable.
+    ///
+    /// This address will be advertised to peers together with any discovered external addresses
+    /// and will be used in NAT traversal and to establish direct connections.
     ///
     /// Can be called multiple times. See also [`Endpoint::add_external_addr`] for
     /// adding addresses at runtime.
@@ -928,7 +931,10 @@ impl Endpoint {
         self.inner.remove_relay(relay).await
     }
 
-    /// Adds an external address to advertise to peers as directly reachable.
+    /// Adds an external address on which this endpoint is directly reachable.
+    ///
+    /// This address will be advertised to peers together with any discovered external addresses
+    /// and will be used in NAT traversal and to establish direct connections.
     ///
     /// See also [`Builder::external_addr`] for setting addresses at build time.
     pub async fn add_external_addr(&self, addr: SocketAddr) {

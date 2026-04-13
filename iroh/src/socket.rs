@@ -1750,6 +1750,7 @@ impl Actor {
     /// - The portmapper.
     /// - A net_report report.
     /// - The local interfaces IP addresses.
+    /// - User configured addresses.
     #[cfg(not(wasm_browser))]
     fn update_direct_addresses(&mut self, net_report_report: Option<&net_report::Report>) {
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
