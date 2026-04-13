@@ -6,17 +6,15 @@
 pub mod attrs;
 pub mod pkarr;
 
-use std::sync::LazyLock;
-
+use data_encoding::Encoding;
+use data_encoding_macro::new_encoding;
 use iroh_base::{EndpointId, KeyParsingError};
 use n0_error::e;
 
 /// z-base-32 encoding as used by pkarr.
-static Z_BASE_32: LazyLock<data_encoding::Encoding> = LazyLock::new(|| {
-    let mut spec = data_encoding::Specification::new();
-    spec.symbols.push_str("ybndrfg8ejkmcpqxot1uwisza345h769");
-    spec.encoding().expect("valid z-base-32 spec")
-});
+const Z_BASE_32: Encoding = new_encoding! {
+    symbols: "ybndrfg8ejkmcpqxot1uwisza345h769",
+};
 
 /// Extension methods for [`EndpointId`] to encode to and decode from z-base-32,
 /// which is the encoding used by [pkarr](https://pkarr.org) domain names.
