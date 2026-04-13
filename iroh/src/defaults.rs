@@ -18,9 +18,10 @@ pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
 /// Production configuration.
 pub mod prod {
-    use iroh_relay::{RelayConfig, RelayMap, RelayQuicConfig};
+    use iroh_relay::{RelayConfig, RelayMap};
 
     use super::*;
+    use crate::RelayUrl;
 
     /// Hostname of the default NA east relay.
     pub const NA_EAST_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh-canary.iroh.link.";
@@ -47,10 +48,7 @@ pub mod prod {
         let url: Url = format!("https://{NA_EAST_RELAY_HOSTNAME}")
             .parse()
             .expect("default url");
-        RelayConfig {
-            url: url.into(),
-            quic: Some(RelayQuicConfig::default()),
-        }
+        RelayConfig::from(RelayUrl::from(url))
     }
 
     /// Get the default [`RelayConfig`] for NA west.
@@ -59,10 +57,7 @@ pub mod prod {
         let url: Url = format!("https://{NA_WEST_RELAY_HOSTNAME}")
             .parse()
             .expect("default url");
-        RelayConfig {
-            url: url.into(),
-            quic: Some(RelayQuicConfig::default()),
-        }
+        RelayConfig::from(RelayUrl::from(url))
     }
 
     /// Get the default [`RelayConfig`] for EU.
@@ -71,10 +66,7 @@ pub mod prod {
         let url: Url = format!("https://{EU_RELAY_HOSTNAME}")
             .parse()
             .expect("default_url");
-        RelayConfig {
-            url: url.into(),
-            quic: Some(RelayQuicConfig::default()),
-        }
+        RelayConfig::from(RelayUrl::from(url))
     }
 
     /// Get the default [`RelayConfig`] for Asia-Pacific
@@ -83,10 +75,7 @@ pub mod prod {
         let url: Url = format!("https://{AP_RELAY_HOSTNAME}")
             .parse()
             .expect("default_url");
-        RelayConfig {
-            url: url.into(),
-            quic: Some(RelayQuicConfig::default()),
-        }
+        RelayConfig::from(RelayUrl::from(url))
     }
 }
 
@@ -96,9 +85,10 @@ pub mod prod {
 ///
 /// Note: we have staging servers in EU and NA, but no corresponding staging server for AP at this time.
 pub mod staging {
-    use iroh_relay::{RelayConfig, RelayMap, RelayQuicConfig};
+    use iroh_relay::{RelayConfig, RelayMap};
 
     use super::*;
+    use crate::RelayUrl;
 
     /// Hostname of the default NA relay.
     pub const NA_EAST_RELAY_HOSTNAME: &str = "staging-use1-1.relay.iroh.network.";
@@ -116,10 +106,7 @@ pub mod staging {
         let url: Url = format!("https://{NA_EAST_RELAY_HOSTNAME}")
             .parse()
             .expect("default url");
-        RelayConfig {
-            url: url.into(),
-            quic: Some(RelayQuicConfig::default()),
-        }
+        RelayConfig::from(RelayUrl::from(url))
     }
 
     /// Get the default [`RelayConfig`] for EU.
@@ -128,10 +115,7 @@ pub mod staging {
         let url: Url = format!("https://{EU_RELAY_HOSTNAME}")
             .parse()
             .expect("default_url");
-        RelayConfig {
-            url: url.into(),
-            quic: Some(RelayQuicConfig::default()),
-        }
+        RelayConfig::from(RelayUrl::from(url))
     }
 }
 
