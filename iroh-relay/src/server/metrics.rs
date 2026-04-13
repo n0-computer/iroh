@@ -5,6 +5,7 @@ use iroh_metrics::{Counter, MetricsGroup, MetricsGroupSet};
 /// Metrics tracked for the relay server
 #[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = "relayserver")]
+#[non_exhaustive]
 pub struct Metrics {
     /*
      * Metrics about packets
@@ -72,6 +73,7 @@ pub struct Metrics {
 /// All metrics tracked in the relay server.
 #[derive(Debug, Default, Clone, MetricsGroupSet)]
 #[metrics(name = "relay")]
+#[non_exhaustive]
 pub struct RelayMetrics {
     /// Metrics tracked for the relay server.
     pub server: Arc<Metrics>,
