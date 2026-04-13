@@ -47,3 +47,4 @@ netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
 noq = { git = "https://github.com/n0-computer/noq", branch = "main" }
 noq-udp = { git = "https://github.com/n0-computer/noq", branch = "main" }
 noq-proto = { git = "https://github.com/n0-computer/noq", branch = "main" }
+patchbay = { git = "https://github.com/n0-computer/patchbay", branch = "main" }
