@@ -55,8 +55,9 @@ async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
     // Devices created after this will resolve "relay.test" to both addresses.
     let relay_v4 = dev_relay.ip().expect("relay has IPv4");
     let relay_v6 = dev_relay.ip6().expect("relay has IPv6");
-    lab.dns_entry("relay.test", relay_v4.into())?;
-    lab.dns_entry("relay.test", relay_v6.into())?;
+    let dns = lab.dns_server()?;
+    dns.set_host("relay.test", relay_v4.into())?;
+    dns.set_host("relay.test", relay_v6.into())?;
     info!(%relay_v4, %relay_v6, "DNS entries for relay.test registered");
 
     let (relay_map_tx, relay_map_rx) = oneshot::channel();
