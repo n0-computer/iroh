@@ -209,23 +209,9 @@ pub enum IncomingFilterOutcome {
     Ignore,
 }
 
-/// A filter that decides whether to accept an incoming connection before the
-/// TLS handshake completes.
+/// Filter predicate used for early filtering of incoming connections before the handshake completes.
 ///
-/// The filter is called with the raw [`Incoming`] for each connection attempt
-/// and returns an [`IncomingFilterOutcome`] that determines what happens next.
-///
-/// Implementers have full access to the [`Incoming`] and can use any of its
-/// methods (including [`Incoming::decrypt`]) to make their decision. Note that
-/// `decrypt()` is relatively expensive, so filters should reject based on
-/// cheaper signals (e.g. remote address) first.
-///
-/// For a higher-level filter API that splits the decision into named methods
-/// (e.g. by socket address or endpoint id, or by proposed ALPNs from the
-/// ClientHello), see the `incoming-filter` example.
-///
-/// [`Incoming`]: crate::endpoint::Incoming
-/// [`Incoming::decrypt`]: crate::endpoint::Incoming::decrypt
+/// See [`RouterBuilder::incoming_filter`] for more details.
 pub type IncomingFilter =
     Arc<dyn Fn(&crate::endpoint::Incoming) -> IncomingFilterOutcome + Send + Sync + 'static>;
 
@@ -471,7 +457,23 @@ impl RouterBuilder {
         }
     }
 
-    /// Sets a [`IncomingFilter`] for the router.
+    /// Sets a filter that decides whether to accept an incoming connection before the
+    /// TLS handshake completes.
+    ///
+    /// The filter is called with the raw [`Incoming`] for each connection attempt
+    /// and returns an [`IncomingFilterOutcome`] that determines what happens next.
+    ///
+    /// Implementers have full access to the [`Incoming`] and can use any of its
+    /// methods (including [`Incoming::decrypt`]) to make their decision. Note that
+    /// `decrypt()` is relatively expensive, so filters should reject based on
+    /// cheaper signals (e.g. remote address) first.
+    ///
+    /// For a higher-level filter API that splits the decision into named methods
+    /// (e.g. by socket address or endpoint id, or by proposed ALPNs from the
+    /// ClientHello), see the `incoming-filter` example.
+    ///
+    /// [`Incoming`]: crate::endpoint::Incoming
+    /// [`Incoming::decrypt`]: crate::endpoint::Incoming::decrypt
     pub fn incoming_filter(mut self, filter: IncomingFilter) -> Self {
         self.incoming_filter = Some(filter);
         self
