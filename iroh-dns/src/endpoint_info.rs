@@ -48,7 +48,7 @@ pub enum ParseError {
     #[error("Record is not an `iroh` record, expected `_iroh`, got `{label}`")]
     NotAnIrohRecord { label: String },
     #[error(transparent)]
-    DecodingError { source: crate::DecodingError },
+    DecodingError { source: iroh_base::KeyParsingError },
 }
 
 /// Parses a [`EndpointId`] from iroh DNS name.
