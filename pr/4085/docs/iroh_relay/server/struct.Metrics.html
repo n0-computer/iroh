@@ -52,7 +52,7 @@ active again.</p>
 <p>This is increased whenever a client disconnects while being inactive, or if a client is upgraded to be
 active again (happens only when the currently-active client for that endpoint id disconnects).</p>
 <p>See <a href="struct.Metrics.html#structfield.clients_inactive_added" title="field iroh_relay::server::Metrics::clients_inactive_added"><code>Self::clients_inactive_added</code></a> for details on when a client becomes inactive.</p>
-</div><span id="structfield.qad_incoming" class="structfield section-header"><a href="#structfield.qad_incoming" class="anchor field">§</a><code>qad_incoming: Counter</code></span><div class="docblock"><p>Number of incoming QUIC connections.</p>
+</div><span id="structfield.qad_incoming" class="structfield section-header"><a href="#structfield.qad_incoming" class="anchor field">§</a><code>qad_incoming: Counter</code></span><div class="docblock"><p>Number of incoming QAD connections.</p>
 <p>After completion, each is counted in either <code>qad_incoming_error</code> or <code>qad_connections</code>.</p>
 <p>Thus the number of inflight incomings is <code>qad_incoming</code> - <code>qad_incoming_error</code> - <code>qad_connections</code>.</p>
 </div><span id="structfield.qad_incoming_error" class="structfield section-header"><a href="#structfield.qad_incoming_error" class="anchor field">§</a><code>qad_incoming_error: Counter</code></span><div class="docblock"><p>Number of QAD QUIC connections that aborted before completing the handshake.</p>
