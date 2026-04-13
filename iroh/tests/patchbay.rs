@@ -92,9 +92,6 @@ async fn holepunch_simple() -> Result {
 /// The client starts behind `nat2`, holepunches a direct path, then replugs
 /// its interface to `nat3`. The server waits until a direct path with a new
 /// remote address is selected. We verify with a ping that the new path works.
-///
-/// Currently ignored because iroh does not yet recover reliably from an
-/// uplink switch.
 #[tokio::test]
 #[traced_test]
 async fn switch_uplink_v4() -> Result {
@@ -153,6 +150,7 @@ async fn switch_uplink_v4() -> Result {
                 .await
                 .context("failed at ping_open")?;
             info!("ping done");
+            conn.close(0u32.into(), b"bye");
             Ok(())
         })
         .run()
@@ -166,8 +164,6 @@ async fn switch_uplink_v4() -> Result {
 /// Similar to [`switch_uplink_v4`], but the client replugs from a Home NAT
 /// to an IPv6-only ISP router. The server waits for the selected path to
 /// switch from an IPv4 to an IPv6 remote address.
-///
-/// Currently ignored because this fails in roughly half of runs.
 #[tokio::test]
 #[traced_test]
 async fn switch_uplink_v6() -> Result {
@@ -244,6 +240,7 @@ async fn switch_uplink_v6() -> Result {
             ping_open(&conn, timeout)
                 .await
                 .context("ping after v6 switch")?;
+            conn.close(0u32.into(), b"bye");
             Ok(())
         })
         .run()
@@ -316,6 +313,7 @@ async fn change_ifaces() -> Result {
             info!(addr=?next.remote_addr(), "new direct path established");
 
             ping_open(&conn, timeout).await.context("ping_open")?;
+            conn.close(0u32.into(), b"bye");
             Ok(())
         })
         .run()
@@ -371,6 +369,7 @@ async fn link_outage_recovery() -> Result {
             ping_open(&conn, timeout)
                 .await
                 .context("ping_open after direct")?;
+            conn.close(0u32.into(), b"bye");
             Ok(())
         })
         .run()
@@ -459,7 +458,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
-    let timeout = Duration::from_secs(30);
+    let timeout = Duration::from_secs(20 + level as u64 * 10);
 
     let limits = DEGRADE_LEVELS[level];
     let link_condition = Some(LinkCondition::Manual(limits));
@@ -481,9 +480,10 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
     impaired_device
         .set_link_condition("eth0", link_condition, LinkDirection::Both)
         .await?;
+    info!(?impaired_side, ?limits, %level, ?timeout, "degrade test start");
 
     let result = tokio::time::timeout(
-        timeout * 2,
+        timeout,
         Pair::new(relay_map)
             .server(server, async move |_dev, _ep, conn| {
                 ping_accept(&conn, timeout).await.context("ping_accept")?;
@@ -492,6 +492,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
             })
             .client(client, async move |_dev, _ep, conn| {
                 let mut paths = conn.paths();
+                info!("waiting for connection to become direct");
                 paths
                     .wait_ip(timeout)
                     .await
@@ -499,6 +500,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<TestGuar
                 info!("direct path established, sending ping");
                 ping_open(&conn, timeout).await.context("ping_open")?;
                 info!("ping complete");
+                conn.close(0u32.into(), b"bye");
                 Ok(())
             })
             .run(),
