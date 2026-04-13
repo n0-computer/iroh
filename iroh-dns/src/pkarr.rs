@@ -278,7 +278,7 @@ impl SignedPacket {
 impl Display for SignedPacket {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(f, "SignedPacket ({}):", self.public_key().to_z32())?;
-        writeln!(f, "  timestamp: {}", &self.timestamp())?;
+        writeln!(f, "  timestamp: {}µs", self.timestamp().as_micros())?;
         for (name, value) in self.all_txt_records() {
             writeln!(f, "  {name} TXT \"{value}\"")?;
         }
@@ -378,12 +378,6 @@ impl Timestamp {
     /// Parses from big-endian bytes.
     pub fn from_be_bytes(bytes: [u8; 8]) -> Self {
         Self(u64::from_be_bytes(bytes))
-    }
-}
-
-impl fmt::Display for Timestamp {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
     }
 }
 
