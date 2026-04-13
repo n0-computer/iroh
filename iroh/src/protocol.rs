@@ -894,17 +894,30 @@ mod tests {
         // -- Setup helpers --
 
         /// Two direct endpoints with a filtered router on the first.
+        ///
+        /// Binds to IPv4 loopback only so retry-token validation works on
+        /// multi-homed CI hosts (tokens are tied to the source address).
         async fn direct_pair<F>(filter: F) -> Result<(Router, Endpoint, EndpointAddr)>
         where
             F: Fn(&crate::endpoint::Incoming) -> IncomingFilterOutcome + Send + Sync + 'static,
         {
-            let e1 = Endpoint::bind(presets::Minimal).await?;
+            let e1 = Endpoint::builder(presets::Minimal)
+                .clear_ip_transports()
+                .bind_addr((std::net::Ipv4Addr::LOCALHOST, 0))
+                .anyerr()?
+                .bind()
+                .await?;
             let r1 = Router::builder(e1.clone())
                 .incoming_filter(Arc::new(filter))
                 .accept(ECHO_ALPN, Echo)
                 .spawn();
             let addr = r1.endpoint().addr();
-            let e2 = Endpoint::bind(presets::Minimal).await?;
+            let e2 = Endpoint::builder(presets::Minimal)
+                .clear_ip_transports()
+                .bind_addr((std::net::Ipv4Addr::LOCALHOST, 0))
+                .anyerr()?
+                .bind()
+                .await?;
             Ok((r1, e2, addr))
         }
 
