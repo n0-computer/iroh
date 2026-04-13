@@ -44,8 +44,8 @@ jobs:
           set -o pipefail
           cargo make patchbay 2>&1 | tee "$RUNNER_TEMP/logs.txt"
         env:
-          PATCHBAY_LOG: trace
-          RUST_LOG: trace
+          PATCHBAY_LOG: ${{ runner.debug && 'trace' || 'debug' }}
+          RUST_LOG: ${{ runner.debug && 'trace' || 'debug' }}
 
       - name: Upload test results
         if: always()
