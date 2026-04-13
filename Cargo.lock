@@ -2466,6 +2466,7 @@ name = "iroh-dns"
 version = "0.97.0"
 dependencies = [
  "data-encoding",
+ "derive_more",
  "iroh-base",
  "n0-error",
  "n0-future",
