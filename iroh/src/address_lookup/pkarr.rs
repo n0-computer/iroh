@@ -57,10 +57,8 @@
 use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
-use iroh_relay::{
-    endpoint_info::{AddrFilter, EncodingError, EndpointIdExt, EndpointInfo},
-    pkarr::{SignedPacket, SignedPacketVerifyError},
-};
+use iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError};
+use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointIdExt, EndpointInfo};
 use n0_error::{e, stack_error};
 use n0_future::{
     boxed::BoxStream,
@@ -300,7 +298,7 @@ impl PkarrPublisher {
     /// Creates a new [`PkarrPublisher`] with a custom TTL and republish intervals.
     ///
     /// This allows creating the publisher with custom time-to-live values of the
-    /// [`SignedPacket`](iroh_relay::pkarr::SignedPacket)s as well as a custom republish interval.
+    /// [`SignedPacket`]s as well as a custom republish interval.
     fn new(
         secret_key: SecretKey,
         pkarr_relay: Url,
@@ -561,7 +559,7 @@ impl AddressLookup for PkarrResolver {
     }
 }
 
-/// A [pkarr](https://pkarr.org) client to publish [`SignedPacket`](iroh_relay::pkarr::SignedPacket)s to a pkarr relay.
+/// A [pkarr](https://pkarr.org) client to publish [`SignedPacket`]s to a pkarr relay.
 ///
 /// [pkarr]: https://pkarr.org
 #[derive(Debug, Clone)]
@@ -642,8 +640,6 @@ impl PkarrRelayClient {
         &self,
         endpoint_id: EndpointId,
     ) -> Result<SignedPacket, AddressLookupError> {
-        let public_key = endpoint_id;
-
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
             .map_err(|_| {
@@ -651,7 +647,7 @@ impl PkarrRelayClient {
                     url: self.pkarr_relay_url.clone().into()
                 })
             })?
-            .push(&public_key.to_z32());
+            .push(&endpoint_id.to_z32());
 
         let response = self
             .http_client
@@ -671,7 +667,7 @@ impl PkarrRelayClient {
             .bytes()
             .await
             .map_err(|source| e!(PkarrError::HttpPayload { source }))?;
-        let packet = SignedPacket::from_relay_payload(&public_key, &payload)
+        let packet = SignedPacket::from_relay_payload(&endpoint_id, &payload)
             .map_err(|err| e!(PkarrError::Verify, err))?;
         Ok(packet)
     }

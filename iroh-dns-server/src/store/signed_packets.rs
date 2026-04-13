@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use iroh_dns::pkarr::SignedPacket;
+use iroh_dns::pkarr::{SignedPacket, Timestamp};
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
 use redb::{
     Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition,
@@ -59,7 +59,7 @@ enum Message {
         res: oneshot::Sender<Snapshot>,
     },
     CheckExpired {
-        time: u64,
+        time: Timestamp,
         key: PublicKeyBytes,
     },
 }
@@ -174,7 +174,7 @@ impl Actor {
                     }
                     _ => false,
                 };
-                let value = serialize_for_storage(&packet);
+                let value = serialize(&packet);
                 tables
                     .signed_packets
                     .insert(key.as_bytes(), &value[..])
@@ -194,7 +194,7 @@ impl Actor {
                 trace!("remove {}", key);
                 let updated = match tables.signed_packets.remove(key.as_bytes()).anyerr()? {
                     Some(row) => {
-                        let packet = deserialize_from_storage(row.value())?;
+                        let packet = deserialize(row.value())?;
                         tables
                             .update_time
                             .remove(&packet.timestamp().to_be_bytes(), key.as_bytes())
@@ -215,7 +215,9 @@ impl Actor {
                 match get_packet(&tables.signed_packets, &key)? {
                     Some(packet) => {
                         let expiry_us = self.options.eviction.as_micros() as u64;
-                        let expired = timestamp_now() - expiry_us;
+                        let expired = Timestamp::from_micros(
+                            Timestamp::now().as_micros().saturating_sub(expiry_us),
+                        );
                         if packet.timestamp() < expired {
                             tables
                                 .update_time
@@ -248,16 +250,9 @@ impl Actor {
     }
 }
 
-fn fmt_time(t: u64) -> String {
-    let duration = std::time::Duration::from_micros(t);
+fn fmt_time(t: Timestamp) -> String {
+    let duration = std::time::Duration::from_micros(t.as_micros());
     humantime::format_rfc3339_micros(SystemTime::UNIX_EPOCH + duration).to_string()
-}
-
-fn timestamp_now() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("system time before UNIX epoch")
-        .as_micros() as u64
 }
 
 /// A struct similar to [`redb::Table`] but for all tables that make up the
@@ -382,9 +377,9 @@ impl SignedPacketStore {
 }
 
 /// Serialize a signed packet for storage: `<8 bytes last_seen><packet bytes>`.
-fn serialize_for_storage(packet: &SignedPacket) -> Vec<u8> {
+fn serialize(packet: &SignedPacket) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + packet.as_bytes().len());
-    out.extend_from_slice(&timestamp_now().to_be_bytes());
+    out.extend_from_slice(&Timestamp::now().to_be_bytes());
     out.extend_from_slice(packet.as_bytes());
     out
 }
@@ -393,7 +388,7 @@ fn serialize_for_storage(packet: &SignedPacket) -> Vec<u8> {
 ///
 /// Handles backwards compatibility with older storage formats that didn't include
 /// the `last_seen` prefix.
-fn deserialize_from_storage(data: &[u8]) -> Result<SignedPacket> {
+fn deserialize(data: &[u8]) -> Result<SignedPacket> {
     // Try parsing as <8 bytes last_seen><packet> (pkarr v3 format)
     if data.len() >= 8
         && let Ok(packet) = SignedPacket::from_bytes_unchecked(&data[8..])
@@ -415,7 +410,7 @@ fn get_packet(
     else {
         return Ok(None);
     };
-    Ok(Some(deserialize_from_storage(row.value())?))
+    Ok(Some(deserialize(row.value())?))
 }
 
 async fn evict_task(send: mpsc::Sender<Message>, options: Options, cancel: CancellationToken) {
@@ -441,7 +436,8 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
         // if we can't get the snapshot we exit the loop, main actor dead
         let snapshot = rx.await.std_context("failed to get snapshot")?;
 
-        let expired = timestamp_now() - expiry_us;
+        let expired =
+            Timestamp::from_micros(Timestamp::now().as_micros().saturating_sub(expiry_us));
         trace!("evicting packets older than {}", fmt_time(expired));
         // if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
@@ -457,7 +453,7 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
                     continue;
                 }
             };
-            let time = u64::from_be_bytes(time.value());
+            let time = Timestamp::from_be_bytes(time.value());
             trace!("evicting expired packets at {}", fmt_time(time));
             for item in keys {
                 let key = match item {
@@ -471,7 +467,9 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
                         continue;
                     }
                 };
-                let key = PublicKeyBytes::new(key.value());
+                // Safety: bytes were originally written from a validated PublicKey.
+                // If the database is corrupt, to_z32() may panic downstream.
+                let key = PublicKeyBytes::new_unchecked(key.value());
 
                 debug!("evicting expired packet {} {}", fmt_time(time), key);
                 send.send(Message::CheckExpired { time, key })
@@ -556,5 +554,35 @@ impl<T> PeekableReceiver<T> {
         } else {
             Err(msg)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iroh_base::SecretKey;
+
+    use super::*;
+
+    fn test_signed_packet() -> SignedPacket {
+        let secret_key = SecretKey::generate();
+        SignedPacket::from_txt_strings(&secret_key, "_iroh", ["relay=https://example.com"], 30)
+            .expect("valid packet")
+    }
+
+    #[test]
+    fn serialize_deserialize_roundtrip() {
+        let packet = test_signed_packet();
+        let serialized = serialize(&packet);
+        let deserialized = deserialize(&serialized).expect("roundtrip should succeed");
+        assert_eq!(packet.as_bytes(), deserialized.as_bytes());
+    }
+
+    #[test]
+    fn deserialize_old_format_without_last_seen_prefix() {
+        // Pre-v0.35 format: raw SignedPacket bytes without the 8-byte last_seen prefix
+        let packet = test_signed_packet();
+        let old_format = packet.as_bytes().to_vec();
+        let deserialized = deserialize(&old_format).expect("old format should be readable");
+        assert_eq!(packet.as_bytes(), deserialized.as_bytes());
     }
 }

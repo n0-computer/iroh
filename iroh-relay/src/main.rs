@@ -496,6 +496,16 @@ async fn main() -> Result<()> {
         .with(EnvFilter::from_default_env())
         .init();
 
+    // Install `ring` as default crypto provider for rustls.
+    // This helps when both the tls-ring and tls-aws-lc-rs features are enabled,
+    // otherwise some crypto operations would panic because rustls can't determine
+    // a default provider.
+    // `ring` is enabled by the `tls-ring` feature, which is included in the `server` feature,
+    // which is required for the main.rs binary. Therefore, this does not need any feature flags.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to set default crypto provider");
+
     let cli = Cli::parse();
     let mut cfg = Config::load(&cli).await?;
     if cfg.enable_quic_addr_discovery && cfg.tls.is_none() {

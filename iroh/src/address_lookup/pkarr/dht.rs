@@ -8,7 +8,8 @@
 use std::sync::{Arc, Mutex};
 
 use iroh_base::{EndpointId, SecretKey};
-use iroh_relay::{endpoint_info::EndpointIdExt, pkarr::SignedPacket};
+use iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError, Timestamp};
+use iroh_relay::endpoint_info::EndpointIdExt;
 use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_future::{
     boxed::BoxStream,
@@ -38,19 +39,21 @@ fn signed_packet_to_mutable_item(packet: &SignedPacket) -> MutableItem {
         *packet.public_key().as_bytes(),
         packet.signature().to_bytes(),
         packet.encoded_packet(),
-        packet.timestamp() as i64,
+        packet.timestamp().as_micros() as i64,
         None,
     )
 }
 
 /// Convert a mainline [`MutableItem`] to a [`SignedPacket`].
-fn mutable_item_to_signed_packet(item: &MutableItem) -> Option<SignedPacket> {
-    let mut bytes = Vec::with_capacity(104 + item.value().len());
-    bytes.extend_from_slice(item.key());
-    bytes.extend_from_slice(item.signature());
-    bytes.extend_from_slice(&(item.seq() as u64).to_be_bytes());
-    bytes.extend_from_slice(item.value());
-    SignedPacket::from_bytes_unchecked(&bytes).ok()
+fn mutable_item_to_signed_packet(
+    item: &MutableItem,
+) -> Result<SignedPacket, SignedPacketVerifyError> {
+    SignedPacket::from_parts_unchecked(
+        item.key(),
+        item.signature(),
+        Timestamp::from_micros(item.seq() as u64),
+        item.value(),
+    )
 }
 
 /// Pkarr Mainline DHT and relay server address lookup.
@@ -96,22 +99,24 @@ struct Inner {
 impl Inner {
     async fn resolve_dht(
         &self,
-        public_key: &[u8; 32],
+        public_key: EndpointId,
     ) -> Option<Result<AddressLookupItem, AddressLookupError>> {
-        let pk = iroh_base::PublicKey::try_from(public_key.as_slice()).ok()?;
-        tracing::info!("resolving {} from DHT", pk.to_z32());
+        tracing::info!("resolving {} from DHT", public_key.to_z32());
 
         let maybe_item = self
             .dht
             .clone()
             .as_async()
-            .get_mutable_most_recent(public_key, None)
+            .get_mutable_most_recent(public_key.as_bytes(), None)
             .await;
         match maybe_item {
             Some(item) => {
-                let Some(signed_packet) = mutable_item_to_signed_packet(&item) else {
-                    tracing::debug!("failed to parse mutable item as signed packet");
-                    return None;
+                let signed_packet = match mutable_item_to_signed_packet(&item) {
+                    Ok(packet) => packet,
+                    Err(err) => {
+                        tracing::debug!("failed to parse mutable item as signed packet: {err}");
+                        return None;
+                    }
                 };
                 match EndpointInfo::from_pkarr_signed_packet(&signed_packet) {
                     Ok(endpoint_info) => {
@@ -242,11 +247,10 @@ impl DhtAddressLookup {
     }
 
     /// Periodically publishes the endpoint address to the DHT.
-    async fn publish_loop(self, public_key_bytes: [u8; 32], item: MutableItem) {
+    async fn publish_loop(self, signed_packet: SignedPacket) {
         let this = self;
-        let z32 = iroh_base::PublicKey::try_from(public_key_bytes.as_slice())
-            .expect("valid key")
-            .to_z32();
+        let z32 = signed_packet.public_key().to_z32();
+        let item = signed_packet_to_mutable_item(&signed_packet);
         loop {
             let res = this
                 .0
@@ -260,6 +264,12 @@ impl DhtAddressLookup {
                     tracing::debug!("pkarr publish success. published under {z32}");
                 }
                 Err(e) => {
+                    // we could do a smaller delay here, but in general DHT publish
+                    // not working is due to a network issue, and if the network changes
+                    // the task will be restarted anyway.
+                    //
+                    // Being unable to publish to the DHT is something that is expected
+                    // to happen from time to time, so this does not warrant a error log.
                     tracing::warn!("pkarr publish error: {}", e);
                 }
             }
@@ -289,10 +299,8 @@ impl AddressLookup for DhtAddressLookup {
             tracing::warn!("failed to create signed packet");
             return;
         };
-        let item = signed_packet_to_mutable_item(&signed_packet);
-        let public_key_bytes = *keypair.public().as_bytes();
         let this = self.clone();
-        let curr = task::spawn(this.publish_loop(public_key_bytes, item));
+        let curr = task::spawn(this.publish_loop(signed_packet));
         let mut task = self.0.task.lock().expect("poisoned");
         *task = Some(AbortOnDropHandle::new(curr));
     }
@@ -304,12 +312,12 @@ impl AddressLookup for DhtAddressLookup {
         let z32 = endpoint_id.to_z32();
         tracing::info!("resolving {} as {}", endpoint_id, z32);
         let address_lookup = self.0.clone();
-        let public_key_bytes = *endpoint_id.as_bytes();
-        let stream = n0_future::stream::once_future(async move {
-            address_lookup.resolve_dht(&public_key_bytes).await
-        })
-        .filter_map(|x| x)
-        .boxed();
+        let stream =
+            n0_future::stream::once_future(
+                async move { address_lookup.resolve_dht(endpoint_id).await },
+            )
+            .filter_map(|x| x)
+            .boxed();
         Some(stream)
     }
 }

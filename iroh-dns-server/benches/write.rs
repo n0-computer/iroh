@@ -9,7 +9,7 @@ use iroh::{
 };
 use iroh_dns_server::{ZoneStore, config::Config, metrics::Metrics, server::Server};
 use n0_error::Result;
-use rand::Rng;
+use rand::RngExt;
 use rand_chacha::rand_core::SeedableRng;
 use tokio::runtime::Runtime;
 

@@ -31,6 +31,7 @@ ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "ze
 http = "1"
 ipnet = "2"
 iroh-base = { version = "0.97.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-dns = { version = "0.97", path = "../iroh-dns" }
 iroh-relay = { version = "0.97", path = "../iroh-relay", default-features = false }
 n0-future = "0.3"
 n0-error = "0.1"
@@ -78,7 +79,7 @@ sync_wrapper = { version = "1.0.2", features = ["futures"] }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "0.26.0-beta.1", default-features = false }
+hickory-resolver = { version = "=0.26.0-beta.1", default-features = false }
 portmapper = { version = "0.15", optional = true, default-features = false }
 noq = { version = "0.17.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [

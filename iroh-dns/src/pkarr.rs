@@ -4,9 +4,13 @@
 //!
 //! [pkarr]: https://pkarr.org
 
-use std::fmt::{self, Debug, Display, Formatter};
+use std::{
+    fmt::{self, Display, Formatter},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use iroh_base::{PublicKey, SecretKey, Signature};
+use n0_error::{e, stack_error};
 use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata::RData};
 
 use crate::EndpointIdExt;
@@ -25,7 +29,8 @@ pub const MAX_SIGNED_PACKET_SIZE: usize = HEADER_SIZE + MAX_DNS_PACKET_SIZE;
 /// Wire format: `<32 bytes pubkey><64 bytes signature><8 bytes BE timestamp><DNS wire format>`
 ///
 /// The DNS packet must be at most 1000 bytes. Total max size is 1104 bytes.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, derive_more::Debug)]
+#[debug("SignedPacket {{ public_key: {}, timestamp: {:?} }}", self.public_key(), self.timestamp())]
 pub struct SignedPacket {
     bytes: Vec<u8>,
 }
@@ -52,7 +57,7 @@ impl SignedPacket {
         for value in values {
             let mut txt = simple_dns::rdata::TXT::new();
             txt.add_string(value.as_ref())
-                .map_err(|e| SignedPacketBuildError::DnsError(e.to_string()))?;
+                .map_err(|e| e!(SignedPacketBuildError::DnsError, e))?;
             packet.answers.push(ResourceRecord::new(
                 dns_name.clone(),
                 CLASS::IN,
@@ -63,14 +68,16 @@ impl SignedPacket {
 
         let encoded_packet = packet
             .build_bytes_vec_compressed()
-            .map_err(|e| SignedPacketBuildError::DnsError(e.to_string()))?;
+            .map_err(|e| e!(SignedPacketBuildError::DnsError, e))?;
 
         if encoded_packet.len() > MAX_DNS_PACKET_SIZE {
-            return Err(SignedPacketBuildError::PacketTooLarge(encoded_packet.len()));
+            return Err(e!(SignedPacketBuildError::PacketTooLarge {
+                len: encoded_packet.len()
+            }));
         }
 
-        let timestamp = timestamp_now();
-        let signature = secret_key.sign(&signable(timestamp, &encoded_packet));
+        let timestamp = Timestamp::now();
+        let signature = secret_key.sign(&signable(timestamp.as_micros(), &encoded_packet));
 
         let mut bytes = Vec::with_capacity(HEADER_SIZE + encoded_packet.len());
         bytes.extend_from_slice(public_key.as_bytes());
@@ -84,14 +91,14 @@ impl SignedPacket {
     /// Parse and verify a signed packet from its wire representation.
     pub fn from_bytes(bytes: &[u8]) -> Result<SignedPacket, SignedPacketVerifyError> {
         if bytes.len() < HEADER_SIZE {
-            return Err(SignedPacketVerifyError::TooShort(bytes.len()));
+            return Err(e!(SignedPacketVerifyError::TooShort { len: bytes.len() }));
         }
         if bytes.len() > MAX_SIGNED_PACKET_SIZE {
-            return Err(SignedPacketVerifyError::TooLarge(bytes.len()));
+            return Err(e!(SignedPacketVerifyError::TooLarge { len: bytes.len() }));
         }
 
         let public_key = PublicKey::try_from(&bytes[..32])
-            .map_err(|e| SignedPacketVerifyError::InvalidKey(e.to_string()))?;
+            .map_err(|e| e!(SignedPacketVerifyError::InvalidKey, e))?;
         let signature =
             Signature::from_bytes(bytes[32..96].try_into().expect("64 bytes for signature"));
         let timestamp =
@@ -100,10 +107,9 @@ impl SignedPacket {
 
         public_key
             .verify(&signable(timestamp, encoded_packet), &signature)
-            .map_err(|e| SignedPacketVerifyError::SignatureError(e.to_string()))?;
+            .map_err(|e| e!(SignedPacketVerifyError::SignatureError, e))?;
 
-        Packet::parse(encoded_packet)
-            .map_err(|e| SignedPacketVerifyError::DnsError(e.to_string()))?;
+        Packet::parse(encoded_packet).map_err(|e| e!(SignedPacketVerifyError::DnsError, e))?;
 
         Ok(SignedPacket {
             bytes: bytes.to_vec(),
@@ -126,13 +132,12 @@ impl SignedPacket {
     /// Still validates minimum length and DNS parsing.
     pub fn from_bytes_unchecked(bytes: &[u8]) -> Result<SignedPacket, SignedPacketVerifyError> {
         if bytes.len() < HEADER_SIZE {
-            return Err(SignedPacketVerifyError::TooShort(bytes.len()));
+            return Err(e!(SignedPacketVerifyError::TooShort { len: bytes.len() }));
         }
         if bytes.len() > MAX_SIGNED_PACKET_SIZE {
-            return Err(SignedPacketVerifyError::TooLarge(bytes.len()));
+            return Err(e!(SignedPacketVerifyError::TooLarge { len: bytes.len() }));
         }
-        Packet::parse(&bytes[104..])
-            .map_err(|e| SignedPacketVerifyError::DnsError(e.to_string()))?;
+        Packet::parse(&bytes[104..]).map_err(|e| e!(SignedPacketVerifyError::DnsError, e))?;
         Ok(SignedPacket {
             bytes: bytes.to_vec(),
         })
@@ -162,9 +167,9 @@ impl SignedPacket {
         )
     }
 
-    /// Return the timestamp in microseconds since UNIX epoch.
-    pub fn timestamp(&self) -> u64 {
-        u64::from_be_bytes(
+    /// Return the timestamp.
+    pub fn timestamp(&self) -> Timestamp {
+        Timestamp::from_be_bytes(
             self.bytes[96..104]
                 .try_into()
                 .expect("8 bytes for timestamp"),
@@ -242,6 +247,24 @@ impl SignedPacket {
             .collect()
     }
 
+    /// Reconstruct a signed packet from its raw parts without verifying the signature.
+    ///
+    /// This is useful for reconstructing a packet from storage or DHT mutable items
+    /// where the components are stored separately.
+    pub fn from_parts_unchecked(
+        public_key: &[u8],
+        signature: &[u8],
+        timestamp: Timestamp,
+        encoded_packet: &[u8],
+    ) -> Result<Self, SignedPacketVerifyError> {
+        let mut bytes = Vec::with_capacity(HEADER_SIZE + encoded_packet.len());
+        bytes.extend_from_slice(public_key);
+        bytes.extend_from_slice(signature);
+        bytes.extend_from_slice(&timestamp.to_be_bytes());
+        bytes.extend_from_slice(encoded_packet);
+        Self::from_bytes_unchecked(&bytes)
+    }
+
     /// Return whether this packet is more recent than another.
     pub fn more_recent_than(&self, other: &SignedPacket) -> bool {
         if self.timestamp() == other.timestamp() {
@@ -249,15 +272,6 @@ impl SignedPacket {
         } else {
             self.timestamp() > other.timestamp()
         }
-    }
-}
-
-impl Debug for SignedPacket {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SignedPacket")
-            .field("public_key", &self.public_key())
-            .field("timestamp", &self.timestamp())
-            .finish()
     }
 }
 
@@ -301,64 +315,111 @@ fn normalize_name(origin: &str, name: String) -> String {
     format!("{name}.{origin}")
 }
 
-fn timestamp_now() -> u64 {
-    use n0_future::time::SystemTime;
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("system time before UNIX epoch")
-        .as_micros() as u64
+/// A pkarr timestamp in microseconds since the UNIX epoch.
+///
+/// Used as the `seq` field in BEP_0044 DHT mutable items. Per the spec, a new
+/// publish must have a strictly higher timestamp than the previous one, or DHT
+/// nodes will reject the update.
+///
+/// [`Timestamp::now`] is guaranteed to be strictly monotonic: it will never
+/// return the same value twice and will never go backward, even if the system
+/// clock is corrected by NTP. This is achieved by tracking the last returned
+/// value and ensuring each call returns at least `last + 1`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Debug)]
+#[debug("Timestamp({}µs)", _0)]
+pub struct Timestamp(u64);
+
+/// Tracks the last timestamp returned by [`Timestamp::now`] to ensure monotonicity.
+static LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
+
+impl Timestamp {
+    /// Returns a strictly monotonic timestamp.
+    ///
+    /// Guaranteed to return a value greater than any previous call, even if the
+    /// system clock jumps backward (e.g. due to NTP correction).
+    pub fn now() -> Self {
+        use n0_future::time::SystemTime;
+        let micros = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system time before UNIX epoch")
+            .as_micros() as u64;
+        // Ensure strictly monotonic: if the clock went backward or two calls
+        // land in the same microsecond, we increment from the last value.
+        let mut last = LAST_TIMESTAMP.load(Ordering::Relaxed);
+        loop {
+            let next = micros.max(last + 1);
+            match LAST_TIMESTAMP.compare_exchange_weak(
+                last,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Self(next),
+                Err(actual) => last = actual,
+            }
+        }
+    }
+
+    /// Creates a timestamp from a raw microseconds value.
+    pub fn from_micros(micros: u64) -> Self {
+        Self(micros)
+    }
+
+    /// Returns the raw microseconds value.
+    pub fn as_micros(self) -> u64 {
+        self.0
+    }
+
+    /// Returns the big-endian byte representation.
+    pub fn to_be_bytes(self) -> [u8; 8] {
+        self.0.to_be_bytes()
+    }
+
+    /// Parses from big-endian bytes.
+    pub fn from_be_bytes(bytes: [u8; 8]) -> Self {
+        Self(u64::from_be_bytes(bytes))
+    }
+}
+
+impl fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 /// Error building a signed packet.
-#[derive(Debug)]
 #[allow(missing_docs)]
+#[stack_error(derive, add_meta)]
+#[non_exhaustive]
 pub enum SignedPacketBuildError {
-    PacketTooLarge(usize),
-    DnsError(String),
+    #[error("DNS packet too large: {len} bytes (max {MAX_DNS_PACKET_SIZE})")]
+    PacketTooLarge { len: usize },
+    #[error("DNS encoding error")]
+    DnsError {
+        #[error(std_err)]
+        source: simple_dns::SimpleDnsError,
+    },
 }
-
-impl fmt::Display for SignedPacketBuildError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::PacketTooLarge(n) => {
-                write!(
-                    f,
-                    "DNS packet too large: {n} bytes (max {MAX_DNS_PACKET_SIZE})"
-                )
-            }
-            Self::DnsError(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl std::error::Error for SignedPacketBuildError {}
 
 /// Error verifying a signed packet.
-#[derive(Debug)]
 #[allow(missing_docs)]
+#[stack_error(derive, add_meta)]
+#[non_exhaustive]
 pub enum SignedPacketVerifyError {
-    TooShort(usize),
-    TooLarge(usize),
-    SignatureError(String),
-    DnsError(String),
-    InvalidKey(String),
+    #[error("Signed packet too short: {len} bytes (min {HEADER_SIZE})")]
+    TooShort { len: usize },
+    #[error("Signed packet too large: {len} bytes (max {MAX_SIGNED_PACKET_SIZE})")]
+    TooLarge { len: usize },
+    #[error("Invalid signature")]
+    SignatureError {
+        #[error(std_err)]
+        source: iroh_base::SignatureError,
+    },
+    #[error("DNS decoding error")]
+    DnsError {
+        #[error(std_err)]
+        source: simple_dns::SimpleDnsError,
+    },
+    #[error("Invalid public key")]
+    InvalidKey { source: iroh_base::KeyParsingError },
 }
-
-impl fmt::Display for SignedPacketVerifyError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TooShort(n) => {
-                write!(f, "Signed packet too short: {n} bytes (min {HEADER_SIZE})")
-            }
-            Self::TooLarge(n) => write!(
-                f,
-                "Signed packet too large: {n} bytes (max {MAX_SIGNED_PACKET_SIZE})"
-            ),
-            Self::SignatureError(e) => write!(f, "Invalid signature: {e}"),
-            Self::DnsError(e) => write!(f, "{e}"),
-            Self::InvalidKey(e) => write!(f, "Invalid public key: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for SignedPacketVerifyError {}
