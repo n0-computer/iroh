@@ -1722,29 +1722,6 @@ dependencies = [
 
 [[package]]
 name = "governor"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae4a26ace7b5399e349df31c90afec7555b5af2e64ee8fe9f2a9b5a3204dca06"
-dependencies = [
- "cfg-if",
- "dashmap",
- "futures-sink",
- "futures-timer",
- "futures-util",
- "getrandom 0.3.4",
- "hashbrown 0.15.5",
- "nonzero_ext",
- "parking_lot",
- "portable-atomic",
- "quanta",
- "rand 0.9.2",
- "smallvec",
- "spinning_top",
- "web-time",
-]
-
-[[package]]
-name = "governor"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9efcab3c1958580ff1f25a2a41be1668f7603d849bb63af523b208a3cc1223b8"
@@ -1817,8 +1794,6 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "allocator-api2",
- "equivalent",
  "foldhash 0.1.5",
 ]
 
@@ -2407,7 +2382,6 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.4.2",
- "governor 0.9.0",
  "hickory-resolver 0.26.0-beta.1",
  "http",
  "indicatif",
@@ -2519,7 +2493,7 @@ dependencies = [
  "data-encoding",
  "derive_more",
  "dirs-next",
- "governor 0.10.4",
+ "governor",
  "hickory-resolver 0.25.2",
  "hickory-server",
  "http",
@@ -5412,7 +5386,7 @@ checksum = "44de9b94d849d3c46e06a883d72d408c2de6403367b39df2b1c9d9e7b6736fe6"
 dependencies = [
  "axum",
  "forwarded-header-value",
- "governor 0.10.4",
+ "governor",
  "http",
  "pin-project",
  "thiserror 2.0.18",

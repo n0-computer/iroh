@@ -175,7 +175,7 @@ pub enum IncomingFilterOutcome {
     ///
     /// What this does depends on the connection type:
     ///
-    /// - **Direct (UDP) connections** — this is QUIC source address
+    /// - **Direct (UDP) connections** : this is QUIC source address
     ///   validation. If the socket address was spoofed, the retry token is
     ///   sent to the spoofed address, so we never hear from the attacker
     ///   again. If the address was real, the client repeats the connection
@@ -183,14 +183,14 @@ pub enum IncomingFilterOutcome {
     ///   [`Incoming::remote_addr_validated`] set to `true`. The token is
     ///   bound to the source address.
     ///
-    /// - **Relay connections** — there is no source address to validate
+    /// - **Relay connections** : there is no source address to validate
     ///   (the relay already vouches for the packet origin), so the
     ///   "validation" itself has no security meaning. However, the retry
     ///   still imposes a real cost on the client: an extra round trip
     ///   through the relay plus the work of sending a fresh ClientHello
-    ///   with the token. This filters out spray-and-pray clients that
-    ///   don't bother to handle retry tokens, and adds latency for any
-    ///   client whose attempts you want to slow down. The next
+    ///   with the token. This filters out adversarial clients that
+    ///   don't bother to handle retry tokens, and adds latency before
+    ///   we get to the more expensive part of the handshake. The next
     ///   [`Incoming`] for that flow will also have
     ///   [`Incoming::remote_addr_validated`] set to `true`, but again,
     ///   that just means the client cooperated with the retry.
@@ -566,10 +566,11 @@ impl RouterBuilder {
                             match filter(&incoming) {
                                 IncomingFilterOutcome::Accept => {}
                                 IncomingFilterOutcome::Retry => {
-                                    debug_assert!(
-                                        !incoming.remote_addr_validated(),
-                                        "filter returned Retry for an already validated connection",
-                                    );
+                                    if !incoming.remote_addr_validated() {
+                                        warn!(
+                                            "filter returned Retry for an already validated connection",
+                                        );
+                                    }
                                     if let Err(err) = incoming.retry() {
                                         err.into_incoming().refuse();
                                     }
@@ -951,9 +952,16 @@ mod tests {
         #[tokio::test]
         #[traced_test]
         async fn addr_retry() -> Result {
-            let (r1, e2, addr) = direct_pair(|_| IncomingFilterOutcome::Retry).await?;
-            // Server sends retry (unvalidated), then refuses (validated).
-            assert!(e2.connect(addr, ECHO_ALPN).await.is_err());
+            let (r1, e2, addr) = direct_pair(|incoming| {
+                if !incoming.remote_addr_validated() {
+                    IncomingFilterOutcome::Retry
+                } else {
+                    IncomingFilterOutcome::Accept
+                }
+            })
+            .await?;
+            // Server sends retry (unvalidated), then accepts once validated.
+            assert!(e2.connect(addr, ECHO_ALPN).await.is_ok());
             r1.shutdown().await.anyerr()?;
             e2.close().await;
             Ok(())

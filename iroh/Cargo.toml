@@ -133,7 +133,6 @@ indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
 iroh-base = { version = "0.97.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 console = { version = "0.16" }
-governor = "0.9"
 
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
