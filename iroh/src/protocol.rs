@@ -108,7 +108,7 @@ pub struct RouterBuilder {
     endpoint: Endpoint,
     protocols: ProtocolMap,
     #[debug(skip)]
-    connection_filter: Option<ConnectionFilter>,
+    incoming_filter: Option<IncomingFilter>,
 }
 
 #[allow(missing_docs)]
@@ -162,7 +162,7 @@ impl From<quic::ClosedStream> for AcceptError {
     }
 }
 
-/// Verdict from a [`ConnectionFilter`] for an incoming connection.
+/// Verdict from a [`IncomingFilter`] for an incoming connection.
 ///
 /// The filter can accept the connection, send a retry token to validate
 /// the source address, actively refuse the connection, or silently drop it.
@@ -226,7 +226,7 @@ pub enum IncomingFilterOutcome {
 ///
 /// [`Incoming`]: crate::endpoint::Incoming
 /// [`Incoming::decrypt`]: crate::endpoint::Incoming::decrypt
-pub type ConnectionFilter =
+pub type IncomingFilter =
     Arc<dyn Fn(&crate::endpoint::Incoming) -> IncomingFilterOutcome + Send + Sync + 'static>;
 
 /// Handler for incoming connections.
@@ -467,13 +467,13 @@ impl RouterBuilder {
         Self {
             endpoint,
             protocols: ProtocolMap::default(),
-            connection_filter: None,
+            incoming_filter: None,
         }
     }
 
-    /// Sets a [`ConnectionFilter`] for the router.
-    pub fn connection_filter(mut self, filter: ConnectionFilter) -> Self {
-        self.connection_filter = Some(filter);
+    /// Sets a [`IncomingFilter`] for the router.
+    pub fn incoming_filter(mut self, filter: IncomingFilter) -> Self {
+        self.incoming_filter = Some(filter);
         self
     }
 
@@ -510,7 +510,7 @@ impl RouterBuilder {
             .collect::<Vec<_>>();
 
         let protocols = Arc::new(self.protocols);
-        let connection_filter = self.connection_filter;
+        let incoming_filter = self.incoming_filter;
         self.endpoint.set_alpns(alpns);
 
         let mut join_set = JoinSet::new();
@@ -562,7 +562,7 @@ impl RouterBuilder {
                             break; // Endpoint is closed.
                         };
 
-                        if let Some(filter) = &connection_filter {
+                        if let Some(filter) = &incoming_filter {
                             match filter(&incoming) {
                                 IncomingFilterOutcome::Accept => {}
                                 IncomingFilterOutcome::Retry => {
@@ -868,7 +868,7 @@ mod tests {
         Ok(())
     }
 
-    mod connection_filter {
+    mod incoming_filter {
         use std::{
             sync::{
                 Arc,
@@ -897,7 +897,7 @@ mod tests {
         {
             let e1 = Endpoint::bind(presets::Minimal).await?;
             let r1 = Router::builder(e1.clone())
-                .connection_filter(Arc::new(filter))
+                .incoming_filter(Arc::new(filter))
                 .accept(ECHO_ALPN, Echo)
                 .spawn();
             let addr = r1.endpoint().addr();
@@ -965,7 +965,7 @@ mod tests {
             let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
             let target_id = e2.id();
             let r1 = Router::builder(e1.clone())
-                .connection_filter(Arc::new(move |incoming: &crate::endpoint::Incoming| {
+                .incoming_filter(Arc::new(move |incoming: &crate::endpoint::Incoming| {
                     if let IncomingAddr::Relay { endpoint_id, .. } = incoming.remote_addr()
                         && endpoint_id == target_id
                     {
@@ -989,7 +989,7 @@ mod tests {
             let (e1, e2, relay_url, _guard) = relay_endpoints().await?;
             let target_id = e2.id();
             let r1 = Router::builder(e1.clone())
-                .connection_filter(Arc::new(move |incoming: &crate::endpoint::Incoming| {
+                .incoming_filter(Arc::new(move |incoming: &crate::endpoint::Incoming| {
                     if let IncomingAddr::Relay { endpoint_id, .. } = incoming.remote_addr()
                         && endpoint_id == target_id
                     {
@@ -1058,7 +1058,7 @@ mod tests {
                 (validated_count.clone(), unvalidated_count.clone());
 
             let r1 = Router::builder(e1.clone())
-                .connection_filter(Arc::new(move |incoming: &crate::endpoint::Incoming| {
+                .incoming_filter(Arc::new(move |incoming: &crate::endpoint::Incoming| {
                     if incoming.remote_addr_validated() {
                         validated_count2.fetch_add(1, Ordering::SeqCst);
                         IncomingFilterOutcome::Accept

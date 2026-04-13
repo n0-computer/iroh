@@ -225,5 +225,5 @@ name = "0rtt"
 required-features = []
 
 [[example]]
-name = "connection-filter"
+name = "incoming-filter"
 required-features = []
