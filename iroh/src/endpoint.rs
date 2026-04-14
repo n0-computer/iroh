@@ -1287,7 +1287,7 @@ impl Endpoint {
         loop {
             if value
                 .into_iter()
-                .filter_map(|x| x)
+                .flatten()
                 .any(|(_url, status)| status.is_connected())
             {
                 return;

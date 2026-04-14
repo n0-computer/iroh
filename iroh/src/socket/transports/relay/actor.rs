@@ -897,6 +897,8 @@ pub(crate) struct HomeRelayWatch {
     inner: Watchable<Option<(RelayUrl, HomeRelayStatus)>>,
 }
 
+pub(super) type HomeRelayWatcher = n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>>;
+
 impl Default for HomeRelayWatch {
     fn default() -> Self {
         Self {

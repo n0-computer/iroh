@@ -23,6 +23,11 @@ mod actor;
 pub(crate) use self::actor::{Config as RelayActorConfig, HomeRelayStatus, HomeRelayWatch};
 use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
 
+type RelayAddrWatcher = n0_watcher::Map<
+    n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>>,
+    Option<(RelayUrl, EndpointId)>,
+>;
+
 #[derive(Debug)]
 pub(crate) struct RelayTransport {
     /// Queue to receive datagrams from relays for [`noq::AsyncUdpSocket::poll_recv`].
@@ -162,12 +167,7 @@ impl RelayTransport {
         }
     }
 
-    pub(super) fn local_addr_watch(
-        &self,
-    ) -> n0_watcher::Map<
-        n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>>,
-        Option<(RelayUrl, EndpointId)>,
-    > {
+    pub(super) fn local_addr_watch(&self) -> RelayAddrWatcher {
         let my_endpoint_id = self.my_endpoint_id;
         self.my_relay
             .watch()
