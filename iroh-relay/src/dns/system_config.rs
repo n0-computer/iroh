@@ -41,7 +41,6 @@ pub(super) struct SystemDnsConfig {
     /// When resolving a short hostname (one with fewer dots than `ndots`,
     /// default 1), the resolver should try appending each search domain
     /// before querying the bare name.
-    ///
     pub(super) search_domains: Vec<String>,
 }
 
@@ -161,15 +160,12 @@ fn parse_resolv_conf(content: &str) -> SystemDnsConfig {
                     // Try parsing as SocketAddr first (supports custom ports like
                     // 8.8.8.8:5353 or [::1]:5353), then fall back to IpAddr with
                     // the default DNS port.
-                    let addr = addr_str
-                        .parse::<SocketAddr>()
-                        .ok()
-                        .or_else(|| {
-                            addr_str
-                                .parse::<IpAddr>()
-                                .ok()
-                                .map(|ip| SocketAddr::new(ip, DNS_PORT))
-                        });
+                    let addr = addr_str.parse::<SocketAddr>().ok().or_else(|| {
+                        addr_str
+                            .parse::<IpAddr>()
+                            .ok()
+                            .map(|ip| SocketAddr::new(ip, DNS_PORT))
+                    });
                     if let Some(addr) = addr {
                         servers.push((addr, DnsProtocol::Udp));
                     }
@@ -211,7 +207,12 @@ mod tests {
     fn parse_basic() {
         let config = parse_resolv_conf("nameserver 8.8.8.8\nnameserver 8.8.4.4\n");
         assert_eq!(ips(&config), [ipv4(8, 8, 8, 8), ipv4(8, 8, 4, 4)]);
-        assert!(config.nameservers.iter().all(|(_, p)| *p == DnsProtocol::Udp));
+        assert!(
+            config
+                .nameservers
+                .iter()
+                .all(|(_, p)| *p == DnsProtocol::Udp)
+        );
     }
 
     #[test]
@@ -288,15 +289,17 @@ mod tests {
     fn parse_custom_port() {
         let config = parse_resolv_conf("nameserver 8.8.8.8:5353\nnameserver 1.1.1.1\n");
         assert_eq!(config.nameservers.len(), 2);
-        assert_eq!(config.nameservers[0].0, "8.8.8.8:5353".parse::<SocketAddr>().unwrap());
+        assert_eq!(
+            config.nameservers[0].0,
+            "8.8.8.8:5353".parse::<SocketAddr>().unwrap()
+        );
         assert_eq!(config.nameservers[1].0.port(), DNS_PORT);
     }
 
     #[test]
     fn search_overrides_domain() {
-        let config = parse_resolv_conf(
-            "domain old.com\nsearch new.com other.com\nnameserver 8.8.8.8\n",
-        );
+        let config =
+            parse_resolv_conf("domain old.com\nsearch new.com other.com\nnameserver 8.8.8.8\n");
         // Last directive wins, per resolv.conf(5).
         assert_eq!(config.search_domains, ["new.com", "other.com"]);
     }

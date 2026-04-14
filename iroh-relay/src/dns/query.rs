@@ -97,7 +97,11 @@ fn check_response(packet: &Packet, expected_id: u16) -> Result<(), DnsError> {
 /// Check whether a resource record's name matches the queried name or its
 /// CNAME-resolved canonical name. If no question section is present
 /// (shouldn't happen in practice), accept all records.
-fn name_matches(rr_name: &Name<'_>, qname: Option<&Name<'_>>, canonical: Option<&Name<'_>>) -> bool {
+fn name_matches(
+    rr_name: &Name<'_>,
+    qname: Option<&Name<'_>>,
+    canonical: Option<&Name<'_>>,
+) -> bool {
     match qname {
         Some(q) => rr_name == q || canonical.is_some_and(|c| rr_name == c),
         None => true, // No question section -- accept all matching record types.
@@ -121,11 +125,11 @@ pub(super) fn parse_a_response(
     let mut addrs = Vec::new();
     let mut min_ttl = u32::MAX;
     for rr in &packet.answers {
-        if let RData::A(A { address }) = &rr.rdata {
-            if name_matches(&rr.name, qname.as_ref(), canonical.as_ref()) {
-                addrs.push(Ipv4Addr::from(*address));
-                min_ttl = min_ttl.min(rr.ttl);
-            }
+        if let RData::A(A { address }) = &rr.rdata
+            && name_matches(&rr.name, qname.as_ref(), canonical.as_ref())
+        {
+            addrs.push(Ipv4Addr::from(*address));
+            min_ttl = min_ttl.min(rr.ttl);
         }
     }
     if min_ttl == u32::MAX {
@@ -148,11 +152,11 @@ pub(super) fn parse_aaaa_response(
     let mut addrs = Vec::new();
     let mut min_ttl = u32::MAX;
     for rr in &packet.answers {
-        if let RData::AAAA(AAAA { address }) = &rr.rdata {
-            if name_matches(&rr.name, qname.as_ref(), canonical.as_ref()) {
-                addrs.push(Ipv6Addr::from(*address));
-                min_ttl = min_ttl.min(rr.ttl);
-            }
+        if let RData::AAAA(AAAA { address }) = &rr.rdata
+            && name_matches(&rr.name, qname.as_ref(), canonical.as_ref())
+        {
+            addrs.push(Ipv6Addr::from(*address));
+            min_ttl = min_ttl.min(rr.ttl);
         }
     }
     if min_ttl == u32::MAX {
@@ -175,12 +179,12 @@ pub(super) fn parse_txt_response(
     let mut records = Vec::new();
     let mut min_ttl = u32::MAX;
     for rr in &packet.answers {
-        if let RData::TXT(txt) = &rr.rdata {
-            if name_matches(&rr.name, qname.as_ref(), canonical.as_ref()) {
-                let record = extract_txt_record_data(txt);
-                records.push(record);
-                min_ttl = min_ttl.min(rr.ttl);
-            }
+        if let RData::TXT(txt) = &rr.rdata
+            && name_matches(&rr.name, qname.as_ref(), canonical.as_ref())
+        {
+            let record = extract_txt_record_data(txt);
+            records.push(record);
+            min_ttl = min_ttl.min(rr.ttl);
         }
     }
     if min_ttl == u32::MAX {
@@ -218,7 +222,7 @@ mod tests {
 
     use simple_dns::{
         CLASS, Name, Packet, PacketFlag, QCLASS, QTYPE, Question, ResourceRecord,
-        rdata::{A, RData, CNAME},
+        rdata::{A, CNAME, RData},
     };
 
     use super::*;
@@ -244,7 +248,9 @@ mod tests {
                 Name::new_unchecked(name),
                 CLASS::IN,
                 300,
-                RData::A(A { address: u32::from(*addr) }),
+                RData::A(A {
+                    address: u32::from(*addr),
+                }),
             ));
         }
         packet.build_bytes_vec().unwrap()
@@ -252,12 +258,7 @@ mod tests {
 
     /// Build a response containing a CNAME from `alias` -> `canonical`, plus
     /// A records under the canonical name (the common "both in one response" case).
-    fn cname_with_a_response(
-        id: u16,
-        alias: &str,
-        canonical: &str,
-        addrs: &[Ipv4Addr],
-    ) -> Vec<u8> {
+    fn cname_with_a_response(id: u16, alias: &str, canonical: &str, addrs: &[Ipv4Addr]) -> Vec<u8> {
         let mut packet = Packet::new_reply(id);
         packet.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
         packet.questions.push(Question::new(
@@ -279,7 +280,9 @@ mod tests {
                 Name::new_unchecked(canonical),
                 CLASS::IN,
                 300,
-                RData::A(A { address: u32::from(*addr) }),
+                RData::A(A {
+                    address: u32::from(*addr),
+                }),
             ));
         }
         packet.build_bytes_vec().unwrap()
@@ -332,7 +335,10 @@ mod tests {
             &[Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)],
         );
         let (addrs, _) = parse_a_response(&resp, id).unwrap();
-        assert_eq!(addrs, [Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)]);
+        assert_eq!(
+            addrs,
+            [Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)]
+        );
     }
 
     #[test]
@@ -363,7 +369,9 @@ mod tests {
             Name::new_unchecked("real.example.com"),
             CLASS::IN,
             300,
-            RData::A(A { address: u32::from(Ipv4Addr::new(5, 6, 7, 8)) }),
+            RData::A(A {
+                address: u32::from(Ipv4Addr::new(5, 6, 7, 8)),
+            }),
         ));
         let resp = packet.build_bytes_vec().unwrap();
         let (addrs, _) = parse_a_response(&resp, id).unwrap();

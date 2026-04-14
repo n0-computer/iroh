@@ -106,10 +106,10 @@ pub enum DnsError {
     },
     #[error("DNS server returned error: {rcode}")]
     ServerError { rcode: String },
-    #[error("domain name does not exist (NXDOMAIN)")]
-    NxDomain {},
     #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
+    #[error("domain name does not exist (NXDOMAIN)")]
+    NxDomain {},
 }
 
 /// Potential errors related to DNS endpoint address lookups.

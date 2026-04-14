@@ -11,7 +11,6 @@ use n0_future::{
     FuturesUnorderedBounded, StreamExt,
     time::{self, Duration},
 };
-use rustls::ClientConfig;
 use simple_dns::TYPE;
 use tracing::{debug, trace};
 
@@ -41,7 +40,8 @@ const DEFAULT_NDOTS: usize = 1;
 pub(super) struct SimpleDnsResolver {
     nameservers: Vec<(SocketAddr, DnsProtocol)>,
     search_domains: Vec<String>,
-    tls_config: Option<Arc<ClientConfig>>,
+    #[cfg(with_crypto_provider)]
+    tls_config: Option<Arc<rustls::ClientConfig>>,
     /// Lazily initialized, cached reqwest client for DNS-over-HTTPS queries.
     https_client: tokio::sync::Mutex<Option<reqwest::Client>>,
     cache: std::sync::RwLock<DnsCache>,
@@ -62,6 +62,7 @@ impl SimpleDnsResolver {
         for domain in &search_domains {
             trace!(%domain, "search domain");
         }
+        #[cfg(with_crypto_provider)]
         let tls_config = builder
             .tls_client_config
             .as_ref()
@@ -69,6 +70,7 @@ impl SimpleDnsResolver {
         Self {
             nameservers,
             search_domains,
+            #[cfg(with_crypto_provider)]
             tls_config,
             https_client: tokio::sync::Mutex::new(None),
             cache: std::sync::RwLock::new(DnsCache::new()),
@@ -137,7 +139,11 @@ impl SimpleDnsResolver {
         if let Some(client) = guard.as_ref() {
             return Ok(client.clone());
         }
-        let client = transport::build_https_client(self.tls_config.as_ref())?;
+        #[cfg(with_crypto_provider)]
+        let tls = self.tls_config.as_ref();
+        #[cfg(not(with_crypto_provider))]
+        let tls = None;
+        let client = transport::build_https_client(tls)?;
         *guard = Some(client.clone());
         Ok(client)
     }
@@ -146,7 +152,7 @@ impl SimpleDnsResolver {
     async fn with_timeout<T>(
         fut: impl std::future::Future<Output = Result<T, DnsError>>,
     ) -> Result<T, DnsError> {
-        Ok(time::timeout(NAMESERVER_TIMEOUT, fut).await??)
+        time::timeout(NAMESERVER_TIMEOUT, fut).await?
     }
 
     /// Query a single nameserver, with UDP retry and truncation fallback.
@@ -164,7 +170,8 @@ impl SimpleDnsResolver {
                     match Self::with_timeout(transport::udp_query(addr, query_bytes)).await {
                         Ok(resp) if query::is_truncated(&resp) => {
                             debug!(%addr, "UDP response truncated, retrying over TCP");
-                            return Self::with_timeout(transport::tcp_query(addr, query_bytes)).await;
+                            return Self::with_timeout(transport::tcp_query(addr, query_bytes))
+                                .await;
                         }
                         Ok(resp) => return Ok(resp),
                         Err(e) => {
@@ -175,9 +182,7 @@ impl SimpleDnsResolver {
                 }
                 Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
             }
-            DnsProtocol::Tcp => {
-                Self::with_timeout(transport::tcp_query(addr, query_bytes)).await
-            }
+            DnsProtocol::Tcp => Self::with_timeout(transport::tcp_query(addr, query_bytes)).await,
             #[cfg(with_crypto_provider)]
             DnsProtocol::Tls => {
                 let tls_config = self.tls_config.as_ref().ok_or_else(|| {
@@ -299,12 +304,7 @@ impl SimpleDnsResolver {
                     if !addrs.is_empty() {
                         debug!(%host, count = addrs.len(), ttl, "resolved A record");
                         if let Ok(mut cache) = self.cache.write() {
-                            cache.insert(
-                                &host,
-                                QueryType::A,
-                                CachedRecord::A(addrs.clone()),
-                                ttl,
-                            );
+                            cache.insert(&host, QueryType::A, CachedRecord::A(addrs.clone()), ttl);
                         }
                         return Ok(addrs.into_iter());
                     }
@@ -406,11 +406,14 @@ impl SimpleDnsResolver {
         let (nameservers, search_domains) = Self::build_config(&self.builder);
         self.nameservers = nameservers;
         self.search_domains = search_domains;
-        self.tls_config = self
-            .builder
-            .tls_client_config
-            .as_ref()
-            .map(|c| Arc::new(c.clone()));
+        #[cfg(with_crypto_provider)]
+        {
+            self.tls_config = self
+                .builder
+                .tls_client_config
+                .as_ref()
+                .map(|c| Arc::new(c.clone()));
+        }
         // Clear cached HTTPS client so it gets rebuilt with the new TLS config on next use
         *self.https_client.get_mut() = None;
         if let Ok(mut cache) = self.cache.write() {
@@ -521,8 +524,7 @@ mod tests {
     }
 
     mod search_names {
-        use super::super::*;
-        use super::super::super::Builder;
+        use super::super::{super::Builder, *};
 
         fn resolver_with_search(domains: &[&str]) -> SimpleDnsResolver {
             let mut r = SimpleDnsResolver::new(Builder::default());
@@ -539,7 +541,10 @@ mod tests {
         #[test]
         fn fqdn_bypasses_search() {
             let r = resolver_with_search(&["example.com"]);
-            assert_eq!(r.search_names("myhost.example.com."), vec!["myhost.example.com."]);
+            assert_eq!(
+                r.search_names("myhost.example.com."),
+                vec!["myhost.example.com."]
+            );
         }
 
         #[test]
@@ -565,10 +570,7 @@ mod tests {
         #[test]
         fn multi_dot_name_tries_bare_first() {
             let r = resolver_with_search(&["example.com"]);
-            assert_eq!(
-                r.search_names("a.b.c"),
-                vec!["a.b.c", "a.b.c.example.com"]
-            );
+            assert_eq!(r.search_names("a.b.c"), vec!["a.b.c", "a.b.c.example.com"]);
         }
     }
 }
