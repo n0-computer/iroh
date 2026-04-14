@@ -71,7 +71,16 @@ impl DnsCache {
     }
 
     /// Insert a record into the cache with the given TTL.
-    /// A TTL of 0 means don't cache (negative caching disabled).
+    ///
+    /// A TTL of 0 means don't cache. This also means that negative responses
+    /// (NXDOMAIN, NODATA) are never cached, since empty results have TTL 0.
+    /// This matches the old hickory-resolver configuration which set
+    /// `negative_max_ttl = Some(Duration::ZERO)`.
+    ///
+    /// **Known limitation:** Without negative caching, repeated queries for
+    /// non-existent domains always hit the network. Under high concurrency
+    /// this can become a thundering herd. A future improvement could cache
+    /// negative results for a short duration (e.g. 5-10 seconds).
     pub(super) fn insert(&mut self, host: &str, qtype: QueryType, record: CachedRecord, ttl: u32) {
         if ttl == 0 {
             return;

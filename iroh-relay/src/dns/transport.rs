@@ -7,10 +7,17 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::DnsError;
 
-// TODO: Consider caching TCP and TLS connections per nameserver for connection reuse,
-// similar to how hickory-resolver multiplexes queries over persistent connections.
-// UDP sockets are intentionally not reused (new random source port per query prevents
-// cache poisoning).
+// Known limitation: TCP and TLS connections are not reused across queries.
+// Each query opens a fresh connection, which means a full TLS handshake per
+// DNS-over-TLS query. This adds significant latency for DoT/DoH workloads.
+// The default UDP-only configuration is not affected.
+//
+// A future improvement could maintain a per-nameserver connection pool for
+// TCP/TLS, similar to how hickory-resolver multiplexes queries over
+// persistent connections.
+//
+// UDP sockets are intentionally not reused (new random source port per query
+// prevents cache poisoning).
 
 /// Send a DNS query over UDP and receive the response.
 ///
