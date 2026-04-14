@@ -2,6 +2,7 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
+use n0_error::e;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::DnsError;
@@ -12,6 +13,10 @@ use super::DnsError;
 // cache poisoning).
 
 /// Send a DNS query over UDP and receive the response.
+///
+/// Each query uses a fresh socket with a random ephemeral source port to
+/// prevent cache poisoning. The response source address is validated against
+/// the target nameserver.
 pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, DnsError> {
     let bind_addr = SocketAddr::new(
         if addr.is_ipv6() {
@@ -25,7 +30,15 @@ pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
     socket.send_to(query, addr).await?;
 
     let mut buf = vec![0u8; 4096];
-    let len = socket.recv(&mut buf).await?;
+    let (len, src) = socket.recv_from(&mut buf).await?;
+    if src != addr {
+        return Err(e!(DnsError::Transport {
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("DNS response from unexpected source {src}, expected {addr}"),
+            ),
+        }));
+    }
     buf.truncate(len);
     Ok(buf)
 }
