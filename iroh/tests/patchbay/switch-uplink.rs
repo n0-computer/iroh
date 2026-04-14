@@ -22,45 +22,22 @@ use tracing::info;
 
 use crate::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
 
-/// Describes which IP family transition the switching side makes.
-///
-/// Each variant determines the router presets for the "from" and "to" routers.
-/// For example, [`V4ToV6`](Self::V4ToV6) starts the switcher behind a v4-only
-/// Home NAT and replugs to a v6-only ISP router.
-#[derive(Debug, Clone, Copy)]
-enum SwitchKind {
-    V4ToV4,
-    V4ToV6,
-    V6ToV4,
-    V6ToV6,
-    DualToDual,
+fn router_preset(ip: IpSupport) -> RouterPreset {
+    match ip {
+        IpSupport::V4Only => RouterPreset::Home,
+        IpSupport::V6Only => RouterPreset::IspV6,
+        IpSupport::DualStack => RouterPreset::Home,
+    }
 }
 
-impl SwitchKind {
-    /// Returns the `(preset, ip_support)` pairs for the "from" and "to" routers.
-    fn router_configs(self) -> ((RouterPreset, IpSupport), (RouterPreset, IpSupport)) {
-        use IpSupport::*;
-        use RouterPreset::*;
-        match self {
-            Self::V4ToV4 => ((Home, V4Only), (Home, V4Only)),
-            Self::V4ToV6 => ((Home, V4Only), (IspV6, V6Only)),
-            Self::V6ToV4 => ((IspV6, V6Only), (Home, V4Only)),
-            Self::V6ToV6 => ((IspV6, V6Only), (IspV6, V6Only)),
-            Self::DualToDual => ((Home, DualStack), (Home, DualStack)),
-        }
+fn path_switched(to: IpSupport, first: &TransportAddr, new: &TransportAddr) -> bool {
+    if new == first {
+        return false;
     }
-
-    /// Checks whether the selected path has changed as expected after the switch.
-    ///
-    /// For cross-family switches (v4-to-v6, v6-to-v4), we verify the new path
-    /// uses the target address family. For same-family switches, we verify the
-    /// remote address changed (different NAT, different public IP).
-    fn path_switched(self, first: &TransportAddr, new: &TransportAddr) -> bool {
-        match self {
-            Self::V4ToV6 => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv6()),
-            Self::V6ToV4 => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv4()),
-            _ => matches!(new, TransportAddr::Ip(_)) && new != first,
-        }
+    match to {
+        IpSupport::V4Only => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv4()),
+        IpSupport::V6Only => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv6()),
+        IpSupport::DualStack => matches!(new, TransportAddr::Ip(_)),
     }
 }
 
@@ -68,13 +45,13 @@ impl SwitchKind {
 ///
 /// The topology has three routers:
 /// - "observer": dual-stack Home NAT for the non-switching side
-/// - "from": the switching side's initial router (determined by `kind`)
-/// - "to": the router the switching side replugs to (determined by `kind`)
+/// - "from": the switching side's initial router (determined by `from`)
+/// - "to": the router the switching side replugs to (determined by `to`)
 ///
 /// After both sides holepunch and exchange a ping, the switching side replugs
 /// from "from" to "to". The observer waits for the selected path to change,
 /// then both sides exchange another ping to confirm the new path works.
-async fn run_switch_uplink(switching_side: Side, kind: SwitchKind) -> Result {
+async fn run_switch_uplink(switching_side: Side, from: IpSupport, to: IpSupport) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let timeout = Duration::from_secs(30);
 
@@ -86,18 +63,17 @@ async fn run_switch_uplink(switching_side: Side, kind: SwitchKind) -> Result {
         .await?
         .id();
 
-    let ((from_preset, from_ip), (to_preset, to_ip)) = kind.router_configs();
     let from_id = lab
         .add_router("from")
-        .preset(from_preset)
-        .ip_support(from_ip)
+        .preset(router_preset(from))
+        .ip_support(from)
         .build()
         .await?
         .id();
     let to_id = lab
         .add_router("to")
-        .preset(to_preset)
-        .ip_support(to_ip)
+        .preset(router_preset(to))
+        .ip_support(to)
         .build()
         .await?
         .id();
@@ -117,7 +93,7 @@ async fn run_switch_uplink(switching_side: Side, kind: SwitchKind) -> Result {
         .build()
         .await?;
 
-    info!(?switching_side, ?kind, "switch uplink test start");
+    info!(?switching_side, ?from, ?to, "switch uplink test start");
 
     /// The switching side: holepunches, pings, replugs to a new router, pings again.
     ///
@@ -152,7 +128,7 @@ async fn run_switch_uplink(switching_side: Side, kind: SwitchKind) -> Result {
     async fn do_observe(
         conn: iroh::endpoint::Connection,
         timeout: Duration,
-        kind: SwitchKind,
+        to: IpSupport,
     ) -> Result {
         let mut paths = conn.paths();
         let first = paths.wait_ip(timeout).await.context("initial holepunch")?;
@@ -161,7 +137,7 @@ async fn run_switch_uplink(switching_side: Side, kind: SwitchKind) -> Result {
             .context("ping_open before switch")?;
         paths
             .wait_selected(timeout, |p| {
-                kind.path_switched(first.remote_addr(), p.remote_addr())
+                path_switched(to, first.remote_addr(), p.remote_addr())
             })
             .await
             .context("path did not switch")?;
@@ -176,7 +152,7 @@ async fn run_switch_uplink(switching_side: Side, kind: SwitchKind) -> Result {
     let pair = match switching_side {
         Side::Client => pair
             .server(server, async move |_dev, _ep, conn| {
-                do_observe(conn, timeout, kind).await
+                do_observe(conn, timeout, to).await
             })
             .client(client, async move |dev, _ep, conn| {
                 do_switch(dev, conn, timeout, to_id).await
@@ -186,7 +162,7 @@ async fn run_switch_uplink(switching_side: Side, kind: SwitchKind) -> Result {
                 do_switch(dev, conn, timeout, to_id).await
             })
             .client(client, async move |_dev, _ep, conn| {
-                do_observe(conn, timeout, kind).await
+                do_observe(conn, timeout, to).await
             }),
     };
     pair.run().await?;
@@ -200,31 +176,55 @@ async fn run_switch_uplink(switching_side: Side, kind: SwitchKind) -> Result {
 #[tokio::test]
 #[traced_test]
 async fn switch_client_v4_to_v4() -> Result {
-    run_switch_uplink(Side::Client, SwitchKind::V4ToV4).await
+    run_switch_uplink(Side::Client, IpSupport::V4Only, IpSupport::V4Only).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn switch_client_v4_to_v6() -> Result {
-    run_switch_uplink(Side::Client, SwitchKind::V4ToV6).await
+    run_switch_uplink(Side::Client, IpSupport::V4Only, IpSupport::V6Only).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn switch_client_v4_to_dual() -> Result {
+    run_switch_uplink(Side::Client, IpSupport::V4Only, IpSupport::DualStack).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn switch_client_v6_to_v4() -> Result {
-    run_switch_uplink(Side::Client, SwitchKind::V6ToV4).await
+    run_switch_uplink(Side::Client, IpSupport::V6Only, IpSupport::V4Only).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn switch_client_v6_to_v6() -> Result {
-    run_switch_uplink(Side::Client, SwitchKind::V6ToV6).await
+    run_switch_uplink(Side::Client, IpSupport::V6Only, IpSupport::V6Only).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn switch_client_v6_to_dual() -> Result {
+    run_switch_uplink(Side::Client, IpSupport::V6Only, IpSupport::DualStack).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn switch_client_dual_to_v4() -> Result {
+    run_switch_uplink(Side::Client, IpSupport::DualStack, IpSupport::V4Only).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn switch_client_dual_to_v6() -> Result {
+    run_switch_uplink(Side::Client, IpSupport::DualStack, IpSupport::V6Only).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn switch_client_dual_to_dual() -> Result {
-    run_switch_uplink(Side::Client, SwitchKind::DualToDual).await
+    run_switch_uplink(Side::Client, IpSupport::DualStack, IpSupport::DualStack).await
 }
 
 // --- Server switches uplink ---
@@ -232,29 +232,53 @@ async fn switch_client_dual_to_dual() -> Result {
 #[tokio::test]
 #[traced_test]
 async fn switch_server_v4_to_v4() -> Result {
-    run_switch_uplink(Side::Server, SwitchKind::V4ToV4).await
+    run_switch_uplink(Side::Server, IpSupport::V4Only, IpSupport::V4Only).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn switch_server_v4_to_v6() -> Result {
-    run_switch_uplink(Side::Server, SwitchKind::V4ToV6).await
+    run_switch_uplink(Side::Server, IpSupport::V4Only, IpSupport::V6Only).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn switch_server_v4_to_dual() -> Result {
+    run_switch_uplink(Side::Server, IpSupport::V4Only, IpSupport::DualStack).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn switch_server_v6_to_v4() -> Result {
-    run_switch_uplink(Side::Server, SwitchKind::V6ToV4).await
+    run_switch_uplink(Side::Server, IpSupport::V6Only, IpSupport::V4Only).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn switch_server_v6_to_v6() -> Result {
-    run_switch_uplink(Side::Server, SwitchKind::V6ToV6).await
+    run_switch_uplink(Side::Server, IpSupport::V6Only, IpSupport::V6Only).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn switch_server_v6_to_dual() -> Result {
+    run_switch_uplink(Side::Server, IpSupport::V6Only, IpSupport::DualStack).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn switch_server_dual_to_v4() -> Result {
+    run_switch_uplink(Side::Server, IpSupport::DualStack, IpSupport::V4Only).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn switch_server_dual_to_v6() -> Result {
+    run_switch_uplink(Side::Server, IpSupport::DualStack, IpSupport::V6Only).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn switch_server_dual_to_dual() -> Result {
-    run_switch_uplink(Side::Server, SwitchKind::DualToDual).await
+    run_switch_uplink(Side::Server, IpSupport::DualStack, IpSupport::DualStack).await
 }
