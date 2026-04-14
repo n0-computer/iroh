@@ -671,8 +671,8 @@
 <a href=#671 id=671 data-nosnippet>671</a>    #[traced_test]
 <a href=#672 id=672 data-nosnippet>672</a>    </span><span class="kw">async fn </span>test_client_v1_protocol() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#673 id=673 data-nosnippet>673</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42u64</span>);
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">let </span>a_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">let </span>b_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">let </span>a_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
+<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">let </span>b_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#676 id=676 data-nosnippet>676</a>
 <a href=#677 id=677 data-nosnippet>677</a>        <span class="kw">let </span>(builder_a, <span class="kw-2">mut </span>a_rw) = test_client_builder(a_key, ProtocolVersion::V1);
 <a href=#678 id=678 data-nosnippet>678</a>
@@ -700,8 +700,8 @@
 <a href=#700 id=700 data-nosnippet>700</a>    #[traced_test]
 <a href=#701 id=701 data-nosnippet>701</a>    </span><span class="kw">async fn </span>test_client_v2_protocol() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#702 id=702 data-nosnippet>702</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42u64</span>);
-<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">let </span>a_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span>b_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">let </span>a_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
+<a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span>b_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#705 id=705 data-nosnippet>705</a>
 <a href=#706 id=706 data-nosnippet>706</a>        <span class="kw">let </span>(builder_a, <span class="kw-2">mut </span>a_rw) = test_client_builder(a_key, ProtocolVersion::V2);
 <a href=#707 id=707 data-nosnippet>707</a>
@@ -730,7 +730,7 @@
 <a href=#730 id=730 data-nosnippet>730</a>    #[traced_test]
 <a href=#731 id=731 data-nosnippet>731</a>    </span><span class="kw">async fn </span>test_duplicate_endpoint_v1_receives_v1health() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#732 id=732 data-nosnippet>732</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42u64</span>);
-<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span>key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span>key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#734 id=734 data-nosnippet>734</a>
 <a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">let </span>(builder_first, <span class="kw-2">mut </span>first_rw) = test_client_builder(key, ProtocolVersion::V1);
 <a href=#736 id=736 data-nosnippet>736</a>
@@ -758,7 +758,7 @@
 <a href=#758 id=758 data-nosnippet>758</a>    #[traced_test]
 <a href=#759 id=759 data-nosnippet>759</a>    </span><span class="kw">async fn </span>test_duplicate_endpoint_v2_receives_health() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42u64</span>);
-<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()).public();
 <a href=#762 id=762 data-nosnippet>762</a>
 <a href=#763 id=763 data-nosnippet>763</a>        <span class="kw">let </span>(builder_first, <span class="kw-2">mut </span>first_rw) = test_client_builder(key, ProtocolVersion::V2);
 <a href=#764 id=764 data-nosnippet>764</a>
