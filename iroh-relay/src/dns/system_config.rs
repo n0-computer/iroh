@@ -42,8 +42,6 @@ pub(super) struct SystemDnsConfig {
     /// default 1), the resolver should try appending each search domain
     /// before querying the bare name.
     ///
-    /// Currently parsed but not yet applied by the resolver.
-    #[allow(dead_code)]
     pub(super) search_domains: Vec<String>,
 }
 
@@ -60,11 +58,6 @@ pub(super) fn system_config() -> SystemDnsConfig {
             search_domains: Vec::new(),
         },
     }
-}
-
-/// Backwards-compatible helper that only returns nameservers.
-pub(super) fn system_nameservers() -> Vec<(SocketAddr, DnsProtocol)> {
-    system_config().nameservers
 }
 
 /// Read system DNS configuration using platform-specific mechanisms.

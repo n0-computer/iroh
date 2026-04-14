@@ -33,9 +33,14 @@ const NAMESERVER_STAGGER: Duration = Duration::from_millis(100);
 /// UDP is unreliable, so a single dropped packet shouldn't be fatal.
 const UDP_ATTEMPTS: usize = 2;
 
+/// Default value for `ndots`: hostnames with at least this many dots are
+/// tried as absolute names first, before appending search domains.
+const DEFAULT_NDOTS: usize = 1;
+
 #[derive(Debug)]
 pub(super) struct SimpleDnsResolver {
     nameservers: Vec<(SocketAddr, DnsProtocol)>,
+    search_domains: Vec<String>,
     tls_config: Option<Arc<ClientConfig>>,
     /// Lazily initialized, cached reqwest client for DNS-over-HTTPS queries.
     https_client: tokio::sync::Mutex<Option<reqwest::Client>>,
@@ -45,10 +50,17 @@ pub(super) struct SimpleDnsResolver {
 
 impl SimpleDnsResolver {
     pub(super) fn new(builder: Builder) -> Self {
-        let nameservers = Self::build_nameservers(&builder);
-        debug!(count = nameservers.len(), "configured DNS nameservers");
+        let (nameservers, search_domains) = Self::build_config(&builder);
+        debug!(
+            nameservers = nameservers.len(),
+            search_domains = search_domains.len(),
+            "configured DNS resolver"
+        );
         for (addr, proto) in &nameservers {
             trace!(%addr, ?proto, "nameserver");
+        }
+        for domain in &search_domains {
+            trace!(%domain, "search domain");
         }
         let tls_config = builder
             .tls_client_config
@@ -56,6 +68,7 @@ impl SimpleDnsResolver {
             .map(|c: &ClientConfig| Arc::new(c.clone()));
         Self {
             nameservers,
+            search_domains,
             tls_config,
             https_client: tokio::sync::Mutex::new(None),
             cache: std::sync::RwLock::new(DnsCache::new()),
@@ -63,11 +76,14 @@ impl SimpleDnsResolver {
         }
     }
 
-    fn build_nameservers(builder: &Builder) -> Vec<(SocketAddr, DnsProtocol)> {
+    fn build_config(builder: &Builder) -> (Vec<(SocketAddr, DnsProtocol)>, Vec<String>) {
         let mut nameservers = Vec::new();
+        let mut search_domains = Vec::new();
 
         if builder.use_system_defaults {
-            nameservers.extend(system_config::system_nameservers());
+            let config = system_config::system_config();
+            nameservers.extend(config.nameservers);
+            search_domains = config.search_domains;
         }
 
         nameservers.extend(builder.nameservers.iter().copied());
@@ -76,7 +92,41 @@ impl SimpleDnsResolver {
             nameservers.extend(system_config::fallback_nameservers());
         }
 
-        nameservers
+        (nameservers, search_domains)
+    }
+
+    /// Returns the list of candidate names to try for a given hostname,
+    /// applying search domain expansion per resolv.conf(5) semantics.
+    ///
+    /// - If the name ends with `.` (FQDN), it is used as-is.
+    /// - If the name has >= `ndots` dots, try the bare name first, then
+    ///   each search domain suffix.
+    /// - If the name has < `ndots` dots, try each search domain suffix
+    ///   first, then the bare name.
+    fn search_names(&self, host: &str) -> Vec<String> {
+        // Explicit FQDN: no search domain expansion.
+        if host.ends_with('.') || self.search_domains.is_empty() {
+            return vec![host.to_string()];
+        }
+
+        let dot_count = host.chars().filter(|&c| c == '.').count();
+        let mut names = Vec::with_capacity(self.search_domains.len() + 1);
+
+        if dot_count >= DEFAULT_NDOTS {
+            // Likely absolute -- try bare name first.
+            names.push(host.to_string());
+            for domain in &self.search_domains {
+                names.push(format!("{host}.{domain}"));
+            }
+        } else {
+            // Short name -- try search domains first.
+            for domain in &self.search_domains {
+                names.push(format!("{host}.{domain}"));
+            }
+            names.push(host.to_string());
+        }
+
+        names
     }
 
     /// Returns a clone of the cached reqwest client, creating it on first use.
@@ -302,16 +352,34 @@ impl SimpleDnsResolver {
             return Ok(addrs.into_iter());
         }
 
-        trace!(%host, "resolving A record");
-        let (response, id) = self.send_query_following_cnames(&host, TYPE::A).await?;
-        let (addrs, ttl) = query::parse_a_response(&response, id)?;
-        debug!(%host, count = addrs.len(), ttl, "resolved A record");
-
-        if let Ok(mut cache) = self.cache.write() {
-            cache.insert(&host, QueryType::A, CachedRecord::A(addrs.clone()), ttl);
+        let mut last_err = None;
+        for name in self.search_names(&host) {
+            trace!(%name, "resolving A record");
+            match self.send_query_following_cnames(&name, TYPE::A).await {
+                Ok((response, id)) => {
+                    let (addrs, ttl) = query::parse_a_response(&response, id)?;
+                    if !addrs.is_empty() {
+                        debug!(%name, count = addrs.len(), ttl, "resolved A record");
+                        if let Ok(mut cache) = self.cache.write() {
+                            cache.insert(
+                                &host,
+                                QueryType::A,
+                                CachedRecord::A(addrs.clone()),
+                                ttl,
+                            );
+                        }
+                        return Ok(addrs.into_iter());
+                    }
+                }
+                Err(DnsError::NxDomain { .. }) => {
+                    trace!(%name, "NXDOMAIN, trying next search domain");
+                    last_err = Some(e!(DnsError::NxDomain));
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
         }
-
-        Ok(addrs.into_iter())
+        Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
     }
 
     pub(super) async fn lookup_ipv6(
@@ -325,21 +393,34 @@ impl SimpleDnsResolver {
             return Ok(addrs.into_iter());
         }
 
-        trace!(%host, "resolving AAAA record");
-        let (response, id) = self.send_query_following_cnames(&host, TYPE::AAAA).await?;
-        let (addrs, ttl) = query::parse_aaaa_response(&response, id)?;
-        debug!(%host, count = addrs.len(), ttl, "resolved AAAA record");
-
-        if let Ok(mut cache) = self.cache.write() {
-            cache.insert(
-                &host,
-                QueryType::AAAA,
-                CachedRecord::Aaaa(addrs.clone()),
-                ttl,
-            );
+        let mut last_err = None;
+        for name in self.search_names(&host) {
+            trace!(%name, "resolving AAAA record");
+            match self.send_query_following_cnames(&name, TYPE::AAAA).await {
+                Ok((response, id)) => {
+                    let (addrs, ttl) = query::parse_aaaa_response(&response, id)?;
+                    if !addrs.is_empty() {
+                        debug!(%name, count = addrs.len(), ttl, "resolved AAAA record");
+                        if let Ok(mut cache) = self.cache.write() {
+                            cache.insert(
+                                &host,
+                                QueryType::AAAA,
+                                CachedRecord::Aaaa(addrs.clone()),
+                                ttl,
+                            );
+                        }
+                        return Ok(addrs.into_iter());
+                    }
+                }
+                Err(DnsError::NxDomain { .. }) => {
+                    trace!(%name, "NXDOMAIN, trying next search domain");
+                    last_err = Some(e!(DnsError::NxDomain));
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
         }
-
-        Ok(addrs.into_iter())
+        Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
     }
 
     pub(super) async fn lookup_txt(
@@ -353,21 +434,34 @@ impl SimpleDnsResolver {
             return Ok(records.into_iter());
         }
 
-        trace!(%host, "resolving TXT record");
-        let (response, id) = self.send_query_following_cnames(&host, TYPE::TXT).await?;
-        let (records, ttl) = query::parse_txt_response(&response, id)?;
-        debug!(%host, count = records.len(), ttl, "resolved TXT record");
-
-        if let Ok(mut cache) = self.cache.write() {
-            cache.insert(
-                &host,
-                QueryType::TXT,
-                CachedRecord::Txt(records.clone()),
-                ttl,
-            );
+        let mut last_err = None;
+        for name in self.search_names(&host) {
+            trace!(%name, "resolving TXT record");
+            match self.send_query_following_cnames(&name, TYPE::TXT).await {
+                Ok((response, id)) => {
+                    let (records, ttl) = query::parse_txt_response(&response, id)?;
+                    if !records.is_empty() {
+                        debug!(%name, count = records.len(), ttl, "resolved TXT record");
+                        if let Ok(mut cache) = self.cache.write() {
+                            cache.insert(
+                                &host,
+                                QueryType::TXT,
+                                CachedRecord::Txt(records.clone()),
+                                ttl,
+                            );
+                        }
+                        return Ok(records.into_iter());
+                    }
+                }
+                Err(DnsError::NxDomain { .. }) => {
+                    trace!(%name, "NXDOMAIN, trying next search domain");
+                    last_err = Some(e!(DnsError::NxDomain));
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
         }
-
-        Ok(records.into_iter())
+        Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
     }
 
     pub(super) fn clear_cache(&self) {
@@ -377,7 +471,9 @@ impl SimpleDnsResolver {
     }
 
     pub(super) fn reset(&mut self) {
-        self.nameservers = Self::build_nameservers(&self.builder);
+        let (nameservers, search_domains) = Self::build_config(&self.builder);
+        self.nameservers = nameservers;
+        self.search_domains = search_domains;
         self.tls_config = self
             .builder
             .tls_client_config
@@ -489,6 +585,58 @@ mod tests {
         let resolver = DnsResolver::new();
         for host in ["google.com", "cloudflare.com", "example.com"] {
             assert_resolves_ipv4(&resolver, host).await;
+        }
+    }
+
+    mod search_names {
+        use super::super::*;
+        use super::super::super::Builder;
+
+        fn resolver_with_search(domains: &[&str]) -> SimpleDnsResolver {
+            let mut r = SimpleDnsResolver::new(Builder::default());
+            r.search_domains = domains.iter().map(|s| s.to_string()).collect();
+            r
+        }
+
+        #[test]
+        fn no_search_domains() {
+            let r = SimpleDnsResolver::new(Builder::default());
+            assert_eq!(r.search_names("myhost"), vec!["myhost"]);
+        }
+
+        #[test]
+        fn fqdn_bypasses_search() {
+            let r = resolver_with_search(&["example.com"]);
+            assert_eq!(r.search_names("myhost.example.com."), vec!["myhost.example.com."]);
+        }
+
+        #[test]
+        fn short_name_tries_search_first() {
+            let r = resolver_with_search(&["example.com", "test.local"]);
+            // "myhost" has 0 dots (< ndots=1), so search domains come first.
+            assert_eq!(
+                r.search_names("myhost"),
+                vec!["myhost.example.com", "myhost.test.local", "myhost"]
+            );
+        }
+
+        #[test]
+        fn dotted_name_tries_bare_first() {
+            let r = resolver_with_search(&["example.com"]);
+            // "foo.bar" has 1 dot (>= ndots=1), so bare name comes first.
+            assert_eq!(
+                r.search_names("foo.bar"),
+                vec!["foo.bar", "foo.bar.example.com"]
+            );
+        }
+
+        #[test]
+        fn multi_dot_name_tries_bare_first() {
+            let r = resolver_with_search(&["example.com"]);
+            assert_eq!(
+                r.search_names("a.b.c"),
+                vec!["a.b.c", "a.b.c.example.com"]
+            );
         }
     }
 }
