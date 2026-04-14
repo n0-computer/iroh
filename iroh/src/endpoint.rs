@@ -1238,11 +1238,11 @@ impl Endpoint {
 
     /// A convenience method that waits for the endpoint to be considered "online".
     ///
-    /// This currently means at least one relay server was connected,
-    /// and at least one local IP address is available.
-    /// Even if no relays are configured, this will still wait for a relay connection.
+    /// This currently means at least one relay server has completed its
+    /// connection handshake (i.e. the endpoint is registered and reachable
+    /// via that relay). Merely selecting a relay URL is not sufficient.
     ///
-    /// Once this has been resolved the first time, this will always immediately resolve.
+    /// If no relays are configured, this will pend forever.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
@@ -1285,7 +1285,6 @@ impl Endpoint {
         let mut watcher = self.inner.home_relay_status();
         let mut value = watcher.get();
         loop {
-            tracing::info!("home relay status: {value:?}");
             if value
                 .into_iter()
                 .filter_map(|x| x)

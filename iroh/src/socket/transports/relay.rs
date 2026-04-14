@@ -11,7 +11,7 @@ use n0_future::{
     ready,
     task::{self, AbortOnDropHandle},
 };
-use n0_watcher::{Watchable, Watcher as _};
+use n0_watcher::Watcher as _;
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, PollSender};
 use tracing::{Instrument, error, info_span, warn};
@@ -20,6 +20,7 @@ use super::{Addr, Transmit};
 
 mod actor;
 
+pub(crate) use self::actor::HomeRelayWatch;
 pub(crate) use self::actor::{Config as RelayActorConfig, HomeRelayStatus};
 use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
 
@@ -33,7 +34,7 @@ pub(crate) struct RelayTransport {
     pending_item: Option<RelayRecvDatagram>,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
-    my_relay: Watchable<Option<(RelayUrl, HomeRelayStatus)>>,
+    my_relay: HomeRelayWatch,
     my_endpoint_id: EndpointId,
 }
 
