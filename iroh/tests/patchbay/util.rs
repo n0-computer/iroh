@@ -8,7 +8,7 @@ use iroh::{
 use iroh_metrics::MetricsGroupSet;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{boxed::BoxFuture, task::AbortOnDropHandle};
-use patchbay::{Device, IpSupport, Lab, LabOpts, OutDir, TestGuard};
+use patchbay::{Device, IpSupport, Lab, OutDir, TestGuard};
 use tokio::sync::{Barrier, oneshot};
 use tracing::{Instrument, debug, error, error_span, event, info};
 
@@ -24,13 +24,13 @@ const TEST_ALPN: &[u8] = b"test";
 /// The relay binds on `[::]` and is reachable via `https://relay.test`
 /// (resolved through lab-wide DNS entries for both IPv4 and IPv6).
 pub async fn lab_with_relay(
-    path: PathBuf,
+    outdir: PathBuf,
 ) -> Result<(Lab, RelayMap, AbortOnDropHandle<()>, TestGuard)> {
-    let mut opts = LabOpts::default().outdir(OutDir::Exact(path));
+    let mut builder = Lab::builder().outdir(OutDir::Exact(outdir));
     if let Some(name) = std::thread::current().name() {
-        opts = opts.label(name);
+        builder = builder.label(name);
     }
-    let lab = Lab::with_opts(opts).await?;
+    let lab = builder.build().await?;
     let guard = lab.test_guard();
     let (relay_map, relay_guard) = spawn_relay(&lab).await?;
     Ok((lab, relay_map, relay_guard, guard))
@@ -55,8 +55,9 @@ async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
     // Devices created after this will resolve "relay.test" to both addresses.
     let relay_v4 = dev_relay.ip().expect("relay has IPv4");
     let relay_v6 = dev_relay.ip6().expect("relay has IPv6");
-    lab.dns_entry("relay.test", relay_v4.into())?;
-    lab.dns_entry("relay.test", relay_v6.into())?;
+    let dns = lab.dns_server()?;
+    dns.set_host("relay.test", relay_v4.into())?;
+    dns.set_host("relay.test", relay_v6.into())?;
     info!(%relay_v4, %relay_v6, "DNS entries for relay.test registered");
 
     let (relay_map_tx, relay_map_rx) = oneshot::channel();
