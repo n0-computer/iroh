@@ -283,26 +283,31 @@ impl SimpleDnsResolver {
         Err(e!(DnsError::InvalidResponse))
     }
 
-    pub(super) async fn lookup_ipv4(
+    /// Shared lookup logic: check cache, try search names, parse response, cache result.
+    async fn lookup<T: Clone>(
         &self,
-        host: String,
-    ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
-        if let Some(CachedRecord::A(addrs)) = self.cache.get(&host, QueryType::A) {
-            trace!(%host, count = addrs.len(), "A lookup cache hit");
-            return Ok(addrs.into_iter());
+        host: &str,
+        qtype: QueryType,
+        dns_type: TYPE,
+        from_cache: fn(&CachedRecord) -> Option<Vec<T>>,
+        parse: fn(&[u8], u16) -> Result<(Vec<T>, u32), DnsError>,
+        to_cache: fn(Vec<T>) -> CachedRecord,
+    ) -> Result<Vec<T>, DnsError> {
+        if let Some(cached) = self.cache.get(host, qtype).and_then(|r| from_cache(&r)) {
+            trace!(%host, count = cached.len(), ?qtype, "cache hit");
+            return Ok(cached);
         }
 
         let mut last_err = None;
-        for name in self.search_names(&host) {
-            trace!(%name, "resolving A record");
-            match self.send_query_following_cnames(name, TYPE::A).await {
+        for name in self.search_names(host) {
+            trace!(%name, ?qtype, "resolving");
+            match self.send_query_following_cnames(name, dns_type).await {
                 Ok((response, id)) => {
-                    let (addrs, ttl) = query::parse_a_response(&response, id)?;
-                    if !addrs.is_empty() {
-                        debug!(%host, count = addrs.len(), ttl, "resolved A record");
-                        self.cache
-                            .insert(&host, QueryType::A, CachedRecord::A(addrs.clone()), ttl);
-                        return Ok(addrs.into_iter());
+                    let (results, ttl) = parse(&response, id)?;
+                    if !results.is_empty() {
+                        debug!(%host, count = results.len(), ttl, ?qtype, "resolved");
+                        self.cache.insert(host, qtype, to_cache(results.clone()), ttl);
+                        return Ok(results);
                     }
                 }
                 Err(DnsError::NxDomain { .. }) => {
@@ -312,78 +317,66 @@ impl SimpleDnsResolver {
             }
         }
         Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
+    }
+
+    pub(super) async fn lookup_ipv4(
+        &self,
+        host: String,
+    ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
+        let addrs = self
+            .lookup(
+                &host,
+                QueryType::A,
+                TYPE::A,
+                |r| match r {
+                    CachedRecord::A(v) => Some(v.clone()),
+                    _ => None,
+                },
+                query::parse_a_response,
+                CachedRecord::A,
+            )
+            .await?;
+        Ok(addrs.into_iter())
     }
 
     pub(super) async fn lookup_ipv6(
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
-        if let Some(CachedRecord::Aaaa(addrs)) = self.cache.get(&host, QueryType::AAAA) {
-            trace!(%host, count = addrs.len(), "AAAA lookup cache hit");
-            return Ok(addrs.into_iter());
-        }
-
-        let mut last_err = None;
-        for name in self.search_names(&host) {
-            trace!(%name, "resolving AAAA record");
-            match self.send_query_following_cnames(name, TYPE::AAAA).await {
-                Ok((response, id)) => {
-                    let (addrs, ttl) = query::parse_aaaa_response(&response, id)?;
-                    if !addrs.is_empty() {
-                        debug!(%host, count = addrs.len(), ttl, "resolved AAAA record");
-                        self.cache.insert(
-                            &host,
-                            QueryType::AAAA,
-                            CachedRecord::Aaaa(addrs.clone()),
-                            ttl,
-                        );
-                        return Ok(addrs.into_iter());
-                    }
-                }
-                Err(DnsError::NxDomain { .. }) => {
-                    last_err = Some(e!(DnsError::NxDomain));
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
+        let addrs = self
+            .lookup(
+                &host,
+                QueryType::AAAA,
+                TYPE::AAAA,
+                |r| match r {
+                    CachedRecord::Aaaa(v) => Some(v.clone()),
+                    _ => None,
+                },
+                query::parse_aaaa_response,
+                CachedRecord::Aaaa,
+            )
+            .await?;
+        Ok(addrs.into_iter())
     }
 
     pub(super) async fn lookup_txt(
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
-        {
-            if let Some(CachedRecord::Txt(records)) = self.cache.get(&host, QueryType::TXT) {
-                trace!(%host, count = records.len(), "TXT lookup cache hit");
-                return Ok(records.into_iter());
-            }
-        }
-
-        let mut last_err = None;
-        for name in self.search_names(&host) {
-            trace!(%name, "resolving TXT record");
-            match self.send_query_following_cnames(name, TYPE::TXT).await {
-                Ok((response, id)) => {
-                    let (records, ttl) = query::parse_txt_response(&response, id)?;
-                    if !records.is_empty() {
-                        debug!(%host, count = records.len(), ttl, "resolved TXT record");
-                        self.cache.insert(
-                            &host,
-                            QueryType::TXT,
-                            CachedRecord::Txt(records.clone()),
-                            ttl,
-                        );
-                        return Ok(records.into_iter());
-                    }
-                }
-                Err(DnsError::NxDomain { .. }) => {
-                    last_err = Some(e!(DnsError::NxDomain));
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
+        let records = self
+            .lookup(
+                &host,
+                QueryType::TXT,
+                TYPE::TXT,
+                |r| match r {
+                    CachedRecord::Txt(v) => Some(v.clone()),
+                    _ => None,
+                },
+                query::parse_txt_response,
+                CachedRecord::Txt,
+            )
+            .await?;
+        Ok(records.into_iter())
     }
 
     pub(super) fn clear_cache(&self) {
