@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use iroh::{TransportAddr, endpoint::Side};
+use iroh::{TransportAddr, Watcher, endpoint::Side};
 use n0_error::{Result, StackResultExt};
 use n0_tracing_test::traced_test;
 use patchbay::{IpSupport, RouterPreset};
@@ -30,8 +30,8 @@ fn router_preset(ip: IpSupport) -> RouterPreset {
     }
 }
 
-fn path_switched(to: IpSupport, first: &TransportAddr, new: &TransportAddr) -> bool {
-    if new == first {
+fn path_switched(to: IpSupport, previous: &[TransportAddr], new: &TransportAddr) -> bool {
+    if previous.contains(new) {
         return false;
     }
     match to {
@@ -128,13 +128,18 @@ async fn run_switch_uplink(switching_side: Side, from: IpSupport, to: IpSupport)
         to: IpSupport,
     ) -> Result {
         let mut paths = conn.paths();
-        let first = paths.wait_ip(timeout).await.context("initial holepunch")?;
+        paths.wait_ip(timeout).await.context("initial holepunch")?;
         ping_open(&conn, timeout)
             .await
             .context("ping_open before switch")?;
+        let previous: Vec<TransportAddr> = paths
+            .get()
+            .iter()
+            .map(|p| p.remote_addr().clone())
+            .collect();
         paths
             .wait_selected(timeout, |p| {
-                path_switched(to, first.remote_addr(), p.remote_addr())
+                path_switched(to, &previous, p.remote_addr())
             })
             .await
             .context("path did not switch")?;
