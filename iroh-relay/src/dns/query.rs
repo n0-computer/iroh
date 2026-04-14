@@ -10,7 +10,18 @@ use simple_dns::{
 
 use super::{DnsError, TxtRecordData};
 
+/// EDNS(0) advertised UDP payload size.
+///
+/// 1232 bytes is the current recommended safe value per RFC 6891 and the
+/// DNS flag day 2020 recommendations. This avoids IP fragmentation on
+/// common path MTUs while allowing responses much larger than the
+/// original 512-byte RFC 1035 limit.
+const EDNS_UDP_PAYLOAD_SIZE: u16 = 1232;
+
 /// Build a DNS query packet for the given host and query type.
+///
+/// The query includes an EDNS(0) OPT record advertising support for
+/// responses up to [`EDNS_UDP_PAYLOAD_SIZE`] bytes over UDP.
 ///
 /// Returns `(query_id, wire_bytes)`.
 pub(super) fn build_query(host: &str, qtype: TYPE) -> Result<(u16, Vec<u8>), DnsError> {
@@ -21,6 +32,13 @@ pub(super) fn build_query(host: &str, qtype: TYPE) -> Result<(u16, Vec<u8>), Dns
     let name = Name::new(host)?;
     let question = Question::new(name, QTYPE::TYPE(qtype), QCLASS::CLASS(CLASS::IN), false);
     packet.questions.push(question);
+
+    // Add EDNS(0) OPT record to advertise larger UDP payload support.
+    *packet.opt_mut() = Some(simple_dns::rdata::OPT {
+        udp_packet_size: EDNS_UDP_PAYLOAD_SIZE,
+        version: 0,
+        opt_codes: vec![],
+    });
 
     let bytes = packet.build_bytes_vec()?;
     Ok((id, bytes))
@@ -303,6 +321,15 @@ mod tests {
             RData::CNAME(CNAME(Name::new_unchecked(canonical))),
         ));
         packet.build_bytes_vec().unwrap()
+    }
+
+    #[test]
+    fn build_query_includes_edns_opt() {
+        let (_, bytes) = build_query("example.com", TYPE::A).unwrap();
+        let packet = Packet::parse(&bytes).unwrap();
+        let opt = packet.opt().expect("query should include OPT record");
+        assert_eq!(opt.udp_packet_size, 1232);
+        assert_eq!(opt.version, 0);
     }
 
     #[test]
