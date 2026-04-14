@@ -26,11 +26,12 @@
 // via a cfg directive
 #![cfg(all(target_os = "linux", not(skip_patchbay)))]
 
-use std::time::Duration;
+use std::{net::Ipv4Addr, time::Duration};
 
+use ipnet::Ipv4Net;
 use n0_error::{Result, StackResultExt};
 use n0_tracing_test::traced_test;
-use patchbay::{LinkCondition, LinkDirection, Nat};
+use patchbay::{IfaceConfig, LinkCondition, LinkDirection, Nat};
 use testdir::testdir;
 use tracing::info;
 
@@ -213,6 +214,130 @@ async fn link_outage_recovery() -> Result {
                 .await
                 .context("ping_open after direct")?;
             conn.close(0u32.into(), b"bye");
+            Ok(())
+        })
+        .run()
+        .await?;
+    guard.ok();
+    Ok(())
+}
+
+/// Starts the client behind a symmetric NAT where holepunching is impossible, so the
+/// connection stays on relay. Then replugs the client to a Home NAT where holepunching
+/// works, and verifies that a direct path is established.
+#[tokio::test]
+#[traced_test]
+async fn hard_nat_to_holepunchable() -> Result {
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
+    let net1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
+    let net2_easy = lab.add_router("nat2_easy").nat(Nat::Home).build().await?;
+    let net2_hard = lab
+        .add_router("nat2_hard")
+        .nat(Nat::Corporate)
+        .build()
+        .await?;
+    let server = lab.add_device("server").uplink(net1.id()).build().await?;
+    let client = lab
+        .add_device("client")
+        .uplink(net2_hard.id())
+        .build()
+        .await?;
+    let timeout = Duration::from_secs(15);
+    Pair::new(relay_map)
+        .server(server, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
+            ping_open(&conn, timeout)
+                .await
+                .context("ping_accept 1 (relay)")?;
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("did not become direct after replug")?;
+            info!("connection became direct");
+            ping_open(&conn, timeout)
+                .await
+                .context("ping_accept 2 (direct)")?;
+            conn.close(0u32.into(), b"bye");
+            Ok(())
+        })
+        .client(client, async move |dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
+
+            // Verify the connection works over relay.
+            ping_accept(&conn, timeout)
+                .await
+                .context("ping over relay")?;
+
+            // Give holepunching a chance to fail (it should not succeed behind a EndpointDependent NAT).
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            assert!(
+                paths.selected().is_relay(),
+                "should still be relayed behind symmetric NAT"
+            );
+
+            // Replug to a Home NAT where holepunching works.
+            info!("replug to holepunchable NAT");
+            dev.iface("eth0").unwrap().replug(net2_easy.id()).await?;
+
+            // Wait for a direct path to be established.
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("did not become direct after replug")?;
+            info!("connection became direct");
+
+            ping_accept(&conn, timeout)
+                .await
+                .context("ping over direct")?;
+            conn.closed().await;
+            Ok(())
+        })
+        .run()
+        .await?;
+    guard.ok();
+    Ok(())
+}
+
+/// Holepunching succeeds despite many unreachable local addresses (Docker, VPN, etc).
+#[tokio::test]
+#[traced_test]
+async fn holepunch_many_addrs() -> Result {
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
+    let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
+    let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
+    let server = lab.add_device("server").uplink(nat1.id()).build().await?;
+    let mut client_builder = lab.add_device("client").uplink(nat2.id());
+    // Add unreachable veth interfaces on the client.
+    // iroh discovers these as Local candidates and advertises them via REACH_OUT.
+    // The server's noq must probe through these to find the real address.
+    const ADDR_COUNT: u8 = 8;
+    for i in 0..ADDR_COUNT {
+        client_builder = client_builder.iface(
+            &format!("virt{i}"),
+            IfaceConfig::dummy().addr(Ipv4Net::new_assert(
+                Ipv4Addr::new(172, 16, 0, i + 1).into(),
+                8,
+            )),
+        );
+    }
+    let client = client_builder.build().await?;
+
+    let timeout = Duration::from_secs(15);
+    Pair::new(relay_map)
+        .server(server, async |_dev, _ep, conn| {
+            conn.closed().await;
+            Ok(())
+        })
+        .client(client, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("holepunch to direct with many addrs")?;
+            info!("connection became direct");
             Ok(())
         })
         .run()
