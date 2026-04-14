@@ -15,7 +15,8 @@ use tracing::{debug, trace};
 use super::{
     Builder, DnsError, DnsProtocol, TxtRecordData,
     cache::{CachedRecord, DnsCache, QueryType},
-    query, system_config, transport,
+    query::{self, MAX_CNAME_DEPTH},
+    system_config, transport,
 };
 
 /// Per-nameserver timeout. Ensures we move on to the next nameserver
@@ -144,6 +145,53 @@ impl SimpleDnsResolver {
         Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
     }
 
+    /// Send a query and follow CNAME chains recursively if the response contains
+    /// a CNAME but no records of the requested type.
+    async fn send_query_following_cnames(
+        &self,
+        host: &str,
+        qtype: TYPE,
+    ) -> Result<(Vec<u8>, u16), DnsError> {
+        let mut current_host = host.to_string();
+        for _ in 0..MAX_CNAME_DEPTH {
+            let (id, query_bytes) = query::build_query(&current_host, qtype)?;
+            let response = self.send_query(&query_bytes).await?;
+
+            // Check if the response only has CNAMEs but no records of the
+            // requested type. If so, follow the CNAME to a new query.
+            let packet = simple_dns::Packet::parse(&response)
+                .map_err(|e| e!(DnsError::InvalidPacket { source: e }))?;
+            let has_target_records = packet.answers.iter().any(|rr| match (&rr.rdata, qtype) {
+                (simple_dns::rdata::RData::A(_), TYPE::A) => true,
+                (simple_dns::rdata::RData::AAAA(_), TYPE::AAAA) => true,
+                (simple_dns::rdata::RData::TXT(_), TYPE::TXT) => true,
+                _ => false,
+            });
+
+            if has_target_records {
+                return Ok((response, id));
+            }
+
+            // No target records -- check for a CNAME to follow.
+            match query::cname_target(&packet, &current_host) {
+                Some(target) => {
+                    debug!(
+                        from = %current_host,
+                        to = %target,
+                        "following CNAME"
+                    );
+                    current_host = target;
+                }
+                None => {
+                    // No CNAME either; return the response as-is (empty results).
+                    return Ok((response, id));
+                }
+            }
+        }
+        // Exceeded max CNAME depth.
+        Err(e!(DnsError::InvalidResponse))
+    }
+
     pub(super) async fn lookup_ipv4(
         &self,
         host: String,
@@ -156,8 +204,7 @@ impl SimpleDnsResolver {
         }
 
         trace!(%host, "resolving A record");
-        let (id, query_bytes) = query::build_query(&host, TYPE::A)?;
-        let response = self.send_query(&query_bytes).await?;
+        let (response, id) = self.send_query_following_cnames(&host, TYPE::A).await?;
         let (addrs, ttl) = query::parse_a_response(&response, id)?;
         debug!(%host, count = addrs.len(), ttl, "resolved A record");
 
@@ -180,8 +227,7 @@ impl SimpleDnsResolver {
         }
 
         trace!(%host, "resolving AAAA record");
-        let (id, query_bytes) = query::build_query(&host, TYPE::AAAA)?;
-        let response = self.send_query(&query_bytes).await?;
+        let (response, id) = self.send_query_following_cnames(&host, TYPE::AAAA).await?;
         let (addrs, ttl) = query::parse_aaaa_response(&response, id)?;
         debug!(%host, count = addrs.len(), ttl, "resolved AAAA record");
 
@@ -209,8 +255,7 @@ impl SimpleDnsResolver {
         }
 
         trace!(%host, "resolving TXT record");
-        let (id, query_bytes) = query::build_query(&host, TYPE::TXT)?;
-        let response = self.send_query(&query_bytes).await?;
+        let (response, id) = self.send_query_following_cnames(&host, TYPE::TXT).await?;
         let (records, ttl) = query::parse_txt_response(&response, id)?;
         debug!(%host, count = records.len(), ttl, "resolved TXT record");
 

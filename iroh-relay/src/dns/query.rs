@@ -26,6 +26,49 @@ pub(super) fn build_query(host: &str, qtype: TYPE) -> Result<(u16, Vec<u8>), Dns
     Ok((id, bytes))
 }
 
+/// Maximum CNAME chain depth to prevent infinite loops.
+pub(super) const MAX_CNAME_DEPTH: usize = 8;
+
+/// Resolve the CNAME chain in the answer section starting from `start_name`.
+///
+/// Returns the final canonical name after following all CNAMEs, or the
+/// original name if no CNAME records are present.
+fn resolve_cname_chain<'a>(packet: &'a Packet<'a>, start_name: &Name<'a>) -> Name<'a> {
+    let mut current = start_name.clone();
+    for _ in 0..MAX_CNAME_DEPTH {
+        let next = packet.answers.iter().find_map(|rr| {
+            if rr.name == current {
+                if let RData::CNAME(cname) = &rr.rdata {
+                    return Some(cname.0.clone());
+                }
+            }
+            None
+        });
+        match next {
+            Some(name) => current = name,
+            None => break,
+        }
+    }
+    current
+}
+
+/// Returns the CNAME target for a query name, if the response contains a CNAME
+/// but no final records of the requested type for that name.
+///
+/// This is used for recursive CNAME following: when the server returns only a
+/// CNAME without the final record, the caller issues a new query for the target.
+pub(super) fn cname_target(packet: &Packet<'_>, qname: &str) -> Option<String> {
+    let Ok(name) = Name::new(qname) else {
+        return None;
+    };
+    let canonical = resolve_cname_chain(packet, &name);
+    if canonical != name {
+        Some(canonical.to_string())
+    } else {
+        None
+    }
+}
+
 /// Check response packet for errors (RCODE, ID mismatch).
 fn check_response(packet: &Packet, expected_id: u16) -> Result<(), DnsError> {
     if packet.id() != expected_id {
@@ -39,7 +82,10 @@ fn check_response(packet: &Packet, expected_id: u16) -> Result<(), DnsError> {
     }
 }
 
-/// Parse A (IPv4) records from a DNS response.
+/// Parse A (IPv4) records from a DNS response, following CNAME chains.
+///
+/// If the response contains CNAME records pointing from the queried name to a
+/// canonical name, records for both the original and canonical names are collected.
 pub(super) fn parse_a_response(
     data: &[u8],
     expected_id: u16,
@@ -47,12 +93,23 @@ pub(super) fn parse_a_response(
     let packet = Packet::parse(data)?;
     check_response(&packet, expected_id)?;
 
+    // Resolve the CNAME chain to find the canonical name.
+    let qname = packet
+        .questions
+        .first()
+        .map(|q| q.qname.clone())
+        .unwrap_or_else(|| Name::new_unchecked(""));
+    let canonical = resolve_cname_chain(&packet, &qname);
+
     let mut addrs = Vec::new();
     let mut min_ttl = u32::MAX;
     for rr in &packet.answers {
         if let RData::A(A { address }) = &rr.rdata {
-            addrs.push(Ipv4Addr::from(*address));
-            min_ttl = min_ttl.min(rr.ttl);
+            // Accept records matching either the original or canonical name.
+            if rr.name == qname || rr.name == canonical {
+                addrs.push(Ipv4Addr::from(*address));
+                min_ttl = min_ttl.min(rr.ttl);
+            }
         }
     }
     if min_ttl == u32::MAX {
@@ -61,7 +118,7 @@ pub(super) fn parse_a_response(
     Ok((addrs, min_ttl))
 }
 
-/// Parse AAAA (IPv6) records from a DNS response.
+/// Parse AAAA (IPv6) records from a DNS response, following CNAME chains.
 pub(super) fn parse_aaaa_response(
     data: &[u8],
     expected_id: u16,
@@ -69,12 +126,21 @@ pub(super) fn parse_aaaa_response(
     let packet = Packet::parse(data)?;
     check_response(&packet, expected_id)?;
 
+    let qname = packet
+        .questions
+        .first()
+        .map(|q| q.qname.clone())
+        .unwrap_or_else(|| Name::new_unchecked(""));
+    let canonical = resolve_cname_chain(&packet, &qname);
+
     let mut addrs = Vec::new();
     let mut min_ttl = u32::MAX;
     for rr in &packet.answers {
         if let RData::AAAA(AAAA { address }) = &rr.rdata {
-            addrs.push(Ipv6Addr::from(*address));
-            min_ttl = min_ttl.min(rr.ttl);
+            if rr.name == qname || rr.name == canonical {
+                addrs.push(Ipv6Addr::from(*address));
+                min_ttl = min_ttl.min(rr.ttl);
+            }
         }
     }
     if min_ttl == u32::MAX {
@@ -83,7 +149,7 @@ pub(super) fn parse_aaaa_response(
     Ok((addrs, min_ttl))
 }
 
-/// Parse TXT records from a DNS response.
+/// Parse TXT records from a DNS response, following CNAME chains.
 pub(super) fn parse_txt_response(
     data: &[u8],
     expected_id: u16,
@@ -91,13 +157,22 @@ pub(super) fn parse_txt_response(
     let packet = Packet::parse(data)?;
     check_response(&packet, expected_id)?;
 
+    let qname = packet
+        .questions
+        .first()
+        .map(|q| q.qname.clone())
+        .unwrap_or_else(|| Name::new_unchecked(""));
+    let canonical = resolve_cname_chain(&packet, &qname);
+
     let mut records = Vec::new();
     let mut min_ttl = u32::MAX;
     for rr in &packet.answers {
         if let RData::TXT(txt) = &rr.rdata {
-            let record = extract_txt_record_data(txt);
-            records.push(record);
-            min_ttl = min_ttl.min(rr.ttl);
+            if rr.name == qname || rr.name == canonical {
+                let record = extract_txt_record_data(txt);
+                records.push(record);
+                min_ttl = min_ttl.min(rr.ttl);
+            }
         }
     }
     if min_ttl == u32::MAX {
@@ -135,5 +210,173 @@ pub(super) fn is_truncated(data: &[u8]) -> bool {
         packet.has_flags(PacketFlag::TRUNCATION)
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use simple_dns::{
+        CLASS, Name, Packet, PacketFlag, QCLASS, QTYPE, Question, ResourceRecord,
+        rdata::{A, RData, CNAME},
+    };
+
+    use super::*;
+
+    /// Build a query packet for `host` with type A, return (id, bytes).
+    fn make_query(host: &str) -> (u16, Vec<u8>) {
+        build_query(host, TYPE::A).unwrap()
+    }
+
+    /// Build a response with A records for `name`.
+    fn a_response(id: u16, name: &str, addrs: &[Ipv4Addr]) -> Vec<u8> {
+        let mut packet = Packet::new_reply(id);
+        packet.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
+        // Echo the question back (needed for CNAME resolution in parse functions).
+        packet.questions.push(Question::new(
+            Name::new_unchecked(name),
+            QTYPE::TYPE(TYPE::A),
+            QCLASS::CLASS(CLASS::IN),
+            false,
+        ));
+        for addr in addrs {
+            packet.answers.push(ResourceRecord::new(
+                Name::new_unchecked(name),
+                CLASS::IN,
+                300,
+                RData::A(A { address: u32::from(*addr) }),
+            ));
+        }
+        packet.build_bytes_vec().unwrap()
+    }
+
+    /// Build a response containing a CNAME from `alias` -> `canonical`, plus
+    /// A records under the canonical name (the common "both in one response" case).
+    fn cname_with_a_response(
+        id: u16,
+        alias: &str,
+        canonical: &str,
+        addrs: &[Ipv4Addr],
+    ) -> Vec<u8> {
+        let mut packet = Packet::new_reply(id);
+        packet.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
+        packet.questions.push(Question::new(
+            Name::new_unchecked(alias),
+            QTYPE::TYPE(TYPE::A),
+            QCLASS::CLASS(CLASS::IN),
+            false,
+        ));
+        // CNAME record
+        packet.answers.push(ResourceRecord::new(
+            Name::new_unchecked(alias),
+            CLASS::IN,
+            300,
+            RData::CNAME(CNAME(Name::new_unchecked(canonical))),
+        ));
+        // A records for the canonical name
+        for addr in addrs {
+            packet.answers.push(ResourceRecord::new(
+                Name::new_unchecked(canonical),
+                CLASS::IN,
+                300,
+                RData::A(A { address: u32::from(*addr) }),
+            ));
+        }
+        packet.build_bytes_vec().unwrap()
+    }
+
+    /// Build a response containing only a CNAME (no final A record).
+    fn cname_only_response(id: u16, alias: &str, canonical: &str) -> Vec<u8> {
+        let mut packet = Packet::new_reply(id);
+        packet.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
+        packet.questions.push(Question::new(
+            Name::new_unchecked(alias),
+            QTYPE::TYPE(TYPE::A),
+            QCLASS::CLASS(CLASS::IN),
+            false,
+        ));
+        packet.answers.push(ResourceRecord::new(
+            Name::new_unchecked(alias),
+            CLASS::IN,
+            300,
+            RData::CNAME(CNAME(Name::new_unchecked(canonical))),
+        ));
+        packet.build_bytes_vec().unwrap()
+    }
+
+    #[test]
+    fn parse_a_no_cname() {
+        let (id, _) = make_query("example.com");
+        let resp = a_response(id, "example.com", &[Ipv4Addr::new(1, 2, 3, 4)]);
+        let (addrs, ttl) = parse_a_response(&resp, id).unwrap();
+        assert_eq!(addrs, [Ipv4Addr::new(1, 2, 3, 4)]);
+        assert_eq!(ttl, 300);
+    }
+
+    #[test]
+    fn parse_a_with_cname_in_response() {
+        let (id, _) = make_query("alias.example.com");
+        let resp = cname_with_a_response(
+            id,
+            "alias.example.com",
+            "real.example.com",
+            &[Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)],
+        );
+        let (addrs, _) = parse_a_response(&resp, id).unwrap();
+        assert_eq!(addrs, [Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)]);
+    }
+
+    #[test]
+    fn parse_a_with_chained_cname() {
+        // alias -> middle -> real, A records on real
+        let (id, _) = make_query("alias.example.com");
+        let mut packet = Packet::new_reply(id);
+        packet.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
+        packet.questions.push(Question::new(
+            Name::new_unchecked("alias.example.com"),
+            QTYPE::TYPE(TYPE::A),
+            QCLASS::CLASS(CLASS::IN),
+            false,
+        ));
+        packet.answers.push(ResourceRecord::new(
+            Name::new_unchecked("alias.example.com"),
+            CLASS::IN,
+            300,
+            RData::CNAME(CNAME(Name::new_unchecked("middle.example.com"))),
+        ));
+        packet.answers.push(ResourceRecord::new(
+            Name::new_unchecked("middle.example.com"),
+            CLASS::IN,
+            300,
+            RData::CNAME(CNAME(Name::new_unchecked("real.example.com"))),
+        ));
+        packet.answers.push(ResourceRecord::new(
+            Name::new_unchecked("real.example.com"),
+            CLASS::IN,
+            300,
+            RData::A(A { address: u32::from(Ipv4Addr::new(5, 6, 7, 8)) }),
+        ));
+        let resp = packet.build_bytes_vec().unwrap();
+        let (addrs, _) = parse_a_response(&resp, id).unwrap();
+        assert_eq!(addrs, [Ipv4Addr::new(5, 6, 7, 8)]);
+    }
+
+    #[test]
+    fn cname_target_extracts_target_for_recursive_follow() {
+        let id = 1234;
+        let resp = cname_only_response(id, "alias.example.com", "real.example.com");
+        let packet = Packet::parse(&resp).unwrap();
+        let target = cname_target(&packet, "alias.example.com");
+        assert_eq!(target.as_deref(), Some("real.example.com"));
+    }
+
+    #[test]
+    fn cname_target_returns_none_when_no_cname() {
+        let id = 1234;
+        let resp = a_response(id, "example.com", &[Ipv4Addr::new(1, 2, 3, 4)]);
+        let packet = Packet::parse(&resp).unwrap();
+        let target = cname_target(&packet, "example.com");
+        assert_eq!(target, None);
     }
 }
