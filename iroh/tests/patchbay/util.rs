@@ -480,8 +480,8 @@ mod relay {
         let url: RelayUrl = "https://relay.test".parse().expect("valid relay url");
         let quic = server
             .quic_addr()
-            .map(|addr| RelayQuicConfig { port: addr.port() });
-        let relay_map: RelayMap = RelayConfig { url, quic }.into();
+            .map(|addr| RelayQuicConfig::new(addr.port()));
+        let relay_map: RelayMap = RelayConfig::new(url, quic).into();
 
         Ok((relay_map, server))
     }

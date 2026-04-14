@@ -25,6 +25,7 @@ pub(crate) mod server {
     use tracing::{Instrument, debug, info, info_span};
 
     use super::*;
+    use crate::server::Metrics;
     pub use crate::server::QuicConfig;
 
     pub struct QuicServer {
@@ -92,7 +93,10 @@ pub(crate) mod server {
         /// If there is a panic during a connection, it will be propagated
         /// up here. Any other errors in a connection will be logged as a
         ///  warning.
-        pub(crate) fn spawn(mut quic_config: QuicConfig) -> Result<Self, QuicSpawnError> {
+        pub(crate) fn spawn(
+            mut quic_config: QuicConfig,
+            metrics: Arc<Metrics>,
+        ) -> Result<Self, QuicSpawnError> {
             quic_config.server_config.alpn_protocols =
                 vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
             let server_config = QuicServerConfig::try_from(quic_config.server_config)?;
@@ -129,18 +133,17 @@ pub(crate) mod server {
                             Some(res) = set.join_next() => {
                                 if let Err(err) = res {
                                     if err.is_panic() {
-                                        panic!("task panicked: {err:#?}");
+                                        panic!("quic task panicked: {err:#?}");
                                     } else {
-                                        debug!("error accepting incoming connection: {err:#?}");
+                                        debug!("quic task cancelled: {err:#?}");
                                     }
                                 }
                             }
                             res = endpoint.accept() => match res {
-                                Some(conn) => {
-                                     debug!("accepting connection");
-                                     let remote_addr = conn.remote_address();
+                                Some(incoming) => {
+                                     let remote_addr = incoming.remote_address();
                                      set.spawn(
-                                         handle_connection(conn).instrument(info_span!("qad-conn", %remote_addr))
+                                         handle_connection(incoming, metrics.clone()).instrument(info_span!("qad-conn", %remote_addr))
                                      );                                }
                                 None => {
                                     debug!("endpoint closed");
@@ -200,23 +203,37 @@ pub(crate) mod server {
     }
 
     /// Handle the connection from the client.
-    async fn handle_connection(incoming: noq::Incoming) -> Result<(), ConnectionError> {
+    async fn handle_connection(
+        incoming: noq::Incoming,
+        metrics: Arc<Metrics>,
+    ) -> Result<(), ConnectionError> {
+        metrics.qad_incoming.inc();
+        debug!("incoming");
         let connection = match incoming.await {
             Ok(conn) => conn,
             Err(e) => {
+                debug!("establishing failed: {e:#}");
+                metrics.qad_incoming_error.inc();
                 return Err(e);
             }
         };
+        metrics.qad_connections.inc();
         debug!("established");
         // wait for the client to close the connection
         let connection_err = connection.closed().await;
+        metrics.qad_connections_closed.inc();
         match connection_err {
             noq::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
                 if error_code == QUIC_ADDR_DISC_CLOSE_CODE =>
             {
+                debug!("peer disconnected");
                 Ok(())
             }
-            _ => Err(connection_err),
+            _ => {
+                debug!("peer disconnected with {connection_err:#}");
+                metrics.qad_connections_errored.inc();
+                Err(connection_err)
+            }
         }
     }
 }
@@ -371,10 +388,13 @@ mod tests {
         // create a server config with self signed certificates
         let (_, server_config) = super::super::server::testing::self_signed_tls_certs_and_config();
         let bind_addr = SocketAddr::new(host.into(), 0);
-        let quic_server = QuicServer::spawn(QuicConfig {
-            server_config,
-            bind_addr,
-        })?;
+        let quic_server = QuicServer::spawn(
+            QuicConfig {
+                server_config,
+                bind_addr,
+            },
+            Default::default(),
+        )?;
 
         // create a client-side endpoint
         let client_endpoint =

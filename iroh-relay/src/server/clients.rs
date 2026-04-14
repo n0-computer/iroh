@@ -78,7 +78,7 @@ impl Clients {
         let connection_id = self.get_connection_id();
         trace!(remote_endpoint = %endpoint_id.fmt_short(), "registering client");
 
-        let client = Client::new(client_config, connection_id, self, metrics);
+        let client = Client::new(client_config, connection_id, self, metrics.clone());
         match self.0.clients.entry(endpoint_id) {
             dashmap::Entry::Occupied(mut entry) => {
                 let state = entry.get_mut();
@@ -91,6 +91,7 @@ impl Clients {
                     .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string())
                     .ok();
                 state.inactive.push(old_client);
+                metrics.clients_inactive_added.inc();
             }
             dashmap::Entry::Vacant(entry) => {
                 entry.insert(ClientState {
@@ -110,7 +111,12 @@ impl Clients {
     /// peer is gone from the network.
     ///
     /// Must be passed a matching connection_id.
-    pub(super) fn unregister(&self, connection_id: u64, endpoint_id: EndpointId) {
+    pub(super) fn unregister(
+        &self,
+        connection_id: u64,
+        endpoint_id: EndpointId,
+        metrics: &Metrics,
+    ) {
         trace!(
             endpoint_id = %endpoint_id.fmt_short(),
             connection_id, "unregistering client"
@@ -122,6 +128,7 @@ impl Clients {
             if state.active.connection_id() == connection_id {
                 // The unregistering client is the currently active client
                 if let Some(last_inactive_client) = state.inactive.pop() {
+                    metrics.clients_inactive_removed.inc();
                     // There is an inactive client, promote to active again.
                     state.active = last_inactive_client;
                     // Don't remove the entry from client map.
@@ -137,6 +144,7 @@ impl Clients {
                 state
                     .inactive
                     .retain(|client| client.connection_id() != connection_id);
+                metrics.clients_inactive_removed.inc();
                 // Active client is unmodified: keep entry in map.
                 false
             }
