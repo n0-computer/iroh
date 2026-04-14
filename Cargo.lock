@@ -1840,9 +1840,9 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hickory-net"
-version = "0.26.0-beta.1"
+version = "0.26.0-beta.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc867c64bc89c63a3b1c34258e3bbbd73eb18f8ab785ff352c81c98ad187f78e"
+checksum = "1e232f503c4cfe3f4ea6594971255ecab9f6a0080c4c8e0e17630cc701322aa4"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1852,7 +1852,7 @@ dependencies = [
  "futures-io",
  "futures-util",
  "h2",
- "hickory-proto 0.26.0-beta.1",
+ "hickory-proto 0.26.0-beta.4",
  "http",
  "idna",
  "ipnet",
@@ -1900,9 +1900,9 @@ dependencies = [
 
 [[package]]
 name = "hickory-proto"
-version = "0.26.0-beta.1"
+version = "0.26.0-beta.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b91ba40132ef5ec8f1eabddb35d1b5d9fae3699c4545c590401893636097caee"
+checksum = "fcca12171ce774c549f35510be702f4da00ef12ca486f0f2acb2ee96f2f5ca0f"
 dependencies = [
  "data-encoding",
  "idna",
@@ -1944,14 +1944,14 @@ dependencies = [
 
 [[package]]
 name = "hickory-resolver"
-version = "0.26.0-beta.1"
+version = "0.26.0-beta.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b3691451dab87ca2d7e3018ae231347d3a502ef3e8c4430f454f7efefa84b1d"
+checksum = "1e7d2c928fa078e6640f26cf1b537b212e1688829c3944780025c7084e8bbbf6"
 dependencies = [
  "cfg-if",
  "futures-util",
  "hickory-net",
- "hickory-proto 0.26.0-beta.1",
+ "hickory-proto 0.26.0-beta.4",
  "ipconfig",
  "ipnet",
  "jni 0.22.4",
@@ -2382,7 +2382,7 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.4.2",
- "hickory-resolver 0.26.0-beta.1",
+ "hickory-resolver 0.26.0-beta.4",
  "http",
  "indicatif",
  "ipnet",
@@ -2580,7 +2580,7 @@ dependencies = [
  "data-encoding",
  "derive_more",
  "getrandom 0.4.2",
- "hickory-resolver 0.26.0-beta.1",
+ "hickory-resolver 0.26.0-beta.4",
  "http",
  "http-body-util",
  "hyper",
@@ -4955,7 +4955,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "737bfdaf732174c48b8193b29158460d8d959dd8e9ce071a5bbda95d8546b68b"
 dependencies = [
  "acto",
- "hickory-proto 0.26.0-beta.1",
+ "hickory-proto 0.26.0-beta.4",
  "rand 0.10.1",
  "socket2",
  "thiserror 2.0.18",
@@ -6610,3 +6610,8 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[patch.unused]]
+name = "swarm-discovery"
+version = "0.6.0-alpha.2"
+source = "git+https://github.com/n0-computer/swarm-discovery?branch=matheus23%2Fhickory-0.26-beta.4#ead497b4042870e1ee06db18de7c3579fbba9304"
