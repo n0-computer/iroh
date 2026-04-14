@@ -1287,7 +1287,7 @@
 <a href=#1287 id=1287 data-nosnippet>1287</a>        <span class="kw">loop </span>{
 <a href=#1288 id=1288 data-nosnippet>1288</a>            <span class="kw">if </span>value
 <a href=#1289 id=1289 data-nosnippet>1289</a>                .into_iter()
-<a href=#1290 id=1290 data-nosnippet>1290</a>                .filter_map(|x| x)
+<a href=#1290 id=1290 data-nosnippet>1290</a>                .flatten()
 <a href=#1291 id=1291 data-nosnippet>1291</a>                .any(|(_url, status)| status.is_connected())
 <a href=#1292 id=1292 data-nosnippet>1292</a>            {
 <a href=#1293 id=1293 data-nosnippet>1293</a>                <span class="kw">return</span>;
