@@ -94,6 +94,7 @@ fn check_response(packet: &Packet, expected_id: u16) -> Result<(), DnsError> {
     }
     match packet.rcode() {
         RCODE::NoError => Ok(()),
+        RCODE::NameError => Err(e!(DnsError::NxDomain)),
         rcode => Err(e!(DnsError::ServerError {
             rcode: format!("{rcode:?}"),
         })),
