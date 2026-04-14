@@ -235,10 +235,10 @@ impl SimpleDnsResolver {
     /// a CNAME but no records of the requested type.
     async fn send_query_following_cnames(
         &self,
-        host: &str,
+        host: String,
         qtype: TYPE,
     ) -> Result<(Vec<u8>, u16), DnsError> {
-        let mut current_host = host.to_string();
+        let mut current_host = host;
         for _ in 0..MAX_CNAME_DEPTH {
             let (id, query_bytes) = query::build_query(&current_host, qtype)?;
             let response = self.send_query(&query_bytes).await?;
@@ -293,11 +293,11 @@ impl SimpleDnsResolver {
         let mut last_err = None;
         for name in self.search_names(&host) {
             trace!(%name, "resolving A record");
-            match self.send_query_following_cnames(&name, TYPE::A).await {
+            match self.send_query_following_cnames(name, TYPE::A).await {
                 Ok((response, id)) => {
                     let (addrs, ttl) = query::parse_a_response(&response, id)?;
                     if !addrs.is_empty() {
-                        debug!(%name, count = addrs.len(), ttl, "resolved A record");
+                        debug!(%host, count = addrs.len(), ttl, "resolved A record");
                         if let Ok(mut cache) = self.cache.write() {
                             cache.insert(
                                 &host,
@@ -310,9 +310,7 @@ impl SimpleDnsResolver {
                     }
                 }
                 Err(DnsError::NxDomain { .. }) => {
-                    trace!(%name, "NXDOMAIN, trying next search domain");
                     last_err = Some(e!(DnsError::NxDomain));
-                    continue;
                 }
                 Err(e) => return Err(e),
             }
@@ -334,11 +332,11 @@ impl SimpleDnsResolver {
         let mut last_err = None;
         for name in self.search_names(&host) {
             trace!(%name, "resolving AAAA record");
-            match self.send_query_following_cnames(&name, TYPE::AAAA).await {
+            match self.send_query_following_cnames(name, TYPE::AAAA).await {
                 Ok((response, id)) => {
                     let (addrs, ttl) = query::parse_aaaa_response(&response, id)?;
                     if !addrs.is_empty() {
-                        debug!(%name, count = addrs.len(), ttl, "resolved AAAA record");
+                        debug!(%host, count = addrs.len(), ttl, "resolved AAAA record");
                         if let Ok(mut cache) = self.cache.write() {
                             cache.insert(
                                 &host,
@@ -351,9 +349,7 @@ impl SimpleDnsResolver {
                     }
                 }
                 Err(DnsError::NxDomain { .. }) => {
-                    trace!(%name, "NXDOMAIN, trying next search domain");
                     last_err = Some(e!(DnsError::NxDomain));
-                    continue;
                 }
                 Err(e) => return Err(e),
             }
@@ -375,11 +371,11 @@ impl SimpleDnsResolver {
         let mut last_err = None;
         for name in self.search_names(&host) {
             trace!(%name, "resolving TXT record");
-            match self.send_query_following_cnames(&name, TYPE::TXT).await {
+            match self.send_query_following_cnames(name, TYPE::TXT).await {
                 Ok((response, id)) => {
                     let (records, ttl) = query::parse_txt_response(&response, id)?;
                     if !records.is_empty() {
-                        debug!(%name, count = records.len(), ttl, "resolved TXT record");
+                        debug!(%host, count = records.len(), ttl, "resolved TXT record");
                         if let Ok(mut cache) = self.cache.write() {
                             cache.insert(
                                 &host,
@@ -392,9 +388,7 @@ impl SimpleDnsResolver {
                     }
                 }
                 Err(DnsError::NxDomain { .. }) => {
-                    trace!(%name, "NXDOMAIN, trying next search domain");
                     last_err = Some(e!(DnsError::NxDomain));
-                    continue;
                 }
                 Err(e) => return Err(e),
             }

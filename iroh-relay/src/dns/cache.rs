@@ -44,6 +44,15 @@ impl CacheEntry {
 }
 
 /// DNS cache with LRU eviction and TTL-based expiry.
+///
+/// # Allocation notes
+///
+/// - `get()` allocates a `String` for the lookup key because `LruCache::get`
+///   requires `K: Borrow<Q>` and tuples don't implement cross-type `Borrow`.
+///   This is ~20-50 bytes per lookup, negligible vs network I/O.
+/// - `get()` clones the cached record (Vec of addresses). Necessary because
+///   the cache is behind a `std::sync::RwLock` and the borrow can't outlive it.
+/// - `insert()` allocates a `String` for the key. Unavoidable for owned storage.
 #[derive(Debug)]
 pub(super) struct DnsCache {
     inner: LruCache<(String, QueryType), CacheEntry>,
