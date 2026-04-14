@@ -2,7 +2,6 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
-use n0_error::e;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::DnsError;
@@ -37,12 +36,9 @@ pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
     let mut buf = vec![0u8; 4096];
     let (len, src) = socket.recv_from(&mut buf).await?;
     if src != addr {
-        return Err(e!(DnsError::Transport {
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("DNS response from unexpected source {src}, expected {addr}"),
-            ),
-        }));
+        return Err(std::io::Error::other(format!(
+            "DNS response from unexpected source {src}, expected {addr}"
+        )))?;
     }
     buf.truncate(len);
     Ok(buf)

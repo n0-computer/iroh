@@ -142,18 +142,11 @@ impl SimpleDnsResolver {
         Ok(client)
     }
 
-    /// Run a future with [`NAMESERVER_TIMEOUT`], converting timeout to [`DnsError::Transport`].
+    /// Run a future with [`NAMESERVER_TIMEOUT`].
     async fn with_timeout<T>(
         fut: impl std::future::Future<Output = Result<T, DnsError>>,
     ) -> Result<T, DnsError> {
-        time::timeout(NAMESERVER_TIMEOUT, fut).await.unwrap_or_else(|_| {
-            Err(e!(DnsError::Transport {
-                source: std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "nameserver query timed out",
-                ),
-            }))
-        })
+        Ok(time::timeout(NAMESERVER_TIMEOUT, fut).await??)
     }
 
     /// Query a single nameserver, with UDP retry and truncation fallback.
@@ -189,10 +182,7 @@ impl SimpleDnsResolver {
             DnsProtocol::Tls => {
                 let tls_config = self.tls_config.as_ref().ok_or_else(|| {
                     e!(DnsError::Transport {
-                        source: std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "TLS config required for DNS-over-TLS",
-                        ),
+                        source: std::io::Error::other("TLS config required for DNS-over-TLS"),
                     })
                 })?;
                 Self::with_timeout(transport::tls_query(addr, query_bytes, tls_config)).await
@@ -255,8 +245,7 @@ impl SimpleDnsResolver {
 
             // Check if the response only has CNAMEs but no records of the
             // requested type. If so, follow the CNAME to a new query.
-            let packet = simple_dns::Packet::parse(&response)
-                .map_err(|e| e!(DnsError::InvalidPacket { source: e }))?;
+            let packet = simple_dns::Packet::parse(&response)?;
             let has_target_records = packet.answers.iter().any(|rr| {
                 matches!(
                     (&rr.rdata, qtype),
