@@ -311,11 +311,13 @@ impl ClientBuilder {
         tokio::pin!(ws_fut);
 
         // Race QUIC handshake (1 RTT) against the full WS connect (3-4 RTTs).
-        // As soon as QUIC succeeds, the WS future is dropped.
-        let race = tokio::select! {
-            r = &mut quic_fut => Either::Left(r),
-            r = &mut ws_fut => Either::Right(r),
-        };
+        // The &mut borrows keep the loser alive for fallback.
+        #[rustfmt::skip]
+        let race = n0_future::future::race(
+            async { Either::Left((&mut quic_fut).await) },
+            async { Either::Right((&mut ws_fut).await) }
+        )
+        .await;
 
         match race {
             Either::Left(Ok(quic)) => {
@@ -336,7 +338,7 @@ impl ClientBuilder {
                     }
                     Err(err) => {
                         debug!("WT handshake failed ({err:#}), falling back to WS");
-                        self.connect_ws_resolved(ip).await
+                        ws_fut.await
                     }
                 }
             }
