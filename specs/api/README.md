@@ -9,7 +9,7 @@ For the low-level wire protocol specification, see [../wire/](../wire/README.md)
 ## Table of Contents
 
 1. [Overview](01-overview.md) — What iroh is, design philosophy, and building blocks
-2. [Identity](02-identity.md) — Keys, endpoint identity, and authentication
+2. [Endpoints](02-endpoints.md) — Endpoint setup, identity, home relay selection, and authentication
 3. [Connections](03-connections.md) — QUIC connections, streams, and datagrams
 4. [Addressing](04-addressing.md) — Endpoint addresses and transport address types
 5. [Address Lookup](05-address-lookup.md) — Resolving endpoint IDs to dialable addresses
