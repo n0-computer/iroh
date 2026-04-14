@@ -290,7 +290,7 @@ where
         }
 
         self.clients
-            .unregister(self.connection_id, self.endpoint_id);
+            .unregister(self.connection_id, self.endpoint_id, &self.metrics);
         self.metrics.disconnects.inc();
     }
 
