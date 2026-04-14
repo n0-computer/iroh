@@ -1,6 +1,7 @@
 //! Simple TTL-based DNS cache using LRU eviction.
 
 use std::{
+    hash::{Hash, Hasher},
     net::{Ipv4Addr, Ipv6Addr},
     time::{Duration, Instant},
 };
@@ -19,6 +20,18 @@ pub(super) enum QueryType {
     A,
     AAAA,
     TXT,
+}
+
+/// Pre-hash `(host, qtype)` into a u64 key for allocation-free cache lookups.
+///
+/// Collisions are benign (worst case: wrong cache entry returned, causing a
+/// re-query). With 64-bit hashes and a 512-entry cache the probability is
+/// negligible.
+fn cache_key(host: &str, qtype: QueryType) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    host.hash(&mut hasher);
+    qtype.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// A cached DNS result.
@@ -45,17 +58,12 @@ impl CacheEntry {
 
 /// DNS cache with LRU eviction and TTL-based expiry.
 ///
-/// # Allocation notes
-///
-/// - `get()` allocates a `String` for the lookup key because `LruCache::get`
-///   requires `K: Borrow<Q>` and tuples don't implement cross-type `Borrow`.
-///   This is ~20-50 bytes per lookup, negligible vs network I/O.
-/// - `get()` clones the cached record (Vec of addresses). Necessary because
-///   the cache is behind a `std::sync::RwLock` and the borrow can't outlive it.
-/// - `insert()` allocates a `String` for the key. Unavoidable for owned storage.
+/// Uses pre-hashed u64 keys to avoid allocating a `String` on every lookup.
+/// The only remaining per-hit allocation is the `record.clone()` on cache hit,
+/// which is necessary because the cache is behind a `std::sync::RwLock`.
 #[derive(Debug)]
 pub(super) struct DnsCache {
-    inner: LruCache<(String, QueryType), CacheEntry>,
+    inner: LruCache<u64, CacheEntry>,
 }
 
 impl DnsCache {
@@ -67,16 +75,13 @@ impl DnsCache {
 
     /// Look up a cached record. Returns `None` if not found or expired.
     pub(super) fn get(&mut self, host: &str, qtype: QueryType) -> Option<CachedRecord> {
-        let key = (host.to_string(), qtype);
-        if let Some(entry) = self.inner.get(&key) {
-            if entry.is_expired() {
-                self.inner.pop(&key);
-                return None;
-            }
-            Some(entry.record.clone())
-        } else {
-            None
+        let key = cache_key(host, qtype);
+        let entry = self.inner.get(&key)?;
+        if entry.is_expired() {
+            self.inner.pop(&key);
+            return None;
         }
+        Some(entry.record.clone())
     }
 
     /// Insert a record into the cache with the given TTL.
@@ -99,7 +104,7 @@ impl DnsCache {
             inserted_at: Instant::now(),
             ttl: Duration::from_secs(ttl as u64),
         };
-        self.inner.put((host.to_string(), qtype), entry);
+        self.inner.put(cache_key(host, qtype), entry);
     }
 
     /// Clear all cache entries.
