@@ -22,25 +22,6 @@ use tracing::info;
 
 use crate::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
 
-fn router_preset(ip: IpSupport) -> RouterPreset {
-    match ip {
-        IpSupport::V4Only => RouterPreset::Home,
-        IpSupport::V6Only => RouterPreset::IspV6,
-        IpSupport::DualStack => RouterPreset::Home,
-    }
-}
-
-fn path_switched(to: IpSupport, previous: &[TransportAddr], new: &TransportAddr) -> bool {
-    if previous.contains(new) {
-        return false;
-    }
-    match to {
-        IpSupport::V4Only => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv4()),
-        IpSupport::V6Only => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv6()),
-        IpSupport::DualStack => matches!(new, TransportAddr::Ip(_)),
-    }
-}
-
 /// Builds the lab topology and runs a single uplink switch test.
 ///
 /// The topology has three routers:
@@ -169,6 +150,25 @@ async fn run_switch_uplink(switching_side: Side, from: IpSupport, to: IpSupport)
 
     guard.ok();
     Ok(())
+}
+
+fn router_preset(ip: IpSupport) -> RouterPreset {
+    match ip {
+        IpSupport::V4Only => RouterPreset::Home,
+        IpSupport::V6Only => RouterPreset::IspV6,
+        IpSupport::DualStack => RouterPreset::Home,
+    }
+}
+
+fn path_switched(to: IpSupport, previous: &[TransportAddr], new: &TransportAddr) -> bool {
+    if previous.contains(new) {
+        return false;
+    }
+    match to {
+        IpSupport::V4Only => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv4()),
+        IpSupport::V6Only => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv6()),
+        IpSupport::DualStack => matches!(new, TransportAddr::Ip(_)),
+    }
 }
 
 // --- Client switches uplink ---
