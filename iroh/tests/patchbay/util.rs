@@ -8,6 +8,7 @@ use iroh::{
 use iroh_metrics::MetricsGroupSet;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{boxed::BoxFuture, task::AbortOnDropHandle};
+use noq::Side;
 use patchbay::{Device, IpSupport, Lab, OutDir, TestGuard};
 use tokio::sync::{Barrier, oneshot};
 use tracing::{Instrument, debug, error, error_span, event, info};
@@ -73,14 +74,40 @@ async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
 /// Type alias for boxed run functions used in [`Pair`].
 type RunFn = Box<dyn 'static + Send + FnOnce(Device, Endpoint, Connection) -> BoxFuture<Result>>;
 
+fn box_fn<F, Fut>(f: F) -> RunFn
+where
+    F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
+    Fut: Future<Output = Result> + Send + 'static,
+{
+    Box::new(move |dev, ep, conn| Box::pin(f(dev, ep, conn)))
+}
+
 /// Builder for two connected endpoints in a lab.
 ///
 /// Use this to quickly create two endpoints on two different devices and create a
 /// connection between them that starts as relay-only.
+///
+/// Two construction paths:
+///
+/// ```ignore
+/// // Explicit server/client assignment:
+/// Pair::new(relay_map)
+///     .server(server_dev, async |dev, ep, conn| { ... })
+///     .client(client_dev, async |dev, ep, conn| { ... })
+///     .run().await?;
+///
+/// // Role-based assignment (for matrix tests that swap sides):
+/// Pair::with_devices(relay_map, server_dev, client_dev)
+///     .side(active_side, async |dev, ep, conn| { ... })
+///     .other(async |dev, ep, conn| { ... })
+///     .run().await?;
+/// ```
 pub struct Pair {
     relay_map: RelayMap,
-    server: Option<(Device, RunFn)>,
-    client: Option<(Device, RunFn)>,
+    server_dev: Option<Device>,
+    client_dev: Option<Device>,
+    server_fn: Option<RunFn>,
+    client_fn: Option<RunFn>,
 }
 
 impl Pair {
@@ -88,9 +115,55 @@ impl Pair {
     pub fn new(relay_map: RelayMap) -> Self {
         Self {
             relay_map,
-            server: None,
-            client: None,
+            server_dev: None,
+            client_dev: None,
+            server_fn: None,
+            client_fn: None,
         }
+    }
+
+    /// Creates a pair builder with both devices pre-assigned.
+    ///
+    /// Use with [`.side()`](Self::side) and [`.other()`](Self::other) to
+    /// assign closures by role rather than by protocol side.
+    pub fn with_devices(relay_map: RelayMap, server: Device, client: Device) -> Self {
+        Self {
+            relay_map,
+            server_dev: Some(server),
+            client_dev: Some(client),
+            server_fn: None,
+            client_fn: None,
+        }
+    }
+
+    /// Assigns a closure to the given [`Side`].
+    ///
+    /// Requires that devices were set via [`Pair::with_devices`].
+    pub fn side<F, Fut>(mut self, side: Side, run_fn: F) -> Self
+    where
+        F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
+        Fut: Future<Output = Result> + Send + 'static,
+    {
+        *match side {
+            Side::Server => &mut self.server_fn,
+            Side::Client => &mut self.client_fn,
+        } = Some(box_fn(run_fn));
+        self
+    }
+
+    /// Assigns a closure to whichever [`Side`] was not set by [`.side()`](Self::side).
+    pub fn other<F, Fut>(self, run_fn: F) -> Self
+    where
+        F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
+        Fut: Future<Output = Result> + Send + 'static,
+    {
+        let remaining = match (&self.server_fn, &self.client_fn) {
+            (Some(_), None) => Side::Client,
+            (None, Some(_)) => Side::Server,
+            (None, None) => panic!("call .side() before .other()"),
+            (Some(_), Some(_)) => panic!("both sides already assigned"),
+        };
+        self.side(remaining, run_fn)
     }
 
     /// Sets the server device and run function.
@@ -99,9 +172,8 @@ impl Pair {
         F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
         Fut: Future<Output = Result> + Send + 'static,
     {
-        let run_fn: RunFn =
-            Box::new(move |device, endpoint, conn| Box::pin(run_fn(device, endpoint, conn)));
-        self.server = Some((device, run_fn));
+        self.server_dev = Some(device);
+        self.server_fn = Some(box_fn(run_fn));
         self
     }
 
@@ -111,9 +183,8 @@ impl Pair {
         F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
         Fut: Future<Output = Result> + Send + 'static,
     {
-        let run_fn: RunFn =
-            Box::new(move |device, endpoint, conn| Box::pin(run_fn(device, endpoint, conn)));
-        self.client = Some((device, run_fn));
+        self.client_dev = Some(device);
+        self.client_fn = Some(box_fn(run_fn));
         self
     }
 
@@ -133,14 +204,16 @@ impl Pair {
     ///
     /// Returns an error if any step or run function failed.
     pub async fn run(mut self) -> Result {
-        let (server_device, server_run) = self
-            .server
+        let server_device = self.server_dev.take().context("Missing server device")?;
+        let server_run = self
+            .server_fn
             .take()
-            .context("Missing server initialization")?;
-        let (client_device, client_run) = self
-            .client
+            .context("Missing server run function")?;
+        let client_device = self.client_dev.take().context("Missing client device")?;
+        let client_run = self
+            .client_fn
             .take()
-            .context("Missing client initialization")?;
+            .context("Missing client run function")?;
 
         let (addr_tx, addr_rx) = oneshot::channel();
         let relay_map2 = self.relay_map.clone();
