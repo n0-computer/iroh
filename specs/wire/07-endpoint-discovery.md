@@ -90,7 +90,7 @@ Endpoints publish their addressing information so that remote endpoints can find
 1. The endpoint monitors its own addressing information:
    - Home relay URL
    - Direct IP addresses (if address filter permits)
-2. When addressing information changes, the endpoint publishes a new Pkarr signed packet (see [Addressing](addressing.md)).
+2. When addressing information changes, the endpoint publishes a new Pkarr signed packet (see [Addressing](06-addressing.md)).
 3. Even if unchanged, the endpoint republishes every 5 minutes to keep records fresh.
 
 ### DNS Staggering

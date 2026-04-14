@@ -20,7 +20,7 @@ The home relay selection process:
 3. The endpoint maintains a persistent connection to its home relay.
 4. If network conditions change, the endpoint re-evaluates and may switch to a different home relay.
 
-An endpoint advertises its home relay URL as part of its addressing information (see [Addressing](addressing.md) and [Address Lookup](address-lookup.md)), so that remote endpoints know where to find it.
+An endpoint advertises its home relay URL as part of its addressing information (see [Addressing](04-addressing.md) and [Address Lookup](05-address-lookup.md)), so that remote endpoints know where to find it.
 
 ## Relay Connection
 
@@ -46,7 +46,7 @@ The relay does not buffer packets — if the destination is not currently connec
 
 ## QAD Service
 
-Relay servers also provide a QUIC Address Discovery (QAD) service. This is a separate QUIC endpoint on the relay server that helps iroh endpoints discover their public IP address and port as observed from the relay's perspective. This information is critical for NAT traversal (see [Holepunching](holepunching.md)).
+Relay servers also provide a QUIC Address Discovery (QAD) service. This is a separate QUIC endpoint on the relay server that helps iroh endpoints discover their public IP address and port as observed from the relay's perspective. This information is critical for NAT traversal (see [Holepunching](07-holepunching.md)).
 
 The QAD service uses the ALPN `/iroh-qad/0` and implements the QUIC Address Discovery draft. When an endpoint connects, the relay observes the endpoint's public IP:port and reports it back via QUIC's observed address mechanism.
 
