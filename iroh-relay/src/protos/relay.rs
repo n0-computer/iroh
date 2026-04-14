@@ -792,8 +792,7 @@ mod proptests {
                 s.len() < MAX_PACKET_SIZE // a single unicode character can match a regex "." but take up multiple bytes
             })
             .prop_map(|problem| RelayToClientMsg::Health { problem });
-        let health = Just(HealthStatus::SameEndpointIdConnected)
-            .prop_map(RelayToClientMsg::Status);
+        let health = Just(HealthStatus::SameEndpointIdConnected).prop_map(RelayToClientMsg::Status);
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),
