@@ -42,13 +42,14 @@ pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay
 #[strum(parse_err_ty = UnsupportedRelayProtocolVersion, parse_err_fn = strum_err_fn)]
 // Needs to be ordered with latest version last, so that the `Ord` impl orders by latest version as max.
 pub enum ProtocolVersion {
-    /// Version 1 (before iroh 0.97.0)
+    /// Version 1 (the only vesion supported until iroh 0.98.0)
     #[strum(serialize = "iroh-relay-v1")]
     V1,
-    /// Version 2 (added in iroh 0.97.0)
+    /// Version 2 (added in iroh 0.98.0)
     /// - Removed `Health` frame (id 11)
     /// - Added new `Status` frame (id 13)
-    /// - Changed behavior such that unknown frames are allowed
+    /// - Changed behavior such that unknown frames are ignored instead of
+    ///   being treated as an error
     #[default]
     #[strum(serialize = "iroh-relay-v2")]
     V2,
@@ -62,7 +63,7 @@ impl ProtocolVersion {
             .map(ProtocolVersion::to_str)
             // We reverse the order so that the latest version comes first:
             // `Self::VARIANTS` is ordered in definition order, where the latest version comes last
-            // so that the `Ord` derive correctly orderes by "latest is max".
+            // so that the `Ord` derive correctly orders by "latest is max".
             .rev()
     }
 
