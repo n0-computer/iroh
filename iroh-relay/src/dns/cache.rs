@@ -39,7 +39,7 @@ struct CacheEntry {
 
 impl CacheEntry {
     fn is_expired(&self) -> bool {
-        Instant::now() > self.inserted_at + self.ttl
+        self.inserted_at.elapsed() > self.ttl
     }
 }
 

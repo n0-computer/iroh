@@ -25,14 +25,12 @@ use super::DnsError;
 /// prevent cache poisoning. The response source address is validated against
 /// the target nameserver.
 pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, DnsError> {
-    let bind_addr = SocketAddr::new(
-        if addr.is_ipv6() {
-            std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
-        } else {
-            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
-        },
-        0,
-    );
+    let unspecified: std::net::IpAddr = if addr.is_ipv6() {
+        std::net::Ipv6Addr::UNSPECIFIED.into()
+    } else {
+        std::net::Ipv4Addr::UNSPECIFIED.into()
+    };
+    let bind_addr = SocketAddr::new(unspecified, 0);
     let socket = tokio::net::UdpSocket::bind(bind_addr).await?;
     socket.send_to(query, addr).await?;
 

@@ -65,7 +65,7 @@ impl SimpleDnsResolver {
         let tls_config = builder
             .tls_client_config
             .as_ref()
-            .map(|c: &ClientConfig| Arc::new(c.clone()));
+            .map(|c| Arc::new(c.clone()));
         Self {
             nameservers,
             search_domains,
@@ -109,7 +109,7 @@ impl SimpleDnsResolver {
             return vec![host.to_string()];
         }
 
-        let dot_count = host.chars().filter(|&c| c == '.').count();
+        let dot_count = host.bytes().filter(|&b| b == b'.').count();
         let mut names = Vec::with_capacity(self.search_domains.len() + 1);
 
         if dot_count >= DEFAULT_NDOTS {
@@ -142,6 +142,20 @@ impl SimpleDnsResolver {
         Ok(client)
     }
 
+    /// Run a future with [`NAMESERVER_TIMEOUT`], converting timeout to [`DnsError::Transport`].
+    async fn with_timeout<T>(
+        fut: impl std::future::Future<Output = Result<T, DnsError>>,
+    ) -> Result<T, DnsError> {
+        time::timeout(NAMESERVER_TIMEOUT, fut).await.unwrap_or_else(|_| {
+            Err(e!(DnsError::Transport {
+                source: std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "nameserver query timed out",
+                ),
+            }))
+        })
+    }
+
     /// Query a single nameserver, with UDP retry and truncation fallback.
     async fn query_nameserver(
         &self,
@@ -154,56 +168,22 @@ impl SimpleDnsResolver {
                 let mut last_err = None;
                 for attempt in 0..UDP_ATTEMPTS {
                     trace!(%addr, attempt, "sending UDP query");
-                    match time::timeout(NAMESERVER_TIMEOUT, transport::udp_query(addr, query_bytes))
-                        .await
-                    {
-                        Ok(Ok(resp)) => {
-                            if query::is_truncated(&resp) {
-                                debug!(%addr, "UDP response truncated, retrying over TCP");
-                                return time::timeout(
-                                    NAMESERVER_TIMEOUT,
-                                    transport::tcp_query(addr, query_bytes),
-                                )
-                                .await
-                                .unwrap_or_else(|_| {
-                                    Err(e!(DnsError::Transport {
-                                        source: std::io::Error::new(
-                                            std::io::ErrorKind::TimedOut,
-                                            "TCP fallback timed out",
-                                        ),
-                                    }))
-                                });
-                            }
-                            return Ok(resp);
+                    match Self::with_timeout(transport::udp_query(addr, query_bytes)).await {
+                        Ok(resp) if query::is_truncated(&resp) => {
+                            debug!(%addr, "UDP response truncated, retrying over TCP");
+                            return Self::with_timeout(transport::tcp_query(addr, query_bytes)).await;
                         }
-                        Ok(Err(e)) => {
+                        Ok(resp) => return Ok(resp),
+                        Err(e) => {
                             trace!(%addr, attempt, err = %e, "UDP query failed");
                             last_err = Some(e);
-                        }
-                        Err(_) => {
-                            trace!(%addr, attempt, "UDP query timed out");
-                            last_err = Some(e!(DnsError::Transport {
-                                source: std::io::Error::new(
-                                    std::io::ErrorKind::TimedOut,
-                                    "nameserver query timed out",
-                                ),
-                            }));
                         }
                     }
                 }
                 Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
             }
             DnsProtocol::Tcp => {
-                time::timeout(NAMESERVER_TIMEOUT, transport::tcp_query(addr, query_bytes))
-                    .await
-                    .unwrap_or_else(|_| {
-                        Err(e!(DnsError::Transport {
-                            source: std::io::Error::new(
-                                std::io::ErrorKind::TimedOut,
-                                "nameserver query timed out",
-                            ),
-                        }))
-                    })
+                Self::with_timeout(transport::tcp_query(addr, query_bytes)).await
             }
             #[cfg(with_crypto_provider)]
             DnsProtocol::Tls => {
@@ -215,36 +195,12 @@ impl SimpleDnsResolver {
                         ),
                     })
                 })?;
-                time::timeout(
-                    NAMESERVER_TIMEOUT,
-                    transport::tls_query(addr, query_bytes, tls_config),
-                )
-                .await
-                .unwrap_or_else(|_| {
-                    Err(e!(DnsError::Transport {
-                        source: std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "nameserver query timed out",
-                        ),
-                    }))
-                })
+                Self::with_timeout(transport::tls_query(addr, query_bytes, tls_config)).await
             }
             #[cfg(with_crypto_provider)]
             DnsProtocol::Https => {
                 let client = self.get_or_init_https_client().await?;
-                time::timeout(
-                    NAMESERVER_TIMEOUT,
-                    transport::https_query(addr, query_bytes, &client),
-                )
-                .await
-                .unwrap_or_else(|_| {
-                    Err(e!(DnsError::Transport {
-                        source: std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "nameserver query timed out",
-                        ),
-                    }))
-                })
+                Self::with_timeout(transport::https_query(addr, query_bytes, &client)).await
             }
         }
     }
@@ -271,16 +227,7 @@ impl SimpleDnsResolver {
                     time::sleep(stagger).await;
                 }
                 trace!(%addr, ?proto, "sending DNS query");
-                let result = self.query_nameserver(addr, proto, query_bytes).await;
-                match &result {
-                    Ok(resp) => {
-                        trace!(%addr, ?proto, len = resp.len(), "DNS query succeeded");
-                    }
-                    Err(e) => {
-                        trace!(%addr, ?proto, err = %e, "DNS query failed");
-                    }
-                }
-                result
+                self.query_nameserver(addr, proto, query_bytes).await
             });
         }
 
@@ -310,11 +257,13 @@ impl SimpleDnsResolver {
             // requested type. If so, follow the CNAME to a new query.
             let packet = simple_dns::Packet::parse(&response)
                 .map_err(|e| e!(DnsError::InvalidPacket { source: e }))?;
-            let has_target_records = packet.answers.iter().any(|rr| match (&rr.rdata, qtype) {
-                (simple_dns::rdata::RData::A(_), TYPE::A) => true,
-                (simple_dns::rdata::RData::AAAA(_), TYPE::AAAA) => true,
-                (simple_dns::rdata::RData::TXT(_), TYPE::TXT) => true,
-                _ => false,
+            let has_target_records = packet.answers.iter().any(|rr| {
+                matches!(
+                    (&rr.rdata, qtype),
+                    (simple_dns::rdata::RData::A(_), TYPE::A)
+                        | (simple_dns::rdata::RData::AAAA(_), TYPE::AAAA)
+                        | (simple_dns::rdata::RData::TXT(_), TYPE::TXT)
+                )
             });
 
             if has_target_records {
@@ -478,7 +427,7 @@ impl SimpleDnsResolver {
             .builder
             .tls_client_config
             .as_ref()
-            .map(|c: &ClientConfig| Arc::new(c.clone()));
+            .map(|c| Arc::new(c.clone()));
         // Clear cached HTTPS client so it gets rebuilt with the new TLS config on next use
         *self.https_client.get_mut() = None;
         if let Ok(mut cache) = self.cache.write() {

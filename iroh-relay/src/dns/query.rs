@@ -54,18 +54,17 @@ pub(super) const MAX_CNAME_DEPTH: usize = 8;
 fn resolve_cname_chain<'a>(packet: &'a Packet<'a>, start_name: &Name<'a>) -> Name<'a> {
     let mut current = start_name.clone();
     for _ in 0..MAX_CNAME_DEPTH {
-        let next = packet.answers.iter().find_map(|rr| {
-            if rr.name == current {
-                if let RData::CNAME(cname) = &rr.rdata {
-                    return Some(cname.0.clone());
-                }
-            }
-            None
-        });
-        match next {
-            Some(name) => current = name,
-            None => break,
-        }
+        let Some(next) = packet.answers.iter().find_map(|rr| {
+            (rr.name == current)
+                .then(|| match &rr.rdata {
+                    RData::CNAME(cname) => Some(cname.0.clone()),
+                    _ => None,
+                })
+                .flatten()
+        }) else {
+            break;
+        };
+        current = next;
     }
     current
 }
@@ -76,15 +75,9 @@ fn resolve_cname_chain<'a>(packet: &'a Packet<'a>, start_name: &Name<'a>) -> Nam
 /// This is used for recursive CNAME following: when the server returns only a
 /// CNAME without the final record, the caller issues a new query for the target.
 pub(super) fn cname_target(packet: &Packet<'_>, qname: &str) -> Option<String> {
-    let Ok(name) = Name::new(qname) else {
-        return None;
-    };
+    let name = Name::new(qname).ok()?;
     let canonical = resolve_cname_chain(packet, &name);
-    if canonical != name {
-        Some(canonical.to_string())
-    } else {
-        None
-    }
+    (canonical != name).then(|| canonical.to_string())
 }
 
 /// Check response packet for errors (RCODE, ID mismatch).
@@ -209,20 +202,14 @@ pub(super) fn parse_txt_response(
 /// (which uses a HashMap and would lose ordering and deduplicate keys).
 fn extract_txt_record_data(txt: &simple_dns::rdata::TXT<'_>) -> TxtRecordData {
     match String::try_from(txt.clone()) {
-        Ok(s) if !s.is_empty() => {
-            TxtRecordData::from(vec![s.into_bytes().into_boxed_slice()])
-        }
+        Ok(s) if !s.is_empty() => TxtRecordData::from(vec![s.into_bytes().into_boxed_slice()]),
         _ => TxtRecordData::from(Vec::<Box<[u8]>>::new()),
     }
 }
 
 /// Returns true if the response has the TC (truncation) flag set.
 pub(super) fn is_truncated(data: &[u8]) -> bool {
-    if let Ok(packet) = Packet::parse(data) {
-        packet.has_flags(PacketFlag::TRUNCATION)
-    } else {
-        false
-    }
+    Packet::parse(data).is_ok_and(|p| p.has_flags(PacketFlag::TRUNCATION))
 }
 
 #[cfg(test)]
