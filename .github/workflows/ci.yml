@@ -192,7 +192,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.17.9
+        uses: cargo-bins/cargo-binstall@v1.18.1
 
       - name: Install wasm-bindgen-test-runner
         # Match the version of wasm-bindgen used in Cargo.lock
