@@ -138,9 +138,7 @@ async fn run_switch_uplink(switching_side: Side, from: IpSupport, to: IpSupport)
             .map(|p| p.remote_addr().clone())
             .collect();
         paths
-            .wait_selected(timeout, |p| {
-                path_switched(to, &previous, p.remote_addr())
-            })
+            .wait_selected(timeout, |p| path_switched(to, &previous, p.remote_addr()))
             .await
             .context("path did not switch")?;
         ping_open(&conn, timeout)
