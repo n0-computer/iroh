@@ -41,6 +41,9 @@ pub(super) struct SystemDnsConfig {
     /// When resolving a short hostname (one with fewer dots than `ndots`,
     /// default 1), the resolver should try appending each search domain
     /// before querying the bare name.
+    ///
+    /// Currently parsed but not yet applied by the resolver.
+    #[allow(dead_code)]
     pub(super) search_domains: Vec<String>,
 }
 
