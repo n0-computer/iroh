@@ -13,9 +13,11 @@ Iroh is designed as a composition of existing IETF standards and drafts. Rather 
 | Transport | [QUIC v1 (RFC 9000)](https://www.rfc-editor.org/rfc/rfc9000) |
 | Encryption | [TLS 1.3 (RFC 8446)](https://www.rfc-editor.org/rfc/rfc8446) with [Raw Public Keys (RFC 7250)](https://www.rfc-editor.org/rfc/rfc7250) |
 | Multipath | [QUIC Multipath (draft-ietf-quic-multipath)](https://datatracker.ietf.org/doc/draft-ietf-quic-multipath/) |
-| Address Discovery | [QUIC Address Discovery (draft-ietf-quic-address-discovery)](https://quicwg.org/address-discovery/draft-ietf-quic-address-discovery.html) |
-| NAT Traversal | [QUIC NAT Traversal (draft-seemann-quic-nat-traversal)](https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-01.html) |
-| Endpoint Discovery | [Pkarr](https://github.com/Nuhvi/pkarr/blob/main/design/base.md) (the only non-IETF component) |
+| Address Discovery | Modified [QUIC Address Discovery (draft-ietf-quic-address-discovery)](https://quicwg.org/address-discovery/draft-ietf-quic-address-discovery.html) |
+| NAT Traversal | n0-QNT, inspired by [QUIC NAT Traversal (draft-seemann-quic-nat-traversal)](https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-01.html) |
+| Endpoint Discovery | [Pkarr](https://github.com/Nuhvi/pkarr/blob/main/design/base.md) |
+
+QUIC, multipath, and the modified QAD/QNT protocols are implemented in [noq](https://github.com/n0-computer/noq), iroh's QUIC library (a fork of Quinn).
 
 The iroh relay protocol is the primary iroh-specific addition — a lightweight packet forwarding protocol that ensures connectivity when direct paths are unavailable.
 

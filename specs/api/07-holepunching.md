@@ -18,9 +18,11 @@ This approach guarantees that connectivity is always available (via relay) while
 
 ## Address Discovery
 
-Before holepunching can begin, each endpoint needs to know its own public address — the IP and port as seen from outside its NAT. Iroh uses QUIC Address Discovery (QAD) for this, as described in [draft-ietf-quic-address-discovery](https://quicwg.org/address-discovery/draft-ietf-quic-address-discovery.html).
+Before holepunching can begin, each endpoint needs to know its own public address — the IP and port as seen from outside its NAT. Iroh uses a modified form of QUIC Address Discovery (QAD), based on [draft-ietf-quic-address-discovery](https://quicwg.org/address-discovery/draft-ietf-quic-address-discovery.html), implemented in [noq](https://github.com/n0-computer/noq).
 
-Each endpoint connects to the QAD service on its relay server (ALPN `/iroh-qad/0`). The relay server observes the endpoint's public address and reports it back. This discovered address becomes a NAT traversal candidate.
+Each endpoint maintains a persistent connection to the QAD service on its relay server (ALPN `/iroh-qad/0`). The relay server observes the endpoint's public address and continuously reports it back. This discovered address becomes a NAT traversal candidate. The persistent connection allows real-time detection of address changes (e.g., NAT rebinding).
+
+Key modifications from the standard QAD draft include separate IPv4/IPv6 frame types, sequence numbers on observed address frames, and tuned connection parameters for fast failure detection. See the [wire spec](../wire/04-nat-traversal.md) for details.
 
 Additionally, the endpoint's network report collects information about its NAT behavior, including:
 - Whether UDP works on IPv4 and IPv6
@@ -29,7 +31,7 @@ Additionally, the endpoint's network report collects information about its NAT b
 
 ## Coordinated Holepunching
 
-Iroh implements a form of the [QUIC NAT Traversal](https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-01.html) draft for coordinated hole punching.
+Iroh implements **n0 NAT Traversal (n0-QNT)**, a protocol inspired by [draft-seemann-quic-nat-traversal](https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-01.html) but simplified into n0's own protocol, also implemented in noq. The key differences from the draft include a custom transport parameter, a simplified frame set (`ADD_ADDRESS`, `REACH_OUT`, `REMOVE_ADDRESS`), round-based probing, and off-path probing with retry. See the [wire spec](../wire/04-nat-traversal.md) for the full protocol details.
 
 The process works as follows:
 

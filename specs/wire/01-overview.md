@@ -33,8 +33,8 @@ All layers are standard or based on IETF drafts except the relay protocol, which
 | RPK | Transport Layer Security (TLS) Raw Public Keys | [RFC 7250](https://www.rfc-editor.org/rfc/rfc7250) |
 | TLS-EKM | Keying Material Exporters for TLS | [RFC 5705](https://www.rfc-editor.org/rfc/rfc5705) |
 | QUIC-MP | Multipath Extension for QUIC | [draft-ietf-quic-multipath](https://datatracker.ietf.org/doc/draft-ietf-quic-multipath/) |
-| QAD | QUIC Address Discovery | [draft-ietf-quic-address-discovery](https://quicwg.org/address-discovery/draft-ietf-quic-address-discovery.html) |
-| QNT | QUIC NAT Traversal | [draft-seemann-quic-nat-traversal](https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-01.html) |
+| QAD | QUIC Address Discovery (modified) | [draft-ietf-quic-address-discovery](https://quicwg.org/address-discovery/draft-ietf-quic-address-discovery.html) |
+| n0-QNT | n0 NAT Traversal (inspired by QNT) | [draft-seemann-quic-nat-traversal](https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-01.html) |
 | Pkarr | Public Key Addressable Resource Records | [Pkarr Base Design](https://github.com/Nuhvi/pkarr/blob/main/design/base.md) |
 | VarInt | QUIC Variable-Length Integer Encoding | [RFC 9000 Section 16](https://www.rfc-editor.org/rfc/rfc9000#section-16) |
 | RFC 2119 | Key words for use in RFCs | [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) |
@@ -51,8 +51,9 @@ All layers are standard or based on IETF drafts except the relay protocol, which
 | **Path** | A specific route to a remote endpoint over a particular transport. |
 | **ALPN** | Application-Layer Protocol Negotiation identifier. |
 | **Pkarr** | A system for publishing DNS records signed by Ed25519 keys. |
-| **QAD** | QUIC Address Discovery — a mechanism for learning one's public address. |
-| **QNT** | QUIC NAT Traversal — a mechanism for coordinated hole punching. |
+| **QAD** | QUIC Address Discovery (modified) — a mechanism for learning one's public address. |
+| **n0-QNT** | n0 NAT Traversal — n0's protocol for coordinated hole punching, inspired by QUIC NAT Traversal. |
+| **noq** | n0's QUIC library (fork of Quinn), implementing QUIC, multipath, QAD, and n0-QNT. |
 
 ## Notation
 
