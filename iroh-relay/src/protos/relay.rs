@@ -167,6 +167,7 @@ impl HealthStatus {
 
 /// Messages that clients send to relays.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ClientToRelayMsg {
     /// Request from the client to the server to reply to the
     /// other side with a [`RelayToClientMsg::Pong`] with the given payload.
@@ -185,12 +186,12 @@ pub enum ClientToRelayMsg {
 
 /// One or multiple datagrams being transferred via the relay.
 ///
-/// This type is modeled after [`quinn_proto::Transmit`]
-/// (or even more similarly `quinn_udp::Transmit`, but we don't depend on that library here).
+/// This type is modeled after [`noq_proto::Transmit`]
+/// (or even more similarly `noq_udp::Transmit`, but we don't depend on that library here).
 #[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 pub struct Datagrams {
     /// Explicit congestion notification bits
-    pub ecn: Option<quinn_proto::EcnCodepoint>,
+    pub ecn: Option<noq_proto::EcnCodepoint>,
     /// The segment size if this transmission contains multiple datagrams.
     /// This is `None` if the transmit only contains a single datagram
     pub segment_size: Option<NonZeroU16>,
@@ -279,7 +280,7 @@ impl Datagrams {
         }
 
         let ecn_byte = bytes.get_u8();
-        let ecn = quinn_proto::EcnCodepoint::from_bits(ecn_byte);
+        let ecn = noq_proto::EcnCodepoint::from_bits(ecn_byte);
 
         let segment_size = if is_batch {
             let segment_size = bytes.get_u16(); // length checked above
@@ -613,7 +614,7 @@ mod tests {
                 RelayToClientMsg::Datagrams {
                     remote_endpoint_id: client_key.public(),
                     datagrams: Datagrams {
-                        ecn: Some(quinn::EcnCodepoint::Ce),
+                        ecn: Some(noq::EcnCodepoint::Ce),
                         segment_size: NonZeroU16::new(6),
                         contents: "Hello World!".into(),
                     },
@@ -636,7 +637,7 @@ mod tests {
                 RelayToClientMsg::Datagrams {
                     remote_endpoint_id: client_key.public(),
                     datagrams: Datagrams {
-                        ecn: Some(quinn::EcnCodepoint::Ce),
+                        ecn: Some(noq::EcnCodepoint::Ce),
                         segment_size: None,
                         contents: "Hello World!".into(),
                     },
@@ -688,7 +689,7 @@ mod tests {
                 ClientToRelayMsg::Datagrams {
                     dst_endpoint_id: client_key.public(),
                     datagrams: Datagrams {
-                        ecn: Some(quinn::EcnCodepoint::Ce),
+                        ecn: Some(noq::EcnCodepoint::Ce),
                         segment_size: NonZeroU16::new(6),
                         contents: "Hello World!".into(),
                     },
@@ -711,7 +712,7 @@ mod tests {
                 ClientToRelayMsg::Datagrams {
                     dst_endpoint_id: client_key.public(),
                     datagrams: Datagrams {
-                        ecn: Some(quinn::EcnCodepoint::Ce),
+                        ecn: Some(noq::EcnCodepoint::Ce),
                         segment_size: None,
                         contents: "Hello World!".into(),
                     },
@@ -749,11 +750,11 @@ mod proptests {
         secret_key().prop_map(|key| key.public())
     }
 
-    fn ecn() -> impl Strategy<Value = Option<quinn_proto::EcnCodepoint>> {
+    fn ecn() -> impl Strategy<Value = Option<noq_proto::EcnCodepoint>> {
         (0..=3).prop_map(|n| match n {
-            1 => Some(quinn_proto::EcnCodepoint::Ce),
-            2 => Some(quinn_proto::EcnCodepoint::Ect0),
-            3 => Some(quinn_proto::EcnCodepoint::Ect1),
+            1 => Some(noq_proto::EcnCodepoint::Ce),
+            2 => Some(noq_proto::EcnCodepoint::Ect0),
+            3 => Some(noq_proto::EcnCodepoint::Ect1),
             _ => None,
         })
     }

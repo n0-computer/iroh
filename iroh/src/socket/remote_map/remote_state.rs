@@ -15,12 +15,11 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use quinn::WeakConnectionHandle;
-use quinn_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
+use noq::{ConnectionError, WeakConnectionHandle};
+use noq_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
-use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 
@@ -38,7 +37,7 @@ use crate::{
     },
     endpoint::DirectAddr,
     socket::{
-        Metrics as SocketMetrics,
+        Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
         remote_map::{Private, to_transport_addr},
         transports::{self, OwnedTransmit, PathSelectionData, TransportBiasMap, TransportsSender},
@@ -86,9 +85,7 @@ const RTT_SWITCHING_MIN_IP: Duration = Duration::from_millis(5);
 /// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
 /// actor has lagged processing the events, which is rather critical for us.
 type PathEvents = MergeUnbounded<
-    Pin<
-        Box<dyn Stream<Item = (ConnId, Result<PathEvent, BroadcastStreamRecvError>)> + Send + Sync>,
-    >,
+    Pin<Box<dyn Stream<Item = (ConnId, Result<PathEvent, noq::Lagged>)> + Send + Sync>>,
 >;
 
 /// A stream of events of announced NAT traversal candidate addresses for all connections.
@@ -97,13 +94,7 @@ type PathEvents = MergeUnbounded<
 type AddrEvents = MergeUnbounded<
     Pin<
         Box<
-            dyn Stream<
-                    Item = (
-                        ConnId,
-                        Result<n0_nat_traversal::Event, BroadcastStreamRecvError>,
-                    ),
-                > + Send
-                + Sync,
+            dyn Stream<Item = (ConnId, Result<n0_nat_traversal::Event, noq::Lagged>)> + Send + Sync,
         >,
     >,
 >;
@@ -143,13 +134,13 @@ pub(super) struct RemoteStateActor {
     /// Address lookup service, cloned from the socket.
     address_lookup: ConcurrentAddressLookup,
 
-    // Internal state - Quinn Connections we are managing.
+    // Internal state - Noq Connections we are managing.
     //
     /// All connections we have to this remote endpoint.
     connections: FxHashMap<ConnId, ConnectionState>,
     /// Notifications when connections are closed.
     connections_close: FuturesUnordered<OnClosed>,
-    /// Events emitted by Quinn about path changes, for all paths, all connections.
+    /// Events emitted by Noq about path changes, for all paths, all connections.
     path_events: PathEvents,
     /// A stream of events of announced NAT traversal candidate addresses for all connections.
     addr_events: AddrEvents,
@@ -171,7 +162,7 @@ pub(super) struct RemoteStateActor {
     /// a better path: e.g. when the selected path is a relay path we still need to trigger
     /// holepunching regularly.
     ///
-    /// We only select a path once the path is functional in Quinn.
+    /// We only select a path once the path is functional in Noq.
     selected_path: Watchable<Option<transports::Addr>>,
     /// Time at which we should schedule the next holepunch attempt.
     scheduled_holepunch: Option<Instant>,
@@ -308,8 +299,8 @@ impl RemoteStateActor {
                     trace!(?id, ?evt, "remote addrs updated, triggering holepunching");
                     self.trigger_holepunching();
                 }
-                Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
-                    self.handle_connection_close(conn_id);
+                Some((conn_id, reason)) = self.connections_close.next(), if !self.connections_close.is_empty() => {
+                    self.handle_connection_close(conn_id, reason);
                 }
                 res = self.local_direct_addrs.updated() => {
                     if let Err(n0_watcher::Disconnected) = res {
@@ -457,11 +448,10 @@ impl RemoteStateActor {
             self.connections.remove(&conn_id);
 
             // Hook up paths, NAT addresses and connection closed event streams.
-            self.path_events.push(Box::pin(
-                BroadcastStream::new(conn.path_events()).map(move |evt| (conn_id, evt)),
-            ));
+            self.path_events
+                .push(Box::pin(conn.path_events().map(move |evt| (conn_id, evt))));
             self.addr_events.push(Box::pin(
-                BroadcastStream::new(conn.nat_traversal_updates()).map(move |evt| (conn_id, evt)),
+                conn.nat_traversal_updates().map(move |evt| (conn_id, evt)),
             ));
             self.connections_close.push(OnClosed::new(&conn));
 
@@ -511,6 +501,7 @@ impl RemoteStateActor {
                     path_id = %PathId::ZERO,
                     ?res,
                 );
+                Self::configure_path(&path, &path_remote);
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
                     .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
@@ -551,10 +542,11 @@ impl RemoteStateActor {
 
     /// Handles [`RemoteStateMessage::NetworkChange`].
     fn handle_msg_network_change(&mut self, is_major: bool) {
+        // Ping all the paths so loss-detection starts ASAP.
         for conn in self.connections.values() {
-            if let Some(quinn_conn) = conn.handle.upgrade() {
+            if let Some(noq_conn) = conn.handle.upgrade() {
                 for (path_id, addr) in &conn.paths {
-                    if let Some(path) = quinn_conn.path(*path_id) {
+                    if let Some(path) = noq_conn.path(*path_id) {
                         // Ping the current path
                         if let Err(err) = path.ping() {
                             warn!(%err, %path_id, ?addr, "failed to ping path");
@@ -568,7 +560,16 @@ impl RemoteStateActor {
             self.trigger_holepunching();
         }
     }
-    fn handle_connection_close(&mut self, conn_id: ConnId) {
+
+    fn handle_connection_close(&mut self, conn_id: ConnId, reason: ConnectionError) {
+        event!(
+            target: "iroh::_events::conn::closed",
+            Level::DEBUG,
+            %conn_id,
+            remote_id = %self.endpoint_id.fmt_short(),
+            ?reason,
+        );
+
         if self.connections.remove(&conn_id).is_some() {
             self.metrics.num_conns_closed.inc();
         }
@@ -596,7 +597,7 @@ impl RemoteStateActor {
 
     /// Handles an address lookup result.
     ///
-    /// All address lookup results and up being sent here. It takes care of updating the
+    /// All address lookup results end up being sent here. It takes care of updating the
     /// [`RemotePathState`] with the results.
     fn handle_address_lookup_item(
         &mut self,
@@ -650,22 +651,22 @@ impl RemoteStateActor {
 
     /// Updates QNT's candidate addresses to be the current set of direct addresses.
     ///
-    /// `direct addrs` must be a set of addresses extracted from the endpoint's current
+    /// `direct_addrs` must be a set of addresses extracted from the endpoint's current
     /// [`DirectAddr`]s.
-    fn update_qnt_candidates(conn: &quinn::Connection, direct_addrs: &BTreeSet<SocketAddr>) {
-        let quinn_candidates = match conn.get_local_nat_traversal_addresses() {
+    fn update_qnt_candidates(conn: &noq::Connection, direct_addrs: &BTreeSet<SocketAddr>) {
+        let noq_candidates = match conn.get_local_nat_traversal_addresses() {
             Ok(addrs) => BTreeSet::from_iter(addrs),
             Err(err) => {
                 warn!("failed to get local nat candidates: {err:#}");
                 return;
             }
         };
-        for addr in direct_addrs.difference(&quinn_candidates) {
+        for addr in direct_addrs.difference(&noq_candidates) {
             if let Err(err) = conn.add_nat_traversal_address(*addr) {
                 warn!("failed adding local addr: {err:#}",);
             }
         }
-        for addr in quinn_candidates.difference(direct_addrs) {
+        for addr in noq_candidates.difference(direct_addrs) {
             if let Err(err) = conn.remove_nat_traversal_address(*addr) {
                 warn!("failed removing local addr: {err:#}");
             }
@@ -745,7 +746,7 @@ impl RemoteStateActor {
 
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
-    fn do_holepunching(&mut self, conn: quinn::Connection) {
+    fn do_holepunching(&mut self, conn: noq::Connection) {
         self.metrics.holepunch_attempts.inc();
         let local_candidates = self
             .local_direct_addrs
@@ -775,7 +776,7 @@ impl RemoteStateActor {
             }
             Err(err) => {
                 debug!("failed to initiate NAT traversal: {err:#}");
-                use quinn_proto::n0_nat_traversal::Error;
+                use noq_proto::n0_nat_traversal::Error;
                 match err {
                     Error::Closed
                     | Error::TooManyAddresses
@@ -792,6 +793,18 @@ impl RemoteStateActor {
                     }
                 }
             }
+        }
+    }
+
+    /// Configure path-type-specific settings.
+    ///
+    /// Relay paths get a longer idle timeout to accommodate transparent reconnection
+    /// by the relay actor (see [`RELAY_PATH_MAX_IDLE_TIMEOUT`]).
+    fn configure_path(path: &noq::Path, addr: &transports::Addr) {
+        if matches!(addr, transports::Addr::Relay(..))
+            && let Err(e) = path.set_max_idle_timeout(Some(RELAY_PATH_MAX_IDLE_TIMEOUT))
+        {
+            debug!(?e, "failed to set relay path idle timeout");
         }
     }
 
@@ -836,6 +849,7 @@ impl RemoteStateActor {
                     %path_id,
                     ?res,
                 );
+                Self::configure_path(&path, open_addr);
                 continue;
             }
             if conn.side().is_server() {
@@ -862,6 +876,7 @@ impl RemoteStateActor {
                         if let Err(e) = res {
                             warn!(?e, ?open_addr, ?path_status, "Setting path status failed");
                         }
+                        Self::configure_path(&path, open_addr);
                     }
                 }
                 None => {
@@ -881,11 +896,7 @@ impl RemoteStateActor {
     }
 
     #[instrument(skip(self))]
-    fn handle_path_event(
-        &mut self,
-        conn_id: ConnId,
-        event: Result<PathEvent, BroadcastStreamRecvError>,
-    ) {
+    fn handle_path_event(&mut self, conn_id: ConnId, event: Result<PathEvent, noq::Lagged>) {
         let Ok(event) = event else {
             warn!("missed a PathEvent, RemoteStateActor lagging");
             // TODO: Is it possible to recover using the sync APIs to figure out what the
@@ -923,6 +934,7 @@ impl RemoteStateActor {
                         %conn_id,
                         %path_id,
                     );
+                    Self::configure_path(&path, &path_remote);
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
                         .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
@@ -1070,13 +1082,13 @@ impl RemoteStateActor {
                 {
                     trace!(?path_remote, %conn_id, %path_id, "closing direct path");
                     match path.close() {
-                        Err(quinn_proto::ClosePathError::MultipathNotNegotiated) => {
+                        Err(noq_proto::ClosePathError::MultipathNotNegotiated) => {
                             error!("multipath not negotiated");
                         }
-                        Err(quinn_proto::ClosePathError::LastOpenPath) => {
+                        Err(noq_proto::ClosePathError::LastOpenPath) => {
                             error!("could not close last open path");
                         }
-                        Err(quinn_proto::ClosePathError::ClosedPath) => {
+                        Err(noq_proto::ClosePathError::ClosedPath) => {
                             // We already closed this.
                         }
                         Ok(_fut) => {
@@ -1196,12 +1208,12 @@ pub(crate) enum RemoteStateMessage {
     AddConnection(WeakConnectionHandle, oneshot::Sender<PathWatchable>),
     /// Asks if there is any possible path that could be used.
     ///
-    /// This adds the provided transport addresses to the list of potential paths for this remote
-    /// and starts Address Lookup if needed.
+    /// This adds the provided transport addresses to the list of potential paths for this
+    /// remote and starts Address Lookup if needed.
     ///
-    /// Returns `Ok` immediately if the provided address list is non-empy or we have are other known paths.
-    /// Otherwise returns `Ok` once Address Lookup produces a result, or the Address Lookup error if Address Lookup fails
-    /// or produces no results,
+    /// Sends back `Ok` immediately if the provided address list is non-empy or we have are
+    /// other known paths.  Otherwise sends back `Ok` once Address Lookup produces a result,
+    /// or the Address Lookup error if Address Lookup fails or produces no results,
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         BTreeSet<TransportAddr>,
@@ -1238,7 +1250,7 @@ struct HolepunchAttempt {
 
 /// Newtype to track Connections.
 ///
-/// The wrapped value is the [`quinn::Connection::stable_id`] value, and is thus only valid
+/// The wrapped value is the [`noq::Connection::stable_id`] value, and is thus only valid
 /// for active connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
 #[display("{_0}")]
@@ -1314,15 +1326,15 @@ fn now_or_never<T, F: Future<Output = T>>(fut: F) -> Option<T> {
 
 /// Future that resolves to the `conn_id` once a connection is closed.
 ///
-/// This uses [`quinn::Connection::on_closed`], which does not keep the connection alive
+/// This uses [`noq::Connection::on_closed`], which does not keep the connection alive
 /// while awaiting the future.
 struct OnClosed {
     conn_id: ConnId,
-    inner: quinn::OnClosed,
+    inner: noq::OnClosed,
 }
 
 impl OnClosed {
-    fn new(conn: &quinn::Connection) -> Self {
+    fn new(conn: &noq::Connection) -> Self {
         Self {
             conn_id: ConnId(conn.stable_id()),
             inner: conn.on_closed(),
@@ -1331,11 +1343,11 @@ impl OnClosed {
 }
 
 impl Future for OnClosed {
-    type Output = ConnId;
+    type Output = (ConnId, ConnectionError);
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let (_close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
-        Poll::Ready(self.conn_id)
+        let (close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
+        Poll::Ready((self.conn_id, close_reason))
     }
 }
 

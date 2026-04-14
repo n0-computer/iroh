@@ -48,7 +48,7 @@ mod remote_state;
 /// - Has actors which each manage all the connection state for a remote endpoint.
 ///
 /// - Has the mapped addresses we use to refer to non-IP transports destinations into IPv6
-///   addressing space that is used by Quinn.
+///   addressing space that is used by Noq.
 #[derive(Debug)]
 pub(crate) struct RemoteMap {
     /// Maps for converting between mapped and IP/relay addrs.
@@ -254,7 +254,7 @@ impl RemoteMap {
     pub(super) async fn add_connection(
         &mut self,
         remote: EndpointId,
-        conn: quinn::WeakConnectionHandle,
+        conn: noq::WeakConnectionHandle,
     ) -> Option<PathWatchable> {
         let actor = self.remote_state_actor(remote);
         let (tx, rx) = oneshot::channel();

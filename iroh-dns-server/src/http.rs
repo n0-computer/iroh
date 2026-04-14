@@ -310,7 +310,7 @@ mod tests {
     };
     use n0_error::StdResultExt;
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
 
     use crate::{http::HttpsConfig, server::Server};
 
@@ -333,11 +333,10 @@ mod tests {
 
         const RELAY_URL: &str = "https://relay.example./";
         let (name_z32, signed_packet) = {
-            let secret_key = SecretKey::generate(&mut rng);
+            let secret_key = SecretKey::from_bytes(&rng.random());
             let endpoint_id = secret_key.public();
             let relay_url: RelayUrl = RELAY_URL.parse().expect("valid url");
-            let endpoint_info =
-                EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+            let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
             (
                 secret_key.public().to_z32(),
                 endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?,
@@ -507,9 +506,13 @@ mod tests {
         }
 
         pub(super) fn insecure_tls_config() -> ClientConfig {
-            let mut cfg = ClientConfig::builder()
-                .with_root_certificates(RootCertStore::empty())
-                .with_no_client_auth();
+            let mut cfg = ClientConfig::builder_with_provider(Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(RootCertStore::empty())
+            .with_no_client_auth();
             cfg.dangerous()
                 .set_certificate_verifier(Arc::new(NoCertificateVerification::default()));
             cfg

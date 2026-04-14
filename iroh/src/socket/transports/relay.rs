@@ -25,7 +25,7 @@ use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendIte
 
 #[derive(Debug)]
 pub(crate) struct RelayTransport {
-    /// Queue to receive datagrams from relays for [`quinn::AsyncUdpSocket::poll_recv`].
+    /// Queue to receive datagrams from relays for [`noq::AsyncUdpSocket::poll_recv`].
     relay_datagram_recv_queue: mpsc::Receiver<RelayRecvDatagram>,
     /// Channel on which to send datagrams via a relay server.
     relay_datagram_send_channel: mpsc::Sender<RelaySendItem>,
@@ -80,7 +80,7 @@ impl RelayTransport {
         &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         let mut num_msgs = 0;
@@ -124,10 +124,10 @@ impl RelayTransport {
                 // Our receive buffer isn't big enough to process this datagram.
                 // Continuing would cause a panic.
                 warn!(
-                    quinn_buf_len = buf_out.len(),
+                    noq_buf_len = buf_out.len(),
                     datagram_len = dm.datagrams.contents.len(),
                     segment_size = ?dm.datagrams.segment_size,
-                    "dropping received datagram: quinn buffer too small"
+                    "dropping received datagram: noq buffer too small"
                 );
                 break;
                 // In theory we could put some logic in here to fragment the datagram in case
@@ -212,6 +212,11 @@ impl RelayNetworkChangeSender {
         });
     }
 
+    /// Triggers an immediate health check on relay connections after a network change.
+    pub(super) fn check_connection_after_network_change(&self) {
+        self.send_relay_actor(RelayActorMessage::CheckConnectionAfterNetworkChange);
+    }
+
     pub(super) fn rebind(&self) -> io::Result<()> {
         self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
 
@@ -233,7 +238,7 @@ impl RelayNetworkChangeSender {
 
 /// Sender to send datagrams to the [`RelayActor`].
 ///
-/// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
+/// This includes the waker coordination required to support [`noq::UdpSender::poll_send`].
 #[derive(Debug, Clone)]
 pub(crate) struct RelaySender {
     sender: PollSender<RelaySendItem>,
@@ -279,9 +284,9 @@ impl RelaySender {
 fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
     Datagrams {
         ecn: transmit.ecn.map(|ecn| match ecn {
-            quinn_udp::EcnCodepoint::Ect0 => quinn_proto::EcnCodepoint::Ect0,
-            quinn_udp::EcnCodepoint::Ect1 => quinn_proto::EcnCodepoint::Ect1,
-            quinn_udp::EcnCodepoint::Ce => quinn_proto::EcnCodepoint::Ce,
+            noq_udp::EcnCodepoint::Ect0 => noq_proto::EcnCodepoint::Ect0,
+            noq_udp::EcnCodepoint::Ect1 => noq_proto::EcnCodepoint::Ect1,
+            noq_udp::EcnCodepoint::Ce => noq_proto::EcnCodepoint::Ce,
         }),
         segment_size: transmit
             .segment_size

@@ -7,8 +7,8 @@ use std::{
     task::{Context, Poll},
 };
 
+use ipnet::{Ipv4Net, Ipv6Net};
 use n0_watcher::Watchable;
-use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
 use tracing::{debug, info, trace};
@@ -190,16 +190,16 @@ impl IpTransport {
         &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
-        match self.socket.poll_recv_quinn(cx, bufs, metas) {
+        match self.socket.poll_recv_noq(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(n)) => {
                 for (source_addr, meta) in source_addrs.iter_mut().zip(metas.iter_mut()).take(n) {
                     if meta.addr.is_ipv4() {
                         // The AsyncUdpSocket is an AF_INET6 socket and needs to show this
-                        // as coming from an IPv4-mapped IPv6 addresses, since Quinn will
+                        // as coming from an IPv4-mapped IPv6 addresses, since Noq will
                         // use those when sending on an INET6 socket.
                         let v6_ip = match meta.addr.ip() {
                             IpAddr::V4(ipv4_addr) => ipv4_addr.to_ipv6_mapped(),
@@ -314,7 +314,7 @@ impl IpSender {
     ) -> Poll<io::Result<()>> {
         let total_bytes = transmit.contents.len() as u64;
         let res = Pin::new(&mut self.sender).poll_send(
-            &quinn_udp::Transmit {
+            &noq_udp::Transmit {
                 destination: Self::canonical_addr(dst),
                 ecn: transmit.ecn,
                 contents: transmit.contents,
@@ -464,7 +464,7 @@ impl IpTransports {
         &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         macro_rules! poll_transport {

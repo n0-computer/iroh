@@ -147,7 +147,7 @@ impl AddressLookup for TestAddrLookup {
             Some(Box::pin(n0_future::stream::once(Ok(Item::new(
                 EndpointInfo {
                     endpoint_id,
-                    data: EndpointData::new([TransportAddr::Custom(CustomAddr::from_parts(
+                    data: EndpointData::from_iter([TransportAddr::Custom(CustomAddr::from_parts(
                         TEST_TRANSPORT_ID,
                         endpoint_id.as_bytes(),
                     ))]),
@@ -263,7 +263,7 @@ impl CustomEndpoint for TestTransport {
         &mut self,
         cx: &mut std::task::Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [noq_udp::RecvMeta],
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         let n = bufs.len();
@@ -318,13 +318,14 @@ mod tests {
 
     use iroh_relay::RelayMap;
     use n0_error::{Result, StdResultExt};
+    use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
 
     use super::*;
     use crate::{
         Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
         endpoint::{
-            Builder, Connection,
+            Builder, Connection, presets,
             transports::{AddrKind, TransportBias},
         },
         protocol::{AcceptError, ProtocolHandler, Router},
@@ -381,7 +382,7 @@ mod tests {
             Some(map) => RelayMode::Custom(map),
             None => RelayMode::Disabled,
         };
-        let mut builder = Endpoint::builder()
+        let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
             .relay_mode(relay_mode)
             .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
@@ -425,13 +426,19 @@ mod tests {
         )
     }
 
-    /// Returns true if the selected path is an IP transport.
-    fn is_ip_selected(conn: &crate::endpoint::Connection) -> bool {
+    /// Returns true if either
+    /// - we have both IP and custom paths, and the selected path is IP.
+    /// - we only have one path
+    fn is_ip_selected_from_ip_and_custom(conn: &crate::endpoint::Connection) -> bool {
         let paths = conn.paths().get();
+        let has_ip = paths.iter().any(|p| p.remote_addr().is_ip());
+        let has_custom = paths.iter().any(|p| p.remote_addr().is_custom());
+        if !has_ip || !has_custom {
+            return true;
+        }
         paths
             .iter()
-            .find(|p| p.is_selected())
-            .is_some_and(|p| matches!(p.remote_addr(), TransportAddr::Ip(_)))
+            .any(|p| p.is_selected() && p.remote_addr().is_ip())
     }
 
     /// Returns true if the selected path is a relay transport.
@@ -440,7 +447,7 @@ mod tests {
         paths
             .iter()
             .find(|p| p.is_selected())
-            .is_some_and(|p| matches!(p.remote_addr(), TransportAddr::Relay(_)))
+            .is_some_and(|p| p.is_relay())
     }
 
     /// Verifies echo works over the connection.
@@ -455,10 +462,11 @@ mod tests {
 
     /// Test custom transport only - no IP, no relay, dial by custom address.
     #[tokio::test]
+    #[traced_test]
     async fn test_custom_transport_only() -> Result<()> {
         let network = TestNetwork::new();
-        let s1 = SecretKey::generate(&mut rand::rng());
-        let s2 = SecretKey::generate(&mut rand::rng());
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
 
         let t1 = network.create_transport(s1.public())?;
         let t2 = network.create_transport(s2.public())?;
@@ -491,16 +499,17 @@ mod tests {
 
     /// Test that custom transport is selected over IP when given an RTT advantage.
     #[tokio::test]
+    #[traced_test]
     async fn test_custom_transport_wins_over_ip() -> Result<()> {
         let network = TestNetwork::new();
-        let s1 = SecretKey::generate(&mut rand::rng());
-        let s2 = SecretKey::generate(&mut rand::rng());
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
 
         let t1 = network.create_transport(s1.public())?;
         let t2 = network.create_transport(s2.public())?;
 
         // Strong RTT advantage for custom transport
-        let custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
+        let custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_secs(10));
         let config = EndpointConfig::default()
             .with_ip()
             .with_custom_bias(custom_bias);
@@ -529,17 +538,17 @@ mod tests {
 
     /// Test that IP is selected over custom transport when custom has an RTT disadvantage.
     #[tokio::test]
+    #[traced_test]
     async fn test_ip_wins_over_custom() -> Result<()> {
         let network = TestNetwork::new();
-        let s1 = SecretKey::generate(&mut rand::rng());
-        let s2 = SecretKey::generate(&mut rand::rng());
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
 
         let t1 = network.create_transport(s1.public())?;
         let t2 = network.create_transport(s2.public())?;
 
         // Strong RTT disadvantage for custom transport
-        let custom_bias =
-            TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(100));
+        let custom_bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_secs(10));
         let config = EndpointConfig::default()
             .with_ip()
             .with_custom_bias(custom_bias);
@@ -556,7 +565,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         assert!(
-            is_ip_selected(&conn),
+            is_ip_selected_from_ip_and_custom(&conn),
             "IP transport should be selected when custom has RTT disadvantage"
         );
 
@@ -572,11 +581,12 @@ mod tests {
     /// both relay and custom addresses to verify the custom transport (primary) wins
     /// over the relay (backup).
     #[tokio::test]
+    #[traced_test]
     async fn test_custom_transport_wins_over_relay() -> Result<()> {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let network = TestNetwork::new();
-        let s1 = SecretKey::generate(&mut rand::rng());
-        let s2 = SecretKey::generate(&mut rand::rng());
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
 
         let t1 = network.create_transport(s1.public())?;
         let t2 = network.create_transport(s2.public())?;

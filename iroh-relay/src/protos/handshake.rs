@@ -555,7 +555,7 @@ mod tests {
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
     use tracing::{Instrument, info_span};
 
@@ -689,7 +689,7 @@ mod tests {
     async fn test_handshake_via_shared_secrets() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let (client, server) = simulate_handshake(&secret_key, Some(42), Some(42), None).await;
         client?;
         let (public_key, auth) = server?;
@@ -703,7 +703,7 @@ mod tests {
     async fn test_handshake_via_challenge() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let (client, server) = simulate_handshake(&secret_key, None, None, None).await;
         client?;
         let (public_key, auth) = server?;
@@ -717,7 +717,7 @@ mod tests {
     async fn test_handshake_mismatching_shared_secrets() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         // mismatching shared secrets *might* happen with HTTPS proxies that don't also middle-man the shared secret
         let (client, server) = simulate_handshake(&secret_key, Some(10), Some(99), None).await;
         client?;
@@ -731,7 +731,7 @@ mod tests {
     #[traced_test]
     async fn test_handshake_challenge_fallback() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         // clients might not have access to shared secrets
         let (client, server) = simulate_handshake(&secret_key, None, Some(99), None).await;
         client?;
@@ -745,7 +745,7 @@ mod tests {
     #[traced_test]
     async fn test_handshake_with_auth_positive() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let public_key = secret_key.public();
         let (client, server) = simulate_handshake(&secret_key, None, None, Some(public_key)).await;
         client?;
@@ -758,9 +758,9 @@ mod tests {
     #[traced_test]
     async fn test_handshake_with_auth_negative() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let public_key = secret_key.public();
-        let wrong_secret_key = SecretKey::generate(&mut rng);
+        let wrong_secret_key = SecretKey::from_bytes(&rng.random());
         let (client, server) =
             simulate_handshake(&wrong_secret_key, None, None, Some(public_key)).await;
         assert!(client.is_err());
@@ -772,9 +772,9 @@ mod tests {
     #[traced_test]
     async fn test_handshake_via_shared_secret_with_auth_negative() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let public_key = secret_key.public();
-        let wrong_secret_key = SecretKey::generate(&mut rng);
+        let wrong_secret_key = SecretKey::from_bytes(&rng.random());
         let (client, server) =
             simulate_handshake(&wrong_secret_key, Some(42), Some(42), Some(public_key)).await;
         assert!(client.is_err());
@@ -785,7 +785,7 @@ mod tests {
     #[test]
     fn test_client_auth_roundtrip() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let challenge = ServerChallenge::new(&mut rng);
         let client_auth = ClientAuth::new(&secret_key, &challenge);
 
@@ -801,7 +801,7 @@ mod tests {
     #[test]
     fn test_km_client_auth_roundtrip() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let client_auth = KeyMaterialClientAuth::new(
             &secret_key,
             &TestKeyingMaterial {
@@ -823,7 +823,7 @@ mod tests {
     #[test]
     fn test_challenge_verification() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let challenge = ServerChallenge::new(&mut rng);
         let client_auth = ClientAuth::new(&secret_key, &challenge);
         assert!(client_auth.verify(&challenge).is_ok());
@@ -834,7 +834,7 @@ mod tests {
     #[test]
     fn test_key_material_verification() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let io = TestKeyingMaterial {
             inner: (),
             shared_secret: Some(42),

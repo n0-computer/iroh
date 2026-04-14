@@ -49,8 +49,6 @@ use url::Host;
 
 #[cfg(not(wasm_browser))]
 use super::defaults::timeouts::DNS_TIMEOUT;
-#[cfg(wasm_browser)]
-use super::portmapper; // We stub the library
 use super::{
     Report,
     probes::{Probe, ProbePlan},
@@ -486,8 +484,8 @@ pub(super) enum QuicError {
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct QuicConfig {
     /// A QUIC Endpoint
-    #[debug("quinn::Endpoint")]
-    pub(crate) ep: quinn::Endpoint,
+    #[debug("noq::Endpoint")]
+    pub(crate) ep: noq::Endpoint,
     /// A client config.
     pub(crate) client_config: rustls::ClientConfig,
     /// Enable ipv4 QUIC address discovery probes
@@ -880,7 +878,7 @@ async fn run_https_probe(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::net::Ipv4Addr;
 
@@ -917,9 +915,8 @@ mod tests {
     async fn test_qad_probe_v4() -> Result {
         let (server, relay) = test_utils::relay().await;
         let relay = Arc::new(relay);
-        let client_config = iroh_relay::client::make_dangerous_client_config();
-        let ep =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
+        let client_config = iroh_relay::tls::make_dangerous_client_config();
+        let ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
         let client_addr = ep.local_addr().anyerr()?;
 
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);

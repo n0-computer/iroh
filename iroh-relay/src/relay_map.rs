@@ -214,6 +214,7 @@ impl fmt::Display for RelayMap {
 // Please note that this is documented in the `iroh.computer` repository under
 // `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
+#[non_exhaustive]
 pub struct RelayConfig {
     /// The [`RelayUrl`] where this relay server can be dialed.
     pub url: RelayUrl,
@@ -223,6 +224,13 @@ pub struct RelayConfig {
     /// with this relay server.
     #[serde(default = "quic_config")]
     pub quic: Option<RelayQuicConfig>,
+}
+
+impl RelayConfig {
+    /// Creates a new relay configuration with the given URL and optional QUIC config.
+    pub fn new(url: RelayUrl, quic: Option<RelayQuicConfig>) -> Self {
+        Self { url, quic }
+    }
 }
 
 impl From<RelayUrl> for RelayConfig {
@@ -243,9 +251,17 @@ fn quic_config() -> Option<RelayQuicConfig> {
 ///
 /// Defaults to using [`DEFAULT_RELAY_QUIC_PORT`].
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub struct RelayQuicConfig {
     /// The port on which the connection should be bound to.
     pub port: u16,
+}
+
+impl RelayQuicConfig {
+    /// Creates a new QUIC address discovery configuration with the given port.
+    pub fn new(port: u16) -> Self {
+        Self { port }
+    }
 }
 
 impl Default for RelayQuicConfig {

@@ -76,12 +76,8 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
 
     let quic = server
         .quic_addr()
-        .map(|addr| RelayQuicConfig { port: addr.port() });
-    let n: RelayMap = RelayConfig {
-        url: url.clone(),
-        quic,
-    }
-    .into();
+        .map(|addr| RelayQuicConfig::new(addr.port()));
+    let n: RelayMap = RelayConfig::new(url.clone(), quic).into();
     Ok((n, url, server))
 }
 
@@ -157,6 +153,7 @@ pub(crate) mod dns_and_pkarr_servers {
             impl Preset for DnsPkarrPreset {
                 fn apply(self, builder: crate::endpoint::Builder) -> crate::endpoint::Builder {
                     builder
+                        .addr_filter(crate::address_lookup::AddrFilter::relay_only())
                         .address_lookup(self.dns_address_lookup)
                         .address_lookup(self.pkarr_address_publisher)
                         .dns_resolver(self.dns_resolver)
@@ -189,10 +186,7 @@ pub(crate) mod dns_server {
         net::{Ipv4Addr, SocketAddr},
     };
 
-    use hickory_resolver::proto::{
-        op::{Message, header::MessageType},
-        serialize::binary::BinDecodable,
-    };
+    use hickory_resolver::proto::{op::Message, serialize::binary::BinDecodable};
     use n0_future::future::Boxed as BoxFuture;
     use tokio::{net::UdpSocket, sync::oneshot};
     use tracing::{debug, error, warn};
@@ -265,11 +259,14 @@ pub(crate) mod dns_server {
             }
         }
 
-        async fn handle_datagram(&self, from: SocketAddr, buf: &[u8]) -> std::io::Result<()> {
+        async fn handle_datagram(
+            &self,
+            from: SocketAddr,
+            buf: &[u8],
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
             let packet = Message::from_bytes(buf)?;
             debug!(queries = ?packet.queries(), %from, "received query");
-            let mut reply = packet.clone();
-            reply.set_message_type(MessageType::Response);
+            let mut reply = packet.to_response();
             self.resolver.resolve(&packet, &mut reply).await?;
             debug!(?reply, %from, "send reply");
             let buf = reply.to_vec()?;
