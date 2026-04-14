@@ -15,7 +15,7 @@ EndpointAddr {
 }
 ```
 
-The Endpoint ID is always required. The set of transport addresses may be empty if an address lookup service is configured to resolve the Endpoint ID at connection time (see [Address Lookup](address-lookup.md)).
+The Endpoint ID is always required. The set of transport addresses may be empty if an address lookup service is configured to resolve the Endpoint ID at connection time (see [Address Lookup](05-address-lookup.md)).
 
 ## Transport Address Types
 

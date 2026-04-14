@@ -12,11 +12,11 @@ The primary transport is standard UDP sockets. Iroh binds to both IPv4 and IPv6 
 
 ### Relay
 
-The relay transport carries QUIC packets over WebSocket connections to relay servers. It is the fallback transport that guarantees connectivity when direct paths are unavailable. See [Relays](relays.md) for details on the relay protocol.
+The relay transport carries QUIC packets over WebSocket connections to relay servers. It is the fallback transport that guarantees connectivity when direct paths are unavailable. See [Relays](06-relays.md) for details on the relay protocol.
 
 ### Custom Transports
 
-Iroh's transport layer is extensible. Custom transports can be implemented for non-IP networks such as Tor, Bluetooth Low Energy, or any other communication channel. Each custom transport is identified by a unique transport ID (see [Addressing](addressing.md) for the registry).
+Iroh's transport layer is extensible. Custom transports can be implemented for non-IP networks such as Tor, Bluetooth Low Energy, or any other communication channel. Each custom transport is identified by a unique transport ID (see [Addressing](04-addressing.md) for the registry).
 
 Custom transports integrate with iroh's path selection and multipath systems. They appear as additional paths alongside UDP and relay paths.
 

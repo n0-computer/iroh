@@ -11,7 +11,7 @@ An endpoint's identity is its Ed25519 public key, called the **Endpoint ID**. Th
 The Endpoint ID serves three roles:
 - **Identity**: It is the stable, globally unique identifier for the endpoint.
 - **Authentication**: During TLS handshake, each side proves possession of their secret key and verifies the peer's Endpoint ID.
-- **Addressing**: It is used as a lookup key for address discovery (see [Address Lookup](address-lookup.md)) and as a routing key by relay servers.
+- **Addressing**: It is used as a lookup key for address discovery (see [Address Lookup](05-address-lookup.md)) and as a routing key by relay servers.
 
 ## TLS Authentication
 
