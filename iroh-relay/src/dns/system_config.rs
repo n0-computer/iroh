@@ -32,27 +32,47 @@ const GOOGLE_DNS_IPV6_PRIMARY: Ipv6Addr = Ipv6Addr::new(0x2001, 0x4860, 0x4860, 
 const GOOGLE_DNS_IPV6_SECONDARY: Ipv6Addr =
     Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8844);
 
+/// Parsed system DNS configuration.
+#[derive(Debug, Clone, Default)]
+pub(super) struct SystemDnsConfig {
+    pub(super) nameservers: Vec<(SocketAddr, DnsProtocol)>,
+    /// Search domains from resolv.conf `search` or `domain` directives.
+    ///
+    /// When resolving a short hostname (one with fewer dots than `ndots`,
+    /// default 1), the resolver should try appending each search domain
+    /// before querying the bare name.
+    pub(super) search_domains: Vec<String>,
+}
+
 /// Parse system DNS configuration.
 ///
-/// On Unix, reads `/etc/resolv.conf` for `nameserver` lines.
+/// On Unix, reads `/etc/resolv.conf` for `nameserver` and `search`/`domain` lines.
 /// On Windows, uses the `ipconfig` crate to enumerate network adapters.
 /// Falls back to Google DNS if parsing fails or no servers are found.
-pub(super) fn system_nameservers() -> Vec<(SocketAddr, DnsProtocol)> {
+pub(super) fn system_config() -> SystemDnsConfig {
     match read_system_dns() {
-        Ok(servers) if !servers.is_empty() => servers,
-        _ => fallback_nameservers(),
+        Ok(config) if !config.nameservers.is_empty() => config,
+        _ => SystemDnsConfig {
+            nameservers: fallback_nameservers(),
+            search_domains: Vec::new(),
+        },
     }
+}
+
+/// Backwards-compatible helper that only returns nameservers.
+pub(super) fn system_nameservers() -> Vec<(SocketAddr, DnsProtocol)> {
+    system_config().nameservers
 }
 
 /// Read system DNS configuration using platform-specific mechanisms.
 #[cfg(windows)]
-fn read_system_dns() -> Result<Vec<(SocketAddr, DnsProtocol)>, std::io::Error> {
+fn read_system_dns() -> Result<SystemDnsConfig, std::io::Error> {
     read_from_ipconfig()
 }
 
 /// Read system DNS configuration using platform-specific mechanisms.
 #[cfg(not(windows))]
-fn read_system_dns() -> Result<Vec<(SocketAddr, DnsProtocol)>, std::io::Error> {
+fn read_system_dns() -> Result<SystemDnsConfig, std::io::Error> {
     read_resolv_conf()
 }
 
@@ -80,7 +100,7 @@ pub(super) fn fallback_nameservers() -> Vec<(SocketAddr, DnsProtocol)> {
 
 /// Read DNS servers from Windows network adapter configuration.
 #[cfg(windows)]
-fn read_from_ipconfig() -> Result<Vec<(SocketAddr, DnsProtocol)>, std::io::Error> {
+fn read_from_ipconfig() -> Result<SystemDnsConfig, std::io::Error> {
     let adapters =
         ipconfig::get_adapters().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
@@ -98,23 +118,37 @@ fn read_from_ipconfig() -> Result<Vec<(SocketAddr, DnsProtocol)>, std::io::Error
         }
     }
 
-    // Deduplicate — multiple adapters may report the same DNS server
+    // Deduplicate -- multiple adapters may report the same DNS server
     servers.dedup_by_key(|(addr, _)| *addr);
 
-    Ok(servers)
+    // Windows does not expose search domains via ipconfig in a
+    // straightforward way, so we leave them empty.
+    Ok(SystemDnsConfig {
+        nameservers: servers,
+        search_domains: Vec::new(),
+    })
 }
 
-/// Read `/etc/resolv.conf` and extract nameserver addresses.
+/// Read `/etc/resolv.conf` and extract nameserver addresses and search domains.
 #[cfg(not(windows))]
-fn read_resolv_conf() -> Result<Vec<(SocketAddr, DnsProtocol)>, std::io::Error> {
+fn read_resolv_conf() -> Result<SystemDnsConfig, std::io::Error> {
     let content = std::fs::read_to_string("/etc/resolv.conf")?;
     Ok(parse_resolv_conf(&content))
 }
 
-/// Parse resolv.conf content and extract nameserver addresses.
+/// Parse resolv.conf content and extract nameserver addresses and search domains.
+///
+/// Recognized directives:
+/// - `nameserver <ip>` -- adds a DNS nameserver
+/// - `search <domain> [<domain> ...]` -- sets the search domain list
+/// - `domain <domain>` -- equivalent to a single-entry search list
+///
+/// The `search` and `domain` directives are mutually exclusive per resolv.conf(5);
+/// the last one seen wins, matching standard resolver behavior.
 #[cfg(any(not(windows), test))]
-fn parse_resolv_conf(content: &str) -> Vec<(SocketAddr, DnsProtocol)> {
+fn parse_resolv_conf(content: &str) -> SystemDnsConfig {
     let mut servers = Vec::new();
+    let mut search_domains = Vec::new();
 
     for line in content.lines() {
         let line = line.trim();
@@ -122,25 +156,41 @@ fn parse_resolv_conf(content: &str) -> Vec<(SocketAddr, DnsProtocol)> {
         if line.starts_with('#') || line.starts_with(';') {
             continue;
         }
-        // Split into keyword and rest, handling any whitespace separator
         let mut parts = line.split_whitespace();
-        if parts.next() == Some("nameserver")
-            && let Some(addr_str) = parts.next()
-            && let Ok(ip) = addr_str.parse::<IpAddr>()
-        {
-            servers.push((SocketAddr::new(ip, DNS_PORT), DnsProtocol::Udp));
+        match parts.next() {
+            Some("nameserver") => {
+                if let Some(addr_str) = parts.next()
+                    && let Ok(ip) = addr_str.parse::<IpAddr>()
+                {
+                    servers.push((SocketAddr::new(ip, DNS_PORT), DnsProtocol::Udp));
+                }
+            }
+            Some("search") => {
+                // `search` replaces any previous search/domain list.
+                search_domains = parts.map(|s| s.to_string()).collect();
+            }
+            Some("domain") => {
+                // `domain` is equivalent to a single-entry search list.
+                if let Some(domain) = parts.next() {
+                    search_domains = vec![domain.to_string()];
+                }
+            }
+            _ => {}
         }
     }
 
-    servers
+    SystemDnsConfig {
+        nameservers: servers,
+        search_domains,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn ips(servers: &[(SocketAddr, DnsProtocol)]) -> Vec<IpAddr> {
-        servers.iter().map(|(a, _)| a.ip()).collect()
+    fn ips(config: &SystemDnsConfig) -> Vec<IpAddr> {
+        config.nameservers.iter().map(|(a, _)| a.ip()).collect()
     }
 
     fn ipv4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
@@ -149,64 +199,88 @@ mod tests {
 
     #[test]
     fn parse_basic() {
-        let servers = parse_resolv_conf("nameserver 8.8.8.8\nnameserver 8.8.4.4\n");
-        assert_eq!(ips(&servers), [ipv4(8, 8, 8, 8), ipv4(8, 8, 4, 4)]);
-        assert!(servers.iter().all(|(_, p)| *p == DnsProtocol::Udp));
+        let config = parse_resolv_conf("nameserver 8.8.8.8\nnameserver 8.8.4.4\n");
+        assert_eq!(ips(&config), [ipv4(8, 8, 8, 8), ipv4(8, 8, 4, 4)]);
+        assert!(config.nameservers.iter().all(|(_, p)| *p == DnsProtocol::Udp));
     }
 
     #[test]
     fn parse_ipv6() {
-        let servers = parse_resolv_conf("nameserver 8.8.8.8\nnameserver 2001:4860:4860::8888\n");
-        assert_eq!(servers.len(), 2);
-        assert!(servers[1].0.ip().is_ipv6());
+        let config = parse_resolv_conf("nameserver 8.8.8.8\nnameserver 2001:4860:4860::8888\n");
+        assert_eq!(config.nameservers.len(), 2);
+        assert!(config.nameservers[1].0.ip().is_ipv6());
     }
 
     #[test]
     fn parse_comments_and_directives() {
-        let servers = parse_resolv_conf(
+        let config = parse_resolv_conf(
             "# comment\n; comment\nsearch example.com\nnameserver 1.1.1.1\noptions ndots:5\nnameserver 1.0.0.1\n",
         );
-        assert_eq!(ips(&servers), [ipv4(1, 1, 1, 1), ipv4(1, 0, 0, 1)]);
+        assert_eq!(ips(&config), [ipv4(1, 1, 1, 1), ipv4(1, 0, 0, 1)]);
+        assert_eq!(config.search_domains, ["example.com"]);
     }
 
     #[test]
     fn parse_skips_invalid_ips() {
-        let servers = parse_resolv_conf("nameserver not-an-ip\nnameserver 8.8.8.8\n");
-        assert_eq!(ips(&servers), [ipv4(8, 8, 8, 8)]);
+        let config = parse_resolv_conf("nameserver not-an-ip\nnameserver 8.8.8.8\n");
+        assert_eq!(ips(&config), [ipv4(8, 8, 8, 8)]);
     }
 
     #[test]
     fn parse_empty() {
-        assert!(parse_resolv_conf("").is_empty());
+        assert!(parse_resolv_conf("").nameservers.is_empty());
     }
 
     #[test]
     fn parse_no_nameservers() {
-        assert!(parse_resolv_conf("search example.com\noptions ndots:1\n").is_empty());
+        let config = parse_resolv_conf("search example.com\noptions ndots:1\n");
+        assert!(config.nameservers.is_empty());
+        assert_eq!(config.search_domains, ["example.com"]);
     }
 
     #[test]
     fn parse_whitespace_variations() {
-        let servers = parse_resolv_conf("  nameserver   8.8.8.8  \n\tnameserver\t1.1.1.1\t\n");
-        assert_eq!(servers.len(), 2);
+        let config = parse_resolv_conf("  nameserver   8.8.8.8  \n\tnameserver\t1.1.1.1\t\n");
+        assert_eq!(config.nameservers.len(), 2);
     }
 
     #[test]
     fn parse_inline_comment() {
-        let servers = parse_resolv_conf("nameserver 8.8.8.8 # primary\nnameserver 1.1.1.1\n");
-        assert_eq!(ips(&servers), [ipv4(8, 8, 8, 8), ipv4(1, 1, 1, 1)]);
+        let config = parse_resolv_conf("nameserver 8.8.8.8 # primary\nnameserver 1.1.1.1\n");
+        assert_eq!(ips(&config), [ipv4(8, 8, 8, 8), ipv4(1, 1, 1, 1)]);
     }
 
     #[test]
     fn parse_no_space_after_keyword() {
-        let servers = parse_resolv_conf("nameserver8.8.8.8\nnameserver 1.1.1.1\n");
-        assert_eq!(ips(&servers), [ipv4(1, 1, 1, 1)]);
+        let config = parse_resolv_conf("nameserver8.8.8.8\nnameserver 1.1.1.1\n");
+        assert_eq!(ips(&config), [ipv4(1, 1, 1, 1)]);
     }
 
     #[test]
     fn parse_scoped_ipv6() {
-        let servers = parse_resolv_conf("nameserver fe80::1%eth0\nnameserver 8.8.8.8\n");
-        assert_eq!(ips(&servers), [ipv4(8, 8, 8, 8)]);
+        let config = parse_resolv_conf("nameserver fe80::1%eth0\nnameserver 8.8.8.8\n");
+        assert_eq!(ips(&config), [ipv4(8, 8, 8, 8)]);
+    }
+
+    #[test]
+    fn parse_search_domains() {
+        let config = parse_resolv_conf("search example.com foo.bar\nnameserver 8.8.8.8\n");
+        assert_eq!(config.search_domains, ["example.com", "foo.bar"]);
+    }
+
+    #[test]
+    fn parse_domain_directive() {
+        let config = parse_resolv_conf("domain example.com\nnameserver 8.8.8.8\n");
+        assert_eq!(config.search_domains, ["example.com"]);
+    }
+
+    #[test]
+    fn search_overrides_domain() {
+        let config = parse_resolv_conf(
+            "domain old.com\nsearch new.com other.com\nnameserver 8.8.8.8\n",
+        );
+        // Last directive wins, per resolv.conf(5).
+        assert_eq!(config.search_domains, ["new.com", "other.com"]);
     }
 
     #[test]
