@@ -3051,9 +3051,9 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
 name = "netdev"
-version = "0.41.0"
+version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "395f1acaf7a073f756fc22068e0b526d2cf22d09f5e13802b516ef8eeaeee5eb"
+checksum = "e30af1a5073b82356d9317c18226826370b4288eba2f71c7e84e18bae51b3847"
 dependencies = [
  "block2",
  "dispatch2",
@@ -3134,7 +3134,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#2cdaf61858f15d9a9d89cb2214fa38fd4c04aca8"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#d77c60b12a06ce084e6cb753bb15481da0123f09"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3203,7 +3203,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "0.17.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#44387fda1bccf2872e1961f3f44561ff07dcefae"
+source = "git+https://github.com/n0-computer/noq?branch=main#f0ccfc2ece291d88d2d4185df644616dbb9840fe"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3224,7 +3224,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "0.16.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#44387fda1bccf2872e1961f3f44561ff07dcefae"
+source = "git+https://github.com/n0-computer/noq?branch=main#f0ccfc2ece291d88d2d4185df644616dbb9840fe"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3253,7 +3253,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "0.9.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#44387fda1bccf2872e1961f3f44561ff07dcefae"
+source = "git+https://github.com/n0-computer/noq?branch=main#f0ccfc2ece291d88d2d4185df644616dbb9840fe"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -3722,7 +3722,7 @@ dependencies = [
 [[package]]
 name = "portmapper"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#2cdaf61858f15d9a9d89cb2214fa38fd4c04aca8"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#d77c60b12a06ce084e6cb753bb15481da0123f09"
 dependencies = [
  "base64",
  "bytes",
