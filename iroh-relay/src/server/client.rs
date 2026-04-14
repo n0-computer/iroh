@@ -671,8 +671,8 @@ mod tests {
     #[traced_test]
     async fn test_client_v1_protocol() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
-        let a_key = SecretKey::generate(&mut rng).public();
-        let b_key = SecretKey::generate(&mut rng).public();
+        let a_key = SecretKey::from_bytes(&rng.random()).public();
+        let b_key = SecretKey::from_bytes(&rng.random()).public();
 
         let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V1);
 
@@ -700,8 +700,8 @@ mod tests {
     #[traced_test]
     async fn test_client_v2_protocol() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
-        let a_key = SecretKey::generate(&mut rng).public();
-        let b_key = SecretKey::generate(&mut rng).public();
+        let a_key = SecretKey::from_bytes(&rng.random()).public();
+        let b_key = SecretKey::from_bytes(&rng.random()).public();
 
         let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V2);
 
@@ -730,7 +730,7 @@ mod tests {
     #[traced_test]
     async fn test_duplicate_endpoint_v1_receives_v1health() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
-        let key = SecretKey::generate(&mut rng).public();
+        let key = SecretKey::from_bytes(&rng.random()).public();
 
         let (builder_first, mut first_rw) = test_client_builder(key, ProtocolVersion::V1);
 
@@ -758,7 +758,7 @@ mod tests {
     #[traced_test]
     async fn test_duplicate_endpoint_v2_receives_health() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
-        let key = SecretKey::generate(&mut rng).public();
+        let key = SecretKey::from_bytes(&rng.random()).public();
 
         let (builder_first, mut first_rw) = test_client_builder(key, ProtocolVersion::V2);
 
