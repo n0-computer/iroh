@@ -48,6 +48,7 @@ use crate::{
     socket::{
         RemoteStateActorStoppedError,
         remote_map::{PathInfo, PathWatchable, PathWatcher},
+        transports,
     },
 };
 
@@ -81,14 +82,12 @@ impl From<IncomingAddr> for iroh_base::TransportAddr {
     }
 }
 
-impl From<crate::socket::transports::Addr> for IncomingAddr {
-    fn from(addr: crate::socket::transports::Addr) -> Self {
+impl From<transports::Addr> for IncomingAddr {
+    fn from(addr: transports::Addr) -> Self {
         match addr {
-            crate::socket::transports::Addr::Ip(addr) => Self::Ip(addr),
-            crate::socket::transports::Addr::Relay(url, endpoint_id) => {
-                Self::Relay { url, endpoint_id }
-            }
-            crate::socket::transports::Addr::Custom(addr) => Self::Custom(addr),
+            transports::Addr::Ip(addr) => Self::Ip(addr),
+            transports::Addr::Relay(url, endpoint_id) => Self::Relay { url, endpoint_id },
+            transports::Addr::Custom(addr) => Self::Custom(addr),
         }
     }
 }

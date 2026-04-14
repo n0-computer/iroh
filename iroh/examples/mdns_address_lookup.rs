@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 address_lookup::DiscoveryEvent::Expired { .. } => {}
+                _ => {}
             };
         }
     });

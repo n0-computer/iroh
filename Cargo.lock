@@ -3068,9 +3068,9 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
 name = "netdev"
-version = "0.41.0"
+version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "395f1acaf7a073f756fc22068e0b526d2cf22d09f5e13802b516ef8eeaeee5eb"
+checksum = "e30af1a5073b82356d9317c18226826370b4288eba2f71c7e84e18bae51b3847"
 dependencies = [
  "block2",
  "dispatch2",
@@ -3151,7 +3151,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#2cdaf61858f15d9a9d89cb2214fa38fd4c04aca8"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#d77c60b12a06ce084e6cb753bb15481da0123f09"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3220,7 +3220,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "0.17.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#44387fda1bccf2872e1961f3f44561ff07dcefae"
+source = "git+https://github.com/n0-computer/noq?branch=main#f0ccfc2ece291d88d2d4185df644616dbb9840fe"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3241,7 +3241,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "0.16.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#44387fda1bccf2872e1961f3f44561ff07dcefae"
+source = "git+https://github.com/n0-computer/noq?branch=main#f0ccfc2ece291d88d2d4185df644616dbb9840fe"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3270,7 +3270,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "0.9.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#44387fda1bccf2872e1961f3f44561ff07dcefae"
+source = "git+https://github.com/n0-computer/noq?branch=main#f0ccfc2ece291d88d2d4185df644616dbb9840fe"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -3531,14 +3531,15 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "patchbay"
-version = "0.3.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6d93ad32b57e2d0185284b2e73817b3668feb3013ee70e963d1cb01dda53a8a"
+checksum = "7c3742a2d138befdefff631816140d985988b7e4600dbec986d360d35f0209b2"
 dependencies = [
  "anyhow",
  "chrono",
  "derive_more",
  "futures",
+ "hickory-proto 0.25.2",
  "ipnet",
  "iroh-metrics",
  "libc",
@@ -3691,7 +3692,7 @@ dependencies = [
 [[package]]
 name = "portmapper"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#2cdaf61858f15d9a9d89cb2214fa38fd4c04aca8"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#d77c60b12a06ce084e6cb753bb15481da0123f09"
 dependencies = [
  "base64",
  "bytes",
@@ -4988,7 +4989,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
