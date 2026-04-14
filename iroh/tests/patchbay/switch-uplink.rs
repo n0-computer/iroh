@@ -59,25 +59,17 @@ async fn run_switch_uplink(switching_side: Side, from: IpSupport, to: IpSupport)
         .await?
         .id();
 
-    let (server_uplink, client_uplink) = match switching_side {
-        Side::Client => (observer_id, from_id),
-        Side::Server => (from_id, observer_id),
-    };
-    let server = lab
-        .add_device("server")
-        .uplink(server_uplink)
-        .build()
-        .await?;
-    let client = lab
-        .add_device("client")
-        .uplink(client_uplink)
+    let switcher = lab.add_device("switcher").uplink(from_id).build().await?;
+    let observer = lab
+        .add_device("observer")
+        .uplink(observer_id)
         .build()
         .await?;
 
     info!(?switching_side, ?from, ?to, "switch uplink test start");
 
-    Pair::with_devices(relay_map, server, client)
-        .side(switching_side, async move |dev, _ep, conn| {
+    Pair::new(relay_map)
+        .left(switching_side, switcher, async move |dev, _ep, conn| {
             let mut paths = conn.paths();
             paths.wait_ip(timeout).await.context("initial holepunch")?;
             ping_accept(&conn, timeout)
@@ -90,7 +82,7 @@ async fn run_switch_uplink(switching_side: Side, from: IpSupport, to: IpSupport)
             conn.closed().await;
             Ok(())
         })
-        .other(async move |_dev, _ep, conn| {
+        .right(observer, async move |_dev, _ep, conn| {
             let mut paths = conn.paths();
             paths.wait_ip(timeout).await.context("initial holepunch")?;
             let previous: Vec<TransportAddr> = paths

@@ -96,10 +96,10 @@ where
 ///     .client(client_dev, async |dev, ep, conn| { ... })
 ///     .run().await?;
 ///
-/// // Role-based assignment (for matrix tests that swap sides):
-/// Pair::with_devices(relay_map, server_dev, client_dev)
-///     .side(active_side, async |dev, ep, conn| { ... })
-///     .other(async |dev, ep, conn| { ... })
+/// // Side-swapped assignment (for matrix tests):
+/// Pair::new(relay_map)
+///     .left(some_side, dev_a, async |dev, ep, conn| { ... })
+///     .right(dev_b, async |dev, ep, conn| { ... })
 ///     .run().await?;
 /// ```
 pub struct Pair {
@@ -122,48 +122,36 @@ impl Pair {
         }
     }
 
-    /// Creates a pair builder with both devices pre-assigned.
+    /// Places a device and closure on the given [`Side`].
     ///
-    /// Use with [`.side()`](Self::side) and [`.other()`](Self::other) to
-    /// assign closures by role rather than by protocol side.
-    pub fn with_devices(relay_map: RelayMap, server: Device, client: Device) -> Self {
-        Self {
-            relay_map,
-            server_dev: Some(server),
-            client_dev: Some(client),
-            server_fn: None,
-            client_fn: None,
-        }
-    }
-
-    /// Assigns a closure to the given [`Side`].
-    ///
-    /// Requires that devices were set via [`Pair::with_devices`].
-    pub fn side<F, Fut>(mut self, side: Side, run_fn: F) -> Self
+    /// Use with [`.right()`](Self::right) for matrix tests that swap sides.
+    pub fn left<F, Fut>(mut self, side: Side, device: Device, run_fn: F) -> Self
     where
         F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
         Fut: Future<Output = Result> + Send + 'static,
     {
-        *match side {
-            Side::Server => &mut self.server_fn,
-            Side::Client => &mut self.client_fn,
-        } = Some(box_fn(run_fn));
+        let (dev_slot, fn_slot) = match side {
+            Side::Server => (&mut self.server_dev, &mut self.server_fn),
+            Side::Client => (&mut self.client_dev, &mut self.client_fn),
+        };
+        *dev_slot = Some(device);
+        *fn_slot = Some(box_fn(run_fn));
         self
     }
 
-    /// Assigns a closure to whichever [`Side`] was not set by [`.side()`](Self::side).
-    pub fn other<F, Fut>(self, run_fn: F) -> Self
+    /// Places a device and closure on whichever [`Side`] was not set by [`.left()`](Self::left).
+    pub fn right<F, Fut>(self, device: Device, run_fn: F) -> Self
     where
         F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
         Fut: Future<Output = Result> + Send + 'static,
     {
-        let remaining = match (&self.server_fn, &self.client_fn) {
+        let remaining = match (&self.server_dev, &self.client_dev) {
             (Some(_), None) => Side::Client,
             (None, Some(_)) => Side::Server,
-            (None, None) => panic!("call .side() before .other()"),
+            (None, None) => panic!("call .left() before .right()"),
             (Some(_), Some(_)) => panic!("both sides already assigned"),
         };
-        self.side(remaining, run_fn)
+        self.left(remaining, device, run_fn)
     }
 
     /// Sets the server device and run function.
