@@ -2,7 +2,7 @@
 
 This specification defines the wire-level protocol details of iroh. It is intended for iroh engineers and anyone implementing or analyzing the iroh protocol at the byte level.
 
-For a high-level conceptual overview, see the [API specification](../api/README.md).
+For a high-level conceptual overview, see the [Design specification](../design/README.md).
 
 **Version:** 1.0
 

@@ -1,4 +1,4 @@
-# Iroh Specification v1.0 — API Reference
+# Iroh Specification v1.0 — Design
 
 This specification describes how iroh works at a conceptual level. It is intended for power users who want to understand iroh's design and behavior without reading the source code.
 
