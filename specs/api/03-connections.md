@@ -18,7 +18,7 @@ When an endpoint initiates a connection, iroh proceeds as follows:
 
 1. If no addressing information is provided, the configured address lookup service is queried to resolve the Endpoint ID to a relay URL and/or direct addresses.
 2. A QUIC connection is initiated simultaneously on all available paths — direct IP addresses, relay server, and any custom transports.
-3. The TLS handshake authenticates both peers using their Ed25519 keys (see [Identity](02-identity.md)).
+3. The TLS handshake authenticates both peers using their Ed25519 keys (see [Endpoints](02-endpoints.md)).
 4. The fastest path to complete the handshake is used. If the relay path wins, iroh begins hole punching to establish a direct connection in the background (see [Holepunching](07-holepunching.md)).
 5. The connection is returned to the application.
 
