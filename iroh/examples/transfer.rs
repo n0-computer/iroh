@@ -561,12 +561,20 @@ impl EndpointArgs {
         // stream-level receive window. The distinction between connection-level and stream-level
         // doesn't matter here because we don't have concurrent data-intensive streams
         // in the transfer protocol.
-        if let Some(size) = self.receive_window {
-            cfg = cfg.stream_receive_window((size as u32).into());
+        // We also set the send_window to 8 * stream_receive_window. This is the same as what
+        // the noq default does.
+        let rwnd = if let Some(size) = self.receive_window {
+            Some(size as u32)
         } else if let Some(expected_rtt) = self.receive_window_rtt {
             const MAX_STREAM_BANDWIDTH: u32 = 12500 * 1000; // bytes/s
-            let stream_rwnd = MAX_STREAM_BANDWIDTH / 1000 * expected_rtt;
-            cfg = cfg.stream_receive_window(stream_rwnd.into());
+            let size = MAX_STREAM_BANDWIDTH / 1000 * expected_rtt;
+            Some(size)
+        } else {
+            None
+        };
+        if let Some(size) = rwnd {
+            cfg = cfg.stream_receive_window(size.into());
+            cfg = cfg.send_window(size as u64 * 8);
         }
 
         #[cfg(feature = "qlog")]
