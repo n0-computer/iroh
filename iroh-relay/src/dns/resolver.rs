@@ -2,8 +2,9 @@
 //! and tokio for transport.
 
 use std::{
+    future::Future,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use n0_error::e;
@@ -11,7 +12,7 @@ use n0_future::{
     FuturesUnorderedBounded, StreamExt,
     time::{self, Duration},
 };
-use simple_dns::TYPE;
+use simple_dns::{TYPE, rdata::RData};
 use tracing::{debug, trace};
 
 use super::{
@@ -43,8 +44,8 @@ pub(super) struct SimpleDnsResolver {
     #[cfg(with_crypto_provider)]
     tls_config: Option<Arc<rustls::ClientConfig>>,
     /// Lazily initialized, cached reqwest client for DNS-over-HTTPS queries.
-    https_client: tokio::sync::Mutex<Option<reqwest::Client>>,
-    cache: std::sync::RwLock<DnsCache>,
+    https_client: Mutex<Option<reqwest::Client>>,
+    cache: DnsCache,
     builder: Builder,
 }
 
@@ -72,8 +73,8 @@ impl SimpleDnsResolver {
             search_domains,
             #[cfg(with_crypto_provider)]
             tls_config,
-            https_client: tokio::sync::Mutex::new(None),
-            cache: std::sync::RwLock::new(DnsCache::new()),
+            https_client: Mutex::new(None),
+            cache: DnsCache::new(),
             builder,
         }
     }
@@ -134,8 +135,8 @@ impl SimpleDnsResolver {
     /// Returns a clone of the cached reqwest client, creating it on first use.
     ///
     /// `reqwest::Client` uses an inner `Arc`, so cloning is cheap.
-    async fn get_or_init_https_client(&self) -> Result<reqwest::Client, DnsError> {
-        let mut guard = self.https_client.lock().await;
+    fn get_or_init_https_client(&self) -> Result<reqwest::Client, DnsError> {
+        let mut guard = self.https_client.lock().expect("poisoned");
         if let Some(client) = guard.as_ref() {
             return Ok(client.clone());
         }
@@ -150,7 +151,7 @@ impl SimpleDnsResolver {
 
     /// Run a future with [`NAMESERVER_TIMEOUT`].
     async fn with_timeout<T>(
-        fut: impl std::future::Future<Output = Result<T, DnsError>>,
+        fut: impl Future<Output = Result<T, DnsError>>,
     ) -> Result<T, DnsError> {
         time::timeout(NAMESERVER_TIMEOUT, fut).await?
     }
@@ -194,7 +195,7 @@ impl SimpleDnsResolver {
             }
             #[cfg(with_crypto_provider)]
             DnsProtocol::Https => {
-                let client = self.get_or_init_https_client().await?;
+                let client = self.get_or_init_https_client()?;
                 Self::with_timeout(transport::https_query(addr, query_bytes, &client)).await
             }
         }
@@ -213,9 +214,7 @@ impl SimpleDnsResolver {
         let count = self.nameservers.len();
         let mut futures = FuturesUnorderedBounded::new(count);
 
-        for (i, (addr, proto)) in self.nameservers.iter().enumerate() {
-            let addr = *addr;
-            let proto = *proto;
+        for (i, (addr, proto)) in self.nameservers.iter().copied().enumerate() {
             let stagger = NAMESERVER_STAGGER * i as u32;
             futures.push(async move {
                 if !stagger.is_zero() {
@@ -254,9 +253,9 @@ impl SimpleDnsResolver {
             let has_target_records = packet.answers.iter().any(|rr| {
                 matches!(
                     (&rr.rdata, qtype),
-                    (simple_dns::rdata::RData::A(_), TYPE::A)
-                        | (simple_dns::rdata::RData::AAAA(_), TYPE::AAAA)
-                        | (simple_dns::rdata::RData::TXT(_), TYPE::TXT)
+                    (RData::A(_), TYPE::A)
+                        | (RData::AAAA(_), TYPE::AAAA)
+                        | (RData::TXT(_), TYPE::TXT)
                 )
             });
 
@@ -288,9 +287,7 @@ impl SimpleDnsResolver {
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
-        if let Ok(mut cache) = self.cache.write()
-            && let Some(CachedRecord::A(addrs)) = cache.get(&host, QueryType::A)
-        {
+        if let Some(CachedRecord::A(addrs)) = self.cache.get(&host, QueryType::A) {
             trace!(%host, count = addrs.len(), "A lookup cache hit");
             return Ok(addrs.into_iter());
         }
@@ -303,9 +300,8 @@ impl SimpleDnsResolver {
                     let (addrs, ttl) = query::parse_a_response(&response, id)?;
                     if !addrs.is_empty() {
                         debug!(%host, count = addrs.len(), ttl, "resolved A record");
-                        if let Ok(mut cache) = self.cache.write() {
-                            cache.insert(&host, QueryType::A, CachedRecord::A(addrs.clone()), ttl);
-                        }
+                        self.cache
+                            .insert(&host, QueryType::A, CachedRecord::A(addrs.clone()), ttl);
                         return Ok(addrs.into_iter());
                     }
                 }
@@ -322,9 +318,7 @@ impl SimpleDnsResolver {
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
-        if let Ok(mut cache) = self.cache.write()
-            && let Some(CachedRecord::Aaaa(addrs)) = cache.get(&host, QueryType::AAAA)
-        {
+        if let Some(CachedRecord::Aaaa(addrs)) = self.cache.get(&host, QueryType::AAAA) {
             trace!(%host, count = addrs.len(), "AAAA lookup cache hit");
             return Ok(addrs.into_iter());
         }
@@ -337,14 +331,12 @@ impl SimpleDnsResolver {
                     let (addrs, ttl) = query::parse_aaaa_response(&response, id)?;
                     if !addrs.is_empty() {
                         debug!(%host, count = addrs.len(), ttl, "resolved AAAA record");
-                        if let Ok(mut cache) = self.cache.write() {
-                            cache.insert(
-                                &host,
-                                QueryType::AAAA,
-                                CachedRecord::Aaaa(addrs.clone()),
-                                ttl,
-                            );
-                        }
+                        self.cache.insert(
+                            &host,
+                            QueryType::AAAA,
+                            CachedRecord::Aaaa(addrs.clone()),
+                            ttl,
+                        );
                         return Ok(addrs.into_iter());
                     }
                 }
@@ -361,11 +353,11 @@ impl SimpleDnsResolver {
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
-        if let Ok(mut cache) = self.cache.write()
-            && let Some(CachedRecord::Txt(records)) = cache.get(&host, QueryType::TXT)
         {
-            trace!(%host, count = records.len(), "TXT lookup cache hit");
-            return Ok(records.into_iter());
+            if let Some(CachedRecord::Txt(records)) = self.cache.get(&host, QueryType::TXT) {
+                trace!(%host, count = records.len(), "TXT lookup cache hit");
+                return Ok(records.into_iter());
+            }
         }
 
         let mut last_err = None;
@@ -376,14 +368,12 @@ impl SimpleDnsResolver {
                     let (records, ttl) = query::parse_txt_response(&response, id)?;
                     if !records.is_empty() {
                         debug!(%host, count = records.len(), ttl, "resolved TXT record");
-                        if let Ok(mut cache) = self.cache.write() {
-                            cache.insert(
-                                &host,
-                                QueryType::TXT,
-                                CachedRecord::Txt(records.clone()),
-                                ttl,
-                            );
-                        }
+                        self.cache.insert(
+                            &host,
+                            QueryType::TXT,
+                            CachedRecord::Txt(records.clone()),
+                            ttl,
+                        );
                         return Ok(records.into_iter());
                     }
                 }
@@ -397,9 +387,7 @@ impl SimpleDnsResolver {
     }
 
     pub(super) fn clear_cache(&self) {
-        if let Ok(mut cache) = self.cache.write() {
-            cache.clear();
-        }
+        self.cache.clear();
     }
 
     pub(super) fn reset(&mut self) {
@@ -415,10 +403,8 @@ impl SimpleDnsResolver {
                 .map(|c| Arc::new(c.clone()));
         }
         // Clear cached HTTPS client so it gets rebuilt with the new TLS config on next use
-        *self.https_client.get_mut() = None;
-        if let Ok(mut cache) = self.cache.write() {
-            cache.clear();
-        }
+        *self.https_client.lock().expect("poisoned") = None;
+        self.clear_cache();
     }
 }
 

@@ -3,6 +3,7 @@
 use std::{
     hash::{Hash, Hasher},
     net::{Ipv4Addr, Ipv6Addr},
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -56,29 +57,32 @@ impl CacheEntry {
     }
 }
 
-/// DNS cache with LRU eviction and TTL-based expiry.
+/// Thread-safe DNS cache with LRU eviction and TTL-based expiry.
 ///
 /// Uses pre-hashed u64 keys to avoid allocating a `String` on every lookup.
 /// The only remaining per-hit allocation is the `record.clone()` on cache hit,
-/// which is necessary because the cache is behind a `std::sync::RwLock`.
+/// necessary because the result must outlive the lock guard.
 #[derive(Debug)]
 pub(super) struct DnsCache {
-    inner: LruCache<u64, CacheEntry>,
+    inner: Mutex<LruCache<u64, CacheEntry>>,
 }
 
 impl DnsCache {
     pub(super) fn new() -> Self {
         Self {
-            inner: LruCache::new(std::num::NonZeroUsize::new(MAX_CACHE_ENTRIES).expect("non-zero")),
+            inner: Mutex::new(LruCache::new(
+                std::num::NonZeroUsize::new(MAX_CACHE_ENTRIES).expect("non-zero"),
+            )),
         }
     }
 
     /// Look up a cached record. Returns `None` if not found or expired.
-    pub(super) fn get(&mut self, host: &str, qtype: QueryType) -> Option<CachedRecord> {
+    pub(super) fn get(&self, host: &str, qtype: QueryType) -> Option<CachedRecord> {
         let key = cache_key(host, qtype);
-        let entry = self.inner.get(&key)?;
+        let mut inner = self.inner.lock().expect("poisoned");
+        let entry = inner.get(&key)?;
         if entry.is_expired() {
-            self.inner.pop(&key);
+            inner.pop(&key);
             return None;
         }
         Some(entry.record.clone())
@@ -95,7 +99,7 @@ impl DnsCache {
     /// non-existent domains always hit the network. Under high concurrency
     /// this can become a thundering herd. A future improvement could cache
     /// negative results for a short duration (e.g. 5-10 seconds).
-    pub(super) fn insert(&mut self, host: &str, qtype: QueryType, record: CachedRecord, ttl: u32) {
+    pub(super) fn insert(&self, host: &str, qtype: QueryType, record: CachedRecord, ttl: u32) {
         if ttl == 0 {
             return;
         }
@@ -104,11 +108,14 @@ impl DnsCache {
             inserted_at: Instant::now(),
             ttl: Duration::from_secs(ttl as u64),
         };
-        self.inner.put(cache_key(host, qtype), entry);
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .put(cache_key(host, qtype), entry);
     }
 
     /// Clear all cache entries.
-    pub(super) fn clear(&mut self) {
-        self.inner.clear();
+    pub(super) fn clear(&self) {
+        self.inner.lock().expect("poisoned").clear();
     }
 }
