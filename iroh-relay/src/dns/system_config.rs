@@ -118,8 +118,10 @@ fn read_from_ipconfig() -> Result<SystemDnsConfig, std::io::Error> {
         }
     }
 
-    // Deduplicate -- multiple adapters may report the same DNS server
-    servers.dedup_by_key(|(addr, _)| *addr);
+    // Deduplicate -- multiple adapters may report the same DNS server.
+    // Use a HashSet since dedup_by_key only removes consecutive duplicates.
+    let mut seen = std::collections::HashSet::new();
+    servers.retain(|(addr, _)| seen.insert(*addr));
 
     // Windows does not expose search domains via ipconfig in a
     // straightforward way, so we leave them empty.
