@@ -4950,9 +4950,8 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swarm-discovery"
-version = "0.6.0-alpha.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "737bfdaf732174c48b8193b29158460d8d959dd8e9ce071a5bbda95d8546b68b"
+version = "0.6.0-alpha.2"
+source = "git+https://github.com/n0-computer/swarm-discovery?branch=matheus23%2Fhickory-0.26-beta.4#ead497b4042870e1ee06db18de7c3579fbba9304"
 dependencies = [
  "acto",
  "hickory-proto 0.26.0-beta.4",
@@ -6610,8 +6609,3 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
-
-[[patch.unused]]
-name = "swarm-discovery"
-version = "0.6.0-alpha.2"
-source = "git+https://github.com/n0-computer/swarm-discovery?branch=matheus23%2Fhickory-0.26-beta.4#ead497b4042870e1ee06db18de7c3579fbba9304"
