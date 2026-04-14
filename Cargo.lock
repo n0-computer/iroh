@@ -3530,7 +3530,8 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "patchbay"
 version = "0.5.0"
-source = "git+https://github.com/n0-computer/patchbay?branch=main#b3c9cf30c6535e19491cfdc78e0afac0112e6adf"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c3742a2d138befdefff631816140d985988b7e4600dbec986d360d35f0209b2"
 dependencies = [
  "anyhow",
  "chrono",
