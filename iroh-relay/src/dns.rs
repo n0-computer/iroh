@@ -566,39 +566,51 @@ impl DnsResolverInner {
 /// This contains a list of character strings, as defined in [RFC 1035 Section 3.3.14].
 ///
 /// [`TxtRecordData`] implements [`fmt::Display`], so you can call [`ToString::to_string`] to
-/// convert the record data into a string. This will concatenate all strings without a separator.
+/// convert the record data into a string. This will parse each character string with
+/// [`String::from_utf8_lossy`] and then concatenate all strings without a separator.
 ///
 /// If you want to process each character string individually, use [`Self::iter`].
 ///
 /// [RFC 1035 Section 3.3.14]: https://datatracker.ietf.org/doc/html/rfc1035#section-3.3.14
 #[derive(Debug, Clone)]
-pub struct TxtRecordData(Box<[String]>);
+pub struct TxtRecordData(Box<[Box<[u8]>]>);
 
 impl TxtRecordData {
     /// Returns an iterator over the character strings contained in this TXT record.
-    pub fn iter(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().map(|x| x.as_str())
+    pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        self.0.iter().map(|x| x.as_ref())
     }
 }
 
 impl fmt::Display for TxtRecordData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for s in self.iter() {
-            write!(f, "{s}")?
+            write!(f, "{}", &String::from_utf8_lossy(s))?
         }
         Ok(())
     }
 }
 
-impl FromIterator<String> for TxtRecordData {
-    fn from_iter<T: IntoIterator<Item = String>>(iter: T) -> Self {
+impl FromIterator<Box<[u8]>> for TxtRecordData {
+    fn from_iter<T: IntoIterator<Item = Box<[u8]>>>(iter: T) -> Self {
         Self(iter.into_iter().collect())
+    }
+}
+
+impl From<Vec<Box<[u8]>>> for TxtRecordData {
+    fn from(value: Vec<Box<[u8]>>) -> Self {
+        Self(value.into_boxed_slice())
     }
 }
 
 impl From<Vec<String>> for TxtRecordData {
     fn from(value: Vec<String>) -> Self {
-        Self(value.into_boxed_slice())
+        Self(
+            value
+                .into_iter()
+                .map(|s| s.into_bytes().into_boxed_slice())
+                .collect(),
+        )
     }
 }
 
