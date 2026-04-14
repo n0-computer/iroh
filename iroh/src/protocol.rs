@@ -468,10 +468,6 @@ impl RouterBuilder {
     /// `decrypt()` is relatively expensive, so filters should reject based on
     /// cheaper signals (e.g. remote address) first.
     ///
-    /// For a higher-level filter API that splits the decision into named methods
-    /// (e.g. by socket address or endpoint id, or by proposed ALPNs from the
-    /// ClientHello), see the `incoming-filter` example.
-    ///
     /// [`Incoming`]: crate::endpoint::Incoming
     /// [`Incoming::decrypt`]: crate::endpoint::Incoming::decrypt
     pub fn incoming_filter(mut self, filter: IncomingFilter) -> Self {
