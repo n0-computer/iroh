@@ -95,10 +95,10 @@ impl H3RelayServer {
         let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
         let mut server_config = noq::ServerConfig::with_crypto(Arc::new(quic_server_config));
         let transport_config = Arc::get_mut(&mut server_config.transport).expect("not used yet");
-        // Uni streams: 1 control stream per side and 1 spare for QPACK (unused but spec-allowed).
-        // Bidi streams: 1 for the CONNECT session + 1 for the relay data stream.
+        // Uni streams: high limit for per-message uni streams.
+        // Bidi streams: 1 for the CONNECT session.
         transport_config
-            .max_concurrent_uni_streams(3_u8.into())
+            .max_concurrent_uni_streams(256u32.into())
             .max_concurrent_bidi_streams(2_u8.into());
 
         let endpoint = noq::Endpoint::server(server_config, config.bind_addr)
@@ -310,31 +310,8 @@ async fn handle_wt_connection(
     trace!("WT srv: sending CONNECT response");
     send.write_all(&resp_buf).await?;
 
-    // Accept the client's data bidi stream (opened in the same flight as CONNECT).
-    trace!("WT srv: accepting data bidi stream");
-    let (data_send, mut data_recv) = conn.accept_bi().await?;
-
-    // Validate the WT stream header and session ID.
-    let frame_type = wt::VarInt::read(&mut data_recv)
-        .await
-        .map_err(|_| wt::ConnectError::UnexpectedEnd)?;
-    if wt::Frame(frame_type) != wt::Frame::WEBTRANSPORT {
-        return Err(wt::ConnectError::UnexpectedFrame(wt::Frame(frame_type)).into());
-    }
-    let stream_session_id = wt::VarInt::read(&mut data_recv)
-        .await
-        .map_err(|_| wt::ConnectError::UnexpectedEnd)?;
-    if stream_session_id.into_inner() != session_id {
-        warn!(
-            expected = session_id,
-            got = stream_session_id.into_inner(),
-            "WT srv: session ID mismatch on data stream"
-        );
-        return Err(wt::ConnectError::WrongProtocol(Some("session ID mismatch".into())).into());
-    }
-    trace!("WT srv: data stream validated");
-
-    let mut io = WtBytesFramed::new(data_send, data_recv, conn.clone());
+    // Use uni streams for relay messages (one stream per message).
+    let mut io = WtBytesFramed::new(conn.clone(), session_id);
 
     trace!("WT srv: starting relay handshake");
     let authentication = handshake::serverside(&mut io, client_auth_header).await?;

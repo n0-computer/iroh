@@ -1,38 +1,50 @@
 //! WebTransport stream adapter for the relay protocol.
 //!
-//! [`WtBytesFramed`] wraps a noq bidirectional QUIC stream (opened within a
-//! WebTransport session) into a [`BytesStreamSink`]-compatible type. Messages
-//! are length-prefixed with QUIC varints for browser compatibility.
+//! [`WtBytesFramed`] uses a new unidirectional QUIC stream per relay message.
+//! Each stream carries `[Frame::WEBTRANSPORT][session_id][payload]`. The stream
+//! is finished after the payload, so the receiver reads to EOF. Successive send
+//! streams get increasing priority so the QUIC scheduler prefers newer messages
+//! over retransmissions of older ones.
 //!
 //! [`BytesStreamSink`]: super::streams::BytesStreamSink
 
 use std::{
-    io,
     pin::Pin,
     task::{Context, Poll},
 };
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use n0_future::{Sink, Stream, ready};
-use noq::VarInt;
-use noq_proto::coding::{Decodable, Encodable};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio_util::sync::ReusableBoxFuture;
+use web_transport_proto as wt;
 
 use super::streams::StreamError;
-use crate::ExportKeyingMaterial;
+use crate::{ExportKeyingMaterial, MAX_PACKET_SIZE};
 
-/// Relay transport backed by a WebTransport bidirectional stream.
+/// Maximum bytes to read from a single uni stream before rejecting.
+const MAX_UNI_STREAM_SIZE: usize = MAX_PACKET_SIZE + 64;
+
+fn io_err(e: impl std::fmt::Display) -> StreamError {
+    StreamError::new(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        e.to_string(),
+    ))
+}
+
+/// Relay transport using one unidirectional QUIC stream per message.
 ///
-/// Messages are framed as `[varint length][payload]` using QUIC variable-length
-/// integers. This framing is compatible with browser WebTransport clients that
-/// open bidi streams via `createBidirectionalStream()`.
+/// Each message is sent on a fresh uni stream with a WT session header and
+/// the raw payload. The receiver accepts uni streams and reads each to EOF.
+/// This eliminates head-of-line blocking: retransmission on one stream does
+/// not delay delivery of later messages on other streams.
 pub struct WtBytesFramed {
-    send: noq::SendStream,
-    recv: noq::RecvStream,
-    /// QUIC connection handle for TLS keying material export.
     conn: noq::Connection,
-    recv_buf: BytesMut,
-    send_buf: BytesMut,
+    session_id: u64,
+    pending_send: Option<Bytes>,
+    send_fut: ReusableBoxFuture<'static, Result<(), StreamError>>,
+    recv_fut: ReusableBoxFuture<'static, Result<Bytes, StreamError>>,
+    send_busy: bool,
+    send_priority: i32,
 }
 
 impl std::fmt::Debug for WtBytesFramed {
@@ -42,19 +54,34 @@ impl std::fmt::Debug for WtBytesFramed {
 }
 
 impl WtBytesFramed {
-    /// Create from a noq bidirectional stream pair and the parent connection.
-    ///
-    /// The connection handle is used for TLS keying material export during the
-    /// relay handshake, avoiding an extra authentication round-trip.
-    pub fn new(send: noq::SendStream, recv: noq::RecvStream, conn: noq::Connection) -> Self {
+    /// Create from a QUIC connection and the WebTransport session ID.
+    pub fn new(conn: noq::Connection, session_id: u64) -> Self {
+        let recv_conn = conn.clone();
+        let hdr_len = wt_header_len(session_id);
         Self {
-            send,
-            recv,
             conn,
-            recv_buf: BytesMut::with_capacity(4096),
-            send_buf: BytesMut::new(),
+            session_id,
+            pending_send: None,
+            send_fut: ReusableBoxFuture::new(std::future::pending()),
+            recv_fut: ReusableBoxFuture::new(recv_one_message(recv_conn, hdr_len)),
+            send_busy: false,
+            send_priority: 0,
         }
     }
+}
+
+/// Encode the WT uni stream header for the given session ID.
+fn encode_wt_header(session_id: u64) -> BytesMut {
+    let mut hdr = BytesMut::with_capacity(16);
+    wt::Frame::WEBTRANSPORT.encode(&mut hdr);
+    wt::VarInt::from_u64(session_id)
+        .expect("session ID fits in varint")
+        .encode(&mut hdr);
+    hdr
+}
+
+fn wt_header_len(session_id: u64) -> usize {
+    encode_wt_header(session_id).len()
 }
 
 impl ExportKeyingMaterial for WtBytesFramed {
@@ -64,9 +91,8 @@ impl ExportKeyingMaterial for WtBytesFramed {
         label: &[u8],
         context: Option<&[u8]>,
     ) -> Option<T> {
-        let buf = output.as_mut();
         self.conn
-            .export_keying_material(buf, label, context.unwrap_or(&[]))
+            .export_keying_material(output.as_mut(), label, context.unwrap_or(&[]))
             .ok()?;
         Some(output)
     }
@@ -90,19 +116,44 @@ impl ExportKeyingMaterial for noq::Connection {
     }
 }
 
-/// Try to decode a varint from the front of `buf` without advancing the buffer.
-///
-/// Returns `Some((value, header_len))` if enough bytes are present to decode a
-/// complete varint. Returns `None` if the buffer is too short.
-fn try_decode_varint(buf: &[u8]) -> Option<(u64, usize)> {
-    let mut cursor = buf;
-    let before = cursor.len();
-    let val = VarInt::decode(&mut cursor).ok()?;
-    let consumed = before - cursor.len();
-    Some((val.into_inner(), consumed))
+/// Accept a uni stream, skip the WT header, read the payload to EOF.
+async fn recv_one_message(
+    conn: noq::Connection,
+    wt_header_len: usize,
+) -> Result<Bytes, StreamError> {
+    let mut recv = conn.accept_uni().await.map_err(io_err)?;
+    let data = recv
+        .read_to_end(MAX_UNI_STREAM_SIZE)
+        .await
+        .map_err(io_err)?;
+    if data.len() < wt_header_len {
+        return Err(StreamError::new(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "uni stream shorter than WT header",
+        )));
+    }
+    Ok(Bytes::from(data).slice(wt_header_len..))
 }
 
-// -- Stream: read varint-length-prefixed messages -------------------------
+/// Open a uni stream, write WT header and payload, finish the stream.
+async fn send_one_message(
+    conn: noq::Connection,
+    session_id: u64,
+    priority: i32,
+    payload: Bytes,
+) -> Result<(), StreamError> {
+    let mut stream = conn.open_uni().await.map_err(io_err)?;
+    let _ = stream.set_priority(priority);
+    stream
+        .write_chunk(encode_wt_header(session_id).freeze())
+        .await
+        .map_err(io_err)?;
+    stream.write_chunk(payload).await.map_err(io_err)?;
+    stream.finish().map_err(io_err)?;
+    Ok(())
+}
+
+// -- Stream: accept uni streams, read each to EOF -----------------------------
 
 impl Stream for WtBytesFramed {
     type Item = Result<Bytes, StreamError>;
@@ -110,98 +161,74 @@ impl Stream for WtBytesFramed {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
-        loop {
-            // Try to parse a complete message from the buffer.
-            if let Some((message_len, header_len)) = try_decode_varint(&this.recv_buf) {
-                let total = header_len + message_len as usize;
-                if this.recv_buf.len() >= total {
-                    this.recv_buf.advance(header_len);
-                    let payload = this.recv_buf.split_to(message_len as usize).freeze();
-                    return Poll::Ready(Some(Ok(payload)));
+        match ready!(this.recv_fut.poll(cx)) {
+            Ok(payload) => {
+                // Immediately set up the next recv.
+                let conn = this.conn.clone();
+                let hdr_len = wt_header_len(this.session_id);
+                this.recv_fut.set(recv_one_message(conn, hdr_len));
+                if payload.is_empty() {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Some(Ok(payload)))
                 }
             }
-
-            // Read more data from the QUIC stream into recv_buf.
-            let mut tmp = [0u8; 4096];
-            let mut read_buf = ReadBuf::new(&mut tmp);
-            match ready!(Pin::new(&mut this.recv).poll_read(cx, &mut read_buf)) {
-                Ok(()) => {
-                    let n = read_buf.filled().len();
-                    if n == 0 {
-                        if this.recv_buf.is_empty() {
-                            return Poll::Ready(None);
-                        }
-                        return Poll::Ready(Some(Err(StreamError::new(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "stream ended mid-message",
-                        )))));
-                    }
-                    this.recv_buf.extend_from_slice(&tmp[..n]);
-                }
-                Err(e) => return Poll::Ready(Some(Err(StreamError::new(e)))),
+            Err(e) => {
+                // Connection closed or error. Don't set up a new recv.
+                Poll::Ready(Some(Err(e)))
             }
         }
     }
 }
 
-// -- Sink: write varint-length-prefixed messages --------------------------
+// -- Sink: new uni stream per message -----------------------------------------
 
 impl Sink<Bytes> for WtBytesFramed {
     type Error = StreamError;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let this = self.get_mut();
-        while !this.send_buf.is_empty() {
-            match ready!(Pin::new(&mut this.send).poll_write(cx, &this.send_buf)) {
-                Ok(n) => {
-                    this.send_buf.advance(n);
+
+        // Flush in-progress send.
+        if this.send_busy {
+            match ready!(this.send_fut.poll(cx)) {
+                Ok(()) => {
+                    this.send_busy = false;
                 }
-                Err(e) => return Poll::Ready(Err(StreamError::new(e))),
+                Err(e) => {
+                    this.send_busy = false;
+                    return Poll::Ready(Err(e));
+                }
             }
         }
+
+        // Start sending a pending message.
+        if let Some(msg) = this.pending_send.take() {
+            let conn = this.conn.clone();
+            let session_id = this.session_id;
+            let priority = this.send_priority;
+            this.send_priority = this.send_priority.saturating_add(1);
+            this.send_fut
+                .set(send_one_message(conn, session_id, priority, msg));
+            this.send_busy = true;
+            let pin = Pin::new(this);
+            return pin.poll_ready(cx);
+        }
+
         Poll::Ready(Ok(()))
     }
 
     fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
-        let this = self.get_mut();
-        let len = VarInt::from_u64(item.len() as u64).map_err(|_| {
-            StreamError::new(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "message too large for varint framing",
-            ))
-        })?;
-        len.encode(&mut this.send_buf);
-        this.send_buf.put_slice(&item);
+        self.get_mut().pending_send = Some(item);
         Ok(())
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        let this = self.get_mut();
-        while !this.send_buf.is_empty() {
-            match ready!(Pin::new(&mut this.send).poll_write(cx, &this.send_buf)) {
-                Ok(n) => {
-                    this.send_buf.advance(n);
-                }
-                Err(e) => return Poll::Ready(Err(StreamError::new(e))),
-            }
-        }
-        Pin::new(&mut this.send)
-            .poll_flush(cx)
-            .map_err(StreamError::new)
+        self.poll_ready(cx)
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        let this = self.get_mut();
-        while !this.send_buf.is_empty() {
-            match ready!(Pin::new(&mut this.send).poll_write(cx, &this.send_buf)) {
-                Ok(n) => {
-                    this.send_buf.advance(n);
-                }
-                Err(e) => return Poll::Ready(Err(StreamError::new(e))),
-            }
-        }
-        Pin::new(&mut this.send)
-            .poll_shutdown(cx)
-            .map_err(StreamError::new)
+        ready!(self.poll_ready(cx)?);
+        Poll::Ready(Ok(()))
     }
 }

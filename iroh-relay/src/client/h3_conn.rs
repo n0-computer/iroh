@@ -117,7 +117,10 @@ pub(crate) async fn quic_connect(
             )
         })
     })?;
-    let client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
+    let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
+    let mut transport = noq_proto::TransportConfig::default();
+    transport.max_concurrent_uni_streams(256u32.into());
+    client_config.transport_config(Arc::new(transport));
 
     trace!(%server_addr, %server_name, "WT: QUIC connecting");
     let connecting = endpoint.connect_with(client_config, server_addr, server_name)?;
@@ -165,7 +168,7 @@ pub(crate) async fn wt_handshake(
     let mut connect_buf = bytes::BytesMut::new();
     connect_req.encode(&mut connect_buf)?;
 
-    // Send settings + CONNECT + data stream in the same flight.
+    // Send settings and CONNECT in the same flight.
     let send_all = async {
         trace!("WT: opening uni stream for settings");
         let mut uni = conn.open_uni().await?;
@@ -174,23 +177,11 @@ pub(crate) async fn wt_handshake(
 
         trace!("WT: opening bidi stream for CONNECT");
         let (mut connect_send, connect_recv) = conn.open_bi().await?;
-        // The session ID is the QUIC stream ID of the CONNECT bidi stream.
-        let session_id =
-            wt::VarInt::from_u64(u64::from(connect_send.id())).expect("stream ID fits in varint");
+        let session_id: u64 = connect_send.id().into();
         connect_send.write_all(&connect_buf).await?;
         trace!("WT: CONNECT written");
 
-        // Open the data bidi stream in the same flight, tagged with the
-        // session ID per the WebTransport spec.
-        trace!("WT: opening data bidi stream");
-        let (mut data_send, data_recv) = conn.open_bi().await?;
-        let mut wt_hdr = bytes::BytesMut::with_capacity(16);
-        wt::Frame::WEBTRANSPORT.encode(&mut wt_hdr);
-        session_id.encode(&mut wt_hdr);
-        data_send.write_all(&wt_hdr).await?;
-        trace!("WT: data stream opened with WT header");
-
-        Ok::<_, H3ConnectError>((connect_recv, data_send, data_recv))
+        Ok::<_, H3ConnectError>((connect_recv, session_id))
     };
 
     let settings_recv = async {
@@ -203,7 +194,7 @@ pub(crate) async fn wt_handshake(
     };
 
     let (send_result, server_settings) = tokio::join!(send_all, settings_recv);
-    let (mut recv, data_send, data_recv) = send_result?;
+    let (mut recv, session_id) = send_result?;
     let server_settings = server_settings?;
 
     if server_settings.supports_webtransport() == 0 {
@@ -214,7 +205,7 @@ pub(crate) async fn wt_handshake(
         }));
     }
 
-    trace!("WT: all pipelined, waiting for CONNECT response");
+    trace!("WT: pipelined, waiting for CONNECT response");
 
     let resp = wt::ConnectResponse::read(&mut recv).await?;
 
@@ -226,7 +217,8 @@ pub(crate) async fn wt_handshake(
         }));
     }
 
-    let mut io = WtBytesFramed::new(data_send, data_recv, conn.clone());
+    // Use uni streams for relay messages (one stream per message).
+    let mut io = WtBytesFramed::new(conn.clone(), session_id);
 
     trace!("WT: starting relay handshake");
     handshake::clientside(&mut io, secret_key).await?;
