@@ -27,6 +27,8 @@ pub struct MaybeTlsStreamBuilder {
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
     prefer_ipv6: bool,
+    /// Pre-resolved IP address, skipping DNS resolution.
+    resolved_ip: Option<std::net::IpAddr>,
     tls_config: rustls::ClientConfig,
 }
 
@@ -37,6 +39,7 @@ impl MaybeTlsStreamBuilder {
             dns_resolver,
             proxy_url: None,
             prefer_ipv6: false,
+            resolved_ip: None,
             tls_config,
         }
     }
@@ -48,6 +51,12 @@ impl MaybeTlsStreamBuilder {
 
     pub fn prefer_ipv6(mut self, prefer: bool) -> Self {
         self.prefer_ipv6 = prefer;
+        self
+    }
+
+    /// Use a pre-resolved IP address, skipping DNS resolution.
+    pub fn resolved_ip(mut self, ip: std::net::IpAddr) -> Self {
+        self.resolved_ip = Some(ip);
         self
     }
 
@@ -114,10 +123,14 @@ impl MaybeTlsStreamBuilder {
 
     async fn dial_url_direct(&self) -> Result<tokio::net::TcpStream, DialError> {
         use tokio::net::TcpStream;
-        let dst_ip = self
-            .dns_resolver
-            .resolve_host(&self.url, self.prefer_ipv6, DNS_TIMEOUT)
-            .await?;
+        let dst_ip = match self.resolved_ip {
+            Some(ip) => ip,
+            None => {
+                self.dns_resolver
+                    .resolve_host(&self.url, self.prefer_ipv6, DNS_TIMEOUT)
+                    .await?
+            }
+        };
 
         let port = url_port(&self.url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
         let addr = SocketAddr::new(dst_ip, port);

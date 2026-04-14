@@ -327,6 +327,10 @@ struct EndpointArgs {
     /// Disable all default bind addresses.
     #[clap(long)]
     no_default_bind: bool,
+    /// Trust any server certificate (for local testing with self-signed certs).
+    #[cfg(feature = "test-utils")]
+    #[clap(long)]
+    insecure: bool,
 }
 
 #[derive(Subcommand, Debug, derive_more::Display)]
@@ -464,7 +468,7 @@ impl EndpointArgs {
             builder = builder.relay_mode(RelayMode::Custom(RelayMap::from_iter(self.relay_url)));
         } else {
             builder = builder.relay_mode(self.env.relay_mode());
-        };
+        }
         builder = builder.secret_key(secret_key);
         if self.no_relay {
             builder = builder.addr_filter(AddrFilter::ip_only());
@@ -472,7 +476,12 @@ impl EndpointArgs {
             builder = builder.addr_filter(AddrFilter::relay_only());
         }
 
-        if Env::Dev == self.env {
+        #[cfg(feature = "test-utils")]
+        let needs_insecure = Env::Dev == self.env || self.insecure;
+        #[cfg(not(feature = "test-utils"))]
+        let needs_insecure = Env::Dev == self.env;
+
+        if needs_insecure {
             #[cfg(feature = "test-utils")]
             {
                 builder = builder.ca_roots_config(iroh::tls::CaRootsConfig::insecure_skip_verify());
@@ -480,7 +489,7 @@ impl EndpointArgs {
             #[cfg(not(feature = "test-utils"))]
             {
                 n0_error::bail_any!(
-                    "Must have the `test-utils` feature enabled when using the `--env=dev` flag"
+                    "Must have the `test-utils` feature enabled when using --env=dev, --insecure, or --local-relay"
                 )
             }
         }

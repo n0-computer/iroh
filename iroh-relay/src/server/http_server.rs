@@ -341,9 +341,11 @@ pub(super) struct ServerBuilder {
     /// The capacity of the key cache.
     key_cache_capacity: usize,
     /// Access config for endpoints.
-    access: AccessConfig,
+    access: Arc<AccessConfig>,
     metrics: Option<Arc<Metrics>>,
     establish_timeout: Duration,
+    /// Shared client registry (all transports register here).
+    clients: Clients,
 }
 
 impl ServerBuilder {
@@ -356,9 +358,10 @@ impl ServerBuilder {
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
-            access: AccessConfig::Everyone,
+            access: Arc::new(AccessConfig::Everyone),
             metrics: None,
             establish_timeout: ESTABLISH_TIMEOUT,
+            clients: Clients::default(),
         }
     }
 
@@ -369,7 +372,7 @@ impl ServerBuilder {
     }
 
     /// Set the access configuration.
-    pub(super) fn access(mut self, access: AccessConfig) -> Self {
+    pub(super) fn access(mut self, access: Arc<AccessConfig>) -> Self {
         self.access = access;
         self
     }
@@ -422,6 +425,13 @@ impl ServerBuilder {
         self
     }
 
+    /// Set a shared clients registry.
+    /// Set the shared client registry.
+    pub(super) fn clients(mut self, clients: Clients) -> Self {
+        self.clients = clients;
+        self
+    }
+
     /// Set the capacity of the cache for public keys.
     pub fn key_cache_capacity(mut self, capacity: usize) -> Self {
         self.key_cache_capacity = capacity;
@@ -432,13 +442,16 @@ impl ServerBuilder {
     pub(super) async fn spawn(self) -> Result<Server, SpawnError> {
         let cancel_token = CancellationToken::new();
 
+        let metrics = self.metrics.unwrap_or_default();
+        let key_cache = KeyCache::new(self.key_cache_capacity);
         let service = RelayService::new(
+            self.clients,
             self.handlers,
             self.headers,
             self.client_rx_ratelimit,
-            KeyCache::new(self.key_cache_capacity),
+            key_cache,
             self.access,
-            self.metrics.unwrap_or_default(),
+            metrics,
         );
 
         let addr = self.addr;
@@ -521,7 +534,7 @@ struct Inner {
     write_timeout: Duration,
     rate_limit: Option<ClientRateLimit>,
     key_cache: KeyCache,
-    access: AccessConfig,
+    access: Arc<AccessConfig>,
     metrics: Arc<Metrics>,
 }
 
@@ -853,21 +866,22 @@ pub(super) enum TlsAcceptor {
 }
 
 impl RelayService {
-    /// Creates a new RelayService.
+    /// Creates a new [`RelayService`].
     ///
-    /// This allows embedding the relay service into an existing HTTP server.
+    /// The [`Clients`] registry is shared across all transports (WebSocket, H3).
     pub fn new(
+        clients: Clients,
         handlers: Handlers,
         headers: HeaderMap,
         rate_limit: Option<ClientRateLimit>,
         key_cache: KeyCache,
-        access: AccessConfig,
+        access: Arc<AccessConfig>,
         metrics: Arc<Metrics>,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
             headers,
-            clients: Clients::default(),
+            clients,
             write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit,
             key_cache,
@@ -895,7 +909,7 @@ impl RelayService {
     /// # use tokio::net::TcpStream;
     /// # use http::HeaderMap;
     /// # use iroh_relay::server::http_server::{Handlers, RelayService, TlsConfig};
-    /// # use iroh_relay::{KeyCache, server::{AccessConfig, Metrics}};
+    /// # use iroh_relay::{KeyCache, server::{AccessConfig, Metrics, clients::Clients}};
     /// # use webpki_types::{CertificateDer, PrivateKeyDer};
     /// # async fn example(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     /// // Create a relay service
@@ -904,11 +918,12 @@ impl RelayService {
     /// let key_cache = KeyCache::new(1024);
     /// let metrics = Arc::new(Metrics::default());
     /// let relay_service = RelayService::new(
+    ///     Clients::default(),
     ///     handlers,
     ///     headers,
     ///     None, // No rate limiting
     ///     key_cache,
-    ///     AccessConfig::Everyone,
+    ///     Arc::new(AccessConfig::Everyone),
     ///     metrics,
     /// );
     ///
@@ -1378,11 +1393,12 @@ mod tests {
         info!("Create the server.");
         let metrics = Arc::new(Metrics::default());
         let service = RelayService::new(
+            Clients::default(),
             Default::default(),
             Default::default(),
             None,
             KeyCache::test(),
-            AccessConfig::Everyone,
+            Arc::new(AccessConfig::Everyone),
             metrics.clone(),
         );
 
@@ -1478,11 +1494,12 @@ mod tests {
 
         info!("Create the server.");
         let service = RelayService::new(
+            Clients::default(),
             Default::default(),
             Default::default(),
             None,
             KeyCache::test(),
-            AccessConfig::Everyone,
+            Arc::new(AccessConfig::Everyone),
             Default::default(),
         );
 

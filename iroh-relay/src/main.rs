@@ -46,6 +46,14 @@ struct Cli {
     /// Running in dev mode will ignore any config file fields pertaining to TLS.
     #[clap(long, default_value_t = false)]
     dev: bool,
+    /// Run in localhost development mode with TLS (self-signed certs).
+    ///
+    /// This enables HTTPS and H3/QUIC transports using auto-generated self-signed
+    /// certificates for localhost/127.0.0.1. Useful for benchmarking H3 vs WS locally.
+    ///
+    /// Clients must use `--insecure` or equivalent to accept the self-signed certs.
+    #[clap(long, default_value_t = false, conflicts_with = "dev")]
+    dev_tls: bool,
     /// Path to the configuration file.
     #[clap(long, short)]
     config_path: Option<PathBuf>,
@@ -508,7 +516,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let mut cfg = Config::load(&cli).await?;
-    if cfg.enable_quic_addr_discovery && cfg.tls.is_none() {
+    if cfg.enable_quic_addr_discovery && cfg.tls.is_none() && !cli.dev_tls {
         bail_any!("TLS must be configured in order to spawn a QUIC endpoint");
     }
     if cli.dev {
@@ -520,10 +528,31 @@ async fn main() -> Result<()> {
             cfg.http_bind_addr = Some((Ipv6Addr::UNSPECIFIED, DEV_MODE_HTTP_PORT).into());
         }
     }
+    if cli.dev_tls {
+        warn!("Running with self-signed certificates. Do not use --dev-tls in production.");
+        cfg.tls = Some(TlsConfig {
+            https_bind_addr: Some((Ipv6Addr::UNSPECIFIED, 8443).into()),
+            quic_bind_addr: Some((Ipv6Addr::UNSPECIFIED, 8443).into()),
+            hostname: None,
+            cert_mode: CertMode::Manual,
+            cert_dir: None,
+            manual_cert_path: None,
+            manual_key_path: None,
+            prod_tls: false,
+            contact: None,
+            dangerous_http_only: false,
+        });
+        // QAD disabled in dev-tls: it would conflict with the H3 relay server
+        // on the same UDP port. In production, QAD uses a separate port.
+        cfg.enable_quic_addr_discovery = false;
+        if cfg.http_bind_addr.is_none() {
+            cfg.http_bind_addr = Some((Ipv6Addr::UNSPECIFIED, DEV_MODE_HTTP_PORT).into());
+        }
+    }
     if cfg.tls.is_none() && cfg.enable_quic_addr_discovery {
         bail_any!("If QUIC address discovery is enabled, TLS must also be configured");
     };
-    let relay_config = build_relay_config(cfg).await?;
+    let relay_config = build_relay_config(cfg, cli.dev_tls).await?;
     debug!("{relay_config:#?}");
 
     let mut relay = relay::Server::spawn(relay_config).await?;
@@ -632,12 +661,28 @@ async fn maybe_load_tls(
 }
 
 /// Convert the TOML-loaded config to the [`relay::RelayConfig`] format.
-async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::Error>> {
+async fn build_relay_config(
+    cfg: Config,
+    dev_tls: bool,
+) -> Result<relay::ServerConfig<std::io::Error>> {
     // Don't bind to https, even if tls configuration is available.
     // Is really only relevant if we are in `--dev` mode & we also have TLS configuration
     // enabled to use QUIC address discovery locally.
     let dangerous_http_only = cfg.tls.as_ref().is_some_and(|tls| tls.dangerous_http_only);
-    let relay_tls = maybe_load_tls(&cfg).await?;
+    let relay_tls = if dev_tls {
+        // Generate self-signed certs for local dev with TLS.
+        let (certs, server_config) =
+            iroh_relay::server::testing::self_signed_tls_certs_and_config();
+        let tls_cfg = cfg.tls.as_ref().expect("dev_tls sets tls config");
+        Some(relay::TlsConfig {
+            https_bind_addr: tls_cfg.https_bind_addr(&cfg),
+            quic_bind_addr: tls_cfg.quic_bind_addr(&cfg),
+            cert: relay::CertConfig::Manual { certs },
+            server_config,
+        })
+    } else {
+        maybe_load_tls(&cfg).await?
+    };
 
     let mut quic_config = None;
     if cfg.enable_quic_addr_discovery {
@@ -725,7 +770,7 @@ mod tests {
             max_burst_bytes = 800
         ";
         let config = Config::from_str(config)?;
-        let relay_config = build_relay_config(config).await?;
+        let relay_config = build_relay_config(config, false).await?;
 
         let relay = relay_config.relay.expect("no relay config");
         assert_eq!(
@@ -743,7 +788,7 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limit_default() -> Result {
         let config = Config::from_str("")?;
-        let relay_config = build_relay_config(config).await?;
+        let relay_config = build_relay_config(config, false).await?;
 
         let relay = relay_config.relay.expect("no relay config");
         assert!(relay.limits.client_rx.is_none());
@@ -832,19 +877,19 @@ mod tests {
             enable_relay = false
         ";
         let config = Config::from_str(config)?;
-        let relay_config = build_relay_config(config).await?;
+        let relay_config = build_relay_config(config, false).await?;
         assert!(relay_config.relay.is_none());
 
         let config = "
             enable_relay = true
         ";
         let config = Config::from_str(config)?;
-        let relay_config = build_relay_config(config).await?;
+        let relay_config = build_relay_config(config, false).await?;
         assert!(relay_config.relay.is_some());
 
         let config = "";
         let config = Config::from_str(config)?;
-        let relay_config = build_relay_config(config).await?;
+        let relay_config = build_relay_config(config, false).await?;
         assert!(relay_config.relay.is_some());
 
         Ok(())

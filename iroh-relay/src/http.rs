@@ -20,3 +20,12 @@ pub const RELAY_PROBE_PATH: &str = "/ping";
 pub const RELAY_PROTOCOL_VERSION: &str = "iroh-relay-v1";
 /// The HTTP header name for relay client authentication
 pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay-client-auth-v1");
+
+/// ALPN protocol identifier for H3 relay connections.
+///
+/// Uses the standard HTTP/3 ALPN. The relay protocol is negotiated via
+/// RFC 9220 extended CONNECT with `:protocol = websocket` and the
+/// `Sec-WebSocket-Protocol` subprotocol header, mirroring the HTTP/1.1
+/// WebSocket upgrade flow.
+#[cfg(feature = "h3-transport")]
+pub const ALPN_RELAY_H3: &[u8] = b"h3";

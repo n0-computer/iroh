@@ -149,7 +149,9 @@ testdir = "0.10"
 cfg_aliases = { version = "0.2.1" }
 
 [features]
-default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring"]
+default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring", "h3-transport"]
+# HTTP/3 relay transport (QUIC-based, preferred when UDP is available)
+h3-transport = ["iroh-relay/h3-transport"]
 portmapper = ["dep:portmapper"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper?/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]

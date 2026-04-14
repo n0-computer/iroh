@@ -13,14 +13,14 @@ use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
 use n0_error::{e, stack_error};
 use n0_future::{
-    Sink, Stream,
+    Either, Sink, Stream,
     split::{SplitSink, SplitStream, split},
     time,
 };
 use tracing::{Level, debug, event, trace};
 use url::Url;
 
-pub use self::conn::{RecvError, SendError};
+pub use self::conn::{RecvError, SendError, Transport};
 #[cfg(not(wasm_browser))]
 use crate::dns::{DnsError, DnsResolver};
 use crate::{
@@ -33,6 +33,8 @@ use crate::{
 };
 
 pub(crate) mod conn;
+#[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+pub(crate) mod h3_conn;
 #[cfg(not(wasm_browser))]
 pub(crate) mod streams;
 #[cfg(not(wasm_browser))]
@@ -88,6 +90,12 @@ pub enum ConnectError {
         "No rustls crypto provider configured while both ring and aws-lc-rs feature flags are disabled"
     )]
     MissingCryptoProvider,
+    #[cfg(feature = "h3-transport")]
+    #[error(transparent)]
+    H3 {
+        #[error(std_err)]
+        source: h3_conn::H3ConnectError,
+    },
     #[cfg(wasm_browser)]
     #[error("The relay protocol is not available in browsers")]
     RelayProtoNotAvailable {},
@@ -149,6 +157,11 @@ pub struct ClientBuilder {
     dns_resolver: DnsResolver,
     /// Cache for public keys of remote endpoints.
     key_cache: KeyCache,
+    /// Whether to prefer H3 (QUIC) transport over WebSocket.
+    ///
+    /// When true, the client tries H3 first and falls back to WebSocket on failure.
+    #[cfg(feature = "h3-transport")]
+    enable_h3: bool,
 }
 
 impl ClientBuilder {
@@ -167,6 +180,8 @@ impl ClientBuilder {
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
+            #[cfg(feature = "h3-transport")]
+            enable_h3: false,
         }
     }
 
@@ -223,9 +238,155 @@ impl ClientBuilder {
         self
     }
 
+    /// Enable H3/WebTransport relay connections.
+    ///
+    /// When true, the client races WebTransport and WebSocket connections
+    /// concurrently. The first transport to receive a server response wins;
+    /// the other is aborted.
+    #[cfg(feature = "h3-transport")]
+    pub fn enable_h3(mut self, enable: bool) -> Self {
+        self.enable_h3 = enable;
+        self
+    }
+
     /// Establishes a new connection to the relay server.
+    ///
+    /// When H3 is enabled via [`enable_h3`](Self::enable_h3), races WebTransport
+    /// and WebSocket concurrently. The first to receive a server response wins.
     #[cfg(not(wasm_browser))]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
+        #[cfg(feature = "h3-transport")]
+        if self.enable_h3 {
+            return self.connect_race().await;
+        }
+
+        self.connect_ws().await
+    }
+
+    /// Race WebTransport and WebSocket connections concurrently.
+    ///
+    /// DNS is resolved once, then both transports connect in parallel using
+    /// the same IP. The first to complete wins; the loser is dropped.
+    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+    async fn connect_race(&self) -> Result<Client, ConnectError> {
+        use std::net::SocketAddr;
+
+        let url = &*self.url;
+        let host = url
+            .host_str()
+            .ok_or_else(|| e!(ConnectError::InvalidRelayUrl { url: url.clone() }))?;
+        let port = url
+            .port_or_known_default()
+            .ok_or_else(|| e!(ConnectError::InvalidRelayUrl { url: url.clone() }))?;
+
+        let ip = self
+            .dns_resolver
+            .resolve_host(
+                url,
+                self.prefer_ipv6(),
+                crate::defaults::timeouts::DNS_TIMEOUT,
+            )
+            .await
+            .map_err(|err| {
+                e!(ConnectError::Dial {
+                    source: e!(DialError::Dns { source: err })
+                })
+            })?;
+
+        debug!(%ip, %host, "racing WT and WS connections");
+
+        let server_addr = SocketAddr::new(ip, port);
+
+        // Phase 1: race QUIC handshake against WS connect.
+        // The QUIC handshake is 1 RTT; WS needs TCP + TLS + HTTP upgrade (3-4 RTTs).
+        // If QUIC succeeds first, abort WS and complete WT handshake uncontested.
+        let tls_config = self
+            .tls_config
+            .clone()
+            .ok_or_else(|| e!(ConnectError::MissingCryptoProvider))?;
+
+        let quic_fut = h3_conn::quic_connect(server_addr, host, tls_config);
+        let ws_fut = self.connect_ws_resolved(ip);
+        tokio::pin!(quic_fut);
+        tokio::pin!(ws_fut);
+
+        // Race QUIC handshake (1 RTT) against the full WS connect (3-4 RTTs).
+        // As soon as QUIC succeeds, the WS future is dropped.
+        let race = tokio::select! {
+            r = &mut quic_fut => Either::Left(r),
+            r = &mut ws_fut => Either::Right(r),
+        };
+
+        match race {
+            Either::Left(Ok(quic)) => {
+                debug!("QUIC handshake won the race, completing WT handshake");
+                match h3_conn::wt_handshake(quic, host, &self.secret_key).await {
+                    Ok((io, state, local_addr)) => {
+                        event!(
+                            target: "iroh::_events::net::relay::connected",
+                            Level::DEBUG,
+                            url = %self.url,
+                            transport = "h3",
+                        );
+                        let conn = Conn::from_wt(io, state, self.key_cache.clone());
+                        Ok(Client {
+                            conn,
+                            local_addr: Some(local_addr),
+                        })
+                    }
+                    Err(err) => {
+                        debug!("WT handshake failed ({err:#}), falling back to WS");
+                        self.connect_ws_resolved(ip).await
+                    }
+                }
+            }
+            Either::Left(Err(err)) => {
+                debug!("QUIC failed ({err:#}), waiting for WS");
+                ws_fut.await
+            }
+            Either::Right(Ok(client)) => {
+                debug!("WS won the race");
+                Ok(client)
+            }
+            Either::Right(Err(ws_err)) => {
+                debug!("WS failed ({ws_err:#}), waiting for QUIC");
+                match quic_fut.await {
+                    Ok(quic) => h3_conn::wt_handshake(quic, host, &self.secret_key)
+                        .await
+                        .map(|(io, state, local_addr)| {
+                            let conn = Conn::from_wt(io, state, self.key_cache.clone());
+                            Client {
+                                conn,
+                                local_addr: Some(local_addr),
+                            }
+                        })
+                        .map_err(|_| ws_err),
+                    Err(err) => {
+                        debug!("QUIC also failed: {err:#}");
+                        Err(ws_err)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Connect via WebSocket with a pre-resolved IP address.
+    #[cfg(not(wasm_browser))]
+    async fn connect_ws_resolved(&self, ip: std::net::IpAddr) -> Result<Client, ConnectError> {
+        self.connect_ws_inner(Some(ip)).await
+    }
+
+    /// Connect via WebSocket.
+    #[cfg(not(wasm_browser))]
+    async fn connect_ws(&self) -> Result<Client, ConnectError> {
+        self.connect_ws_inner(None).await
+    }
+
+    #[cfg(not(wasm_browser))]
+    async fn connect_ws_inner(
+        &self,
+        resolved_ip: Option<std::net::IpAddr>,
+    ) -> Result<Client, ConnectError> {
         use http::header::SEC_WEBSOCKET_PROTOCOL;
         use tls::MaybeTlsStreamBuilder;
 
@@ -262,6 +423,9 @@ impl ClientBuilder {
             MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone(), tls_config)
                 .prefer_ipv6(self.prefer_ipv6())
                 .proxy_url(self.proxy_url.clone());
+        if let Some(ip) = resolved_ip {
+            builder = builder.resolved_ip(ip);
+        }
 
         let stream = builder.connect().await?;
         let local_addr = stream
@@ -382,6 +546,18 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a [`Client`] from a pre-established [`Conn`] and optional local address.
+    #[cfg(all(feature = "h3-transport", test))]
+    pub(crate) fn from_conn(conn: Conn, local_addr: Option<SocketAddr>) -> Self {
+        Self { conn, local_addr }
+    }
+
+    /// Returns which transport protocol this connection uses.
+    #[cfg(not(wasm_browser))]
+    pub fn transport(&self) -> Transport {
+        self.conn.transport()
+    }
+
     /// Splits the client into a sink and a stream.
     pub fn split(self) -> (ClientStream, ClientSink) {
         let (sink, stream) = split(self.conn);

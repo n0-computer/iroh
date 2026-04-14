@@ -1,5 +1,5 @@
-//! Implements logic for abstracting over a websocket stream that allows sending only [`Bytes`]-based
-//! messages.
+//! Abstractions over transport streams (WebSocket, H3) that provide a [`Bytes`]-based
+//! Stream and Sink interface for the relay protocol.
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -12,6 +12,46 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::warn;
 
 use crate::ExportKeyingMaterial;
+
+/// Error type for transport stream operations.
+///
+/// Wraps transport-specific errors (WebSocket, H3) into a common type
+/// used throughout the relay protocol.
+#[derive(Debug)]
+pub struct StreamError(Box<dyn std::error::Error + Send + Sync + 'static>);
+
+impl StreamError {
+    /// Create a new StreamError from any error type.
+    pub fn new(err: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self(Box::new(err))
+    }
+}
+
+impl std::fmt::Display for StreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for StreamError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.source()
+    }
+}
+
+#[cfg(not(wasm_browser))]
+impl From<tokio_websockets::Error> for StreamError {
+    fn from(e: tokio_websockets::Error) -> Self {
+        Self(Box::new(e))
+    }
+}
+
+#[cfg(wasm_browser)]
+impl From<ws_stream_wasm::WsErr> for StreamError {
+    fn from(e: ws_stream_wasm::WsErr) -> Self {
+        Self(Box::new(e))
+    }
+}
 
 #[cfg(not(wasm_browser))]
 #[derive(derive_more::Debug)]
@@ -27,25 +67,7 @@ pub(crate) struct WsBytesFramed {
     pub(crate) io: ws_stream_wasm::WsStream,
 }
 
-/// Error type for WebSocket stream operations.
-///
-/// This type alias represents errors that can occur during WebSocket communication.
-/// The underlying error type depends on the platform:
-/// - On non-browser platforms: `tokio_websockets::Error`
-/// - On browser WASM: `ws_stream_wasm::WsErr`
-#[cfg(not(wasm_browser))]
-pub type StreamError = tokio_websockets::Error;
-
-/// Error type for WebSocket stream operations.
-///
-/// This type alias represents errors that can occur during WebSocket communication.
-/// The underlying error type depends on the platform:
-/// - On non-browser platforms: `tokio_websockets::Error`
-/// - On browser WASM: `ws_stream_wasm::WsErr`
-#[cfg(wasm_browser)]
-pub type StreamError = ws_stream_wasm::WsErr;
-
-/// Shorthand for a type that implements both a websocket-based stream & sink for [`Bytes`].
+/// Shorthand for a type that implements both a transport-based stream & sink for [`Bytes`].
 pub trait BytesStreamSink:
     Stream<Item = Result<Bytes, StreamError>> + Sink<Bytes, Error = StreamError> + Unpin
 {
@@ -92,7 +114,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for WsBytesFramed<T> {
         loop {
             match ready!(Pin::new(&mut self.io).poll_next(cx)) {
                 None => return Poll::Ready(None),
-                Some(Err(e)) => return Poll::Ready(Some(Err(e))),
+                Some(Err(e)) => return Poll::Ready(Some(Err(e.into()))),
                 Some(Ok(msg)) => {
                     if msg.is_close() {
                         // Indicate the stream is done when we receive a close message.
@@ -139,7 +161,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Sink<Bytes> for WsBytesFramed<T> {
 
     fn start_send(mut self: Pin<&mut Self>, bytes: Bytes) -> Result<(), Self::Error> {
         let msg = tokio_websockets::Message::binary(tokio_websockets::Payload::from(bytes));
-        Pin::new(&mut self.io).start_send(msg)
+        Pin::new(&mut self.io).start_send(msg).map_err(Into::into)
     }
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

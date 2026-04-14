@@ -431,7 +431,7 @@ fn addr_relay_only(addr: EndpointAddr) -> EndpointAddr {
     EndpointAddr::from_parts(addr.id, addr.addrs.into_iter().filter(|a| a.is_relay()))
 }
 
-mod relay {
+pub(crate) mod relay {
     use std::net::{IpAddr, Ipv6Addr};
 
     use iroh_base::RelayUrl;
@@ -448,7 +448,16 @@ mod relay {
     /// The returned [`RelayMap`] uses `https://relay.test` as the relay URL.
     /// Callers are responsible for ensuring that a DNS entry for `relay.test`
     /// exists and points to the relay's IP addresses.
+    pub async fn run_relay_server_named(hostname: &str) -> Result<(RelayMap, Server), SpawnError> {
+        let (map, server) = run_relay_server_inner(hostname).await?;
+        Ok((map, server))
+    }
+
     pub async fn run_relay_server() -> Result<(RelayMap, Server), SpawnError> {
+        run_relay_server_inner("relay.test").await
+    }
+
+    async fn run_relay_server_inner(hostname: &str) -> Result<(RelayMap, Server), SpawnError> {
         let bind_ip: IpAddr = Ipv6Addr::UNSPECIFIED.into();
 
         let (certs, server_config) =
@@ -477,11 +486,15 @@ mod relay {
         };
         let server = Server::spawn(config).await?;
 
-        let url: RelayUrl = "https://relay.test".parse().expect("valid relay url");
+        let url: RelayUrl = format!("https://{hostname}")
+            .parse()
+            .expect("valid relay url");
         let quic = server
             .quic_addr()
             .map(|addr| RelayQuicConfig::new(addr.port()));
-        let relay_map: RelayMap = RelayConfig::new(url, quic).into();
+        let mut cfg = RelayConfig::new(url, quic);
+        cfg.h3 = true;
+        let relay_map: RelayMap = cfg.into();
 
         Ok((relay_map, server))
     }

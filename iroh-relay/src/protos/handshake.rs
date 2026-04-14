@@ -137,13 +137,9 @@ impl Frame for ServerDeniesAuth {
 #[non_exhaustive]
 pub enum Error {
     #[error(transparent)]
-    Websocket {
-        #[cfg(not(wasm_browser))]
+    Stream {
         #[error(from, std_err)]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        #[error(from, std_err)]
-        source: ws_stream_wasm::WsErr,
+        source: crate::protos::streams::StreamError,
     },
     #[error("Handshake stream ended prematurely")]
     UnexpectedEnd {},
@@ -651,13 +647,13 @@ mod tests {
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(tokio_websockets::Error::Io)
-            .sink_map_err(tokio_websockets::Error::Io)
+            .map_err(crate::protos::streams::StreamError::new)
+            .sink_map_err(crate::protos::streams::StreamError::new)
             .with_shared_secret(client_shared_secret);
         let mut server_io = Framed::new(server, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(tokio_websockets::Error::Io)
-            .sink_map_err(tokio_websockets::Error::Io)
+            .map_err(crate::protos::streams::StreamError::new)
+            .sink_map_err(crate::protos::streams::StreamError::new)
             .with_shared_secret(server_shared_secret);
 
         let client_auth_header = KeyMaterialClientAuth::new(secret_key, &client_io)
