@@ -61,6 +61,12 @@ pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
 }
 
 /// Send a DNS query over TLS (DNS-over-TLS, RFC 7858).
+///
+/// **Limitation:** The server name for TLS SNI is derived from the IP address.
+/// This works for public DNS providers that include IP SANs in their certificates
+/// (e.g. Google 8.8.8.8, Cloudflare 1.1.1.1), but will fail TLS validation for
+/// servers whose certificates only cover hostnames. A future improvement could
+/// accept an optional hostname for SNI.
 pub(super) async fn tls_query(
     addr: SocketAddr,
     query: &[u8],
@@ -98,6 +104,12 @@ pub(super) fn build_https_client(
 }
 
 /// Send a DNS query over HTTPS (DNS-over-HTTPS, RFC 8484).
+///
+/// **Limitation:** The URL is constructed from the IP address (e.g.
+/// `https://1.1.1.1/dns-query`). This works for providers whose TLS
+/// certificates include the IP address as a SAN, but will fail for servers
+/// that only have hostname-based certificates. A future improvement could
+/// accept an optional hostname for URL construction and TLS SNI.
 pub(super) async fn https_query(
     addr: SocketAddr,
     query: &[u8],
