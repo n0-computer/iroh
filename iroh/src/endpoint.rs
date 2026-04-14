@@ -1282,7 +1282,25 @@ impl Endpoint {
     /// }
     /// ```
     pub async fn online(&self) {
-        self.inner.home_relay().initialized().await;
+        let mut watcher = self.inner.home_relay_status();
+        let mut value = watcher.get();
+        loop {
+            tracing::info!("home relay status: {value:?}");
+            if value
+                .into_iter()
+                .filter_map(|x| x)
+                .any(|(_url, status)| status.is_connected())
+            {
+                return;
+            }
+            value = match watcher.updated().await {
+                Ok(value) => value,
+                Err(_disconnected) => {
+                    std::future::pending::<()>().await;
+                    break;
+                }
+            }
+        }
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
