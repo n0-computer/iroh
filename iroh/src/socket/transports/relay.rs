@@ -20,8 +20,7 @@ use super::{Addr, Transmit};
 
 mod actor;
 
-pub(crate) use self::actor::HomeRelayWatch;
-pub(crate) use self::actor::{Config as RelayActorConfig, HomeRelayStatus};
+pub(crate) use self::actor::{Config as RelayActorConfig, HomeRelayStatus, HomeRelayWatch};
 use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
 
 #[derive(Debug)]

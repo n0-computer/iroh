@@ -33,8 +33,7 @@ use custom::{CustomEndpoint, CustomSender, CustomTransport};
 pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
-pub(crate) use self::relay::{HomeRelayStatus, RelayActorConfig, RelayTransport};
-pub(crate) use self::relay::HomeRelayWatch;
+pub(crate) use self::relay::{HomeRelayStatus, HomeRelayWatch, RelayActorConfig, RelayTransport};
 
 /// Manages the different underlying data transports that the socket can support.
 #[derive(Debug)]
