@@ -100,6 +100,16 @@ fn check_response(packet: &Packet, expected_id: u16) -> Result<(), DnsError> {
     }
 }
 
+/// Check whether a resource record's name matches the queried name or its
+/// CNAME-resolved canonical name. If no question section is present
+/// (shouldn't happen in practice), accept all records.
+fn name_matches(rr_name: &Name<'_>, qname: Option<&Name<'_>>, canonical: Option<&Name<'_>>) -> bool {
+    match qname {
+        Some(q) => rr_name == q || canonical.is_some_and(|c| rr_name == c),
+        None => true, // No question section -- accept all matching record types.
+    }
+}
+
 /// Parse A (IPv4) records from a DNS response, following CNAME chains.
 ///
 /// If the response contains CNAME records pointing from the queried name to a
@@ -111,20 +121,14 @@ pub(super) fn parse_a_response(
     let packet = Packet::parse(data)?;
     check_response(&packet, expected_id)?;
 
-    // Resolve the CNAME chain to find the canonical name.
-    let qname = packet
-        .questions
-        .first()
-        .map(|q| q.qname.clone())
-        .unwrap_or_else(|| Name::new_unchecked(""));
-    let canonical = resolve_cname_chain(&packet, &qname);
+    let qname = packet.questions.first().map(|q| q.qname.clone());
+    let canonical = qname.as_ref().map(|q| resolve_cname_chain(&packet, q));
 
     let mut addrs = Vec::new();
     let mut min_ttl = u32::MAX;
     for rr in &packet.answers {
         if let RData::A(A { address }) = &rr.rdata {
-            // Accept records matching either the original or canonical name.
-            if rr.name == qname || rr.name == canonical {
+            if name_matches(&rr.name, qname.as_ref(), canonical.as_ref()) {
                 addrs.push(Ipv4Addr::from(*address));
                 min_ttl = min_ttl.min(rr.ttl);
             }
@@ -144,18 +148,14 @@ pub(super) fn parse_aaaa_response(
     let packet = Packet::parse(data)?;
     check_response(&packet, expected_id)?;
 
-    let qname = packet
-        .questions
-        .first()
-        .map(|q| q.qname.clone())
-        .unwrap_or_else(|| Name::new_unchecked(""));
-    let canonical = resolve_cname_chain(&packet, &qname);
+    let qname = packet.questions.first().map(|q| q.qname.clone());
+    let canonical = qname.as_ref().map(|q| resolve_cname_chain(&packet, q));
 
     let mut addrs = Vec::new();
     let mut min_ttl = u32::MAX;
     for rr in &packet.answers {
         if let RData::AAAA(AAAA { address }) = &rr.rdata {
-            if rr.name == qname || rr.name == canonical {
+            if name_matches(&rr.name, qname.as_ref(), canonical.as_ref()) {
                 addrs.push(Ipv6Addr::from(*address));
                 min_ttl = min_ttl.min(rr.ttl);
             }
@@ -175,18 +175,14 @@ pub(super) fn parse_txt_response(
     let packet = Packet::parse(data)?;
     check_response(&packet, expected_id)?;
 
-    let qname = packet
-        .questions
-        .first()
-        .map(|q| q.qname.clone())
-        .unwrap_or_else(|| Name::new_unchecked(""));
-    let canonical = resolve_cname_chain(&packet, &qname);
+    let qname = packet.questions.first().map(|q| q.qname.clone());
+    let canonical = qname.as_ref().map(|q| resolve_cname_chain(&packet, q));
 
     let mut records = Vec::new();
     let mut min_ttl = u32::MAX;
     for rr in &packet.answers {
         if let RData::TXT(txt) = &rr.rdata {
-            if rr.name == qname || rr.name == canonical {
+            if name_matches(&rr.name, qname.as_ref(), canonical.as_ref()) {
                 let record = extract_txt_record_data(txt);
                 records.push(record);
                 min_ttl = min_ttl.min(rr.ttl);

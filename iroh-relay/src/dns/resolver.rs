@@ -7,7 +7,10 @@ use std::{
 };
 
 use n0_error::e;
-use n0_future::time::{self, Duration};
+use n0_future::{
+    FuturesUnorderedBounded, StreamExt,
+    time::{self, Duration},
+};
 use rustls::ClientConfig;
 use simple_dns::TYPE;
 use tracing::{debug, trace};
@@ -19,10 +22,16 @@ use super::{
     system_config, transport,
 };
 
-/// Per-nameserver timeout. Ensures we move on to the next nameserver
-/// if one is unresponsive, rather than consuming the entire query budget.
-/// Matches hickory-resolver's default of 5 seconds.
-const NAMESERVER_TIMEOUT: Duration = Duration::from_secs(5);
+/// Per-nameserver timeout for a single attempt.
+const NAMESERVER_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Delay between launching queries to successive nameservers.
+/// Gives the preferred nameserver a head start before trying alternates.
+const NAMESERVER_STAGGER: Duration = Duration::from_millis(100);
+
+/// Number of UDP retry attempts per nameserver before giving up.
+/// UDP is unreliable, so a single dropped packet shouldn't be fatal.
+const UDP_ATTEMPTS: usize = 2;
 
 #[derive(Debug)]
 pub(super) struct SimpleDnsResolver {
@@ -83,63 +92,153 @@ impl SimpleDnsResolver {
         Ok(client)
     }
 
-    /// Send a query to the first responding nameserver.
-    async fn send_query(&self, query_bytes: &[u8]) -> Result<Vec<u8>, DnsError> {
-        let mut last_err = None;
-        for (addr, proto) in &self.nameservers {
-            trace!(%addr, ?proto, "sending DNS query");
-            let result = time::timeout(NAMESERVER_TIMEOUT, async {
-                match proto {
-                    DnsProtocol::Udp => {
-                        let resp = transport::udp_query(*addr, query_bytes).await?;
-                        // Check for truncation, fallback to TCP
-                        if query::is_truncated(&resp) {
-                            debug!(%addr, "UDP response truncated, retrying over TCP");
-                            transport::tcp_query(*addr, query_bytes).await
-                        } else {
-                            Ok(resp)
+    /// Query a single nameserver, with UDP retry and truncation fallback.
+    async fn query_nameserver(
+        &self,
+        addr: SocketAddr,
+        proto: DnsProtocol,
+        query_bytes: &[u8],
+    ) -> Result<Vec<u8>, DnsError> {
+        match proto {
+            DnsProtocol::Udp => {
+                let mut last_err = None;
+                for attempt in 0..UDP_ATTEMPTS {
+                    trace!(%addr, attempt, "sending UDP query");
+                    match time::timeout(NAMESERVER_TIMEOUT, transport::udp_query(addr, query_bytes))
+                        .await
+                    {
+                        Ok(Ok(resp)) => {
+                            if query::is_truncated(&resp) {
+                                debug!(%addr, "UDP response truncated, retrying over TCP");
+                                return time::timeout(
+                                    NAMESERVER_TIMEOUT,
+                                    transport::tcp_query(addr, query_bytes),
+                                )
+                                .await
+                                .unwrap_or_else(|_| {
+                                    Err(e!(DnsError::Transport {
+                                        source: std::io::Error::new(
+                                            std::io::ErrorKind::TimedOut,
+                                            "TCP fallback timed out",
+                                        ),
+                                    }))
+                                });
+                            }
+                            return Ok(resp);
+                        }
+                        Ok(Err(e)) => {
+                            trace!(%addr, attempt, err = %e, "UDP query failed");
+                            last_err = Some(e);
+                        }
+                        Err(_) => {
+                            trace!(%addr, attempt, "UDP query timed out");
+                            last_err = Some(e!(DnsError::Transport {
+                                source: std::io::Error::new(
+                                    std::io::ErrorKind::TimedOut,
+                                    "nameserver query timed out",
+                                ),
+                            }));
                         }
                     }
-                    DnsProtocol::Tcp => transport::tcp_query(*addr, query_bytes).await,
-                    DnsProtocol::Tls => {
-                        let tls_config = self.tls_config.as_ref().ok_or_else(|| {
-                            e!(DnsError::Transport {
-                                source: std::io::Error::new(
-                                    std::io::ErrorKind::InvalidInput,
-                                    "TLS config required for DNS-over-TLS",
-                                ),
-                            })
-                        })?;
-                        transport::tls_query(*addr, query_bytes, tls_config).await
-                    }
-                    DnsProtocol::Https => {
-                        let client = self.get_or_init_https_client().await?;
-                        transport::https_query(*addr, query_bytes, &client).await
-                    }
                 }
-            })
-            .await;
-            let result = match result {
-                Ok(inner) => inner,
-                Err(_elapsed) => {
-                    trace!(%addr, ?proto, "DNS query timed out");
+                Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
+            }
+            DnsProtocol::Tcp => {
+                time::timeout(NAMESERVER_TIMEOUT, transport::tcp_query(addr, query_bytes))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(e!(DnsError::Transport {
+                            source: std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "nameserver query timed out",
+                            ),
+                        }))
+                    })
+            }
+            #[cfg(with_crypto_provider)]
+            DnsProtocol::Tls => {
+                let tls_config = self.tls_config.as_ref().ok_or_else(|| {
+                    e!(DnsError::Transport {
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "TLS config required for DNS-over-TLS",
+                        ),
+                    })
+                })?;
+                time::timeout(
+                    NAMESERVER_TIMEOUT,
+                    transport::tls_query(addr, query_bytes, tls_config),
+                )
+                .await
+                .unwrap_or_else(|_| {
                     Err(e!(DnsError::Transport {
                         source: std::io::Error::new(
                             std::io::ErrorKind::TimedOut,
                             "nameserver query timed out",
                         ),
                     }))
+                })
+            }
+            #[cfg(with_crypto_provider)]
+            DnsProtocol::Https => {
+                let client = self.get_or_init_https_client().await?;
+                time::timeout(
+                    NAMESERVER_TIMEOUT,
+                    transport::https_query(addr, query_bytes, &client),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    Err(e!(DnsError::Transport {
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "nameserver query timed out",
+                        ),
+                    }))
+                })
+            }
+        }
+    }
+
+    /// Send a query to all nameservers in parallel with staggered starts.
+    ///
+    /// Each nameserver gets a staggered start delay to give the preferred
+    /// (first) nameserver a head start. The first successful response wins.
+    /// UDP queries are retried once per nameserver on failure.
+    async fn send_query(&self, query_bytes: &[u8]) -> Result<Vec<u8>, DnsError> {
+        if self.nameservers.is_empty() {
+            return Err(e!(DnsError::NoResponse));
+        }
+
+        let count = self.nameservers.len();
+        let mut futures = FuturesUnorderedBounded::new(count);
+
+        for (i, (addr, proto)) in self.nameservers.iter().enumerate() {
+            let addr = *addr;
+            let proto = *proto;
+            let stagger = NAMESERVER_STAGGER * i as u32;
+            futures.push(async move {
+                if !stagger.is_zero() {
+                    time::sleep(stagger).await;
                 }
-            };
+                trace!(%addr, ?proto, "sending DNS query");
+                let result = self.query_nameserver(addr, proto, query_bytes).await;
+                match &result {
+                    Ok(resp) => {
+                        trace!(%addr, ?proto, len = resp.len(), "DNS query succeeded");
+                    }
+                    Err(e) => {
+                        trace!(%addr, ?proto, err = %e, "DNS query failed");
+                    }
+                }
+                result
+            });
+        }
+
+        let mut last_err = None;
+        while let Some(result) = futures.next().await {
             match result {
-                Ok(resp) => {
-                    trace!(%addr, ?proto, len = resp.len(), "DNS query succeeded");
-                    return Ok(resp);
-                }
-                Err(e) => {
-                    trace!(%addr, ?proto, err = %e, "DNS query failed, trying next nameserver");
-                    last_err = Some(e);
-                }
+                Ok(resp) => return Ok(resp),
+                Err(e) => last_err = Some(e),
             }
         }
         Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
