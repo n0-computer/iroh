@@ -109,9 +109,6 @@ async fn run_switch_uplink(switching_side: Side, from: IpSupport, to: IpSupport)
         ping_accept(&conn, timeout)
             .await
             .context("ping_accept before switch")?;
-        // TODO(Frando): Without this sleep, some of the server-side tests fail.
-        // Exact reason not yet known, but things are very timing-sensitive atm.
-        tokio::time::sleep(Duration::from_secs(1)).await;
         dev.iface("eth0").unwrap().replug(to_id).await?;
         ping_accept(&conn, timeout)
             .await
