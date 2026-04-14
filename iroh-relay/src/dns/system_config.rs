@@ -159,10 +159,22 @@ fn parse_resolv_conf(content: &str) -> SystemDnsConfig {
         let mut parts = line.split_whitespace();
         match parts.next() {
             Some("nameserver") => {
-                if let Some(addr_str) = parts.next()
-                    && let Ok(ip) = addr_str.parse::<IpAddr>()
-                {
-                    servers.push((SocketAddr::new(ip, DNS_PORT), DnsProtocol::Udp));
+                if let Some(addr_str) = parts.next() {
+                    // Try parsing as SocketAddr first (supports custom ports like
+                    // 8.8.8.8:5353 or [::1]:5353), then fall back to IpAddr with
+                    // the default DNS port.
+                    let addr = addr_str
+                        .parse::<SocketAddr>()
+                        .ok()
+                        .or_else(|| {
+                            addr_str
+                                .parse::<IpAddr>()
+                                .ok()
+                                .map(|ip| SocketAddr::new(ip, DNS_PORT))
+                        });
+                    if let Some(addr) = addr {
+                        servers.push((addr, DnsProtocol::Udp));
+                    }
                 }
             }
             Some("search") => {
@@ -272,6 +284,14 @@ mod tests {
     fn parse_domain_directive() {
         let config = parse_resolv_conf("domain example.com\nnameserver 8.8.8.8\n");
         assert_eq!(config.search_domains, ["example.com"]);
+    }
+
+    #[test]
+    fn parse_custom_port() {
+        let config = parse_resolv_conf("nameserver 8.8.8.8:5353\nnameserver 1.1.1.1\n");
+        assert_eq!(config.nameservers.len(), 2);
+        assert_eq!(config.nameservers[0].0, "8.8.8.8:5353".parse::<SocketAddr>().unwrap());
+        assert_eq!(config.nameservers[1].0.port(), DNS_PORT);
     }
 
     #[test]
