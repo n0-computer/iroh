@@ -28,15 +28,17 @@
 
 use std::time::Duration;
 
-use iroh::{TransportAddr, endpoint::Side};
+use iroh::endpoint::Side;
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_tracing_test::traced_test;
-use patchbay::{IpSupport, LinkCondition, LinkDirection, LinkLimits, Nat, RouterPreset, TestGuard};
+use patchbay::{LinkCondition, LinkDirection, LinkLimits, Nat, TestGuard};
 use testdir::testdir;
 use tracing::info;
 
 use self::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
 
+#[path = "patchbay/switch-uplink.rs"]
+mod switch_uplink;
 #[path = "patchbay/util.rs"]
 mod util;
 
@@ -79,168 +81,6 @@ async fn holepunch_simple() -> Result {
                 .await
                 .context("holepunch to direct")?;
             info!("connection became direct");
-            Ok(())
-        })
-        .run()
-        .await?;
-    guard.ok();
-    Ok(())
-}
-
-/// Switches the client's IPv4 uplink to a different NAT mid-connection.
-///
-/// The client starts behind `nat2`, holepunches a direct path, then replugs
-/// its interface to `nat3`. The server waits until a direct path with a new
-/// remote address is selected. We verify with a ping that the new path works.
-#[tokio::test]
-#[traced_test]
-async fn switch_uplink_v4() -> Result {
-    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
-    let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
-    let nat3 = lab.add_router("nat3").nat(Nat::Home).build().await?;
-    let server = lab.add_device("server").uplink(nat1.id()).build().await?;
-    let client = lab.add_device("client").uplink(nat2.id()).build().await?;
-    let timeout = Duration::from_secs(10);
-    Pair::new(relay_map)
-        .server(server, async move |_dev, _ep, conn| {
-            let mut paths = conn.paths();
-            assert!(paths.selected().is_relay(), "connection started relayed");
-
-            // Wait until a first direct path is established.
-            let first = paths.wait_ip(timeout).await?;
-            info!(addr=?first.remote_addr(), "connection became direct, waiting for path change");
-
-            // Now wait until the direct path changes, which happens after the other endpoint
-            // changes its uplink. We check is_ip() explicitly to avoid triggering on a
-            // transient relay fallback during the network switch.
-            let second = paths
-                .wait_selected(timeout, |p| {
-                    p.is_ip() && p.remote_addr() != first.remote_addr()
-                })
-                .await
-                .context("did not switch paths")?;
-            info!(addr=?second.remote_addr(), "connection changed path, wait for ping");
-
-            ping_accept(&conn, timeout).await?;
-            info!("ping done");
-            conn.closed().await;
-            Ok(())
-        })
-        .client(client, async move |dev, _ep, conn| {
-            let mut paths = conn.paths();
-            assert!(paths.selected().is_relay(), "connection started relayed");
-
-            // Wait for conn to become direct.
-            paths
-                .wait_ip(timeout)
-                .await
-                .context("holepunch to direct")?;
-
-            // Wait a little more and then switch wifis.
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            info!("switch IP uplink");
-            dev.iface("eth0").unwrap().replug(nat3.id()).await?;
-
-            // We don't assert any path changes here, because the remote stays identical,
-            // and PathInfo does not contain info on local addrs. Instead, the remote
-            // only accepts our ping after the path changed.
-            info!("send ping");
-            ping_open(&conn, timeout)
-                .await
-                .context("failed at ping_open")?;
-            info!("ping done");
-            conn.close(0u32.into(), b"bye");
-            Ok(())
-        })
-        .run()
-        .await?;
-    guard.ok();
-    Ok(())
-}
-
-/// Switches the client's uplink from an IPv4 NAT to an IPv6-only ISP network.
-///
-/// Similar to [`switch_uplink_v4`], but the client replugs from a Home NAT
-/// to an IPv6-only ISP router. The server waits for the selected path to
-/// switch from an IPv4 to an IPv6 remote address.
-#[tokio::test]
-#[traced_test]
-async fn switch_uplink_v6() -> Result {
-    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let public = lab
-        .add_router("public")
-        .preset(RouterPreset::Public)
-        .build()
-        .await?;
-    let home = lab
-        .add_router("nat2")
-        .preset(RouterPreset::Home)
-        .ip_support(IpSupport::V4Only)
-        .build()
-        .await?;
-    let mobile = lab
-        .add_router("nat3")
-        .preset(RouterPreset::IspV6)
-        .build()
-        .await?;
-    let server = lab.add_device("server").uplink(public.id()).build().await?;
-    let client = lab.add_device("client").uplink(home.id()).build().await?;
-    let timeout = Duration::from_secs(10);
-    Pair::new(relay_map)
-        .server(server, async move |_dev, _ep, conn| {
-            let mut paths = conn.paths();
-            assert!(paths.selected().is_relay(), "connection started relayed");
-
-            // Wait until a first direct path is established.
-            let first = paths
-                .wait_ip(timeout)
-                .await
-                .context("did not become direct")?;
-            info!(addr=?first.remote_addr(), "connection became direct, waiting for path change");
-
-            ping_accept(&conn, timeout).await.context("ping_accept 1")?;
-
-            // Now wait until the direct path switches to an IPv6 address, which happens
-            // after the other endpoint replugs to the v6-only ISP router.
-            let second = paths
-                .wait_selected(
-                    timeout,
-                    |p| matches!(p.remote_addr(), TransportAddr::Ip(addr) if addr.ip().is_ipv6()),
-                )
-                .await
-                .context("did not switch paths to v6")?;
-            info!(addr=?second.remote_addr(), "connection changed path, wait for ping");
-
-            ping_accept(&conn, timeout).await.context("ping_accept 2")?;
-            info!("ping done");
-            conn.closed().await;
-            Ok(())
-        })
-        .client(client, async move |dev, _ep, conn| {
-            let mut paths = conn.paths();
-            assert!(paths.selected().is_relay(), "connection started relayed");
-
-            // Wait for conn to become direct.
-            paths
-                .wait_ip(timeout)
-                .await
-                .context("holepunch to direct")?;
-
-            ping_open(&conn, timeout)
-                .await
-                .context("ping before switch")?;
-
-            info!("switch IP uplink to v6");
-            dev.iface("eth0").unwrap().replug(mobile.id()).await?;
-
-            // We don't assert any path changes here, because the remote stays identical,
-            // and PathInfo does not contain info on local addrs. Instead, the remote
-            // only accepts our ping after the path changed.
-            ping_open(&conn, timeout)
-                .await
-                .context("ping after v6 switch")?;
-            conn.close(0u32.into(), b"bye");
             Ok(())
         })
         .run()
