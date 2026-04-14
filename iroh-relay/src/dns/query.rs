@@ -195,26 +195,23 @@ pub(super) fn parse_txt_response(
     Ok((records, min_ttl))
 }
 
-/// Extract character strings from a TXT record into `TxtRecordData`.
+/// Extract the raw content of a TXT record into `TxtRecordData`.
 ///
-/// For iroh's use case, TXT records contain `key=value` strings
-/// where each DNS character string is one attribute.
+/// Converts the TXT record's character strings into raw bytes. In iroh's
+/// DNS encoding, each TXT record typically contains a single character
+/// string (one `key=value` attribute), and each attribute is published as
+/// a separate TXT ResourceRecord.
+///
+/// We use `String::try_from` which concatenates all character strings in
+/// the record into one byte sequence. This preserves the raw content
+/// without the destructive key=value parsing that `TXT::attributes()` does
+/// (which uses a HashMap and would lose ordering and deduplicate keys).
 fn extract_txt_record_data(txt: &simple_dns::rdata::TXT<'_>) -> TxtRecordData {
-    let attrs = txt.attributes();
-    if !attrs.is_empty() {
-        let strings: Vec<String> = attrs
-            .into_iter()
-            .map(|(k, v)| match v {
-                Some(val) => format!("{k}={val}"),
-                None => k.to_owned(),
-            })
-            .collect();
-        TxtRecordData::from(strings)
-    } else {
-        match String::try_from(txt.clone()) {
-            Ok(s) if !s.is_empty() => TxtRecordData::from(vec![s]),
-            _ => TxtRecordData::from(Vec::<String>::new()),
+    match String::try_from(txt.clone()) {
+        Ok(s) if !s.is_empty() => {
+            TxtRecordData::from(vec![s.into_bytes().into_boxed_slice()])
         }
+        _ => TxtRecordData::from(Vec::<Box<[u8]>>::new()),
     }
 }
 
