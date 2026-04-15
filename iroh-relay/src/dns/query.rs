@@ -112,34 +112,46 @@ fn name_matches(
     }
 }
 
-/// Parse A (IPv4) records from a DNS response, following CNAME chains.
+/// Parse matching records from a DNS response, following CNAME chains.
 ///
-/// If the response contains CNAME records pointing from the queried name to a
-/// canonical name, records for both the original and canonical names are collected.
-pub(super) fn parse_a_response(
+/// Validates the response, resolves CNAME chains, then extracts records using
+/// the provided closure. Returns the extracted records and the minimum TTL.
+fn parse_response<T>(
     data: &[u8],
     expected_id: u16,
-) -> Result<(Vec<Ipv4Addr>, u32), DnsError> {
+    extract: impl Fn(&RData<'_>) -> Option<T>,
+) -> Result<(Vec<T>, u32), DnsError> {
     let packet = Packet::parse(data)?;
     check_response(&packet, expected_id)?;
 
     let qname = packet.questions.first().map(|q| q.qname.clone());
     let canonical = qname.as_ref().map(|q| resolve_cname_chain(&packet, q));
 
-    let mut addrs = Vec::new();
+    let mut results = Vec::new();
     let mut min_ttl = u32::MAX;
     for rr in &packet.answers {
-        if let RData::A(A { address }) = &rr.rdata
-            && name_matches(&rr.name, qname.as_ref(), canonical.as_ref())
+        if name_matches(&rr.name, qname.as_ref(), canonical.as_ref())
+            && let Some(val) = extract(&rr.rdata)
         {
-            addrs.push(Ipv4Addr::from(*address));
+            results.push(val);
             min_ttl = min_ttl.min(rr.ttl);
         }
     }
     if min_ttl == u32::MAX {
         min_ttl = 0;
     }
-    Ok((addrs, min_ttl))
+    Ok((results, min_ttl))
+}
+
+/// Parse A (IPv4) records from a DNS response, following CNAME chains.
+pub(super) fn parse_a_response(
+    data: &[u8],
+    expected_id: u16,
+) -> Result<(Vec<Ipv4Addr>, u32), DnsError> {
+    parse_response(data, expected_id, |rdata| match rdata {
+        RData::A(A { address }) => Some(Ipv4Addr::from(*address)),
+        _ => None,
+    })
 }
 
 /// Parse AAAA (IPv6) records from a DNS response, following CNAME chains.
@@ -147,26 +159,10 @@ pub(super) fn parse_aaaa_response(
     data: &[u8],
     expected_id: u16,
 ) -> Result<(Vec<Ipv6Addr>, u32), DnsError> {
-    let packet = Packet::parse(data)?;
-    check_response(&packet, expected_id)?;
-
-    let qname = packet.questions.first().map(|q| q.qname.clone());
-    let canonical = qname.as_ref().map(|q| resolve_cname_chain(&packet, q));
-
-    let mut addrs = Vec::new();
-    let mut min_ttl = u32::MAX;
-    for rr in &packet.answers {
-        if let RData::AAAA(AAAA { address }) = &rr.rdata
-            && name_matches(&rr.name, qname.as_ref(), canonical.as_ref())
-        {
-            addrs.push(Ipv6Addr::from(*address));
-            min_ttl = min_ttl.min(rr.ttl);
-        }
-    }
-    if min_ttl == u32::MAX {
-        min_ttl = 0;
-    }
-    Ok((addrs, min_ttl))
+    parse_response(data, expected_id, |rdata| match rdata {
+        RData::AAAA(AAAA { address }) => Some(Ipv6Addr::from(*address)),
+        _ => None,
+    })
 }
 
 /// Parse TXT records from a DNS response, following CNAME chains.
@@ -174,27 +170,10 @@ pub(super) fn parse_txt_response(
     data: &[u8],
     expected_id: u16,
 ) -> Result<(Vec<TxtRecordData>, u32), DnsError> {
-    let packet = Packet::parse(data)?;
-    check_response(&packet, expected_id)?;
-
-    let qname = packet.questions.first().map(|q| q.qname.clone());
-    let canonical = qname.as_ref().map(|q| resolve_cname_chain(&packet, q));
-
-    let mut records = Vec::new();
-    let mut min_ttl = u32::MAX;
-    for rr in &packet.answers {
-        if let RData::TXT(txt) = &rr.rdata
-            && name_matches(&rr.name, qname.as_ref(), canonical.as_ref())
-        {
-            let record = extract_txt_record_data(txt);
-            records.push(record);
-            min_ttl = min_ttl.min(rr.ttl);
-        }
-    }
-    if min_ttl == u32::MAX {
-        min_ttl = 0;
-    }
-    Ok((records, min_ttl))
+    parse_response(data, expected_id, |rdata| match rdata {
+        RData::TXT(txt) => Some(extract_txt_record_data(txt)),
+        _ => None,
+    })
 }
 
 /// Extract the raw content of a TXT record into `TxtRecordData`.
