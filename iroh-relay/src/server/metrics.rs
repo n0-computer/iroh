@@ -5,6 +5,7 @@ use iroh_metrics::{Counter, MetricsGroup, MetricsGroupSet};
 /// Metrics tracked for the relay server
 #[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = "relayserver")]
+#[non_exhaustive]
 pub struct Metrics {
     /*
      * Metrics about packets
@@ -62,16 +63,69 @@ pub struct Metrics {
 
     /// Number of unique client keys per day
     pub unique_client_keys: Counter,
-    // TODO: enable when we can have multiple connections for one endpoint id
-    // pub duplicate_client_keys: Counter,
-    // pub duplicate_client_conns: Counter,
+
+    /// Number of times a client was moved into the inactive state.
+    ///
+    /// A client becomes inactive when a new client connects with the same endpoint id. An inactive
+    /// client can still send messages, but won't receive anything. If the currently-active client
+    /// disconnects, and if there are inactive clients, the most-recent inactive client becomes
+    /// active again.
+    ///
+    /// The number of inactive clients at any time is `clients_inactive_added` - `clients_inactive_removed`.
+    pub clients_inactive_added: Counter,
+
+    /// Number of times a client was removed from the inactive state.
+    ///
+    /// This is increased whenever a client disconnects while being inactive, or if a client is upgraded to be
+    /// active again (happens only when the currently-active client for that endpoint id disconnects).
+    ///
+    /// See [`Self::clients_inactive_added`] for details on when a client becomes inactive.
+    pub clients_inactive_removed: Counter,
+
     // TODO: only important stat that we cannot track right now
     // pub average_queue_duration:
+    //
+    /// Number of incoming QAD connections.
+    ///
+    /// After completion, each is counted in either `qad_incoming_error` or `qad_connections`.
+    ///
+    /// Thus the number of inflight incomings is `qad_incoming` - `qad_incoming_error` - `qad_connections`.
+    pub qad_incoming: Counter,
+
+    /// Number of QAD QUIC connections that aborted before completing the handshake.
+    pub qad_incoming_error: Counter,
+
+    /// Number of accepted QAD QUIC connections.
+    ///
+    /// The number of active connections is `qad_connections` - `qad_connections_closed`.
+    pub qad_connections: Counter,
+
+    /// Number of QAD QUIC connections that disconnected after being accepted.
+    pub qad_connections_closed: Counter,
+
+    /// Number of QAD QUIC connections that disconnected after being accepted, with an error.
+    ///
+    /// The number is *included* in `qad_connections_closed` (not in addition to).
+    pub qad_connections_errored: Counter,
+
+    /// Number of accepted HTTP(S) connections.
+    ///
+    /// The number of active connections at any time is `http_connections` - `http_connections_closed`
+    pub http_connections: Counter,
+
+    /// Number of terminated HTTP(S) connections.
+    pub http_connections_closed: Counter,
+
+    /// Number of HTTP(S) connections that terminated with an error.
+    ///
+    /// The number is *included* in `http_connections_closed` (not in addition to).
+    pub http_connections_errored: Counter,
 }
 
 /// All metrics tracked in the relay server.
 #[derive(Debug, Default, Clone, MetricsGroupSet)]
 #[metrics(name = "relay")]
+#[non_exhaustive]
 pub struct RelayMetrics {
     /// Metrics tracked for the relay server.
     pub server: Arc<Metrics>,

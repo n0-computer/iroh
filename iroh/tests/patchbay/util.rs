@@ -8,7 +8,7 @@ use iroh::{
 use iroh_metrics::MetricsGroupSet;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{boxed::BoxFuture, task::AbortOnDropHandle};
-use patchbay::{Device, IpSupport, Lab, LabOpts, OutDir, TestGuard};
+use patchbay::{Device, IpSupport, Lab, OutDir, TestGuard};
 use tokio::sync::{Barrier, oneshot};
 use tracing::{Instrument, debug, error, error_span, event, info};
 
@@ -24,13 +24,13 @@ const TEST_ALPN: &[u8] = b"test";
 /// The relay binds on `[::]` and is reachable via `https://relay.test`
 /// (resolved through lab-wide DNS entries for both IPv4 and IPv6).
 pub async fn lab_with_relay(
-    path: PathBuf,
+    outdir: PathBuf,
 ) -> Result<(Lab, RelayMap, AbortOnDropHandle<()>, TestGuard)> {
-    let mut opts = LabOpts::default().outdir(OutDir::Exact(path));
+    let mut builder = Lab::builder().outdir(OutDir::Exact(outdir));
     if let Some(name) = std::thread::current().name() {
-        opts = opts.label(name);
+        builder = builder.label(name);
     }
-    let lab = Lab::with_opts(opts).await?;
+    let lab = builder.build().await?;
     let guard = lab.test_guard();
     let (relay_map, relay_guard) = spawn_relay(&lab).await?;
     Ok((lab, relay_map, relay_guard, guard))
@@ -55,8 +55,9 @@ async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
     // Devices created after this will resolve "relay.test" to both addresses.
     let relay_v4 = dev_relay.ip().expect("relay has IPv4");
     let relay_v6 = dev_relay.ip6().expect("relay has IPv6");
-    lab.dns_entry("relay.test", relay_v4.into())?;
-    lab.dns_entry("relay.test", relay_v6.into())?;
+    let dns = lab.dns_server()?;
+    dns.set_host("relay.test", relay_v4.into())?;
+    dns.set_host("relay.test", relay_v6.into())?;
     info!(%relay_v4, %relay_v6, "DNS entries for relay.test registered");
 
     let (relay_map_tx, relay_map_rx) = oneshot::channel();
@@ -143,30 +144,49 @@ impl Pair {
 
         let (addr_tx, addr_rx) = oneshot::channel();
         let relay_map2 = self.relay_map.clone();
-        let barrier = Arc::new(Barrier::new(2));
-        let barrier2 = barrier.clone();
+
+        // Create an in-memory synchronization barrier to wait for both run functions to complete
+        // before dropping endpoints. We use this to guarantee completion without awaiting
+        // `Endpoint::close` on both sides. `Endpoint::close` often takes several seconds,
+        // which increases test runtime for all tests significantly, and closing behavior
+        // should be tested for separately from the tests that use `Pair`.
+        let barrier_server = Arc::new(Barrier::new(2));
+        let barrier_client = barrier_server.clone();
+
         let server_task = server_device.spawn(|dev| {
-            let barrier = barrier2;
             async move {
-                let endpoint = endpoint_builder(&dev, relay_map2).bind().await
+                let endpoint = endpoint_builder(&dev, relay_map2)
+                    .bind()
+                    .await
                     .context("server endpoint bind")?;
-                info!(id=%endpoint.id().fmt_short(), bound_sockets=?endpoint.bound_sockets(), "server endpoint bound");
+                info!(
+                    id=%endpoint.id().fmt_short(),
+                    bound_sockets=?endpoint.bound_sockets(),
+                    "server endpoint bound",
+                );
                 endpoint.online().await;
                 info!("endpoint online");
-                // Send address to client task. Make it a relay-only address, like in the default address lookup services.
+
+                // Send address to client task. Make it a relay-only address,
+                // like in the default address lookup services.
                 addr_tx.send(addr_relay_only(endpoint.addr())).unwrap();
                 let incoming = endpoint.accept().await.context("server accept incoming")?;
-                let conn = incoming.accept().anyerr()?.await
+                let conn = incoming
+                    .accept()
+                    .anyerr()?
+                    .await
                     .context("server accept handshake")?;
+
                 info!(remote=%conn.remote_id().fmt_short(), "accepted, executing run function");
                 watch_selected_path(&conn);
                 let res = server_run(dev.clone(), endpoint.clone(), conn).await;
                 match &res {
                     Ok(()) => info!("run function completed successfully"),
-                    Err(err)=> error!("run function failed: {err:#}"),
+                    Err(err) => error!("run function failed: {err:#}"),
                 }
+
                 // Wait until the client run function completed before dropping the endpoint.
-                barrier.wait().await;
+                barrier_server.wait().await;
                 for group in endpoint.metrics().groups() {
                     dev.record_iroh_metrics(group);
                 }
@@ -176,23 +196,38 @@ impl Pair {
         })?;
         let client_task = client_device.spawn(move |dev| {
             async move {
-                let endpoint = endpoint_builder(&dev, self.relay_map).bind().await
+                let endpoint = endpoint_builder(&dev, self.relay_map)
+                    .bind()
+                    .await
                     .context("client endpoint bind")?;
-                info!(id=%endpoint.id().fmt_short(), bound_sockets=?endpoint.bound_sockets(), "client endpoint bound");
-                let addr = addr_rx.await.std_context("server did not send its address")?;
+                info!(
+                    id=%endpoint.id().fmt_short(),
+                    bound_sockets=?endpoint.bound_sockets(),
+                    "client endpoint bound",
+                );
+
+                let addr = addr_rx
+                    .await
+                    .std_context("server did not send its address")?;
                 info!(?addr, "connecting to server");
-                let conn = endpoint.connect(addr, TEST_ALPN).await
+                let conn = endpoint
+                    .connect(addr, TEST_ALPN)
+                    .await
                     .context("client connect")?;
                 watch_selected_path(&conn);
-                info!(remote=%conn.remote_id().fmt_short(), "connected, executing run function");
+                info!(
+                    remote=%conn.remote_id().fmt_short(),
+                    "connected, executing run function",
+                );
+
                 let res = client_run(dev.clone(), endpoint.clone(), conn).await;
                 match &res {
                     Ok(()) => info!("run function completed successfully"),
-                    Err(err)=> error!("run function failed: {err:#}"),
+                    Err(err) => error!("run function failed: {err:#}"),
                 }
+
                 // Wait until the server run function completed before dropping the endpoint.
-                barrier.wait().await;
-                // endpoint.close().await;
+                barrier_client.wait().await;
                 for group in endpoint.metrics().groups() {
                     dev.record_iroh_metrics(group);
                 }
@@ -299,7 +334,7 @@ impl PathWatcherExt for PathWatcher {
             }
         })
         .await
-        .std_context("wait_selected timed out")?
+        .with_std_context(|_| "wait_selected timed out after {timeout:?}")?
     }
 }
 
@@ -318,8 +353,9 @@ pub async fn ping_open(conn: &Connection, timeout: Duration) -> Result {
         debug!("done");
         Ok(())
     })
+    .instrument(error_span!("ping_open"))
     .await
-    .std_context("ping_open timed out")?
+    .with_std_context(|_| "ping_open timed out after {timeout:?}")?
 }
 
 /// Accepts a bidi stream, reads 8 bytes of data, and sends the same data back.
@@ -337,7 +373,7 @@ pub async fn ping_accept(conn: &Connection, timeout: Duration) -> Result {
     })
     .instrument(error_span!("ping_accept"))
     .await
-    .std_context("ping_accept timed out")?
+    .with_std_context(|_| "ping_accept timed out after {timeout:?}")?
 }
 
 fn watch_selected_path(conn: &Connection) {
@@ -444,8 +480,8 @@ mod relay {
         let url: RelayUrl = "https://relay.test".parse().expect("valid relay url");
         let quic = server
             .quic_addr()
-            .map(|addr| RelayQuicConfig { port: addr.port() });
-        let relay_map: RelayMap = RelayConfig { url, quic }.into();
+            .map(|addr| RelayQuicConfig::new(addr.port()));
+        let relay_map: RelayMap = RelayConfig::new(url, quic).into();
 
         Ok((relay_map, server))
     }

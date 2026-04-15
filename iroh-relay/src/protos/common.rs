@@ -16,6 +16,7 @@ use noq_proto::{
     Copy, Clone, PartialEq, Eq, Debug, num_enum::IntoPrimitive, num_enum::TryFromPrimitive,
 )]
 // needs to be pub due to being exposed in error types
+#[non_exhaustive]
 pub enum FrameType {
     /// The server frame type for the challenge response
     ServerChallenge = 0,
@@ -45,6 +46,8 @@ pub enum FrameType {
     Ping = 9,
     /// 8 byte payload, the contents of ping being replied to
     Pong = 10,
+    /// REMOVED since relay-protocol-v2, use `Self::Status` instead.
+    ///
     /// Sent from server to client to tell the client if their connection is unhealthy somehow.
     /// Contains only UTF-8 bytes.
     Health = 11,
@@ -53,6 +56,15 @@ pub enum FrameType {
     /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
     /// and how long to try total.
     Restarting = 12,
+
+    /// Sent from server to client to declare the connection health state.
+    ///
+    /// Added in `iroh-relay-v2` protocol. May not be sent to `iroh-relay-v1` clients.
+    ///
+    /// Uses a binary-encoded [`Status`] payload.
+    ///
+    /// [`Status`]: super::relay::Status
+    Status = 13,
 }
 
 #[stack_error(derive, add_meta)]

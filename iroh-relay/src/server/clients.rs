@@ -17,7 +17,10 @@ use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
 use crate::{
-    protos::{relay::Datagrams, streams::BytesStreamSink},
+    protos::{
+        relay::{Datagrams, Status},
+        streams::BytesStreamSink,
+    },
     server::{client::SendError, metrics::Metrics},
 };
 
@@ -78,7 +81,7 @@ impl Clients {
         let connection_id = self.get_connection_id();
         trace!(remote_endpoint = %endpoint_id.fmt_short(), "registering client");
 
-        let client = Client::new(client_config, connection_id, self, metrics);
+        let client = Client::new(client_config, connection_id, self, metrics.clone());
         match self.0.clients.entry(endpoint_id) {
             dashmap::Entry::Occupied(mut entry) => {
                 let state = entry.get_mut();
@@ -88,9 +91,10 @@ impl Clients {
                     "multiple connections found, deactivating old connection",
                 );
                 old_client
-                    .try_send_health("Another endpoint connected with the same endpoint id. No more messages will be received".to_string())
+                    .try_send_health(Status::SameEndpointIdConnected)
                     .ok();
                 state.inactive.push(old_client);
+                metrics.clients_inactive_added.inc();
             }
             dashmap::Entry::Vacant(entry) => {
                 entry.insert(ClientState {
@@ -110,7 +114,12 @@ impl Clients {
     /// peer is gone from the network.
     ///
     /// Must be passed a matching connection_id.
-    pub(super) fn unregister(&self, connection_id: u64, endpoint_id: EndpointId) {
+    pub(super) fn unregister(
+        &self,
+        connection_id: u64,
+        endpoint_id: EndpointId,
+        metrics: &Metrics,
+    ) {
         trace!(
             endpoint_id = %endpoint_id.fmt_short(),
             connection_id, "unregistering client"
@@ -122,8 +131,11 @@ impl Clients {
             if state.active.connection_id() == connection_id {
                 // The unregistering client is the currently active client
                 if let Some(last_inactive_client) = state.inactive.pop() {
+                    metrics.clients_inactive_removed.inc();
                     // There is an inactive client, promote to active again.
                     state.active = last_inactive_client;
+                    // Inform the old client that it is healthy again.
+                    state.active.try_send_health(Status::Healthy).ok();
                     // Don't remove the entry from client map.
                     false
                 } else {
@@ -137,6 +149,7 @@ impl Clients {
                 state
                     .inactive
                     .retain(|client| client.connection_id() != connection_id);
+                metrics.clients_inactive_removed.inc();
                 // Active client is unmodified: keep entry in map.
                 false
             }
@@ -263,6 +276,7 @@ mod tests {
                 stream: ServerRelayedStream::test(server),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
+                protocol_version: Default::default(),
             },
             Conn::test(client),
         )
@@ -351,7 +365,11 @@ mod tests {
         assert!(a2_conn_id != a1_conn_id);
 
         // a1 is marked inactive and should receive a health frame
-        let _frame = recv_frame(FrameType::Health, &mut a1_rw).await?;
+        let frame = recv_frame(FrameType::Status, &mut a1_rw).await?;
+        assert_eq!(
+            frame,
+            RelayToClientMsg::Status(Status::SameEndpointIdConnected)
+        );
 
         // send packet and verify it is send to a2
         clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
@@ -386,8 +404,14 @@ mod tests {
         .await
         .std_context("timeout")?;
 
-        // a1 should be marked active again now, and receive sent messages
+        // a1 should be marked active again now
         assert_eq!(clients.active_connection_id(a_key), Some(a1_conn_id));
+
+        // a1 is marked active again and should receive a health frame
+        let frame = recv_frame(FrameType::Status, &mut a1_rw).await?;
+        assert_eq!(frame, RelayToClientMsg::Status(Status::Healthy));
+
+        // a1 should receive packets
         clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
         let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a1_rw).await?;
         assert_eq!(
