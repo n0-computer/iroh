@@ -338,7 +338,7 @@ struct EndpointArgs {
     /// The default is 1.25 MB, which gives a max throughput of 100 MBit/s at 100ms RTT.
     ///
     /// Accepts values like "5M", "2000K", etc.
-    #[clap(long, value_parser = parse_byte_size, conflicts_with = "receive_window_rtt")]
+    #[clap(long, value_parser = parse_byte_size)]
     receive_window: Option<u32>,
 }
 
