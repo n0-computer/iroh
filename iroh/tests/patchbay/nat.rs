@@ -19,9 +19,8 @@ use patchbay::Nat;
 use testdir::testdir;
 use tracing::info;
 
-use crate::util::{ping_accept, ping_open};
-
 use super::util::{Pair, PathWatcherExt, lab_with_relay};
+use crate::util::{ping_accept, ping_open};
 
 async fn run_nat_holepunch(nat_server: Nat, nat_client: Nat) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
