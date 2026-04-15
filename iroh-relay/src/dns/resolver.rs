@@ -46,6 +46,7 @@ const DEFAULT_NDOTS: usize = 1;
 pub(super) struct SimpleDnsResolver {
     nameservers: Vec<(SocketAddr, DnsProtocol)>,
     search_domains: Vec<String>,
+    ndots: usize,
     #[cfg(with_crypto_provider)]
     tls_config: Option<Arc<rustls::ClientConfig>>,
     /// Lazily initialized, cached reqwest client for DNS-over-HTTPS queries.
@@ -56,10 +57,11 @@ pub(super) struct SimpleDnsResolver {
 
 impl SimpleDnsResolver {
     pub(super) fn new(builder: Builder) -> Self {
-        let (nameservers, search_domains) = Self::build_config(&builder);
+        let (nameservers, search_domains, ndots) = Self::build_config(&builder);
         debug!(
             nameservers = nameservers.len(),
             search_domains = search_domains.len(),
+            ndots,
             "configured DNS resolver"
         );
         for (addr, proto) in &nameservers {
@@ -76,6 +78,7 @@ impl SimpleDnsResolver {
         Self {
             nameservers,
             search_domains,
+            ndots,
             #[cfg(with_crypto_provider)]
             tls_config,
             https_client: Mutex::new(None),
@@ -84,14 +87,16 @@ impl SimpleDnsResolver {
         }
     }
 
-    fn build_config(builder: &Builder) -> (Vec<(SocketAddr, DnsProtocol)>, Vec<String>) {
+    fn build_config(builder: &Builder) -> (Vec<(SocketAddr, DnsProtocol)>, Vec<String>, usize) {
         let mut nameservers = Vec::new();
         let mut search_domains = Vec::new();
+        let mut ndots = None;
 
         if builder.use_system_defaults {
             let config = system_config::system_config();
             nameservers.extend(config.nameservers);
             search_domains = config.search_domains;
+            ndots = config.ndots;
         }
 
         nameservers.extend(builder.nameservers.iter().copied());
@@ -100,7 +105,7 @@ impl SimpleDnsResolver {
             nameservers.extend(system_config::fallback_nameservers());
         }
 
-        (nameservers, search_domains)
+        (nameservers, search_domains, ndots.unwrap_or(DEFAULT_NDOTS))
     }
 
     /// Returns the list of candidate names to try for a given hostname,
@@ -122,7 +127,7 @@ impl SimpleDnsResolver {
         // resolv.conf(5): "if the name has more dots than ndots, try as absolute first"
         // which is equivalent to num_labels > ndots.
         let num_labels = host.bytes().filter(|&b| b == b'.').count() + 1;
-        let bare_first = num_labels > DEFAULT_NDOTS;
+        let bare_first = num_labels > self.ndots;
 
         let mut names = Vec::with_capacity(self.search_domains.len() + 1);
         let mut push = |name: String| {
@@ -381,9 +386,10 @@ impl SimpleDnsResolver {
     }
 
     pub(super) fn reset(&mut self) {
-        let (nameservers, search_domains) = Self::build_config(&self.builder);
+        let (nameservers, search_domains, ndots) = Self::build_config(&self.builder);
         self.nameservers = nameservers;
         self.search_domains = search_domains;
+        self.ndots = ndots;
         #[cfg(with_crypto_provider)]
         {
             self.tls_config = self
@@ -547,6 +553,22 @@ mod tests {
         fn multi_dot_name_tries_bare_first() {
             let r = resolver_with_search(&["example.com"]);
             assert_eq!(r.search_names("a.b.c"), vec!["a.b.c", "a.b.c.example.com"]);
+        }
+
+        #[test]
+        fn high_ndots_k8s_style() {
+            let mut r = SimpleDnsResolver::new(Builder::default());
+            r.search_domains = vec!["ns.svc.cluster.local".into(), "svc.cluster.local".into()];
+            r.ndots = 5;
+            // 4 dots < ndots=5, so search domains come first (Kubernetes behavior).
+            assert_eq!(
+                r.search_names("my-svc.my-ns.svc.cluster.local"),
+                vec![
+                    "my-svc.my-ns.svc.cluster.local.ns.svc.cluster.local",
+                    "my-svc.my-ns.svc.cluster.local.svc.cluster.local",
+                    "my-svc.my-ns.svc.cluster.local",
+                ]
+            );
         }
     }
 }

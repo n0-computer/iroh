@@ -42,6 +42,12 @@ pub(super) struct SystemDnsConfig {
     /// default 1), the resolver should try appending each search domain
     /// before querying the bare name.
     pub(super) search_domains: Vec<String>,
+    /// The `ndots` option from resolv.conf.
+    ///
+    /// Names with at least this many dots are tried as absolute first.
+    /// `None` means use the default (1).
+    /// See <https://man7.org/linux/man-pages/man5/resolv.conf.5.html>.
+    pub(super) ndots: Option<usize>,
 }
 
 /// Parse system DNS configuration.
@@ -55,6 +61,7 @@ pub(super) fn system_config() -> SystemDnsConfig {
         _ => SystemDnsConfig {
             nameservers: fallback_nameservers(),
             search_domains: Vec::new(),
+            ndots: None,
         },
     }
 }
@@ -123,6 +130,7 @@ fn read_from_ipconfig() -> Result<SystemDnsConfig, std::io::Error> {
     Ok(SystemDnsConfig {
         nameservers: servers,
         search_domains: Vec::new(),
+        ndots: None,
     })
 }
 
@@ -146,6 +154,7 @@ fn read_resolv_conf() -> Result<SystemDnsConfig, std::io::Error> {
 fn parse_resolv_conf(content: &str) -> SystemDnsConfig {
     let mut servers = Vec::new();
     let mut search_domains = Vec::new();
+    let mut ndots = None;
 
     for line in content.lines() {
         let line = line.trim();
@@ -181,6 +190,13 @@ fn parse_resolv_conf(content: &str) -> SystemDnsConfig {
                     search_domains = vec![domain.to_string()];
                 }
             }
+            Some("options") => {
+                for opt in parts {
+                    if let Some(n) = opt.strip_prefix("ndots:").and_then(|v| v.parse().ok()) {
+                        ndots = Some(n);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -188,6 +204,7 @@ fn parse_resolv_conf(content: &str) -> SystemDnsConfig {
     SystemDnsConfig {
         nameservers: servers,
         search_domains,
+        ndots,
     }
 }
 
@@ -229,6 +246,19 @@ mod tests {
         );
         assert_eq!(ips(&config), [ipv4(1, 1, 1, 1), ipv4(1, 0, 0, 1)]);
         assert_eq!(config.search_domains, ["example.com"]);
+        assert_eq!(config.ndots, Some(5));
+    }
+
+    #[test]
+    fn parse_ndots() {
+        let config = parse_resolv_conf("nameserver 8.8.8.8\noptions ndots:3\n");
+        assert_eq!(config.ndots, Some(3));
+    }
+
+    #[test]
+    fn parse_ndots_default() {
+        let config = parse_resolv_conf("nameserver 8.8.8.8\n");
+        assert_eq!(config.ndots, None);
     }
 
     #[test]
