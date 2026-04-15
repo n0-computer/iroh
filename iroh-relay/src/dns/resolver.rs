@@ -312,7 +312,7 @@ impl SimpleDnsResolver {
                         return Ok(results);
                     }
                 }
-                Err(DnsError::NxDomain { .. }) => {
+                Err(DnsError::NxDomain { .. }) | Err(DnsError::ServerError { .. }) => {
                     last_err = Some(e!(DnsError::NxDomain));
                 }
                 Err(e) => return Err(e),
