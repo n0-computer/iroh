@@ -125,11 +125,27 @@ fn read_from_ipconfig() -> Result<SystemDnsConfig, std::io::Error> {
     let mut seen = std::collections::HashSet::new();
     servers.retain(|(addr, _)| seen.insert(*addr));
 
-    // Windows does not expose search domains via ipconfig in a
-    // straightforward way, so we leave them empty.
+    // Read search domains from the Windows registry (comma-separated SearchList key).
+    // Falls back to the primary domain if no search list is configured.
+    let search_domains = ipconfig::computer::get_search_list()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    let search_domains = if search_domains.is_empty() {
+        ipconfig::computer::get_domain()
+            .ok()
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .into_iter()
+            .collect()
+    } else {
+        search_domains
+    };
+
     Ok(SystemDnsConfig {
         nameservers: servers,
-        search_domains: Vec::new(),
+        search_domains,
         ndots: None,
     })
 }
