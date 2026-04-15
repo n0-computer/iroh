@@ -17,7 +17,7 @@ rand = "0.10"
 rcgen = "0.14"
 rustls = { version = "0.23.33", default-features = false }
 clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["rt", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.0", default-features = false, features = [
     "env-filter",
