@@ -51,7 +51,9 @@ pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
     let mut stream = tokio::net::TcpStream::connect(addr).await?;
 
     // Write length-prefixed query
-    let len = (query.len() as u16).to_be_bytes();
+    let len = u16::try_from(query.len())
+        .map_err(|_| std::io::Error::other("DNS query too large for TCP framing"))?
+        .to_be_bytes();
     stream.write_all(&len).await?;
     stream.write_all(query).await?;
     stream.flush().await?;
@@ -84,7 +86,9 @@ pub(super) async fn tls_query(
     let mut stream = connector.connect(server_name, tcp_stream).await?;
 
     // Write length-prefixed query (same framing as TCP)
-    let len = (query.len() as u16).to_be_bytes();
+    let len = u16::try_from(query.len())
+        .map_err(|_| std::io::Error::other("DNS query too large for TCP framing"))?
+        .to_be_bytes();
     stream.write_all(&len).await?;
     stream.write_all(query).await?;
     stream.flush().await?;
@@ -130,7 +134,7 @@ pub(super) async fn https_query(
         .send()
         .await?;
 
-    let bytes = response.bytes().await?;
+    let bytes = response.error_for_status()?.bytes().await?;
     Ok(bytes.to_vec())
 }
 

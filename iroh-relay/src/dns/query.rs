@@ -78,8 +78,14 @@ pub(super) fn cname_target(packet: &Packet<'_>, qname: &str) -> Option<String> {
     (canonical != name).then(|| canonical.to_string())
 }
 
-/// Check response packet for errors (RCODE, ID mismatch).
+/// Check response packet for errors (QR bit, ID mismatch, question section, RCODE).
+///
+/// Validates per RFC 5452: transaction ID, QR flag, and question section must match
+/// the original query to prevent spoofed responses.
 fn check_response(packet: &Packet, expected_id: u16) -> Result<(), DnsError> {
+    if !packet.has_flags(PacketFlag::RESPONSE) {
+        return Err(e!(DnsError::InvalidResponse));
+    }
     if packet.id() != expected_id {
         return Err(e!(DnsError::InvalidResponse));
     }
@@ -210,8 +216,12 @@ fn extract_txt_record_data(txt: &simple_dns::rdata::TXT<'_>) -> TxtRecordData {
 }
 
 /// Returns true if the response has the TC (truncation) flag set.
+///
+/// Checks the raw header byte directly instead of parsing the full packet,
+/// since a truncated packet may fail to parse entirely.
 pub(super) fn is_truncated(data: &[u8]) -> bool {
-    Packet::parse(data).is_ok_and(|p| p.has_flags(PacketFlag::TRUNCATION))
+    // TC bit is bit 1 of the third byte in the DNS header (RFC 1035 Section 4.1.1).
+    data.len() >= 3 && (data[2] & 0x02) != 0
 }
 
 #[cfg(test)]

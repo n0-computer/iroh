@@ -14,6 +14,12 @@ use super::TxtRecordData;
 /// Maximum number of entries in the DNS cache.
 const MAX_CACHE_ENTRIES: usize = 512;
 
+/// Maximum TTL for cache entries (1 day).
+///
+/// Prevents malicious or misconfigured servers from making entries
+/// effectively permanent by returning very large TTL values.
+const MAX_TTL_SECS: u32 = 86400;
+
 /// Query type key for cache entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(clippy::upper_case_acronyms)]
@@ -106,7 +112,7 @@ impl DnsCache {
         let entry = CacheEntry {
             record,
             inserted_at: Instant::now(),
-            ttl: Duration::from_secs(ttl as u64),
+            ttl: Duration::from_secs(ttl.min(MAX_TTL_SECS) as u64),
         };
         self.inner
             .lock()
