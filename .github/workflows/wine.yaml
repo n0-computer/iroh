@@ -20,7 +20,7 @@ jobs:
     name: Wine Sanity Check
     runs-on: [self-hosted, linux, X64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Wine
         run: |
