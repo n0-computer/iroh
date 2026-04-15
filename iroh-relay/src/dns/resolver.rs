@@ -65,17 +65,11 @@ impl SimpleDnsResolver {
     pub(super) fn new(builder: Builder) -> Self {
         let (nameservers, search_domains, ndots) = Self::build_config(&builder);
         debug!(
-            nameservers = nameservers.len(),
-            search_domains = search_domains.len(),
+            ?nameservers,
+            ?search_domains,
             ndots,
             "configured DNS resolver"
         );
-        for (addr, proto) in &nameservers {
-            trace!(%addr, ?proto, "nameserver");
-        }
-        for domain in &search_domains {
-            trace!(%domain, "search domain");
-        }
         #[cfg(with_crypto_provider)]
         let tls_config = builder
             .tls_client_config
@@ -242,7 +236,6 @@ impl SimpleDnsResolver {
                 if !stagger.is_zero() {
                     time::sleep(stagger).await;
                 }
-                trace!(%addr, ?proto, "sending DNS query");
                 self.query_nameserver(addr, proto, query_bytes).await
             });
         }
@@ -291,7 +284,7 @@ impl SimpleDnsResolver {
 
     /// Shared lookup logic: check cache, try search names, parse response, cache result.
     #[allow(clippy::type_complexity)]
-    async fn lookup<T: Clone>(
+    async fn lookup<T: Clone + std::fmt::Debug>(
         &self,
         host: &str,
         qtype: QueryType,
@@ -301,30 +294,45 @@ impl SimpleDnsResolver {
         to_cache: fn(Vec<T>) -> CachedRecord,
     ) -> Result<Vec<T>, DnsError> {
         if let Some(cached) = self.cache.get(host, qtype).and_then(|r| from_cache(&r)) {
-            trace!(%host, count = cached.len(), ?qtype, "cache hit");
+            trace!(%host, records = cached.len(), ?qtype, "cache hit");
             return Ok(cached);
         }
 
         let mut last_err = None;
-        for name in self.search_names(host) {
+        let names = self.search_names(host);
+        let total = names.len();
+        for (i, name) in names.into_iter().enumerate() {
             trace!(%name, ?qtype, "resolving");
-            match self.send_query_following_cnames(name, dns_type).await {
-                Ok((response, id)) => {
-                    let (results, ttl) = parse(&response, id)?;
-                    if !results.is_empty() {
-                        debug!(%host, count = results.len(), ttl, ?qtype, "resolved");
-                        self.cache
-                            .insert(host, qtype, to_cache(results.clone()), ttl);
-                        return Ok(results);
-                    }
+            let res = match self
+                .send_query_following_cnames(name.clone(), dns_type)
+                .await
+            {
+                Ok((response, id)) => parse(&response, id),
+                Err(e) => Err(e),
+            };
+            match res {
+                Ok((results, ttl)) if !results.is_empty() => {
+                    debug!(%host, ?qtype, ?results, ttl, "resolved");
+                    self.cache
+                        .insert(host, qtype, to_cache(results.clone()), ttl);
+                    return Ok(results);
                 }
-                Err(DnsError::NxDomain { .. }) | Err(DnsError::ServerError { .. }) => {
+                Ok(_) => {}
+                Err(ref e @ DnsError::NxDomain { .. })
+                | Err(ref e @ DnsError::ServerError { .. }) => {
+                    let remaining = total - i - 1;
+                    trace!(%name, ?qtype, remaining, reason = %e, "lookup failed");
                     last_err = Some(e!(DnsError::NxDomain));
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    debug!(%name, ?qtype, reason = %e, "lookup failed");
+                    return Err(e);
+                }
             }
         }
-        Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
+        let err = last_err.unwrap_or_else(|| e!(DnsError::NoResponse));
+        debug!(%host, ?qtype, reason = %err, "resolve failed");
+        Err(err)
     }
 
     pub(super) async fn lookup_ipv4(
@@ -517,6 +525,38 @@ mod tests {
         for host in ["google.com", "cloudflare.com", "example.com"] {
             assert_resolves_ipv4(&resolver, host).await;
         }
+    }
+
+    /// Run with `cargo test -p iroh-relay resolve_success_and_nxdomain -- --ignored --nocapture`
+    /// and `RUST_LOG=iroh_relay::dns=trace` to see the log output.
+    #[tokio::test]
+    #[ignore = "requires network access"]
+    async fn resolve_success_and_nxdomain() {
+        let _ = tracing_subscriber::fmt::try_init();
+        let resolver = with_proto(GOOGLE_DNS, DnsProtocol::Udp);
+
+        tracing::info!("--- resolving example.com (first, expect network query) ---");
+        let addrs: Vec<_> = resolver
+            .lookup_ipv4("example.com", TIMEOUT)
+            .await
+            .unwrap()
+            .collect();
+        assert!(!addrs.is_empty());
+
+        tracing::info!("--- resolving example.com (second, expect cache hit) ---");
+        let addrs2: Vec<_> = resolver
+            .lookup_ipv4("example.com", TIMEOUT)
+            .await
+            .unwrap()
+            .collect();
+        assert_eq!(addrs, addrs2);
+
+        tracing::info!("--- resolving nonexistent domain (expect NXDOMAIN) ---");
+        let err = resolver
+            .lookup_ipv4("this-domain-does-not-exist.example.invalid", TIMEOUT)
+            .await
+            .map(|i| i.collect::<Vec<_>>());
+        assert!(err.is_err(), "expected NXDOMAIN, got {err:?}");
     }
 
     mod search_names {
