@@ -42,34 +42,34 @@
 <a href=#42 id=42 data-nosnippet>42</a>/// domains first. See &lt;https://man7.org/linux/man-pages/man5/resolv.conf.5.html&gt;.
 <a href=#43 id=43 data-nosnippet>43</a></span><span class="kw">const </span>DEFAULT_NDOTS: usize = <span class="number">1</span>;
 <a href=#44 id=44 data-nosnippet>44</a>
-<a href=#45 id=45 data-nosnippet>45</a><span class="attr">#[derive(Debug)]
-<a href=#46 id=46 data-nosnippet>46</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SimpleDnsResolver {
-<a href=#47 id=47 data-nosnippet>47</a>    nameservers: Vec&lt;(SocketAddr, DnsProtocol)&gt;,
-<a href=#48 id=48 data-nosnippet>48</a>    search_domains: Vec&lt;String&gt;,
-<a href=#49 id=49 data-nosnippet>49</a>    ndots: usize,
-<a href=#50 id=50 data-nosnippet>50</a>    <span class="attr">#[cfg(with_crypto_provider)]
-<a href=#51 id=51 data-nosnippet>51</a>    </span>tls_config: <span class="prelude-ty">Option</span>&lt;Arc&lt;rustls::ClientConfig&gt;&gt;,
-<a href=#52 id=52 data-nosnippet>52</a>    <span class="doccomment">/// Lazily initialized, cached reqwest client for DNS-over-HTTPS queries.
-<a href=#53 id=53 data-nosnippet>53</a>    </span>https_client: Mutex&lt;<span class="prelude-ty">Option</span>&lt;reqwest::Client&gt;&gt;,
-<a href=#54 id=54 data-nosnippet>54</a>    cache: DnsCache,
-<a href=#55 id=55 data-nosnippet>55</a>    builder: Builder,
-<a href=#56 id=56 data-nosnippet>56</a>}
-<a href=#57 id=57 data-nosnippet>57</a>
-<a href=#58 id=58 data-nosnippet>58</a><span class="kw">impl </span>SimpleDnsResolver {
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(builder: Builder) -&gt; <span class="self">Self </span>{
-<a href=#60 id=60 data-nosnippet>60</a>        <span class="kw">let </span>(nameservers, search_domains, ndots) = <span class="self">Self</span>::build_config(<span class="kw-2">&amp;</span>builder);
-<a href=#61 id=61 data-nosnippet>61</a>        <span class="macro">debug!</span>(
-<a href=#62 id=62 data-nosnippet>62</a>            nameservers = nameservers.len(),
-<a href=#63 id=63 data-nosnippet>63</a>            search_domains = search_domains.len(),
-<a href=#64 id=64 data-nosnippet>64</a>            ndots,
-<a href=#65 id=65 data-nosnippet>65</a>            <span class="string">"configured DNS resolver"
-<a href=#66 id=66 data-nosnippet>66</a>        </span>);
-<a href=#67 id=67 data-nosnippet>67</a>        <span class="kw">for </span>(addr, proto) <span class="kw">in </span><span class="kw-2">&amp;</span>nameservers {
-<a href=#68 id=68 data-nosnippet>68</a>            <span class="macro">trace!</span>(%addr, <span class="question-mark">?</span>proto, <span class="string">"nameserver"</span>);
-<a href=#69 id=69 data-nosnippet>69</a>        }
-<a href=#70 id=70 data-nosnippet>70</a>        <span class="kw">for </span>domain <span class="kw">in </span><span class="kw-2">&amp;</span>search_domains {
-<a href=#71 id=71 data-nosnippet>71</a>            <span class="macro">trace!</span>(%domain, <span class="string">"search domain"</span>);
-<a href=#72 id=72 data-nosnippet>72</a>        }
+<a href=#45 id=45 data-nosnippet>45</a><span class="doccomment">/// RFC 6761 Section 6.3: "localhost" and names under it resolve to loopback.
+<a href=#46 id=46 data-nosnippet>46</a></span><span class="kw">fn </span>is_localhost(host: <span class="kw-2">&amp;</span>str) -&gt; bool {
+<a href=#47 id=47 data-nosnippet>47</a>    <span class="kw">let </span>host = host.strip_suffix(<span class="string">'.'</span>).unwrap_or(host);
+<a href=#48 id=48 data-nosnippet>48</a>    host.eq_ignore_ascii_case(<span class="string">"localhost"</span>) || host.ends_with(<span class="string">".localhost"</span>)
+<a href=#49 id=49 data-nosnippet>49</a>}
+<a href=#50 id=50 data-nosnippet>50</a>
+<a href=#51 id=51 data-nosnippet>51</a><span class="attr">#[derive(Debug)]
+<a href=#52 id=52 data-nosnippet>52</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SimpleDnsResolver {
+<a href=#53 id=53 data-nosnippet>53</a>    nameservers: Vec&lt;(SocketAddr, DnsProtocol)&gt;,
+<a href=#54 id=54 data-nosnippet>54</a>    search_domains: Vec&lt;String&gt;,
+<a href=#55 id=55 data-nosnippet>55</a>    ndots: usize,
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="attr">#[cfg(with_crypto_provider)]
+<a href=#57 id=57 data-nosnippet>57</a>    </span>tls_config: <span class="prelude-ty">Option</span>&lt;Arc&lt;rustls::ClientConfig&gt;&gt;,
+<a href=#58 id=58 data-nosnippet>58</a>    <span class="doccomment">/// Lazily initialized, cached reqwest client for DNS-over-HTTPS queries.
+<a href=#59 id=59 data-nosnippet>59</a>    </span>https_client: Mutex&lt;<span class="prelude-ty">Option</span>&lt;reqwest::Client&gt;&gt;,
+<a href=#60 id=60 data-nosnippet>60</a>    cache: DnsCache,
+<a href=#61 id=61 data-nosnippet>61</a>    builder: Builder,
+<a href=#62 id=62 data-nosnippet>62</a>}
+<a href=#63 id=63 data-nosnippet>63</a>
+<a href=#64 id=64 data-nosnippet>64</a><span class="kw">impl </span>SimpleDnsResolver {
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(builder: Builder) -&gt; <span class="self">Self </span>{
+<a href=#66 id=66 data-nosnippet>66</a>        <span class="kw">let </span>(nameservers, search_domains, ndots) = <span class="self">Self</span>::build_config(<span class="kw-2">&amp;</span>builder);
+<a href=#67 id=67 data-nosnippet>67</a>        <span class="macro">debug!</span>(
+<a href=#68 id=68 data-nosnippet>68</a>            <span class="question-mark">?</span>nameservers,
+<a href=#69 id=69 data-nosnippet>69</a>            <span class="question-mark">?</span>search_domains,
+<a href=#70 id=70 data-nosnippet>70</a>            ndots,
+<a href=#71 id=71 data-nosnippet>71</a>            <span class="string">"configured DNS resolver"
+<a href=#72 id=72 data-nosnippet>72</a>        </span>);
 <a href=#73 id=73 data-nosnippet>73</a>        <span class="attr">#[cfg(with_crypto_provider)]
 <a href=#74 id=74 data-nosnippet>74</a>        </span><span class="kw">let </span>tls_config = builder
 <a href=#75 id=75 data-nosnippet>75</a>            .tls_client_config
@@ -236,339 +236,393 @@
 <a href=#236 id=236 data-nosnippet>236</a>                <span class="kw">if </span>!stagger.is_zero() {
 <a href=#237 id=237 data-nosnippet>237</a>                    time::sleep(stagger).<span class="kw">await</span>;
 <a href=#238 id=238 data-nosnippet>238</a>                }
-<a href=#239 id=239 data-nosnippet>239</a>                <span class="macro">trace!</span>(%addr, <span class="question-mark">?</span>proto, <span class="string">"sending DNS query"</span>);
-<a href=#240 id=240 data-nosnippet>240</a>                <span class="self">self</span>.query_nameserver(addr, proto, query_bytes).<span class="kw">await
-<a href=#241 id=241 data-nosnippet>241</a>            </span>});
-<a href=#242 id=242 data-nosnippet>242</a>        }
-<a href=#243 id=243 data-nosnippet>243</a>
-<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">let </span><span class="kw-2">mut </span>last_err = <span class="prelude-val">None</span>;
-<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(result) = futures.next().<span class="kw">await </span>{
-<a href=#246 id=246 data-nosnippet>246</a>            <span class="kw">match </span>result {
-<a href=#247 id=247 data-nosnippet>247</a>                <span class="prelude-val">Ok</span>(resp) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(resp),
-<a href=#248 id=248 data-nosnippet>248</a>                <span class="prelude-val">Err</span>(e) =&gt; last_err = <span class="prelude-val">Some</span>(e),
-<a href=#249 id=249 data-nosnippet>249</a>            }
-<a href=#250 id=250 data-nosnippet>250</a>        }
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="prelude-val">Err</span>(last_err.unwrap_or_else(|| <span class="macro">e!</span>(DnsError::NoResponse)))
-<a href=#252 id=252 data-nosnippet>252</a>    }
-<a href=#253 id=253 data-nosnippet>253</a>
-<a href=#254 id=254 data-nosnippet>254</a>    <span class="doccomment">/// Send a query and follow CNAME chains recursively if the response contains
-<a href=#255 id=255 data-nosnippet>255</a>    /// a CNAME but no records of the requested type.
-<a href=#256 id=256 data-nosnippet>256</a>    </span><span class="kw">async fn </span>send_query_following_cnames(
-<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#258 id=258 data-nosnippet>258</a>        host: String,
-<a href=#259 id=259 data-nosnippet>259</a>        qtype: TYPE,
-<a href=#260 id=260 data-nosnippet>260</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;u8&gt;, u16), DnsError&gt; {
-<a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span><span class="kw-2">mut </span>current_host = host;
-<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">for _ in </span><span class="number">0</span>..MAX_CNAME_DEPTH {
-<a href=#263 id=263 data-nosnippet>263</a>            <span class="kw">let </span>(id, query_bytes) = query::build_query(<span class="kw-2">&amp;</span>current_host, qtype)<span class="question-mark">?</span>;
-<a href=#264 id=264 data-nosnippet>264</a>            <span class="kw">let </span>response = <span class="self">self</span>.send_query(<span class="kw-2">&amp;</span>query_bytes).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#265 id=265 data-nosnippet>265</a>            <span class="kw">let </span>packet = simple_dns::Packet::parse(<span class="kw-2">&amp;</span>response)<span class="question-mark">?</span>;
-<a href=#266 id=266 data-nosnippet>266</a>
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw">let </span>has_answer = packet
-<a href=#268 id=268 data-nosnippet>268</a>                .answers
-<a href=#269 id=269 data-nosnippet>269</a>                .iter()
-<a href=#270 id=270 data-nosnippet>270</a>                .any(|rr| rr.rdata.type_code() == qtype);
-<a href=#271 id=271 data-nosnippet>271</a>
-<a href=#272 id=272 data-nosnippet>272</a>            <span class="kw">if </span>has_answer {
-<a href=#273 id=273 data-nosnippet>273</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>((response, id));
-<a href=#274 id=274 data-nosnippet>274</a>            }
-<a href=#275 id=275 data-nosnippet>275</a>
-<a href=#276 id=276 data-nosnippet>276</a>            <span class="comment">// No records of the requested type -- follow CNAME if present.
-<a href=#277 id=277 data-nosnippet>277</a>            </span><span class="kw">let </span><span class="prelude-val">Some</span>(target) = query::cname_target(<span class="kw-2">&amp;</span>packet, <span class="kw-2">&amp;</span>current_host) <span class="kw">else </span>{
-<a href=#278 id=278 data-nosnippet>278</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>((response, id));
-<a href=#279 id=279 data-nosnippet>279</a>            };
-<a href=#280 id=280 data-nosnippet>280</a>            <span class="macro">debug!</span>(from = %current_host, to = %target, <span class="string">"following CNAME"</span>);
-<a href=#281 id=281 data-nosnippet>281</a>            current_host = target;
-<a href=#282 id=282 data-nosnippet>282</a>        }
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="prelude-val">Err</span>(<span class="macro">e!</span>(DnsError::InvalidResponse))
-<a href=#284 id=284 data-nosnippet>284</a>    }
-<a href=#285 id=285 data-nosnippet>285</a>
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="doccomment">/// Shared lookup logic: check cache, try search names, parse response, cache result.
-<a href=#287 id=287 data-nosnippet>287</a>    </span><span class="attr">#[allow(clippy::type_complexity)]
-<a href=#288 id=288 data-nosnippet>288</a>    </span><span class="kw">async fn </span>lookup&lt;T: Clone&gt;(
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#290 id=290 data-nosnippet>290</a>        host: <span class="kw-2">&amp;</span>str,
-<a href=#291 id=291 data-nosnippet>291</a>        qtype: QueryType,
-<a href=#292 id=292 data-nosnippet>292</a>        dns_type: TYPE,
-<a href=#293 id=293 data-nosnippet>293</a>        from_cache: <span class="kw">fn</span>(<span class="kw-2">&amp;</span>CachedRecord) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;T&gt;&gt;,
-<a href=#294 id=294 data-nosnippet>294</a>        parse: <span class="kw">fn</span>(<span class="kw-2">&amp;</span>[u8], u16) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;T&gt;, u32), DnsError&gt;,
-<a href=#295 id=295 data-nosnippet>295</a>        to_cache: <span class="kw">fn</span>(Vec&lt;T&gt;) -&gt; CachedRecord,
-<a href=#296 id=296 data-nosnippet>296</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;T&gt;, DnsError&gt; {
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(cached) = <span class="self">self</span>.cache.get(host, qtype).and_then(|r| from_cache(<span class="kw-2">&amp;</span>r)) {
-<a href=#298 id=298 data-nosnippet>298</a>            <span class="macro">trace!</span>(%host, count = cached.len(), <span class="question-mark">?</span>qtype, <span class="string">"cache hit"</span>);
-<a href=#299 id=299 data-nosnippet>299</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(cached);
-<a href=#300 id=300 data-nosnippet>300</a>        }
-<a href=#301 id=301 data-nosnippet>301</a>
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span><span class="kw-2">mut </span>last_err = <span class="prelude-val">None</span>;
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">for </span>name <span class="kw">in </span><span class="self">self</span>.search_names(host) {
-<a href=#304 id=304 data-nosnippet>304</a>            <span class="macro">trace!</span>(%name, <span class="question-mark">?</span>qtype, <span class="string">"resolving"</span>);
-<a href=#305 id=305 data-nosnippet>305</a>            <span class="kw">match </span><span class="self">self</span>.send_query_following_cnames(name, dns_type).<span class="kw">await </span>{
-<a href=#306 id=306 data-nosnippet>306</a>                <span class="prelude-val">Ok</span>((response, id)) =&gt; {
-<a href=#307 id=307 data-nosnippet>307</a>                    <span class="kw">let </span>(results, ttl) = parse(<span class="kw-2">&amp;</span>response, id)<span class="question-mark">?</span>;
-<a href=#308 id=308 data-nosnippet>308</a>                    <span class="kw">if </span>!results.is_empty() {
-<a href=#309 id=309 data-nosnippet>309</a>                        <span class="macro">debug!</span>(%host, count = results.len(), ttl, <span class="question-mark">?</span>qtype, <span class="string">"resolved"</span>);
-<a href=#310 id=310 data-nosnippet>310</a>                        <span class="self">self</span>.cache
-<a href=#311 id=311 data-nosnippet>311</a>                            .insert(host, qtype, to_cache(results.clone()), ttl);
-<a href=#312 id=312 data-nosnippet>312</a>                        <span class="kw">return </span><span class="prelude-val">Ok</span>(results);
-<a href=#313 id=313 data-nosnippet>313</a>                    }
-<a href=#314 id=314 data-nosnippet>314</a>                }
-<a href=#315 id=315 data-nosnippet>315</a>                <span class="prelude-val">Err</span>(DnsError::NxDomain { .. }) | <span class="prelude-val">Err</span>(DnsError::ServerError { .. }) =&gt; {
-<a href=#316 id=316 data-nosnippet>316</a>                    last_err = <span class="prelude-val">Some</span>(<span class="macro">e!</span>(DnsError::NxDomain));
-<a href=#317 id=317 data-nosnippet>317</a>                }
-<a href=#318 id=318 data-nosnippet>318</a>                <span class="prelude-val">Err</span>(e) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(e),
-<a href=#319 id=319 data-nosnippet>319</a>            }
-<a href=#320 id=320 data-nosnippet>320</a>        }
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="prelude-val">Err</span>(last_err.unwrap_or_else(|| <span class="macro">e!</span>(DnsError::NoResponse)))
-<a href=#322 id=322 data-nosnippet>322</a>    }
-<a href=#323 id=323 data-nosnippet>323</a>
-<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>lookup_ipv4(
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#326 id=326 data-nosnippet>326</a>        host: String,
-<a href=#327 id=327 data-nosnippet>327</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = Ipv4Addr&gt; + <span class="kw">use</span>&lt;&gt;, DnsError&gt; {
-<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">let </span>addrs = <span class="self">self
-<a href=#329 id=329 data-nosnippet>329</a>            </span>.lookup(
-<a href=#330 id=330 data-nosnippet>330</a>                <span class="kw-2">&amp;</span>host,
-<a href=#331 id=331 data-nosnippet>331</a>                QueryType::A,
-<a href=#332 id=332 data-nosnippet>332</a>                TYPE::A,
-<a href=#333 id=333 data-nosnippet>333</a>                |r| <span class="kw">match </span>r {
-<a href=#334 id=334 data-nosnippet>334</a>                    CachedRecord::A(v) =&gt; <span class="prelude-val">Some</span>(v.clone()),
-<a href=#335 id=335 data-nosnippet>335</a>                    <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#336 id=336 data-nosnippet>336</a>                },
-<a href=#337 id=337 data-nosnippet>337</a>                query::parse_a_response,
-<a href=#338 id=338 data-nosnippet>338</a>                CachedRecord::A,
-<a href=#339 id=339 data-nosnippet>339</a>            )
-<a href=#340 id=340 data-nosnippet>340</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#341 id=341 data-nosnippet>341</a>        <span class="prelude-val">Ok</span>(addrs.into_iter())
-<a href=#342 id=342 data-nosnippet>342</a>    }
-<a href=#343 id=343 data-nosnippet>343</a>
-<a href=#344 id=344 data-nosnippet>344</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>lookup_ipv6(
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#346 id=346 data-nosnippet>346</a>        host: String,
-<a href=#347 id=347 data-nosnippet>347</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = Ipv6Addr&gt; + <span class="kw">use</span>&lt;&gt;, DnsError&gt; {
-<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">let </span>addrs = <span class="self">self
-<a href=#349 id=349 data-nosnippet>349</a>            </span>.lookup(
-<a href=#350 id=350 data-nosnippet>350</a>                <span class="kw-2">&amp;</span>host,
-<a href=#351 id=351 data-nosnippet>351</a>                QueryType::AAAA,
-<a href=#352 id=352 data-nosnippet>352</a>                TYPE::AAAA,
-<a href=#353 id=353 data-nosnippet>353</a>                |r| <span class="kw">match </span>r {
-<a href=#354 id=354 data-nosnippet>354</a>                    CachedRecord::Aaaa(v) =&gt; <span class="prelude-val">Some</span>(v.clone()),
-<a href=#355 id=355 data-nosnippet>355</a>                    <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#356 id=356 data-nosnippet>356</a>                },
-<a href=#357 id=357 data-nosnippet>357</a>                query::parse_aaaa_response,
-<a href=#358 id=358 data-nosnippet>358</a>                CachedRecord::Aaaa,
-<a href=#359 id=359 data-nosnippet>359</a>            )
-<a href=#360 id=360 data-nosnippet>360</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#361 id=361 data-nosnippet>361</a>        <span class="prelude-val">Ok</span>(addrs.into_iter())
-<a href=#362 id=362 data-nosnippet>362</a>    }
-<a href=#363 id=363 data-nosnippet>363</a>
-<a href=#364 id=364 data-nosnippet>364</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>lookup_txt(
-<a href=#365 id=365 data-nosnippet>365</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#366 id=366 data-nosnippet>366</a>        host: String,
-<a href=#367 id=367 data-nosnippet>367</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = TxtRecordData&gt; + <span class="kw">use</span>&lt;&gt;, DnsError&gt; {
-<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">let </span>records = <span class="self">self
-<a href=#369 id=369 data-nosnippet>369</a>            </span>.lookup(
-<a href=#370 id=370 data-nosnippet>370</a>                <span class="kw-2">&amp;</span>host,
-<a href=#371 id=371 data-nosnippet>371</a>                QueryType::TXT,
-<a href=#372 id=372 data-nosnippet>372</a>                TYPE::TXT,
-<a href=#373 id=373 data-nosnippet>373</a>                |r| <span class="kw">match </span>r {
-<a href=#374 id=374 data-nosnippet>374</a>                    CachedRecord::Txt(v) =&gt; <span class="prelude-val">Some</span>(v.clone()),
-<a href=#375 id=375 data-nosnippet>375</a>                    <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#376 id=376 data-nosnippet>376</a>                },
-<a href=#377 id=377 data-nosnippet>377</a>                query::parse_txt_response,
-<a href=#378 id=378 data-nosnippet>378</a>                CachedRecord::Txt,
-<a href=#379 id=379 data-nosnippet>379</a>            )
-<a href=#380 id=380 data-nosnippet>380</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#381 id=381 data-nosnippet>381</a>        <span class="prelude-val">Ok</span>(records.into_iter())
-<a href=#382 id=382 data-nosnippet>382</a>    }
-<a href=#383 id=383 data-nosnippet>383</a>
-<a href=#384 id=384 data-nosnippet>384</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>clear_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#385 id=385 data-nosnippet>385</a>        <span class="self">self</span>.cache.clear();
-<a href=#386 id=386 data-nosnippet>386</a>    }
-<a href=#387 id=387 data-nosnippet>387</a>
-<a href=#388 id=388 data-nosnippet>388</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>reset(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">let </span>(nameservers, search_domains, ndots) = <span class="self">Self</span>::build_config(<span class="kw-2">&amp;</span><span class="self">self</span>.builder);
-<a href=#390 id=390 data-nosnippet>390</a>        <span class="self">self</span>.nameservers = nameservers;
-<a href=#391 id=391 data-nosnippet>391</a>        <span class="self">self</span>.search_domains = search_domains;
-<a href=#392 id=392 data-nosnippet>392</a>        <span class="self">self</span>.ndots = ndots;
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="attr">#[cfg(with_crypto_provider)]
-<a href=#394 id=394 data-nosnippet>394</a>        </span>{
-<a href=#395 id=395 data-nosnippet>395</a>            <span class="self">self</span>.tls_config = <span class="self">self
-<a href=#396 id=396 data-nosnippet>396</a>                </span>.builder
-<a href=#397 id=397 data-nosnippet>397</a>                .tls_client_config
-<a href=#398 id=398 data-nosnippet>398</a>                .as_ref()
-<a href=#399 id=399 data-nosnippet>399</a>                .map(|c| Arc::new(c.clone()));
-<a href=#400 id=400 data-nosnippet>400</a>        }
-<a href=#401 id=401 data-nosnippet>401</a>        <span class="comment">// Clear cached HTTPS client so it gets rebuilt with the new TLS config on next use
-<a href=#402 id=402 data-nosnippet>402</a>        </span><span class="kw-2">*</span><span class="self">self</span>.https_client.lock().expect(<span class="string">"poisoned"</span>) = <span class="prelude-val">None</span>;
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="self">self</span>.clear_cache();
+<a href=#239 id=239 data-nosnippet>239</a>                <span class="self">self</span>.query_nameserver(addr, proto, query_bytes).<span class="kw">await
+<a href=#240 id=240 data-nosnippet>240</a>            </span>});
+<a href=#241 id=241 data-nosnippet>241</a>        }
+<a href=#242 id=242 data-nosnippet>242</a>
+<a href=#243 id=243 data-nosnippet>243</a>        <span class="kw">let </span><span class="kw-2">mut </span>last_err = <span class="prelude-val">None</span>;
+<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(result) = futures.next().<span class="kw">await </span>{
+<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw">match </span>result {
+<a href=#246 id=246 data-nosnippet>246</a>                <span class="prelude-val">Ok</span>(resp) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(resp),
+<a href=#247 id=247 data-nosnippet>247</a>                <span class="prelude-val">Err</span>(e) =&gt; last_err = <span class="prelude-val">Some</span>(e),
+<a href=#248 id=248 data-nosnippet>248</a>            }
+<a href=#249 id=249 data-nosnippet>249</a>        }
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="prelude-val">Err</span>(last_err.unwrap_or_else(|| <span class="macro">e!</span>(DnsError::NoResponse)))
+<a href=#251 id=251 data-nosnippet>251</a>    }
+<a href=#252 id=252 data-nosnippet>252</a>
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="doccomment">/// Send a query and follow CNAME chains recursively if the response contains
+<a href=#254 id=254 data-nosnippet>254</a>    /// a CNAME but no records of the requested type.
+<a href=#255 id=255 data-nosnippet>255</a>    </span><span class="kw">async fn </span>send_query_following_cnames(
+<a href=#256 id=256 data-nosnippet>256</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#257 id=257 data-nosnippet>257</a>        host: String,
+<a href=#258 id=258 data-nosnippet>258</a>        qtype: TYPE,
+<a href=#259 id=259 data-nosnippet>259</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;u8&gt;, u16), DnsError&gt; {
+<a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">let </span><span class="kw-2">mut </span>current_host = host;
+<a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">for _ in </span><span class="number">0</span>..MAX_CNAME_DEPTH {
+<a href=#262 id=262 data-nosnippet>262</a>            <span class="kw">let </span>(id, query_bytes) = query::build_query(<span class="kw-2">&amp;</span>current_host, qtype)<span class="question-mark">?</span>;
+<a href=#263 id=263 data-nosnippet>263</a>            <span class="kw">let </span>response = <span class="self">self</span>.send_query(<span class="kw-2">&amp;</span>query_bytes).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#264 id=264 data-nosnippet>264</a>            <span class="kw">let </span>packet = simple_dns::Packet::parse(<span class="kw-2">&amp;</span>response)<span class="question-mark">?</span>;
+<a href=#265 id=265 data-nosnippet>265</a>
+<a href=#266 id=266 data-nosnippet>266</a>            <span class="kw">let </span>has_answer = packet
+<a href=#267 id=267 data-nosnippet>267</a>                .answers
+<a href=#268 id=268 data-nosnippet>268</a>                .iter()
+<a href=#269 id=269 data-nosnippet>269</a>                .any(|rr| rr.rdata.type_code() == qtype);
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a>            <span class="kw">if </span>has_answer {
+<a href=#272 id=272 data-nosnippet>272</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>((response, id));
+<a href=#273 id=273 data-nosnippet>273</a>            }
+<a href=#274 id=274 data-nosnippet>274</a>
+<a href=#275 id=275 data-nosnippet>275</a>            <span class="comment">// No records of the requested type -- follow CNAME if present.
+<a href=#276 id=276 data-nosnippet>276</a>            </span><span class="kw">let </span><span class="prelude-val">Some</span>(target) = query::cname_target(<span class="kw-2">&amp;</span>packet, <span class="kw-2">&amp;</span>current_host) <span class="kw">else </span>{
+<a href=#277 id=277 data-nosnippet>277</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>((response, id));
+<a href=#278 id=278 data-nosnippet>278</a>            };
+<a href=#279 id=279 data-nosnippet>279</a>            <span class="macro">debug!</span>(from = %current_host, to = %target, <span class="string">"following CNAME"</span>);
+<a href=#280 id=280 data-nosnippet>280</a>            current_host = target;
+<a href=#281 id=281 data-nosnippet>281</a>        }
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="prelude-val">Err</span>(<span class="macro">e!</span>(DnsError::InvalidResponse))
+<a href=#283 id=283 data-nosnippet>283</a>    }
+<a href=#284 id=284 data-nosnippet>284</a>
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// Shared lookup logic: check cache, try search names, parse response, cache result.
+<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="attr">#[allow(clippy::type_complexity)]
+<a href=#287 id=287 data-nosnippet>287</a>    </span><span class="kw">async fn </span>lookup&lt;T: Clone + std::fmt::Debug&gt;(
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#289 id=289 data-nosnippet>289</a>        host: <span class="kw-2">&amp;</span>str,
+<a href=#290 id=290 data-nosnippet>290</a>        qtype: QueryType,
+<a href=#291 id=291 data-nosnippet>291</a>        dns_type: TYPE,
+<a href=#292 id=292 data-nosnippet>292</a>        from_cache: <span class="kw">fn</span>(<span class="kw-2">&amp;</span>CachedRecord) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;T&gt;&gt;,
+<a href=#293 id=293 data-nosnippet>293</a>        parse: <span class="kw">fn</span>(<span class="kw-2">&amp;</span>[u8], u16) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;T&gt;, u32), DnsError&gt;,
+<a href=#294 id=294 data-nosnippet>294</a>        to_cache: <span class="kw">fn</span>(Vec&lt;T&gt;) -&gt; CachedRecord,
+<a href=#295 id=295 data-nosnippet>295</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;T&gt;, DnsError&gt; {
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(cached) = <span class="self">self</span>.cache.get(host, qtype).and_then(|r| from_cache(<span class="kw-2">&amp;</span>r)) {
+<a href=#297 id=297 data-nosnippet>297</a>            <span class="macro">trace!</span>(%host, records = cached.len(), <span class="question-mark">?</span>qtype, <span class="string">"cache hit"</span>);
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(cached);
+<a href=#299 id=299 data-nosnippet>299</a>        }
+<a href=#300 id=300 data-nosnippet>300</a>
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">let </span><span class="kw-2">mut </span>last_err = <span class="prelude-val">None</span>;
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>names = <span class="self">self</span>.search_names(host);
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>total = names.len();
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">for </span>(i, name) <span class="kw">in </span>names.into_iter().enumerate() {
+<a href=#305 id=305 data-nosnippet>305</a>            <span class="macro">trace!</span>(%name, <span class="question-mark">?</span>qtype, <span class="string">"resolving"</span>);
+<a href=#306 id=306 data-nosnippet>306</a>            <span class="kw">let </span>res = <span class="kw">match </span><span class="self">self
+<a href=#307 id=307 data-nosnippet>307</a>                </span>.send_query_following_cnames(name.clone(), dns_type)
+<a href=#308 id=308 data-nosnippet>308</a>                .<span class="kw">await
+<a href=#309 id=309 data-nosnippet>309</a>            </span>{
+<a href=#310 id=310 data-nosnippet>310</a>                <span class="prelude-val">Ok</span>((response, id)) =&gt; parse(<span class="kw-2">&amp;</span>response, id),
+<a href=#311 id=311 data-nosnippet>311</a>                <span class="prelude-val">Err</span>(e) =&gt; <span class="prelude-val">Err</span>(e),
+<a href=#312 id=312 data-nosnippet>312</a>            };
+<a href=#313 id=313 data-nosnippet>313</a>            <span class="kw">match </span>res {
+<a href=#314 id=314 data-nosnippet>314</a>                <span class="prelude-val">Ok</span>((results, ttl)) <span class="kw">if </span>!results.is_empty() =&gt; {
+<a href=#315 id=315 data-nosnippet>315</a>                    <span class="macro">debug!</span>(%host, <span class="question-mark">?</span>qtype, <span class="question-mark">?</span>results, ttl, <span class="string">"resolved"</span>);
+<a href=#316 id=316 data-nosnippet>316</a>                    <span class="self">self</span>.cache
+<a href=#317 id=317 data-nosnippet>317</a>                        .insert(host, qtype, to_cache(results.clone()), ttl);
+<a href=#318 id=318 data-nosnippet>318</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(results);
+<a href=#319 id=319 data-nosnippet>319</a>                }
+<a href=#320 id=320 data-nosnippet>320</a>                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {}
+<a href=#321 id=321 data-nosnippet>321</a>                <span class="prelude-val">Err</span>(<span class="kw-2">ref </span>e @ DnsError::NxDomain { .. })
+<a href=#322 id=322 data-nosnippet>322</a>                | <span class="prelude-val">Err</span>(<span class="kw-2">ref </span>e @ DnsError::ServerError { .. }) =&gt; {
+<a href=#323 id=323 data-nosnippet>323</a>                    <span class="kw">let </span>remaining = total - i - <span class="number">1</span>;
+<a href=#324 id=324 data-nosnippet>324</a>                    <span class="macro">trace!</span>(%name, <span class="question-mark">?</span>qtype, remaining, reason = %e, <span class="string">"lookup failed"</span>);
+<a href=#325 id=325 data-nosnippet>325</a>                    last_err = <span class="prelude-val">Some</span>(<span class="macro">e!</span>(DnsError::NxDomain));
+<a href=#326 id=326 data-nosnippet>326</a>                }
+<a href=#327 id=327 data-nosnippet>327</a>                <span class="prelude-val">Err</span>(e) =&gt; {
+<a href=#328 id=328 data-nosnippet>328</a>                    <span class="macro">debug!</span>(%name, <span class="question-mark">?</span>qtype, reason = %e, <span class="string">"lookup failed"</span>);
+<a href=#329 id=329 data-nosnippet>329</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(e);
+<a href=#330 id=330 data-nosnippet>330</a>                }
+<a href=#331 id=331 data-nosnippet>331</a>            }
+<a href=#332 id=332 data-nosnippet>332</a>        }
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">let </span>err = last_err.unwrap_or_else(|| <span class="macro">e!</span>(DnsError::NoResponse));
+<a href=#334 id=334 data-nosnippet>334</a>        <span class="macro">debug!</span>(%host, <span class="question-mark">?</span>qtype, reason = %err, <span class="string">"resolve failed"</span>);
+<a href=#335 id=335 data-nosnippet>335</a>        <span class="prelude-val">Err</span>(err)
+<a href=#336 id=336 data-nosnippet>336</a>    }
+<a href=#337 id=337 data-nosnippet>337</a>
+<a href=#338 id=338 data-nosnippet>338</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>lookup_ipv4(
+<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#340 id=340 data-nosnippet>340</a>        host: String,
+<a href=#341 id=341 data-nosnippet>341</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = Ipv4Addr&gt; + <span class="kw">use</span>&lt;&gt;, DnsError&gt; {
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="comment">// RFC 6761: localhost always resolves to loopback.
+<a href=#343 id=343 data-nosnippet>343</a>        </span><span class="kw">if </span>is_localhost(<span class="kw-2">&amp;</span>host) {
+<a href=#344 id=344 data-nosnippet>344</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[Ipv4Addr::LOCALHOST].into_iter());
+<a href=#345 id=345 data-nosnippet>345</a>        }
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span>addrs = <span class="self">self
+<a href=#347 id=347 data-nosnippet>347</a>            </span>.lookup(
+<a href=#348 id=348 data-nosnippet>348</a>                <span class="kw-2">&amp;</span>host,
+<a href=#349 id=349 data-nosnippet>349</a>                QueryType::A,
+<a href=#350 id=350 data-nosnippet>350</a>                TYPE::A,
+<a href=#351 id=351 data-nosnippet>351</a>                |r| <span class="kw">match </span>r {
+<a href=#352 id=352 data-nosnippet>352</a>                    CachedRecord::A(v) =&gt; <span class="prelude-val">Some</span>(v.clone()),
+<a href=#353 id=353 data-nosnippet>353</a>                    <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#354 id=354 data-nosnippet>354</a>                },
+<a href=#355 id=355 data-nosnippet>355</a>                query::parse_a_response,
+<a href=#356 id=356 data-nosnippet>356</a>                CachedRecord::A,
+<a href=#357 id=357 data-nosnippet>357</a>            )
+<a href=#358 id=358 data-nosnippet>358</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#359 id=359 data-nosnippet>359</a>        <span class="prelude-val">Ok</span>(addrs.into_iter())
+<a href=#360 id=360 data-nosnippet>360</a>    }
+<a href=#361 id=361 data-nosnippet>361</a>
+<a href=#362 id=362 data-nosnippet>362</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>lookup_ipv6(
+<a href=#363 id=363 data-nosnippet>363</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#364 id=364 data-nosnippet>364</a>        host: String,
+<a href=#365 id=365 data-nosnippet>365</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = Ipv6Addr&gt; + <span class="kw">use</span>&lt;&gt;, DnsError&gt; {
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="comment">// RFC 6761: localhost always resolves to loopback.
+<a href=#367 id=367 data-nosnippet>367</a>        </span><span class="kw">if </span>is_localhost(<span class="kw-2">&amp;</span>host) {
+<a href=#368 id=368 data-nosnippet>368</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[Ipv6Addr::LOCALHOST].into_iter());
+<a href=#369 id=369 data-nosnippet>369</a>        }
+<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">let </span>addrs = <span class="self">self
+<a href=#371 id=371 data-nosnippet>371</a>            </span>.lookup(
+<a href=#372 id=372 data-nosnippet>372</a>                <span class="kw-2">&amp;</span>host,
+<a href=#373 id=373 data-nosnippet>373</a>                QueryType::AAAA,
+<a href=#374 id=374 data-nosnippet>374</a>                TYPE::AAAA,
+<a href=#375 id=375 data-nosnippet>375</a>                |r| <span class="kw">match </span>r {
+<a href=#376 id=376 data-nosnippet>376</a>                    CachedRecord::Aaaa(v) =&gt; <span class="prelude-val">Some</span>(v.clone()),
+<a href=#377 id=377 data-nosnippet>377</a>                    <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#378 id=378 data-nosnippet>378</a>                },
+<a href=#379 id=379 data-nosnippet>379</a>                query::parse_aaaa_response,
+<a href=#380 id=380 data-nosnippet>380</a>                CachedRecord::Aaaa,
+<a href=#381 id=381 data-nosnippet>381</a>            )
+<a href=#382 id=382 data-nosnippet>382</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#383 id=383 data-nosnippet>383</a>        <span class="prelude-val">Ok</span>(addrs.into_iter())
+<a href=#384 id=384 data-nosnippet>384</a>    }
+<a href=#385 id=385 data-nosnippet>385</a>
+<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>lookup_txt(
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#388 id=388 data-nosnippet>388</a>        host: String,
+<a href=#389 id=389 data-nosnippet>389</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = TxtRecordData&gt; + <span class="kw">use</span>&lt;&gt;, DnsError&gt; {
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">let </span>records = <span class="self">self
+<a href=#391 id=391 data-nosnippet>391</a>            </span>.lookup(
+<a href=#392 id=392 data-nosnippet>392</a>                <span class="kw-2">&amp;</span>host,
+<a href=#393 id=393 data-nosnippet>393</a>                QueryType::TXT,
+<a href=#394 id=394 data-nosnippet>394</a>                TYPE::TXT,
+<a href=#395 id=395 data-nosnippet>395</a>                |r| <span class="kw">match </span>r {
+<a href=#396 id=396 data-nosnippet>396</a>                    CachedRecord::Txt(v) =&gt; <span class="prelude-val">Some</span>(v.clone()),
+<a href=#397 id=397 data-nosnippet>397</a>                    <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#398 id=398 data-nosnippet>398</a>                },
+<a href=#399 id=399 data-nosnippet>399</a>                query::parse_txt_response,
+<a href=#400 id=400 data-nosnippet>400</a>                CachedRecord::Txt,
+<a href=#401 id=401 data-nosnippet>401</a>            )
+<a href=#402 id=402 data-nosnippet>402</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="prelude-val">Ok</span>(records.into_iter())
 <a href=#404 id=404 data-nosnippet>404</a>    }
-<a href=#405 id=405 data-nosnippet>405</a>}
-<a href=#406 id=406 data-nosnippet>406</a>
-<a href=#407 id=407 data-nosnippet>407</a><span class="attr">#[cfg(test)]
-<a href=#408 id=408 data-nosnippet>408</a></span><span class="kw">mod </span>tests {
-<a href=#409 id=409 data-nosnippet>409</a>    <span class="kw">use </span>std::net::{IpAddr, Ipv4Addr, SocketAddr};
-<a href=#410 id=410 data-nosnippet>410</a>
-<a href=#411 id=411 data-nosnippet>411</a>    <span class="kw">use </span>n0_future::time::Duration;
-<a href=#412 id=412 data-nosnippet>412</a>
-<a href=#413 id=413 data-nosnippet>413</a>    <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::{DnsProtocol, DnsResolver};
-<a href=#414 id=414 data-nosnippet>414</a>
-<a href=#415 id=415 data-nosnippet>415</a>    <span class="kw">const </span>TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
-<a href=#416 id=416 data-nosnippet>416</a>    <span class="kw">const </span>GOOGLE_DNS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(<span class="number">8</span>, <span class="number">8</span>, <span class="number">8</span>, <span class="number">8</span>)), <span class="number">53</span>);
-<a href=#417 id=417 data-nosnippet>417</a>    <span class="kw">const </span>CLOUDFLARE_DNS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(<span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>)), <span class="number">53</span>);
-<a href=#418 id=418 data-nosnippet>418</a>    <span class="kw">const </span>GOOGLE_DNS_TLS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(<span class="number">8</span>, <span class="number">8</span>, <span class="number">8</span>, <span class="number">8</span>)), <span class="number">853</span>);
-<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">const </span>CLOUDFLARE_DNS_HTTPS: SocketAddr =
-<a href=#420 id=420 data-nosnippet>420</a>        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(<span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>)), <span class="number">443</span>);
-<a href=#421 id=421 data-nosnippet>421</a>
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">fn </span>with_proto(addr: SocketAddr, proto: DnsProtocol) -&gt; DnsResolver {
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">let </span><span class="kw-2">mut </span>builder = DnsResolver::builder().with_nameserver(addr, proto);
-<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">if </span>proto == DnsProtocol::Tls {
-<a href=#425 id=425 data-nosnippet>425</a>            <span class="kw">let </span>root_store =
-<a href=#426 id=426 data-nosnippet>426</a>                rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-<a href=#427 id=427 data-nosnippet>427</a>            builder = builder.tls_client_config(
-<a href=#428 id=428 data-nosnippet>428</a>                rustls::ClientConfig::builder()
-<a href=#429 id=429 data-nosnippet>429</a>                    .with_root_certificates(root_store)
-<a href=#430 id=430 data-nosnippet>430</a>                    .with_no_client_auth(),
-<a href=#431 id=431 data-nosnippet>431</a>            );
-<a href=#432 id=432 data-nosnippet>432</a>        }
-<a href=#433 id=433 data-nosnippet>433</a>        builder.build()
-<a href=#434 id=434 data-nosnippet>434</a>    }
-<a href=#435 id=435 data-nosnippet>435</a>
-<a href=#436 id=436 data-nosnippet>436</a>    <span class="kw">async fn </span>assert_resolves_ipv4(resolver: <span class="kw-2">&amp;</span>DnsResolver, host: <span class="kw-2">&amp;</span>str) {
-<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = resolver.lookup_ipv4(host, TIMEOUT).<span class="kw">await</span>.unwrap().collect();
-<a href=#438 id=438 data-nosnippet>438</a>        <span class="macro">assert!</span>(!addrs.is_empty(), <span class="string">"{host} should have IPv4 addresses"</span>);
-<a href=#439 id=439 data-nosnippet>439</a>    }
-<a href=#440 id=440 data-nosnippet>440</a>
-<a href=#441 id=441 data-nosnippet>441</a>    <span class="attr">#[tokio::test]
-<a href=#442 id=442 data-nosnippet>442</a>    #[ignore = <span class="string">"requires network access"</span>]
-<a href=#443 id=443 data-nosnippet>443</a>    </span><span class="kw">async fn </span>resolve_ipv4_udp() {
-<a href=#444 id=444 data-nosnippet>444</a>        assert_resolves_ipv4(<span class="kw-2">&amp;</span>with_proto(GOOGLE_DNS, DnsProtocol::Udp), <span class="string">"google.com"</span>).<span class="kw">await</span>;
-<a href=#445 id=445 data-nosnippet>445</a>    }
-<a href=#446 id=446 data-nosnippet>446</a>
-<a href=#447 id=447 data-nosnippet>447</a>    <span class="attr">#[tokio::test]
-<a href=#448 id=448 data-nosnippet>448</a>    #[ignore = <span class="string">"requires network access"</span>]
-<a href=#449 id=449 data-nosnippet>449</a>    </span><span class="kw">async fn </span>resolve_ipv6_udp() {
-<a href=#450 id=450 data-nosnippet>450</a>        <span class="kw">let </span>resolver = with_proto(GOOGLE_DNS, DnsProtocol::Udp);
-<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = resolver
-<a href=#452 id=452 data-nosnippet>452</a>            .lookup_ipv6(<span class="string">"google.com"</span>, TIMEOUT)
-<a href=#453 id=453 data-nosnippet>453</a>            .<span class="kw">await
-<a href=#454 id=454 data-nosnippet>454</a>            </span>.unwrap()
-<a href=#455 id=455 data-nosnippet>455</a>            .collect();
-<a href=#456 id=456 data-nosnippet>456</a>        <span class="macro">assert!</span>(!addrs.is_empty());
-<a href=#457 id=457 data-nosnippet>457</a>    }
-<a href=#458 id=458 data-nosnippet>458</a>
-<a href=#459 id=459 data-nosnippet>459</a>    <span class="attr">#[tokio::test]
-<a href=#460 id=460 data-nosnippet>460</a>    #[ignore = <span class="string">"requires network access"</span>]
-<a href=#461 id=461 data-nosnippet>461</a>    </span><span class="kw">async fn </span>resolve_ipv4_tcp() {
-<a href=#462 id=462 data-nosnippet>462</a>        assert_resolves_ipv4(<span class="kw-2">&amp;</span>with_proto(CLOUDFLARE_DNS, DnsProtocol::Tcp), <span class="string">"google.com"</span>).<span class="kw">await</span>;
-<a href=#463 id=463 data-nosnippet>463</a>    }
-<a href=#464 id=464 data-nosnippet>464</a>
-<a href=#465 id=465 data-nosnippet>465</a>    <span class="attr">#[tokio::test]
-<a href=#466 id=466 data-nosnippet>466</a>    #[ignore = <span class="string">"requires network access"</span>]
-<a href=#467 id=467 data-nosnippet>467</a>    </span><span class="kw">async fn </span>resolve_ipv4_tls() {
-<a href=#468 id=468 data-nosnippet>468</a>        assert_resolves_ipv4(<span class="kw-2">&amp;</span>with_proto(GOOGLE_DNS_TLS, DnsProtocol::Tls), <span class="string">"google.com"</span>).<span class="kw">await</span>;
-<a href=#469 id=469 data-nosnippet>469</a>    }
-<a href=#470 id=470 data-nosnippet>470</a>
-<a href=#471 id=471 data-nosnippet>471</a>    <span class="attr">#[tokio::test]
-<a href=#472 id=472 data-nosnippet>472</a>    #[ignore = <span class="string">"requires network access"</span>]
-<a href=#473 id=473 data-nosnippet>473</a>    </span><span class="kw">async fn </span>resolve_ipv4_https() {
-<a href=#474 id=474 data-nosnippet>474</a>        assert_resolves_ipv4(
-<a href=#475 id=475 data-nosnippet>475</a>            <span class="kw-2">&amp;</span>with_proto(CLOUDFLARE_DNS_HTTPS, DnsProtocol::Https),
-<a href=#476 id=476 data-nosnippet>476</a>            <span class="string">"google.com"</span>,
-<a href=#477 id=477 data-nosnippet>477</a>        )
-<a href=#478 id=478 data-nosnippet>478</a>        .<span class="kw">await</span>;
+<a href=#405 id=405 data-nosnippet>405</a>
+<a href=#406 id=406 data-nosnippet>406</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>clear_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+<a href=#407 id=407 data-nosnippet>407</a>        <span class="self">self</span>.cache.clear();
+<a href=#408 id=408 data-nosnippet>408</a>    }
+<a href=#409 id=409 data-nosnippet>409</a>
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>reset(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">let </span>(nameservers, search_domains, ndots) = <span class="self">Self</span>::build_config(<span class="kw-2">&amp;</span><span class="self">self</span>.builder);
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="self">self</span>.nameservers = nameservers;
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="self">self</span>.search_domains = search_domains;
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="self">self</span>.ndots = ndots;
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="attr">#[cfg(with_crypto_provider)]
+<a href=#416 id=416 data-nosnippet>416</a>        </span>{
+<a href=#417 id=417 data-nosnippet>417</a>            <span class="self">self</span>.tls_config = <span class="self">self
+<a href=#418 id=418 data-nosnippet>418</a>                </span>.builder
+<a href=#419 id=419 data-nosnippet>419</a>                .tls_client_config
+<a href=#420 id=420 data-nosnippet>420</a>                .as_ref()
+<a href=#421 id=421 data-nosnippet>421</a>                .map(|c| Arc::new(c.clone()));
+<a href=#422 id=422 data-nosnippet>422</a>        }
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="comment">// Clear cached HTTPS client so it gets rebuilt with the new TLS config on next use
+<a href=#424 id=424 data-nosnippet>424</a>        </span><span class="kw-2">*</span><span class="self">self</span>.https_client.lock().expect(<span class="string">"poisoned"</span>) = <span class="prelude-val">None</span>;
+<a href=#425 id=425 data-nosnippet>425</a>        <span class="self">self</span>.clear_cache();
+<a href=#426 id=426 data-nosnippet>426</a>    }
+<a href=#427 id=427 data-nosnippet>427</a>}
+<a href=#428 id=428 data-nosnippet>428</a>
+<a href=#429 id=429 data-nosnippet>429</a><span class="attr">#[cfg(test)]
+<a href=#430 id=430 data-nosnippet>430</a></span><span class="kw">mod </span>tests {
+<a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">use </span>std::net::{IpAddr, Ipv4Addr, SocketAddr};
+<a href=#432 id=432 data-nosnippet>432</a>
+<a href=#433 id=433 data-nosnippet>433</a>    <span class="kw">use </span>n0_future::time::Duration;
+<a href=#434 id=434 data-nosnippet>434</a>
+<a href=#435 id=435 data-nosnippet>435</a>    <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::{DnsProtocol, DnsResolver};
+<a href=#436 id=436 data-nosnippet>436</a>
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="kw">const </span>TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
+<a href=#438 id=438 data-nosnippet>438</a>    <span class="kw">const </span>GOOGLE_DNS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(<span class="number">8</span>, <span class="number">8</span>, <span class="number">8</span>, <span class="number">8</span>)), <span class="number">53</span>);
+<a href=#439 id=439 data-nosnippet>439</a>    <span class="kw">const </span>CLOUDFLARE_DNS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(<span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>)), <span class="number">53</span>);
+<a href=#440 id=440 data-nosnippet>440</a>    <span class="kw">const </span>GOOGLE_DNS_TLS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(<span class="number">8</span>, <span class="number">8</span>, <span class="number">8</span>, <span class="number">8</span>)), <span class="number">853</span>);
+<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">const </span>CLOUDFLARE_DNS_HTTPS: SocketAddr =
+<a href=#442 id=442 data-nosnippet>442</a>        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(<span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>)), <span class="number">443</span>);
+<a href=#443 id=443 data-nosnippet>443</a>
+<a href=#444 id=444 data-nosnippet>444</a>    <span class="kw">fn </span>with_proto(addr: SocketAddr, proto: DnsProtocol) -&gt; DnsResolver {
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">let </span><span class="kw-2">mut </span>builder = DnsResolver::builder().with_nameserver(addr, proto);
+<a href=#446 id=446 data-nosnippet>446</a>        <span class="kw">if </span>proto == DnsProtocol::Tls {
+<a href=#447 id=447 data-nosnippet>447</a>            <span class="kw">let </span>root_store =
+<a href=#448 id=448 data-nosnippet>448</a>                rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+<a href=#449 id=449 data-nosnippet>449</a>            builder = builder.tls_client_config(
+<a href=#450 id=450 data-nosnippet>450</a>                rustls::ClientConfig::builder()
+<a href=#451 id=451 data-nosnippet>451</a>                    .with_root_certificates(root_store)
+<a href=#452 id=452 data-nosnippet>452</a>                    .with_no_client_auth(),
+<a href=#453 id=453 data-nosnippet>453</a>            );
+<a href=#454 id=454 data-nosnippet>454</a>        }
+<a href=#455 id=455 data-nosnippet>455</a>        builder.build()
+<a href=#456 id=456 data-nosnippet>456</a>    }
+<a href=#457 id=457 data-nosnippet>457</a>
+<a href=#458 id=458 data-nosnippet>458</a>    <span class="kw">async fn </span>assert_resolves_ipv4(resolver: <span class="kw-2">&amp;</span>DnsResolver, host: <span class="kw-2">&amp;</span>str) {
+<a href=#459 id=459 data-nosnippet>459</a>        <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = resolver.lookup_ipv4(host, TIMEOUT).<span class="kw">await</span>.unwrap().collect();
+<a href=#460 id=460 data-nosnippet>460</a>        <span class="macro">assert!</span>(!addrs.is_empty(), <span class="string">"{host} should have IPv4 addresses"</span>);
+<a href=#461 id=461 data-nosnippet>461</a>    }
+<a href=#462 id=462 data-nosnippet>462</a>
+<a href=#463 id=463 data-nosnippet>463</a>    <span class="attr">#[tokio::test]
+<a href=#464 id=464 data-nosnippet>464</a>    #[ignore = <span class="string">"requires network access"</span>]
+<a href=#465 id=465 data-nosnippet>465</a>    </span><span class="kw">async fn </span>resolve_ipv4_udp() {
+<a href=#466 id=466 data-nosnippet>466</a>        assert_resolves_ipv4(<span class="kw-2">&amp;</span>with_proto(GOOGLE_DNS, DnsProtocol::Udp), <span class="string">"google.com"</span>).<span class="kw">await</span>;
+<a href=#467 id=467 data-nosnippet>467</a>    }
+<a href=#468 id=468 data-nosnippet>468</a>
+<a href=#469 id=469 data-nosnippet>469</a>    <span class="attr">#[tokio::test]
+<a href=#470 id=470 data-nosnippet>470</a>    #[ignore = <span class="string">"requires network access"</span>]
+<a href=#471 id=471 data-nosnippet>471</a>    </span><span class="kw">async fn </span>resolve_ipv6_udp() {
+<a href=#472 id=472 data-nosnippet>472</a>        <span class="kw">let </span>resolver = with_proto(GOOGLE_DNS, DnsProtocol::Udp);
+<a href=#473 id=473 data-nosnippet>473</a>        <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = resolver
+<a href=#474 id=474 data-nosnippet>474</a>            .lookup_ipv6(<span class="string">"google.com"</span>, TIMEOUT)
+<a href=#475 id=475 data-nosnippet>475</a>            .<span class="kw">await
+<a href=#476 id=476 data-nosnippet>476</a>            </span>.unwrap()
+<a href=#477 id=477 data-nosnippet>477</a>            .collect();
+<a href=#478 id=478 data-nosnippet>478</a>        <span class="macro">assert!</span>(!addrs.is_empty());
 <a href=#479 id=479 data-nosnippet>479</a>    }
 <a href=#480 id=480 data-nosnippet>480</a>
 <a href=#481 id=481 data-nosnippet>481</a>    <span class="attr">#[tokio::test]
 <a href=#482 id=482 data-nosnippet>482</a>    #[ignore = <span class="string">"requires network access"</span>]
-<a href=#483 id=483 data-nosnippet>483</a>    </span><span class="kw">async fn </span>resolve_txt_udp() {
-<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">let </span>resolver = with_proto(GOOGLE_DNS, DnsProtocol::Udp);
-<a href=#485 id=485 data-nosnippet>485</a>        <span class="kw">let </span>records: Vec&lt;<span class="kw">_</span>&gt; = resolver
-<a href=#486 id=486 data-nosnippet>486</a>            .lookup_txt(<span class="string">"google.com"</span>, TIMEOUT)
-<a href=#487 id=487 data-nosnippet>487</a>            .<span class="kw">await
-<a href=#488 id=488 data-nosnippet>488</a>            </span>.unwrap()
-<a href=#489 id=489 data-nosnippet>489</a>            .collect();
-<a href=#490 id=490 data-nosnippet>490</a>        <span class="macro">assert!</span>(!records.is_empty());
+<a href=#483 id=483 data-nosnippet>483</a>    </span><span class="kw">async fn </span>resolve_ipv4_tcp() {
+<a href=#484 id=484 data-nosnippet>484</a>        assert_resolves_ipv4(<span class="kw-2">&amp;</span>with_proto(CLOUDFLARE_DNS, DnsProtocol::Tcp), <span class="string">"google.com"</span>).<span class="kw">await</span>;
+<a href=#485 id=485 data-nosnippet>485</a>    }
+<a href=#486 id=486 data-nosnippet>486</a>
+<a href=#487 id=487 data-nosnippet>487</a>    <span class="attr">#[tokio::test]
+<a href=#488 id=488 data-nosnippet>488</a>    #[ignore = <span class="string">"requires network access"</span>]
+<a href=#489 id=489 data-nosnippet>489</a>    </span><span class="kw">async fn </span>resolve_ipv4_tls() {
+<a href=#490 id=490 data-nosnippet>490</a>        assert_resolves_ipv4(<span class="kw-2">&amp;</span>with_proto(GOOGLE_DNS_TLS, DnsProtocol::Tls), <span class="string">"google.com"</span>).<span class="kw">await</span>;
 <a href=#491 id=491 data-nosnippet>491</a>    }
 <a href=#492 id=492 data-nosnippet>492</a>
 <a href=#493 id=493 data-nosnippet>493</a>    <span class="attr">#[tokio::test]
 <a href=#494 id=494 data-nosnippet>494</a>    #[ignore = <span class="string">"requires network access"</span>]
-<a href=#495 id=495 data-nosnippet>495</a>    </span><span class="kw">async fn </span>resolve_system_defaults() {
-<a href=#496 id=496 data-nosnippet>496</a>        assert_resolves_ipv4(<span class="kw-2">&amp;</span>DnsResolver::new(), <span class="string">"google.com"</span>).<span class="kw">await</span>;
-<a href=#497 id=497 data-nosnippet>497</a>    }
-<a href=#498 id=498 data-nosnippet>498</a>
-<a href=#499 id=499 data-nosnippet>499</a>    <span class="attr">#[tokio::test]
-<a href=#500 id=500 data-nosnippet>500</a>    #[ignore = <span class="string">"requires network access"</span>]
-<a href=#501 id=501 data-nosnippet>501</a>    </span><span class="kw">async fn </span>resolve_multiple_sites() {
-<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">let </span>resolver = DnsResolver::new();
-<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">for </span>host <span class="kw">in </span>[<span class="string">"google.com"</span>, <span class="string">"cloudflare.com"</span>, <span class="string">"example.com"</span>] {
-<a href=#504 id=504 data-nosnippet>504</a>            assert_resolves_ipv4(<span class="kw-2">&amp;</span>resolver, host).<span class="kw">await</span>;
-<a href=#505 id=505 data-nosnippet>505</a>        }
-<a href=#506 id=506 data-nosnippet>506</a>    }
-<a href=#507 id=507 data-nosnippet>507</a>
-<a href=#508 id=508 data-nosnippet>508</a>    <span class="kw">mod </span>search_names {
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::{<span class="kw">super</span>::Builder, <span class="kw-2">*</span>};
-<a href=#510 id=510 data-nosnippet>510</a>
-<a href=#511 id=511 data-nosnippet>511</a>        <span class="kw">fn </span>resolver_with_search(domains: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]) -&gt; SimpleDnsResolver {
-<a href=#512 id=512 data-nosnippet>512</a>            <span class="kw">let </span><span class="kw-2">mut </span>r = SimpleDnsResolver::new(Builder::default());
-<a href=#513 id=513 data-nosnippet>513</a>            r.search_domains = domains.iter().map(|s| s.to_string()).collect();
-<a href=#514 id=514 data-nosnippet>514</a>            r
-<a href=#515 id=515 data-nosnippet>515</a>        }
-<a href=#516 id=516 data-nosnippet>516</a>
-<a href=#517 id=517 data-nosnippet>517</a>        <span class="attr">#[test]
-<a href=#518 id=518 data-nosnippet>518</a>        </span><span class="kw">fn </span>no_search_domains() {
-<a href=#519 id=519 data-nosnippet>519</a>            <span class="kw">let </span>r = SimpleDnsResolver::new(Builder::default());
-<a href=#520 id=520 data-nosnippet>520</a>            <span class="macro">assert_eq!</span>(r.search_names(<span class="string">"myhost"</span>), <span class="macro">vec!</span>[<span class="string">"myhost"</span>]);
-<a href=#521 id=521 data-nosnippet>521</a>        }
-<a href=#522 id=522 data-nosnippet>522</a>
-<a href=#523 id=523 data-nosnippet>523</a>        <span class="attr">#[test]
-<a href=#524 id=524 data-nosnippet>524</a>        </span><span class="kw">fn </span>fqdn_bypasses_search() {
-<a href=#525 id=525 data-nosnippet>525</a>            <span class="kw">let </span>r = resolver_with_search(<span class="kw-2">&amp;</span>[<span class="string">"example.com"</span>]);
-<a href=#526 id=526 data-nosnippet>526</a>            <span class="macro">assert_eq!</span>(
-<a href=#527 id=527 data-nosnippet>527</a>                r.search_names(<span class="string">"myhost.example.com."</span>),
-<a href=#528 id=528 data-nosnippet>528</a>                <span class="macro">vec!</span>[<span class="string">"myhost.example.com."</span>]
-<a href=#529 id=529 data-nosnippet>529</a>            );
-<a href=#530 id=530 data-nosnippet>530</a>        }
-<a href=#531 id=531 data-nosnippet>531</a>
-<a href=#532 id=532 data-nosnippet>532</a>        <span class="attr">#[test]
-<a href=#533 id=533 data-nosnippet>533</a>        </span><span class="kw">fn </span>short_name_tries_search_first() {
-<a href=#534 id=534 data-nosnippet>534</a>            <span class="kw">let </span>r = resolver_with_search(<span class="kw-2">&amp;</span>[<span class="string">"example.com"</span>, <span class="string">"test.local"</span>]);
-<a href=#535 id=535 data-nosnippet>535</a>            <span class="comment">// "myhost" has 0 dots (&lt; ndots=1), so search domains come first.
-<a href=#536 id=536 data-nosnippet>536</a>            </span><span class="macro">assert_eq!</span>(
-<a href=#537 id=537 data-nosnippet>537</a>                r.search_names(<span class="string">"myhost"</span>),
-<a href=#538 id=538 data-nosnippet>538</a>                <span class="macro">vec!</span>[<span class="string">"myhost.example.com"</span>, <span class="string">"myhost.test.local"</span>, <span class="string">"myhost"</span>]
-<a href=#539 id=539 data-nosnippet>539</a>            );
-<a href=#540 id=540 data-nosnippet>540</a>        }
-<a href=#541 id=541 data-nosnippet>541</a>
-<a href=#542 id=542 data-nosnippet>542</a>        <span class="attr">#[test]
-<a href=#543 id=543 data-nosnippet>543</a>        </span><span class="kw">fn </span>dotted_name_tries_bare_first() {
-<a href=#544 id=544 data-nosnippet>544</a>            <span class="kw">let </span>r = resolver_with_search(<span class="kw-2">&amp;</span>[<span class="string">"example.com"</span>]);
-<a href=#545 id=545 data-nosnippet>545</a>            <span class="comment">// "foo.bar" has 1 dot (&gt;= ndots=1), so bare name comes first.
-<a href=#546 id=546 data-nosnippet>546</a>            </span><span class="macro">assert_eq!</span>(
-<a href=#547 id=547 data-nosnippet>547</a>                r.search_names(<span class="string">"foo.bar"</span>),
-<a href=#548 id=548 data-nosnippet>548</a>                <span class="macro">vec!</span>[<span class="string">"foo.bar"</span>, <span class="string">"foo.bar.example.com"</span>]
-<a href=#549 id=549 data-nosnippet>549</a>            );
-<a href=#550 id=550 data-nosnippet>550</a>        }
-<a href=#551 id=551 data-nosnippet>551</a>
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="attr">#[test]
-<a href=#553 id=553 data-nosnippet>553</a>        </span><span class="kw">fn </span>multi_dot_name_tries_bare_first() {
-<a href=#554 id=554 data-nosnippet>554</a>            <span class="kw">let </span>r = resolver_with_search(<span class="kw-2">&amp;</span>[<span class="string">"example.com"</span>]);
-<a href=#555 id=555 data-nosnippet>555</a>            <span class="macro">assert_eq!</span>(r.search_names(<span class="string">"a.b.c"</span>), <span class="macro">vec!</span>[<span class="string">"a.b.c"</span>, <span class="string">"a.b.c.example.com"</span>]);
-<a href=#556 id=556 data-nosnippet>556</a>        }
-<a href=#557 id=557 data-nosnippet>557</a>
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="attr">#[test]
-<a href=#559 id=559 data-nosnippet>559</a>        </span><span class="kw">fn </span>high_ndots_k8s_style() {
-<a href=#560 id=560 data-nosnippet>560</a>            <span class="kw">let </span><span class="kw-2">mut </span>r = SimpleDnsResolver::new(Builder::default());
-<a href=#561 id=561 data-nosnippet>561</a>            r.search_domains = <span class="macro">vec!</span>[<span class="string">"ns.svc.cluster.local"</span>.into(), <span class="string">"svc.cluster.local"</span>.into()];
-<a href=#562 id=562 data-nosnippet>562</a>            r.ndots = <span class="number">5</span>;
-<a href=#563 id=563 data-nosnippet>563</a>            <span class="comment">// 4 dots &lt; ndots=5, so search domains come first (Kubernetes behavior).
-<a href=#564 id=564 data-nosnippet>564</a>            </span><span class="macro">assert_eq!</span>(
-<a href=#565 id=565 data-nosnippet>565</a>                r.search_names(<span class="string">"my-svc.my-ns.svc.cluster.local"</span>),
-<a href=#566 id=566 data-nosnippet>566</a>                <span class="macro">vec!</span>[
-<a href=#567 id=567 data-nosnippet>567</a>                    <span class="string">"my-svc.my-ns.svc.cluster.local.ns.svc.cluster.local"</span>,
-<a href=#568 id=568 data-nosnippet>568</a>                    <span class="string">"my-svc.my-ns.svc.cluster.local.svc.cluster.local"</span>,
-<a href=#569 id=569 data-nosnippet>569</a>                    <span class="string">"my-svc.my-ns.svc.cluster.local"</span>,
-<a href=#570 id=570 data-nosnippet>570</a>                ]
-<a href=#571 id=571 data-nosnippet>571</a>            );
-<a href=#572 id=572 data-nosnippet>572</a>        }
-<a href=#573 id=573 data-nosnippet>573</a>    }
-<a href=#574 id=574 data-nosnippet>574</a>}</code></pre></div></section></main></body></html>
+<a href=#495 id=495 data-nosnippet>495</a>    </span><span class="kw">async fn </span>resolve_ipv4_https() {
+<a href=#496 id=496 data-nosnippet>496</a>        assert_resolves_ipv4(
+<a href=#497 id=497 data-nosnippet>497</a>            <span class="kw-2">&amp;</span>with_proto(CLOUDFLARE_DNS_HTTPS, DnsProtocol::Https),
+<a href=#498 id=498 data-nosnippet>498</a>            <span class="string">"google.com"</span>,
+<a href=#499 id=499 data-nosnippet>499</a>        )
+<a href=#500 id=500 data-nosnippet>500</a>        .<span class="kw">await</span>;
+<a href=#501 id=501 data-nosnippet>501</a>    }
+<a href=#502 id=502 data-nosnippet>502</a>
+<a href=#503 id=503 data-nosnippet>503</a>    <span class="attr">#[tokio::test]
+<a href=#504 id=504 data-nosnippet>504</a>    #[ignore = <span class="string">"requires network access"</span>]
+<a href=#505 id=505 data-nosnippet>505</a>    </span><span class="kw">async fn </span>resolve_txt_udp() {
+<a href=#506 id=506 data-nosnippet>506</a>        <span class="kw">let </span>resolver = with_proto(GOOGLE_DNS, DnsProtocol::Udp);
+<a href=#507 id=507 data-nosnippet>507</a>        <span class="kw">let </span>records: Vec&lt;<span class="kw">_</span>&gt; = resolver
+<a href=#508 id=508 data-nosnippet>508</a>            .lookup_txt(<span class="string">"google.com"</span>, TIMEOUT)
+<a href=#509 id=509 data-nosnippet>509</a>            .<span class="kw">await
+<a href=#510 id=510 data-nosnippet>510</a>            </span>.unwrap()
+<a href=#511 id=511 data-nosnippet>511</a>            .collect();
+<a href=#512 id=512 data-nosnippet>512</a>        <span class="macro">assert!</span>(!records.is_empty());
+<a href=#513 id=513 data-nosnippet>513</a>    }
+<a href=#514 id=514 data-nosnippet>514</a>
+<a href=#515 id=515 data-nosnippet>515</a>    <span class="attr">#[tokio::test]
+<a href=#516 id=516 data-nosnippet>516</a>    #[ignore = <span class="string">"requires network access"</span>]
+<a href=#517 id=517 data-nosnippet>517</a>    </span><span class="kw">async fn </span>resolve_system_defaults() {
+<a href=#518 id=518 data-nosnippet>518</a>        assert_resolves_ipv4(<span class="kw-2">&amp;</span>DnsResolver::new(), <span class="string">"google.com"</span>).<span class="kw">await</span>;
+<a href=#519 id=519 data-nosnippet>519</a>    }
+<a href=#520 id=520 data-nosnippet>520</a>
+<a href=#521 id=521 data-nosnippet>521</a>    <span class="attr">#[tokio::test]
+<a href=#522 id=522 data-nosnippet>522</a>    #[ignore = <span class="string">"requires network access"</span>]
+<a href=#523 id=523 data-nosnippet>523</a>    </span><span class="kw">async fn </span>resolve_multiple_sites() {
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">let </span>resolver = DnsResolver::new();
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">for </span>host <span class="kw">in </span>[<span class="string">"google.com"</span>, <span class="string">"cloudflare.com"</span>, <span class="string">"example.com"</span>] {
+<a href=#526 id=526 data-nosnippet>526</a>            assert_resolves_ipv4(<span class="kw-2">&amp;</span>resolver, host).<span class="kw">await</span>;
+<a href=#527 id=527 data-nosnippet>527</a>        }
+<a href=#528 id=528 data-nosnippet>528</a>    }
+<a href=#529 id=529 data-nosnippet>529</a>
+<a href=#530 id=530 data-nosnippet>530</a>    <span class="doccomment">/// Run with `cargo test -p iroh-relay resolve_success_and_nxdomain -- --ignored --nocapture`
+<a href=#531 id=531 data-nosnippet>531</a>    /// and `RUST_LOG=iroh_relay::dns=trace` to see the log output.
+<a href=#532 id=532 data-nosnippet>532</a>    </span><span class="attr">#[tokio::test]
+<a href=#533 id=533 data-nosnippet>533</a>    #[ignore = <span class="string">"requires network access"</span>]
+<a href=#534 id=534 data-nosnippet>534</a>    </span><span class="kw">async fn </span>resolve_success_and_nxdomain() {
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="kw">let _ </span>= tracing_subscriber::fmt::try_init();
+<a href=#536 id=536 data-nosnippet>536</a>        <span class="kw">let </span>resolver = with_proto(GOOGLE_DNS, DnsProtocol::Udp);
+<a href=#537 id=537 data-nosnippet>537</a>
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="macro">tracing::info!</span>(<span class="string">"--- resolving example.com (first, expect network query) ---"</span>);
+<a href=#539 id=539 data-nosnippet>539</a>        <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = resolver
+<a href=#540 id=540 data-nosnippet>540</a>            .lookup_ipv4(<span class="string">"example.com"</span>, TIMEOUT)
+<a href=#541 id=541 data-nosnippet>541</a>            .<span class="kw">await
+<a href=#542 id=542 data-nosnippet>542</a>            </span>.unwrap()
+<a href=#543 id=543 data-nosnippet>543</a>            .collect();
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="macro">assert!</span>(!addrs.is_empty());
+<a href=#545 id=545 data-nosnippet>545</a>
+<a href=#546 id=546 data-nosnippet>546</a>        <span class="macro">tracing::info!</span>(<span class="string">"--- resolving example.com (second, expect cache hit) ---"</span>);
+<a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">let </span>addrs2: Vec&lt;<span class="kw">_</span>&gt; = resolver
+<a href=#548 id=548 data-nosnippet>548</a>            .lookup_ipv4(<span class="string">"example.com"</span>, TIMEOUT)
+<a href=#549 id=549 data-nosnippet>549</a>            .<span class="kw">await
+<a href=#550 id=550 data-nosnippet>550</a>            </span>.unwrap()
+<a href=#551 id=551 data-nosnippet>551</a>            .collect();
+<a href=#552 id=552 data-nosnippet>552</a>        <span class="macro">assert_eq!</span>(addrs, addrs2);
+<a href=#553 id=553 data-nosnippet>553</a>
+<a href=#554 id=554 data-nosnippet>554</a>        <span class="macro">tracing::info!</span>(<span class="string">"--- resolving nonexistent domain (expect NXDOMAIN) ---"</span>);
+<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>err = resolver
+<a href=#556 id=556 data-nosnippet>556</a>            .lookup_ipv4(<span class="string">"this-domain-does-not-exist.example.invalid"</span>, TIMEOUT)
+<a href=#557 id=557 data-nosnippet>557</a>            .<span class="kw">await
+<a href=#558 id=558 data-nosnippet>558</a>            </span>.map(|i| i.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;());
+<a href=#559 id=559 data-nosnippet>559</a>        <span class="macro">assert!</span>(err.is_err(), <span class="string">"expected NXDOMAIN, got {err:?}"</span>);
+<a href=#560 id=560 data-nosnippet>560</a>    }
+<a href=#561 id=561 data-nosnippet>561</a>
+<a href=#562 id=562 data-nosnippet>562</a>    <span class="kw">mod </span>search_names {
+<a href=#563 id=563 data-nosnippet>563</a>        <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::{<span class="kw">super</span>::Builder, <span class="kw-2">*</span>};
+<a href=#564 id=564 data-nosnippet>564</a>
+<a href=#565 id=565 data-nosnippet>565</a>        <span class="kw">fn </span>resolver_with_search(domains: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]) -&gt; SimpleDnsResolver {
+<a href=#566 id=566 data-nosnippet>566</a>            <span class="kw">let </span><span class="kw-2">mut </span>r = SimpleDnsResolver::new(Builder::default());
+<a href=#567 id=567 data-nosnippet>567</a>            r.search_domains = domains.iter().map(|s| s.to_string()).collect();
+<a href=#568 id=568 data-nosnippet>568</a>            r
+<a href=#569 id=569 data-nosnippet>569</a>        }
+<a href=#570 id=570 data-nosnippet>570</a>
+<a href=#571 id=571 data-nosnippet>571</a>        <span class="attr">#[test]
+<a href=#572 id=572 data-nosnippet>572</a>        </span><span class="kw">fn </span>no_search_domains() {
+<a href=#573 id=573 data-nosnippet>573</a>            <span class="kw">let </span>r = SimpleDnsResolver::new(Builder::default());
+<a href=#574 id=574 data-nosnippet>574</a>            <span class="macro">assert_eq!</span>(r.search_names(<span class="string">"myhost"</span>), <span class="macro">vec!</span>[<span class="string">"myhost"</span>]);
+<a href=#575 id=575 data-nosnippet>575</a>        }
+<a href=#576 id=576 data-nosnippet>576</a>
+<a href=#577 id=577 data-nosnippet>577</a>        <span class="attr">#[test]
+<a href=#578 id=578 data-nosnippet>578</a>        </span><span class="kw">fn </span>fqdn_bypasses_search() {
+<a href=#579 id=579 data-nosnippet>579</a>            <span class="kw">let </span>r = resolver_with_search(<span class="kw-2">&amp;</span>[<span class="string">"example.com"</span>]);
+<a href=#580 id=580 data-nosnippet>580</a>            <span class="macro">assert_eq!</span>(
+<a href=#581 id=581 data-nosnippet>581</a>                r.search_names(<span class="string">"myhost.example.com."</span>),
+<a href=#582 id=582 data-nosnippet>582</a>                <span class="macro">vec!</span>[<span class="string">"myhost.example.com."</span>]
+<a href=#583 id=583 data-nosnippet>583</a>            );
+<a href=#584 id=584 data-nosnippet>584</a>        }
+<a href=#585 id=585 data-nosnippet>585</a>
+<a href=#586 id=586 data-nosnippet>586</a>        <span class="attr">#[test]
+<a href=#587 id=587 data-nosnippet>587</a>        </span><span class="kw">fn </span>short_name_tries_search_first() {
+<a href=#588 id=588 data-nosnippet>588</a>            <span class="kw">let </span>r = resolver_with_search(<span class="kw-2">&amp;</span>[<span class="string">"example.com"</span>, <span class="string">"test.local"</span>]);
+<a href=#589 id=589 data-nosnippet>589</a>            <span class="comment">// "myhost" has 0 dots (&lt; ndots=1), so search domains come first.
+<a href=#590 id=590 data-nosnippet>590</a>            </span><span class="macro">assert_eq!</span>(
+<a href=#591 id=591 data-nosnippet>591</a>                r.search_names(<span class="string">"myhost"</span>),
+<a href=#592 id=592 data-nosnippet>592</a>                <span class="macro">vec!</span>[<span class="string">"myhost.example.com"</span>, <span class="string">"myhost.test.local"</span>, <span class="string">"myhost"</span>]
+<a href=#593 id=593 data-nosnippet>593</a>            );
+<a href=#594 id=594 data-nosnippet>594</a>        }
+<a href=#595 id=595 data-nosnippet>595</a>
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="attr">#[test]
+<a href=#597 id=597 data-nosnippet>597</a>        </span><span class="kw">fn </span>dotted_name_tries_bare_first() {
+<a href=#598 id=598 data-nosnippet>598</a>            <span class="kw">let </span>r = resolver_with_search(<span class="kw-2">&amp;</span>[<span class="string">"example.com"</span>]);
+<a href=#599 id=599 data-nosnippet>599</a>            <span class="comment">// "foo.bar" has 1 dot (&gt;= ndots=1), so bare name comes first.
+<a href=#600 id=600 data-nosnippet>600</a>            </span><span class="macro">assert_eq!</span>(
+<a href=#601 id=601 data-nosnippet>601</a>                r.search_names(<span class="string">"foo.bar"</span>),
+<a href=#602 id=602 data-nosnippet>602</a>                <span class="macro">vec!</span>[<span class="string">"foo.bar"</span>, <span class="string">"foo.bar.example.com"</span>]
+<a href=#603 id=603 data-nosnippet>603</a>            );
+<a href=#604 id=604 data-nosnippet>604</a>        }
+<a href=#605 id=605 data-nosnippet>605</a>
+<a href=#606 id=606 data-nosnippet>606</a>        <span class="attr">#[test]
+<a href=#607 id=607 data-nosnippet>607</a>        </span><span class="kw">fn </span>multi_dot_name_tries_bare_first() {
+<a href=#608 id=608 data-nosnippet>608</a>            <span class="kw">let </span>r = resolver_with_search(<span class="kw-2">&amp;</span>[<span class="string">"example.com"</span>]);
+<a href=#609 id=609 data-nosnippet>609</a>            <span class="macro">assert_eq!</span>(r.search_names(<span class="string">"a.b.c"</span>), <span class="macro">vec!</span>[<span class="string">"a.b.c"</span>, <span class="string">"a.b.c.example.com"</span>]);
+<a href=#610 id=610 data-nosnippet>610</a>        }
+<a href=#611 id=611 data-nosnippet>611</a>
+<a href=#612 id=612 data-nosnippet>612</a>        <span class="attr">#[test]
+<a href=#613 id=613 data-nosnippet>613</a>        </span><span class="kw">fn </span>high_ndots_k8s_style() {
+<a href=#614 id=614 data-nosnippet>614</a>            <span class="kw">let </span><span class="kw-2">mut </span>r = SimpleDnsResolver::new(Builder::default());
+<a href=#615 id=615 data-nosnippet>615</a>            r.search_domains = <span class="macro">vec!</span>[<span class="string">"ns.svc.cluster.local"</span>.into(), <span class="string">"svc.cluster.local"</span>.into()];
+<a href=#616 id=616 data-nosnippet>616</a>            r.ndots = <span class="number">5</span>;
+<a href=#617 id=617 data-nosnippet>617</a>            <span class="comment">// 4 dots &lt; ndots=5, so search domains come first (Kubernetes behavior).
+<a href=#618 id=618 data-nosnippet>618</a>            </span><span class="macro">assert_eq!</span>(
+<a href=#619 id=619 data-nosnippet>619</a>                r.search_names(<span class="string">"my-svc.my-ns.svc.cluster.local"</span>),
+<a href=#620 id=620 data-nosnippet>620</a>                <span class="macro">vec!</span>[
+<a href=#621 id=621 data-nosnippet>621</a>                    <span class="string">"my-svc.my-ns.svc.cluster.local.ns.svc.cluster.local"</span>,
+<a href=#622 id=622 data-nosnippet>622</a>                    <span class="string">"my-svc.my-ns.svc.cluster.local.svc.cluster.local"</span>,
+<a href=#623 id=623 data-nosnippet>623</a>                    <span class="string">"my-svc.my-ns.svc.cluster.local"</span>,
+<a href=#624 id=624 data-nosnippet>624</a>                ]
+<a href=#625 id=625 data-nosnippet>625</a>            );
+<a href=#626 id=626 data-nosnippet>626</a>        }
+<a href=#627 id=627 data-nosnippet>627</a>    }
+<a href=#628 id=628 data-nosnippet>628</a>}</code></pre></div></section></main></body></html>
