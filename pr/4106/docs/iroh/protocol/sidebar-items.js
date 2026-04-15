@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AcceptError"],"struct":["AccessLimit","Router","RouterBuilder"],"trait":["DynProtocolHandler","ProtocolHandler"]};
+window.SIDEBAR_ITEMS = {"enum":["AcceptError","IncomingFilterOutcome"],"struct":["AccessLimit","Router","RouterBuilder"],"trait":["DynProtocolHandler","ProtocolHandler"],"type":["IncomingFilter"]};
