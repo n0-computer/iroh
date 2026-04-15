@@ -331,17 +331,15 @@ struct EndpointArgs {
     /// Increasing this value gives higher throughput at high latencies, at the cost of
     /// more memory usage.
     ///
-    /// The default is 1.25 MB, which gives a max throughput of 12.5 MB/s at 100ms RTT.
+    /// The receive window is usually calculated as the product of desired throughput
+    /// and expected maximum roundtrip latency (RTT), i.e. for a throughput of 100 MBit/s
+    /// and a RTT of 200ms, you would set the receive window to (100 Mbit/s / 8) * 0.2s = 2.5M.
+    ///
+    /// The default is 1.25 MB, which gives a max throughput of 100 MBit/s at 100ms RTT.
     ///
     /// Accepts values like "5M", "2000K", etc.
     #[clap(long, value_parser = parse_byte_size, conflicts_with = "receive_window_rtt")]
-    receive_window: Option<u64>,
-    /// Receive window size derived from expected RTT in milliseconds.
-    ///
-    /// Calculates the receive window size for an expected RTT
-    /// and a desired max throughput of 12.5 MB/s.
-    #[clap(long, conflicts_with = "receive_window")]
-    receive_window_rtt: Option<u32>,
+    receive_window: Option<u32>,
 }
 
 #[derive(Subcommand, Debug, derive_more::Display)]
@@ -556,25 +554,17 @@ impl EndpointArgs {
 
         // Adjust the receive window, if configured.
         // By default noq and iroh set the connection-level receive window to VarInt::MAX, and
-        // the stream receive window to 1.25MB (for a throughput of 12.5 MB/s at 100ms latency).
+        // the stream receive window to 1.25 MB (for a throughput of 100 MBit/s at 100ms latency).
         // We leave the connection-level receive window at the default and adjust the
         // stream-level receive window. The distinction between connection-level and stream-level
         // doesn't matter here because we don't have concurrent data-intensive streams
         // in the transfer protocol.
-        // We also set the send_window to 8 * stream_receive_window. This is the same as what
-        // the noq default does.
-        let rwnd = if let Some(size) = self.receive_window {
-            Some(size as u32)
-        } else if let Some(expected_rtt) = self.receive_window_rtt {
-            const MAX_STREAM_BANDWIDTH: u32 = 12500 * 1000; // bytes/s
-            let size = MAX_STREAM_BANDWIDTH / 1000 * expected_rtt;
-            Some(size)
-        } else {
-            None
-        };
-        if let Some(size) = rwnd {
+        // We also set the send_window to 2 * stream_receive_window. By default, noq sets this
+        // to 8 * 1.25MB. The transfer protocol doesn't use concurrent data streams, so 2 times
+        // our receive window is enough.
+        if let Some(size) = self.receive_window {
             cfg = cfg.stream_receive_window(size.into());
-            cfg = cfg.send_window(size as u64 * 8);
+            cfg = cfg.send_window(size as u64 * 2);
         }
 
         #[cfg(feature = "qlog")]
