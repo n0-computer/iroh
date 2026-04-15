@@ -42,7 +42,7 @@ use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay, PingTracker,
     client::{Client, ConnectError, RecvError, SendError},
-    protos::relay::{ClientToRelayMsg, Datagrams, HealthStatus, RelayToClientMsg},
+    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, Status},
 };
 use n0_error::{e, stack_error};
 use n0_future::{
@@ -682,7 +682,7 @@ impl ActiveRelayActor {
                 state.established = true;
             }
             RelayToClientMsg::Status(status) => match status {
-                HealthStatus::Healthy => info!("Relay server reports: {status}"),
+                Status::Healthy => info!("Relay server reports: {status}"),
                 _ => warn!("Relay server reports problem: {status}"),
             },
             RelayToClientMsg::Restarting { .. } => {

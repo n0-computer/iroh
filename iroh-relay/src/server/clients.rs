@@ -18,7 +18,7 @@ use tracing::{debug, trace};
 use super::client::{Client, Config, ForwardPacketError};
 use crate::{
     protos::{
-        relay::{Datagrams, HealthStatus},
+        relay::{Datagrams, Status},
         streams::BytesStreamSink,
     },
     server::{client::SendError, metrics::Metrics},
@@ -91,7 +91,7 @@ impl Clients {
                     "multiple connections found, deactivating old connection",
                 );
                 old_client
-                    .try_send_health(HealthStatus::SameEndpointIdConnected)
+                    .try_send_health(Status::SameEndpointIdConnected)
                     .ok();
                 state.inactive.push(old_client);
                 metrics.clients_inactive_added.inc();
@@ -135,7 +135,7 @@ impl Clients {
                     // There is an inactive client, promote to active again.
                     state.active = last_inactive_client;
                     // Inform the old client that it is healthy again.
-                    state.active.try_send_health(HealthStatus::Healthy).ok();
+                    state.active.try_send_health(Status::Healthy).ok();
                     // Don't remove the entry from client map.
                     false
                 } else {
@@ -368,7 +368,7 @@ mod tests {
         let frame = recv_frame(FrameType::Status, &mut a1_rw).await?;
         assert_eq!(
             frame,
-            RelayToClientMsg::Status(HealthStatus::SameEndpointIdConnected)
+            RelayToClientMsg::Status(Status::SameEndpointIdConnected)
         );
 
         // send packet and verify it is send to a2
@@ -409,7 +409,7 @@ mod tests {
 
         // a1 is marked active again and should receive a health frame
         let frame = recv_frame(FrameType::Status, &mut a1_rw).await?;
-        assert_eq!(frame, RelayToClientMsg::Status(HealthStatus::Healthy));
+        assert_eq!(frame, RelayToClientMsg::Status(Status::Healthy));
 
         // a1 should receive packets
         clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;

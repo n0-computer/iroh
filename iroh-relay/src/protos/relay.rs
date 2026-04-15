@@ -85,7 +85,7 @@ pub enum RelayToClientMsg {
     /// packet but has now disconnected from the relay.
     EndpointGone(EndpointId),
     /// A one-way message from relay to client, declaring the connection health state.
-    Status(HealthStatus),
+    Status(Status),
     /// A one-way message from relay to client, advertising that the relay is restarting.
     Restarting {
         /// An advisory duration that the client should wait before attempting to reconnect.
@@ -111,9 +111,7 @@ pub enum RelayToClientMsg {
     ///
     /// Use [`Self::Status`] instead.
     Health {
-        /// If set, is a description of why the connection is unhealthy.
-        ///
-        /// If `None` means the connection is healthy again.
+        /// Description of why the connection is unhealthy.
         ///
         /// The default condition is healthy, so the relay doesn't broadcast a [`RelayToClientMsg::Health`]
         /// until a problem exists.
@@ -124,7 +122,7 @@ pub enum RelayToClientMsg {
 /// One-way message from server to client indicating issues with the relay connection.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[non_exhaustive]
-pub enum HealthStatus {
+pub enum Status {
     /// The connection is healthy and recovered from previous problems.
     #[display("The connection is healthy and has recovered from previous problems")]
     Healthy,
@@ -138,13 +136,13 @@ pub enum HealthStatus {
     Unknown(u8),
 }
 
-impl HealthStatus {
+impl Status {
     #[cfg(feature = "server")]
     fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         match self {
-            HealthStatus::Healthy => dst.put_u8(0),
-            HealthStatus::SameEndpointIdConnected => dst.put_u8(1),
-            HealthStatus::Unknown(discriminant) => dst.put_u8(*discriminant),
+            Status::Healthy => dst.put_u8(0),
+            Status::SameEndpointIdConnected => dst.put_u8(1),
+            Status::Unknown(discriminant) => dst.put_u8(*discriminant),
         }
         dst
     }
@@ -448,7 +446,7 @@ impl RelayToClientMsg {
                 }
             }
             FrameType::Status => {
-                let status = HealthStatus::from_bytes(content)?;
+                let status = Status::from_bytes(content)?;
                 Self::Status(status)
             }
             _ => {
@@ -663,8 +661,7 @@ mod tests {
                 "0c 00 00 00 0a 00 00 00 14",
             ),
             (
-                RelayToClientMsg::Status(HealthStatus::SameEndpointIdConnected)
-                    .write_to(Vec::new()),
+                RelayToClientMsg::Status(Status::SameEndpointIdConnected).write_to(Vec::new()),
                 "0d 01",
             ),
         ]);
@@ -792,7 +789,7 @@ mod proptests {
                 s.len() < MAX_PACKET_SIZE // a single unicode character can match a regex "." but take up multiple bytes
             })
             .prop_map(|problem| RelayToClientMsg::Health { problem });
-        let health = Just(HealthStatus::SameEndpointIdConnected).prop_map(RelayToClientMsg::Status);
+        let health = Just(Status::SameEndpointIdConnected).prop_map(RelayToClientMsg::Status);
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),

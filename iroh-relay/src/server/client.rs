@@ -18,7 +18,7 @@ use crate::{
     PingTracker,
     http::ProtocolVersion,
     protos::{
-        relay::{ClientToRelayMsg, Datagrams, HealthStatus, PING_INTERVAL, RelayToClientMsg},
+        relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg, Status},
         streams::BytesStreamSink,
     },
     server::{
@@ -173,7 +173,7 @@ impl Client {
 
     pub(super) fn try_send_health(
         &self,
-        status: HealthStatus,
+        status: Status,
     ) -> Result<(), TrySendError<RelayToClientMsg>> {
         let message = match self.protocol_version {
             ProtocolVersion::V2 => RelayToClientMsg::Status(status),
@@ -525,7 +525,7 @@ mod tests {
     use crate::{
         client::conn::Conn,
         http::ProtocolVersion,
-        protos::{common::FrameType, relay::HealthStatus, streams::WsBytesFramed},
+        protos::{common::FrameType, relay::Status, streams::WsBytesFramed},
         server::streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
     };
 
@@ -774,7 +774,7 @@ mod tests {
         let frame = recv_frame(FrameType::Status, &mut first_rw).await?;
         assert_eq!(
             frame,
-            RelayToClientMsg::Status(HealthStatus::SameEndpointIdConnected)
+            RelayToClientMsg::Status(Status::SameEndpointIdConnected)
         );
 
         clients.shutdown().await;
