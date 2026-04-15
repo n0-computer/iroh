@@ -61,9 +61,9 @@ pub enum FrameType {
     ///
     /// Added in `iroh-relay-v2` protocol. May not be sent to `iroh-relay-v1` clients.
     ///
-    /// Uses a binary-encoded [`HealthStatus`] payload.
+    /// Uses a binary-encoded [`Status`] payload.
     ///
-    /// [`HealthStatus`]: super::relay::HealthStatus
+    /// [`Status`]: super::relay::Status
     Status = 13,
 }
 
