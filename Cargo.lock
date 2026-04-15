@@ -1737,7 +1737,7 @@ dependencies = [
  "parking_lot",
  "portable-atomic",
  "quanta",
- "rand 0.9.2",
+ "rand 0.9.4",
  "smallvec",
  "spinning_top",
  "web-time",
@@ -1857,7 +1857,7 @@ dependencies = [
  "idna",
  "ipnet",
  "jni 0.22.4",
- "rand 0.10.0",
+ "rand 0.10.1",
  "rustls",
  "thiserror 2.0.18",
  "tinyvec",
@@ -1886,7 +1886,7 @@ dependencies = [
  "idna",
  "ipnet",
  "once_cell",
- "rand 0.9.2",
+ "rand 0.9.4",
  "ring",
  "rustls",
  "serde",
@@ -1910,7 +1910,7 @@ dependencies = [
  "jni 0.22.4",
  "once_cell",
  "prefix-trie 0.8.2",
- "rand 0.10.0",
+ "rand 0.10.1",
  "ring",
  "thiserror 2.0.18",
  "tinyvec",
@@ -1931,7 +1931,7 @@ dependencies = [
  "moka",
  "once_cell",
  "parking_lot",
- "rand 0.9.2",
+ "rand 0.9.4",
  "resolv-conf",
  "rustls",
  "serde",
@@ -1959,7 +1959,7 @@ dependencies = [
  "ndk-context",
  "once_cell",
  "parking_lot",
- "rand 0.10.0",
+ "rand 0.10.1",
  "resolv-conf",
  "rustls",
  "smallvec",
@@ -2289,7 +2289,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "log",
- "rand 0.10.0",
+ "rand 0.10.1",
  "tokio",
  "url",
  "xmltree",
@@ -2407,7 +2407,7 @@ dependencies = [
  "portmapper",
  "postcard",
  "pretty_assertions",
- "rand 0.10.0",
+ "rand 0.10.1",
  "rand_chacha 0.10.0",
  "reqwest 0.13.2",
  "rustc-hash",
@@ -2447,7 +2447,7 @@ dependencies = [
  "n0-error",
  "postcard",
  "proptest",
- "rand 0.10.0",
+ "rand 0.10.1",
  "rand_chacha 0.10.0",
  "serde",
  "serde_json",
@@ -2471,7 +2471,7 @@ dependencies = [
  "n0-error",
  "n0-future",
  "noq",
- "rand 0.10.0",
+ "rand 0.10.1",
  "rcgen",
  "rustls",
  "tokio",
@@ -2506,7 +2506,7 @@ dependencies = [
  "n0-future",
  "n0-tracing-test",
  "pkarr",
- "rand 0.10.0",
+ "rand 0.10.1",
  "rand_chacha 0.10.0",
  "rcgen",
  "redb",
@@ -2598,7 +2598,7 @@ dependencies = [
  "pkarr",
  "postcard",
  "proptest",
- "rand 0.10.0",
+ "rand 0.10.1",
  "rand_chacha 0.10.0",
  "rcgen",
  "reloadable-state",
@@ -3236,7 +3236,7 @@ dependencies = [
  "identity-hash",
  "lru-slab",
  "n0-qlog",
- "rand 0.10.0",
+ "rand 0.10.1",
  "ring",
  "rustc-hash",
  "rustls",
@@ -3736,7 +3736,7 @@ dependencies = [
  "n0-error",
  "netwatch",
  "num_enum",
- "rand 0.10.0",
+ "rand 0.10.1",
  "serde",
  "smallvec",
  "socket2",
@@ -3866,7 +3866,7 @@ dependencies = [
  "bit-vec",
  "bitflags",
  "num-traits",
- "rand 0.9.2",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax",
@@ -3934,7 +3934,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.2",
+ "rand 0.9.4",
  "ring",
  "rustc-hash",
  "rustls",
@@ -3983,9 +3983,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.9.2"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
@@ -3993,9 +3993,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc266eb313df6c5c09c1c7b1fbe2510961e5bcd3add930c1e31f7ed9da0feff8"
+checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
  "chacha20",
  "getrandom 0.4.2",
@@ -4939,7 +4939,7 @@ checksum = "737bfdaf732174c48b8193b29158460d8d959dd8e9ce071a5bbda95d8546b68b"
 dependencies = [
  "acto",
  "hickory-proto 0.26.0-beta.1",
- "rand 0.10.0",
+ "rand 0.10.1",
  "socket2",
  "thiserror 2.0.18",
  "tokio",
@@ -5025,7 +5025,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5271,7 +5271,7 @@ dependencies = [
  "getrandom 0.4.2",
  "http",
  "httparse",
- "rand 0.10.0",
+ "rand 0.10.1",
  "ring",
  "rustls-pki-types",
  "sha1_smol",
