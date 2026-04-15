@@ -395,7 +395,7 @@ impl PathWatcherExt for PathWatcher {
             }
         })
         .await
-        .with_std_context(|_| "wait_selected timed out after {timeout:?}")?
+        .with_std_context(|_| format!("wait_selected timed out after {timeout:?}"))?
     }
 }
 
@@ -416,7 +416,7 @@ pub async fn ping_open(conn: &Connection, timeout: Duration) -> Result {
     })
     .instrument(error_span!("ping_open"))
     .await
-    .with_std_context(|_| "ping_open timed out after {timeout:?}")?
+    .with_std_context(|_| format!("ping_open timed out after {timeout:?}"))?
 }
 
 /// Accepts a bidi stream, reads 8 bytes of data, and sends the same data back.
@@ -434,7 +434,7 @@ pub async fn ping_accept(conn: &Connection, timeout: Duration) -> Result {
     })
     .instrument(error_span!("ping_accept"))
     .await
-    .with_std_context(|_| "ping_accept timed out after {timeout:?}")?
+    .with_std_context(|_| format!("ping_accept timed out after {timeout:?}"))?
 }
 
 fn watch_selected_path(conn: &Connection) {

@@ -38,8 +38,12 @@ use tracing::info;
 
 use self::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
 
+// Because we're in an integration test, we can't declare modules under patchbay/
+// without setting an explicit path.
 #[path = "patchbay/degrade.rs"]
 mod degrade;
+#[path = "patchbay/nat.rs"]
+mod nat;
 #[path = "patchbay/switch-uplink.rs"]
 mod switch_uplink;
 #[path = "patchbay/util.rs"]
@@ -100,8 +104,11 @@ async fn run_add_faster_link(active_side: Side) -> Result {
 
     let active = lab
         .add_device("active")
-        .iface("eth0", nat_a.id())
-        .iface("eth1", nat_b.id())
+        .iface(
+            "eth0",
+            IfaceConfig::routed(nat_a.id()).condition(LinkCondition::Mobile4G, LinkDirection::Both),
+        )
+        .iface("eth1", IfaceConfig::routed(nat_b.id()).down())
         .build()
         .await?;
     let passive = lab
@@ -109,12 +116,6 @@ async fn run_add_faster_link(active_side: Side) -> Result {
         .iface("eth0", nat_b.id())
         .build()
         .await?;
-    active
-        .iface("eth0")
-        .unwrap()
-        .set_condition(LinkCondition::Mobile4G, LinkDirection::Both)
-        .await?;
-    active.iface("eth1").unwrap().link_down().await?;
 
     let timeout = Duration::from_secs(15);
     Pair::new(relay_map)
@@ -126,10 +127,11 @@ async fn run_add_faster_link(active_side: Side) -> Result {
                 .await
                 .context("did not become direct")?;
             info!(addr=?first.remote_addr(), "connection became direct");
+            ping_accept(&conn, timeout)
+                .await
+                .context("ping_accept before switch")?;
 
-            tokio::time::sleep(Duration::from_secs(1)).await;
-
-            info!("bring up eth1");
+            info!("bring up faster link (eth1)");
             dev.iface("eth1").unwrap().link_up().await?;
 
             let next = paths
@@ -139,14 +141,37 @@ async fn run_add_faster_link(active_side: Side) -> Result {
                 .await
                 .context("did not switch paths")?;
             info!(addr=?next.remote_addr(), "new direct path established");
+            ping_accept(&conn, timeout)
+                .await
+                .context("ping_accept after switch")?;
 
-            ping_open(&conn, timeout).await.context("ping_open")?;
-            conn.close(0u32.into(), b"bye");
+            conn.closed().await;
             Ok(())
         })
         .right(passive, async move |_dev, _ep, conn| {
-            ping_accept(&conn, timeout).await.context("ping_accept")?;
-            conn.closed().await;
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
+            let first = paths
+                .wait_ip(timeout)
+                .await
+                .context("did not become direct")?;
+            info!(addr=?first.remote_addr(), "connection became direct");
+            ping_open(&conn, timeout)
+                .await
+                .context("ping_open before switch")?;
+
+            let next = paths
+                .wait_selected(timeout, |p| {
+                    p.is_ip() && p.remote_addr() != first.remote_addr()
+                })
+                .await
+                .context("did not switch paths")?;
+            info!(addr=?next.remote_addr(), "new direct path established");
+            ping_open(&conn, timeout)
+                .await
+                .context("ping_open after switch")?;
+
+            conn.close(0u32.into(), b"bye");
             Ok(())
         })
         .run()
@@ -171,7 +196,7 @@ async fn add_faster_link_server() -> Result {
 ///
 /// After recovery, verifies connectivity (via relay fallback or re-established
 /// direct path), then waits for a direct path to be selected again.
-async fn run_link_outage_recovery(outage_side: Side) -> Result {
+async fn run_link_outage_recovery(outage_side: Side, downtime: Duration) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
@@ -182,20 +207,19 @@ async fn run_link_outage_recovery(outage_side: Side) -> Result {
         .left(outage_side, outage, async move |dev, _ep, conn| {
             let mut paths = conn.paths();
             paths.wait_ip(timeout).await.context("initial holepunch")?;
-            let downtime = Duration::from_secs(5);
             info!("holepunched, now killing link for {downtime:?}");
             dev.iface("eth0").unwrap().link_down().await?;
             tokio::time::sleep(downtime).await;
             dev.iface("eth0").unwrap().link_up().await?;
             info!("link restored, waiting for recovery");
 
-            ping_open(&conn, Duration::from_secs(30))
+            ping_open(&conn, timeout)
                 .await
                 .context("ping_open after link_up")?;
             info!("connection recovered after link outage");
 
             paths
-                .wait_ip(Duration::from_secs(30))
+                .wait_ip(timeout)
                 .await
                 .context("did not re-establish direct path")?;
             ping_open(&conn, timeout)
@@ -219,35 +243,35 @@ async fn run_link_outage_recovery(outage_side: Side) -> Result {
 #[tokio::test]
 #[traced_test]
 async fn link_outage_recovery_client() -> Result {
-    run_link_outage_recovery(Side::Client).await
+    run_link_outage_recovery(Side::Client, Duration::from_secs(5)).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn link_outage_recovery_server() -> Result {
-    run_link_outage_recovery(Side::Server).await
+    run_link_outage_recovery(Side::Server, Duration::from_secs(5)).await
 }
 
 /// Starts one side behind a symmetric NAT (no holepunch possible), then replugs
 /// it to a Home NAT and verifies a direct path is established.
 async fn run_hard_nat_to_holepunchable(replug_side: Side) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let net_easy = lab.add_router("net_easy").nat(Nat::Home).build().await?;
-    let net_hard = lab
-        .add_router("net_hard")
+    let nat_easy = lab.add_router("nat_easy").nat(Nat::Home).build().await?;
+    let nat_hard = lab
+        .add_router("nat_hard")
         .nat(Nat::Corporate)
         .build()
         .await?;
-    let net_peer = lab.add_router("net_peer").nat(Nat::Home).build().await?;
+    let nat_peer = lab.add_router("nat_peer").nat(Nat::Home).build().await?;
 
     let replug = lab
         .add_device("replug")
-        .uplink(net_hard.id())
+        .uplink(nat_hard.id())
         .build()
         .await?;
     let stable = lab
         .add_device("stable")
-        .uplink(net_peer.id())
+        .uplink(nat_peer.id())
         .build()
         .await?;
 
@@ -259,7 +283,7 @@ async fn run_hard_nat_to_holepunchable(replug_side: Side) -> Result {
 
             ping_accept(&conn, timeout)
                 .await
-                .context("ping over relay")?;
+                .context("ping 1 (relay)")?;
 
             tokio::time::sleep(Duration::from_secs(3)).await;
             assert!(
@@ -268,7 +292,7 @@ async fn run_hard_nat_to_holepunchable(replug_side: Side) -> Result {
             );
 
             info!("replug to holepunchable NAT");
-            dev.iface("eth0").unwrap().replug(net_easy.id()).await?;
+            dev.iface("eth0").unwrap().replug(nat_easy.id()).await?;
 
             paths
                 .wait_ip(timeout)
@@ -278,7 +302,7 @@ async fn run_hard_nat_to_holepunchable(replug_side: Side) -> Result {
 
             ping_accept(&conn, timeout)
                 .await
-                .context("ping over direct")?;
+                .context("ping 2 (direct)")?;
             conn.closed().await;
             Ok(())
         })
@@ -314,19 +338,18 @@ async fn hard_nat_to_holepunchable_server() -> Result {
 }
 
 /// Holepunching succeeds despite many unreachable local addresses on one side.
-async fn run_holepunch_many_addrs(many_addrs_side: Side) -> Result {
+async fn run_holepunch_many_addrs(many_addrs_side: Side, addr_count: u8) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
     let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
 
     let mut builder = lab.add_device("many_addrs").uplink(nat1.id());
-    const ADDR_COUNT: u8 = 8;
-    for i in 0..ADDR_COUNT {
+    for i in 0..addr_count {
         builder = builder.iface(
             &format!("virt{i}"),
             IfaceConfig::dummy().addr(Ipv4Net::new_assert(
                 Ipv4Addr::new(172, 16, 0, i + 1).into(),
-                8,
+                24,
             )),
         );
     }
@@ -336,6 +359,14 @@ async fn run_holepunch_many_addrs(many_addrs_side: Side) -> Result {
     let timeout = Duration::from_secs(15);
     Pair::new(relay_map)
         .left(many_addrs_side, many_addrs, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            assert!(paths.selected().is_relay(), "connection started relayed");
+            paths
+                .wait_ip(timeout)
+                .await
+                .context("holepunch to direct with many addrs")?;
+            info!("connection became direct");
+            ping_accept(&conn, timeout).await.context("ping_accept")?;
             conn.closed().await;
             Ok(())
         })
@@ -347,6 +378,7 @@ async fn run_holepunch_many_addrs(many_addrs_side: Side) -> Result {
                 .await
                 .context("holepunch to direct with many addrs")?;
             info!("connection became direct");
+            ping_open(&conn, timeout).await.context("ping_accept")?;
             conn.close(0u32.into(), b"bye");
             Ok(())
         })
@@ -358,12 +390,26 @@ async fn run_holepunch_many_addrs(many_addrs_side: Side) -> Result {
 
 #[tokio::test]
 #[traced_test]
-async fn holepunch_many_addrs_client() -> Result {
-    run_holepunch_many_addrs(Side::Client).await
+async fn holepunch_many_addrs_client_8() -> Result {
+    run_holepunch_many_addrs(Side::Client, 8).await
 }
 
 #[tokio::test]
 #[traced_test]
-async fn holepunch_many_addrs_server() -> Result {
-    run_holepunch_many_addrs(Side::Server).await
+async fn holepunch_many_addrs_server_8() -> Result {
+    run_holepunch_many_addrs(Side::Server, 8).await
+}
+
+#[tokio::test]
+#[traced_test]
+#[ignore = "not yet passing"]
+async fn holepunch_many_addrs_client_16() -> Result {
+    run_holepunch_many_addrs(Side::Client, 16).await
+}
+
+#[tokio::test]
+#[traced_test]
+#[ignore = "not yet passing"]
+async fn holepunch_many_addrs_server_16() -> Result {
+    run_holepunch_many_addrs(Side::Server, 16).await
 }
