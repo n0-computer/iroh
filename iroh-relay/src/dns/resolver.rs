@@ -306,7 +306,8 @@ impl SimpleDnsResolver {
                     let (results, ttl) = parse(&response, id)?;
                     if !results.is_empty() {
                         debug!(%host, count = results.len(), ttl, ?qtype, "resolved");
-                        self.cache.insert(host, qtype, to_cache(results.clone()), ttl);
+                        self.cache
+                            .insert(host, qtype, to_cache(results.clone()), ttl);
                         return Ok(results);
                     }
                 }
