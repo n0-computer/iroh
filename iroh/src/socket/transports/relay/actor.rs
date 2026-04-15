@@ -1680,4 +1680,29 @@ mod tests {
         let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
         assert!(res.is_err(), "ping timeout should only happen once");
     }
+
+    #[test]
+    fn test_home_relay_watch_url_guard() {
+        use super::{HomeRelayStatus::*, HomeRelayWatch};
+
+        let watch = HomeRelayWatch::default();
+        let a: RelayUrl = "https://a.example.com".parse().unwrap();
+        let b: RelayUrl = "https://b.example.com".parse().unwrap();
+
+        // Actor A becomes home and connects
+        watch.set(a.clone(), Connecting);
+        watch.set_status(&a, Connected);
+        assert_eq!(watch.get(), Some((a.clone(), Connected)));
+
+        // RelayActor migrates home to B
+        watch.set(b.clone(), Connecting);
+
+        // Old actor A tries to write -- rejected because URL changed
+        watch.set_status(&a, Disconnected);
+        assert_eq!(watch.get(), Some((b.clone(), Connecting)));
+
+        // Actor B writes normally
+        watch.set_status(&b, Connected);
+        assert_eq!(watch.get(), Some((b.clone(), Connected)));
+    }
 }
