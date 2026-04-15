@@ -1680,4 +1680,29 @@
 <a href=#1680 id=1680 data-nosnippet>1680</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
 <a href=#1681 id=1681 data-nosnippet>1681</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping timeout should only happen once"</span>);
 <a href=#1682 id=1682 data-nosnippet>1682</a>    }
-<a href=#1683 id=1683 data-nosnippet>1683</a>}</code></pre></div></section></main></body></html>
+<a href=#1683 id=1683 data-nosnippet>1683</a>
+<a href=#1684 id=1684 data-nosnippet>1684</a>    <span class="attr">#[test]
+<a href=#1685 id=1685 data-nosnippet>1685</a>    </span><span class="kw">fn </span>test_home_relay_watch_url_guard() {
+<a href=#1686 id=1686 data-nosnippet>1686</a>        <span class="kw">use super</span>::{HomeRelayStatus::<span class="kw-2">*</span>, HomeRelayWatch};
+<a href=#1687 id=1687 data-nosnippet>1687</a>
+<a href=#1688 id=1688 data-nosnippet>1688</a>        <span class="kw">let </span>watch = HomeRelayWatch::default();
+<a href=#1689 id=1689 data-nosnippet>1689</a>        <span class="kw">let </span>a: RelayUrl = <span class="string">"https://a.example.com"</span>.parse().unwrap();
+<a href=#1690 id=1690 data-nosnippet>1690</a>        <span class="kw">let </span>b: RelayUrl = <span class="string">"https://b.example.com"</span>.parse().unwrap();
+<a href=#1691 id=1691 data-nosnippet>1691</a>
+<a href=#1692 id=1692 data-nosnippet>1692</a>        <span class="comment">// Actor A becomes home and connects
+<a href=#1693 id=1693 data-nosnippet>1693</a>        </span>watch.set(a.clone(), Connecting);
+<a href=#1694 id=1694 data-nosnippet>1694</a>        watch.set_status(<span class="kw-2">&amp;</span>a, Connected);
+<a href=#1695 id=1695 data-nosnippet>1695</a>        <span class="macro">assert_eq!</span>(watch.get(), <span class="prelude-val">Some</span>((a.clone(), Connected)));
+<a href=#1696 id=1696 data-nosnippet>1696</a>
+<a href=#1697 id=1697 data-nosnippet>1697</a>        <span class="comment">// RelayActor migrates home to B
+<a href=#1698 id=1698 data-nosnippet>1698</a>        </span>watch.set(b.clone(), Connecting);
+<a href=#1699 id=1699 data-nosnippet>1699</a>
+<a href=#1700 id=1700 data-nosnippet>1700</a>        <span class="comment">// Old actor A tries to write -- rejected because URL changed
+<a href=#1701 id=1701 data-nosnippet>1701</a>        </span>watch.set_status(<span class="kw-2">&amp;</span>a, Disconnected);
+<a href=#1702 id=1702 data-nosnippet>1702</a>        <span class="macro">assert_eq!</span>(watch.get(), <span class="prelude-val">Some</span>((b.clone(), Connecting)));
+<a href=#1703 id=1703 data-nosnippet>1703</a>
+<a href=#1704 id=1704 data-nosnippet>1704</a>        <span class="comment">// Actor B writes normally
+<a href=#1705 id=1705 data-nosnippet>1705</a>        </span>watch.set_status(<span class="kw-2">&amp;</span>b, Connected);
+<a href=#1706 id=1706 data-nosnippet>1706</a>        <span class="macro">assert_eq!</span>(watch.get(), <span class="prelude-val">Some</span>((b.clone(), Connected)));
+<a href=#1707 id=1707 data-nosnippet>1707</a>    }
+<a href=#1708 id=1708 data-nosnippet>1708</a>}</code></pre></div></section></main></body></html>
