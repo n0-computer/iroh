@@ -1,6 +1,8 @@
 //! DNS transport implementations: UDP, TCP, TLS, and HTTPS.
 
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
+#[cfg(with_crypto_provider)]
+use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -68,6 +70,7 @@ pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
 /// (e.g. Google 8.8.8.8, Cloudflare 1.1.1.1), but will fail TLS validation for
 /// servers whose certificates only cover hostnames. A future improvement could
 /// accept an optional hostname for SNI.
+#[cfg(with_crypto_provider)]
 pub(super) async fn tls_query(
     addr: SocketAddr,
     query: &[u8],
@@ -94,6 +97,7 @@ pub(super) async fn tls_query(
 }
 
 /// Build a [`reqwest::Client`] for DNS-over-HTTPS queries.
+#[cfg(with_crypto_provider)]
 pub(super) fn build_https_client(
     tls_config: Option<&Arc<rustls::ClientConfig>>,
 ) -> Result<reqwest::Client, DnsError> {
@@ -111,6 +115,7 @@ pub(super) fn build_https_client(
 /// certificates include the IP address as a SAN, but will fail for servers
 /// that only have hostname-based certificates. A future improvement could
 /// accept an optional hostname for URL construction and TLS SNI.
+#[cfg(with_crypto_provider)]
 pub(super) async fn https_query(
     addr: SocketAddr,
     query: &[u8],
