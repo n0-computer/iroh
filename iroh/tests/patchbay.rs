@@ -348,7 +348,7 @@ async fn run_holepunch_many_addrs(many_addrs_side: Side, addr_count: u8) -> Resu
         builder = builder.iface(
             &format!("virt{i}"),
             IfaceConfig::dummy().addr(Ipv4Net::new_assert(
-                Ipv4Addr::new(172, 16, 0, i + 1).into(),
+                Ipv4Addr::new(172, 16, 0, i + 1),
                 24,
             )),
         );
