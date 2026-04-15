@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["CLIENT_AUTH_HEADER","RELAY_PATH","RELAY_PROBE_PATH","RELAY_PROTOCOL_VERSION"]};
+window.SIDEBAR_ITEMS = {"constant":["CLIENT_AUTH_HEADER","RELAY_PATH","RELAY_PROBE_PATH"],"enum":["ProtocolVersion"],"struct":["UnsupportedRelayProtocolVersion"]};
