@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a>    PingTracker,
 <a href=#19 id=19 data-nosnippet>19</a>    http::ProtocolVersion,
 <a href=#20 id=20 data-nosnippet>20</a>    protos::{
-<a href=#21 id=21 data-nosnippet>21</a>        relay::{ClientToRelayMsg, Datagrams, HealthStatus, PING_INTERVAL, RelayToClientMsg},
+<a href=#21 id=21 data-nosnippet>21</a>        relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg, Status},
 <a href=#22 id=22 data-nosnippet>22</a>        streams::BytesStreamSink,
 <a href=#23 id=23 data-nosnippet>23</a>    },
 <a href=#24 id=24 data-nosnippet>24</a>    server::{
@@ -173,7 +173,7 @@
 <a href=#173 id=173 data-nosnippet>173</a>
 <a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>try_send_health(
 <a href=#175 id=175 data-nosnippet>175</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#176 id=176 data-nosnippet>176</a>        status: HealthStatus,
+<a href=#176 id=176 data-nosnippet>176</a>        status: Status,
 <a href=#177 id=177 data-nosnippet>177</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TrySendError&lt;RelayToClientMsg&gt;&gt; {
 <a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">let </span>message = <span class="kw">match </span><span class="self">self</span>.protocol_version {
 <a href=#179 id=179 data-nosnippet>179</a>            ProtocolVersion::V2 =&gt; RelayToClientMsg::Status(status),
@@ -525,7 +525,7 @@
 <a href=#525 id=525 data-nosnippet>525</a>    <span class="kw">use crate</span>::{
 <a href=#526 id=526 data-nosnippet>526</a>        client::conn::Conn,
 <a href=#527 id=527 data-nosnippet>527</a>        http::ProtocolVersion,
-<a href=#528 id=528 data-nosnippet>528</a>        protos::{common::FrameType, relay::HealthStatus, streams::WsBytesFramed},
+<a href=#528 id=528 data-nosnippet>528</a>        protos::{common::FrameType, relay::Status, streams::WsBytesFramed},
 <a href=#529 id=529 data-nosnippet>529</a>        server::streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
 <a href=#530 id=530 data-nosnippet>530</a>    };
 <a href=#531 id=531 data-nosnippet>531</a>
@@ -774,7 +774,7 @@
 <a href=#774 id=774 data-nosnippet>774</a>        <span class="kw">let </span>frame = recv_frame(FrameType::Status, <span class="kw-2">&amp;mut </span>first_rw).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#775 id=775 data-nosnippet>775</a>        <span class="macro">assert_eq!</span>(
 <a href=#776 id=776 data-nosnippet>776</a>            frame,
-<a href=#777 id=777 data-nosnippet>777</a>            RelayToClientMsg::Status(HealthStatus::SameEndpointIdConnected)
+<a href=#777 id=777 data-nosnippet>777</a>            RelayToClientMsg::Status(Status::SameEndpointIdConnected)
 <a href=#778 id=778 data-nosnippet>778</a>        );
 <a href=#779 id=779 data-nosnippet>779</a>
 <a href=#780 id=780 data-nosnippet>780</a>        clients.shutdown().<span class="kw">await</span>;

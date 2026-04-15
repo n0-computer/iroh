@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><span class="kw">super</span>::client::{Client, Config, ForwardPacketError};
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use crate</span>::{
 <a href=#20 id=20 data-nosnippet>20</a>    protos::{
-<a href=#21 id=21 data-nosnippet>21</a>        relay::{Datagrams, HealthStatus},
+<a href=#21 id=21 data-nosnippet>21</a>        relay::{Datagrams, Status},
 <a href=#22 id=22 data-nosnippet>22</a>        streams::BytesStreamSink,
 <a href=#23 id=23 data-nosnippet>23</a>    },
 <a href=#24 id=24 data-nosnippet>24</a>    server::{client::SendError, metrics::Metrics},
@@ -91,7 +91,7 @@
 <a href=#91 id=91 data-nosnippet>91</a>                    <span class="string">"multiple connections found, deactivating old connection"</span>,
 <a href=#92 id=92 data-nosnippet>92</a>                );
 <a href=#93 id=93 data-nosnippet>93</a>                old_client
-<a href=#94 id=94 data-nosnippet>94</a>                    .try_send_health(HealthStatus::SameEndpointIdConnected)
+<a href=#94 id=94 data-nosnippet>94</a>                    .try_send_health(Status::SameEndpointIdConnected)
 <a href=#95 id=95 data-nosnippet>95</a>                    .ok();
 <a href=#96 id=96 data-nosnippet>96</a>                state.inactive.push(old_client);
 <a href=#97 id=97 data-nosnippet>97</a>                metrics.clients_inactive_added.inc();
@@ -135,7 +135,7 @@
 <a href=#135 id=135 data-nosnippet>135</a>                    <span class="comment">// There is an inactive client, promote to active again.
 <a href=#136 id=136 data-nosnippet>136</a>                    </span>state.active = last_inactive_client;
 <a href=#137 id=137 data-nosnippet>137</a>                    <span class="comment">// Inform the old client that it is healthy again.
-<a href=#138 id=138 data-nosnippet>138</a>                    </span>state.active.try_send_health(HealthStatus::Healthy).ok();
+<a href=#138 id=138 data-nosnippet>138</a>                    </span>state.active.try_send_health(Status::Healthy).ok();
 <a href=#139 id=139 data-nosnippet>139</a>                    <span class="comment">// Don't remove the entry from client map.
 <a href=#140 id=140 data-nosnippet>140</a>                    </span><span class="bool-val">false
 <a href=#141 id=141 data-nosnippet>141</a>                </span>} <span class="kw">else </span>{
@@ -368,7 +368,7 @@
 <a href=#368 id=368 data-nosnippet>368</a>        </span><span class="kw">let </span>frame = recv_frame(FrameType::Status, <span class="kw-2">&amp;mut </span>a1_rw).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#369 id=369 data-nosnippet>369</a>        <span class="macro">assert_eq!</span>(
 <a href=#370 id=370 data-nosnippet>370</a>            frame,
-<a href=#371 id=371 data-nosnippet>371</a>            RelayToClientMsg::Status(HealthStatus::SameEndpointIdConnected)
+<a href=#371 id=371 data-nosnippet>371</a>            RelayToClientMsg::Status(Status::SameEndpointIdConnected)
 <a href=#372 id=372 data-nosnippet>372</a>        );
 <a href=#373 id=373 data-nosnippet>373</a>
 <a href=#374 id=374 data-nosnippet>374</a>        <span class="comment">// send packet and verify it is send to a2
@@ -409,7 +409,7 @@
 <a href=#409 id=409 data-nosnippet>409</a>
 <a href=#410 id=410 data-nosnippet>410</a>        <span class="comment">// a1 is marked active again and should receive a health frame
 <a href=#411 id=411 data-nosnippet>411</a>        </span><span class="kw">let </span>frame = recv_frame(FrameType::Status, <span class="kw-2">&amp;mut </span>a1_rw).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#412 id=412 data-nosnippet>412</a>        <span class="macro">assert_eq!</span>(frame, RelayToClientMsg::Status(HealthStatus::Healthy));
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="macro">assert_eq!</span>(frame, RelayToClientMsg::Status(Status::Healthy));
 <a href=#413 id=413 data-nosnippet>413</a>
 <a href=#414 id=414 data-nosnippet>414</a>        <span class="comment">// a1 should receive packets
 <a href=#415 id=415 data-nosnippet>415</a>        </span>clients.send_packet(a_key, Datagrams::from(<span class="kw-2">&amp;</span>data[..]), b_key, <span class="kw-2">&amp;</span>metrics)<span class="question-mark">?</span>;

@@ -42,7 +42,7 @@
 <a href=#42 id=42 data-nosnippet>42</a><span class="kw">use </span>iroh_relay::{
 <a href=#43 id=43 data-nosnippet>43</a>    <span class="self">self </span><span class="kw">as </span>relay, PingTracker,
 <a href=#44 id=44 data-nosnippet>44</a>    client::{Client, ConnectError, RecvError, SendError},
-<a href=#45 id=45 data-nosnippet>45</a>    protos::relay::{ClientToRelayMsg, Datagrams, HealthStatus, RelayToClientMsg},
+<a href=#45 id=45 data-nosnippet>45</a>    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, Status},
 <a href=#46 id=46 data-nosnippet>46</a>};
 <a href=#47 id=47 data-nosnippet>47</a><span class="kw">use </span>n0_error::{e, stack_error};
 <a href=#48 id=48 data-nosnippet>48</a><span class="kw">use </span>n0_future::{
@@ -682,7 +682,7 @@
 <a href=#682 id=682 data-nosnippet>682</a>                state.established = <span class="bool-val">true</span>;
 <a href=#683 id=683 data-nosnippet>683</a>            }
 <a href=#684 id=684 data-nosnippet>684</a>            RelayToClientMsg::Status(status) =&gt; <span class="kw">match </span>status {
-<a href=#685 id=685 data-nosnippet>685</a>                HealthStatus::Healthy =&gt; <span class="macro">info!</span>(<span class="string">"Relay server reports: {status}"</span>),
+<a href=#685 id=685 data-nosnippet>685</a>                Status::Healthy =&gt; <span class="macro">info!</span>(<span class="string">"Relay server reports: {status}"</span>),
 <a href=#686 id=686 data-nosnippet>686</a>                <span class="kw">_ </span>=&gt; <span class="macro">warn!</span>(<span class="string">"Relay server reports problem: {status}"</span>),
 <a href=#687 id=687 data-nosnippet>687</a>            },
 <a href=#688 id=688 data-nosnippet>688</a>            RelayToClientMsg::Restarting { .. } =&gt; {
