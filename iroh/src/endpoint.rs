@@ -11,7 +11,7 @@
 //!
 //! [module docs]: crate
 
-use std::{net::SocketAddr, pin::Pin, sync::Arc};
+use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
@@ -128,6 +128,7 @@ pub struct Builder {
     transport_bias: socket::transports::TransportBiasMap,
     portmapper_config: PortmapperConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
+    configured_addrs: BTreeSet<SocketAddr>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -194,6 +195,7 @@ impl Builder {
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
             crypto_provider: None,
+            configured_addrs: Default::default(),
         }
     }
 
@@ -201,9 +203,7 @@ impl Builder {
 
     /// Binds the endpoint.
     pub async fn bind(self) -> Result<Endpoint, BindError> {
-        let secret_key = self
-            .secret_key
-            .unwrap_or_else(|| SecretKey::generate(&mut rand::rng()));
+        let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
 
         let crypto_provider = self
             .crypto_provider
@@ -256,6 +256,7 @@ impl Builder {
             transport_bias: self.transport_bias,
             portmapper_config: self.portmapper_config,
             static_config,
+            configured_addrs: self.configured_addrs,
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
@@ -616,6 +617,18 @@ impl Builder {
         self
     }
 
+    /// Adds an external address on which this endpoint is directly reachable.
+    ///
+    /// This address will be advertised to peers together with any discovered external addresses
+    /// and will be used in NAT traversal and to establish direct connections.
+    ///
+    /// Can be called multiple times. See also [`Endpoint::add_external_addr`] for
+    /// adding addresses at runtime.
+    pub fn external_addr(mut self, addr: SocketAddr) -> Self {
+        self.configured_addrs.insert(addr);
+        self
+    }
+
     // # Methods for more specialist customisation.
 
     /// Sets a custom [`QuicTransportConfig`] for this endpoint.
@@ -916,6 +929,28 @@ impl Endpoint {
             return None;
         }
         self.inner.remove_relay(relay).await
+    }
+
+    /// Adds an external address on which this endpoint is directly reachable.
+    ///
+    /// This address will be advertised to peers together with any discovered external addresses
+    /// and will be used in NAT traversal and to establish direct connections.
+    ///
+    /// See also [`Builder::external_addr`] for setting addresses at build time.
+    pub async fn add_external_addr(&self, addr: SocketAddr) {
+        if self.is_closed() {
+            warn!("Attempting to add external addr for a closed endpoint. Ignoring.");
+            return;
+        }
+        self.inner.add_external_addr(addr).await;
+    }
+
+    /// Removes a configured external address. Returns `true` if it was present.
+    pub async fn remove_external_addr(&self, addr: &SocketAddr) -> bool {
+        if self.is_closed() {
+            return false;
+        }
+        self.inner.remove_external_addr(addr).await
     }
 
     // # Methods for establishing connectivity.
@@ -1833,7 +1868,7 @@ mod tests {
     use std::{
         collections::BTreeMap,
         io,
-        net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
         str::FromStr,
         sync::Arc,
         time::{Duration, Instant},
@@ -1846,7 +1881,7 @@ mod tests {
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use noq::PathStats;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use rand_chacha::ChaCha8Rng;
     use tokio::sync::oneshot;
     use tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
@@ -1887,7 +1922,7 @@ mod tests {
     async fn endpoint_connect_close() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, relay_url, _guard) = run_relay_server().await?;
-        let server_secret_key = SecretKey::generate(&mut rng);
+        let server_secret_key = SecretKey::from_bytes(&rng.random());
         let server_peer_id = server_secret_key.public();
 
         let qlog = QlogFileGroup::from_env("endpoint_connect_close");
@@ -1994,7 +2029,7 @@ mod tests {
         let chunk_size = 100;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
-        let server_secret_key = SecretKey::generate(&mut rng);
+        let server_secret_key = SecretKey::from_bytes(&rng.random());
         let server_endpoint_id = server_secret_key.public();
 
         // Make sure the server is bound before having clients connect to it:
@@ -2062,7 +2097,7 @@ mod tests {
             for i in 0..n_clients {
                 let round_start = Instant::now();
                 info!("[client] round {i}");
-                let client_secret_key = SecretKey::generate(&mut rng);
+                let client_secret_key = SecretKey::from_bytes(&rng.random());
                 let ep = Endpoint::builder(presets::Minimal)
                     .relay_mode(RelayMode::Custom(relay_map.clone()))
                     .alpns(vec![TEST_ALPN.to_vec()])
@@ -2241,7 +2276,7 @@ mod tests {
             qlog: Arc<QlogFileGroup>,
         ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2288,7 +2323,7 @@ mod tests {
             qlog: Arc<QlogFileGroup>,
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2346,7 +2381,7 @@ mod tests {
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
         ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2389,7 +2424,7 @@ mod tests {
             node_addr_tx: oneshot::Sender<EndpointAddr>,
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2770,6 +2805,55 @@ mod tests {
 
         assert!(ep.addr().ip_addrs().count() > 0);
 
+        Ok(())
+    }
+
+    /// Test that configured external addresses are included in the endpoint's
+    /// direct addresses, both when set via builder and at runtime.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[traced_test]
+    async fn test_external_addr() -> Result {
+        let configured_addr = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 12345));
+
+        // Test builder-configured external address
+        let ep = Endpoint::builder(presets::Minimal)
+            .external_addr(configured_addr)
+            .bind()
+            .await?;
+
+        let addr = ep.addr();
+        assert!(
+            addr.ip_addrs().any(|a| *a == configured_addr),
+            "builder-configured external addr {configured_addr} not found in endpoint addr: {addr:?}"
+        );
+
+        // Test runtime add
+        let runtime_addr = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(5, 6, 7, 8), 54321));
+        ep.add_external_addr(runtime_addr).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let addr = ep.addr();
+        assert!(
+            addr.ip_addrs().any(|a| *a == runtime_addr),
+            "runtime-added external addr {runtime_addr} not found in endpoint addr: {addr:?}"
+        );
+
+        // Test runtime remove
+        let removed = ep.remove_external_addr(&runtime_addr).await;
+        assert!(removed);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let addr = ep.addr();
+        assert!(
+            !addr.ip_addrs().any(|a| *a == runtime_addr),
+            "removed external addr {runtime_addr} still found in endpoint addr: {addr:?}"
+        );
+        assert!(
+            addr.ip_addrs().any(|a| *a == configured_addr),
+            "builder-configured external addr should still be present: {addr:?}"
+        );
+
+        ep.close().await;
         Ok(())
     }
 
@@ -3425,7 +3509,7 @@ mod tests {
     async fn same_endpoint_id_relay() -> Result {
         let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
 
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -3579,7 +3663,7 @@ mod tests {
 
         info!("Connecting");
         let mut rng = ChaCha8Rng::seed_from_u64(41);
-        let ep_id = SecretKey::generate(&mut rng).public();
+        let ep_id = SecretKey::from_bytes(&rng.random()).public();
 
         // should likely be an error that states that the
         // endpoint is closed instead:

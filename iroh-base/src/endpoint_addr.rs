@@ -158,13 +158,30 @@ impl From<EndpointId> for EndpointAddr {
     }
 }
 
-/// A custom address.
+/// A custom transport address consisting of a transport id and opaque address data.
 ///
-/// This is a generic address type with a type id and opaque data,
-/// to allow external crates to implement custom transports.
+/// This is a generic address type that allows external crates to implement custom
+/// transports for iroh.
 ///
-/// Custom addresses can be written by anybody, so you need to be prepared to handle
-/// unexpected type ids and data when parsing custom addresses.
+/// Transport ids are freely chosen u64 numbers. A registry for well-known transport ids
+/// is maintained at <https://github.com/n0-computer/iroh/blob/main/TRANSPORTS.md>.
+/// The opaque address data is not validated or size-limited in any way.
+///
+/// # String encoding
+///
+/// Used by [`Display`] and [`FromStr`] implementations.
+/// Format: `<id>_<data>` where `<id>` is the transport id as lowercase hex (no `0x`
+/// prefix, no leading zeros) and `<data>` is the address bytes as lowercase hex,
+/// separated by `_`.
+///
+/// # Binary encoding
+///
+/// Used by [`Self::to_vec`] and [`Self::from_bytes`].
+/// Format: 8-byte little-endian `u64` transport id, followed by raw address data bytes.
+/// The minimum valid length is 8 bytes (id only with empty data).
+///
+/// [`Display`]: std::fmt::Display
+/// [`FromStr`]: std::str::FromStr
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CustomAddr {
     /// The transport id.
@@ -196,7 +213,7 @@ impl std::str::FromStr for CustomAddr {
     }
 }
 
-/// Error parsing a [`crate::CustomAddr`].
+/// Error returned when parsing a [`CustomAddr`] from its string encoding fails.
 ///
 /// Parsing a string into a [`CustomAddr`] represents just the first part of
 /// validation. Even if the string is well-formed, the resulting [`CustomAddr`] might
@@ -242,21 +259,21 @@ impl From<(u64, &[u8])> for CustomAddr {
 }
 
 impl CustomAddrBytes {
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         match self {
             Self::Inline { size, .. } => *size as usize,
             Self::Heap(data) => data.len(),
         }
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
+    fn as_bytes(&self) -> &[u8] {
         match self {
             Self::Inline { size, data } => &data[..*size as usize],
             Self::Heap(data) => data,
         }
     }
 
-    pub fn copy_from_slice(data: &[u8]) -> Self {
+    fn copy_from_slice(data: &[u8]) -> Self {
         if data.len() <= 30 {
             let mut inline = [0u8; 30];
             inline[..data.len()].copy_from_slice(data);
@@ -271,7 +288,7 @@ impl CustomAddrBytes {
 }
 
 impl CustomAddr {
-    /// Creates a new [`CustomAddr`] from its parts.
+    /// Creates a new [`CustomAddr`] from a transport id and raw address data.
     pub fn from_parts(id: u64, data: &[u8]) -> Self {
         Self {
             id,
@@ -300,15 +317,19 @@ impl CustomAddr {
         self.data.as_bytes()
     }
 
-    /// Convert to byte representation
-    pub fn as_vec(&self) -> Vec<u8> {
+    /// Serializes to the binary encoding.
+    ///
+    /// See [`CustomAddr`] docs for details on the encoding.
+    pub fn to_vec(&self) -> Vec<u8> {
         let mut out = vec![0u8; 8 + self.data.len()];
         out[..8].copy_from_slice(&self.id().to_le_bytes());
         out[8..].copy_from_slice(self.data());
         out
     }
 
-    /// Parse from bytes
+    /// Parses from the binary encoding.
+    ///
+    /// See [`CustomAddr`] docs for details on the encoding.
     pub fn from_bytes(data: &[u8]) -> Result<Self, &'static str> {
         if data.len() < 8 {
             return Err("data too short");

@@ -16,6 +16,7 @@ use noq_proto::{
     Copy, Clone, PartialEq, Eq, Debug, num_enum::IntoPrimitive, num_enum::TryFromPrimitive,
 )]
 // needs to be pub due to being exposed in error types
+#[non_exhaustive]
 pub enum FrameType {
     /// The server frame type for the challenge response
     ServerChallenge = 0,

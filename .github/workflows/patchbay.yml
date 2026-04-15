@@ -1,0 +1,59 @@
+name: Patchbay Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: patchbay-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  SCCACHE_CACHE_SIZE: "10G"
+  IROH_FORCE_STAGING_RELAYS: "1"
+  NEXTEST_VERSION: "0.9.80"
+
+jobs:
+  patchbay_tests:
+    name: Patchbay Tests
+    timeout-minutes: 15
+    runs-on: [self-hosted, linux, X64]
+    env:
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - name: Enable unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        continue-on-error: true
+
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Install cargo-make and cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }},cargo-make
+
+      - name: Build patchbay tests
+        run: cargo make patchbay --no-run
+
+      - name: Run patchbay tests
+        run: |
+          set -o pipefail
+          cargo make patchbay 2>&1 | tee "$RUNNER_TEMP/logs.txt"
+        env:
+          PATCHBAY_LOG: ${{ runner.debug && 'trace' || 'debug' }}
+          RUST_LOG: ${{ runner.debug && 'trace' || 'debug' }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: patchbay-testdir-${{ github.sha }}
+          path: |
+            target/testdir-current/
+            ${{ runner.temp }}/logs.txt
+          retention-days: 7
+          if-no-files-found: ignore

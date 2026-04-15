@@ -43,7 +43,7 @@ pkarr = { version = "5", default-features = false }
 noq = { version = "0.17.0", default-features = false, features = ["rustls"] }
 noq-proto = { version = "0.16", default-features = false }
 noq-udp = { version = "0.9", default-features = false }
-rand = "0.9.2"
+rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustc-hash = "2"
 rustls = { version = "0.23.33", default-features = false }
@@ -69,7 +69,7 @@ pkcs8 = "0.11.0-rc.9"
 iroh-metrics = { version = "0.38", default-features = false }
 
 # mdns
-swarm-discovery = { version = "0.5", optional = true }
+swarm-discovery = { version = "0.6.0-alpha.1", optional = true }
 futures-util = "0.3"
 
 # test_utils
@@ -96,21 +96,22 @@ tokio = { version = "1", features = [
 wasm-bindgen-futures = "0.4"
 # we don't use time directly, but need to enable it because x509_parser uses these in browsers and we need to enable some feature flags for that to work
 time = { version = "0.3", features = ["wasm-bindgen"] }
-getrandom = { version = "0.3.2", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 # target-common test/dev dependencies
 [dev-dependencies]
 console_error_panic_hook = "0.1"
+n0-error = { version = "0.1", features = ["anyhow"] }
 postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-rand_chacha = "0.9"
+rand_chacha = "0.10"
 chrono = "0.4.43"
 
 # *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
 axum = { version = "0.8" }
 pretty_assertions = "1.4"
-rand_chacha = "0.9"
+rand_chacha = "0.10"
 tokio = { version = "1", features = [
     "io-util",
     "sync",
@@ -137,6 +138,12 @@ console = { version = "0.16" }
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
 wasm-tracing = "2.1.0"
 wasm-bindgen-test = "0.3.62"
+
+# patchbay netsim test dependencies (linux only)
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "0.8"
+patchbay = { version = "0.5", features = ["iroh-metrics"] }
+testdir = "0.10"
 
 [build-dependencies]
 cfg_aliases = { version = "0.2.1" }
@@ -214,4 +221,8 @@ required-features = []
 
 [[example]]
 name = "0rtt"
+required-features = []
+
+[[example]]
+name = "incoming-filter"
 required-features = []

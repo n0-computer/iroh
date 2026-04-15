@@ -496,6 +496,16 @@ async fn main() -> Result<()> {
         .with(EnvFilter::from_default_env())
         .init();
 
+    // Install `ring` as default crypto provider for rustls.
+    // This helps when both the tls-ring and tls-aws-lc-rs features are enabled,
+    // otherwise some crypto operations would panic because rustls can't determine
+    // a default provider.
+    // `ring` is enabled by the `tls-ring` feature, which is included in the `server` feature,
+    // which is required for the main.rs binary. Therefore, this does not need any feature flags.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to set default crypto provider");
+
     let cli = Cli::parse();
     let mut cfg = Config::load(&cli).await?;
     if cfg.enable_quic_addr_discovery && cfg.tls.is_none() {
@@ -702,7 +712,7 @@ mod tests {
 
     use iroh_base::SecretKey;
     use n0_error::Result;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
@@ -750,7 +760,7 @@ mod tests {
         assert_eq!(config.access, AccessConfig::Everyone);
 
         let mut rng = ChaCha8Rng::seed_from_u64(0);
-        let endpoint_id = SecretKey::generate(&mut rng).public();
+        let endpoint_id = SecretKey::from_bytes(&rng.random()).public();
 
         let config = format!(
             "

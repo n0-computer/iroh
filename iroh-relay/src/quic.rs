@@ -5,7 +5,6 @@ use std::{net::SocketAddr, sync::Arc};
 use n0_error::stack_error;
 use n0_future::time::Duration;
 use noq::{VarInt, crypto::rustls::QuicClientConfig};
-use tokio::sync::watch;
 
 /// ALPN for our quic addr discovery
 pub const ALPN_QUIC_ADDR_DISC: &[u8] = b"/iroh-qad/0";
@@ -26,6 +25,7 @@ pub(crate) mod server {
     use tracing::{Instrument, debug, info, info_span};
 
     use super::*;
+    use crate::server::Metrics;
     pub use crate::server::QuicConfig;
 
     pub struct QuicServer {
@@ -93,7 +93,10 @@ pub(crate) mod server {
         /// If there is a panic during a connection, it will be propagated
         /// up here. Any other errors in a connection will be logged as a
         ///  warning.
-        pub(crate) fn spawn(mut quic_config: QuicConfig) -> Result<Self, QuicSpawnError> {
+        pub(crate) fn spawn(
+            mut quic_config: QuicConfig,
+            metrics: Arc<Metrics>,
+        ) -> Result<Self, QuicSpawnError> {
             quic_config.server_config.alpn_protocols =
                 vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
             let server_config = QuicServerConfig::try_from(quic_config.server_config)?;
@@ -130,18 +133,17 @@ pub(crate) mod server {
                             Some(res) = set.join_next() => {
                                 if let Err(err) = res {
                                     if err.is_panic() {
-                                        panic!("task panicked: {err:#?}");
+                                        panic!("quic task panicked: {err:#?}");
                                     } else {
-                                        debug!("error accepting incoming connection: {err:#?}");
+                                        debug!("quic task cancelled: {err:#?}");
                                     }
                                 }
                             }
                             res = endpoint.accept() => match res {
-                                Some(conn) => {
-                                     debug!("accepting connection");
-                                     let remote_addr = conn.remote_address();
+                                Some(incoming) => {
+                                     let remote_addr = incoming.remote_address();
                                      set.spawn(
-                                         handle_connection(conn).instrument(info_span!("qad-conn", %remote_addr))
+                                         handle_connection(incoming, metrics.clone()).instrument(info_span!("qad-conn", %remote_addr))
                                      );                                }
                                 None => {
                                     debug!("endpoint closed");
@@ -201,23 +203,37 @@ pub(crate) mod server {
     }
 
     /// Handle the connection from the client.
-    async fn handle_connection(incoming: noq::Incoming) -> Result<(), ConnectionError> {
+    async fn handle_connection(
+        incoming: noq::Incoming,
+        metrics: Arc<Metrics>,
+    ) -> Result<(), ConnectionError> {
+        metrics.qad_incoming.inc();
+        debug!("incoming");
         let connection = match incoming.await {
             Ok(conn) => conn,
             Err(e) => {
+                debug!("establishing failed: {e:#}");
+                metrics.qad_incoming_error.inc();
                 return Err(e);
             }
         };
+        metrics.qad_connections.inc();
         debug!("established");
         // wait for the client to close the connection
         let connection_err = connection.closed().await;
+        metrics.qad_connections_closed.inc();
         match connection_err {
             noq::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
                 if error_code == QUIC_ADDR_DISC_CLOSE_CODE =>
             {
+                debug!("peer disconnected");
                 Ok(())
             }
-            _ => Err(connection_err),
+            _ => {
+                debug!("peer disconnected with {connection_err:#}");
+                metrics.qad_connections_errored.inc();
+                Err(connection_err)
+            }
         }
     }
 }
@@ -237,11 +253,7 @@ pub enum Error {
         #[error(std_err)]
         source: noq::ConnectionError,
     },
-    #[error(transparent)]
-    WatchRecv {
-        #[error(std_err)]
-        source: watch::error::RecvError,
-    },
+    NoObservedAddr,
 }
 
 /// Handles the client side of QUIC address discovery.
@@ -302,6 +314,7 @@ impl QuicClient {
         server_addr: SocketAddr,
         host: &str,
     ) -> Result<(SocketAddr, std::time::Duration), Error> {
+        use n0_future::StreamExt;
         use noq_proto::PathId;
 
         let connecting = self
@@ -324,15 +337,9 @@ impl QuicClient {
         //         Ok((addr, latency))
         //     }
 
-        let res = match external_addresses.wait_for(|addr| addr.is_some()).await {
-            Ok(res) => res,
-            Err(err) => {
-                // attempt to gracefully close the connections
-                conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-                return Err(err.into());
-            }
+        let Some(mut observed_addr) = external_addresses.next().await else {
+            n0_error::bail!(Error::NoObservedAddr);
         };
-        let mut observed_addr = res.expect("checked");
         // if we've sent to an ipv4 address, but received an observed address
         // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
         observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
@@ -381,10 +388,13 @@ mod tests {
         // create a server config with self signed certificates
         let (_, server_config) = super::super::server::testing::self_signed_tls_certs_and_config();
         let bind_addr = SocketAddr::new(host.into(), 0);
-        let quic_server = QuicServer::spawn(QuicConfig {
-            server_config,
-            bind_addr,
-        })?;
+        let quic_server = QuicServer::spawn(
+            QuicConfig {
+                server_config,
+                bind_addr,
+            },
+            Default::default(),
+        )?;
 
         // create a client-side endpoint
         let client_endpoint =

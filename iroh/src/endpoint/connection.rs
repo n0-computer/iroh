@@ -48,6 +48,7 @@ use crate::{
     socket::{
         RemoteStateActorStoppedError,
         remote_map::{PathInfo, PathWatchable, PathWatcher},
+        transports,
     },
 };
 
@@ -81,14 +82,12 @@ impl From<IncomingAddr> for iroh_base::TransportAddr {
     }
 }
 
-impl From<crate::socket::transports::Addr> for IncomingAddr {
-    fn from(addr: crate::socket::transports::Addr) -> Self {
+impl From<transports::Addr> for IncomingAddr {
+    fn from(addr: transports::Addr) -> Self {
         match addr {
-            crate::socket::transports::Addr::Ip(addr) => Self::Ip(addr),
-            crate::socket::transports::Addr::Relay(url, endpoint_id) => {
-                Self::Relay { url, endpoint_id }
-            }
-            crate::socket::transports::Addr::Custom(addr) => Self::Custom(addr),
+            transports::Addr::Ip(addr) => Self::Ip(addr),
+            transports::Addr::Relay(url, endpoint_id) => Self::Relay { url, endpoint_id },
+            transports::Addr::Custom(addr) => Self::Custom(addr),
         }
     }
 }
@@ -1273,7 +1272,7 @@ mod tests {
     use n0_future::StreamExt;
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use tracing::{Instrument, error_span, info, info_span, trace_span};
 
     use super::Endpoint;
@@ -1414,7 +1413,8 @@ mod tests {
     async fn test_0rtt() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let client = Endpoint::bind(presets::Minimal).await?;
-        let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
+        let server =
+            spawn_0rtt_server(SecretKey::from_bytes(&rng.random()), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
         // The second 0rtt attempt should work
@@ -1434,14 +1434,15 @@ mod tests {
     async fn test_0rtt_non_consecutive() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let client = Endpoint::bind(presets::Minimal).await?;
-        let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
+        let server =
+            spawn_0rtt_server(SecretKey::from_bytes(&rng.random()), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
         let another =
-            spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("another")).await?;
+            spawn_0rtt_server(SecretKey::from_bytes(&rng.random()), info_span!("another")).await?;
         connect_client_0rtt_expect_err(&client, another.addr()).await?;
         another.close().await;
 
@@ -1462,7 +1463,7 @@ mod tests {
             .bind()
             .instrument(info_span!("client"))
             .await?;
-        let server_key = SecretKey::generate(&mut rng);
+        let server_key = SecretKey::from_bytes(&rng.random());
         let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr())
@@ -1499,7 +1500,7 @@ mod tests {
         let (relay_map, _relay_map, _guard) = run_relay_server().await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .secret_key(SecretKey::generate(&mut rng))
+            .secret_key(SecretKey::from_bytes(&rng.random()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
             .bind()
@@ -1507,7 +1508,7 @@ mod tests {
 
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .secret_key(SecretKey::generate(&mut rng))
+            .secret_key(SecretKey::from_bytes(&rng.random()))
             .ca_roots_config(CaRootsConfig::insecure_skip_verify())
             .bind()
             .await?;

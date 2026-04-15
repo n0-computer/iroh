@@ -37,6 +37,7 @@
 //!             DiscoveryEvent::Expired { endpoint_id } => {
 //!                 println!("MDNS expired: {endpoint_id}");
 //!             }
+//!             _ => {}
 //!         }
 //!     }
 //! }
@@ -242,6 +243,7 @@ impl AddressLookupBuilder for MdnsAddressLookupBuilder {
 
 /// An event emitted from the [`MdnsAddressLookup`] service.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum DiscoveryEvent {
     /// A peer was discovered or it's information was updated.
     Discovered {
@@ -611,7 +613,7 @@ mod tests {
         use n0_error::{AnyError as Error, Result, StdResultExt, bail_any};
         use n0_future::StreamExt;
         use n0_tracing_test::traced_test;
-        use rand::{CryptoRng, SeedableRng};
+        use rand::{CryptoRng, RngExt, SeedableRng};
 
         use super::super::*;
         use crate::address_lookup::UserData;
@@ -828,19 +830,19 @@ mod tests {
 
             // Create an Address Lookupusing the default
             // service name
-            let id_a = SecretKey::generate(&mut rng).public();
+            let id_a = SecretKey::from_bytes(&rng.random()).public();
             let address_lookup_a = MdnsAddressLookup::builder().build(id_a)?;
 
             // Create a Address Lookupusing a custom
             // service name
-            let id_b = SecretKey::generate(&mut rng).public();
+            let id_b = SecretKey::from_bytes(&rng.random()).public();
             let address_lookup_b = MdnsAddressLookup::builder()
                 .service_name("different.name")
                 .build(id_b)?;
 
             // Create an Address Lookupusing the same
             // custom service name
-            let id_c = SecretKey::generate(&mut rng).public();
+            let id_c = SecretKey::from_bytes(&rng.random()).public();
             let address_lookup_c = MdnsAddressLookup::builder()
                 .service_name("different.name")
                 .build(id_c)?;
@@ -930,7 +932,7 @@ mod tests {
             rng: &mut R,
             advertise: bool,
         ) -> Result<(PublicKey, MdnsAddressLookup)> {
-            let endpoint_id = SecretKey::generate(rng).public();
+            let endpoint_id = SecretKey::from_bytes(&rng.random()).public();
             Ok((
                 endpoint_id,
                 MdnsAddressLookup::builder()

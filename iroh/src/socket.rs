@@ -28,8 +28,10 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
+use mapped_addrs::MultipathMappedAddr;
 use n0_error::{bail, e, stack_error};
 use n0_future::{
+    MaybeFuture,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -38,17 +40,18 @@ use n0_watcher::{self, Watchable, Watcher};
 use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
 use noq::{
-    WeakConnectionHandle,
+    NetworkChangeHint, WeakConnectionHandle,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
-use rand::Rng;
+use rand::RngExt;
+use rustc_hash::FxHashSet;
 use tokio::sync::{
     Mutex as AsyncMutex,
     mpsc::{self},
     oneshot,
 };
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
-use tracing::{Instrument, Level, Span, debug, event, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, Transport, TransportConfig};
 use url::Url;
 
@@ -102,9 +105,23 @@ pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The maximum time a path can stay idle before being closed.
 ///
-/// This is [`HEARTBEAT_INTERVAL`] + 1.5s.  This gives us a chance to send a PING frame and
-/// some retries.
-pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
+/// 15s gives 3x [`HEARTBEAT_INTERVAL`] (5s) for multiple retry chances, and enough
+/// margin for real-world outages (WiFi reconnect 2-5s, cellular handoff 2-10s).
+/// iroh 0.35 used 10s at the QUIC level; tailscale uses 45s at the WireGuard session
+/// level with 3s heartbeats.
+pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The maximum time a relay path can stay idle before being closed.
+///
+/// Relay paths need a longer idle timeout than direct paths because the relay actor
+/// manages the WebSocket connection and transparently reconnects after network changes
+/// or relay server restarts. During network outages the interface may be down for
+/// 5-15s, during which no relay traffic flows. Once the interface recovers, the relay
+/// actor reconnects (DNS + TCP + TLS + WebSocket upgrade), which adds another 1-2s.
+///
+/// Set to match the connection-level idle timeout (30s) so the relay path survives
+/// as long as the connection itself.
+pub(crate) const RELAY_PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
@@ -159,6 +176,9 @@ pub(crate) struct Options {
 
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
+
+    /// Explicitly configured external addresses to advertise.
+    pub(crate) configured_addrs: BTreeSet<SocketAddr>,
 }
 
 /// Inner state for an iroh [`crate::Endpoint`].
@@ -329,6 +349,8 @@ pub(crate) struct Socket {
     address_lookup: address_lookup::ConcurrentAddressLookup,
     /// Optional user-defined discover data.
     address_lookup_user_data: RwLock<Option<UserData>>,
+    /// Explicitly configured external addresses to advertise.
+    configured_addrs: RwLock<BTreeSet<SocketAddr>>,
 
     pub(crate) tls_config: rustls::ClientConfig,
 
@@ -810,6 +832,7 @@ impl EndpointInner {
             transport_bias,
             portmapper_config,
             static_config,
+            configured_addrs,
         } = opts;
 
         let address_lookup = address_lookup::ConcurrentAddressLookup::default();
@@ -911,6 +934,7 @@ impl EndpointInner {
             address_lookup,
             relay_map: relay_map.clone(),
             address_lookup_user_data: RwLock::new(address_lookup_user_data),
+            configured_addrs: RwLock::new(configured_addrs),
             direct_addrs,
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
@@ -992,6 +1016,7 @@ impl EndpointInner {
 
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
+            endpoint: endpoint.clone(),
             sock: sock.clone(),
             remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
@@ -1000,6 +1025,7 @@ impl EndpointInner {
             direct_addr_update_state,
             transports_network_change,
             direct_addr_done_rx,
+            call_notify_quic_network_change: None,
         };
         // Initialize addresses
         #[cfg(not(wasm_browser))]
@@ -1165,6 +1191,36 @@ impl EndpointInner {
         res
     }
 
+    /// Adds an external address to advertise to peers.
+    pub(crate) async fn add_external_addr(&self, addr: SocketAddr) {
+        self.sock
+            .configured_addrs
+            .write()
+            .expect("poisoned")
+            .insert(addr);
+        self.actor_sender
+            .send(ActorMessage::DirectAddrRefresh)
+            .await
+            .ok();
+    }
+
+    /// Removes a configured external address. Returns `true` if it was present.
+    pub(crate) async fn remove_external_addr(&self, addr: &SocketAddr) -> bool {
+        let removed = self
+            .sock
+            .configured_addrs
+            .write()
+            .expect("poisoned")
+            .remove(addr);
+        if removed {
+            self.actor_sender
+                .send(ActorMessage::DirectAddrRefresh)
+                .await
+                .ok();
+        }
+        removed
+    }
+
     /// Call to notify the system of potential network changes.
     pub(crate) async fn network_change(&self) {
         self.actor_sender
@@ -1268,11 +1324,69 @@ enum ActorMessage {
     ),
     #[debug("RemoteInfo(..)")]
     RemoteInfo(EndpointId, oneshot::Sender<RemoteInfo>),
+    /// Re-evaluate direct addresses, e.g. after configured external addresses changed.
+    DirectAddrRefresh,
     #[cfg(all(test, with_crypto_provider))]
     ForceNetworkChange(bool),
 }
 
+/// State for polling until a default route is available after a network change.
+///
+/// When a network change is detected but no default route exists yet (e.g.,
+/// interface just came up but gateway not assigned), we poll with exponential
+/// backoff until the gateway appears. This avoids the fixed 2s delay that was
+/// too slow for interface recovery scenarios.
+struct PendingNetworkChangeNotify {
+    /// Next time to check for default route.
+    next_check: Instant,
+    /// Current backoff interval.
+    interval: Duration,
+    /// Whether this was a major change.
+    is_major: bool,
+    /// When we started polling (to enforce a max wait).
+    started: Instant,
+}
+
+impl PendingNetworkChangeNotify {
+    const INITIAL_INTERVAL: Duration = Duration::from_millis(100);
+    const MAX_INTERVAL: Duration = Duration::from_secs(1);
+    const MAX_WAIT: Duration = Duration::from_secs(5);
+
+    fn new(is_major: bool) -> Self {
+        Self {
+            next_check: Instant::now() + Self::INITIAL_INTERVAL,
+            interval: Self::INITIAL_INTERVAL,
+            is_major,
+            started: Instant::now(),
+        }
+    }
+
+    /// Advance to the next check interval (exponential backoff, capped).
+    fn advance(&mut self) {
+        self.interval = (self.interval * 2).min(Self::MAX_INTERVAL);
+        self.next_check = Instant::now() + self.interval;
+    }
+
+    /// Whether we've exceeded the maximum wait time.
+    fn expired(&self) -> bool {
+        self.started.elapsed() >= Self::MAX_WAIT
+    }
+}
+
 struct Actor {
+    /// A clone of the quinn Endpoint.
+    ///
+    /// The task of this actor is currently owned by the [`crate::Endpoint`] and wrapped in
+    /// an [`AbortOnDropHandle`]. When [`crate::Endpoint::close`] is called various
+    /// subsystems are being stopped. Then, when [`ShutdownState::at_endpoint_closed`] is
+    /// called by [`crate::Endpoint::close`], this actor itself is stopped via it's
+    /// [`CancellationToken`] and we will drop this clone of the endpoint. The endpoint is
+    /// then finally dropped when the [`crate::Endpoint`] itself is dropped.
+    ///
+    /// All of this to say: keeping the quinn endpoint alive here does not impact the
+    /// lifetime of it since it's lifetime is shorter than that one that's stored in the
+    /// [`crate::Endpoint`].
+    endpoint: noq::Endpoint,
     /// Shared state between an awful lot of iroh subsystems.
     ///
     /// In particular both the [`EndpointInner`] as well as this actor itself have a
@@ -1292,6 +1406,13 @@ struct Actor {
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
+    /// Polling state for [`Actor::notify_quic_network_change`].
+    ///
+    /// When a network change is detected but no default route is available yet,
+    /// we poll with exponential backoff (100ms, 200ms, 400ms, 800ms, 1s, 1s, ...)
+    /// until the gateway appears. Once it does, we notify immediately.
+    /// After 5s total we notify anyway even without a gateway.
+    call_notify_quic_network_change: Option<PendingNetworkChangeNotify>,
 }
 
 impl Actor {
@@ -1320,6 +1441,14 @@ impl Actor {
         while !shutdown_token.is_cancelled() {
             self.sock.metrics.socket.actor_tick_main.inc();
             let portmap_watcher_changed = portmap_watcher.changed();
+
+            let notify_quic_network_change = match &self.call_notify_quic_network_change {
+                Some(pending) => {
+                    MaybeFuture::Some(n0_future::time::sleep_until(pending.next_check))
+                }
+                None => MaybeFuture::None,
+            };
+            n0_future::pin!(notify_quic_network_change);
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
@@ -1418,10 +1547,44 @@ impl Actor {
                 eid = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
                     trace!(%eid, "cleaned up RemoteStateActor");
                 }
+                _ = &mut notify_quic_network_change => {
+                    let has_network = self.has_usable_network();
+                    let Some(pending) = self.call_notify_quic_network_change.as_mut() else {
+                        continue;
+                    };
+                    if has_network || pending.expired() {
+                        // Gateway appeared or we've waited long enough, notify now.
+                        let is_major = pending.is_major;
+                        self.call_notify_quic_network_change = None;
+                        self.notify_quic_network_change(is_major);
+                    } else {
+                        // No gateway yet, back off and try again.
+                        trace!(
+                            interval = ?pending.interval,
+                            elapsed = ?pending.started.elapsed(),
+                            "no default route yet, retrying"
+                        );
+                        pending.advance();
+                    }
+                }
                 else => {
                     trace!("tick: else");
                 }
             }
+        }
+    }
+
+    /// Whether the local network has a default route and at least one IP address.
+    fn has_usable_network(&mut self) -> bool {
+        #[cfg(target_family = "wasm")]
+        {
+            true
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let interfaces = self.local_interfaces_watcher.get();
+            interfaces.default_route_interface.is_some()
+                && (interfaces.have_v4 || interfaces.have_v6)
         }
     }
 
@@ -1436,6 +1599,7 @@ impl Actor {
             if let Err(err) = self.transports_network_change.rebind() {
                 warn!("failed to rebind transports: {err:?}");
             }
+            self.transports_network_change.check_relay_connection();
 
             #[cfg(not(wasm_browser))]
             self.sock.dns_resolver.reset().await;
@@ -1444,6 +1608,89 @@ impl Actor {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
 
+        if self.has_usable_network() {
+            // This is considered a usable network change, propagate it to the QUIC stack
+            // right away.
+            self.call_notify_quic_network_change = None;
+            self.notify_quic_network_change(is_major);
+        } else {
+            // No default route yet (e.g., interface just came up but gateway not
+            // assigned). Poll with exponential backoff until the gateway appears.
+            match &mut self.call_notify_quic_network_change {
+                Some(pending) => {
+                    // Update is_major if this change is more severe.
+                    pending.is_major |= is_major;
+                }
+                None => {
+                    self.call_notify_quic_network_change =
+                        Some(PendingNetworkChangeNotify::new(is_major));
+                }
+            }
+        }
+    }
+
+    /// Notifies the QUIC stack of the network change we observed.
+    ///
+    /// This is decoupled from receiving the network change, because we try to debounce
+    /// network changes as they often arrive in groups.
+    fn notify_quic_network_change(&mut self, is_major: bool) {
+        #[derive(Debug)]
+        struct Hint {
+            local_addrs: FxHashSet<IpAddr>,
+        }
+
+        impl NetworkChangeHint for Hint {
+            fn is_path_recoverable(
+                &self,
+                _path_id: noq::PathId,
+                network_path: noq_proto::FourTuple,
+            ) -> bool {
+                match MultipathMappedAddr::from(network_path.remote()) {
+                    MultipathMappedAddr::Mixed(_) => {
+                        // This address is only ever used to send an Initial packet to, it
+                        // should never appear as an established path.
+                        error!("A mixed address can not be used for network changes");
+                        false
+                    }
+                    MultipathMappedAddr::Relay(_) => {
+                        // We pretend the relay path is never affected by link changes. The
+                        // relay actor transparently reconnects and the addresses never
+                        // change.
+                        true
+                    }
+                    MultipathMappedAddr::Ip(_) => {
+                        // If we no longer have a valid interface to send from for a local
+                        // IP then it can not be recovered.
+                        match network_path.local_ip() {
+                            Some(local_ip) => self.local_addrs.contains(&local_ip),
+                            None => true,
+                        }
+                    }
+                    MultipathMappedAddr::Custom(_) => {
+                        // Assume it is unrecoverable for now
+                        false
+                    }
+                }
+            }
+        }
+
+        let hint = Hint {
+            #[cfg(not(wasm_browser))]
+            local_addrs: {
+                let interfaces = self.local_interfaces_watcher.get();
+                interfaces
+                    .local_addresses
+                    .regular
+                    .iter()
+                    .chain(interfaces.local_addresses.loopback.iter())
+                    .copied()
+                    .collect()
+            },
+            #[cfg(wasm_browser)]
+            local_addrs: Default::default(),
+        };
+
+        self.endpoint.handle_network_change(Some(Arc::new(hint)));
         self.remote_map.on_network_change(is_major);
     }
 
@@ -1481,6 +1728,13 @@ impl Actor {
                     tx.send(watcher).ok();
                 }
             }
+            ActorMessage::DirectAddrRefresh => {
+                #[cfg(not(wasm_browser))]
+                {
+                    let (report, _reason) = self.sock.net_report.get();
+                    self.update_direct_addresses(report.as_ref());
+                }
+            }
             #[cfg(all(test, with_crypto_provider))]
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major).await;
@@ -1496,6 +1750,7 @@ impl Actor {
     /// - The portmapper.
     /// - A net_report report.
     /// - The local interfaces IP addresses.
+    /// - User configured addresses.
     #[cfg(not(wasm_browser))]
     fn update_direct_addresses(&mut self, net_report_report: Option<&net_report::Report>) {
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
@@ -1550,6 +1805,11 @@ impl Actor {
         }
 
         self.collect_local_addresses(&mut addrs);
+
+        // Add configured external addresses.
+        for addr in self.sock.configured_addrs.read().expect("poisoned").iter() {
+            addrs.entry(*addr).or_insert(DirectAddrType::Config);
+        }
 
         // Finally create and store store all these direct addresses and send any
         // queued call-me-maybe messages.
@@ -1720,6 +1980,7 @@ pub struct DirectAddr {
 /// These are the various sources or origins from which an iroh endpoint might have found a
 /// possible [`DirectAddr`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum DirectAddrType {
     /// Not yet determined..
     Unknown,
@@ -1742,6 +2003,8 @@ pub enum DirectAddrType {
     /// configure the router to forward this port to the iroh endpoint.  This indicates a
     /// situation like this, which still uses QAD to discover the public address.
     Qad4LocalPort,
+    /// An address explicitly provided by the user via configuration.
+    Config,
 }
 
 impl Display for DirectAddrType {
@@ -1752,6 +2015,7 @@ impl Display for DirectAddrType {
             DirectAddrType::Qad => write!(f, "qad"),
             DirectAddrType::Portmapped => write!(f, "portmap"),
             DirectAddrType::Qad4LocalPort => write!(f, "qad4localport"),
+            DirectAddrType::Config => write!(f, "config"),
         }
     }
 }
@@ -1767,7 +2031,7 @@ mod tests {
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use rand::{CryptoRng, Rng, RngCore, SeedableRng};
+    use rand::{CryptoRng, Rng, RngExt, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
 
@@ -1788,7 +2052,7 @@ mod tests {
 
     fn default_options(rng: &mut impl CryptoRng) -> Options {
         let crypto_provider = default_provider();
-        let secret_key = SecretKey::generate(rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let tls_config = tls::TlsConfig::new(
             secret_key.clone(),
             DEFAULT_MAX_TLS_TICKETS,
@@ -1821,6 +2085,7 @@ mod tests {
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
             static_config,
+            configured_addrs: Default::default(),
         }
     }
 
@@ -2229,6 +2494,7 @@ mod tests {
             transport_bias: Default::default(),
             portmapper_config: Default::default(),
             static_config,
+            configured_addrs: Default::default(),
         };
         let sock = EndpointInner::bind(opts).await?;
         Ok(sock)
