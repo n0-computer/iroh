@@ -31,9 +31,12 @@ pub(super) enum QueryType {
 
 /// Pre-hash `(host, qtype)` into a u64 key for allocation-free cache lookups.
 ///
-/// Collisions are benign (worst case: wrong cache entry returned, causing a
-/// re-query). With 64-bit hashes and a 512-entry cache the probability is
-/// negligible.
+/// A hash collision between different (host, qtype) pairs could return wrong
+/// cached data (e.g. addresses for the wrong domain). The `from_cache` closure
+/// in the resolver rejects type mismatches (A vs AAAA vs TXT), but a same-type
+/// cross-domain collision would be silent. With 64-bit hashes and a 512-entry
+/// cache, the birthday-bound probability is ~1.4e-14 per lookup -- negligible
+/// in practice.
 fn cache_key(host: &str, qtype: QueryType) -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
     host.hash(&mut hasher);
