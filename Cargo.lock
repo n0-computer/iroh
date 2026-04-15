@@ -3134,7 +3134,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-net-tools-flags#ad2b61b1e8bfa5573274dfa4c04d3f35a9f45f6e"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#d77c60b12a06ce084e6cb753bb15481da0123f09"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3722,7 +3722,7 @@ dependencies = [
 [[package]]
 name = "portmapper"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-net-tools-flags#ad2b61b1e8bfa5573274dfa4c04d3f35a9f45f6e"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#d77c60b12a06ce084e6cb753bb15481da0123f09"
 dependencies = [
  "base64",
  "bytes",

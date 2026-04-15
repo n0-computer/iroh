@@ -42,8 +42,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 unused-async = "warn"
 
 [patch.crates-io]
-portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "feat-net-tools-flags" }
-netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "feat-net-tools-flags" }
+portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
+netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
 noq = { git = "https://github.com/n0-computer/noq", branch = "main" }
 noq-udp = { git = "https://github.com/n0-computer/noq", branch = "main" }
 noq-proto = { git = "https://github.com/n0-computer/noq", branch = "main" }
