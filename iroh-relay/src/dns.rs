@@ -84,7 +84,7 @@ pub enum DnsError {
     Timeout { source: tokio::time::error::Elapsed },
     #[error("No response")]
     NoResponse {},
-    #[error("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}")]
+    #[error("Resolve failed IPv4: {ipv4}, IPv6: {ipv6}")]
     ResolveBoth {
         ipv4: Box<DnsError>,
         ipv6: Box<DnsError>,

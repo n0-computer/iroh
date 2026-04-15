@@ -42,6 +42,12 @@ const UDP_ATTEMPTS: usize = 2;
 /// domains first. See <https://man7.org/linux/man-pages/man5/resolv.conf.5.html>.
 const DEFAULT_NDOTS: usize = 1;
 
+/// RFC 6761 Section 6.3: "localhost" and names under it resolve to loopback.
+fn is_localhost(host: &str) -> bool {
+    let host = host.strip_suffix('.').unwrap_or(host);
+    host.eq_ignore_ascii_case("localhost") || host.ends_with(".localhost")
+}
+
 #[derive(Debug)]
 pub(super) struct SimpleDnsResolver {
     nameservers: Vec<(SocketAddr, DnsProtocol)>,
@@ -325,6 +331,10 @@ impl SimpleDnsResolver {
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
+        // RFC 6761: localhost always resolves to loopback.
+        if is_localhost(&host) {
+            return Ok(vec![Ipv4Addr::LOCALHOST].into_iter());
+        }
         let addrs = self
             .lookup(
                 &host,
@@ -345,6 +355,10 @@ impl SimpleDnsResolver {
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
+        // RFC 6761: localhost always resolves to loopback.
+        if is_localhost(&host) {
+            return Ok(vec![Ipv6Addr::LOCALHOST].into_iter());
+        }
         let addrs = self
             .lookup(
                 &host,
