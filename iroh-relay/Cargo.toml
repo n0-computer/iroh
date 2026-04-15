@@ -138,6 +138,7 @@ platform-verifier = ["dep:rustls-platform-verifier"]
 server = [
     "metrics",
     "tokio/signal",
+    "tokio/rt-multi-thread",
     "dep:clap",
     "dep:dashmap",
     "dep:ahash",
