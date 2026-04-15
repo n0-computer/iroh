@@ -54,17 +54,15 @@ pub(super) const MAX_CNAME_DEPTH: usize = 8;
 fn resolve_cname_chain<'a>(packet: &'a Packet<'a>, start_name: &Name<'a>) -> Name<'a> {
     let mut current = start_name.clone();
     for _ in 0..MAX_CNAME_DEPTH {
-        let Some(next) = packet.answers.iter().find_map(|rr| {
-            (rr.name == current)
-                .then(|| match &rr.rdata {
-                    RData::CNAME(cname) => Some(cname.0.clone()),
-                    _ => None,
-                })
-                .flatten()
-        }) else {
+        let Some(RData::CNAME(cname)) = packet
+            .answers
+            .iter()
+            .find(|rr| rr.name == current)
+            .map(|rr| &rr.rdata)
+        else {
             break;
         };
-        current = next;
+        current = cname.0.clone();
     }
     current
 }

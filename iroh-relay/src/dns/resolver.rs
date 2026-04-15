@@ -35,8 +35,11 @@ const NAMESERVER_STAGGER: Duration = Duration::from_millis(100);
 /// UDP is unreliable, so a single dropped packet shouldn't be fatal.
 const UDP_ATTEMPTS: usize = 2;
 
-/// Default value for `ndots`: hostnames with at least this many dots are
-/// tried as absolute names first, before appending search domains.
+/// Default value for `ndots` per resolv.conf(5).
+///
+/// Names with at least this many dots are tried as absolute names first,
+/// before appending search domains. Names with fewer dots try search
+/// domains first. See <https://man7.org/linux/man-pages/man5/resolv.conf.5.html>.
 const DEFAULT_NDOTS: usize = 1;
 
 #[derive(Debug)]
@@ -104,31 +107,38 @@ impl SimpleDnsResolver {
     /// applying search domain expansion per resolv.conf(5) semantics.
     ///
     /// - If the name ends with `.` (FQDN), it is used as-is.
-    /// - If the name has >= `ndots` dots, try the bare name first, then
-    ///   each search domain suffix.
-    /// - If the name has < `ndots` dots, try each search domain suffix
-    ///   first, then the bare name.
+    /// - If the name has more labels than `ndots`, try the bare name first,
+    ///   then each search domain suffix.
+    /// - Otherwise, try each search domain suffix first, then the bare name.
+    ///
+    /// See <https://man7.org/linux/man-pages/man5/resolv.conf.5.html>.
     fn search_names(&self, host: &str) -> Vec<String> {
         // Explicit FQDN: no search domain expansion.
         if host.ends_with('.') || self.search_domains.is_empty() {
             return vec![host.to_string()];
         }
 
-        let dot_count = host.bytes().filter(|&b| b == b'.').count();
-        let mut names = Vec::with_capacity(self.search_domains.len() + 1);
+        // Label count = dots + 1 (e.g. "foo.bar" has 2 labels).
+        // resolv.conf(5): "if the name has more dots than ndots, try as absolute first"
+        // which is equivalent to num_labels > ndots.
+        let num_labels = host.bytes().filter(|&b| b == b'.').count() + 1;
+        let bare_first = num_labels > DEFAULT_NDOTS;
 
-        if dot_count >= DEFAULT_NDOTS {
-            // Likely absolute -- try bare name first.
-            names.push(host.to_string());
-            for domain in &self.search_domains {
-                names.push(format!("{host}.{domain}"));
+        let mut names = Vec::with_capacity(self.search_domains.len() + 1);
+        let mut push = |name: String| {
+            if !names.contains(&name) {
+                names.push(name);
             }
-        } else {
-            // Short name -- try search domains first.
-            for domain in &self.search_domains {
-                names.push(format!("{host}.{domain}"));
-            }
-            names.push(host.to_string());
+        };
+
+        if bare_first {
+            push(host.to_string());
+        }
+        for domain in &self.search_domains {
+            push(format!("{host}.{domain}"));
+        }
+        if !bare_first {
+            push(host.to_string());
         }
 
         names
@@ -140,12 +150,14 @@ impl SimpleDnsResolver {
     #[cfg(with_crypto_provider)]
     fn get_or_init_https_client(&self) -> Result<reqwest::Client, DnsError> {
         let mut guard = self.https_client.lock().expect("poisoned");
-        if let Some(client) = guard.as_ref() {
-            return Ok(client.clone());
+        match guard.as_ref() {
+            Some(client) => Ok(client.clone()),
+            None => {
+                let client = transport::build_https_client(self.tls_config.as_ref())?;
+                *guard = Some(client.clone());
+                Ok(client)
+            }
         }
-        let client = transport::build_https_client(self.tls_config.as_ref())?;
-        *guard = Some(client.clone());
-        Ok(client)
     }
 
     /// Run a future with [`NAMESERVER_TIMEOUT`].
