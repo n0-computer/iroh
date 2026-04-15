@@ -1,10 +1,12 @@
 //! Built-in DNS resolver using `simple-dns` for packet construction/parsing
 //! and tokio for transport.
 
+#[cfg(with_crypto_provider)]
+use std::sync::Arc;
 use std::{
     future::Future,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::Mutex,
 };
 
 use n0_error::e;
@@ -12,7 +14,7 @@ use n0_future::{
     FuturesUnorderedBounded, StreamExt,
     time::{self, Duration},
 };
-use simple_dns::{TYPE, rdata::RData};
+use simple_dns::TYPE;
 use tracing::{debug, trace};
 
 use super::{
@@ -135,16 +137,13 @@ impl SimpleDnsResolver {
     /// Returns a clone of the cached reqwest client, creating it on first use.
     ///
     /// `reqwest::Client` uses an inner `Arc`, so cloning is cheap.
+    #[cfg(with_crypto_provider)]
     fn get_or_init_https_client(&self) -> Result<reqwest::Client, DnsError> {
         let mut guard = self.https_client.lock().expect("poisoned");
         if let Some(client) = guard.as_ref() {
             return Ok(client.clone());
         }
-        #[cfg(with_crypto_provider)]
-        let tls = self.tls_config.as_ref();
-        #[cfg(not(with_crypto_provider))]
-        let tls = None;
-        let client = transport::build_https_client(tls)?;
+        let client = transport::build_https_client(self.tls_config.as_ref())?;
         *guard = Some(client.clone());
         Ok(client)
     }
@@ -246,44 +245,29 @@ impl SimpleDnsResolver {
         for _ in 0..MAX_CNAME_DEPTH {
             let (id, query_bytes) = query::build_query(&current_host, qtype)?;
             let response = self.send_query(&query_bytes).await?;
-
-            // Check if the response only has CNAMEs but no records of the
-            // requested type. If so, follow the CNAME to a new query.
             let packet = simple_dns::Packet::parse(&response)?;
-            let has_target_records = packet.answers.iter().any(|rr| {
-                matches!(
-                    (&rr.rdata, qtype),
-                    (RData::A(_), TYPE::A)
-                        | (RData::AAAA(_), TYPE::AAAA)
-                        | (RData::TXT(_), TYPE::TXT)
-                )
-            });
 
-            if has_target_records {
+            let has_answer = packet
+                .answers
+                .iter()
+                .any(|rr| rr.rdata.type_code() == qtype);
+
+            if has_answer {
                 return Ok((response, id));
             }
 
-            // No target records -- check for a CNAME to follow.
-            match query::cname_target(&packet, &current_host) {
-                Some(target) => {
-                    debug!(
-                        from = %current_host,
-                        to = %target,
-                        "following CNAME"
-                    );
-                    current_host = target;
-                }
-                None => {
-                    // No CNAME either; return the response as-is (empty results).
-                    return Ok((response, id));
-                }
-            }
+            // No records of the requested type -- follow CNAME if present.
+            let Some(target) = query::cname_target(&packet, &current_host) else {
+                return Ok((response, id));
+            };
+            debug!(from = %current_host, to = %target, "following CNAME");
+            current_host = target;
         }
-        // Exceeded max CNAME depth.
         Err(e!(DnsError::InvalidResponse))
     }
 
     /// Shared lookup logic: check cache, try search names, parse response, cache result.
+    #[allow(clippy::type_complexity)]
     async fn lookup<T: Clone>(
         &self,
         host: &str,
