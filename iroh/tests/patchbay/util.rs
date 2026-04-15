@@ -8,6 +8,7 @@ use iroh::{
 use iroh_metrics::MetricsGroupSet;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{boxed::BoxFuture, task::AbortOnDropHandle};
+use noq::Side;
 use patchbay::{Device, IpSupport, Lab, OutDir, TestGuard};
 use tokio::sync::{Barrier, oneshot};
 use tracing::{Instrument, debug, error, error_span, event, info};
@@ -73,14 +74,40 @@ async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
 /// Type alias for boxed run functions used in [`Pair`].
 type RunFn = Box<dyn 'static + Send + FnOnce(Device, Endpoint, Connection) -> BoxFuture<Result>>;
 
+fn box_fn<F, Fut>(f: F) -> RunFn
+where
+    F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
+    Fut: Future<Output = Result> + Send + 'static,
+{
+    Box::new(move |dev, ep, conn| Box::pin(f(dev, ep, conn)))
+}
+
 /// Builder for two connected endpoints in a lab.
 ///
 /// Use this to quickly create two endpoints on two different devices and create a
 /// connection between them that starts as relay-only.
+///
+/// Two construction paths:
+///
+/// ```ignore
+/// // Explicit server/client assignment:
+/// Pair::new(relay_map)
+///     .server(server_dev, async |dev, ep, conn| { ... })
+///     .client(client_dev, async |dev, ep, conn| { ... })
+///     .run().await?;
+///
+/// // Side-swapped assignment (for matrix tests):
+/// Pair::new(relay_map)
+///     .left(some_side, dev_a, async |dev, ep, conn| { ... })
+///     .right(dev_b, async |dev, ep, conn| { ... })
+///     .run().await?;
+/// ```
 pub struct Pair {
     relay_map: RelayMap,
-    server: Option<(Device, RunFn)>,
-    client: Option<(Device, RunFn)>,
+    server_dev: Option<Device>,
+    client_dev: Option<Device>,
+    server_fn: Option<RunFn>,
+    client_fn: Option<RunFn>,
 }
 
 impl Pair {
@@ -88,9 +115,43 @@ impl Pair {
     pub fn new(relay_map: RelayMap) -> Self {
         Self {
             relay_map,
-            server: None,
-            client: None,
+            server_dev: None,
+            client_dev: None,
+            server_fn: None,
+            client_fn: None,
         }
+    }
+
+    /// Places a device and closure on the given [`Side`].
+    ///
+    /// Use with [`.right()`](Self::right) for matrix tests that swap sides.
+    pub fn left<F, Fut>(mut self, side: Side, device: Device, run_fn: F) -> Self
+    where
+        F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
+        Fut: Future<Output = Result> + Send + 'static,
+    {
+        let (dev_slot, fn_slot) = match side {
+            Side::Server => (&mut self.server_dev, &mut self.server_fn),
+            Side::Client => (&mut self.client_dev, &mut self.client_fn),
+        };
+        *dev_slot = Some(device);
+        *fn_slot = Some(box_fn(run_fn));
+        self
+    }
+
+    /// Places a device and closure on whichever [`Side`] was not set by [`.left()`](Self::left).
+    pub fn right<F, Fut>(self, device: Device, run_fn: F) -> Self
+    where
+        F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
+        Fut: Future<Output = Result> + Send + 'static,
+    {
+        let remaining = match (&self.server_dev, &self.client_dev) {
+            (Some(_), None) => Side::Client,
+            (None, Some(_)) => Side::Server,
+            (None, None) => panic!("call .left() before .right()"),
+            (Some(_), Some(_)) => panic!("both sides already assigned"),
+        };
+        self.left(remaining, device, run_fn)
     }
 
     /// Sets the server device and run function.
@@ -99,9 +160,8 @@ impl Pair {
         F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
         Fut: Future<Output = Result> + Send + 'static,
     {
-        let run_fn: RunFn =
-            Box::new(move |device, endpoint, conn| Box::pin(run_fn(device, endpoint, conn)));
-        self.server = Some((device, run_fn));
+        self.server_dev = Some(device);
+        self.server_fn = Some(box_fn(run_fn));
         self
     }
 
@@ -111,9 +171,8 @@ impl Pair {
         F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
         Fut: Future<Output = Result> + Send + 'static,
     {
-        let run_fn: RunFn =
-            Box::new(move |device, endpoint, conn| Box::pin(run_fn(device, endpoint, conn)));
-        self.client = Some((device, run_fn));
+        self.client_dev = Some(device);
+        self.client_fn = Some(box_fn(run_fn));
         self
     }
 
@@ -133,14 +192,16 @@ impl Pair {
     ///
     /// Returns an error if any step or run function failed.
     pub async fn run(mut self) -> Result {
-        let (server_device, server_run) = self
-            .server
+        let server_device = self.server_dev.take().context("Missing server device")?;
+        let server_run = self
+            .server_fn
             .take()
-            .context("Missing server initialization")?;
-        let (client_device, client_run) = self
-            .client
+            .context("Missing server run function")?;
+        let client_device = self.client_dev.take().context("Missing client device")?;
+        let client_run = self
+            .client_fn
             .take()
-            .context("Missing client initialization")?;
+            .context("Missing client run function")?;
 
         let (addr_tx, addr_rx) = oneshot::channel();
         let relay_map2 = self.relay_map.clone();
@@ -334,7 +395,7 @@ impl PathWatcherExt for PathWatcher {
             }
         })
         .await
-        .with_std_context(|_| "wait_selected timed out after {timeout:?}")?
+        .with_std_context(|_| format!("wait_selected timed out after {timeout:?}"))?
     }
 }
 
@@ -355,7 +416,7 @@ pub async fn ping_open(conn: &Connection, timeout: Duration) -> Result {
     })
     .instrument(error_span!("ping_open"))
     .await
-    .with_std_context(|_| "ping_open timed out after {timeout:?}")?
+    .with_std_context(|_| format!("ping_open timed out after {timeout:?}"))?
 }
 
 /// Accepts a bidi stream, reads 8 bytes of data, and sends the same data back.
@@ -373,7 +434,7 @@ pub async fn ping_accept(conn: &Connection, timeout: Duration) -> Result {
     })
     .instrument(error_span!("ping_accept"))
     .await
-    .with_std_context(|_| "ping_accept timed out after {timeout:?}")?
+    .with_std_context(|_| format!("ping_accept timed out after {timeout:?}"))?
 }
 
 fn watch_selected_path(conn: &Connection) {
