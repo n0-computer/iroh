@@ -900,7 +900,7 @@ mod tests {
         {
             let e1 = Endpoint::builder(presets::Minimal)
                 .clear_ip_transports()
-                .bind_addr((std::net::Ipv4Addr::LOCALHOST, 0))
+                .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, 0))
                 .anyerr()?
                 .bind()
                 .await?;
@@ -911,7 +911,7 @@ mod tests {
             let addr = r1.endpoint().addr();
             let e2 = Endpoint::builder(presets::Minimal)
                 .clear_ip_transports()
-                .bind_addr((std::net::Ipv4Addr::LOCALHOST, 0))
+                .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, 0))
                 .anyerr()?
                 .bind()
                 .await?;
