@@ -42,7 +42,7 @@ use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay, PingTracker,
     client::{Client, ConnectError, RecvError, SendError},
-    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, Status},
 };
 use n0_error::{e, stack_error};
 use n0_future::{
@@ -681,14 +681,19 @@ impl ActiveRelayActor {
                 state.ping_tracker.pong_received(data);
                 state.established = true;
             }
-            RelayToClientMsg::Health { problem } => {
-                warn!("Relay server reports problem: {problem}");
-            }
+            RelayToClientMsg::Status(status) => match status {
+                Status::Healthy => info!("Relay server reports: {status}"),
+                _ => warn!("Relay server reports problem: {status}"),
+            },
             RelayToClientMsg::Restarting { .. } => {
                 trace!("Ignoring {msg:?}")
             }
-            _ => {
-                warn!("Ignoring unknown relay message: {msg:?}")
+            // Deprecated variants, kept for backwards compatibility with older relay protocol versions.
+            RelayToClientMsg::Health { problem } => {
+                warn!("Relay server reports problem: {problem}");
+            }
+            frame => {
+                warn!("Ignoring unknown relay message: {frame:?}")
             }
         }
     }
