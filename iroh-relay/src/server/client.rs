@@ -663,7 +663,7 @@ mod tests {
                 channel_capacity: 10,
                 protocol_version,
             },
-            Conn::test(client, Default::default()),
+            Conn::test(client, protocol_version),
         )
     }
 
