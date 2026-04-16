@@ -348,7 +348,10 @@ impl Server {
         let quic_server = match config.quic {
             Some(quic_config) => {
                 debug!("Starting QUIC server {}", quic_config.bind_addr);
-                Some(QuicServer::spawn(quic_config).map_err(|err| e!(SpawnError::QuicSpawn, err))?)
+                Some(
+                    QuicServer::spawn(quic_config, metrics.server.clone())
+                        .map_err(|err| e!(SpawnError::QuicSpawn, err))?,
+                )
             }
             None => None,
         };

@@ -36,9 +36,12 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{self, Watchable, Watcher};
-#[cfg(not(wasm_browser))]
-use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
+#[cfg(not(wasm_browser))]
+use netwatch::{
+    interfaces::{IpNet, Ipv6AddrFlags},
+    ip::LocalAddresses,
+};
 use noq::{
     NetworkChangeHint, WeakConnectionHandle,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
@@ -1756,7 +1759,8 @@ impl Actor {
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
         // this as a map of SocketAddr -> DirectAddrType.  At the end we will construct a
         // DirectAddr from each entry.
-        let mut addrs: BTreeMap<SocketAddr, DirectAddrType> = BTreeMap::new();
+        let mut addrs: BTreeMap<SocketAddr, (DirectAddrType, Option<Ipv6AddrFlags>)> =
+            BTreeMap::new();
 
         // First add PortMapper provided addresses.
         let portmap_watcher = self
@@ -1767,13 +1771,15 @@ impl Actor {
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
             addrs
                 .entry(portmap_ext)
-                .or_insert(DirectAddrType::Portmapped);
+                .or_insert((DirectAddrType::Portmapped, None));
         }
 
         // Next add STUN addresses from the net_report report.
         if let Some(net_report_report) = net_report_report {
             if let Some(global_v4) = net_report_report.global_v4 {
-                addrs.entry(global_v4.into()).or_insert(DirectAddrType::Qad);
+                addrs
+                    .entry(global_v4.into())
+                    .or_insert((DirectAddrType::Qad, None));
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -1796,11 +1802,13 @@ impl Actor {
                     addr.set_port(port);
                     addrs
                         .entry(addr.into())
-                        .or_insert(DirectAddrType::Qad4LocalPort);
+                        .or_insert((DirectAddrType::Qad4LocalPort, None));
                 }
             }
             if let Some(global_v6) = net_report_report.global_v6 {
-                addrs.entry(global_v6.into()).or_insert(DirectAddrType::Qad);
+                addrs
+                    .entry(global_v6.into())
+                    .or_insert((DirectAddrType::Qad, None));
             }
         }
 
@@ -1808,24 +1816,31 @@ impl Actor {
 
         // Add configured external addresses.
         for addr in self.sock.configured_addrs.read().expect("poisoned").iter() {
-            addrs.entry(*addr).or_insert(DirectAddrType::Config);
+            addrs.entry(*addr).or_insert((DirectAddrType::Config, None));
         }
 
-        // Finally create and store store all these direct addresses and send any
-        // queued call-me-maybe messages.
-        self.sock.store_direct_addresses(
-            addrs
-                .iter()
-                .map(|(addr, typ)| DirectAddr {
-                    addr: *addr,
-                    typ: *typ,
-                })
-                .collect(),
-        );
+        // Finally create and store store all these direct addresses
+        let stored_addrs = addrs
+            .into_iter()
+            .filter_map(|(addr, (typ, flags))| {
+                // Filter out deprecated IPs
+                let is_deprecated = flags.map(|f| f.deprecated).unwrap_or(false);
+                if is_deprecated {
+                    return None;
+                }
+                Some(DirectAddr { addr, typ })
+            })
+            .collect();
+        self.sock.store_direct_addresses(stored_addrs);
     }
 
     #[cfg(not(wasm_browser))]
-    fn collect_local_addresses(&mut self, addrs: &mut BTreeMap<SocketAddr, DirectAddrType>) {
+    fn collect_local_addresses(
+        &mut self,
+        addrs: &mut BTreeMap<SocketAddr, (DirectAddrType, Option<Ipv6AddrFlags>)>,
+    ) {
+        let netmon_state = self.local_interfaces_watcher.get();
+
         // Matches the addresses that have been bound vs the requested ones.
         let local_addrs: Vec<(SocketAddr, SocketAddr)> = self
             .sock
@@ -1875,7 +1890,8 @@ impl Actor {
                 };
                 if let Some(port) = port_if_unspecified {
                     let addr = SocketAddr::new(ip, port);
-                    addrs.entry(addr).or_insert(DirectAddrType::Local);
+                    let flags = find_flags(&netmon_state, ip);
+                    addrs.entry(addr).or_insert((DirectAddrType::Local, flags));
                 }
             }
         }
@@ -1883,7 +1899,8 @@ impl Actor {
         // If a socket is bound to a specific address, add it.
         for (bound, local) in local_addrs {
             if !bound.ip().is_unspecified() {
-                addrs.entry(local).or_insert(DirectAddrType::Local);
+                let flags = find_flags(&netmon_state, local.ip());
+                addrs.entry(local).or_insert((DirectAddrType::Local, flags));
             }
         }
     }
@@ -1903,6 +1920,28 @@ impl Actor {
 
         #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report.as_ref());
+    }
+}
+
+#[cfg(not(wasm_browser))]
+fn find_flags(state: &netmon::State, ip: IpAddr) -> Option<Ipv6AddrFlags> {
+    if ip.is_ipv6() {
+        state
+            .interfaces
+            .values()
+            .flat_map(|i| i.addrs())
+            .find_map(|addr| match addr {
+                IpNet::V4(_) => None,
+                IpNet::V6 { net, flags, .. } => {
+                    if net.addr() == ip {
+                        Some(flags)
+                    } else {
+                        None
+                    }
+                }
+            })
+    } else {
+        None
     }
 }
 
@@ -1980,6 +2019,7 @@ pub struct DirectAddr {
 /// These are the various sources or origins from which an iroh endpoint might have found a
 /// possible [`DirectAddr`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum DirectAddrType {
     /// Not yet determined..
     Unknown,

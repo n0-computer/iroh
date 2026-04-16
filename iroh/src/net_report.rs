@@ -921,13 +921,11 @@ mod test_utils {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
-        let quic = Some(RelayQuicConfig {
-            port: server.quic_addr().expect("server should run quic").port(),
-        });
-        let endpoint_desc = RelayConfig {
-            url: server.https_url().expect("should work as relay"),
-            quic,
-        };
+        let quic = Some(RelayQuicConfig::new(
+            server.quic_addr().expect("server should run quic").port(),
+        ));
+        let endpoint_desc =
+            RelayConfig::new(server.https_url().expect("should work as relay"), quic);
 
         (server, endpoint_desc)
     }
