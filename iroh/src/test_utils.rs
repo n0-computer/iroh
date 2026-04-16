@@ -290,6 +290,8 @@ pub(crate) mod pkarr_relay {
         routing::put,
     };
     use bytes::Bytes;
+    use iroh_base::EndpointId;
+    use iroh_relay::endpoint_info::EndpointIdExt;
     use tokio::sync::oneshot;
     use tracing::{debug, error, warn};
     use url::Url;
@@ -330,9 +332,9 @@ pub(crate) mod pkarr_relay {
         Path(key): Path<String>,
         body: Bytes,
     ) -> Result<impl IntoResponse, AppError> {
-        let key = pkarr::PublicKey::try_from(key.as_str()).map_err(std::io::Error::other)?;
-        let signed_packet =
-            pkarr::SignedPacket::from_relay_payload(&key, &body).map_err(std::io::Error::other)?;
+        let key = EndpointId::from_z32(&key).map_err(std::io::Error::other)?;
+        let signed_packet = iroh_dns::pkarr::SignedPacket::from_relay_payload(&key, &body)
+            .map_err(std::io::Error::other)?;
         let _updated = state.upsert(signed_packet)?;
         Ok(http::StatusCode::NO_CONTENT)
     }
@@ -361,8 +363,8 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use iroh_base::EndpointId;
+    use iroh_dns::pkarr::SignedPacket;
     use iroh_relay::endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME};
-    use pkarr::SignedPacket;
     use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;
@@ -410,8 +412,7 @@ pub(crate) mod pkarr_dns_state {
         }
 
         pub fn upsert(&self, signed_packet: SignedPacket) -> std::io::Result<bool> {
-            let endpoint_id = EndpointId::from_bytes(&signed_packet.public_key().to_bytes())
-                .map_err(std::io::Error::other)?;
+            let endpoint_id = signed_packet.public_key();
             let mut map = self.packets.lock().expect("poisoned");
             let updated = match map.entry(endpoint_id) {
                 hash_map::Entry::Vacant(e) => {
