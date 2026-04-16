@@ -1820,13 +1820,11 @@ impl Actor {
         if let Some(net_report_report) = net_report_report {
             let bound_v4 = self
                 .sock
-                .ip_bind_addrs()
-                .iter()
+                .ip_local_addrs()
                 .find_map(|a| (a.is_ipv4() && a.port() != 0).then_some(a.port()));
             let bound_v6 = self
                 .sock
-                .ip_bind_addrs()
-                .iter()
+                .ip_local_addrs()
                 .find_map(|a| (a.is_ipv6() && a.port() != 0).then_some(a.port()));
 
             if let Some(global_v4) = net_report_report.global_v4 {
