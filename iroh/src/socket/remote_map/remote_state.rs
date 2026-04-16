@@ -472,7 +472,6 @@ impl RemoteStateActor {
                     handle: handle.clone(),
                     path_watchable: path_watchable.clone(),
                     paths: Default::default(),
-                    paths_by_addr: Default::default(),
                     has_been_direct: false,
                 })
                 .into_mut();
@@ -816,6 +815,7 @@ impl RemoteStateActor {
     fn open_path(&mut self, open_addr: &transports::Addr) {
         let bias = self.transport_bias.get(open_addr);
         let path_status = bias.transport_type.to_path_status();
+
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
             transports::Addr::Relay(relay_url, eid) => self
@@ -827,12 +827,17 @@ impl RemoteStateActor {
             }
         };
 
-        for (conn_id, conn_state) in self.connections.iter_mut() {
+        for (conn_id, conn_state) in self.connections.iter() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-            if let Some(&path_id) = conn_state.paths_by_addr.get(open_addr)
-                && let Some(path) = conn.path(path_id)
+
+            let mut path_for_addr_exists = false;
+            for path in conn_state
+                .paths
+                .iter()
+                .filter(|(_id, addr)| *addr == open_addr)
+                .filter_map(|(id, _addr)| conn.path(*id))
             {
                 // We still need to ensure that the path status is set correctly,
                 // in case the path was opened by QNT, which opens all IP paths
@@ -846,15 +851,16 @@ impl RemoteStateActor {
                     ?open_addr,
                     ?path_status,
                     %conn_id,
-                    %path_id,
+                    path_id=%path.id(),
                     ?res,
                 );
                 Self::configure_path(&path, open_addr);
+                path_for_addr_exists = true;
+            }
+            if path_for_addr_exists || conn.side().is_server() {
                 continue;
             }
-            if conn.side().is_server() {
-                continue;
-            }
+
             let fut = conn.open_path_ensure(quic_addr, path_status);
             match fut.path_id() {
                 Some(path_id) => {
@@ -961,20 +967,23 @@ impl RemoteStateActor {
                 );
 
                 // If one connection abandons a path, close it on all connections.
-                for (conn_id, conn_state) in self.connections.iter_mut() {
-                    let Some(path_id) = conn_state.paths_by_addr.get(&path_remote) else {
-                        continue;
-                    };
+                for (conn_id, conn_state) in self.connections.iter() {
                     let Some(conn) = conn_state.handle.upgrade() else {
                         continue;
                     };
-                    if let Some(path) = conn.path(*path_id) {
-                        trace!(?path_remote, %conn_id, %path_id, "closing path");
+                    // Close all paths with the remote address that was abandoned.
+                    for path in conn_state
+                        .paths
+                        .iter()
+                        .filter(|(_id, addr)| **addr == path_remote)
+                        .filter_map(|(id, _addr)| conn.path(*id))
+                    {
+                        trace!(?path_remote, %conn_id, path_id=%path.id(), "closing path");
                         if let Err(err) = path.close() {
                             trace!(
                                 ?path_remote,
                                 %conn_id,
-                                %path_id,
+                                path_id=%path.id(),
                                 "path close failed: {err:#}"
                             );
                         }
@@ -1265,8 +1274,6 @@ struct ConnectionState {
     path_watchable: PathWatchable,
     /// The open paths that exist on this connection.
     paths: FxHashMap<PathId, transports::Addr>,
-    /// Reverse map of [`Self::paths].
-    paths_by_addr: FxHashMap<transports::Addr, PathId>,
     /// Whether this connection has ever had a direct path.
     ///
     /// Used for recording metrics.
@@ -1298,7 +1305,6 @@ impl ConnectionState {
         }
 
         self.paths.insert(path_id, remote.clone());
-        self.paths_by_addr.insert(remote.clone(), path_id);
         if let Some(conn) = self.handle.upgrade() {
             self.path_watchable.insert(&conn, path_id, remote.into());
         }
@@ -1307,9 +1313,6 @@ impl ConnectionState {
     /// Removes a path from this connection.
     fn remove_path(&mut self, path_id: &PathId) -> Option<transports::Addr> {
         let addr = self.paths.remove(path_id);
-        if let Some(ref addr) = addr {
-            self.paths_by_addr.remove(addr);
-        }
         self.path_watchable.set_abandoned(*path_id);
         addr
     }
