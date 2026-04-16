@@ -14,7 +14,6 @@ use iroh::{
     address_lookup::{AddrFilter, DhtAddressLookup},
     endpoint::presets,
 };
-use iroh_relay::endpoint_info::EndpointIdExt;
 use n0_error::{Result, StdResultExt};
 use tracing::warn;
 

@@ -32,7 +32,7 @@ use url::Url;
 
 use crate::{
     defaults::timeouts::DNS_TIMEOUT,
-    endpoint_info::{EndpointIdExt, EndpointInfo, ParseError},
+    endpoint_info::{EndpointInfo, ParseError},
 };
 
 /// The n0 address lookup DNS origin, for production.
