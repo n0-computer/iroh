@@ -2,20 +2,11 @@
 //!
 //! iroh runs QAD probes against multiple relays and keeps every observed
 //! external address in [`crate::NetReport::qad_v4_observations`] /
-//! `qad_v6_observations`. Feeding that list into [`NatPattern::classify`]
+//! `qad_v6_observations`. Feeding those ports into [`NatPattern::classify`]
 //! produces a classification, and [`NatPattern::expand_candidates`] turns
 //! the pattern into a predicted port set to advertise to peers.
 
-use std::net::SocketAddr;
-
 use serde::{Deserialize, Serialize};
-
-/// A single QAD probe observation used for NAT pattern classification.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Observation {
-    /// External address the QAD server saw.
-    pub observed: SocketAddr,
-}
 
 /// The detected port-allocation pattern of the local NAT.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,22 +85,19 @@ impl Default for NatPatternConfig {
 /// Lower bound on observation count; fewer than this yields
 /// [`NatPattern::Unknown`].
 const MIN_OBSERVATIONS: usize = 3;
-/// Spread at or below this is classified as [`NatPattern::Incremental`] or
-/// [`NatPattern::Preservation`] rather than [`NatPattern::PortBlock`].
-const INCREMENTAL_MAX_SPREAD: u16 = 31;
 /// Spread above this is [`NatPattern::Random`].
 const PORT_BLOCK_MAX_SPREAD: u16 = 2047;
 
 impl NatPattern {
-    /// Classify the local NAT from a set of QAD observations.
+    /// Classify the local NAT from a set of QAD-observed external ports.
     ///
     /// `bound_port` is the local port the probes originated from; it is used
     /// to detect port preservation and parity behaviour.
-    pub fn classify(observations: &[Observation], bound_port: u16) -> Self {
-        if observations.len() < MIN_OBSERVATIONS {
+    pub fn classify(observed_ports: &[u16], bound_port: u16) -> Self {
+        if observed_ports.len() < MIN_OBSERVATIONS {
             return Self::Unknown;
         }
-        let ports: Vec<u16> = observations.iter().map(|o| o.observed.port()).collect();
+        let ports = observed_ports;
 
         if ports.iter().all(|p| *p == ports[0]) {
             return Self::Preservation {
@@ -118,7 +106,7 @@ impl NatPattern {
             };
         }
 
-        if let Some(delta) = detect_constant_delta(&ports) {
+        if let Some(delta) = detect_constant_delta(ports) {
             let last_port = ports.iter().copied().max().unwrap_or(0);
             let parity_preserving = ports.iter().all(|p| (p & 1) == (bound_port & 1));
             return Self::Incremental {
@@ -134,23 +122,13 @@ impl NatPattern {
         };
         let spread = max - min;
 
-        if spread <= INCREMENTAL_MAX_SPREAD {
-            // Narrow non-monotone spread: treat as a small block.
-            let block_size = (spread + 1).next_power_of_two();
-            let block_base = min & !(block_size.saturating_sub(1));
-            return Self::PortBlock {
-                block_base,
-                block_size,
-                first_observed: observations[0].observed.port(),
-            };
-        }
         if spread <= PORT_BLOCK_MAX_SPREAD {
             let block_size = (spread + 1).next_power_of_two();
             let block_base = min & !(block_size.saturating_sub(1));
             return Self::PortBlock {
                 block_base,
                 block_size,
-                first_observed: observations[0].observed.port(),
+                first_observed: ports[0],
             };
         }
 
@@ -257,25 +235,17 @@ fn detect_constant_delta(ports: &[u16]) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
-
     use super::*;
-
-    fn obs(port: u16) -> Observation {
-        Observation {
-            observed: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), port),
-        }
-    }
 
     #[test]
     fn unknown_when_too_few_observations() {
-        let pattern = NatPattern::classify(&[obs(1), obs(2)], 42);
+        let pattern = NatPattern::classify(&[1, 2], 42);
         assert_eq!(pattern, NatPattern::Unknown);
     }
 
     #[test]
     fn preservation_when_all_ports_equal() {
-        let pattern = NatPattern::classify(&[obs(5000), obs(5000), obs(5000)], 5000);
+        let pattern = NatPattern::classify(&[5000, 5000, 5000], 5000);
         assert_eq!(
             pattern,
             NatPattern::Preservation {
@@ -287,7 +257,7 @@ mod tests {
 
     #[test]
     fn preservation_with_port_shift() {
-        let pattern = NatPattern::classify(&[obs(49200), obs(49200), obs(49200)], 12345);
+        let pattern = NatPattern::classify(&[49200, 49200, 49200], 12345);
         assert_eq!(
             pattern,
             NatPattern::Preservation {
@@ -299,7 +269,7 @@ mod tests {
 
     #[test]
     fn incremental_delta_one() {
-        let pattern = NatPattern::classify(&[obs(40001), obs(40002), obs(40003)], 40001);
+        let pattern = NatPattern::classify(&[40001, 40002, 40003], 40001);
         assert_eq!(
             pattern,
             NatPattern::Incremental {
@@ -312,7 +282,7 @@ mod tests {
 
     #[test]
     fn incremental_parity_preserving() {
-        let pattern = NatPattern::classify(&[obs(40002), obs(40004), obs(40006)], 40000);
+        let pattern = NatPattern::classify(&[40002, 40004, 40006], 40000);
         assert_eq!(
             pattern,
             NatPattern::Incremental {
@@ -325,7 +295,7 @@ mod tests {
 
     #[test]
     fn port_block_for_narrow_non_monotone_spread() {
-        let pattern = NatPattern::classify(&[obs(44100), obs(44500), obs(44200)], 12345);
+        let pattern = NatPattern::classify(&[44100, 44500, 44200], 12345);
         let NatPattern::PortBlock {
             block_base,
             block_size,
@@ -342,7 +312,7 @@ mod tests {
 
     #[test]
     fn random_for_wide_spread() {
-        let pattern = NatPattern::classify(&[obs(3000), obs(51000), obs(22000)], 12345);
+        let pattern = NatPattern::classify(&[3000, 51000, 22000], 12345);
         assert_eq!(pattern, NatPattern::Random);
     }
 

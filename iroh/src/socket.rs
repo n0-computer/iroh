@@ -71,6 +71,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
     metrics::EndpointMetrics,
+    nat_pattern,
     net_report::{self, IfStateDetails, Report},
     portmapper,
     runtime::Runtime,
@@ -182,6 +183,9 @@ pub(crate) struct Options {
 
     /// Explicitly configured external addresses to advertise.
     pub(crate) configured_addrs: BTreeSet<SocketAddr>,
+
+    /// Local NAT pattern detection and candidate expansion configuration.
+    pub(crate) nat_pattern_config: nat_pattern::NatPatternConfig,
 }
 
 /// Inner state for an iroh [`crate::Endpoint`].
@@ -355,6 +359,13 @@ pub(crate) struct Socket {
     address_lookup_user_data: RwLock<Option<UserData>>,
     /// Explicitly configured external addresses to advertise.
     configured_addrs: RwLock<BTreeSet<SocketAddr>>,
+
+    /// Local NAT pattern detection and candidate expansion configuration.
+    nat_pattern_config: nat_pattern::NatPatternConfig,
+    /// Most recently classified IPv4 NAT pattern.
+    nat_pattern_v4: Watchable<Option<nat_pattern::NatPattern>>,
+    /// Most recently classified IPv6 NAT pattern.
+    nat_pattern_v6: Watchable<Option<nat_pattern::NatPattern>>,
 
     pub(crate) tls_config: rustls::ClientConfig,
 
@@ -843,6 +854,7 @@ impl EndpointInner {
             portmapper_config,
             static_config,
             configured_addrs,
+            nat_pattern_config,
         } = opts;
 
         let address_lookup = address_lookup::ConcurrentAddressLookup::default();
@@ -946,6 +958,9 @@ impl EndpointInner {
             relay_map: relay_map.clone(),
             address_lookup_user_data: RwLock::new(address_lookup_user_data),
             configured_addrs: RwLock::new(configured_addrs),
+            nat_pattern_config,
+            nat_pattern_v4: Watchable::new(None),
+            nat_pattern_v6: Watchable::new(None),
             direct_addrs,
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
@@ -1783,41 +1798,67 @@ impl Actor {
                 .or_insert((DirectAddrType::Portmapped, None));
         }
 
-        // Next add STUN addresses from the net_report report.
+        // Next add the QAD-discovered external address, and predicted
+        // candidates derived from the classified NAT pattern.
         if let Some(net_report_report) = net_report_report {
+            let bound_v4 = self
+                .sock
+                .ip_bind_addrs()
+                .iter()
+                .find_map(|a| (a.is_ipv4() && a.port() != 0).then_some(a.port()));
+            let bound_v6 = self
+                .sock
+                .ip_bind_addrs()
+                .iter()
+                .find_map(|a| (a.is_ipv6() && a.port() != 0).then_some(a.port()));
+
             if let Some(global_v4) = net_report_report.global_v4 {
                 addrs
                     .entry(global_v4.into())
                     .or_insert((DirectAddrType::Qad, None));
 
-                // If they're behind a hard NAT and are using a fixed
-                // port locally, assume they might've added a static
-                // port mapping on their router to the same explicit
-                // port that we are running with. Worst case it's an invalid candidate mapping.
-                let port = self.sock.ip_bind_addrs().iter().find_map(|addr| {
-                    if addr.port() != 0 {
-                        Some(addr.port())
-                    } else {
-                        None
-                    }
+                let pattern = bound_v4.map(|bp| {
+                    let ports: Vec<u16> = net_report_report
+                        .qad_v4_observations
+                        .iter()
+                        .map(|o| o.observed.port())
+                        .collect();
+                    nat_pattern::NatPattern::classify(&ports, bp)
                 });
-
-                if let Some(port) = port
-                    && net_report_report
-                        .mapping_varies_by_dest()
-                        .unwrap_or_default()
-                {
-                    let mut addr = global_v4;
-                    addr.set_port(port);
-                    addrs
-                        .entry(addr.into())
-                        .or_insert((DirectAddrType::Qad4LocalPort, None));
+                let _ = self.sock.nat_pattern_v4.set(pattern.clone());
+                if let Some(pattern) = pattern {
+                    let predicted = pattern.expand_candidates(&self.sock.nat_pattern_config);
+                    for port in predicted {
+                        let addr = SocketAddr::new((*global_v4.ip()).into(), port);
+                        addrs
+                            .entry(addr)
+                            .or_insert((DirectAddrType::Qad4LocalPort, None));
+                    }
                 }
             }
             if let Some(global_v6) = net_report_report.global_v6 {
                 addrs
                     .entry(global_v6.into())
                     .or_insert((DirectAddrType::Qad, None));
+
+                let pattern = bound_v6.map(|bp| {
+                    let ports: Vec<u16> = net_report_report
+                        .qad_v6_observations
+                        .iter()
+                        .map(|o| o.observed.port())
+                        .collect();
+                    nat_pattern::NatPattern::classify(&ports, bp)
+                });
+                let _ = self.sock.nat_pattern_v6.set(pattern.clone());
+                if let Some(pattern) = pattern {
+                    let predicted = pattern.expand_candidates(&self.sock.nat_pattern_config);
+                    for port in predicted {
+                        let addr = SocketAddr::new((*global_v6.ip()).into(), port);
+                        addrs
+                            .entry(addr)
+                            .or_insert((DirectAddrType::Qad4LocalPort, None));
+                    }
+                }
             }
         }
 
@@ -2134,6 +2175,7 @@ mod tests {
             portmapper_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
+            nat_pattern_config: Default::default(),
         }
     }
 
@@ -2543,6 +2585,7 @@ mod tests {
             portmapper_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
+            nat_pattern_config: Default::default(),
         };
         let sock = EndpointInner::bind(opts).await?;
         Ok(sock)

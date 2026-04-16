@@ -56,6 +56,7 @@ use crate::{
     },
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
+    nat_pattern,
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
     },
@@ -129,6 +130,7 @@ pub struct Builder {
     portmapper_config: PortmapperConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
+    nat_pattern_config: nat_pattern::NatPatternConfig,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -196,6 +198,7 @@ impl Builder {
             portmapper_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
+            nat_pattern_config: Default::default(),
         }
     }
 
@@ -257,6 +260,7 @@ impl Builder {
             portmapper_config: self.portmapper_config,
             static_config,
             configured_addrs: self.configured_addrs,
+            nat_pattern_config: self.nat_pattern_config.clone(),
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
