@@ -384,7 +384,7 @@
 <a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span>protocol_version =
 <a href=#385 id=385 data-nosnippet>385</a>            ProtocolVersion::match_from_str(<span class="kw-2">&amp;</span>ws_meta.protocol()).ok_or_else(|| {
 <a href=#386 id=386 data-nosnippet>386</a>                <span class="macro">e!</span>(ConnectError::BadVersionHeader {
-<a href=#387 id=387 data-nosnippet>387</a>                    server_version: protocol_version_str.map(ToOwned::to_owned)
+<a href=#387 id=387 data-nosnippet>387</a>                    server_version: <span class="prelude-val">Some</span>(ws_meta.protocol())
 <a href=#388 id=388 data-nosnippet>388</a>                })
 <a href=#389 id=389 data-nosnippet>389</a>            })<span class="question-mark">?</span>;
 <a href=#390 id=390 data-nosnippet>390</a>
