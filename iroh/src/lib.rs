@@ -276,6 +276,7 @@ pub mod address_lookup;
 pub mod defaults;
 pub mod endpoint;
 pub mod metrics;
+pub mod nat_pattern;
 mod net_report;
 pub mod protocol;
 
