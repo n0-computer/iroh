@@ -1840,11 +1840,26 @@ impl Actor {
                         .iter()
                         .map(|o| o.observed.port())
                         .collect();
-                    nat_pattern::NatPattern::classify(&ports, bp)
+                    let pattern = nat_pattern::NatPattern::classify(&ports, bp);
+                    record_nat_pattern_metrics(&self.sock.metrics, &pattern);
+                    event!(
+                        target: "iroh::_events::nat_pattern",
+                        Level::DEBUG,
+                        family = "v4",
+                        bound_port = bp,
+                        observed = ?ports,
+                        pattern = %pattern,
+                    );
+                    pattern
                 });
                 let _ = self.sock.nat_pattern_v4.set(pattern.clone());
                 if let Some(pattern) = pattern {
                     let predicted = pattern.expand_candidates(&self.sock.nat_pattern_config);
+                    self.sock
+                        .metrics
+                        .socket
+                        .nat_pattern_candidates_emitted
+                        .inc_by(predicted.len() as u64);
                     for port in predicted {
                         let addr = SocketAddr::new((*global_v4.ip()).into(), port);
                         addrs
@@ -1864,11 +1879,26 @@ impl Actor {
                         .iter()
                         .map(|o| o.observed.port())
                         .collect();
-                    nat_pattern::NatPattern::classify(&ports, bp)
+                    let pattern = nat_pattern::NatPattern::classify(&ports, bp);
+                    record_nat_pattern_metrics(&self.sock.metrics, &pattern);
+                    event!(
+                        target: "iroh::_events::nat_pattern",
+                        Level::DEBUG,
+                        family = "v6",
+                        bound_port = bp,
+                        observed = ?ports,
+                        pattern = %pattern,
+                    );
+                    pattern
                 });
                 let _ = self.sock.nat_pattern_v6.set(pattern.clone());
                 if let Some(pattern) = pattern {
                     let predicted = pattern.expand_candidates(&self.sock.nat_pattern_config);
+                    self.sock
+                        .metrics
+                        .socket
+                        .nat_pattern_candidates_emitted
+                        .inc_by(predicted.len() as u64);
                     for port in predicted {
                         let addr = SocketAddr::new((*global_v6.ip()).into(), port);
                         addrs
@@ -1988,6 +2018,18 @@ impl Actor {
         #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report.as_ref());
     }
+}
+
+#[cfg(not(wasm_browser))]
+fn record_nat_pattern_metrics(metrics: &EndpointMetrics, pattern: &nat_pattern::NatPattern) {
+    let counter = match pattern {
+        nat_pattern::NatPattern::Preservation { .. } => &metrics.socket.nat_pattern_preservation,
+        nat_pattern::NatPattern::Incremental { .. } => &metrics.socket.nat_pattern_incremental,
+        nat_pattern::NatPattern::PortBlock { .. } => &metrics.socket.nat_pattern_port_block,
+        nat_pattern::NatPattern::Random => &metrics.socket.nat_pattern_random,
+        nat_pattern::NatPattern::Unknown => &metrics.socket.nat_pattern_unknown,
+    };
+    counter.inc();
 }
 
 #[cfg(not(wasm_browser))]

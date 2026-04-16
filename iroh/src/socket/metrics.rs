@@ -86,4 +86,27 @@ pub struct Metrics {
     pub actor_tick_direct_addr_heartbeat: Counter,
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
+
+    /// Number of times the local NAT was classified as [`NatPattern::Preservation`].
+    ///
+    /// [`NatPattern::Preservation`]: crate::nat_pattern::NatPattern::Preservation
+    pub nat_pattern_preservation: Counter,
+    /// Number of times the local NAT was classified as [`NatPattern::Incremental`].
+    ///
+    /// [`NatPattern::Incremental`]: crate::nat_pattern::NatPattern::Incremental
+    pub nat_pattern_incremental: Counter,
+    /// Number of times the local NAT was classified as [`NatPattern::PortBlock`].
+    ///
+    /// [`NatPattern::PortBlock`]: crate::nat_pattern::NatPattern::PortBlock
+    pub nat_pattern_port_block: Counter,
+    /// Number of times the local NAT was classified as [`NatPattern::Random`].
+    ///
+    /// [`NatPattern::Random`]: crate::nat_pattern::NatPattern::Random
+    pub nat_pattern_random: Counter,
+    /// Number of times classification yielded [`NatPattern::Unknown`] (too few observations).
+    ///
+    /// [`NatPattern::Unknown`]: crate::nat_pattern::NatPattern::Unknown
+    pub nat_pattern_unknown: Counter,
+    /// Number of predicted candidates emitted from NAT pattern expansion.
+    pub nat_pattern_candidates_emitted: Counter,
 }
