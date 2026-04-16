@@ -850,7 +850,10 @@ mod proptests {
         };
         let encoded = frame.to_bytes().freeze();
         let result = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), ProtocolVersion::V2);
-        assert!(matches!(result, Err(Error::FrameNotAllowedInVersion { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::FrameNotAllowedInVersion { .. })
+        ));
     }
 
     #[test]
@@ -858,7 +861,10 @@ mod proptests {
         let frame = RelayToClientMsg::Status(Status::SameEndpointIdConnected);
         let encoded = frame.to_bytes().freeze();
         let result = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), ProtocolVersion::V1);
-        assert!(matches!(result, Err(Error::FrameNotAllowedInVersion { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::FrameNotAllowedInVersion { .. })
+        ));
     }
 
     proptest! {
