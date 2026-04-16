@@ -835,11 +835,38 @@ mod proptests {
         prop_oneof![send_packet, ping, pong]
     }
 
+    /// The earliest protocol version in which `frame` is allowed.
+    fn allowed_version(frame: &RelayToClientMsg) -> ProtocolVersion {
+        match frame {
+            RelayToClientMsg::Health { .. } => ProtocolVersion::V1,
+            _ => ProtocolVersion::V2,
+        }
+    }
+
+    #[test]
+    fn v1health_rejected_in_v2() {
+        let frame = RelayToClientMsg::Health {
+            problem: "test".into(),
+        };
+        let encoded = frame.to_bytes().freeze();
+        let result = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), ProtocolVersion::V2);
+        assert!(matches!(result, Err(Error::FrameNotAllowedInVersion { .. })));
+    }
+
+    #[test]
+    fn status_rejected_in_v1() {
+        let frame = RelayToClientMsg::Status(Status::SameEndpointIdConnected);
+        let encoded = frame.to_bytes().freeze();
+        let result = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), ProtocolVersion::V1);
+        assert!(matches!(result, Err(Error::FrameNotAllowedInVersion { .. })));
+    }
+
     proptest! {
         #[test]
         fn server_client_frame_roundtrip(frame in server_client_frame()) {
+            let version = allowed_version(&frame);
             let encoded = frame.to_bytes().freeze();
-            let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), Default::default()).unwrap();
+            let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), version).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 
