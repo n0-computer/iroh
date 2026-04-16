@@ -305,7 +305,6 @@ mod tests {
     use iroh::{
         RelayUrl, SecretKey,
         address_lookup::{EndpointInfo, PkarrRelayClient},
-        endpoint_info::EndpointIdExt,
         tls::{CaRootsConfig, default_provider},
     };
     use n0_error::StdResultExt;
