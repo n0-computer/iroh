@@ -2419,7 +2419,6 @@ dependencies = [
  "smallvec",
  "strum 0.28.0",
  "swarm-discovery",
- "sync_wrapper",
  "testdir",
  "time",
  "tokio",

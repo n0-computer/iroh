@@ -52,7 +52,7 @@ use crate::{
     NetReport,
     address_lookup::{
         AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
-        Error as AddressLookupError, UserData,
+        LookupFailed, UserData,
     },
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
@@ -838,7 +838,7 @@ pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
     #[error("No addressing information available")]
-    NoAddress { source: AddressLookupError },
+    NoAddress { source: LookupFailed },
     #[error("Unable to connect to remote")]
     Noq {
         #[error(std_err)]

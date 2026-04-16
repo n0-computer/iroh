@@ -290,16 +290,31 @@ impl AddressLookupBuilderError {
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 #[derive(Clone)]
-pub enum Error {
+pub enum LookupFailed {
     #[error("No address lookup configured")]
     NoServiceConfigured,
-    #[error("Address lookup produced no results")]
-    NoResults,
-    #[error("Service '{provenance}' error")]
-    User {
-        provenance: &'static str,
-        source: Arc<AnyError>,
-    },
+    #[error(
+        "All address lookup services failed or produced no results{}",
+        {
+            let errors = errors.iter().map(|err| format!("{err:#}")).collect::<Vec<_>>();
+            if !errors.is_empty() {
+                format!("\n    {}", errors.join("\n    "))
+            } else {
+                String::new()
+            }
+        }
+    )]
+    NoResults { errors: Vec<Error> },
+}
+
+/// Error returned by address lookup services when failing to perform the lookup.
+#[stack_error(derive, add_meta)]
+#[error("Service '{provenance}' failed")]
+#[derive(Clone)]
+pub struct Error {
+    provenance: &'static str,
+    #[error(source)]
+    source: Arc<AnyError>,
 }
 
 impl Error {
@@ -324,10 +339,7 @@ impl Error {
     /// Creates a new user error from an arbitrary error type that can be converted into [`AnyError`].
     #[track_caller]
     pub fn from_err_any(provenance: &'static str, source: impl Into<AnyError>) -> Self {
-        e!(Error::User {
-            provenance,
-            source: Arc::new(source.into())
-        })
+        Self::new(provenance, Arc::new(source.into()))
     }
 }
 
@@ -573,12 +585,16 @@ impl AddressLookup for ConcurrentAddressLookup {
 
     fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
         let services = self.services.read().expect("poisoned");
-        let streams = services
+        let mut streams = services
             .iter()
-            .filter_map(|service| service.resolve(endpoint_id));
-
-        let streams = n0_future::MergeBounded::from_iter(streams);
-        Some(Box::pin(streams))
+            .filter_map(|service| service.resolve(endpoint_id))
+            .peekable();
+        if streams.peek().is_none() {
+            None
+        } else {
+            let streams = n0_future::MergeBounded::from_iter(streams);
+            Some(Box::pin(streams))
+        }
     }
 }
 
@@ -703,6 +719,32 @@ mod tests {
         }
     }
 
+    /// An address lookup that yields a single `Err(_)` after `delay` and then ends.
+    ///
+    /// Used to reproduce the issue where one resolver's error truncates the merged
+    /// stream of a [`ConcurrentAddressLookup`], hiding subsequent successful results
+    /// from other resolvers.
+    #[derive(Debug, Clone)]
+    struct FailingAddressLookup {
+        delay: Duration,
+    }
+
+    impl AddressLookup for FailingAddressLookup {
+        fn publish(&self, _data: &EndpointData) {}
+
+        fn resolve(&self, _endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
+            let delay = self.delay;
+            let fut = async move {
+                time::sleep(delay).await;
+                Err(Error::from_err(
+                    "failing-test",
+                    std::io::Error::other("simulated resolver failure"),
+                ))
+            };
+            Some(n0_future::stream::once_future(fut).boxed())
+        }
+    }
+
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
     /// This is a smoke test for our Address Lookupmechanism.
@@ -804,6 +846,46 @@ mod tests {
         .await;
 
         let _conn = ep2.connect(ep1.id(), TEST_ALPN).await?;
+        Ok(())
+    }
+
+    /// Regression test for https://github.com/n0-computer/iroh/issues/4125
+    ///
+    /// When one resolver in a [`ConcurrentAddressLookup`] returns `Err(_)` early,
+    /// the merged stream is currently replaced with `pending()`, hiding any later
+    /// `Ok(_)` results from other resolvers. This test verifies that a slow but
+    /// successful resolver still delivers its result after a fast failing one errors.
+    #[tokio::test]
+    #[traced_test]
+    async fn address_lookup_succeeds_after_other_resolver_errors() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let address_lookup_shared = TestAddressLookupShared::default();
+        let (ep1, _guard1) = new_endpoint_add(&mut rng, |ep| {
+            ep.address_lookup()
+                .unwrap()
+                .add(address_lookup_shared.create_address_lookup(ep.id()));
+        })
+        .await;
+
+        let (ep2, _guard2) = new_endpoint_add(&mut rng, |ep| {
+            // Failing resolver errors first (50ms), working resolver delivers later (200ms).
+            // Without the fix, the error from the failing resolver terminates the stream
+            // before the working resolver's result arrives, so connect times out.
+            let failing = FailingAddressLookup {
+                delay: Duration::from_millis(50),
+            };
+            // This lookup has a delay of 200ms (hardcoded).
+            let working = address_lookup_shared.create_address_lookup(ep.id());
+            let address_lookup = ep.address_lookup().unwrap();
+            address_lookup.add(failing);
+            address_lookup.add(working);
+        })
+        .await;
+
+        let _conn = ep2
+            .connect(ep1.id(), TEST_ALPN)
+            .await
+            .context("connect after other resolver errored")?;
         Ok(())
     }
 
