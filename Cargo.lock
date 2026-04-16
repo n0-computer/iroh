@@ -4951,7 +4951,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "swarm-discovery"
 version = "0.6.0-alpha.2"
-source = "git+https://github.com/n0-computer/swarm-discovery?branch=matheus23%2Fhickory-0.26-beta.4#ead497b4042870e1ee06db18de7c3579fbba9304"
+source = "git+https://github.com/n0-computer/swarm-discovery?branch=matheus23%2Fhickory-0.26-beta.4#f0d63255073d02dc022e89e8eaf15cfe194d7464"
 dependencies = [
  "acto",
  "hickory-proto 0.26.0-beta.4",
