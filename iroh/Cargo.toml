@@ -27,10 +27,11 @@ bytes = "1.11"
 ctutils = { version = "0.4.0", default-features = false }
 data-encoding = "2.2"
 derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_into", "deref", "from_str", "into_iterator"] }
-ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
+ed25519-dalek = { version = "=3.0.0-pre.6", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
 ipnet = "2"
 iroh-base = { version = "0.97.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-dns = { version = "0.97", path = "../iroh-dns" }
 iroh-relay = { version = "0.97", path = "../iroh-relay", default-features = false }
 n0-future = "0.3"
 n0-error = "0.1"
@@ -39,7 +40,7 @@ netwatch = "0.16"
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-pkarr = { version = "5", default-features = false }
+mainline = { version = "6", optional = true }
 noq = { version = "0.18.0", default-features = false, features = ["rustls"] }
 noq-proto = { version = "0.17", default-features = false }
 noq-udp = { version = "0.10", default-features = false }
@@ -69,7 +70,7 @@ pkcs8 = "0.11.0-rc.9"
 iroh-metrics = { version = "0.38", default-features = false }
 
 # mdns
-swarm-discovery = { version = "0.6.0-alpha.1", optional = true }
+swarm-discovery = { version = "=0.6.0-alpha.2", optional = true }
 futures-util = "0.3"
 
 # test_utils
@@ -77,7 +78,8 @@ axum = { version = "0.8", optional = true }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "=0.26.0-beta.1", default-features = false }
+
+hickory-resolver = { version = "=0.26.0-beta.4", default-features = false }
 portmapper = { version = "0.16", optional = true, default-features = false }
 noq = { version = "0.18.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
@@ -153,7 +155,7 @@ portmapper = ["dep:portmapper"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper?/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 address-lookup-mdns = ["dep:swarm-discovery"]
-address-lookup-pkarr-dht = ["pkarr/dht", "pkarr/relays"]
+address-lookup-pkarr-dht = ["dep:mainline"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["iroh-relay/platform-verifier"]
 qlog = ["noq/qlog"]
