@@ -179,7 +179,7 @@ impl RemotePathState {
     /// Replies to all pending resolve requests.
     ///
     /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,
-    /// otherwise with the provided `address_lookup_error` or with [`LookupFailed::NoResults`].
+    /// otherwise with the provided `address_lookup_error` or with [`AddressLookupFailed::NoResults`].
     fn emit_pending_resolve_requests(&mut self, address_lookup_error: Option<AddressLookupFailed>) {
         if self.pending_resolve_requests.is_empty() {
             return;

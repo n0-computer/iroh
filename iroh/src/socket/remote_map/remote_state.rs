@@ -1370,7 +1370,7 @@ fn to_transports_addr(
 /// - If at least one item was yielded, the wrapper ends and buffered errors
 ///   are discarded.
 /// - If no item was yielded, the wrapper yields a single
-///   [`LookupFailed::NoResults`] carrying all buffered errors, then ends.
+///   [`AddressLookupFailed::NoResults`] carrying all buffered errors, then ends.
 #[derive(Default)]
 struct AddressLookupStream {
     inner: Option<BoxStream<Result<AddressLookupItem, AddressLookupError>>>,
