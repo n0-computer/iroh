@@ -247,17 +247,33 @@ impl DhtAddressLookup {
     }
 
     /// Periodically publishes the endpoint address to the DHT.
+    ///
+    /// The first publish uses BEP-44 compare-and-swap against the currently-stored seq
+    /// so we don't clobber a concurrent writer for this key. Subsequent iterations are
+    /// refreshes — their purpose is to reach DHT nodes that have newly joined the
+    /// routing table, not to write new data, so they pass `cas: None` (a stale CAS
+    /// would make fresh nodes reject the put).
     async fn publish_loop(self, signed_packet: SignedPacket) {
         let this = self;
-        let z32 = signed_packet.public_key().to_z32();
+        let public_key = signed_packet.public_key();
+        let z32 = public_key.to_z32();
         let item = signed_packet_to_mutable_item(&signed_packet);
+        let initial_cas = this
+            .0
+            .dht
+            .clone()
+            .as_async()
+            .get_mutable_most_recent(public_key.as_bytes(), None)
+            .await
+            .map(|item| item.seq());
+        let mut cas = initial_cas;
         loop {
             let res = this
                 .0
                 .dht
                 .clone()
                 .as_async()
-                .put_mutable(item.clone(), None)
+                .put_mutable(item.clone(), cas)
                 .await;
             match res {
                 Ok(_) => {
@@ -273,6 +289,7 @@ impl DhtAddressLookup {
                     tracing::warn!("pkarr publish error: {}", e);
                 }
             }
+            cas = None;
             time::sleep(this.0.republish_delay).await;
         }
     }
