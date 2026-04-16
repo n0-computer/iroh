@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["attrs","pkarr"],"trait":["EndpointIdExt"]};
+window.SIDEBAR_ITEMS = {"mod":["attrs","pkarr"]};
