@@ -588,7 +588,7 @@ impl Resolver for HickoryResolver {
             let lookup = resolver.ipv4_lookup(host).await?;
             let iter: BoxIter<Ipv4Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match record.data() {
+                    match &record.data {
                         RData::A(addr) => Some(addr.0),
                         _ => None,
                     }
@@ -603,7 +603,7 @@ impl Resolver for HickoryResolver {
             let lookup = resolver.ipv6_lookup(host).await?;
             let iter: BoxIter<Ipv6Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match record.data() {
+                    match &record.data {
                         RData::AAAA(addr) => Some(addr.0),
                         _ => None,
                     }
@@ -618,12 +618,12 @@ impl Resolver for HickoryResolver {
             let lookup = resolver.txt_lookup(host).await?;
             let iter: BoxIter<TxtRecordData> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match record.data() {
+                    match &record.data {
                         RData::TXT(txt) => {
                             // I don't know a way of avoiding this deep copy, even if it's agonizing.
                             // The representation of `TxtRecrodData` and `hickory_proto::rr::rdata::TXT`
                             // is identical.
-                            Some(TxtRecordData::from(txt.txt_data().to_vec()))
+                            Some(TxtRecordData::from(txt.txt_data.to_vec()))
                         }
                         _ => None,
                     }

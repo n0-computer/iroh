@@ -690,8 +690,8 @@ mod tests {
         let lookup = lookup
             .answers()
             .iter()
-            .filter_map(|record| match record.data() {
-                RData::TXT(txt) => Some(TxtRecordData::from(txt.txt_data().to_vec())),
+            .filter_map(|record| match &record.data {
+                RData::TXT(txt) => Some(TxtRecordData::from(txt.txt_data.to_vec())),
                 _ => None,
             });
 
