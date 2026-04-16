@@ -22,25 +22,6 @@ use tracing::info;
 
 use crate::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
 
-fn router_preset(ip: IpSupport) -> RouterPreset {
-    match ip {
-        IpSupport::V4Only => RouterPreset::Home,
-        IpSupport::V6Only => RouterPreset::IspV6,
-        IpSupport::DualStack => RouterPreset::Home,
-    }
-}
-
-fn path_switched(to: IpSupport, previous: &[TransportAddr], new: &TransportAddr) -> bool {
-    if previous.contains(new) {
-        return false;
-    }
-    match to {
-        IpSupport::V4Only => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv4()),
-        IpSupport::V6Only => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv6()),
-        IpSupport::DualStack => matches!(new, TransportAddr::Ip(_)),
-    }
-}
-
 /// Builds the lab topology and runs a single uplink switch test.
 ///
 /// The topology has three routers:
@@ -78,97 +59,74 @@ async fn run_switch_uplink(switching_side: Side, from: IpSupport, to: IpSupport)
         .await?
         .id();
 
-    let (server_uplink, client_uplink) = match switching_side {
-        Side::Client => (observer_id, from_id),
-        Side::Server => (from_id, observer_id),
-    };
-    let server = lab
-        .add_device("server")
-        .uplink(server_uplink)
-        .build()
-        .await?;
-    let client = lab
-        .add_device("client")
-        .uplink(client_uplink)
+    let switcher = lab.add_device("switcher").uplink(from_id).build().await?;
+    let observer = lab
+        .add_device("observer")
+        .uplink(observer_id)
         .build()
         .await?;
 
     info!(?switching_side, ?from, ?to, "switch uplink test start");
 
-    /// The switching side: holepunches, pings, replugs to a new router, pings again.
-    ///
-    /// Waits for the peer to close the connection after the second ping succeeds.
-    async fn do_switch(
-        dev: patchbay::Device,
-        conn: iroh::endpoint::Connection,
-        timeout: Duration,
-        to_id: patchbay::NodeId,
-    ) -> Result {
-        let mut paths = conn.paths();
-        paths.wait_ip(timeout).await.context("initial holepunch")?;
-        ping_accept(&conn, timeout)
-            .await
-            .context("ping_accept before switch")?;
-        dev.iface("eth0").unwrap().replug(to_id).await?;
-        ping_accept(&conn, timeout)
-            .await
-            .context("ping_accept after switch")?;
-        conn.closed().await;
-        Ok(())
-    }
-
-    /// The observing side: holepunches, pings, waits for the path to change, pings again.
-    ///
-    /// After the switching side replugs, the observer sees the selected path change
-    /// to match the expected address family (or a new address for same-family switches).
-    /// Closes the connection after the second ping succeeds.
-    async fn do_observe(
-        conn: iroh::endpoint::Connection,
-        timeout: Duration,
-        to: IpSupport,
-    ) -> Result {
-        let mut paths = conn.paths();
-        paths.wait_ip(timeout).await.context("initial holepunch")?;
-        ping_open(&conn, timeout)
-            .await
-            .context("ping_open before switch")?;
-        let previous: Vec<TransportAddr> = paths
-            .get()
-            .iter()
-            .map(|p| p.remote_addr().clone())
-            .collect();
-        paths
-            .wait_selected(timeout, |p| path_switched(to, &previous, p.remote_addr()))
-            .await
-            .context("path did not switch")?;
-        ping_open(&conn, timeout)
-            .await
-            .context("ping_open after switch")?;
-        conn.close(0u32.into(), b"bye");
-        Ok(())
-    }
-
-    let pair = Pair::new(relay_map);
-    let pair = match switching_side {
-        Side::Client => pair
-            .server(server, async move |_dev, _ep, conn| {
-                do_observe(conn, timeout, to).await
-            })
-            .client(client, async move |dev, _ep, conn| {
-                do_switch(dev, conn, timeout, to_id).await
-            }),
-        Side::Server => pair
-            .server(server, async move |dev, _ep, conn| {
-                do_switch(dev, conn, timeout, to_id).await
-            })
-            .client(client, async move |_dev, _ep, conn| {
-                do_observe(conn, timeout, to).await
-            }),
-    };
-    pair.run().await?;
+    Pair::new(relay_map)
+        .left(switching_side, switcher, async move |dev, _ep, conn| {
+            let mut paths = conn.paths();
+            paths.wait_ip(timeout).await.context("initial holepunch")?;
+            ping_accept(&conn, timeout)
+                .await
+                .context("ping_accept before switch")?;
+            dev.iface("eth0").unwrap().replug(to_id).await?;
+            ping_accept(&conn, timeout)
+                .await
+                .context("ping_accept after switch")?;
+            conn.closed().await;
+            Ok(())
+        })
+        .right(observer, async move |_dev, _ep, conn| {
+            let mut paths = conn.paths();
+            paths.wait_ip(timeout).await.context("initial holepunch")?;
+            let previous: Vec<TransportAddr> = paths
+                .get()
+                .iter()
+                .map(|p| p.remote_addr().clone())
+                .collect();
+            ping_open(&conn, timeout)
+                .await
+                .context("ping_open before switch")?;
+            paths
+                .wait_selected(timeout, |p| path_switched(to, &previous, p.remote_addr()))
+                .await
+                .context("path did not switch")?;
+            ping_open(&conn, timeout)
+                .await
+                .context("ping_open after switch")?;
+            conn.close(0u32.into(), b"bye");
+            Ok(())
+        })
+        .run()
+        .await?;
 
     guard.ok();
     Ok(())
+}
+
+fn router_preset(ip: IpSupport) -> RouterPreset {
+    match ip {
+        IpSupport::V4Only => RouterPreset::Home,
+        IpSupport::V6Only => RouterPreset::IspV6,
+        IpSupport::DualStack => RouterPreset::Home,
+    }
+}
+
+fn path_switched(to: IpSupport, previous: &[TransportAddr], new: &TransportAddr) -> bool {
+    if previous.contains(new) {
+        return false;
+    }
+    match to {
+        IpSupport::V4Only => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv4()),
+        IpSupport::V6Only => matches!(new, TransportAddr::Ip(a) if a.ip().is_ipv6()),
+        IpSupport::DualStack => matches!(new, TransportAddr::Ip(_)),
+    }
 }
 
 // --- Client switches uplink ---
