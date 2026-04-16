@@ -31,8 +31,8 @@ pub use self::{
 use super::Source;
 use crate::{
     address_lookup::{
-        AddressLookup, ConcurrentAddressLookup, Error as AddressLookupError,
-        Item as AddressLookupItem, LookupFailed,
+        AddressLookup, AddressLookupFailed, ConcurrentAddressLookup, Error as AddressLookupError,
+        Item as AddressLookupItem,
     },
     endpoint::DirectAddr,
     socket::{
@@ -518,7 +518,7 @@ impl RemoteStateActor {
     fn handle_msg_resolve_remote(
         &mut self,
         addrs: BTreeSet<TransportAddr>,
-        tx: oneshot::Sender<Result<(), LookupFailed>>,
+        tx: oneshot::Sender<Result<(), AddressLookupFailed>>,
     ) {
         let addrs = to_transports_addr(self.endpoint_id, addrs);
         self.paths.insert_multiple(addrs, Source::App);
@@ -578,7 +578,7 @@ impl RemoteStateActor {
             Some(stream) => self.address_lookup_stream.set(stream),
             None => self
                 .paths
-                .address_lookup_finished(Err(e!(LookupFailed::NoServiceConfigured))),
+                .address_lookup_finished(Err(e!(AddressLookupFailed::NoServiceConfigured))),
         }
     }
 
@@ -586,7 +586,7 @@ impl RemoteStateActor {
     ///
     /// All address lookup results end up being sent here. It takes care of updating the
     /// [`RemotePathState`] with the results.
-    fn handle_address_lookup_item(&mut self, item: Result<AddressLookupItem, LookupFailed>) {
+    fn handle_address_lookup_item(&mut self, item: Result<AddressLookupItem, AddressLookupFailed>) {
         match item {
             Err(err) => {
                 warn!("Address Lookup failed: {err:#}");
@@ -1196,7 +1196,7 @@ pub(crate) enum RemoteStateMessage {
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         BTreeSet<TransportAddr>,
-        oneshot::Sender<Result<(), LookupFailed>>,
+        oneshot::Sender<Result<(), AddressLookupFailed>>,
     ),
     /// Returns information about the remote.
     ///
@@ -1391,7 +1391,7 @@ impl AddressLookupStream {
 }
 
 impl Stream for AddressLookupStream {
-    type Item = Result<AddressLookupItem, LookupFailed>;
+    type Item = Result<AddressLookupItem, AddressLookupFailed>;
 
     fn poll_next(
         self: Pin<&mut Self>,
@@ -1415,7 +1415,7 @@ impl Stream for AddressLookupStream {
                         this.inner = None;
                         if !this.did_emit {
                             let errors = this.errors.take().unwrap_or_default();
-                            Some(Err(e!(LookupFailed::NoResults { errors })))
+                            Some(Err(e!(AddressLookupFailed::NoResults { errors })))
                         } else {
                             None
                         }

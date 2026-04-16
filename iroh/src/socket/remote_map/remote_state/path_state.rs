@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 use tracing::trace;
 
 use super::{Source, TransportAddrInfo, TransportAddrUsage};
-use crate::{address_lookup::LookupFailed, metrics::SocketMetrics, socket::transports};
+use crate::{address_lookup::AddressLookupFailed, metrics::SocketMetrics, socket::transports};
 
 /// Maximum number of non-relay paths we keep around per endpoint.
 pub(super) const MAX_NON_RELAY_PATHS: usize = 30;
@@ -34,7 +34,7 @@ pub(super) struct RemotePathState {
     /// mechanisms. The are only potentially usable.
     paths: FxHashMap<transports::Addr, PathState>,
     /// Pending resolve requests from [`Self::resolve_remote`].
-    pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), LookupFailed>>>,
+    pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), AddressLookupFailed>>>,
     metrics: Arc<SocketMetrics>,
 }
 
@@ -150,8 +150,8 @@ impl RemotePathState {
     ///
     /// If there already is a known path, `Ok(())` is returned immediately. Otherwise an
     /// address lookup is performed and the result is sent back once that
-    /// completes. [`AddressLookupError`] is sent if there are no known paths.
-    pub(super) fn resolve_remote(&mut self, tx: oneshot::Sender<Result<(), LookupFailed>>) {
+    /// completes. [`AddressLookupFailed`] is sent if there are no known paths.
+    pub(super) fn resolve_remote(&mut self, tx: oneshot::Sender<Result<(), AddressLookupFailed>>) {
         if !self.paths.is_empty() {
             tx.send(Ok(())).ok();
         } else {
@@ -162,7 +162,7 @@ impl RemotePathState {
     /// Notifies that a Address Lookup run has finished.
     ///
     /// This will emit pending resolve requests.
-    pub(super) fn address_lookup_finished(&mut self, result: Result<(), LookupFailed>) {
+    pub(super) fn address_lookup_finished(&mut self, result: Result<(), AddressLookupFailed>) {
         self.emit_pending_resolve_requests(result.err());
     }
 
@@ -180,14 +180,14 @@ impl RemotePathState {
     ///
     /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,
     /// otherwise with the provided `address_lookup_error` or with [`LookupFailed::NoResults`].
-    fn emit_pending_resolve_requests(&mut self, address_lookup_error: Option<LookupFailed>) {
+    fn emit_pending_resolve_requests(&mut self, address_lookup_error: Option<AddressLookupFailed>) {
         if self.pending_resolve_requests.is_empty() {
             return;
         }
         let result = match (self.paths.is_empty(), address_lookup_error) {
             (false, _) => Ok(()),
             (true, Some(err)) => Err(err),
-            (true, None) => Err(e!(LookupFailed::NoResults { errors: Vec::new() })),
+            (true, None) => Err(e!(AddressLookupFailed::NoResults { errors: Vec::new() })),
         };
         for tx in self.pending_resolve_requests.drain(..) {
             tx.send(result.clone()).ok();

@@ -290,7 +290,7 @@ impl AddressLookupBuilderError {
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 #[derive(Clone)]
-pub enum LookupFailed {
+pub enum AddressLookupFailed {
     #[error("No address lookup configured")]
     NoServiceConfigured,
     #[error(
