@@ -77,7 +77,7 @@ use crate::{
     socket::{
         concurrent_read_map::ReadOnlyMap,
         remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
-        transports::TransportBiasMap,
+        transports::{HomeRelayStatus, HomeRelayWatch, HomeRelayWatcher, TransportBiasMap},
     },
     tls::{
         self,
@@ -340,6 +340,7 @@ pub(crate) struct Socket {
 
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
+    home_relay_watch: HomeRelayWatcher,
     /// Currently bound IP addresses of all sockets
     #[cfg(not(wasm_browser))]
     ip_bind_addrs: Vec<SocketAddr>,
@@ -478,6 +479,12 @@ impl Socket {
                 })
                 .collect()
         })
+    }
+
+    pub(crate) fn home_relay_status(
+        &self,
+    ) -> impl Watcher<Value = Vec<Option<(RelayUrl, HomeRelayStatus)>>> + use<> {
+        self.home_relay_watch.clone()
     }
 
     /// Stores a new set of direct addresses.
@@ -863,11 +870,10 @@ impl EndpointInner {
             .next()
             .unwrap_or_else(RelayMap::empty);
 
-        let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(false));
 
         let relay_actor_config = RelayActorConfig {
-            my_relay: my_relay.clone(),
+            my_relay: HomeRelayWatch::default(),
             secret_key: secret_key.clone(),
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
@@ -928,6 +934,8 @@ impl EndpointInner {
             )
         };
 
+        let home_relay_watch = transports.home_relay_watch();
+
         let sock = Arc::new(Socket {
             public_key: secret_key.public(),
             remote_actors: remote_map.senders(),
@@ -944,6 +952,7 @@ impl EndpointInner {
             dns_resolver: dns_resolver.clone(),
             metrics: metrics.clone(),
             local_addrs_watch: transports.local_addrs_watch(),
+            home_relay_watch,
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
             tls_config: tls_config.clone(),
