@@ -179,7 +179,7 @@
 <a href=#179 id=179 data-nosnippet>179</a>    <span class="doccomment">/// Replies to all pending resolve requests.
 <a href=#180 id=180 data-nosnippet>180</a>    ///
 <a href=#181 id=181 data-nosnippet>181</a>    /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,
-<a href=#182 id=182 data-nosnippet>182</a>    /// otherwise with the provided `address_lookup_error` or with [`LookupFailed::NoResults`].
+<a href=#182 id=182 data-nosnippet>182</a>    /// otherwise with the provided `address_lookup_error` or with [`AddressLookupFailed::NoResults`].
 <a href=#183 id=183 data-nosnippet>183</a>    </span><span class="kw">fn </span>emit_pending_resolve_requests(<span class="kw-2">&amp;mut </span><span class="self">self</span>, address_lookup_error: <span class="prelude-ty">Option</span>&lt;AddressLookupFailed&gt;) {
 <a href=#184 id=184 data-nosnippet>184</a>        <span class="kw">if </span><span class="self">self</span>.pending_resolve_requests.is_empty() {
 <a href=#185 id=185 data-nosnippet>185</a>            <span class="kw">return</span>;

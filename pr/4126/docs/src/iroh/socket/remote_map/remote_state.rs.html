@@ -1370,7 +1370,7 @@
 <a href=#1370 id=1370 data-nosnippet>1370</a>/// - If at least one item was yielded, the wrapper ends and buffered errors
 <a href=#1371 id=1371 data-nosnippet>1371</a>///   are discarded.
 <a href=#1372 id=1372 data-nosnippet>1372</a>/// - If no item was yielded, the wrapper yields a single
-<a href=#1373 id=1373 data-nosnippet>1373</a>///   [`LookupFailed::NoResults`] carrying all buffered errors, then ends.
+<a href=#1373 id=1373 data-nosnippet>1373</a>///   [`AddressLookupFailed::NoResults`] carrying all buffered errors, then ends.
 <a href=#1374 id=1374 data-nosnippet>1374</a></span><span class="attr">#[derive(Default)]
 <a href=#1375 id=1375 data-nosnippet>1375</a></span><span class="kw">struct </span>AddressLookupStream {
 <a href=#1376 id=1376 data-nosnippet>1376</a>    inner: <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;AddressLookupItem, AddressLookupError&gt;&gt;&gt;,
