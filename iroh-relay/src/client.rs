@@ -375,12 +375,26 @@ impl ClientBuilder {
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let (_, ws_stream) = ws_stream_wasm::WsMeta::connect(
+        let (ws_meta, ws_stream) = ws_stream_wasm::WsMeta::connect(
             dial_url.as_str(),
             Some(ProtocolVersion::all().collect()),
         )
         .await?;
-        let conn = Conn::new(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
+
+        let protocol_version =
+            ProtocolVersion::match_from_str(&ws_meta.protocol()).ok_or_else(|| {
+                e!(ConnectError::BadVersionHeader {
+                    server_version: protocol_version_str.map(ToOwned::to_owned)
+                })
+            })?;
+
+        let conn = Conn::new(
+            ws_stream,
+            self.key_cache.clone(),
+            &self.secret_key,
+            protocol_version,
+        )
+        .await?;
 
         event!(
             target: "iroh::_events::net::relay::connected",
