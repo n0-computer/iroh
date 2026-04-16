@@ -67,7 +67,7 @@ use crate::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
 use crate::net_report::QuicConfig;
 use crate::{
-    address_lookup::{self, AddressLookup, AddressLookupFailed, EndpointData, UserData},
+    address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
     metrics::EndpointMetrics,
@@ -350,7 +350,7 @@ pub(crate) struct Socket {
     relay_map: RelayMap,
 
     /// Optional Address Lookup
-    address_lookup: address_lookup::ConcurrentAddressLookup,
+    address_lookup: address_lookup::AddressLookupServices,
     /// Optional user-defined discover data.
     address_lookup_user_data: RwLock<Option<UserData>>,
     /// Explicitly configured external addresses to advertise.
@@ -525,7 +525,7 @@ impl Socket {
     }
 
     /// Reference to the internal Address Lookup
-    pub(crate) fn address_lookup(&self) -> &address_lookup::ConcurrentAddressLookup {
+    pub(crate) fn address_lookup(&self) -> &address_lookup::AddressLookupServices {
         &self.address_lookup
     }
 
@@ -845,7 +845,7 @@ impl EndpointInner {
             configured_addrs,
         } = opts;
 
-        let address_lookup = address_lookup::ConcurrentAddressLookup::default();
+        let address_lookup = address_lookup::AddressLookupServices::default();
         let port_mapper = portmapper::create_client(&metrics, &portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs

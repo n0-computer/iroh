@@ -50,7 +50,7 @@
 //!   records to/from the Mainline DHT. It requires enabling the `address-lookup-pkarr-dht` feature.
 //!
 //! To use multiple Address Lookup'ssimultaneously you can call [`Builder::address_lookup`].
-//! This will use [`ConcurrentAddressLookup`] under the hood, which performs lookups to all
+//! This will use [`AddressLookupServices`] under the hood, which performs lookups to all
 //! Address Lookupsystems at the same time.
 //!
 //! [`Builder::address_lookup`] takes any type that implements [`AddressLookupBuilder`]. You can
@@ -129,13 +129,16 @@
 
 use std::{
     borrow::{Borrow, Cow},
+    pin::Pin,
     sync::{Arc, RwLock},
+    task::{Poll, ready},
 };
 
 use iroh_base::{EndpointAddr, EndpointId};
 pub use iroh_relay::endpoint_info::AddrFilter;
 use n0_error::{AnyError, e, stack_error};
-use n0_future::boxed::BoxStream;
+use n0_future::{MergeBounded, Stream, boxed::BoxStream};
+use tracing::debug;
 
 pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData};
 use crate::{Endpoint, endpoint::EndpointError};
@@ -479,11 +482,16 @@ impl From<Item> for EndpointInfo {
     }
 }
 
-/// An Address Lookup service that combines multiple Address Lookup sources.
+/// Registry for address lookup services for an [`Endpoint`].
 ///
-/// The Address Lookup will resolve concurrently.
+/// The endpoint will use this registry both for publishing its own [`EndpointInfo`]
+/// and for resolving addresses of remote endpoints.
+///
+/// See [`AddressLookup`] and [`Self::resolve`] for details.
+///
+/// [`Endpoint]: crate::Endpoint
 #[derive(Debug, Default, Clone)]
-pub struct ConcurrentAddressLookup {
+pub struct AddressLookupServices {
     services: Arc<RwLock<Vec<Box<dyn AddressLookup>>>>,
     /// The data last published, used to publish when adding a new service.
     last_data: Arc<RwLock<Option<EndpointData>>>,
@@ -491,21 +499,7 @@ pub struct ConcurrentAddressLookup {
     addr_filter: Arc<RwLock<Option<AddrFilter>>>,
 }
 
-impl ConcurrentAddressLookup {
-    /// Creates an empty [`ConcurrentAddressLookup`].
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
-    /// Creates a new [`ConcurrentAddressLookup`].
-    pub fn from_services(services: Vec<Box<dyn AddressLookup>>) -> Self {
-        Self {
-            services: Arc::new(RwLock::new(services)),
-            last_data: Default::default(),
-            addr_filter: Default::default(),
-        }
-    }
-
+impl AddressLookupServices {
     /// Sets the address filter applied before publishing to any service.
     ///
     /// When set, all address data is filtered once before being distributed
@@ -550,24 +544,9 @@ impl ConcurrentAddressLookup {
         let mut services = self.services.write().expect("poisoned");
         services.clear();
     }
-}
 
-impl<T> From<T> for ConcurrentAddressLookup
-where
-    T: IntoIterator<Item = Box<dyn AddressLookup>>,
-{
-    fn from(iter: T) -> Self {
-        let services = iter.into_iter().collect::<Vec<_>>();
-        Self {
-            services: Arc::new(RwLock::new(services)),
-            last_data: Default::default(),
-            addr_filter: Default::default(),
-        }
-    }
-}
-
-impl AddressLookup for ConcurrentAddressLookup {
-    fn publish(&self, data: &EndpointData) {
+    /// Publish endpoint data on all configured services.
+    pub(crate) fn publish(&self, data: &EndpointData) {
         let data = match &*self.addr_filter.read().expect("poisoned") {
             Some(filter) => data.apply_filter(filter),
             None => Cow::Borrowed(data),
@@ -583,17 +562,120 @@ impl AddressLookup for ConcurrentAddressLookup {
             .replace(data.into_owned());
     }
 
-    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
+    /// Resolves the addressing information for an [`EndpointId`] across all configured services.
+    ///
+    /// All services are queried concurrently and their results are merged into a
+    /// single stream. Each [`Item`] is yielded as soon as it is produced,
+    /// allowing the caller to act on the first usable address while slower
+    /// services are still working.
+    ///
+    /// Errors from individual services are buffered and do not terminate the
+    /// stream: a single failing service must not hide results from others still
+    /// in flight. The buffered errors only surface as a single
+    /// [`AddressLookupFailed::NoResults`] error once all services have finished
+    /// without yielding any [`Item`]. If at least one [`Item`] was yielded,
+    /// buffered errors are discarded and the stream ends with `None`.
+    ///
+    /// If no services are configured, the stream yields a single
+    /// [`AddressLookupFailed::NoServiceConfigured`] error and then ends.
+    ///
+    /// Dropping the returned stream signals all underlying services to stop any
+    /// pending work, as documented on [`AddressLookup::resolve`].
+    pub fn resolve(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> impl Stream<Item = Result<Item, AddressLookupFailed>> + use<> {
         let services = self.services.read().expect("poisoned");
-        let mut streams = services
-            .iter()
-            .filter_map(|service| service.resolve(endpoint_id))
-            .peekable();
-        if streams.peek().is_none() {
-            None
+        if services.is_empty() {
+            AddressLookupStream::empty()
         } else {
-            let streams = n0_future::MergeBounded::from_iter(streams);
-            Some(Box::pin(streams))
+            let streams = services
+                .iter()
+                .filter_map(|service| service.resolve(endpoint_id));
+            AddressLookupStream::new(streams)
+        }
+    }
+}
+
+/// Stream returned by [`AddressLookupServices::resolve`].
+///
+/// Merges the per-service result streams. Yields each `Ok(_)` item as soon
+/// as it is produced and buffers any `Err(_)` so a single failing service
+/// cannot hide results from others still in flight.
+///
+/// Once all services are done, the stream ends with `None` if at least one
+/// item was yielded; otherwise it yields a single
+/// [`AddressLookupFailed::NoResults`] carrying all buffered errors, then ends.
+///
+/// If no services are configured, the stream yields a single
+/// [`AddressLookupFailed::NoServiceConfigured`] error, then ends.
+struct AddressLookupStream {
+    streams: Option<MergeBounded<BoxStream<Result<Item, Error>>>>,
+    errors: Vec<Error>,
+    did_emit: bool,
+    closed: bool,
+}
+
+impl AddressLookupStream {
+    fn empty() -> Self {
+        Self {
+            streams: None,
+            errors: Vec::new(),
+            did_emit: false,
+            closed: false,
+        }
+    }
+
+    fn new(streams: impl Iterator<Item = BoxStream<Result<Item, Error>>>) -> Self {
+        Self {
+            streams: Some(MergeBounded::from_iter(streams)),
+            errors: Vec::new(),
+            did_emit: false,
+            closed: false,
+        }
+    }
+}
+
+impl Stream for AddressLookupStream {
+    type Item = Result<Item, AddressLookupFailed>;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if this.closed {
+            return Poll::Ready(None);
+        }
+        let mut inner = match this.streams.as_mut() {
+            Some(inner) => inner,
+            None => {
+                this.closed = true;
+                return Poll::Ready(Some(Err(e!(AddressLookupFailed::NoServiceConfigured))));
+            }
+        };
+        loop {
+            let item = match ready!(Pin::new(&mut inner).poll_next(cx)) {
+                Some(Ok(item)) => {
+                    this.did_emit = true;
+                    Some(Ok(item))
+                }
+                Some(Err(error)) => {
+                    debug!("address lookup error: {error:#}");
+                    this.errors.push(error);
+                    continue;
+                }
+                None => {
+                    this.closed = true;
+                    if !this.did_emit {
+                        let errors = std::mem::take(&mut this.errors);
+                        Some(Err(e!(AddressLookupFailed::NoResults { errors })))
+                    } else {
+                        None
+                    }
+                }
+            };
+            return Poll::Ready(item);
         }
     }
 }
@@ -722,7 +804,7 @@ mod tests {
     /// An address lookup that yields a single `Err(_)` after `delay` and then ends.
     ///
     /// Used to reproduce the issue where one resolver's error truncates the merged
-    /// stream of a [`ConcurrentAddressLookup`], hiding subsequent successful results
+    /// stream of a [`AddressLookupServices`], hiding subsequent successful results
     /// from other resolvers.
     #[derive(Debug, Clone)]
     struct FailingAddressLookup {
@@ -833,15 +915,14 @@ mod tests {
         })
         .await;
 
-        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
+        let (ep2, _guard2) = new_endpoint_add(&mut rng, |ep| {
             let address_lookup1 = EmptyAddressLookup;
             let address_lookup2 = address_lookup_shared.create_lying_address_lookup(ep.id());
             let address_lookup3 = address_lookup_shared.create_address_lookup(ep.id());
-            let address_lookup = ConcurrentAddressLookup::empty();
+            let address_lookup = ep.address_lookup().unwrap();
             address_lookup.add(address_lookup1);
             address_lookup.add(address_lookup2);
             address_lookup.add(address_lookup3);
-            address_lookup
         })
         .await;
 
@@ -851,7 +932,7 @@ mod tests {
 
     /// Regression test for https://github.com/n0-computer/iroh/issues/4125
     ///
-    /// When one resolver in a [`ConcurrentAddressLookup`] returns `Err(_)` early,
+    /// When one resolver in a [`AddressLookupServices`] returns `Err(_)` early,
     /// the merged stream is currently replaced with `pending()`, hiding any later
     /// `Ok(_)` results from other resolvers. This test verifies that a slow but
     /// successful resolver still delivers its result after a fast failing one errors.
@@ -901,9 +982,9 @@ mod tests {
         })
         .await;
 
-        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
+        let (ep2, _guard2) = new_endpoint_add(&mut rng, |ep| {
             let address_lookup1 = address_lookup_shared.create_lying_address_lookup(ep.id());
-            ConcurrentAddressLookup::from_services(vec![Box::new(address_lookup1)])
+            ep.address_lookup().unwrap().add(address_lookup1)
         })
         .await;
 
@@ -966,7 +1047,7 @@ mod tests {
         }
 
         let recorder = RecordingLookup::default();
-        let lookup = ConcurrentAddressLookup::empty();
+        let lookup = AddressLookupServices::default();
         lookup.set_addr_filter(AddrFilter::relay_only());
         lookup.add(recorder.clone());
 
