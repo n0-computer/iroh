@@ -3,7 +3,7 @@
 //! The main export is the [`DnsResolver`] struct. It provides methods to resolve domain names
 //! to IPv4 and IPv6 addresses. Additionally, the resolver features methods to resolve the
 //! [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
-//! See the [`endpoint_info`] module documentation for details on how iroh endpoint records
+//! See the [`crate::endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
 use std::{
@@ -32,7 +32,7 @@ use url::Url;
 
 use crate::{
     defaults::timeouts::DNS_TIMEOUT,
-    endpoint_info::{self, EndpointInfo, ParseError},
+    endpoint_info::{EndpointIdExt, EndpointInfo, ParseError},
 };
 
 /// The n0 address lookup DNS origin, for production.
@@ -427,8 +427,7 @@ impl DnsResolver {
         endpoint_id: &EndpointId,
         origin: &str,
     ) -> Result<EndpointInfo, LookupError> {
-        let name = endpoint_info::endpoint_domain(endpoint_id, origin);
-        let name = endpoint_info::ensure_iroh_txt_label(name);
+        let name = format!("_iroh.{}.{}", endpoint_id.to_z32(), origin);
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
         let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
@@ -439,7 +438,11 @@ impl DnsResolver {
         &self,
         name: &str,
     ) -> Result<EndpointInfo, LookupError> {
-        let name = endpoint_info::ensure_iroh_txt_label(name.to_string());
+        let name = if name.starts_with("_iroh.") {
+            name.to_string()
+        } else {
+            format!("_iroh.{name}")
+        };
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
         let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
@@ -585,7 +588,7 @@ impl Resolver for HickoryResolver {
             let lookup = resolver.ipv4_lookup(host).await?;
             let iter: BoxIter<Ipv4Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match record.data() {
+                    match &record.data {
                         RData::A(addr) => Some(addr.0),
                         _ => None,
                     }
@@ -600,7 +603,7 @@ impl Resolver for HickoryResolver {
             let lookup = resolver.ipv6_lookup(host).await?;
             let iter: BoxIter<Ipv6Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match record.data() {
+                    match &record.data {
                         RData::AAAA(addr) => Some(addr.0),
                         _ => None,
                     }
@@ -615,12 +618,12 @@ impl Resolver for HickoryResolver {
             let lookup = resolver.txt_lookup(host).await?;
             let iter: BoxIter<TxtRecordData> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match record.data() {
+                    match &record.data {
                         RData::TXT(txt) => {
                             // I don't know a way of avoiding this deep copy, even if it's agonizing.
                             // The representation of `TxtRecrodData` and `hickory_proto::rr::rdata::TXT`
                             // is identical.
-                            Some(TxtRecordData::from(txt.txt_data().to_vec()))
+                            Some(TxtRecordData::from(txt.txt_data.to_vec()))
                         }
                         _ => None,
                     }
