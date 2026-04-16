@@ -336,7 +336,10 @@ mod tests {
             parity_preserving: true,
         };
         let out = pattern.expand_candidates(&NatPatternConfig::default());
-        assert!(out.iter().all(|p| p % 2 == 0), "all candidates must be even");
+        assert!(
+            out.iter().all(|p| p % 2 == 0),
+            "all candidates must be even"
+        );
     }
 
     #[test]
