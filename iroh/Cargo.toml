@@ -40,9 +40,9 @@ papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
 pkarr = { version = "5", default-features = false }
-noq = { version = "0.17.0", default-features = false, features = ["rustls"] }
-noq-proto = { version = "0.16", default-features = false }
-noq-udp = { version = "0.9", default-features = false }
+noq = { version = "0.18.0", default-features = false, features = ["rustls"] }
+noq-proto = { version = "0.17", default-features = false }
+noq-udp = { version = "0.10", default-features = false }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustc-hash = "2"
@@ -80,7 +80,7 @@ sync_wrapper = { version = "1.0.2", features = ["futures"] }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = { version = "=0.26.0-beta.1", default-features = false }
 portmapper = { version = "0.15", optional = true, default-features = false }
-noq = { version = "0.17.0", default-features = false, features = ["runtime-tokio", "rustls"] }
+noq = { version = "0.18.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",

@@ -1737,7 +1737,7 @@ dependencies = [
  "parking_lot",
  "portable-atomic",
  "quanta",
- "rand 0.9.3",
+ "rand 0.9.4",
  "smallvec",
  "spinning_top",
  "web-time",
@@ -1886,7 +1886,7 @@ dependencies = [
  "idna",
  "ipnet",
  "once_cell",
- "rand 0.9.3",
+ "rand 0.9.4",
  "ring",
  "rustls",
  "serde",
@@ -1931,7 +1931,7 @@ dependencies = [
  "moka",
  "once_cell",
  "parking_lot",
- "rand 0.9.3",
+ "rand 0.9.4",
  "resolv-conf",
  "rustls",
  "serde",
@@ -3105,6 +3105,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "netlink-packet-route"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be8919612f6028ab4eacbbfe1234a9a43e3722c6e0915e7ff519066991905092"
+dependencies = [
+ "bitflags",
+ "libc",
+ "log",
+ "netlink-packet-core",
+]
+
+[[package]]
 name = "netlink-proto"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3134,7 +3146,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#d77c60b12a06ce084e6cb753bb15481da0123f09"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#97ef90b5ff749c6b7a8b7af7a014d0c9f5c7cf2d"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3147,7 +3159,7 @@ dependencies = [
  "n0-watcher",
  "netdev",
  "netlink-packet-core",
- "netlink-packet-route 0.29.0",
+ "netlink-packet-route 0.30.0",
  "netlink-proto",
  "netlink-sys",
  "noq-udp",
@@ -3202,8 +3214,9 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 
 [[package]]
 name = "noq"
-version = "0.17.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#f0ccfc2ece291d88d2d4185df644616dbb9840fe"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b969bd157c3bd3bab239a1a8b14f67f2033fa012770367fcbd5b42d71ae3548"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3223,8 +3236,9 @@ dependencies = [
 
 [[package]]
 name = "noq-proto"
-version = "0.16.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#f0ccfc2ece291d88d2d4185df644616dbb9840fe"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdec6f5039d98ee5377b2f532d495a555eb664c53161b1b5780dcaeac678b60e"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3252,8 +3266,9 @@ dependencies = [
 
 [[package]]
 name = "noq-udp"
-version = "0.9.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#f0ccfc2ece291d88d2d4185df644616dbb9840fe"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee91b05f4f3353290936ba1f3233518868fb4e2da99cb4c90d1f8cebb064e527"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -3722,7 +3737,7 @@ dependencies = [
 [[package]]
 name = "portmapper"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#d77c60b12a06ce084e6cb753bb15481da0123f09"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#97ef90b5ff749c6b7a8b7af7a014d0c9f5c7cf2d"
 dependencies = [
  "base64",
  "bytes",
@@ -3866,7 +3881,7 @@ dependencies = [
  "bit-vec",
  "bitflags",
  "num-traits",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax",
@@ -3934,7 +3949,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.3",
+ "rand 0.9.4",
  "ring",
  "rustc-hash",
  "rustls",
@@ -3983,9 +3998,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ec095654a25171c2124e9e3393a930bddbffdc939556c914957a4c3e0a87166"
+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
