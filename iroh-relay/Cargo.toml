@@ -131,7 +131,7 @@ vergen-gitcl = "1.0.8"
 default = ["metrics", "tls-ring"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["dep:rustls-platform-verifier"]
-server = [
+server-no-tls = [
     "metrics",
     "tokio/signal",
     "dep:clap",
@@ -152,8 +152,8 @@ server = [
     "noq/platform-verifier",
     "noq/runtime-tokio",
     "iroh-metrics/service",
-    "tls-ring",
 ]
+server = ["server", "tls-ring"]
 metrics = ["iroh-metrics/metrics"]
 test-utils = []
 tls-ring = [
