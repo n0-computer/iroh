@@ -8,6 +8,10 @@
 //! You can look at the published pkarr DNS record using <https://app.pkarr.org/>.
 //!
 //! To see what is going on, run with `RUST_LOG=iroh_pkarr_address_lookup=debug`.
+//!
+//! Note that while the DhtAddressLookup by default publishes only the home
+//! relay of the endpoint, this example explicitly removes the filter to publish
+//! all addresses.
 use clap::Parser;
 use iroh::{
     Endpoint, EndpointId,
