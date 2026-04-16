@@ -31,6 +31,13 @@ pub struct Report {
     pub global_v4: Option<SocketAddrV4>,
     /// `[ip]:port` of global IPv6
     pub global_v6: Option<SocketAddrV6>,
+    /// All QAD IPv4 observations from this report cycle, one per probed relay.
+    ///
+    /// Retained so that NAT pattern classification can inspect the allocation
+    /// behaviour across multiple destinations.
+    pub qad_v4_observations: Vec<QadObservation>,
+    /// All QAD IPv6 observations from this report cycle.
+    pub qad_v6_observations: Vec<QadObservation>,
     /// CaptivePortal is set when we think there's a captive portal that is
     /// intercepting HTTP traffic.
     pub captive_portal: Option<bool>,
@@ -40,6 +47,14 @@ impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
     }
+}
+
+/// A single QAD probe observation: which relay responded, and what external
+/// address it reported.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct QadObservation {
+    pub relay: RelayUrl,
+    pub observed: SocketAddr,
 }
 
 impl Report {
@@ -81,6 +96,10 @@ impl Report {
                 };
 
                 self.udp_v4 = true;
+                self.qad_v4_observations.push(QadObservation {
+                    relay: report.relay.clone(),
+                    observed: report.addr,
+                });
 
                 if let Some(global) = self.global_v4 {
                     if global == ipp {
@@ -109,6 +128,10 @@ impl Report {
                 };
 
                 self.udp_v6 = true;
+                self.qad_v6_observations.push(QadObservation {
+                    relay: report.relay.clone(),
+                    observed: report.addr,
+                });
                 if let Some(global) = self.global_v6 {
                     if global == ipp {
                         if self.mapping_varies_by_dest_ipv6.is_none() {
@@ -211,5 +234,39 @@ impl RelayLatencies {
             list.push(*val);
         }
         list.into_iter().min()
+    }
+}
+
+#[cfg(all(test, not(wasm_browser)))]
+mod tests {
+    use std::{net::Ipv4Addr, str::FromStr};
+
+    use super::*;
+    use crate::net_report::reportgen::QadProbeReport;
+
+    #[test]
+    fn qad_observations_collected_per_probe() {
+        let relay_a = RelayUrl::from_str("https://a.example.").unwrap();
+        let relay_b = RelayUrl::from_str("https://b.example.").unwrap();
+        let relay_c = RelayUrl::from_str("https://c.example.").unwrap();
+
+        let mut report = Report::default();
+        for (relay, port) in [(&relay_a, 46393), (&relay_b, 46404), (&relay_c, 46401)] {
+            report.update(&ProbeReport::QadIpv4(QadProbeReport {
+                relay: relay.clone(),
+                latency: Duration::from_millis(10),
+                addr: SocketAddr::new(Ipv4Addr::new(146, 70, 221, 132).into(), port),
+            }));
+        }
+
+        assert_eq!(report.qad_v4_observations.len(), 3);
+        let ports: Vec<u16> = report
+            .qad_v4_observations
+            .iter()
+            .map(|o| o.observed.port())
+            .collect();
+        assert_eq!(ports, vec![46393, 46404, 46401]);
+        // mapping_varies_by_dest_ipv4 still tracked
+        assert_eq!(report.mapping_varies_by_dest_ipv4, Some(true));
     }
 }
