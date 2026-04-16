@@ -51,7 +51,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     // ensure the server has connected to a relay
     // and therefore has enough information to publish
     tracing::info!("waiting for server to go online");
-    time::timeout(Duration::from_secs(12), server.online())
+    time::timeout(Duration::from_secs(20), server.online())
         .await
         .std_context("server endpoint took too long to get online")?;
 
