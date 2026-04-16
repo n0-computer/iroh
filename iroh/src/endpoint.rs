@@ -633,6 +633,17 @@ impl Builder {
         self
     }
 
+    /// Configures NAT pattern detection and candidate expansion.
+    ///
+    /// Observes QAD responses across multiple relays to detect the local
+    /// NAT's port-allocation pattern (preservation, incremental, or
+    /// port-block), and advertises additional predicted external-port
+    /// candidates to peers for hole punching.
+    pub fn nat_pattern(mut self, config: nat_pattern::NatPatternConfig) -> Self {
+        self.nat_pattern_config = config;
+        self
+    }
+
     // # Methods for more specialist customisation.
 
     /// Sets a custom [`QuicTransportConfig`] for this endpoint.
@@ -1238,6 +1249,29 @@ impl Endpoint {
         watch_relay.map(move |mut relays| {
             EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
         })
+    }
+
+    /// Returns a [`Watcher`] for the classified IPv4 NAT pattern.
+    ///
+    /// Yields [`None`] until the first net-report cycle has enough QAD
+    /// observations to classify, and on subsequent network changes.
+    ///
+    /// [`Watcher`]: n0_watcher::Watcher
+    #[cfg(not(wasm_browser))]
+    pub fn nat_pattern_v4(
+        &self,
+    ) -> impl n0_watcher::Watcher<Value = Option<nat_pattern::NatPattern>> + use<> {
+        self.inner.nat_pattern_v4()
+    }
+
+    /// Returns a [`Watcher`] for the classified IPv6 NAT pattern.
+    ///
+    /// [`Watcher`]: n0_watcher::Watcher
+    #[cfg(not(wasm_browser))]
+    pub fn nat_pattern_v6(
+        &self,
+    ) -> impl n0_watcher::Watcher<Value = Option<nat_pattern::NatPattern>> + use<> {
+        self.inner.nat_pattern_v6()
     }
 
     /// A convenience method that waits for the endpoint to be considered "online".
@@ -2873,6 +2907,25 @@ mod tests {
             addr.ip_addrs().any(|a| *a == configured_addr),
             "builder-configured external addr should still be present: {addr:?}"
         );
+
+        ep.close().await;
+        Ok(())
+    }
+
+    /// The NAT pattern watchers are reachable and initially emit `None`.
+    #[tokio::test]
+    async fn nat_pattern_watchers_initial() -> Result {
+        use crate::nat_pattern::{NatPattern, NatPatternConfig};
+
+        let ep = Endpoint::builder(presets::Minimal)
+            .nat_pattern(NatPatternConfig::default())
+            .bind()
+            .await?;
+
+        let v4: Option<NatPattern> = ep.nat_pattern_v4().get();
+        let v6: Option<NatPattern> = ep.nat_pattern_v6().get();
+        assert!(v4.is_none() || matches!(v4, Some(NatPattern::Unknown)));
+        assert!(v6.is_none() || matches!(v6, Some(NatPattern::Unknown)));
 
         ep.close().await;
         Ok(())

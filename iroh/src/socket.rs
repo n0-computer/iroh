@@ -455,6 +455,23 @@ impl Socket {
         self.direct_addrs.addrs.watch()
     }
 
+    /// Returns a [`Watcher`] for the classified IPv4 NAT pattern.
+    ///
+    /// Yields [`None`] until the first net-report cycle has enough QAD
+    /// observations to classify. May revert to [`None`] on network change.
+    pub(crate) fn nat_pattern_v4(
+        &self,
+    ) -> impl Watcher<Value = Option<nat_pattern::NatPattern>> + use<> {
+        self.nat_pattern_v4.watch()
+    }
+
+    /// Returns a [`Watcher`] for the classified IPv6 NAT pattern.
+    pub(crate) fn nat_pattern_v6(
+        &self,
+    ) -> impl Watcher<Value = Option<nat_pattern::NatPattern>> + use<> {
+        self.nat_pattern_v6.watch()
+    }
+
     /// Returns a [`Watcher`] for this socket's net-report.
     ///
     /// The [`Socket`] continuously monitors the network conditions for changes.
