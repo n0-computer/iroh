@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use clap::Parser;
-use iroh::{EndpointId, endpoint_info::EndpointIdExt};
+use iroh::EndpointId;
 use n0_error::{Result, StdResultExt};
 
 #[derive(Debug, Parser)]

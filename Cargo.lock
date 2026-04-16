@@ -2441,6 +2441,7 @@ version = "0.97.0"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
+ "data-encoding-macro",
  "derive_more",
  "digest",
  "ed25519-dalek",
@@ -2484,8 +2485,6 @@ dependencies = [
 name = "iroh-dns"
 version = "0.97.0"
 dependencies = [
- "data-encoding",
- "data-encoding-macro",
  "derive_more",
  "iroh-base",
  "n0-error",

@@ -43,12 +43,9 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+pub use iroh_dns::attrs::{EncodingError, IROH_TXT_NAME, ParseError};
 pub(crate) use iroh_dns::attrs::{IrohAttr, TxtAttrs};
 use iroh_dns::pkarr;
-pub use iroh_dns::{
-    EndpointIdExt,
-    attrs::{EncodingError, IROH_TXT_NAME, ParseError},
-};
 use n0_error::{ensure, stack_error};
 use url::Url;
 
@@ -549,7 +546,7 @@ mod tests {
     use iroh_base::{EndpointId, SecretKey, TransportAddr};
     use n0_error::{Result, StdResultExt};
 
-    use super::{EndpointData, EndpointIdExt, EndpointInfo};
+    use super::{EndpointData, EndpointInfo};
     use crate::dns::TxtRecordData;
 
     #[test]
