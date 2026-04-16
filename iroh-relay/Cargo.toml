@@ -81,14 +81,14 @@ time = { version = "0.3.37", optional = true }
 tokio-rustls-acme = { version = "0.9", optional = true }
 tokio-websockets = { version = "0.13", features = ["rustls-bring-your-own-connector", "getrandom", "rand", "server", "sha1_smol"], optional = true } # server-side websocket implementation
 simdutf8 = { version = "0.1.5", optional = true } # minimal version fix
-sha1 = { version = "0.11.0-rc.2", optional = true }
+sha1 = { version = "=0.11.0-rc.5", optional = true }
 toml = { version = "1.0", optional = true }
 serde_json = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "=0.26.0-beta.1", features = ["tokio", "system-config"] }
+hickory-resolver = { version = "=0.26.0-beta.4", features = ["tokio", "system-config"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
