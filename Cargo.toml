@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "iroh-base",
+  "iroh-dns",
   "iroh-dns-server",
   "iroh",
   "iroh/bench",
