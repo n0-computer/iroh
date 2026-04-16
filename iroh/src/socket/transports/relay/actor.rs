@@ -692,9 +692,9 @@ impl ActiveRelayActor {
             RelayToClientMsg::Health { problem } => {
                 warn!("Relay server reports problem: {problem}");
             }
-            frame => {
-                warn!("Ignoring unknown relay message: {frame:?}")
-            }
+            _ => unreachable!(
+                "got unknown RelayToClientMsg but iroh is released in sync with iroh-relay"
+            ),
         }
     }
 

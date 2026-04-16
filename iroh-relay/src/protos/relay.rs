@@ -15,7 +15,7 @@ use n0_error::{e, ensure, stack_error};
 use n0_future::time::Duration;
 
 use super::common::{FrameType, FrameTypeError};
-use crate::KeyCache;
+use crate::{KeyCache, http::ProtocolVersion};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to the socket, not
@@ -66,6 +66,8 @@ pub enum Error {
         #[error(std_err)]
         source: std::str::Utf8Error,
     },
+    #[error("Received a frame not allowed in this protocol version.")]
+    FrameNotAllowedInVersion,
     #[error("Too few bytes")]
     TooSmall {},
 }
@@ -382,8 +384,14 @@ impl RelayToClientMsg {
     /// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
+    ///
+    /// `protocol_version` is the negotiated protocol version for this connection.
     #[allow(clippy::result_large_err)]
-    pub(crate) fn from_bytes(mut content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
+    pub(crate) fn from_bytes(
+        mut content: Bytes,
+        cache: &KeyCache,
+        protocol_version: ProtocolVersion,
+    ) -> Result<Self, Error> {
         let frame_type = FrameType::from_bytes(&mut content)?;
         let frame_len = content.len();
         ensure!(
@@ -423,6 +431,10 @@ impl RelayToClientMsg {
                 Self::Pong(data)
             }
             FrameType::Health => {
+                ensure!(
+                    protocol_version == ProtocolVersion::V1,
+                    Error::FrameNotAllowedInVersion
+                );
                 let problem = std::str::from_utf8(&content)?.to_owned();
                 Self::Health { problem }
             }
@@ -446,6 +458,10 @@ impl RelayToClientMsg {
                 }
             }
             FrameType::Status => {
+                ensure!(
+                    protocol_version >= ProtocolVersion::V2,
+                    Error::FrameNotAllowedInVersion
+                );
                 let status = Status::from_bytes(content)?;
                 Self::Status(status)
             }
@@ -823,7 +839,7 @@ mod proptests {
         #[test]
         fn server_client_frame_roundtrip(frame in server_client_frame()) {
             let encoded = frame.to_bytes().freeze();
-            let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
+            let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), Default::default()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 

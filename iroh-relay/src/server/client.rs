@@ -562,7 +562,7 @@ mod tests {
 
         let endpoint_id = SecretKey::from_bytes(&rng.random()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Conn::test(io_rw);
+        let mut io_rw = Conn::test(io_rw, Default::default());
         let stream = RelayedStream::test(io);
 
         let clients = Clients::default();
@@ -663,7 +663,7 @@ mod tests {
                 channel_capacity: 10,
                 protocol_version,
             },
-            Conn::test(client),
+            Conn::test(client, Default::default()),
         )
     }
 
@@ -791,7 +791,7 @@ mod tests {
 
         // Build the rate limited stream.
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
-        let mut frame_writer = Conn::test(io_write);
+        let mut frame_writer = Conn::test(io_write, Default::default());
         // Rate limiter allowing LIMIT bytes/s
         let mut stream = RelayedStream::test_limited(io_read, LIMIT / 10, LIMIT)?;
 
