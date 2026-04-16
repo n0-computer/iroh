@@ -384,7 +384,7 @@ impl ClientBuilder {
         let protocol_version =
             ProtocolVersion::match_from_str(&ws_meta.protocol()).ok_or_else(|| {
                 e!(ConnectError::BadVersionHeader {
-                    server_version: protocol_version_str.map(ToOwned::to_owned)
+                    server_version: Some(ws_meta.protocol())
                 })
             })?;
 
