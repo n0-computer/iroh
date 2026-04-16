@@ -51,8 +51,8 @@
 <a href=#51 id=51 data-nosnippet>51</a><span class="kw">use crate</span>::{
 <a href=#52 id=52 data-nosnippet>52</a>    NetReport,
 <a href=#53 id=53 data-nosnippet>53</a>    address_lookup::{
-<a href=#54 id=54 data-nosnippet>54</a>        AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
-<a href=#55 id=55 data-nosnippet>55</a>        LookupFailed, UserData,
+<a href=#54 id=54 data-nosnippet>54</a>        AddrFilter, AddressLookupBuilder, AddressLookupFailed, ConcurrentAddressLookup,
+<a href=#55 id=55 data-nosnippet>55</a>        DynAddressLookupBuilder, UserData,
 <a href=#56 id=56 data-nosnippet>56</a>    },
 <a href=#57 id=57 data-nosnippet>57</a>    endpoint::presets::Preset,
 <a href=#58 id=58 data-nosnippet>58</a>    metrics::EndpointMetrics,
@@ -838,7 +838,7 @@
 <a href=#838 id=838 data-nosnippet>838</a>    <span class="attr">#[error(<span class="string">"Connecting to ourself is not supported"</span>)]
 <a href=#839 id=839 data-nosnippet>839</a>    </span>SelfConnect,
 <a href=#840 id=840 data-nosnippet>840</a>    <span class="attr">#[error(<span class="string">"No addressing information available"</span>)]
-<a href=#841 id=841 data-nosnippet>841</a>    </span>NoAddress { source: LookupFailed },
+<a href=#841 id=841 data-nosnippet>841</a>    </span>NoAddress { source: AddressLookupFailed },
 <a href=#842 id=842 data-nosnippet>842</a>    <span class="attr">#[error(<span class="string">"Unable to connect to remote"</span>)]
 <a href=#843 id=843 data-nosnippet>843</a>    </span>Noq {
 <a href=#844 id=844 data-nosnippet>844</a>        <span class="attr">#[error(std_err)]

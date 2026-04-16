@@ -31,8 +31,8 @@
 <a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span><span class="kw">super</span>::Source;
 <a href=#32 id=32 data-nosnippet>32</a><span class="kw">use crate</span>::{
 <a href=#33 id=33 data-nosnippet>33</a>    address_lookup::{
-<a href=#34 id=34 data-nosnippet>34</a>        AddressLookup, ConcurrentAddressLookup, Error <span class="kw">as </span>AddressLookupError,
-<a href=#35 id=35 data-nosnippet>35</a>        Item <span class="kw">as </span>AddressLookupItem, LookupFailed,
+<a href=#34 id=34 data-nosnippet>34</a>        AddressLookup, AddressLookupFailed, ConcurrentAddressLookup, Error <span class="kw">as </span>AddressLookupError,
+<a href=#35 id=35 data-nosnippet>35</a>        Item <span class="kw">as </span>AddressLookupItem,
 <a href=#36 id=36 data-nosnippet>36</a>    },
 <a href=#37 id=37 data-nosnippet>37</a>    endpoint::DirectAddr,
 <a href=#38 id=38 data-nosnippet>38</a>    socket::{
@@ -518,7 +518,7 @@
 <a href=#518 id=518 data-nosnippet>518</a>    </span><span class="kw">fn </span>handle_msg_resolve_remote(
 <a href=#519 id=519 data-nosnippet>519</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#520 id=520 data-nosnippet>520</a>        addrs: BTreeSet&lt;TransportAddr&gt;,
-<a href=#521 id=521 data-nosnippet>521</a>        tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), LookupFailed&gt;&gt;,
+<a href=#521 id=521 data-nosnippet>521</a>        tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), AddressLookupFailed&gt;&gt;,
 <a href=#522 id=522 data-nosnippet>522</a>    ) {
 <a href=#523 id=523 data-nosnippet>523</a>        <span class="kw">let </span>addrs = to_transports_addr(<span class="self">self</span>.endpoint_id, addrs);
 <a href=#524 id=524 data-nosnippet>524</a>        <span class="self">self</span>.paths.insert_multiple(addrs, Source::App);
@@ -578,7 +578,7 @@
 <a href=#578 id=578 data-nosnippet>578</a>            <span class="prelude-val">Some</span>(stream) =&gt; <span class="self">self</span>.address_lookup_stream.set(stream),
 <a href=#579 id=579 data-nosnippet>579</a>            <span class="prelude-val">None </span>=&gt; <span class="self">self
 <a href=#580 id=580 data-nosnippet>580</a>                </span>.paths
-<a href=#581 id=581 data-nosnippet>581</a>                .address_lookup_finished(<span class="prelude-val">Err</span>(<span class="macro">e!</span>(LookupFailed::NoServiceConfigured))),
+<a href=#581 id=581 data-nosnippet>581</a>                .address_lookup_finished(<span class="prelude-val">Err</span>(<span class="macro">e!</span>(AddressLookupFailed::NoServiceConfigured))),
 <a href=#582 id=582 data-nosnippet>582</a>        }
 <a href=#583 id=583 data-nosnippet>583</a>    }
 <a href=#584 id=584 data-nosnippet>584</a>
@@ -586,7 +586,7 @@
 <a href=#586 id=586 data-nosnippet>586</a>    ///
 <a href=#587 id=587 data-nosnippet>587</a>    /// All address lookup results end up being sent here. It takes care of updating the
 <a href=#588 id=588 data-nosnippet>588</a>    /// [`RemotePathState`] with the results.
-<a href=#589 id=589 data-nosnippet>589</a>    </span><span class="kw">fn </span>handle_address_lookup_item(<span class="kw-2">&amp;mut </span><span class="self">self</span>, item: <span class="prelude-ty">Result</span>&lt;AddressLookupItem, LookupFailed&gt;) {
+<a href=#589 id=589 data-nosnippet>589</a>    </span><span class="kw">fn </span>handle_address_lookup_item(<span class="kw-2">&amp;mut </span><span class="self">self</span>, item: <span class="prelude-ty">Result</span>&lt;AddressLookupItem, AddressLookupFailed&gt;) {
 <a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">match </span>item {
 <a href=#591 id=591 data-nosnippet>591</a>            <span class="prelude-val">Err</span>(err) =&gt; {
 <a href=#592 id=592 data-nosnippet>592</a>                <span class="macro">warn!</span>(<span class="string">"Address Lookup failed: {err:#}"</span>);
@@ -1196,7 +1196,7 @@
 <a href=#1196 id=1196 data-nosnippet>1196</a>    </span><span class="attr">#[debug(<span class="string">"ResolveRemote(..)"</span>)]
 <a href=#1197 id=1197 data-nosnippet>1197</a>    </span>ResolveRemote(
 <a href=#1198 id=1198 data-nosnippet>1198</a>        BTreeSet&lt;TransportAddr&gt;,
-<a href=#1199 id=1199 data-nosnippet>1199</a>        oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), LookupFailed&gt;&gt;,
+<a href=#1199 id=1199 data-nosnippet>1199</a>        oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), AddressLookupFailed&gt;&gt;,
 <a href=#1200 id=1200 data-nosnippet>1200</a>    ),
 <a href=#1201 id=1201 data-nosnippet>1201</a>    <span class="doccomment">/// Returns information about the remote.
 <a href=#1202 id=1202 data-nosnippet>1202</a>    ///
@@ -1391,7 +1391,7 @@
 <a href=#1391 id=1391 data-nosnippet>1391</a>}
 <a href=#1392 id=1392 data-nosnippet>1392</a>
 <a href=#1393 id=1393 data-nosnippet>1393</a><span class="kw">impl </span>Stream <span class="kw">for </span>AddressLookupStream {
-<a href=#1394 id=1394 data-nosnippet>1394</a>    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;AddressLookupItem, LookupFailed&gt;;
+<a href=#1394 id=1394 data-nosnippet>1394</a>    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;AddressLookupItem, AddressLookupFailed&gt;;
 <a href=#1395 id=1395 data-nosnippet>1395</a>
 <a href=#1396 id=1396 data-nosnippet>1396</a>    <span class="kw">fn </span>poll_next(
 <a href=#1397 id=1397 data-nosnippet>1397</a>        <span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
@@ -1415,7 +1415,7 @@
 <a href=#1415 id=1415 data-nosnippet>1415</a>                        this.inner = <span class="prelude-val">None</span>;
 <a href=#1416 id=1416 data-nosnippet>1416</a>                        <span class="kw">if </span>!this.did_emit {
 <a href=#1417 id=1417 data-nosnippet>1417</a>                            <span class="kw">let </span>errors = this.errors.take().unwrap_or_default();
-<a href=#1418 id=1418 data-nosnippet>1418</a>                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(<span class="macro">e!</span>(LookupFailed::NoResults { errors })))
+<a href=#1418 id=1418 data-nosnippet>1418</a>                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(<span class="macro">e!</span>(AddressLookupFailed::NoResults { errors })))
 <a href=#1419 id=1419 data-nosnippet>1419</a>                        } <span class="kw">else </span>{
 <a href=#1420 id=1420 data-nosnippet>1420</a>                            <span class="prelude-val">None
 <a href=#1421 id=1421 data-nosnippet>1421</a>                        </span>}

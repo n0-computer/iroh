@@ -12,7 +12,7 @@
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>tracing::trace;
 <a href=#13 id=13 data-nosnippet>13</a>
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use super</span>::{Source, TransportAddrInfo, TransportAddrUsage};
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use crate</span>::{address_lookup::LookupFailed, metrics::SocketMetrics, socket::transports};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use crate</span>::{address_lookup::AddressLookupFailed, metrics::SocketMetrics, socket::transports};
 <a href=#16 id=16 data-nosnippet>16</a>
 <a href=#17 id=17 data-nosnippet>17</a><span class="doccomment">/// Maximum number of non-relay paths we keep around per endpoint.
 <a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>MAX_NON_RELAY_PATHS: usize = <span class="number">30</span>;
@@ -34,7 +34,7 @@
 <a href=#34 id=34 data-nosnippet>34</a>    /// mechanisms. The are only potentially usable.
 <a href=#35 id=35 data-nosnippet>35</a>    </span>paths: FxHashMap&lt;transports::Addr, PathState&gt;,
 <a href=#36 id=36 data-nosnippet>36</a>    <span class="doccomment">/// Pending resolve requests from [`Self::resolve_remote`].
-<a href=#37 id=37 data-nosnippet>37</a>    </span>pending_resolve_requests: VecDeque&lt;oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), LookupFailed&gt;&gt;&gt;,
+<a href=#37 id=37 data-nosnippet>37</a>    </span>pending_resolve_requests: VecDeque&lt;oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), AddressLookupFailed&gt;&gt;&gt;,
 <a href=#38 id=38 data-nosnippet>38</a>    metrics: Arc&lt;SocketMetrics&gt;,
 <a href=#39 id=39 data-nosnippet>39</a>}
 <a href=#40 id=40 data-nosnippet>40</a>
@@ -150,8 +150,8 @@
 <a href=#150 id=150 data-nosnippet>150</a>    ///
 <a href=#151 id=151 data-nosnippet>151</a>    /// If there already is a known path, `Ok(())` is returned immediately. Otherwise an
 <a href=#152 id=152 data-nosnippet>152</a>    /// address lookup is performed and the result is sent back once that
-<a href=#153 id=153 data-nosnippet>153</a>    /// completes. [`AddressLookupError`] is sent if there are no known paths.
-<a href=#154 id=154 data-nosnippet>154</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>resolve_remote(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), LookupFailed&gt;&gt;) {
+<a href=#153 id=153 data-nosnippet>153</a>    /// completes. [`AddressLookupFailed`] is sent if there are no known paths.
+<a href=#154 id=154 data-nosnippet>154</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>resolve_remote(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), AddressLookupFailed&gt;&gt;) {
 <a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">if </span>!<span class="self">self</span>.paths.is_empty() {
 <a href=#156 id=156 data-nosnippet>156</a>            tx.send(<span class="prelude-val">Ok</span>(())).ok();
 <a href=#157 id=157 data-nosnippet>157</a>        } <span class="kw">else </span>{
@@ -162,7 +162,7 @@
 <a href=#162 id=162 data-nosnippet>162</a>    <span class="doccomment">/// Notifies that a Address Lookup run has finished.
 <a href=#163 id=163 data-nosnippet>163</a>    ///
 <a href=#164 id=164 data-nosnippet>164</a>    /// This will emit pending resolve requests.
-<a href=#165 id=165 data-nosnippet>165</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>address_lookup_finished(<span class="kw-2">&amp;mut </span><span class="self">self</span>, result: <span class="prelude-ty">Result</span>&lt;(), LookupFailed&gt;) {
+<a href=#165 id=165 data-nosnippet>165</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>address_lookup_finished(<span class="kw-2">&amp;mut </span><span class="self">self</span>, result: <span class="prelude-ty">Result</span>&lt;(), AddressLookupFailed&gt;) {
 <a href=#166 id=166 data-nosnippet>166</a>        <span class="self">self</span>.emit_pending_resolve_requests(result.err());
 <a href=#167 id=167 data-nosnippet>167</a>    }
 <a href=#168 id=168 data-nosnippet>168</a>
@@ -180,14 +180,14 @@
 <a href=#180 id=180 data-nosnippet>180</a>    ///
 <a href=#181 id=181 data-nosnippet>181</a>    /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,
 <a href=#182 id=182 data-nosnippet>182</a>    /// otherwise with the provided `address_lookup_error` or with [`LookupFailed::NoResults`].
-<a href=#183 id=183 data-nosnippet>183</a>    </span><span class="kw">fn </span>emit_pending_resolve_requests(<span class="kw-2">&amp;mut </span><span class="self">self</span>, address_lookup_error: <span class="prelude-ty">Option</span>&lt;LookupFailed&gt;) {
+<a href=#183 id=183 data-nosnippet>183</a>    </span><span class="kw">fn </span>emit_pending_resolve_requests(<span class="kw-2">&amp;mut </span><span class="self">self</span>, address_lookup_error: <span class="prelude-ty">Option</span>&lt;AddressLookupFailed&gt;) {
 <a href=#184 id=184 data-nosnippet>184</a>        <span class="kw">if </span><span class="self">self</span>.pending_resolve_requests.is_empty() {
 <a href=#185 id=185 data-nosnippet>185</a>            <span class="kw">return</span>;
 <a href=#186 id=186 data-nosnippet>186</a>        }
 <a href=#187 id=187 data-nosnippet>187</a>        <span class="kw">let </span>result = <span class="kw">match </span>(<span class="self">self</span>.paths.is_empty(), address_lookup_error) {
 <a href=#188 id=188 data-nosnippet>188</a>            (<span class="bool-val">false</span>, <span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(()),
 <a href=#189 id=189 data-nosnippet>189</a>            (<span class="bool-val">true</span>, <span class="prelude-val">Some</span>(err)) =&gt; <span class="prelude-val">Err</span>(err),
-<a href=#190 id=190 data-nosnippet>190</a>            (<span class="bool-val">true</span>, <span class="prelude-val">None</span>) =&gt; <span class="prelude-val">Err</span>(<span class="macro">e!</span>(LookupFailed::NoResults { errors: Vec::new() })),
+<a href=#190 id=190 data-nosnippet>190</a>            (<span class="bool-val">true</span>, <span class="prelude-val">None</span>) =&gt; <span class="prelude-val">Err</span>(<span class="macro">e!</span>(AddressLookupFailed::NoResults { errors: Vec::new() })),
 <a href=#191 id=191 data-nosnippet>191</a>        };
 <a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">for </span>tx <span class="kw">in </span><span class="self">self</span>.pending_resolve_requests.drain(..) {
 <a href=#193 id=193 data-nosnippet>193</a>            tx.send(result.clone()).ok();
