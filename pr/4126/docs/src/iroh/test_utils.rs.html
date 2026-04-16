@@ -265,8 +265,8 @@
 <a href=#265 id=265 data-nosnippet>265</a>            buf: <span class="kw-2">&amp;</span>[u8],
 <a href=#266 id=266 data-nosnippet>266</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt; {
 <a href=#267 id=267 data-nosnippet>267</a>            <span class="kw">let </span>packet = Message::from_bytes(buf)<span class="question-mark">?</span>;
-<a href=#268 id=268 data-nosnippet>268</a>            <span class="macro">debug!</span>(queries = <span class="question-mark">?</span>packet.queries(), %from, <span class="string">"received query"</span>);
-<a href=#269 id=269 data-nosnippet>269</a>            <span class="kw">let </span><span class="kw-2">mut </span>reply = packet.to_response();
+<a href=#268 id=268 data-nosnippet>268</a>            <span class="macro">debug!</span>(queries = <span class="question-mark">?</span>packet.queries, %from, <span class="string">"received query"</span>);
+<a href=#269 id=269 data-nosnippet>269</a>            <span class="kw">let </span><span class="kw-2">mut </span>reply = packet.clone().into_response();
 <a href=#270 id=270 data-nosnippet>270</a>            <span class="self">self</span>.resolver.resolve(<span class="kw-2">&amp;</span>packet, <span class="kw-2">&amp;mut </span>reply).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#271 id=271 data-nosnippet>271</a>            <span class="macro">debug!</span>(<span class="question-mark">?</span>reply, %from, <span class="string">"send reply"</span>);
 <a href=#272 id=272 data-nosnippet>272</a>            <span class="kw">let </span>buf = reply.to_vec()<span class="question-mark">?</span>;
@@ -290,128 +290,128 @@
 <a href=#290 id=290 data-nosnippet>290</a>        routing::put,
 <a href=#291 id=291 data-nosnippet>291</a>    };
 <a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">use </span>bytes::Bytes;
-<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">use </span>tokio::sync::oneshot;
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">use </span>tracing::{debug, error, warn};
-<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">use </span>url::Url;
-<a href=#296 id=296 data-nosnippet>296</a>
-<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">use </span><span class="kw">super</span>::CleanupDropGuard;
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">use </span><span class="kw">crate</span>::test_utils::pkarr_dns_state::State <span class="kw">as </span>AppState;
-<a href=#299 id=299 data-nosnippet>299</a>
-<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">pub async fn </span>run_pkarr_relay(state: AppState) -&gt; std::io::Result&lt;(Url, CleanupDropGuard)&gt; {
-<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">let </span>bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, <span class="number">0</span>));
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>app = Router::new()
-<a href=#303 id=303 data-nosnippet>303</a>            .route(<span class="string">"/pkarr/{key}"</span>, put(pkarr_put))
-<a href=#304 id=304 data-nosnippet>304</a>            .with_state(state);
-<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>listener = tokio::net::TcpListener::bind(bind_addr).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span>bound_addr = listener.local_addr()<span class="question-mark">?</span>;
-<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"http://{bound_addr}/pkarr"</span>)
-<a href=#308 id=308 data-nosnippet>308</a>            .parse()
-<a href=#309 id=309 data-nosnippet>309</a>            .expect(<span class="string">"valid url"</span>);
-<a href=#310 id=310 data-nosnippet>310</a>
-<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span>(tx, <span class="kw-2">mut </span>rx) = oneshot::channel();
-<a href=#312 id=312 data-nosnippet>312</a>        tokio::spawn(<span class="kw">async move </span>{
-<a href=#313 id=313 data-nosnippet>313</a>            <span class="kw">let </span>serve = axum::serve(listener, app);
-<a href=#314 id=314 data-nosnippet>314</a>            <span class="macro">tokio::select!</span> {
-<a href=#315 id=315 data-nosnippet>315</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>rx =&gt; {
-<a href=#316 id=316 data-nosnippet>316</a>                    <span class="macro">debug!</span>(<span class="string">"shutting down pkarr server"</span>);
-<a href=#317 id=317 data-nosnippet>317</a>                }
-<a href=#318 id=318 data-nosnippet>318</a>                res = serve.into_future() =&gt; {
-<a href=#319 id=319 data-nosnippet>319</a>                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = res {
-<a href=#320 id=320 data-nosnippet>320</a>                        <span class="macro">error!</span>(<span class="string">"pkarr server error: {e:?}"</span>);
-<a href=#321 id=321 data-nosnippet>321</a>                    }
-<a href=#322 id=322 data-nosnippet>322</a>                }
-<a href=#323 id=323 data-nosnippet>323</a>            }
-<a href=#324 id=324 data-nosnippet>324</a>        });
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="prelude-val">Ok</span>((url, CleanupDropGuard(tx)))
-<a href=#326 id=326 data-nosnippet>326</a>    }
-<a href=#327 id=327 data-nosnippet>327</a>
-<a href=#328 id=328 data-nosnippet>328</a>    <span class="kw">async fn </span>pkarr_put(
-<a href=#329 id=329 data-nosnippet>329</a>        State(state): State&lt;AppState&gt;,
-<a href=#330 id=330 data-nosnippet>330</a>        Path(key): Path&lt;String&gt;,
-<a href=#331 id=331 data-nosnippet>331</a>        body: Bytes,
-<a href=#332 id=332 data-nosnippet>332</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>IntoResponse, AppError&gt; {
-<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">let </span>key = pkarr::PublicKey::try_from(key.as_str()).map_err(std::io::Error::other)<span class="question-mark">?</span>;
-<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span>signed_packet =
-<a href=#335 id=335 data-nosnippet>335</a>            pkarr::SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>key, <span class="kw-2">&amp;</span>body).map_err(std::io::Error::other)<span class="question-mark">?</span>;
-<a href=#336 id=336 data-nosnippet>336</a>        <span class="kw">let </span>_updated = state.upsert(signed_packet)<span class="question-mark">?</span>;
-<a href=#337 id=337 data-nosnippet>337</a>        <span class="prelude-val">Ok</span>(http::StatusCode::NO_CONTENT)
-<a href=#338 id=338 data-nosnippet>338</a>    }
-<a href=#339 id=339 data-nosnippet>339</a>
-<a href=#340 id=340 data-nosnippet>340</a>    <span class="attr">#[derive(Debug)]
-<a href=#341 id=341 data-nosnippet>341</a>    </span><span class="kw">struct </span>AppError(std::io::Error);
-<a href=#342 id=342 data-nosnippet>342</a>    <span class="kw">impl</span>&lt;T: Into&lt;std::io::Error&gt;&gt; From&lt;T&gt; <span class="kw">for </span>AppError {
-<a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">fn </span>from(value: T) -&gt; <span class="self">Self </span>{
-<a href=#344 id=344 data-nosnippet>344</a>            <span class="self">Self</span>(value.into())
-<a href=#345 id=345 data-nosnippet>345</a>        }
-<a href=#346 id=346 data-nosnippet>346</a>    }
-<a href=#347 id=347 data-nosnippet>347</a>    <span class="kw">impl </span>IntoResponse <span class="kw">for </span>AppError {
-<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">fn </span>into_response(<span class="self">self</span>) -&gt; axum::response::Response {
-<a href=#349 id=349 data-nosnippet>349</a>            <span class="macro">warn!</span>(err = <span class="question-mark">?</span><span class="self">self</span>, <span class="string">"request failed"</span>);
-<a href=#350 id=350 data-nosnippet>350</a>            (http::StatusCode::INTERNAL_SERVER_ERROR, <span class="self">self</span>.<span class="number">0</span>.to_string()).into_response()
-<a href=#351 id=351 data-nosnippet>351</a>        }
-<a href=#352 id=352 data-nosnippet>352</a>    }
-<a href=#353 id=353 data-nosnippet>353</a>}
-<a href=#354 id=354 data-nosnippet>354</a>
-<a href=#355 id=355 data-nosnippet>355</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>pkarr_dns_state {
-<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">use </span>std::{
-<a href=#357 id=357 data-nosnippet>357</a>        collections::{HashMap, hash_map},
-<a href=#358 id=358 data-nosnippet>358</a>        future::Future,
-<a href=#359 id=359 data-nosnippet>359</a>        sync::{Arc, Mutex},
-<a href=#360 id=360 data-nosnippet>360</a>        time::Duration,
-<a href=#361 id=361 data-nosnippet>361</a>    };
-<a href=#362 id=362 data-nosnippet>362</a>
-<a href=#363 id=363 data-nosnippet>363</a>    <span class="kw">use </span>iroh_base::EndpointId;
-<a href=#364 id=364 data-nosnippet>364</a>    <span class="kw">use </span>iroh_relay::endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME};
-<a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">use </span>pkarr::SignedPacket;
-<a href=#366 id=366 data-nosnippet>366</a>    <span class="kw">use </span>tracing::debug;
-<a href=#367 id=367 data-nosnippet>367</a>
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">use </span><span class="kw">crate</span>::test_utils::dns_server::QueryHandler;
-<a href=#369 id=369 data-nosnippet>369</a>
-<a href=#370 id=370 data-nosnippet>370</a>    <span class="attr">#[derive(Debug, Clone)]
-<a href=#371 id=371 data-nosnippet>371</a>    </span><span class="kw">pub struct </span>State {
-<a href=#372 id=372 data-nosnippet>372</a>        packets: Arc&lt;Mutex&lt;HashMap&lt;EndpointId, SignedPacket&gt;&gt;&gt;,
-<a href=#373 id=373 data-nosnippet>373</a>        origin: String,
-<a href=#374 id=374 data-nosnippet>374</a>        notify: Arc&lt;tokio::sync::Notify&gt;,
-<a href=#375 id=375 data-nosnippet>375</a>    }
-<a href=#376 id=376 data-nosnippet>376</a>
-<a href=#377 id=377 data-nosnippet>377</a>    <span class="kw">impl </span>State {
-<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">pub fn </span>new(origin: String) -&gt; <span class="self">Self </span>{
-<a href=#379 id=379 data-nosnippet>379</a>            <span class="self">Self </span>{
-<a href=#380 id=380 data-nosnippet>380</a>                packets: Default::default(),
-<a href=#381 id=381 data-nosnippet>381</a>                origin,
-<a href=#382 id=382 data-nosnippet>382</a>                notify: Arc::new(tokio::sync::Notify::new()),
-<a href=#383 id=383 data-nosnippet>383</a>            }
-<a href=#384 id=384 data-nosnippet>384</a>        }
-<a href=#385 id=385 data-nosnippet>385</a>
-<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">pub fn </span>on_update(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; tokio::sync::futures::Notified&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#387 id=387 data-nosnippet>387</a>            <span class="self">self</span>.notify.notified()
-<a href=#388 id=388 data-nosnippet>388</a>        }
-<a href=#389 id=389 data-nosnippet>389</a>
-<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">pub async fn </span>on_endpoint(
-<a href=#391 id=391 data-nosnippet>391</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#392 id=392 data-nosnippet>392</a>            endpoint: <span class="kw-2">&amp;</span>EndpointId,
-<a href=#393 id=393 data-nosnippet>393</a>            timeout: Duration,
-<a href=#394 id=394 data-nosnippet>394</a>        ) -&gt; std::io::Result&lt;()&gt; {
-<a href=#395 id=395 data-nosnippet>395</a>            <span class="kw">let </span>timeout = tokio::time::sleep(timeout);
-<a href=#396 id=396 data-nosnippet>396</a>            <span class="macro">tokio::pin!</span>(timeout);
-<a href=#397 id=397 data-nosnippet>397</a>            <span class="kw">while </span><span class="self">self</span>.get(endpoint, |p| {
-<a href=#398 id=398 data-nosnippet>398</a>                <span class="kw">let </span>endpoint_info = p
-<a href=#399 id=399 data-nosnippet>399</a>                    .as_ref()
-<a href=#400 id=400 data-nosnippet>400</a>                    .and_then(|p| EndpointInfo::from_pkarr_signed_packet(p).ok());
-<a href=#401 id=401 data-nosnippet>401</a>                <span class="macro">debug!</span>(<span class="string">"got info {:#?}"</span>, endpoint_info);
-<a href=#402 id=402 data-nosnippet>402</a>                p.is_none()
-<a href=#403 id=403 data-nosnippet>403</a>            }) {
-<a href=#404 id=404 data-nosnippet>404</a>                <span class="macro">tokio::select!</span> {
-<a href=#405 id=405 data-nosnippet>405</a>                    <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::other(<span class="string">"timeout"</span>)),
-<a href=#406 id=406 data-nosnippet>406</a>                    <span class="kw">_ </span>= <span class="self">self</span>.on_update() =&gt; {}
-<a href=#407 id=407 data-nosnippet>407</a>                }
-<a href=#408 id=408 data-nosnippet>408</a>            }
-<a href=#409 id=409 data-nosnippet>409</a>            <span class="prelude-val">Ok</span>(())
-<a href=#410 id=410 data-nosnippet>410</a>        }
-<a href=#411 id=411 data-nosnippet>411</a>
-<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">pub fn </span>upsert(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: SignedPacket) -&gt; std::io::Result&lt;bool&gt; {
-<a href=#413 id=413 data-nosnippet>413</a>            <span class="kw">let </span>endpoint_id = EndpointId::from_bytes(<span class="kw-2">&amp;</span>signed_packet.public_key().to_bytes())
-<a href=#414 id=414 data-nosnippet>414</a>                .map_err(std::io::Error::other)<span class="question-mark">?</span>;
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">use </span>iroh_base::EndpointId;
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">use </span>tokio::sync::oneshot;
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">use </span>tracing::{debug, error, warn};
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">use </span>url::Url;
+<a href=#297 id=297 data-nosnippet>297</a>
+<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">use </span><span class="kw">super</span>::CleanupDropGuard;
+<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">use </span><span class="kw">crate</span>::test_utils::pkarr_dns_state::State <span class="kw">as </span>AppState;
+<a href=#300 id=300 data-nosnippet>300</a>
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">pub async fn </span>run_pkarr_relay(state: AppState) -&gt; std::io::Result&lt;(Url, CleanupDropGuard)&gt; {
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, <span class="number">0</span>));
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>app = Router::new()
+<a href=#304 id=304 data-nosnippet>304</a>            .route(<span class="string">"/pkarr/{key}"</span>, put(pkarr_put))
+<a href=#305 id=305 data-nosnippet>305</a>            .with_state(state);
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span>listener = tokio::net::TcpListener::bind(bind_addr).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>bound_addr = listener.local_addr()<span class="question-mark">?</span>;
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"http://{bound_addr}/pkarr"</span>)
+<a href=#309 id=309 data-nosnippet>309</a>            .parse()
+<a href=#310 id=310 data-nosnippet>310</a>            .expect(<span class="string">"valid url"</span>);
+<a href=#311 id=311 data-nosnippet>311</a>
+<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">let </span>(tx, <span class="kw-2">mut </span>rx) = oneshot::channel();
+<a href=#313 id=313 data-nosnippet>313</a>        tokio::spawn(<span class="kw">async move </span>{
+<a href=#314 id=314 data-nosnippet>314</a>            <span class="kw">let </span>serve = axum::serve(listener, app);
+<a href=#315 id=315 data-nosnippet>315</a>            <span class="macro">tokio::select!</span> {
+<a href=#316 id=316 data-nosnippet>316</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>rx =&gt; {
+<a href=#317 id=317 data-nosnippet>317</a>                    <span class="macro">debug!</span>(<span class="string">"shutting down pkarr server"</span>);
+<a href=#318 id=318 data-nosnippet>318</a>                }
+<a href=#319 id=319 data-nosnippet>319</a>                res = serve.into_future() =&gt; {
+<a href=#320 id=320 data-nosnippet>320</a>                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = res {
+<a href=#321 id=321 data-nosnippet>321</a>                        <span class="macro">error!</span>(<span class="string">"pkarr server error: {e:?}"</span>);
+<a href=#322 id=322 data-nosnippet>322</a>                    }
+<a href=#323 id=323 data-nosnippet>323</a>                }
+<a href=#324 id=324 data-nosnippet>324</a>            }
+<a href=#325 id=325 data-nosnippet>325</a>        });
+<a href=#326 id=326 data-nosnippet>326</a>        <span class="prelude-val">Ok</span>((url, CleanupDropGuard(tx)))
+<a href=#327 id=327 data-nosnippet>327</a>    }
+<a href=#328 id=328 data-nosnippet>328</a>
+<a href=#329 id=329 data-nosnippet>329</a>    <span class="kw">async fn </span>pkarr_put(
+<a href=#330 id=330 data-nosnippet>330</a>        State(state): State&lt;AppState&gt;,
+<a href=#331 id=331 data-nosnippet>331</a>        Path(key): Path&lt;String&gt;,
+<a href=#332 id=332 data-nosnippet>332</a>        body: Bytes,
+<a href=#333 id=333 data-nosnippet>333</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>IntoResponse, AppError&gt; {
+<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span>key = EndpointId::from_z32(<span class="kw-2">&amp;</span>key).map_err(std::io::Error::other)<span class="question-mark">?</span>;
+<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span>signed_packet = iroh_dns::pkarr::SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>key, <span class="kw-2">&amp;</span>body)
+<a href=#336 id=336 data-nosnippet>336</a>            .map_err(std::io::Error::other)<span class="question-mark">?</span>;
+<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw">let </span>_updated = state.upsert(signed_packet)<span class="question-mark">?</span>;
+<a href=#338 id=338 data-nosnippet>338</a>        <span class="prelude-val">Ok</span>(http::StatusCode::NO_CONTENT)
+<a href=#339 id=339 data-nosnippet>339</a>    }
+<a href=#340 id=340 data-nosnippet>340</a>
+<a href=#341 id=341 data-nosnippet>341</a>    <span class="attr">#[derive(Debug)]
+<a href=#342 id=342 data-nosnippet>342</a>    </span><span class="kw">struct </span>AppError(std::io::Error);
+<a href=#343 id=343 data-nosnippet>343</a>    <span class="kw">impl</span>&lt;T: Into&lt;std::io::Error&gt;&gt; From&lt;T&gt; <span class="kw">for </span>AppError {
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw">fn </span>from(value: T) -&gt; <span class="self">Self </span>{
+<a href=#345 id=345 data-nosnippet>345</a>            <span class="self">Self</span>(value.into())
+<a href=#346 id=346 data-nosnippet>346</a>        }
+<a href=#347 id=347 data-nosnippet>347</a>    }
+<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">impl </span>IntoResponse <span class="kw">for </span>AppError {
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">fn </span>into_response(<span class="self">self</span>) -&gt; axum::response::Response {
+<a href=#350 id=350 data-nosnippet>350</a>            <span class="macro">warn!</span>(err = <span class="question-mark">?</span><span class="self">self</span>, <span class="string">"request failed"</span>);
+<a href=#351 id=351 data-nosnippet>351</a>            (http::StatusCode::INTERNAL_SERVER_ERROR, <span class="self">self</span>.<span class="number">0</span>.to_string()).into_response()
+<a href=#352 id=352 data-nosnippet>352</a>        }
+<a href=#353 id=353 data-nosnippet>353</a>    }
+<a href=#354 id=354 data-nosnippet>354</a>}
+<a href=#355 id=355 data-nosnippet>355</a>
+<a href=#356 id=356 data-nosnippet>356</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>pkarr_dns_state {
+<a href=#357 id=357 data-nosnippet>357</a>    <span class="kw">use </span>std::{
+<a href=#358 id=358 data-nosnippet>358</a>        collections::{HashMap, hash_map},
+<a href=#359 id=359 data-nosnippet>359</a>        future::Future,
+<a href=#360 id=360 data-nosnippet>360</a>        sync::{Arc, Mutex},
+<a href=#361 id=361 data-nosnippet>361</a>        time::Duration,
+<a href=#362 id=362 data-nosnippet>362</a>    };
+<a href=#363 id=363 data-nosnippet>363</a>
+<a href=#364 id=364 data-nosnippet>364</a>    <span class="kw">use </span>iroh_base::EndpointId;
+<a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">use </span>iroh_dns::pkarr::SignedPacket;
+<a href=#366 id=366 data-nosnippet>366</a>    <span class="kw">use </span>iroh_relay::endpoint_info::{EndpointInfo, IROH_TXT_NAME};
+<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw">use </span>tracing::debug;
+<a href=#368 id=368 data-nosnippet>368</a>
+<a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">use </span><span class="kw">crate</span>::test_utils::dns_server::QueryHandler;
+<a href=#370 id=370 data-nosnippet>370</a>
+<a href=#371 id=371 data-nosnippet>371</a>    <span class="attr">#[derive(Debug, Clone)]
+<a href=#372 id=372 data-nosnippet>372</a>    </span><span class="kw">pub struct </span>State {
+<a href=#373 id=373 data-nosnippet>373</a>        packets: Arc&lt;Mutex&lt;HashMap&lt;EndpointId, SignedPacket&gt;&gt;&gt;,
+<a href=#374 id=374 data-nosnippet>374</a>        origin: String,
+<a href=#375 id=375 data-nosnippet>375</a>        notify: Arc&lt;tokio::sync::Notify&gt;,
+<a href=#376 id=376 data-nosnippet>376</a>    }
+<a href=#377 id=377 data-nosnippet>377</a>
+<a href=#378 id=378 data-nosnippet>378</a>    <span class="kw">impl </span>State {
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">pub fn </span>new(origin: String) -&gt; <span class="self">Self </span>{
+<a href=#380 id=380 data-nosnippet>380</a>            <span class="self">Self </span>{
+<a href=#381 id=381 data-nosnippet>381</a>                packets: Default::default(),
+<a href=#382 id=382 data-nosnippet>382</a>                origin,
+<a href=#383 id=383 data-nosnippet>383</a>                notify: Arc::new(tokio::sync::Notify::new()),
+<a href=#384 id=384 data-nosnippet>384</a>            }
+<a href=#385 id=385 data-nosnippet>385</a>        }
+<a href=#386 id=386 data-nosnippet>386</a>
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw">pub fn </span>on_update(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; tokio::sync::futures::Notified&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#388 id=388 data-nosnippet>388</a>            <span class="self">self</span>.notify.notified()
+<a href=#389 id=389 data-nosnippet>389</a>        }
+<a href=#390 id=390 data-nosnippet>390</a>
+<a href=#391 id=391 data-nosnippet>391</a>        <span class="kw">pub async fn </span>on_endpoint(
+<a href=#392 id=392 data-nosnippet>392</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#393 id=393 data-nosnippet>393</a>            endpoint: <span class="kw-2">&amp;</span>EndpointId,
+<a href=#394 id=394 data-nosnippet>394</a>            timeout: Duration,
+<a href=#395 id=395 data-nosnippet>395</a>        ) -&gt; std::io::Result&lt;()&gt; {
+<a href=#396 id=396 data-nosnippet>396</a>            <span class="kw">let </span>timeout = tokio::time::sleep(timeout);
+<a href=#397 id=397 data-nosnippet>397</a>            <span class="macro">tokio::pin!</span>(timeout);
+<a href=#398 id=398 data-nosnippet>398</a>            <span class="kw">while </span><span class="self">self</span>.get(endpoint, |p| {
+<a href=#399 id=399 data-nosnippet>399</a>                <span class="kw">let </span>endpoint_info = p
+<a href=#400 id=400 data-nosnippet>400</a>                    .as_ref()
+<a href=#401 id=401 data-nosnippet>401</a>                    .and_then(|p| EndpointInfo::from_pkarr_signed_packet(p).ok());
+<a href=#402 id=402 data-nosnippet>402</a>                <span class="macro">debug!</span>(<span class="string">"got info {:#?}"</span>, endpoint_info);
+<a href=#403 id=403 data-nosnippet>403</a>                p.is_none()
+<a href=#404 id=404 data-nosnippet>404</a>            }) {
+<a href=#405 id=405 data-nosnippet>405</a>                <span class="macro">tokio::select!</span> {
+<a href=#406 id=406 data-nosnippet>406</a>                    <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::other(<span class="string">"timeout"</span>)),
+<a href=#407 id=407 data-nosnippet>407</a>                    <span class="kw">_ </span>= <span class="self">self</span>.on_update() =&gt; {}
+<a href=#408 id=408 data-nosnippet>408</a>                }
+<a href=#409 id=409 data-nosnippet>409</a>            }
+<a href=#410 id=410 data-nosnippet>410</a>            <span class="prelude-val">Ok</span>(())
+<a href=#411 id=411 data-nosnippet>411</a>        }
+<a href=#412 id=412 data-nosnippet>412</a>
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">pub fn </span>upsert(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: SignedPacket) -&gt; std::io::Result&lt;bool&gt; {
+<a href=#414 id=414 data-nosnippet>414</a>            <span class="kw">let </span>endpoint_id = signed_packet.public_key();
 <a href=#415 id=415 data-nosnippet>415</a>            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().expect(<span class="string">"poisoned"</span>);
 <a href=#416 id=416 data-nosnippet>416</a>            <span class="kw">let </span>updated = <span class="kw">match </span>map.entry(endpoint_id) {
 <a href=#417 id=417 data-nosnippet>417</a>                hash_map::Entry::Vacant(e) =&gt; {
@@ -449,7 +449,7 @@
 <a href=#449 id=449 data-nosnippet>449</a>            reply: <span class="kw-2">&amp;mut </span>hickory_resolver::proto::op::Message,
 <a href=#450 id=450 data-nosnippet>450</a>            ttl: u32,
 <a href=#451 id=451 data-nosnippet>451</a>        ) -&gt; std::io::Result&lt;()&gt; {
-<a href=#452 id=452 data-nosnippet>452</a>            <span class="kw">for </span>query <span class="kw">in </span>query.queries() {
+<a href=#452 id=452 data-nosnippet>452</a>            <span class="kw">for </span>query <span class="kw">in </span><span class="kw-2">&amp;</span>query.queries {
 <a href=#453 id=453 data-nosnippet>453</a>                <span class="kw">let </span>domain_name = query.name().to_string();
 <a href=#454 id=454 data-nosnippet>454</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(endpoint_id) = endpoint_id_from_domain_name(<span class="kw-2">&amp;</span>domain_name) <span class="kw">else </span>{
 <a href=#455 id=455 data-nosnippet>455</a>                    <span class="kw">continue</span>;
