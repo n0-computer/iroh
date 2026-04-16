@@ -3802,4 +3802,53 @@
 <a href=#3802 id=3802 data-nosnippet>3802</a>
 <a href=#3803 id=3803 data-nosnippet>3803</a>        <span class="prelude-val">Ok</span>(())
 <a href=#3804 id=3804 data-nosnippet>3804</a>    }
-<a href=#3805 id=3805 data-nosnippet>3805</a>}</code></pre></div></section></main></body></html>
+<a href=#3805 id=3805 data-nosnippet>3805</a>
+<a href=#3806 id=3806 data-nosnippet>3806</a>    <span class="attr">#[tokio::test]
+<a href=#3807 id=3807 data-nosnippet>3807</a>    #[traced_test]
+<a href=#3808 id=3808 data-nosnippet>3808</a>    </span><span class="kw">async fn </span>test_endpoint_online_add_relay() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3809 id=3809 data-nosnippet>3809</a>        <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
+<a href=#3810 id=3810 data-nosnippet>3810</a>            .relay_mode(RelayMode::Custom(RelayMap::empty()))
+<a href=#3811 id=3811 data-nosnippet>3811</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#3812 id=3812 data-nosnippet>3812</a>            .bind()
+<a href=#3813 id=3813 data-nosnippet>3813</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3814 id=3814 data-nosnippet>3814</a>        <span class="comment">// should not come online without relays.
+<a href=#3815 id=3815 data-nosnippet>3815</a>        </span><span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), ep.online()).<span class="kw">await</span>;
+<a href=#3816 id=3816 data-nosnippet>3816</a>        <span class="macro">assert!</span>(res.is_err());
+<a href=#3817 id=3817 data-nosnippet>3817</a>
+<a href=#3818 id=3818 data-nosnippet>3818</a>        <span class="comment">// should come online after a relay is added.
+<a href=#3819 id=3819 data-nosnippet>3819</a>        </span><span class="kw">let </span>(relay_map, relay_url, _relay_server_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3820 id=3820 data-nosnippet>3820</a>        ep.insert_relay(relay_url.clone(), relay_map.get(<span class="kw-2">&amp;</span>relay_url).unwrap())
+<a href=#3821 id=3821 data-nosnippet>3821</a>            .<span class="kw">await</span>;
+<a href=#3822 id=3822 data-nosnippet>3822</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">1000</span>), ep.online()).<span class="kw">await</span>;
+<a href=#3823 id=3823 data-nosnippet>3823</a>        <span class="macro">assert!</span>(res.is_ok());
+<a href=#3824 id=3824 data-nosnippet>3824</a>
+<a href=#3825 id=3825 data-nosnippet>3825</a>        <span class="comment">// online should still return after endpoint close, if the endpoint was last online
+<a href=#3826 id=3826 data-nosnippet>3826</a>        </span><span class="kw">let </span>ep_clone = ep.clone();
+<a href=#3827 id=3827 data-nosnippet>3827</a>        <span class="kw">let </span>task = tokio::task::spawn(<span class="kw">async move </span>{
+<a href=#3828 id=3828 data-nosnippet>3828</a>            tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), ep_clone.online()).<span class="kw">await
+<a href=#3829 id=3829 data-nosnippet>3829</a>        </span>});
+<a href=#3830 id=3830 data-nosnippet>3830</a>        ep.close().<span class="kw">await</span>;
+<a href=#3831 id=3831 data-nosnippet>3831</a>        <span class="kw">let </span>res = task.<span class="kw">await</span>.unwrap();
+<a href=#3832 id=3832 data-nosnippet>3832</a>        <span class="macro">assert!</span>(res.is_ok());
+<a href=#3833 id=3833 data-nosnippet>3833</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3834 id=3834 data-nosnippet>3834</a>    }
+<a href=#3835 id=3835 data-nosnippet>3835</a>
+<a href=#3836 id=3836 data-nosnippet>3836</a>    <span class="attr">#[tokio::test]
+<a href=#3837 id=3837 data-nosnippet>3837</a>    #[traced_test]
+<a href=#3838 id=3838 data-nosnippet>3838</a>    </span><span class="kw">async fn </span>test_endpoint_online_close() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3839 id=3839 data-nosnippet>3839</a>        <span class="kw">let </span>ep = Endpoint::bind(presets::Minimal).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3840 id=3840 data-nosnippet>3840</a>        <span class="comment">// should not come online without relays.
+<a href=#3841 id=3841 data-nosnippet>3841</a>        </span><span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), ep.online()).<span class="kw">await</span>;
+<a href=#3842 id=3842 data-nosnippet>3842</a>        <span class="macro">assert!</span>(res.is_err());
+<a href=#3843 id=3843 data-nosnippet>3843</a>
+<a href=#3844 id=3844 data-nosnippet>3844</a>        <span class="comment">// online should remain pending after the endpoint is closed.
+<a href=#3845 id=3845 data-nosnippet>3845</a>        </span><span class="kw">let </span>ep_clone = ep.clone();
+<a href=#3846 id=3846 data-nosnippet>3846</a>        <span class="kw">let </span>task = tokio::task::spawn(<span class="kw">async move </span>{
+<a href=#3847 id=3847 data-nosnippet>3847</a>            tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), ep_clone.online()).<span class="kw">await
+<a href=#3848 id=3848 data-nosnippet>3848</a>        </span>});
+<a href=#3849 id=3849 data-nosnippet>3849</a>        ep.close().<span class="kw">await</span>;
+<a href=#3850 id=3850 data-nosnippet>3850</a>        <span class="kw">let </span>res = task.<span class="kw">await</span>.unwrap();
+<a href=#3851 id=3851 data-nosnippet>3851</a>        <span class="macro">assert!</span>(res.is_err());
+<a href=#3852 id=3852 data-nosnippet>3852</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3853 id=3853 data-nosnippet>3853</a>    }
+<a href=#3854 id=3854 data-nosnippet>3854</a>}</code></pre></div></section></main></body></html>
