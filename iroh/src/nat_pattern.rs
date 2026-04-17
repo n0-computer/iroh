@@ -82,9 +82,13 @@ impl Default for NatPatternConfig {
     }
 }
 
-/// Lower bound on observation count; fewer than this yields
-/// [`NatPattern::Unknown`].
-const MIN_OBSERVATIONS: usize = 3;
+/// Minimum matching observations to classify as [`NatPattern::Preservation`].
+/// A single sample cannot distinguish a stable mapping from the first of
+/// many varying allocations.
+const MIN_OBSERVATIONS_FOR_PRESERVATION: usize = 2;
+/// Minimum observations to classify a varying pattern
+/// (Incremental / PortBlock / Random).
+const MIN_OBSERVATIONS_FOR_VARYING: usize = 3;
 /// Spread above this is [`NatPattern::Random`].
 const PORT_BLOCK_MAX_SPREAD: u16 = 2047;
 
@@ -94,16 +98,20 @@ impl NatPattern {
     /// `bound_port` is the local port the probes originated from; it is used
     /// to detect port preservation and parity behaviour.
     pub fn classify(observed_ports: &[u16], bound_port: u16) -> Self {
-        if observed_ports.len() < MIN_OBSERVATIONS {
+        let ports = observed_ports;
+        if ports.len() < MIN_OBSERVATIONS_FOR_PRESERVATION {
             return Self::Unknown;
         }
-        let ports = observed_ports;
 
         if ports.iter().all(|p| *p == ports[0]) {
             return Self::Preservation {
                 bound_port,
                 external_port: ports[0],
             };
+        }
+
+        if ports.len() < MIN_OBSERVATIONS_FOR_VARYING {
+            return Self::Unknown;
         }
 
         if let Some(delta) = detect_constant_delta(ports) {
@@ -238,9 +246,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unknown_when_too_few_observations() {
+    fn unknown_when_no_observations() {
+        assert_eq!(NatPattern::classify(&[], 42), NatPattern::Unknown);
+    }
+
+    #[test]
+    fn unknown_when_too_few_varying_observations() {
+        // Two differing ports cannot be classified as varying without a third.
         let pattern = NatPattern::classify(&[1, 2], 42);
         assert_eq!(pattern, NatPattern::Unknown);
+    }
+
+    #[test]
+    fn unknown_for_single_observation() {
+        // A single sample can't distinguish preservation from the first
+        // allocation of a varying NAT.
+        assert_eq!(NatPattern::classify(&[19350], 36728), NatPattern::Unknown);
+    }
+
+    #[test]
+    fn preservation_from_two_matching_observations() {
+        let pattern = NatPattern::classify(&[19350, 19350], 36728);
+        assert_eq!(
+            pattern,
+            NatPattern::Preservation {
+                bound_port: 36728,
+                external_port: 19350
+            }
+        );
     }
 
     #[test]

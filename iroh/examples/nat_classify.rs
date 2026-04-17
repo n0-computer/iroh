@@ -60,16 +60,14 @@ async fn main() -> Result {
 async fn wait_classified(
     mut watcher: impl Watcher<Value = Option<NatPattern>>,
 ) -> Option<NatPattern> {
-    if let Some(p) = watcher.get()
-        && !matches!(p, NatPattern::Unknown)
-    {
+    if let Some(p) = watcher.get() {
         return Some(p);
     }
     timeout(CLASSIFY_TIMEOUT, async {
         loop {
             match watcher.updated().await {
-                Ok(Some(p)) if !matches!(p, NatPattern::Unknown) => return Some(p),
-                Ok(_) => continue,
+                Ok(Some(p)) => return Some(p),
+                Ok(None) => continue,
                 Err(_disconnected) => return None,
             }
         }
@@ -82,7 +80,7 @@ async fn wait_classified(
 fn print_family(name: &str, pattern: Option<&NatPattern>, config: &NatPatternConfig) {
     println!("── {name} ──");
     let Some(pattern) = pattern else {
-        println!("  classification  : unavailable (no QAD response)");
+        println!("  classification  : unavailable (net-report did not complete in time)");
         println!();
         return;
     };
@@ -166,7 +164,11 @@ fn print_interpretation(pattern: &NatPattern) {
             "Fully random symmetric NAT. No prediction possible — hole \
              punching will fall back to the relay."
         }
-        NatPattern::Unknown => "Not enough observations to classify.",
+        NatPattern::Unknown => {
+            "Observations disagreed but were too few to infer a varying \
+             pattern. Typical of mobile networks where only some relays \
+             were reachable — retry, or try a different network."
+        }
     };
     println!("  note            : {text}");
 }
