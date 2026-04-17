@@ -10,10 +10,10 @@
 //! cargo run --example nat_classify
 //! ```
 
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
 use iroh::{
-    Endpoint, Watcher,
+    Endpoint, RelayUrl, Watcher,
     endpoint::presets,
     nat_pattern::{NatPattern, NatPatternConfig},
 };
@@ -50,13 +50,23 @@ async fn main() -> Result {
         wait_classified(ep.nat_pattern_v6()),
     );
     let report = ep.net_report().get();
-    let observed_v4: Vec<u16> = report
+    let observed_v4: Vec<(RelayUrl, SocketAddr)> = report
         .as_ref()
-        .map(|r| r.qad_v4_observations.iter().map(|o| o.observed.port()).collect())
+        .map(|r| {
+            r.qad_v4_observations
+                .iter()
+                .map(|o| (o.relay.clone(), o.observed))
+                .collect()
+        })
         .unwrap_or_default();
-    let observed_v6: Vec<u16> = report
+    let observed_v6: Vec<(RelayUrl, SocketAddr)> = report
         .as_ref()
-        .map(|r| r.qad_v6_observations.iter().map(|o| o.observed.port()).collect())
+        .map(|r| {
+            r.qad_v6_observations
+                .iter()
+                .map(|o| (o.relay.clone(), o.observed))
+                .collect()
+        })
         .unwrap_or_default();
 
     print_family("IPv4", pattern_v4.as_ref(), &observed_v4, &config);
@@ -89,13 +99,22 @@ async fn wait_classified(
 fn print_family(
     name: &str,
     pattern: Option<&NatPattern>,
-    observed: &[u16],
+    observed: &[(RelayUrl, SocketAddr)],
     config: &NatPatternConfig,
 ) {
     println!("── {name} ──");
     println!("  QAD probes      : {} responded", observed.len());
-    if !observed.is_empty() {
-        println!("  observed ports  : {observed:?}");
+    for (relay, addr) in observed {
+        let host = relay.host_str().unwrap_or("<relay>");
+        println!("    via {host:<40} → {addr}");
+    }
+    let distinct_ips: std::collections::BTreeSet<_> =
+        observed.iter().map(|(_, a)| a.ip()).collect();
+    if distinct_ips.len() > 1 {
+        println!(
+            "  distinct IPs    : {} — external IP varies across QAD probes",
+            distinct_ips.len()
+        );
     }
     let Some(pattern) = pattern else {
         let reason = if observed.is_empty() {
