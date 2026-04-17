@@ -49,9 +49,18 @@ async fn main() -> Result {
         wait_classified(ep.nat_pattern_v4()),
         wait_classified(ep.nat_pattern_v6()),
     );
+    let report = ep.net_report().get();
+    let observed_v4: Vec<u16> = report
+        .as_ref()
+        .map(|r| r.qad_v4_observations.iter().map(|o| o.observed.port()).collect())
+        .unwrap_or_default();
+    let observed_v6: Vec<u16> = report
+        .as_ref()
+        .map(|r| r.qad_v6_observations.iter().map(|o| o.observed.port()).collect())
+        .unwrap_or_default();
 
-    print_family("IPv4", pattern_v4.as_ref(), &config);
-    print_family("IPv6", pattern_v6.as_ref(), &config);
+    print_family("IPv4", pattern_v4.as_ref(), &observed_v4, &config);
+    print_family("IPv6", pattern_v6.as_ref(), &observed_v6, &config);
 
     ep.close().await;
     Ok(())
@@ -77,16 +86,30 @@ async fn wait_classified(
     .flatten()
 }
 
-fn print_family(name: &str, pattern: Option<&NatPattern>, config: &NatPatternConfig) {
+fn print_family(
+    name: &str,
+    pattern: Option<&NatPattern>,
+    observed: &[u16],
+    config: &NatPatternConfig,
+) {
     println!("── {name} ──");
+    println!("  QAD probes      : {} responded", observed.len());
+    if !observed.is_empty() {
+        println!("  observed ports  : {observed:?}");
+    }
     let Some(pattern) = pattern else {
-        println!("  classification  : unavailable (net-report did not complete in time)");
+        let reason = if observed.is_empty() {
+            "no QAD responses — address family unreachable on this network"
+        } else {
+            "net-report did not complete in time"
+        };
+        println!("  classification  : unavailable ({reason})");
         println!();
         return;
     };
     println!("  classification  : {pattern}");
     print_details(pattern);
-    print_interpretation(pattern);
+    print_interpretation(pattern, observed.len());
 
     let candidates = pattern.expand_candidates(config);
     if !candidates.is_empty() {
@@ -137,7 +160,7 @@ fn print_details(pattern: &NatPattern) {
     }
 }
 
-fn print_interpretation(pattern: &NatPattern) {
+fn print_interpretation(pattern: &NatPattern, observation_count: usize) {
     let text = match pattern {
         NatPattern::Preservation {
             bound_port,
@@ -164,10 +187,15 @@ fn print_interpretation(pattern: &NatPattern) {
             "Fully random symmetric NAT. No prediction possible — hole \
              punching will fall back to the relay."
         }
+        NatPattern::Unknown if observation_count < 2 => {
+            "Fewer than 2 QAD probes responded — can't classify. Typical \
+             on flaky or cellular networks when some relays are \
+             unreachable; retry, or try a different network."
+        }
         NatPattern::Unknown => {
-            "Observations disagreed but were too few to infer a varying \
-             pattern. Typical of mobile networks where only some relays \
-             were reachable — retry, or try a different network."
+            "Observations disagreed but fewer than 3 responded, so the \
+             varying pattern (incremental, port-block, random) can't be \
+             distinguished. Retry to gather more samples."
         }
     };
     println!("  note            : {text}");
