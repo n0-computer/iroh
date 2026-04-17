@@ -67,7 +67,7 @@ use crate::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
 use crate::net_report::QuicConfig;
 use crate::{
-    address_lookup::{self, AddressLookup, EndpointData, Error as AddressLookupError, UserData},
+    address_lookup::{self, AddressLookup, AddressLookupFailed, EndpointData, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
     metrics::EndpointMetrics,
@@ -1268,7 +1268,7 @@ impl EndpointInner {
     pub(crate) async fn resolve_remote(
         &self,
         addr: EndpointAddr,
-    ) -> Result<Result<EndpointIdMappedAddr, AddressLookupError>, RemoteStateActorStoppedError>
+    ) -> Result<Result<EndpointIdMappedAddr, AddressLookupFailed>, RemoteStateActorStoppedError>
     {
         let (tx, rx) = oneshot::channel();
         self.actor_sender
@@ -1325,7 +1325,7 @@ enum ActorMessage {
     ResolveRemote(
         EndpointAddr,
         oneshot::Sender<
-            Result<Result<EndpointIdMappedAddr, AddressLookupError>, RemoteStateActorStoppedError>,
+            Result<Result<EndpointIdMappedAddr, AddressLookupFailed>, RemoteStateActorStoppedError>,
         >,
     ),
     #[debug("AddConnection(..)")]

@@ -28,7 +28,7 @@ use super::{
     transports,
 };
 use crate::{
-    address_lookup,
+    address_lookup::{self, AddressLookupFailed},
     socket::{
         RemoteStateActorStoppedError,
         concurrent_read_map::{ConcurrentReadMap, ReadOnlyMap},
@@ -228,7 +228,7 @@ impl RemoteMap {
     pub(super) async fn resolve_remote(
         &mut self,
         addr: EndpointAddr,
-    ) -> Result<Result<EndpointIdMappedAddr, address_lookup::Error>, RemoteStateActorStoppedError>
+    ) -> Result<Result<EndpointIdMappedAddr, AddressLookupFailed>, RemoteStateActorStoppedError>
     {
         let EndpointAddr { id, addrs } = addr;
         let actor = self.remote_state_actor(id);

@@ -51,8 +51,8 @@ pub use crate::tls::TlsConfigError;
 use crate::{
     NetReport,
     address_lookup::{
-        AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
-        Error as AddressLookupError, UserData,
+        AddrFilter, AddressLookupBuilder, AddressLookupFailed, ConcurrentAddressLookup,
+        DynAddressLookupBuilder, UserData,
     },
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
@@ -838,7 +838,7 @@ pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
     #[error("No addressing information available")]
-    NoAddress { source: AddressLookupError },
+    NoAddress { source: AddressLookupFailed },
     #[error("Unable to connect to remote")]
     Noq {
         #[error(std_err)]
