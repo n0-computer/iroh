@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AddressLookupBuilderError","AddressLookupFailed","ParseError"],"mod":["dns","mdns","memory","pkarr"],"struct":["AddrFilter","ConcurrentAddressLookup","EndpointData","EndpointInfo","Error","FilteredAddressLookup","Item","UserData"],"trait":["AddressLookup","AddressLookupBuilder"]};
