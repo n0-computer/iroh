@@ -892,15 +892,17 @@ mod tests {
 
         /// Two direct endpoints with a filtered router on the first.
         ///
-        /// Binds to IPv4 loopback only so retry-token validation works on
-        /// multi-homed CI hosts (tokens are tied to the source address).
+        /// Binds to the unspecified IPv4 address on both endpoints so that
+        /// multi-interface CI hosts exercise the path that triggered iroh#4114
+        /// (retry tokens tied to a specific local address getting rejected when
+        /// the retried Initial arrives on a different interface).
         async fn direct_pair<F>(filter: F) -> Result<(Router, Endpoint, EndpointAddr)>
         where
             F: Fn(&crate::endpoint::Incoming) -> IncomingFilterOutcome + Send + Sync + 'static,
         {
             let e1 = Endpoint::builder(presets::Minimal)
                 .clear_ip_transports()
-                .bind_addr((std::net::Ipv4Addr::LOCALHOST, 0))
+                .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, 0))
                 .anyerr()?
                 .bind()
                 .await?;
@@ -911,7 +913,7 @@ mod tests {
             let addr = r1.endpoint().addr();
             let e2 = Endpoint::builder(presets::Minimal)
                 .clear_ip_transports()
-                .bind_addr((std::net::Ipv4Addr::LOCALHOST, 0))
+                .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, 0))
                 .anyerr()?
                 .bind()
                 .await?;
