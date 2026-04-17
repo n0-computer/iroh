@@ -282,7 +282,7 @@ fn prune_non_relay_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
     }
 
     // sort the potentially prunable from most recently closed to least recently closed
-    inactive.sort_by(|a, b| b.1.cmp(&a.1));
+    inactive.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     // Prune the "oldest" closed paths.
     let old_inactive =
