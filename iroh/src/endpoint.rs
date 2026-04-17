@@ -1238,11 +1238,11 @@ impl Endpoint {
 
     /// A convenience method that waits for the endpoint to be considered "online".
     ///
-    /// This currently means at least one relay server was connected,
-    /// and at least one local IP address is available.
-    /// Even if no relays are configured, this will still wait for a relay connection.
+    /// This currently means at least one relay server has completed its
+    /// connection handshake (i.e. the endpoint is registered and reachable
+    /// via that relay). Merely selecting a relay URL is not sufficient.
     ///
-    /// Once this has been resolved the first time, this will always immediately resolve.
+    /// If no relays are configured, this will pend forever.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
@@ -1282,7 +1282,24 @@ impl Endpoint {
     /// }
     /// ```
     pub async fn online(&self) {
-        self.inner.home_relay().initialized().await;
+        let mut watcher = self.inner.home_relay_status();
+        let mut value = watcher.get();
+        loop {
+            if value
+                .into_iter()
+                .flatten()
+                .any(|(_url, status)| status.is_connected())
+            {
+                return;
+            }
+            value = match watcher.updated().await {
+                Ok(value) => value,
+                Err(_disconnected) => {
+                    std::future::pending::<()>().await;
+                    break;
+                }
+            }
+        }
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -3783,6 +3800,55 @@ mod tests {
         let incoming = accept_task.await.expect("accept task panicked");
         assert!(incoming.is_none());
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_online_add_relay() -> Result {
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(RelayMap::empty()))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        // should not come online without relays.
+        let res = tokio::time::timeout(Duration::from_millis(500), ep.online()).await;
+        assert!(res.is_err());
+
+        // should come online after a relay is added.
+        let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
+        ep.insert_relay(relay_url.clone(), relay_map.get(&relay_url).unwrap())
+            .await;
+        let res = tokio::time::timeout(Duration::from_millis(1000), ep.online()).await;
+        assert!(res.is_ok());
+
+        // online should still return after endpoint close, if the endpoint was last online
+        let ep_clone = ep.clone();
+        let task = tokio::task::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(500), ep_clone.online()).await
+        });
+        ep.close().await;
+        let res = task.await.unwrap();
+        assert!(res.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_online_close() -> Result {
+        let ep = Endpoint::bind(presets::Minimal).await?;
+        // should not come online without relays.
+        let res = tokio::time::timeout(Duration::from_millis(500), ep.online()).await;
+        assert!(res.is_err());
+
+        // online should remain pending after the endpoint is closed.
+        let ep_clone = ep.clone();
+        let task = tokio::task::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(500), ep_clone.online()).await
+        });
+        ep.close().await;
+        let res = task.await.unwrap();
+        assert!(res.is_err());
         Ok(())
     }
 }
