@@ -87,6 +87,10 @@ pub(crate) use self::{options::Options, reportgen::QuicConfig};
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const ENOUGH_ENDPOINTS: usize = 3;
+/// Minimum QAD samples we try to collect per expected address family, so
+/// the NAT pattern classifier has enough observations to distinguish
+/// Preservation from a varying pattern.
+const MIN_REPORTS_PER_FAMILY: usize = 2;
 
 /// Client to run net_reports.
 #[derive(Debug)]
@@ -490,20 +494,23 @@ impl Client {
             }
         }
 
-        // We set _pending to true if at least one report was started for each category.
-        // If we did not start any report for either category, _pending is set to false right away
-        // (it "completed" in the sense that nothing will ever run). If we did start at least one report,
-        // _pending is set to true, and will be set to false further down once the first task
-        // completed.
-        let mut ipv4_pending = !v4_buf.is_empty();
-        let mut ipv6_pending = !v6_buf.is_empty();
+        // Target number of reports per family before we cancel outstanding
+        // probes. Full reports aim for 2 samples per family to give the
+        // NAT pattern classifier enough observations; incremental reports
+        // stay at a single sample to keep refreshes fast. Capped at the
+        // number of probes actually spawned so we don't wait forever on a
+        // family with fewer probes available.
+        let target_per_family = if do_full { MIN_REPORTS_PER_FAMILY } else { 1 };
+        let target_v4 = v4_buf.len().min(target_per_family);
+        let target_v6 = v6_buf.len().min(target_per_family);
+        let mut v4_reports = 0usize;
+        let mut v6_reports = 0usize;
+        let _ = enough_relays;
 
         while !v4_buf.is_empty() || !v6_buf.is_empty() {
-            // We early-abort the tasks once we have at least `enough_relays` reports,
-            // and at least one ipv4 and one ipv6 report completed (if they were started, see comment above).
-
-            if reports.len() >= enough_relays && !ipv4_pending && !ipv6_pending {
-                debug!("enough probes: {}", reports.len());
+            // Early-abort once both families have collected their targets.
+            if v4_reports >= target_v4 && v6_reports >= target_v6 {
+                debug!("enough probes: v4={v4_reports} v6={v6_reports}");
                 cancel_v4.cancel();
                 cancel_v6.cancel();
                 break;
@@ -520,13 +527,13 @@ impl Client {
                 val = v4_buf.join_next(), if !v4_buf.is_empty() => {
                     let span = warn_span!("QADv4");
                     let _guard = span.enter();
-                    ipv4_pending = false;
                     match val {
                         Some(Ok(Some(Ok(res)))) => {
                             match res {
                                 Ok((r, conn)) => {
                                     debug!(?r, "probe report");
                                     let url = r.relay.clone();
+                                    v4_reports += 1;
                                     reports.push(ProbeReport::QadIpv4(r));
                                     if self.qad_conns.v4.is_none() {
                                         self.qad_conns.v4.replace((url, conn));
@@ -559,13 +566,13 @@ impl Client {
                 val = v6_buf.join_next(), if !v6_buf.is_empty() => {
                     let span = warn_span!("QADv6");
                     let _guard = span.enter();
-                    ipv6_pending = false;
                     match val {
                         Some(Ok(Some(Ok(res)))) => {
                             match res {
                                 Ok((r, conn)) => {
                                     debug!(?r, "probe report");
                                     let url = r.relay.clone();
+                                    v6_reports += 1;
                                     reports.push(ProbeReport::QadIpv6(r));
                                     if self.qad_conns.v6.is_none() {
                                         self.qad_conns.v6.replace((url, conn));
@@ -637,63 +644,35 @@ impl Client {
             }
         }
 
-        if do_full {
-            // Full report, require more probes
-            match (state.have_v4, state.have_v6) {
-                (true, true) => {
-                    // Both IPv4 and IPv6 are expected to be available
-                    if num_ipv4 >= 2 && num_ipv6 >= 1 || num_ipv6 >= 2 && num_ipv4 >= 1 {
-                        return true;
-                    }
+        // Full reports raise the bar to 2 samples per expected address
+        // family so NAT pattern classification has enough observations to
+        // distinguish Preservation from a varying pattern. Incremental
+        // reports stay at the cheaper 1-sample threshold to keep frequent
+        // refreshes fast.
+        let min_per_family = if do_full { 2 } else { 1 };
+        match (state.have_v4, state.have_v6) {
+            (true, true) => {
+                if num_ipv4 >= min_per_family && num_ipv6 >= min_per_family {
+                    return true;
                 }
-                (true, false) => {
-                    // Just Ipv4 is expected
-                    if num_ipv4 >= 2 {
-                        return true;
-                    }
-                }
-                (false, true) => {
-                    // Just Ipv6 is expected
-                    if num_ipv6 >= 2 {
-                        return true;
-                    }
-                }
-                (false, false) => {}
             }
-            if num_https >= num_relays {
-                // If we have at least one https probe per relay, we are happy
-                return true;
-            }
-            false
-        } else {
-            // Incremental reports, here the requirements are reduced further
-            match (state.have_v4, state.have_v6) {
-                (true, true) => {
-                    // Both IPv4 and IPv6 are expected to be available
-                    if num_ipv4 >= 1 && num_ipv6 >= 1 {
-                        return true;
-                    }
+            (true, false) => {
+                if num_ipv4 >= min_per_family {
+                    return true;
                 }
-                (true, false) => {
-                    // Just Ipv4 is expected
-                    if num_ipv4 >= 1 {
-                        return true;
-                    }
-                }
-                (false, true) => {
-                    // Just Ipv6 is expected
-                    if num_ipv6 >= 1 {
-                        return true;
-                    }
-                }
-                (false, false) => {}
             }
-            if num_https >= num_relays {
-                // If we have at least one https probe per relay, we are happy
-                return true;
+            (false, true) => {
+                if num_ipv6 >= min_per_family {
+                    return true;
+                }
             }
-            false
+            (false, false) => {}
         }
+        if num_https >= num_relays {
+            // If we have at least one https probe per relay, we are happy
+            return true;
+        }
+        false
     }
 
     /// Adds `r` to the set of recent Reports and mutates `r.preferred_relay` to contain the best recent one.
