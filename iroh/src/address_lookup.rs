@@ -565,16 +565,17 @@ impl AddressLookupServices {
     /// Resolves the addressing information for an [`EndpointId`] across all configured services.
     ///
     /// All services are queried concurrently and their results are merged into a
-    /// single stream. Each [`Item`] is yielded as soon as it is produced,
-    /// allowing the caller to act on the first usable address while slower
-    /// services are still working.
+    /// single stream. Each [`Item`] is yielded as `Ok(Ok(item))` as soon as it
+    /// is produced, allowing the caller to act on the first usable address
+    /// while slower services are still working.
     ///
-    /// Errors from individual services are buffered and do not terminate the
-    /// stream: a single failing service must not hide results from others still
-    /// in flight. The buffered errors only surface as a single
-    /// [`AddressLookupFailed::NoResults`] error once all services have finished
-    /// without yielding any [`Item`]. If at least one [`Item`] was yielded,
-    /// buffered errors are discarded and the stream ends with `None`.
+    /// Errors from individual services are yielded inline as `Ok(Err(error))`
+    /// and do not terminate the stream: a single failing service must not hide
+    /// results from others still in flight. Inline errors are also buffered;
+    /// if all services finish without yielding any [`Item`], the stream ends
+    /// with a single [`AddressLookupFailed::NoResults`] carrying the buffered
+    /// errors. If at least one [`Item`] was yielded, buffered errors are
+    /// discarded and the stream ends with `None`.
     ///
     /// If no services are configured, the stream yields a single
     /// [`AddressLookupFailed::NoServiceConfigured`] error and then ends.
@@ -584,7 +585,7 @@ impl AddressLookupServices {
     pub fn resolve(
         &self,
         endpoint_id: EndpointId,
-    ) -> impl Stream<Item = Result<Item, AddressLookupFailed>> + use<> {
+    ) -> impl Stream<Item = Result<Result<Item, Error>, AddressLookupFailed>> + use<> {
         let services = self.services.read().expect("poisoned");
         if services.is_empty() {
             AddressLookupStream::empty()
@@ -599,9 +600,10 @@ impl AddressLookupServices {
 
 /// Stream returned by [`AddressLookupServices::resolve`].
 ///
-/// Merges the per-service result streams. Yields each `Ok(_)` item as soon
-/// as it is produced and buffers any `Err(_)` so a single failing service
-/// cannot hide results from others still in flight.
+/// Merges the per-service result streams. Yields each successful item as
+/// `Ok(Ok(item))` as soon as it is produced, and each per-service error
+/// inline as `Ok(Err(error))`, so a single failing service cannot hide
+/// results from others still in flight. Inline errors are also buffered.
 ///
 /// Once all services are done, the stream ends with `None` if at least one
 /// item was yielded; otherwise it yields a single
@@ -637,7 +639,7 @@ impl AddressLookupStream {
 }
 
 impl Stream for AddressLookupStream {
-    type Item = Result<Item, AddressLookupFailed>;
+    type Item = Result<Result<Item, Error>, AddressLookupFailed>;
 
     fn poll_next(
         self: Pin<&mut Self>,
@@ -654,29 +656,27 @@ impl Stream for AddressLookupStream {
                 return Poll::Ready(Some(Err(e!(AddressLookupFailed::NoServiceConfigured))));
             }
         };
-        loop {
-            let item = match ready!(Pin::new(&mut inner).poll_next(cx)) {
-                Some(Ok(item)) => {
-                    this.did_emit = true;
-                    Some(Ok(item))
+        let item = match ready!(Pin::new(&mut inner).poll_next(cx)) {
+            Some(Ok(item)) => {
+                this.did_emit = true;
+                Some(Ok(Ok(item)))
+            }
+            Some(Err(error)) => {
+                debug!("address lookup error: {error:#}");
+                this.errors.push(error.clone());
+                Some(Ok(Err(error)))
+            }
+            None => {
+                this.closed = true;
+                if !this.did_emit {
+                    let errors = std::mem::take(&mut this.errors);
+                    Some(Err(e!(AddressLookupFailed::NoResults { errors })))
+                } else {
+                    None
                 }
-                Some(Err(error)) => {
-                    debug!("address lookup error: {error:#}");
-                    this.errors.push(error);
-                    continue;
-                }
-                None => {
-                    this.closed = true;
-                    if !this.did_emit {
-                        let errors = std::mem::take(&mut this.errors);
-                        Some(Err(e!(AddressLookupFailed::NoResults { errors })))
-                    } else {
-                        None
-                    }
-                }
-            };
-            return Poll::Ready(item);
-        }
+            }
+        };
+        Poll::Ready(item)
     }
 }
 

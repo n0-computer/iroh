@@ -572,6 +572,14 @@ impl RemoteStateActor {
             return;
         }
         let stream = self.address_lookup.resolve(self.endpoint_id);
+        let stream = stream.filter_map(|item| match item {
+            // We don't care about errors from individual services, we just continue.
+            // Indivdual errors are buffered, and if the lookup fails will be returned upstream
+            // with the final `AddressLookupFailed` error.
+            Ok(Err(_err)) => None,
+            Ok(Ok(item)) => Some(Ok(item)),
+            Err(err) => Some(Err(err)),
+        });
         self.address_lookup_stream = Some(Box::pin(stream));
     }
 
