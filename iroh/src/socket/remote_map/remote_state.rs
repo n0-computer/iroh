@@ -3,11 +3,11 @@ use std::{
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
-    task::{Poll, ready},
+    task::Poll,
 };
 
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
-use n0_error::{StackResultExt, e};
+use n0_error::StackResultExt;
 use n0_future::{
     FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
@@ -30,10 +30,7 @@ pub use self::{
 };
 use super::Source;
 use crate::{
-    address_lookup::{
-        AddressLookup, AddressLookupFailed, ConcurrentAddressLookup, Error as AddressLookupError,
-        Item as AddressLookupItem,
-    },
+    address_lookup::{AddressLookupFailed, AddressLookupServices, Item as AddressLookupItem},
     endpoint::DirectAddr,
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
@@ -119,7 +116,7 @@ pub(super) struct RemoteStateActor {
     /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
     custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
     /// Address lookup service, cloned from the socket.
-    address_lookup: ConcurrentAddressLookup,
+    address_lookup: AddressLookupServices,
 
     // Internal state - Noq Connections we are managing.
     //
@@ -163,7 +160,7 @@ pub(super) struct RemoteStateActor {
     // Internal state - address lookup
     //
     /// Stream of Address Lookup results, or always pending if Address Lookup is not running.
-    address_lookup_stream: AddressLookupStream,
+    address_lookup_stream: Option<BoxStream<Result<AddressLookupItem, AddressLookupFailed>>>,
 
     /// Biases for different transport kinds.
     transport_bias: TransportBiasMap,
@@ -177,7 +174,7 @@ impl RemoteStateActor {
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
         metrics: Arc<SocketMetrics>,
-        address_lookup: ConcurrentAddressLookup,
+        address_lookup: AddressLookupServices,
         transport_bias: TransportBiasMap,
     ) -> Self {
         Self {
@@ -197,7 +194,7 @@ impl RemoteStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
-            address_lookup_stream: AddressLookupStream::default(),
+            address_lookup_stream: None,
             transport_bias,
         }
     }
@@ -311,7 +308,7 @@ impl RemoteStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching();
                 }
-                Some(item) = self.address_lookup_stream.next(), if !self.address_lookup_stream.is_empty() => {
+                Some(item) = maybe_next(self.address_lookup_stream.as_mut()), if self.address_lookup_stream.is_some() => {
                     self.handle_address_lookup_item(item);
                 }
                 _ = check_connections.tick() => {
@@ -571,28 +568,40 @@ impl RemoteStateActor {
     /// Does not start Address Lookup if we have a selected path or if Address Lookup is
     /// currently running.
     fn trigger_address_lookup(&mut self) {
-        if self.selected_path.get().is_some() || !self.address_lookup_stream.is_empty() {
+        if self.selected_path.get().is_some() || self.address_lookup_stream.is_some() {
             return;
         }
-        match self.address_lookup.resolve(self.endpoint_id) {
-            Some(stream) => self.address_lookup_stream.set(stream),
-            None => self
-                .paths
-                .address_lookup_finished(Err(e!(AddressLookupFailed::NoServiceConfigured))),
-        }
+        let stream = self.address_lookup.resolve(self.endpoint_id);
+        let stream = stream.filter_map(|item| match item {
+            // We don't care about errors from individual services, we just continue.
+            // Individual errors are buffered into the final error by `AddressLookupServices::resolve`,
+            // and if the lookup fails we return them upstream with the final `AddressLookupFailed` error.
+            Ok(Err(_err)) => None,
+            Ok(Ok(item)) => Some(Ok(item)),
+            Err(err) => Some(Err(err)),
+        });
+        self.address_lookup_stream = Some(Box::pin(stream));
     }
 
     /// Handles an address lookup result.
     ///
     /// All address lookup results end up being sent here. It takes care of updating the
     /// [`RemotePathState`] with the results.
-    fn handle_address_lookup_item(&mut self, item: Result<AddressLookupItem, AddressLookupFailed>) {
+    fn handle_address_lookup_item(
+        &mut self,
+        item: Option<Result<AddressLookupItem, AddressLookupFailed>>,
+    ) {
         match item {
-            Err(err) => {
+            None => {
+                self.paths.address_lookup_finished(Ok(()));
+                self.address_lookup_stream = None;
+            }
+            Some(Err(err)) => {
                 warn!("Address Lookup failed: {err:#}");
                 self.paths.address_lookup_finished(Err(err));
+                self.address_lookup_stream = None;
             }
-            Ok(item) => {
+            Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
                     warn!(
                         ?item,
@@ -1346,84 +1355,11 @@ fn to_transports_addr(
     })
 }
 
-/// Stream wrapper around the result of [`ConcurrentAddressLookup::resolve`].
-///
-/// Holds an optional inner stream and yields only `Ok(_)` items from it.
-/// Errors from the inner stream are buffered internally so a single failing
-/// lookup does not hide results from other lookups still in flight.
-///
-/// # Usage
-///
-/// Construct with [`Default`] and attach the lookup stream via [`Self::set`]
-/// when one is started. Re-attaching with [`Self::set`] replaces the previous
-/// stream and clears any buffered state.
-///
-/// Use [`Self::is_empty`] to check whether a stream is currently attached;
-/// polling without an attached stream immediately yields `Ready(None)`, which
-/// lets the surrounding actor select over this stream unconditionally.
-///
-/// # Output
-///
-/// While the inner stream is live, the wrapper yields each `Ok(item)` and
-/// silently buffers any `Err(_)`. When the inner stream ends:
-///
-/// - If at least one item was yielded, the wrapper ends and buffered errors
-///   are discarded.
-/// - If no item was yielded, the wrapper yields a single
-///   [`AddressLookupFailed::NoResults`] carrying all buffered errors, then ends.
-#[derive(Default)]
-struct AddressLookupStream {
-    inner: Option<BoxStream<Result<AddressLookupItem, AddressLookupError>>>,
-    errors: Option<Vec<AddressLookupError>>,
-    did_emit: bool,
-}
-
-impl AddressLookupStream {
-    fn is_empty(&self) -> bool {
-        self.inner.is_none()
-    }
-
-    fn set(&mut self, stream: BoxStream<Result<AddressLookupItem, AddressLookupError>>) {
-        self.inner = Some(stream);
-        self.errors = None;
-        self.did_emit = false;
-    }
-}
-
-impl Stream for AddressLookupStream {
-    type Item = Result<AddressLookupItem, AddressLookupFailed>;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        loop {
-            let item = match this.inner.as_mut() {
-                None => None,
-                Some(stream) => match ready!(Pin::new(stream).poll_next(cx)) {
-                    Some(Ok(item)) => {
-                        this.did_emit = true;
-                        Some(Ok(item))
-                    }
-                    Some(Err(error)) => {
-                        debug!("address lookup error: {error:#}");
-                        this.errors.get_or_insert_default().push(error);
-                        continue;
-                    }
-                    None => {
-                        this.inner = None;
-                        if !this.did_emit {
-                            let errors = this.errors.take().unwrap_or_default();
-                            Some(Err(e!(AddressLookupFailed::NoResults { errors })))
-                        } else {
-                            None
-                        }
-                    }
-                },
-            };
-            return Poll::Ready(item);
-        }
+/// Returns the next item if `maybe_stream` is `Some`, or `None` otherwise.
+async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<Option<S::Item>> {
+    match maybe_stream {
+        None => None,
+        Some(s) => Some(s.next().await),
     }
 }
 

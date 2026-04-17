@@ -51,7 +51,7 @@ pub use crate::tls::TlsConfigError;
 use crate::{
     NetReport,
     address_lookup::{
-        AddrFilter, AddressLookupBuilder, AddressLookupFailed, ConcurrentAddressLookup,
+        AddrFilter, AddressLookupBuilder, AddressLookupFailed, AddressLookupServices,
         DynAddressLookupBuilder, UserData,
     },
     endpoint::presets::Preset,
@@ -571,7 +571,7 @@ impl Builder {
     ///
     /// This method can be called multiple times and all the Address Lookup's passed in
     /// will be combined using an internal instance of the
-    /// [`crate::address_lookup::ConcurrentAddressLookup`]. To clear all Address Lookup's, use
+    /// [`crate::address_lookup::AddressLookupServices`]. To clear all Address Lookup's, use
     /// [`Self::clear_address_lookup`].
     ///
     /// If no Address Lookup is set, connecting to an endpoint without providing its
@@ -585,11 +585,11 @@ impl Builder {
 
     /// Sets the address filter applied to all address data before publishing.
     ///
-    /// This filter is applied once, at the [`ConcurrentAddressLookup`] level, before
+    /// This filter is applied once, at the [`AddressLookupServices`] level, before
     /// distributing data to any individual address lookup service. This ensures
     /// consistent filtering regardless of how the services configured.
     ///
-    /// [`ConcurrentAddressLookup`]: crate::address_lookup::ConcurrentAddressLookup
+    /// [`AddressLookupServices`]: crate::address_lookup::AddressLookupServices
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
         self.addr_filter = Some(filter);
         self
@@ -1406,7 +1406,7 @@ impl Endpoint {
     /// Returns a `EndpointError::Closed` error if the endpoint is closed.
     ///
     /// See [`Builder::address_lookup`].
-    pub fn address_lookup(&self) -> Result<&ConcurrentAddressLookup, EndpointError> {
+    pub fn address_lookup(&self) -> Result<&AddressLookupServices, EndpointError> {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }

@@ -128,7 +128,7 @@ struct Tasks {
     metrics: Arc<SocketMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    address_lookup: address_lookup::ConcurrentAddressLookup,
+    address_lookup: address_lookup::AddressLookupServices,
     shutdown_token: CancellationToken,
 
     //
@@ -152,7 +152,7 @@ impl RemoteMap {
     pub(super) fn new(
         metrics: Arc<SocketMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        address_lookup: address_lookup::ConcurrentAddressLookup,
+        address_lookup: address_lookup::AddressLookupServices,
         shutdown_token: CancellationToken,
         transport_bias: TransportBiasMap,
         span: Span,
