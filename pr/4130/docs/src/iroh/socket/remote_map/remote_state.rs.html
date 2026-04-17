@@ -574,8 +574,8 @@
 <a href=#574 id=574 data-nosnippet>574</a>        <span class="kw">let </span>stream = <span class="self">self</span>.address_lookup.resolve(<span class="self">self</span>.endpoint_id);
 <a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">let </span>stream = stream.filter_map(|item| <span class="kw">match </span>item {
 <a href=#576 id=576 data-nosnippet>576</a>            <span class="comment">// We don't care about errors from individual services, we just continue.
-<a href=#577 id=577 data-nosnippet>577</a>            // Indivdual errors are buffered, and if the lookup fails will be returned upstream
-<a href=#578 id=578 data-nosnippet>578</a>            // with the final `AddressLookupFailed` error.
+<a href=#577 id=577 data-nosnippet>577</a>            // Individual errors are buffered into the final error by `AddressLookupServices::resolve`,
+<a href=#578 id=578 data-nosnippet>578</a>            // and if the lookup fails we return them upstream with the final `AddressLookupFailed` error.
 <a href=#579 id=579 data-nosnippet>579</a>            </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(_err)) =&gt; <span class="prelude-val">None</span>,
 <a href=#580 id=580 data-nosnippet>580</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(item)) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(item)),
 <a href=#581 id=581 data-nosnippet>581</a>            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)),
