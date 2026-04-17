@@ -569,6 +569,16 @@ impl ActiveRelayActor {
                     match msg {
                         ActiveRelayMessage::SetHomeRelay(is_home) => {
                             self.set_home_relay(is_home);
+                            // We are in `run_connected`, so if we just became the home
+                            // relay, publish `Connected` (the `RelayActor` only sets
+                            // `Connecting` on the URL change since it cannot know our
+                            // actual state).
+                            if is_home {
+                                self.my_relay.set_status(
+                                    &self.url,
+                                    HomeRelayStatus::Connected,
+                                );
+                            }
                         }
                         ActiveRelayMessage::CheckConnection { local_ips } => {
                             match client_stream.local_addr() {
@@ -1082,12 +1092,13 @@ impl RelayActor {
             // On change, notify all currently connected relay servers and
             // start connecting to our home relay if we are not already.
             info!("home is now relay {}, was {:?}", relay_url, prev_url);
-            let status = if self.active_relays.contains_key(&relay_url) {
-                HomeRelayStatus::Connected
-            } else {
-                HomeRelayStatus::Connecting
-            };
-            self.config.my_relay.set(relay_url.clone(), status);
+            // Publish `Connecting` initially. If an `ActiveRelayActor` already
+            // exists for this URL it will republish its actual status (e.g.
+            // `Connected`) when it receives the `SetHomeRelay(true)` message
+            // sent below.
+            self.config
+                .my_relay
+                .set(relay_url.clone(), HomeRelayStatus::Connecting);
             self.set_home_relay(relay_url).await;
         } else {
             self.config.my_relay.clear();
