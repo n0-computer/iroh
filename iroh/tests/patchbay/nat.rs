@@ -29,16 +29,16 @@ enum NatKind {
     ///
     /// Typical of consumer routers with UPnP or static port forwarding.
     ///
-    /// RFC 3489: Full Cone NAT.
     /// RFC 4787: Endpoint-Independent Mapping, Endpoint-Independent Filtering (EIM/EIF).
+    /// RFC 3489: Full Cone NAT.
     Easiest,
     /// Moderately restrictive NAT.
     ///
     /// The external mapping is stable across destinations, but inbound packets are filtered
     /// by source address and port. Common in home routers without UPnP.
     ///
-    /// RFC 3489: Port Restricted Cone NAT.
     /// RFC 4787: Endpoint-Independent Mapping, Address-and-Port-Dependent Filtering (EIM/APDF).
+    /// RFC 3489: Port Restricted Cone NAT.
     Easy,
     /// Most restrictive NAT.
     ///
@@ -46,8 +46,8 @@ enum NatKind {
     /// by source address and port. Holepunching between two Hard NATs requires a relay
     /// (TURN or similar). Typical of corporate firewalls and carrier-grade NAT (CGN).
     ///
-    /// RFC 3489: Symmetric NAT.
     /// RFC 4787: Endpoint-Dependent Mapping, Address-and-Port-Dependent Filtering (EDM/APDF).
+    /// RFC 3489: Symmetric NAT.
     Hard,
 }
 
