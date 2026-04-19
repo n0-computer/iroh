@@ -827,6 +827,18 @@ mod tests {
         }
     }
 
+    /// An address lookup whose `resolve` stream never yields and never ends.
+    #[derive(Debug, Clone)]
+    struct HangingAddressLookup;
+
+    impl AddressLookup for HangingAddressLookup {
+        fn publish(&self, _data: &EndpointData) {}
+
+        fn resolve(&self, _endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
+            Some(n0_future::stream::pending().boxed())
+        }
+    }
+
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
     /// This is a smoke test for our Address Lookupmechanism.
@@ -967,6 +979,56 @@ mod tests {
             .connect(ep1.id(), TEST_ALPN)
             .await
             .context("connect after other resolver errored")?;
+        Ok(())
+    }
+
+    /// Regression test: a hanging address lookup for one peer must not block
+    /// concurrent `connect()` calls to other peers.
+    ///
+    /// `Socket::handle_actor_message` used to `.await` the per-remote
+    /// `RemoteStateActor` reply when handling `ResolveRemote`, so a slow or
+    /// hanging lookup would serialise every other `connect()` behind it via the
+    /// single socket actor. This tests that we do not serialize here anymore.
+    #[tokio::test]
+    #[traced_test]
+    async fn concurrent_connects_not_blocked_by_slow_lookup() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let shared = TestAddressLookupShared::default();
+
+        let (ep_server, _guard_server) =
+            new_endpoint(&mut rng, |ep| shared.create_address_lookup(ep.id())).await;
+
+        // Client uses a working lookup (resolves the server) plus a hanging
+        // lookup. For unknown ids the merged stream pends forever, because
+        // the working lookup ends immediately with no item while the hanging
+        // one never closes.
+        let (ep_client, _guard_client) = new_endpoint_add(&mut rng, |ep| {
+            let lookup = ep.address_lookup().unwrap();
+            lookup.add(shared.create_address_lookup(ep.id()));
+            lookup.add(HangingAddressLookup);
+        })
+        .await;
+
+        // One connect to an unknown id; the socket actor will `.await` its
+        // hanging `ResolveRemote` forever.
+        let offline_id = SecretKey::from_bytes(&rng.random()).public();
+        let _offline_connect = AbortOnDropHandle::new(tokio::spawn({
+            let ep = ep_client.clone();
+            async move {
+                let _ = ep.connect(offline_id, TEST_ALPN).await;
+            }
+        }));
+        // Wait until that `ResolveRemote` is in flight in the socket actor.
+        time::sleep(Duration::from_millis(200)).await;
+
+        // With the bug this connect is queued behind the hanging one and
+        // never makes progress; with the fix it completes promptly.
+        let _conn = time::timeout(
+            Duration::from_secs(1),
+            ep_client.connect(ep_server.id(), TEST_ALPN),
+        )
+        .await
+        .expect("online connect blocked behind hanging lookup")?;
         Ok(())
     }
 
