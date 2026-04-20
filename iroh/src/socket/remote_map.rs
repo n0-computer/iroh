@@ -228,20 +228,14 @@ impl RemoteMap {
     pub(super) async fn resolve_remote(
         &mut self,
         addr: EndpointAddr,
-    ) -> Result<Result<EndpointIdMappedAddr, AddressLookupFailed>, RemoteStateActorStoppedError>
-    {
+        tx: oneshot::Sender<Result<(), AddressLookupFailed>>,
+    ) -> Result<(), RemoteStateActorStoppedError> {
         let EndpointAddr { id, addrs } = addr;
         let actor = self.remote_state_actor(id);
-        let (tx, rx) = oneshot::channel();
         actor
             .send(RemoteStateMessage::ResolveRemote(addrs, tx))
             .await?;
-
-        match rx.await {
-            Ok(Ok(())) => Ok(Ok(self.mapped_addrs.endpoint_addrs.get(&id))),
-            Ok(Err(err)) => Ok(Err(err)),
-            Err(_) => Err(RemoteStateActorStoppedError::new()),
-        }
+        Ok(())
     }
 
     pub(super) async fn add_connection(

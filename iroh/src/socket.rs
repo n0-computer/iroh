@@ -1271,11 +1271,16 @@ impl EndpointInner {
     ) -> Result<Result<EndpointIdMappedAddr, AddressLookupFailed>, RemoteStateActorStoppedError>
     {
         let (tx, rx) = oneshot::channel();
+        let remote_id = addr.id;
         self.actor_sender
             .send(ActorMessage::ResolveRemote(addr, tx))
             .await
             .ok();
-        rx.await.map_err(|_| RemoteStateActorStoppedError::new())?
+        let reply = rx.await.map_err(|_| RemoteStateActorStoppedError::new())?;
+        match reply {
+            Ok(()) => Ok(Ok(self.mapped_addrs.endpoint_addrs.get(&remote_id))),
+            Err(err) => Ok(Err(err)),
+        }
     }
 
     /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
@@ -1325,9 +1330,7 @@ enum ActorMessage {
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         EndpointAddr,
-        oneshot::Sender<
-            Result<Result<EndpointIdMappedAddr, AddressLookupFailed>, RemoteStateActorStoppedError>,
-        >,
+        oneshot::Sender<Result<(), AddressLookupFailed>>,
     ),
     #[debug("AddConnection(..)")]
     AddConnection(
@@ -1726,7 +1729,10 @@ impl Actor {
                 self.handle_relay_map_change();
             }
             ActorMessage::ResolveRemote(addr, tx) => {
-                tx.send(self.remote_map.resolve_remote(addr).await).ok();
+                // Swallowing the error is fine here; if a send on the channel to the
+                // remote state actor ever fails (which it shouldn't), `tx` will be
+                // dropped and thus the failure will be propagated to the caller.
+                self.remote_map.resolve_remote(addr, tx).await.ok();
             }
             ActorMessage::AddConnection(remote, conn, tx) => {
                 // Swallowing the error is fine here; if a send on the channel to the
