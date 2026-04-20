@@ -75,6 +75,11 @@ tempfile = "3.23.0"
 default = ["ring"]
 ring = ["rustls/ring", "tokio-rustls/ring"]
 
+[[bin]]
+name = "iroh-dns-server"
+path = "src/main.rs"
+required-features = ["ring"]
+
 [[bench]]
 name = "write"
 harness = false
