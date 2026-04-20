@@ -36,9 +36,12 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{self, Watchable, Watcher};
-#[cfg(not(wasm_browser))]
-use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
+#[cfg(not(wasm_browser))]
+use netwatch::{
+    interfaces::{IpNet, Ipv6AddrFlags},
+    ip::LocalAddresses,
+};
 use noq::{
     NetworkChangeHint, WeakConnectionHandle,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
@@ -64,7 +67,7 @@ use crate::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
 use crate::net_report::QuicConfig;
 use crate::{
-    address_lookup::{self, AddressLookup, EndpointData, Error as AddressLookupError, UserData},
+    address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
     metrics::EndpointMetrics,
@@ -74,7 +77,7 @@ use crate::{
     socket::{
         concurrent_read_map::ReadOnlyMap,
         remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
-        transports::TransportBiasMap,
+        transports::{HomeRelayStatus, HomeRelayWatch, HomeRelayWatcher, TransportBiasMap},
     },
     tls::{
         self,
@@ -337,6 +340,7 @@ pub(crate) struct Socket {
 
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
+    home_relay_watch: HomeRelayWatcher,
     /// Currently bound IP addresses of all sockets
     #[cfg(not(wasm_browser))]
     ip_bind_addrs: Vec<SocketAddr>,
@@ -346,7 +350,7 @@ pub(crate) struct Socket {
     relay_map: RelayMap,
 
     /// Optional Address Lookup
-    address_lookup: address_lookup::ConcurrentAddressLookup,
+    address_lookup: address_lookup::AddressLookupServices,
     /// Optional user-defined discover data.
     address_lookup_user_data: RwLock<Option<UserData>>,
     /// Explicitly configured external addresses to advertise.
@@ -477,6 +481,12 @@ impl Socket {
         })
     }
 
+    pub(crate) fn home_relay_status(
+        &self,
+    ) -> impl Watcher<Value = Vec<Option<(RelayUrl, HomeRelayStatus)>>> + use<> {
+        self.home_relay_watch.clone()
+    }
+
     /// Stores a new set of direct addresses.
     ///
     /// If the direct addresses have changed from the previous set, they are published to
@@ -515,7 +525,7 @@ impl Socket {
     }
 
     /// Reference to the internal Address Lookup
-    pub(crate) fn address_lookup(&self) -> &address_lookup::ConcurrentAddressLookup {
+    pub(crate) fn address_lookup(&self) -> &address_lookup::AddressLookupServices {
         &self.address_lookup
     }
 
@@ -835,7 +845,7 @@ impl EndpointInner {
             configured_addrs,
         } = opts;
 
-        let address_lookup = address_lookup::ConcurrentAddressLookup::default();
+        let address_lookup = address_lookup::AddressLookupServices::default();
         let port_mapper = portmapper::create_client(&metrics, &portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs
@@ -860,11 +870,10 @@ impl EndpointInner {
             .next()
             .unwrap_or_else(RelayMap::empty);
 
-        let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(false));
 
         let relay_actor_config = RelayActorConfig {
-            my_relay: my_relay.clone(),
+            my_relay: HomeRelayWatch::default(),
             secret_key: secret_key.clone(),
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
@@ -925,6 +934,8 @@ impl EndpointInner {
             )
         };
 
+        let home_relay_watch = transports.home_relay_watch();
+
         let sock = Arc::new(Socket {
             public_key: secret_key.public(),
             remote_actors: remote_map.senders(),
@@ -941,6 +952,7 @@ impl EndpointInner {
             dns_resolver: dns_resolver.clone(),
             metrics: metrics.clone(),
             local_addrs_watch: transports.local_addrs_watch(),
+            home_relay_watch,
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
             tls_config: tls_config.clone(),
@@ -1256,14 +1268,19 @@ impl EndpointInner {
     pub(crate) async fn resolve_remote(
         &self,
         addr: EndpointAddr,
-    ) -> Result<Result<EndpointIdMappedAddr, AddressLookupError>, RemoteStateActorStoppedError>
+    ) -> Result<Result<EndpointIdMappedAddr, AddressLookupFailed>, RemoteStateActorStoppedError>
     {
         let (tx, rx) = oneshot::channel();
+        let remote_id = addr.id;
         self.actor_sender
             .send(ActorMessage::ResolveRemote(addr, tx))
             .await
             .ok();
-        rx.await.map_err(|_| RemoteStateActorStoppedError::new())?
+        let reply = rx.await.map_err(|_| RemoteStateActorStoppedError::new())?;
+        match reply {
+            Ok(()) => Ok(Ok(self.mapped_addrs.endpoint_addrs.get(&remote_id))),
+            Err(err) => Ok(Err(err)),
+        }
     }
 
     /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
@@ -1312,9 +1329,7 @@ enum ActorMessage {
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         EndpointAddr,
-        oneshot::Sender<
-            Result<Result<EndpointIdMappedAddr, AddressLookupError>, RemoteStateActorStoppedError>,
-        >,
+        oneshot::Sender<Result<(), AddressLookupFailed>>,
     ),
     #[debug("AddConnection(..)")]
     AddConnection(
@@ -1716,7 +1731,10 @@ impl Actor {
                 self.handle_relay_map_change();
             }
             ActorMessage::ResolveRemote(addr, tx) => {
-                tx.send(self.remote_map.resolve_remote(addr).await).ok();
+                // Swallowing the error is fine here; if a send on the channel to the
+                // remote state actor ever fails (which it shouldn't), `tx` will be
+                // dropped and thus the failure will be propagated to the caller.
+                self.remote_map.resolve_remote(addr, tx).await.ok();
             }
             ActorMessage::RemoteInfo(id, tx) => {
                 if let Some(info) = self.remote_map.remote_info(id).await {
@@ -1756,7 +1774,8 @@ impl Actor {
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
         // this as a map of SocketAddr -> DirectAddrType.  At the end we will construct a
         // DirectAddr from each entry.
-        let mut addrs: BTreeMap<SocketAddr, DirectAddrType> = BTreeMap::new();
+        let mut addrs: BTreeMap<SocketAddr, (DirectAddrType, Option<Ipv6AddrFlags>)> =
+            BTreeMap::new();
 
         // First add PortMapper provided addresses.
         let portmap_watcher = self
@@ -1767,13 +1786,15 @@ impl Actor {
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
             addrs
                 .entry(portmap_ext)
-                .or_insert(DirectAddrType::Portmapped);
+                .or_insert((DirectAddrType::Portmapped, None));
         }
 
         // Next add STUN addresses from the net_report report.
         if let Some(net_report_report) = net_report_report {
             if let Some(global_v4) = net_report_report.global_v4 {
-                addrs.entry(global_v4.into()).or_insert(DirectAddrType::Qad);
+                addrs
+                    .entry(global_v4.into())
+                    .or_insert((DirectAddrType::Qad, None));
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -1796,11 +1817,13 @@ impl Actor {
                     addr.set_port(port);
                     addrs
                         .entry(addr.into())
-                        .or_insert(DirectAddrType::Qad4LocalPort);
+                        .or_insert((DirectAddrType::Qad4LocalPort, None));
                 }
             }
             if let Some(global_v6) = net_report_report.global_v6 {
-                addrs.entry(global_v6.into()).or_insert(DirectAddrType::Qad);
+                addrs
+                    .entry(global_v6.into())
+                    .or_insert((DirectAddrType::Qad, None));
             }
         }
 
@@ -1808,24 +1831,31 @@ impl Actor {
 
         // Add configured external addresses.
         for addr in self.sock.configured_addrs.read().expect("poisoned").iter() {
-            addrs.entry(*addr).or_insert(DirectAddrType::Config);
+            addrs.entry(*addr).or_insert((DirectAddrType::Config, None));
         }
 
-        // Finally create and store store all these direct addresses and send any
-        // queued call-me-maybe messages.
-        self.sock.store_direct_addresses(
-            addrs
-                .iter()
-                .map(|(addr, typ)| DirectAddr {
-                    addr: *addr,
-                    typ: *typ,
-                })
-                .collect(),
-        );
+        // Finally create and store store all these direct addresses
+        let stored_addrs = addrs
+            .into_iter()
+            .filter_map(|(addr, (typ, flags))| {
+                // Filter out deprecated IPs
+                let is_deprecated = flags.map(|f| f.deprecated).unwrap_or(false);
+                if is_deprecated {
+                    return None;
+                }
+                Some(DirectAddr { addr, typ })
+            })
+            .collect();
+        self.sock.store_direct_addresses(stored_addrs);
     }
 
     #[cfg(not(wasm_browser))]
-    fn collect_local_addresses(&mut self, addrs: &mut BTreeMap<SocketAddr, DirectAddrType>) {
+    fn collect_local_addresses(
+        &mut self,
+        addrs: &mut BTreeMap<SocketAddr, (DirectAddrType, Option<Ipv6AddrFlags>)>,
+    ) {
+        let netmon_state = self.local_interfaces_watcher.get();
+
         // Matches the addresses that have been bound vs the requested ones.
         let local_addrs: Vec<(SocketAddr, SocketAddr)> = self
             .sock
@@ -1875,7 +1905,8 @@ impl Actor {
                 };
                 if let Some(port) = port_if_unspecified {
                     let addr = SocketAddr::new(ip, port);
-                    addrs.entry(addr).or_insert(DirectAddrType::Local);
+                    let flags = find_flags(&netmon_state, ip);
+                    addrs.entry(addr).or_insert((DirectAddrType::Local, flags));
                 }
             }
         }
@@ -1883,7 +1914,8 @@ impl Actor {
         // If a socket is bound to a specific address, add it.
         for (bound, local) in local_addrs {
             if !bound.ip().is_unspecified() {
-                addrs.entry(local).or_insert(DirectAddrType::Local);
+                let flags = find_flags(&netmon_state, local.ip());
+                addrs.entry(local).or_insert((DirectAddrType::Local, flags));
             }
         }
     }
@@ -1903,6 +1935,28 @@ impl Actor {
 
         #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report.as_ref());
+    }
+}
+
+#[cfg(not(wasm_browser))]
+fn find_flags(state: &netmon::State, ip: IpAddr) -> Option<Ipv6AddrFlags> {
+    if ip.is_ipv6() {
+        state
+            .interfaces
+            .values()
+            .flat_map(|i| i.addrs())
+            .find_map(|addr| match addr {
+                IpNet::V4(_) => None,
+                IpNet::V6 { net, flags, .. } => {
+                    if net.addr() == ip {
+                        Some(flags)
+                    } else {
+                        None
+                    }
+                }
+            })
+    } else {
+        None
     }
 }
 

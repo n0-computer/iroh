@@ -3,7 +3,7 @@
 //! The main export is the [`DnsResolver`] struct. It provides methods to resolve domain names
 //! to IPv4 and IPv6 addresses. Additionally, the resolver features methods to resolve the
 //! [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
-//! See the [`endpoint_info`] module documentation for details on how iroh endpoint records
+//! See the [`crate::endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
 #[cfg(not(wasm_browser))]
@@ -38,7 +38,7 @@ use url::Url;
 use self::resolver::SimpleDnsResolver;
 use crate::{
     defaults::timeouts::DNS_TIMEOUT,
-    endpoint_info::{self, EndpointInfo, ParseError},
+    endpoint_info::{EndpointInfo, ParseError},
 };
 
 /// The n0 address lookup DNS origin, for production.
@@ -430,8 +430,7 @@ impl DnsResolver {
         endpoint_id: &EndpointId,
         origin: &str,
     ) -> Result<EndpointInfo, LookupError> {
-        let name = endpoint_info::endpoint_domain(endpoint_id, origin);
-        let name = endpoint_info::ensure_iroh_txt_label(name);
+        let name = format!("_iroh.{}.{}", endpoint_id.to_z32(), origin);
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
         let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
@@ -442,7 +441,11 @@ impl DnsResolver {
         &self,
         name: &str,
     ) -> Result<EndpointInfo, LookupError> {
-        let name = endpoint_info::ensure_iroh_txt_label(name.to_string());
+        let name = if name.starts_with("_iroh.") {
+            name.to_string()
+        } else {
+            format!("_iroh.{name}")
+        };
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
         let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)

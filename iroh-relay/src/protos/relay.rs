@@ -15,7 +15,7 @@ use n0_error::{e, ensure, stack_error};
 use n0_future::time::Duration;
 
 use super::common::{FrameType, FrameTypeError};
-use crate::KeyCache;
+use crate::{KeyCache, http::ProtocolVersion};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to the socket, not
@@ -66,12 +66,14 @@ pub enum Error {
         #[error(std_err)]
         source: std::str::Utf8Error,
     },
+    #[error("Received a frame not allowed in this protocol version.")]
+    FrameNotAllowedInVersion,
     #[error("Too few bytes")]
     TooSmall {},
 }
 
 /// The messages that a relay sends to clients or the clients receive from the relay.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::Display)]
 #[non_exhaustive]
 pub enum RelayToClientMsg {
     /// Represents datagrams sent from relays (originally sent to them by another client).
@@ -85,15 +87,7 @@ pub enum RelayToClientMsg {
     /// packet but has now disconnected from the relay.
     EndpointGone(EndpointId),
     /// A one-way message from relay to client, declaring the connection health state.
-    Health {
-        /// If set, is a description of why the connection is unhealthy.
-        ///
-        /// If `None` means the connection is healthy again.
-        ///
-        /// The default condition is healthy, so the relay doesn't broadcast a [`RelayToClientMsg::Health`]
-        /// until a problem exists.
-        problem: String,
-    },
+    Status(Status),
     /// A one-way message from relay to client, advertising that the relay is restarting.
     Restarting {
         /// An advisory duration that the client should wait before attempting to reconnect.
@@ -111,6 +105,64 @@ pub enum RelayToClientMsg {
     /// Reply to a [`ClientToRelayMsg::Ping`] from a client
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
+
+    // -- Deprecated variants --
+    // We don't use `#[deprecated]` because this would throw warnings for the derived serde impls.
+    /// Removed since relay-protocol-v2:
+    /// A one-way message from relay to client, declaring the connection health state.
+    ///
+    /// Use [`Self::Status`] instead.
+    Health {
+        /// Description of why the connection is unhealthy.
+        ///
+        /// The default condition is healthy, so the relay doesn't broadcast a [`RelayToClientMsg::Health`]
+        /// until a problem exists.
+        problem: String,
+    },
+}
+
+/// One-way message from server to client indicating issues with the relay connection.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[non_exhaustive]
+pub enum Status {
+    /// The connection is healthy and recovered from previous problems.
+    #[display("The connection is healthy and has recovered from previous problems")]
+    Healthy,
+    /// Another endpoint connected with the same endpoint id. No more messages will be received.
+    #[display(
+        "Another endpoint connected with the same endpoint id. No more messages will be received."
+    )]
+    SameEndpointIdConnected,
+    /// Placeholder for backwards-compatibility for future new health status variants.
+    #[display("Unsupported health message ({_0})")]
+    Unknown(u8),
+}
+
+impl Status {
+    #[cfg(feature = "server")]
+    fn write_to<O: BufMut>(&self, mut dst: O) -> O {
+        match self {
+            Status::Healthy => dst.put_u8(0),
+            Status::SameEndpointIdConnected => dst.put_u8(1),
+            Status::Unknown(discriminant) => dst.put_u8(*discriminant),
+        }
+        dst
+    }
+
+    #[cfg(feature = "server")]
+    fn encoded_len(&self) -> usize {
+        1
+    }
+
+    fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
+        ensure!(!bytes.is_empty(), Error::InvalidFrame);
+        let discriminant = bytes.get_u8();
+        match discriminant {
+            0 => Ok(Self::Healthy),
+            1 => Ok(Self::SameEndpointIdConnected),
+            n => Ok(Self::Unknown(n)),
+        }
+    }
 }
 
 /// Messages that clients send to relays.
@@ -259,8 +311,9 @@ impl RelayToClientMsg {
             Self::EndpointGone { .. } => FrameType::EndpointGone,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
-            Self::Health { .. } => FrameType::Health,
+            Self::Status { .. } => FrameType::Status,
             Self::Restarting { .. } => FrameType::Restarting,
+            Self::Health { .. } => FrameType::Health,
         }
     }
 
@@ -302,6 +355,9 @@ impl RelayToClientMsg {
                 dst.put_u32(reconnect_in.as_millis() as u32);
                 dst.put_u32(try_for.as_millis() as u32);
             }
+            Self::Status(status) => {
+                dst = status.write_to(dst);
+            }
         }
         dst
     }
@@ -315,11 +371,12 @@ impl RelayToClientMsg {
             }
             Self::EndpointGone(_) => 32,
             Self::Ping(_) | Self::Pong(_) => 8,
-            Self::Health { problem } => problem.len(),
+            Self::Status(status) => status.encoded_len(),
             Self::Restarting { .. } => {
                 4 // u32
                 + 4 // u32
             }
+            Self::Health { problem } => problem.len(),
         };
         self.typ().encoded_len() + payload_len
     }
@@ -327,8 +384,14 @@ impl RelayToClientMsg {
     /// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
+    ///
+    /// `protocol_version` is the negotiated protocol version for this connection.
     #[allow(clippy::result_large_err)]
-    pub(crate) fn from_bytes(mut content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
+    pub(crate) fn from_bytes(
+        mut content: Bytes,
+        cache: &KeyCache,
+        protocol_version: ProtocolVersion,
+    ) -> Result<Self, Error> {
         let frame_type = FrameType::from_bytes(&mut content)?;
         let frame_len = content.len();
         ensure!(
@@ -368,6 +431,10 @@ impl RelayToClientMsg {
                 Self::Pong(data)
             }
             FrameType::Health => {
+                ensure!(
+                    protocol_version == ProtocolVersion::V1,
+                    Error::FrameNotAllowedInVersion
+                );
                 let problem = std::str::from_utf8(&content)?.to_owned();
                 Self::Health { problem }
             }
@@ -389,6 +456,14 @@ impl RelayToClientMsg {
                     reconnect_in,
                     try_for,
                 }
+            }
+            FrameType::Status => {
+                ensure!(
+                    protocol_version >= ProtocolVersion::V2,
+                    Error::FrameNotAllowedInVersion
+                );
+                let status = Status::from_bytes(content)?;
+                Self::Status(status)
             }
             _ => {
                 return Err(e!(Error::InvalidFrameType { frame_type }));
@@ -601,6 +676,10 @@ mod tests {
                 .write_to(Vec::new()),
                 "0c 00 00 00 0a 00 00 00 14",
             ),
+            (
+                RelayToClientMsg::Status(Status::SameEndpointIdConnected).write_to(Vec::new()),
+                "0d 01",
+            ),
         ]);
 
         Ok(())
@@ -721,18 +800,27 @@ mod proptests {
         let endpoint_gone = key().prop_map(RelayToClientMsg::EndpointGone);
         let ping = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
-        let health = ".{0,65536}"
+        let v1health = ".{0,65536}"
             .prop_filter("exceeds MAX_PACKET_SIZE", |s| {
                 s.len() < MAX_PACKET_SIZE // a single unicode character can match a regex "." but take up multiple bytes
             })
             .prop_map(|problem| RelayToClientMsg::Health { problem });
+        let health = Just(Status::SameEndpointIdConnected).prop_map(RelayToClientMsg::Status);
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),
                 try_for: Duration::from_millis(try_for.into()),
             }
         });
-        prop_oneof![recv_packet, endpoint_gone, ping, pong, health, restarting]
+        prop_oneof![
+            recv_packet,
+            endpoint_gone,
+            ping,
+            pong,
+            v1health,
+            restarting,
+            health
+        ]
     }
 
     fn client_server_frame() -> impl Strategy<Value = ClientToRelayMsg> {
@@ -747,11 +835,44 @@ mod proptests {
         prop_oneof![send_packet, ping, pong]
     }
 
+    /// The earliest protocol version in which `frame` is allowed.
+    fn allowed_version(frame: &RelayToClientMsg) -> ProtocolVersion {
+        match frame {
+            RelayToClientMsg::Health { .. } => ProtocolVersion::V1,
+            _ => ProtocolVersion::V2,
+        }
+    }
+
+    #[test]
+    fn v1health_rejected_in_v2() {
+        let frame = RelayToClientMsg::Health {
+            problem: "test".into(),
+        };
+        let encoded = frame.to_bytes().freeze();
+        let result = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), ProtocolVersion::V2);
+        assert!(matches!(
+            result,
+            Err(Error::FrameNotAllowedInVersion { .. })
+        ));
+    }
+
+    #[test]
+    fn status_rejected_in_v1() {
+        let frame = RelayToClientMsg::Status(Status::SameEndpointIdConnected);
+        let encoded = frame.to_bytes().freeze();
+        let result = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), ProtocolVersion::V1);
+        assert!(matches!(
+            result,
+            Err(Error::FrameNotAllowedInVersion { .. })
+        ));
+    }
+
     proptest! {
         #[test]
         fn server_client_frame_roundtrip(frame in server_client_frame()) {
+            let version = allowed_version(&frame);
             let encoded = frame.to_bytes().freeze();
-            let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
+            let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), version).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 

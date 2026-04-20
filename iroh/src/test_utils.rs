@@ -262,7 +262,11 @@ pub(crate) mod dns_server {
             }
         }
 
-        async fn handle_datagram(&self, from: SocketAddr, buf: &[u8]) -> std::io::Result<()> {
+        async fn handle_datagram(
+            &self,
+            from: SocketAddr,
+            buf: &[u8],
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
             let packet = Packet::parse(buf).map_err(std::io::Error::other)?;
             debug!(questions = ?packet.questions, %from, "received query");
             let mut reply = Packet::new_reply(packet.id());
@@ -290,6 +294,7 @@ pub(crate) mod pkarr_relay {
         routing::put,
     };
     use bytes::Bytes;
+    use iroh_base::EndpointId;
     use tokio::sync::oneshot;
     use tracing::{debug, error, warn};
     use url::Url;
@@ -330,9 +335,9 @@ pub(crate) mod pkarr_relay {
         Path(key): Path<String>,
         body: Bytes,
     ) -> Result<impl IntoResponse, AppError> {
-        let key = pkarr::PublicKey::try_from(key.as_str()).map_err(std::io::Error::other)?;
-        let signed_packet =
-            pkarr::SignedPacket::from_relay_payload(&key, &body).map_err(std::io::Error::other)?;
+        let key = EndpointId::from_z32(&key).map_err(std::io::Error::other)?;
+        let signed_packet = iroh_dns::pkarr::SignedPacket::from_relay_payload(&key, &body)
+            .map_err(std::io::Error::other)?;
         let _updated = state.upsert(signed_packet)?;
         Ok(http::StatusCode::NO_CONTENT)
     }
@@ -361,8 +366,8 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use iroh_base::EndpointId;
-    use iroh_relay::endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME};
-    use pkarr::SignedPacket;
+    use iroh_dns::pkarr::SignedPacket;
+    use iroh_relay::endpoint_info::{EndpointInfo, IROH_TXT_NAME};
     use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;
@@ -414,8 +419,7 @@ pub(crate) mod pkarr_dns_state {
         }
 
         pub fn upsert(&self, signed_packet: SignedPacket) -> std::io::Result<bool> {
-            let endpoint_id = EndpointId::from_bytes(&signed_packet.public_key().to_bytes())
-                .map_err(std::io::Error::other)?;
+            let endpoint_id = signed_packet.public_key();
             let mut map = self.packets.lock().expect("poisoned");
             let updated = match map.entry(endpoint_id) {
                 hash_map::Entry::Vacant(e) => {
@@ -453,8 +457,8 @@ pub(crate) mod pkarr_dns_state {
             reply: &mut simple_dns::Packet<'static>,
             ttl: u32,
         ) -> std::io::Result<()> {
-            for question in &query.questions {
-                let domain_name = question.qname.to_string();
+            for query in &query.queries {
+                let domain_name = query.name().to_string();
                 let Some(endpoint_id) = endpoint_id_from_domain_name(&domain_name) else {
                     continue;
                 };

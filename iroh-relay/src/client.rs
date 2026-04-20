@@ -25,7 +25,7 @@ pub use self::conn::{RecvError, SendError};
 use crate::dns::{DnsError, DnsResolver};
 use crate::{
     KeyCache,
-    http::RELAY_PATH,
+    http::{ProtocolVersion, RELAY_PATH},
     protos::{
         handshake,
         relay::{ClientToRelayMsg, RelayToClientMsg},
@@ -61,6 +61,11 @@ pub enum ConnectError {
         #[error(std_err)]
         source: ws_stream_wasm::WsErr,
     },
+    #[error(
+        "Server replied with invalid iroh-relay version header: {}",
+        server_version.as_deref().unwrap_or("<empty>")
+    )]
+    BadVersionHeader { server_version: Option<String> },
     #[error(transparent)]
     Handshake {
         #[error(std_err)]
@@ -230,7 +235,7 @@ impl ClientBuilder {
         use tls::MaybeTlsStreamBuilder;
 
         use crate::{
-            http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION},
+            http::CLIENT_AUTH_HEADER,
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
         };
 
@@ -277,7 +282,7 @@ impl ClientBuilder {
             })?
             .add_header(
                 SEC_WEBSOCKET_PROTOCOL,
-                http::HeaderValue::from_static(RELAY_PROTOCOL_VERSION),
+                ProtocolVersion::all_as_header_value(),
             )
             .expect("valid header name and value")
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
@@ -302,7 +307,25 @@ impl ClientBuilder {
             }
         );
 
-        let conn = Conn::new(conn, self.key_cache.clone(), &self.secret_key).await?;
+        let protocol_version_str = response
+            .headers()
+            .get(SEC_WEBSOCKET_PROTOCOL)
+            .and_then(|s| s.to_str().ok());
+        let protocol_version = protocol_version_str
+            .and_then(ProtocolVersion::match_from_str)
+            .ok_or_else(|| {
+                e!(ConnectError::BadVersionHeader {
+                    server_version: protocol_version_str.map(ToOwned::to_owned)
+                })
+            })?;
+
+        let conn = Conn::new(
+            conn,
+            self.key_cache.clone(),
+            &self.secret_key,
+            protocol_version,
+        )
+        .await?;
 
         event!(
             target: "iroh::_events::net::relay::connected",
@@ -334,8 +357,6 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     #[cfg(wasm_browser)]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
-        use crate::http::RELAY_PROTOCOL_VERSION;
-
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -354,10 +375,26 @@ impl ClientBuilder {
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let (_, ws_stream) =
-            ws_stream_wasm::WsMeta::connect(dial_url.as_str(), Some(vec![RELAY_PROTOCOL_VERSION]))
-                .await?;
-        let conn = Conn::new(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
+        let (ws_meta, ws_stream) = ws_stream_wasm::WsMeta::connect(
+            dial_url.as_str(),
+            Some(ProtocolVersion::all().collect()),
+        )
+        .await?;
+
+        let protocol_version =
+            ProtocolVersion::match_from_str(&ws_meta.protocol()).ok_or_else(|| {
+                e!(ConnectError::BadVersionHeader {
+                    server_version: Some(ws_meta.protocol())
+                })
+            })?;
+
+        let conn = Conn::new(
+            ws_stream,
+            self.key_cache.clone(),
+            &self.secret_key,
+            protocol_version,
+        )
+        .await?;
 
         event!(
             target: "iroh::_events::net::relay::connected",

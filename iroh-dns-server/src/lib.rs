@@ -28,9 +28,10 @@ mod tests {
         endpoint_info::EndpointInfo,
         tls::{CaRootsConfig, default_provider},
     };
+    use iroh_dns::pkarr::SignedPacket;
+    use mainline::{DhtBuilder, MutableItem, Testnet};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
-    use pkarr::{SignedPacket, Timestamp};
     use rand::{CryptoRng, RngExt, SeedableRng};
 
     use crate::{
@@ -46,6 +47,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result {
+        use simple_dns::{CLASS, Name as DnsName, Packet, ResourceRecord, rdata};
+
         let dir = tempfile::tempdir()?;
         let server = Server::spawn_for_tests(dir.path()).await?;
         let pkarr_relay_url = {
@@ -53,70 +56,89 @@ mod tests {
             url.set_path("/pkarr");
             url
         };
-        let signed_packet = {
-            use pkarr::dns;
-            let keypair = pkarr::Keypair::random();
-            let mut packet = dns::Packet::new_reply(0);
-            // record at root
-            packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("").anyerr()?,
-                dns::CLASS::IN,
-                30,
-                dns::rdata::RData::TXT("hi0".try_into().unwrap()),
-            ));
-            // record at level one
-            packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("_hello").anyerr()?,
-                dns::CLASS::IN,
-                30,
-                dns::rdata::RData::TXT("hi1".try_into().unwrap()),
-            ));
-            // record at level two
-            packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("_hello.world").anyerr()?,
-                dns::CLASS::IN,
-                30,
-                dns::rdata::RData::TXT("hi2".try_into().unwrap()),
-            ));
-            // multiple records for same name
-            packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("multiple").anyerr()?,
-                dns::CLASS::IN,
-                30,
-                dns::rdata::RData::TXT("hi3".try_into().unwrap()),
-            ));
-            packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("multiple").anyerr()?,
-                dns::CLASS::IN,
-                30,
-                dns::rdata::RData::TXT("hi4".try_into().unwrap()),
-            ));
-            // record of type A
-            packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("").anyerr()?,
-                dns::CLASS::IN,
-                30,
-                dns::rdata::RData::A(Ipv4Addr::LOCALHOST.into()),
-            ));
-            // record of type AAAA
-            packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("foo.bar.baz").anyerr()?,
-                dns::CLASS::IN,
-                30,
-                dns::rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
-            ));
-            SignedPacket::new(&keypair, &packet.answers, Timestamp::now()).anyerr()?
+
+        // Build a DNS packet with various record types using simple_dns directly
+        let secret_key = SecretKey::generate();
+        let origin = secret_key.public().to_z32();
+
+        let mut packet = Packet::new_reply(0);
+        // record at root
+        packet.answers.push(ResourceRecord::new(
+            DnsName::new_unchecked(&origin).into_owned(),
+            CLASS::IN,
+            30,
+            rdata::RData::TXT("hi0".try_into().unwrap()),
+        ));
+        // record at level one
+        packet.answers.push(ResourceRecord::new(
+            DnsName::new_unchecked(&format!("_hello.{origin}")).into_owned(),
+            CLASS::IN,
+            30,
+            rdata::RData::TXT("hi1".try_into().unwrap()),
+        ));
+        // record at level two
+        packet.answers.push(ResourceRecord::new(
+            DnsName::new_unchecked(&format!("_hello.world.{origin}")).into_owned(),
+            CLASS::IN,
+            30,
+            rdata::RData::TXT("hi2".try_into().unwrap()),
+        ));
+        // multiple records for same name
+        packet.answers.push(ResourceRecord::new(
+            DnsName::new_unchecked(&format!("multiple.{origin}")).into_owned(),
+            CLASS::IN,
+            30,
+            rdata::RData::TXT("hi3".try_into().unwrap()),
+        ));
+        packet.answers.push(ResourceRecord::new(
+            DnsName::new_unchecked(&format!("multiple.{origin}")).into_owned(),
+            CLASS::IN,
+            30,
+            rdata::RData::TXT("hi4".try_into().unwrap()),
+        ));
+        // record of type A
+        packet.answers.push(ResourceRecord::new(
+            DnsName::new_unchecked(&origin).into_owned(),
+            CLASS::IN,
+            30,
+            rdata::RData::A(Ipv4Addr::LOCALHOST.into()),
+        ));
+        // record of type AAAA
+        packet.answers.push(ResourceRecord::new(
+            DnsName::new_unchecked(&format!("foo.bar.baz.{origin}")).into_owned(),
+            CLASS::IN,
+            30,
+            rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
+        ));
+
+        // Encode and sign manually (same as pkarr format)
+        let encoded = packet.build_bytes_vec_compressed().anyerr()?;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+        let signable = {
+            let mut s = format!("3:seqi{}e1:v{}:", timestamp, encoded.len()).into_bytes();
+            s.extend(&encoded);
+            s
         };
-        let pkarr_client = pkarr::Client::builder()
-            .no_default_network()
-            .relays(&[pkarr_relay_url])
-            .anyerr()?
-            .build()
-            .anyerr()?;
-        pkarr_client.publish(&signed_packet, None).await.anyerr()?;
+        let signature = secret_key.sign(&signable);
+        let mut raw = Vec::with_capacity(104 + encoded.len());
+        raw.extend_from_slice(secret_key.public().as_bytes());
+        raw.extend_from_slice(&signature.to_bytes());
+        raw.extend_from_slice(&timestamp.to_be_bytes());
+        raw.extend_from_slice(&encoded);
+        let signed_packet = SignedPacket::from_bytes(&raw).anyerr()?;
+
+        // Publish via relay
+        let tls_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .expect("infallible");
+        let pkarr_client = PkarrRelayClient::new(pkarr_relay_url, tls_config);
+        pkarr_client.publish(&signed_packet).await?;
 
         use hickory_server::proto::rr::Name;
-        let pubkey = signed_packet.public_key().to_z32();
+        let pubkey = origin;
         let resolver = test_resolver(server.dns_addr());
 
         // resolve root record
@@ -237,13 +259,13 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         // run a mainline testnet
-        let testnet = pkarr::mainline::Testnet::new_async(5).await.anyerr()?;
+        let testnet = Testnet::new_async(5).await.anyerr()?;
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
         let server = Server::spawn_for_tests_with_options(
             dir.path(),
-            Some(BootstrapOption::Custom(bootstrap)),
+            Some(BootstrapOption::Custom(bootstrap.clone())),
             None,
             None,
         )
@@ -258,13 +280,22 @@ mod tests {
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
-        // publish the signed packet to our DHT
-        let pkarr = pkarr::Client::builder()
-            .no_default_network()
-            .dht(|builder| builder.bootstrap(&testnet.bootstrap))
-            .build()
+        // publish to DHT using mainline directly
+        let mut dht_builder = DhtBuilder::default();
+        dht_builder.bootstrap(&bootstrap);
+        let dht = dht_builder.build().anyerr()?;
+        let item = MutableItem::new_signed_unchecked(
+            *secret_key.public().as_bytes(),
+            signed_packet.signature().to_bytes(),
+            signed_packet.encoded_packet(),
+            signed_packet.timestamp().as_micros() as i64,
+            None,
+        );
+        dht.clone()
+            .as_async()
+            .put_mutable(item, None)
+            .await
             .anyerr()?;
-        pkarr.publish(&signed_packet, None).await.anyerr()?;
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(server.dns_addr());

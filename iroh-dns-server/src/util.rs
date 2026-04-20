@@ -14,39 +14,45 @@ use hickory_server::proto::{
     },
     serialize::binary::BinDecodable,
 };
-use n0_error::{AnyError, StdResultExt, e, stack_error};
-use pkarr::SignedPacket;
+use iroh_base::PublicKey;
+use iroh_dns::pkarr::SignedPacket;
+use n0_error::{e, stack_error};
 
-#[derive(
-    derive_more::From, derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy,
-)]
+/// A lightweight `[u8; 32]` wrapper used as a key for caches and database lookups.
+///
+/// Does not validate that the bytes are a valid public key on construction.
+/// If constructed from invalid bytes, methods like `Display` and `to_z32`
+/// will panic. In practice, bytes always originate from a validated `PublicKey`
+/// or a database that was written from one.
+#[derive(derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy)]
 pub struct PublicKeyBytes([u8; 32]);
 
 #[stack_error(derive, add_meta, from_sources)]
 pub enum InvalidPublicKeyBytes {
-    #[error(transparent)]
-    Encoding {
-        #[error(std_err)]
-        source: z32::Z32Error,
-    },
+    #[error("invalid z-base-32 encoding")]
+    InvalidEncoding,
     #[error("invalid length, must be 32 bytes")]
     InvalidLength,
 }
 
 impl PublicKeyBytes {
-    pub fn new(bytes: [u8; 32]) -> Self {
+    /// Wraps raw bytes without validating they are a valid public key.
+    ///
+    /// # Safety (logical)
+    ///
+    /// The caller must ensure the bytes represent a valid Ed25519 public key.
+    /// Passing invalid bytes will cause panics in `Display`, `Debug`, and `to_z32`.
+    pub fn new_unchecked(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
     pub fn from_z32(s: &str) -> Result<Self, InvalidPublicKeyBytes> {
-        let bytes = z32::decode(s.as_bytes())?;
-        let bytes = TryInto::<[u8; 32]>::try_into(&bytes[..])
-            .map_err(|_| e!(InvalidPublicKeyBytes::InvalidLength))?;
-        Ok(Self(bytes))
+        let pk = PublicKey::from_z32(s).map_err(|_| e!(InvalidPublicKeyBytes::InvalidEncoding))?;
+        Ok(Self(*pk.as_bytes()))
     }
 
     pub fn to_z32(self) -> String {
-        z32::encode(&self.0)
+        PublicKey::from_bytes(&self.0).expect("valid key").to_z32()
     }
 
     pub fn to_bytes(self) -> [u8; 32] {
@@ -58,7 +64,7 @@ impl PublicKeyBytes {
     }
 
     pub fn from_signed_packet(packet: &SignedPacket) -> Self {
-        Self(packet.public_key().to_bytes())
+        Self(*packet.public_key().as_bytes())
     }
 }
 
@@ -71,19 +77,6 @@ impl fmt::Display for PublicKeyBytes {
 impl fmt::Debug for PublicKeyBytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "PublicKeyBytes({})", self.to_z32())
-    }
-}
-
-impl From<pkarr::PublicKey> for PublicKeyBytes {
-    fn from(value: pkarr::PublicKey) -> Self {
-        Self(value.to_bytes())
-    }
-}
-
-impl TryFrom<PublicKeyBytes> for pkarr::PublicKey {
-    type Error = AnyError;
-    fn try_from(value: PublicKeyBytes) -> Result<Self, Self::Error> {
-        pkarr::PublicKey::try_from(&value.0).anyerr()
     }
 }
 
@@ -105,7 +98,7 @@ pub fn signed_packet_to_hickory_message(
     signed_packet: &SignedPacket,
 ) -> Result<Message, ProtoError> {
     let encoded = signed_packet.encoded_packet();
-    let message = Message::from_bytes(&encoded)?;
+    let message = Message::from_bytes(encoded)?;
     Ok(message)
 }
 

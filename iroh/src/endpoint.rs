@@ -51,8 +51,8 @@ pub use crate::tls::TlsConfigError;
 use crate::{
     NetReport,
     address_lookup::{
-        AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
-        Error as AddressLookupError, UserData,
+        AddrFilter, AddressLookupBuilder, AddressLookupFailed, AddressLookupServices,
+        DynAddressLookupBuilder, UserData,
     },
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
@@ -571,7 +571,7 @@ impl Builder {
     ///
     /// This method can be called multiple times and all the Address Lookup's passed in
     /// will be combined using an internal instance of the
-    /// [`crate::address_lookup::ConcurrentAddressLookup`]. To clear all Address Lookup's, use
+    /// [`crate::address_lookup::AddressLookupServices`]. To clear all Address Lookup's, use
     /// [`Self::clear_address_lookup`].
     ///
     /// If no Address Lookup is set, connecting to an endpoint without providing its
@@ -585,11 +585,11 @@ impl Builder {
 
     /// Sets the address filter applied to all address data before publishing.
     ///
-    /// This filter is applied once, at the [`ConcurrentAddressLookup`] level, before
+    /// This filter is applied once, at the [`AddressLookupServices`] level, before
     /// distributing data to any individual address lookup service. This ensures
     /// consistent filtering regardless of how the services configured.
     ///
-    /// [`ConcurrentAddressLookup`]: crate::address_lookup::ConcurrentAddressLookup
+    /// [`AddressLookupServices`]: crate::address_lookup::AddressLookupServices
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
         self.addr_filter = Some(filter);
         self
@@ -838,7 +838,7 @@ pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
     #[error("No addressing information available")]
-    NoAddress { source: AddressLookupError },
+    NoAddress { source: AddressLookupFailed },
     #[error("Unable to connect to remote")]
     Noq {
         #[error(std_err)]
@@ -1238,11 +1238,11 @@ impl Endpoint {
 
     /// A convenience method that waits for the endpoint to be considered "online".
     ///
-    /// This currently means at least one relay server was connected,
-    /// and at least one local IP address is available.
-    /// Even if no relays are configured, this will still wait for a relay connection.
+    /// This currently means at least one relay server has completed its
+    /// connection handshake (i.e. the endpoint is registered and reachable
+    /// via that relay). Merely selecting a relay URL is not sufficient.
     ///
-    /// Once this has been resolved the first time, this will always immediately resolve.
+    /// If no relays are configured, this will pend forever.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
@@ -1282,7 +1282,24 @@ impl Endpoint {
     /// }
     /// ```
     pub async fn online(&self) {
-        self.inner.home_relay().initialized().await;
+        let mut watcher = self.inner.home_relay_status();
+        let mut value = watcher.get();
+        loop {
+            if value
+                .into_iter()
+                .flatten()
+                .any(|(_url, status)| status.is_connected())
+            {
+                return;
+            }
+            value = match watcher.updated().await {
+                Ok(value) => value,
+                Err(_disconnected) => {
+                    std::future::pending::<()>().await;
+                    break;
+                }
+            }
+        }
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -1389,7 +1406,7 @@ impl Endpoint {
     /// Returns a `EndpointError::Closed` error if the endpoint is closed.
     ///
     /// See [`Builder::address_lookup`].
-    pub fn address_lookup(&self) -> Result<&ConcurrentAddressLookup, EndpointError> {
+    pub fn address_lookup(&self) -> Result<&AddressLookupServices, EndpointError> {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
@@ -3783,6 +3800,55 @@ mod tests {
         let incoming = accept_task.await.expect("accept task panicked");
         assert!(incoming.is_none());
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_online_add_relay() -> Result {
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(RelayMap::empty()))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        // should not come online without relays.
+        let res = tokio::time::timeout(Duration::from_millis(500), ep.online()).await;
+        assert!(res.is_err());
+
+        // should come online after a relay is added.
+        let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
+        ep.insert_relay(relay_url.clone(), relay_map.get(&relay_url).unwrap())
+            .await;
+        let res = tokio::time::timeout(Duration::from_millis(1000), ep.online()).await;
+        assert!(res.is_ok());
+
+        // online should still return after endpoint close, if the endpoint was last online
+        let ep_clone = ep.clone();
+        let task = tokio::task::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(500), ep_clone.online()).await
+        });
+        ep.close().await;
+        let res = task.await.unwrap();
+        assert!(res.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_online_close() -> Result {
+        let ep = Endpoint::bind(presets::Minimal).await?;
+        // should not come online without relays.
+        let res = tokio::time::timeout(Duration::from_millis(500), ep.online()).await;
+        assert!(res.is_err());
+
+        // online should remain pending after the endpoint is closed.
+        let ep_clone = ep.clone();
+        let task = tokio::task::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(500), ep_clone.online()).await
+        });
+        ep.close().await;
+        let res = task.await.unwrap();
+        assert!(res.is_err());
         Ok(())
     }
 }

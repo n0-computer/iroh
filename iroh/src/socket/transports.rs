@@ -33,7 +33,7 @@ use custom::{CustomEndpoint, CustomSender, CustomTransport};
 pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
-pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
+pub(crate) use self::relay::{HomeRelayStatus, HomeRelayWatch, RelayActorConfig, RelayTransport};
 
 /// Manages the different underlying data transports that the socket can support.
 #[derive(Debug)]
@@ -56,7 +56,15 @@ type CustomTransportsWatcher =
 /// Combined watcher type for all relay transports
 type RelayTransportsWatcher = n0_watcher::Join<
     Option<(RelayUrl, EndpointId)>,
-    n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
+    n0_watcher::Map<
+        n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>>,
+        Option<(RelayUrl, EndpointId)>,
+    >,
+>;
+
+pub(super) type HomeRelayWatcher = n0_watcher::Join<
+    Option<(RelayUrl, HomeRelayStatus)>,
+    n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>>,
 >;
 
 #[cfg(not(wasm_browser))]
@@ -310,6 +318,10 @@ impl Transports {
     /// for relay transports, this is the home relay.
     pub(crate) fn local_addrs(&self) -> Vec<Addr> {
         self.local_addrs_watch().get()
+    }
+
+    pub(super) fn home_relay_watch(&self) -> HomeRelayWatcher {
+        n0_watcher::Join::new(self.relay.iter().map(|t| t.my_relay_status()))
     }
 
     #[cfg(not(wasm_browser))]
