@@ -1409,7 +1409,7 @@
 <a href=#1409 id=1409 data-nosnippet>1409</a>    <span class="kw">async fn </span>make_test_client(client: tokio::io::DuplexStream, key: <span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;Conn&gt; {
 <a href=#1410 id=1410 data-nosnippet>1410</a>        <span class="kw">let </span>client = <span class="kw">crate</span>::client::streams::MaybeTlsStream::Test(client);
 <a href=#1411 id=1411 data-nosnippet>1411</a>        <span class="kw">let </span>client = tokio_websockets::ClientBuilder::new().take_over(client);
-<a href=#1412 id=1412 data-nosnippet>1412</a>        <span class="kw">let </span>client = Conn::new(client, KeyCache::test(), key).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1412 id=1412 data-nosnippet>1412</a>        <span class="kw">let </span>client = Conn::new(client, KeyCache::test(), key, Default::default()).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1413 id=1413 data-nosnippet>1413</a>        <span class="prelude-val">Ok</span>(client)
 <a href=#1414 id=1414 data-nosnippet>1414</a>    }
 <a href=#1415 id=1415 data-nosnippet>1415</a>

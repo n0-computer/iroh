@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>iroh_base::{EndpointId, SecretKey};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>n0_error::{e, stack_error};
 <a href=#16 id=16 data-nosnippet>16</a>
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use crate</span>::{EndpointIdExt, pkarr};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span><span class="kw">crate</span>::pkarr;
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="doccomment">/// The DNS name for the iroh TXT record.
 <a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub const </span>IROH_TXT_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"_iroh"</span>;
@@ -68,7 +68,7 @@
 <a href=#68 id=68 data-nosnippet>68</a>        }));
 <a href=#69 id=69 data-nosnippet>69</a>    }
 <a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">let </span>label = labels.next().expect(<span class="string">"checked above"</span>);
-<a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">let </span>endpoint_id = &lt;EndpointId <span class="kw">as </span>EndpointIdExt&gt;::from_z32(label)<span class="question-mark">?</span>;
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">let </span>endpoint_id = EndpointId::from_z32(label)<span class="question-mark">?</span>;
 <a href=#72 id=72 data-nosnippet>72</a>    <span class="prelude-val">Ok</span>(endpoint_id)
 <a href=#73 id=73 data-nosnippet>73</a>}
 <a href=#74 id=74 data-nosnippet>74</a>

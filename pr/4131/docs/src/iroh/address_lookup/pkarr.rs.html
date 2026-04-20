@@ -58,7 +58,7 @@
 <a href=#58 id=58 data-nosnippet>58</a>
 <a href=#59 id=59 data-nosnippet>59</a><span class="kw">use </span>iroh_base::{EndpointId, RelayUrl, SecretKey};
 <a href=#60 id=60 data-nosnippet>60</a><span class="kw">use </span>iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError};
-<a href=#61 id=61 data-nosnippet>61</a><span class="kw">use </span>iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointIdExt, EndpointInfo};
+<a href=#61 id=61 data-nosnippet>61</a><span class="kw">use </span>iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointInfo};
 <a href=#62 id=62 data-nosnippet>62</a><span class="kw">use </span>n0_error::{e, stack_error};
 <a href=#63 id=63 data-nosnippet>63</a><span class="kw">use </span>n0_future::{
 <a href=#64 id=64 data-nosnippet>64</a>    boxed::BoxStream,
@@ -263,14 +263,14 @@
 <a href=#263 id=263 data-nosnippet>263</a>///
 <a href=#264 id=264 data-nosnippet>264</a>/// This implements the [`AddressLookup`] trait to be used as an address lookup service.  Note
 <a href=#265 id=265 data-nosnippet>265</a>/// that it only publishes address lookup information, for the corresponding resolver use
-<a href=#266 id=266 data-nosnippet>266</a>/// the [`PkarrResolver`] together with [`ConcurrentAddressLookup`].
+<a href=#266 id=266 data-nosnippet>266</a>/// the [`PkarrResolver`] together with [`AddressLookupServices`].
 <a href=#267 id=267 data-nosnippet>267</a>///
 <a href=#268 id=268 data-nosnippet>268</a>/// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
 <a href=#269 id=269 data-nosnippet>269</a>///
 <a href=#270 id=270 data-nosnippet>270</a>/// [pkarr]: https://pkarr.org
 <a href=#271 id=271 data-nosnippet>271</a>/// [module docs]: crate::address_lookup::pkarr
 <a href=#272 id=272 data-nosnippet>272</a>/// [`RelayUrl`]: crate::RelayUrl
-<a href=#273 id=273 data-nosnippet>273</a>/// [`ConcurrentAddressLookup`]: super::ConcurrentAddressLookup
+<a href=#273 id=273 data-nosnippet>273</a>/// [`AddressLookupServices`]: super::AddressLookupServices
 <a href=#274 id=274 data-nosnippet>274</a></span><span class="attr">#[derive(derive_more::Debug, Clone)]
 <a href=#275 id=275 data-nosnippet>275</a></span><span class="kw">pub struct </span>PkarrPublisher {
 <a href=#276 id=276 data-nosnippet>276</a>    endpoint_id: EndpointId,
@@ -498,11 +498,11 @@
 <a href=#498 id=498 data-nosnippet>498</a>///
 <a href=#499 id=499 data-nosnippet>499</a>/// This implements the [`AddressLookup`] trait to be used as an address lookup service.  Note
 <a href=#500 id=500 data-nosnippet>500</a>/// that it only resolves address lookup information, for the corresponding publisher use
-<a href=#501 id=501 data-nosnippet>501</a>/// the [`PkarrPublisher`] together with [`ConcurrentAddressLookup`].
+<a href=#501 id=501 data-nosnippet>501</a>/// the [`PkarrPublisher`] together with [`AddressLookupServices`].
 <a href=#502 id=502 data-nosnippet>502</a>///
 <a href=#503 id=503 data-nosnippet>503</a>/// [pkarr]: https://pkarr.org
 <a href=#504 id=504 data-nosnippet>504</a>/// [module docs]: crate::address_lookup::pkarr
-<a href=#505 id=505 data-nosnippet>505</a>/// [`ConcurrentAddressLookup`]: super::ConcurrentAddressLookup
+<a href=#505 id=505 data-nosnippet>505</a>/// [`AddressLookupServices`]: super::AddressLookupServices
 <a href=#506 id=506 data-nosnippet>506</a></span><span class="attr">#[derive(derive_more::Debug, Clone)]
 <a href=#507 id=507 data-nosnippet>507</a></span><span class="kw">pub struct </span>PkarrResolver {
 <a href=#508 id=508 data-nosnippet>508</a>    pkarr_client: PkarrRelayClient,
