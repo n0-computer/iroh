@@ -989,7 +989,7 @@
 <a href=#989 id=989 data-nosnippet>989</a>    /// `RemoteStateActor` reply when handling `ResolveRemote`, so a slow or
 <a href=#990 id=990 data-nosnippet>990</a>    /// hanging lookup would serialise every other `connect()` behind it via the
 <a href=#991 id=991 data-nosnippet>991</a>    /// single socket actor. This tests that we do not serialize here anymore.
-<a href=#992 id=992 data-nosnippet>992</a>    </span><span class="attr">#[tokio::test]
+<a href=#992 id=992 data-nosnippet>992</a>    </span><span class="attr">#[tokio::test(flavor = <span class="string">"current_thread"</span>, start_paused = <span class="bool-val">true</span>)]
 <a href=#993 id=993 data-nosnippet>993</a>    #[traced_test]
 <a href=#994 id=994 data-nosnippet>994</a>    </span><span class="kw">async fn </span>concurrent_connects_not_blocked_by_slow_lookup() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#995 id=995 data-nosnippet>995</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
