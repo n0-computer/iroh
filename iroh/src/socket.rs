@@ -317,9 +317,13 @@ impl ShutdownState {
 /// possible.
 #[derive(Debug)]
 pub(crate) struct Socket {
-    /// Channels for sending time-crucial messages to `RemoteStateActors`.
+    /// Read-only view of the per-remote `RemoteStateActor` inboxes.
     ///
-    /// Currently only exists to support sending `SendDatagram` messages.
+    /// Lets callers send to an existing `RemoteStateActor` without going through
+    /// the socket actor.
+    ///
+    /// A missing entry means no actor is running for that remote. Spawning new
+    /// `RemoteStateActor`s must go through the socket actor channel.
     remote_actors: ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
 
     /// EndpointId of this endpoint.
@@ -1271,11 +1275,16 @@ impl EndpointInner {
     ) -> Result<Result<EndpointIdMappedAddr, AddressLookupFailed>, RemoteStateActorStoppedError>
     {
         let (tx, rx) = oneshot::channel();
+        let remote_id = addr.id;
         self.actor_sender
             .send(ActorMessage::ResolveRemote(addr, tx))
             .await
             .ok();
-        rx.await.map_err(|_| RemoteStateActorStoppedError::new())?
+        let reply = rx.await.map_err(|_| RemoteStateActorStoppedError::new())?;
+        match reply {
+            Ok(()) => Ok(Ok(self.mapped_addrs.endpoint_addrs.get(&remote_id))),
+            Err(err) => Ok(Err(err)),
+        }
     }
 
     /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
@@ -1283,8 +1292,9 @@ impl EndpointInner {
     /// Returns `None` if no actor is running for the remote.
     pub(crate) async fn remote_info(&self, id: EndpointId) -> Option<RemoteInfo> {
         let (tx, rx) = oneshot::channel();
-        self.actor_sender
-            .send(ActorMessage::RemoteInfo(id, tx))
+        self.remote_actors
+            .get(&id)?
+            .send(RemoteStateMessage::RemoteInfo(tx))
             .await
             .ok()?;
         rx.await.ok()
@@ -1324,9 +1334,7 @@ enum ActorMessage {
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         EndpointAddr,
-        oneshot::Sender<
-            Result<Result<EndpointIdMappedAddr, AddressLookupFailed>, RemoteStateActorStoppedError>,
-        >,
+        oneshot::Sender<Result<(), AddressLookupFailed>>,
     ),
     #[debug("AddConnection(..)")]
     AddConnection(
@@ -1334,8 +1342,6 @@ enum ActorMessage {
         WeakConnectionHandle,
         oneshot::Sender<PathWatchable>,
     ),
-    #[debug("RemoteInfo(..)")]
-    RemoteInfo(EndpointId, oneshot::Sender<RemoteInfo>),
     /// Re-evaluate direct addresses, e.g. after configured external addresses changed.
     DirectAddrRefresh,
     #[cfg(all(test, with_crypto_provider))]
@@ -1471,7 +1477,6 @@ impl Actor {
                     let Some(msg) = msg else {
                         trace!("tick: socket receiver closed");
                         self.sock.metrics.socket.actor_tick_other.inc();
-
                         receiver_closed = true;
                         continue;
                     };
@@ -1556,8 +1561,8 @@ impl Actor {
                     self.sock.metrics.socket.actor_link_change.inc();
                     self.handle_network_change(is_major);
                 }
-                eid = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
-                    trace!(%eid, "cleaned up RemoteStateActor");
+                remote_id = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
+                    trace!(%remote_id, "cleaned up RemoteStateActor");
                 }
                 _ = &mut notify_quic_network_change => {
                     let has_network = self.has_usable_network();
@@ -1728,17 +1733,16 @@ impl Actor {
                 self.handle_relay_map_change();
             }
             ActorMessage::ResolveRemote(addr, tx) => {
-                tx.send(self.remote_map.resolve_remote(addr).await).ok();
-            }
-            ActorMessage::RemoteInfo(id, tx) => {
-                if let Some(info) = self.remote_map.remote_info(id).await {
-                    tx.send(info).ok();
-                }
+                // Swallowing the error is fine here; if a send on the channel to the
+                // remote state actor ever fails (which it shouldn't), `tx` will be
+                // dropped and thus the failure will be propagated to the caller.
+                self.remote_map.resolve_remote(addr, tx).await.ok();
             }
             ActorMessage::AddConnection(remote, conn, tx) => {
-                if let Some(watcher) = self.remote_map.add_connection(remote, conn).await {
-                    tx.send(watcher).ok();
-                }
+                // Swallowing the error is fine here; if a send on the channel to the
+                // remote state actor ever fails (which it shouldn't), `tx` will be
+                // dropped and thus the failure will be propagated to the caller.
+                self.remote_map.add_connection(remote, conn, tx).await.ok();
             }
             ActorMessage::DirectAddrRefresh => {
                 #[cfg(not(wasm_browser))]
