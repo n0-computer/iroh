@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.98.0"
+version = "0.98.1"
 edition = "2024"
 readme = "README.md"
 description = "p2p quic connections dialed by public key"

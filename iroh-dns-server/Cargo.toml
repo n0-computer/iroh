@@ -1,6 +1,6 @@
 [package]
 name = "iroh-dns-server"
-version = "0.98.0"
+version = "0.98.1"
 edition = "2024"
 description = "A pkarr relay and DNS server"
 license = "MIT OR Apache-2.0"
@@ -74,6 +74,11 @@ tempfile = "3.23.0"
 [features]
 default = ["ring"]
 ring = ["rustls/ring", "tokio-rustls/ring"]
+
+[[bin]]
+name = "iroh-dns-server"
+path = "src/main.rs"
+required-features = ["ring"]
 
 [[bench]]
 name = "write"

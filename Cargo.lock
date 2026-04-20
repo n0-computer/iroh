@@ -2365,7 +2365,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.98.0"
+version = "0.98.1"
 dependencies = [
  "axum",
  "backon",
@@ -2495,7 +2495,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.98.0"
+version = "0.98.1"
 dependencies = [
  "async-trait",
  "axum",
