@@ -1614,7 +1614,7 @@ impl Actor {
             self.transports_network_change.check_relay_connection();
 
             #[cfg(not(wasm_browser))]
-            self.sock.dns_resolver.reset().await;
+            self.sock.dns_resolver.reset();
             self.re_stun(UpdateReason::LinkChangeMajor);
         } else {
             self.re_stun(UpdateReason::LinkChangeMinor);

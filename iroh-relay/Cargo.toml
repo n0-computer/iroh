@@ -84,6 +84,7 @@ sha1 = { version = "=0.11.0-rc.5", optional = true }
 toml = { version = "1.0", optional = true }
 serde_json = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+arc-swap = "1.9.1"
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]

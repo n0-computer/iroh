@@ -2588,6 +2588,7 @@ name = "iroh-relay"
 version = "0.98.0"
 dependencies = [
  "ahash",
+ "arc-swap",
  "blake3",
  "bytes",
  "cfg_aliases",
