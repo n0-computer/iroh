@@ -1554,7 +1554,7 @@
 <a href=#1554 id=1554 data-nosnippet>1554</a>                    );
 <a href=#1555 id=1555 data-nosnippet>1555</a>                    current_netmon_state = state;
 <a href=#1556 id=1556 data-nosnippet>1556</a>                    <span class="self">self</span>.sock.metrics.socket.actor_link_change.inc();
-<a href=#1557 id=1557 data-nosnippet>1557</a>                    <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
+<a href=#1557 id=1557 data-nosnippet>1557</a>                    <span class="self">self</span>.handle_network_change(is_major);
 <a href=#1558 id=1558 data-nosnippet>1558</a>                }
 <a href=#1559 id=1559 data-nosnippet>1559</a>                eid = poll_fn(|cx| <span class="self">self</span>.remote_map.poll_cleanup(cx)) =&gt; {
 <a href=#1560 id=1560 data-nosnippet>1560</a>                    <span class="macro">trace!</span>(%eid, <span class="string">"cleaned up RemoteStateActor"</span>);
@@ -1604,7 +1604,7 @@
 <a href=#1604 id=1604 data-nosnippet>1604</a>    ///
 <a href=#1605 id=1605 data-nosnippet>1605</a>    /// This is triggered when the netmon actor detects a change in the local network
 <a href=#1606 id=1606 data-nosnippet>1606</a>    /// interfaces, assigned IP addresses and routes.
-<a href=#1607 id=1607 data-nosnippet>1607</a>    </span><span class="kw">async fn </span>handle_network_change(<span class="kw-2">&amp;mut </span><span class="self">self</span>, is_major: bool) {
+<a href=#1607 id=1607 data-nosnippet>1607</a>    </span><span class="kw">fn </span>handle_network_change(<span class="kw-2">&amp;mut </span><span class="self">self</span>, is_major: bool) {
 <a href=#1608 id=1608 data-nosnippet>1608</a>        <span class="macro">debug!</span>(is_major, <span class="string">"link change detected"</span>);
 <a href=#1609 id=1609 data-nosnippet>1609</a>
 <a href=#1610 id=1610 data-nosnippet>1610</a>        <span class="kw">if </span>is_major {
@@ -1749,7 +1749,7 @@
 <a href=#1749 id=1749 data-nosnippet>1749</a>            }
 <a href=#1750 id=1750 data-nosnippet>1750</a>            <span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#1751 id=1751 data-nosnippet>1751</a>            </span>ActorMessage::ForceNetworkChange(is_major) =&gt; {
-<a href=#1752 id=1752 data-nosnippet>1752</a>                <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
+<a href=#1752 id=1752 data-nosnippet>1752</a>                <span class="self">self</span>.handle_network_change(is_major);
 <a href=#1753 id=1753 data-nosnippet>1753</a>            }
 <a href=#1754 id=1754 data-nosnippet>1754</a>        }
 <a href=#1755 id=1755 data-nosnippet>1755</a>    }
