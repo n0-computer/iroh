@@ -11,7 +11,7 @@ use n0_future::{
     ready,
     task::{self, AbortOnDropHandle},
 };
-use n0_watcher::{Watchable, Watcher as _};
+use n0_watcher::Watcher as _;
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, PollSender};
 use tracing::{Instrument, error, info_span, warn};
@@ -20,8 +20,13 @@ use super::{Addr, Transmit};
 
 mod actor;
 
-pub(crate) use self::actor::Config as RelayActorConfig;
+pub(crate) use self::actor::{Config as RelayActorConfig, HomeRelayStatus, HomeRelayWatch};
 use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
+
+type RelayAddrWatcher = n0_watcher::Map<
+    n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>>,
+    Option<(RelayUrl, EndpointId)>,
+>;
 
 #[derive(Debug)]
 pub(crate) struct RelayTransport {
@@ -33,7 +38,7 @@ pub(crate) struct RelayTransport {
     pending_item: Option<RelayRecvDatagram>,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
-    my_relay: Watchable<Option<RelayUrl>>,
+    my_relay: HomeRelayWatch,
     my_endpoint_id: EndpointId,
 }
 
@@ -162,13 +167,17 @@ impl RelayTransport {
         }
     }
 
-    pub(super) fn local_addr_watch(
-        &self,
-    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>> {
+    pub(super) fn local_addr_watch(&self) -> RelayAddrWatcher {
         let my_endpoint_id = self.my_endpoint_id;
         self.my_relay
             .watch()
-            .map(move |url| url.map(|url| (url, my_endpoint_id)))
+            .map(move |url| url.map(|url| (url.0, my_endpoint_id)))
+    }
+
+    pub(super) fn my_relay_status(
+        &self,
+    ) -> n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>> {
+        self.my_relay.watch()
     }
 
     pub(super) fn create_network_change_sender(&self) -> RelayNetworkChangeSender {

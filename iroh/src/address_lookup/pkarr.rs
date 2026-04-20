@@ -58,7 +58,7 @@ use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError};
-use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointIdExt, EndpointInfo};
+use iroh_relay::endpoint_info::{AddrFilter, EncodingError, EndpointInfo};
 use n0_error::{e, stack_error};
 use n0_future::{
     boxed::BoxStream,
@@ -263,14 +263,14 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
 ///
 /// This implements the [`AddressLookup`] trait to be used as an address lookup service.  Note
 /// that it only publishes address lookup information, for the corresponding resolver use
-/// the [`PkarrResolver`] together with [`ConcurrentAddressLookup`].
+/// the [`PkarrResolver`] together with [`AddressLookupServices`].
 ///
 /// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
 ///
 /// [pkarr]: https://pkarr.org
 /// [module docs]: crate::address_lookup::pkarr
 /// [`RelayUrl`]: crate::RelayUrl
-/// [`ConcurrentAddressLookup`]: super::ConcurrentAddressLookup
+/// [`AddressLookupServices`]: super::AddressLookupServices
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
     endpoint_id: EndpointId,
@@ -498,11 +498,11 @@ impl AddressLookupBuilder for PkarrResolverBuilder {
 ///
 /// This implements the [`AddressLookup`] trait to be used as an address lookup service.  Note
 /// that it only resolves address lookup information, for the corresponding publisher use
-/// the [`PkarrPublisher`] together with [`ConcurrentAddressLookup`].
+/// the [`PkarrPublisher`] together with [`AddressLookupServices`].
 ///
 /// [pkarr]: https://pkarr.org
 /// [module docs]: crate::address_lookup::pkarr
-/// [`ConcurrentAddressLookup`]: super::ConcurrentAddressLookup
+/// [`AddressLookupServices`]: super::AddressLookupServices
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrResolver {
     pkarr_client: PkarrRelayClient,

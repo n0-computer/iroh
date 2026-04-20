@@ -9,7 +9,7 @@ use std::{
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_error::StackResultExt;
 use n0_future::{
-    Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
+    FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
     task::JoinSet,
     time::{self, Duration, Instant},
@@ -18,7 +18,6 @@ use n0_watcher::{Watchable, Watcher};
 use noq::{ConnectionError, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
-use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
@@ -31,10 +30,7 @@ pub use self::{
 };
 use super::Source;
 use crate::{
-    address_lookup::{
-        AddressLookup, ConcurrentAddressLookup, Error as AddressLookupError,
-        Item as AddressLookupItem,
-    },
+    address_lookup::{AddressLookupFailed, AddressLookupServices, Item as AddressLookupItem},
     endpoint::DirectAddr,
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
@@ -99,18 +95,6 @@ type AddrEvents = MergeUnbounded<
     >,
 >;
 
-/// Either a stream of incoming results from [`ConcurrentAddressLookup::resolve`] or infinitely pending.
-///
-/// Set to [`Either::Left`] with an always-pending stream while address lookup is not running, and to
-/// [`Either::Right`] while Address Lookup is running.
-///
-/// The stream returned from [`ConcurrentAddressLookup::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
-/// wrapper to make it `Sync` so that the [`RemoteStateActor::run`] future stays `Send`.
-type AddressLookupStream = Either<
-    n0_future::stream::Pending<Result<AddressLookupItem, AddressLookupError>>,
-    SyncStream<BoxStream<Result<AddressLookupItem, AddressLookupError>>>,
->;
-
 /// The state we need to know about a single remote endpoint.
 ///
 /// This actor manages all connections to the remote endpoint.  It will trigger holepunching
@@ -132,7 +116,7 @@ pub(super) struct RemoteStateActor {
     /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
     custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
     /// Address lookup service, cloned from the socket.
-    address_lookup: ConcurrentAddressLookup,
+    address_lookup: AddressLookupServices,
 
     // Internal state - Noq Connections we are managing.
     //
@@ -176,7 +160,7 @@ pub(super) struct RemoteStateActor {
     // Internal state - address lookup
     //
     /// Stream of Address Lookup results, or always pending if Address Lookup is not running.
-    address_lookup_stream: AddressLookupStream,
+    address_lookup_stream: Option<BoxStream<Result<AddressLookupItem, AddressLookupFailed>>>,
 
     /// Biases for different transport kinds.
     transport_bias: TransportBiasMap,
@@ -190,7 +174,7 @@ impl RemoteStateActor {
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
         metrics: Arc<SocketMetrics>,
-        address_lookup: ConcurrentAddressLookup,
+        address_lookup: AddressLookupServices,
         transport_bias: TransportBiasMap,
     ) -> Self {
         Self {
@@ -210,7 +194,7 @@ impl RemoteStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
-            address_lookup_stream: Either::Left(n0_future::stream::pending()),
+            address_lookup_stream: None,
             transport_bias,
         }
     }
@@ -324,7 +308,7 @@ impl RemoteStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching();
                 }
-                item = self.address_lookup_stream.next() => {
+                Some(item) = maybe_next(self.address_lookup_stream.as_mut()), if self.address_lookup_stream.is_some() => {
                     self.handle_address_lookup_item(item);
                 }
                 _ = check_connections.tick() => {
@@ -530,7 +514,7 @@ impl RemoteStateActor {
     fn handle_msg_resolve_remote(
         &mut self,
         addrs: BTreeSet<TransportAddr>,
-        tx: oneshot::Sender<Result<(), AddressLookupError>>,
+        tx: oneshot::Sender<Result<(), AddressLookupFailed>>,
     ) {
         let addrs = to_transports_addr(self.endpoint_id, addrs);
         self.paths.insert_multiple(addrs, Source::App);
@@ -583,15 +567,19 @@ impl RemoteStateActor {
     /// Does not start Address Lookup if we have a selected path or if Address Lookup is
     /// currently running.
     fn trigger_address_lookup(&mut self) {
-        if self.selected_path.get().is_some()
-            || matches!(self.address_lookup_stream, Either::Right(_))
-        {
+        if self.selected_path.get().is_some() || self.address_lookup_stream.is_some() {
             return;
         }
-        match self.address_lookup.resolve(self.endpoint_id) {
-            Some(stream) => self.address_lookup_stream = Either::Right(SyncStream::new(stream)),
-            None => self.paths.address_lookup_finished(Ok(())),
-        }
+        let stream = self.address_lookup.resolve(self.endpoint_id);
+        let stream = stream.filter_map(|item| match item {
+            // We don't care about errors from individual services, we just continue.
+            // Individual errors are buffered into the final error by `AddressLookupServices::resolve`,
+            // and if the lookup fails we return them upstream with the final `AddressLookupFailed` error.
+            Ok(Err(_err)) => None,
+            Ok(Ok(item)) => Some(Ok(item)),
+            Err(err) => Some(Err(err)),
+        });
+        self.address_lookup_stream = Some(Box::pin(stream));
     }
 
     /// Handles an address lookup result.
@@ -600,17 +588,17 @@ impl RemoteStateActor {
     /// [`RemotePathState`] with the results.
     fn handle_address_lookup_item(
         &mut self,
-        item: Option<Result<AddressLookupItem, AddressLookupError>>,
+        item: Option<Result<AddressLookupItem, AddressLookupFailed>>,
     ) {
         match item {
             None => {
-                self.address_lookup_stream = Either::Left(n0_future::stream::pending());
                 self.paths.address_lookup_finished(Ok(()));
+                self.address_lookup_stream = None;
             }
             Some(Err(err)) => {
                 warn!("Address Lookup failed: {err:#}");
-                self.address_lookup_stream = Either::Left(n0_future::stream::pending());
                 self.paths.address_lookup_finished(Err(err));
+                self.address_lookup_stream = None;
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
@@ -1226,7 +1214,7 @@ pub(crate) enum RemoteStateMessage {
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         BTreeSet<TransportAddr>,
-        oneshot::Sender<Result<(), AddressLookupError>>,
+        oneshot::Sender<Result<(), AddressLookupFailed>>,
     ),
     /// Returns information about the remote.
     ///
@@ -1368,6 +1356,14 @@ fn to_transports_addr(
             None
         }
     })
+}
+
+/// Returns the next item if `maybe_stream` is `Some`, or `None` otherwise.
+async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<Option<S::Item>> {
+    match maybe_stream {
+        None => None,
+        Some(s) => Some(s.next().await),
+    }
 }
 
 #[cfg(test)]

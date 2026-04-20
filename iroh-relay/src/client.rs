@@ -61,6 +61,11 @@ pub enum ConnectError {
         #[error(std_err)]
         source: ws_stream_wasm::WsErr,
     },
+    #[error(
+        "Server replied with invalid iroh-relay version header: {}",
+        server_version.as_deref().unwrap_or("<empty>")
+    )]
+    BadVersionHeader { server_version: Option<String> },
     #[error(transparent)]
     Handshake {
         #[error(std_err)]
@@ -302,7 +307,25 @@ impl ClientBuilder {
             }
         );
 
-        let conn = Conn::new(conn, self.key_cache.clone(), &self.secret_key).await?;
+        let protocol_version_str = response
+            .headers()
+            .get(SEC_WEBSOCKET_PROTOCOL)
+            .and_then(|s| s.to_str().ok());
+        let protocol_version = protocol_version_str
+            .and_then(ProtocolVersion::match_from_str)
+            .ok_or_else(|| {
+                e!(ConnectError::BadVersionHeader {
+                    server_version: protocol_version_str.map(ToOwned::to_owned)
+                })
+            })?;
+
+        let conn = Conn::new(
+            conn,
+            self.key_cache.clone(),
+            &self.secret_key,
+            protocol_version,
+        )
+        .await?;
 
         event!(
             target: "iroh::_events::net::relay::connected",
@@ -352,12 +375,26 @@ impl ClientBuilder {
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let (_, ws_stream) = ws_stream_wasm::WsMeta::connect(
+        let (ws_meta, ws_stream) = ws_stream_wasm::WsMeta::connect(
             dial_url.as_str(),
             Some(ProtocolVersion::all().collect()),
         )
         .await?;
-        let conn = Conn::new(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
+
+        let protocol_version =
+            ProtocolVersion::match_from_str(&ws_meta.protocol()).ok_or_else(|| {
+                e!(ConnectError::BadVersionHeader {
+                    server_version: Some(ws_meta.protocol())
+                })
+            })?;
+
+        let conn = Conn::new(
+            ws_stream,
+            self.key_cache.clone(),
+            &self.secret_key,
+            protocol_version,
+        )
+        .await?;
 
         event!(
             target: "iroh::_events::net::relay::connected",

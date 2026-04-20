@@ -151,6 +151,7 @@ struct ActiveRelayActor {
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
     metrics: Arc<SocketMetrics>,
+    my_relay: HomeRelayWatch,
 }
 
 #[derive(Debug)]
@@ -194,6 +195,7 @@ struct ActiveRelayActorOptions {
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
     metrics: Arc<SocketMetrics>,
+    my_relay: HomeRelayWatch,
 }
 
 /// Configuration needed to create a connection to a relay server.
@@ -264,6 +266,7 @@ impl ActiveRelayActor {
             connection_opts,
             stop_token,
             metrics,
+            my_relay,
         } = opts;
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
@@ -277,6 +280,7 @@ impl ActiveRelayActor {
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
             metrics,
+            my_relay,
         }
     }
 
@@ -315,6 +319,8 @@ impl ActiveRelayActor {
 
         while let Err(err) = self.run_once().await {
             warn!("{err:#}");
+            self.my_relay
+                .set_status(&self.url, HomeRelayStatus::Disconnected);
             match err {
                 RelayConnectionError::Dial { .. } | RelayConnectionError::Handshake { .. } => {
                     // If dialing failed, or if the relay connection failed before we received a pong,
@@ -351,10 +357,14 @@ impl ActiveRelayActor {
     /// or if the relay connection failed while connected. In both cases, the connection should
     /// be retried with a backoff.
     async fn run_once(&mut self) -> Result<(), RelayConnectionError> {
+        self.my_relay
+            .set_status(&self.url, HomeRelayStatus::Connecting);
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
             Some(client_res) => client_res.map_err(|err| e!(RelayConnectionError::Dial, err))?,
             None => return Ok(()),
         };
+        self.my_relay
+            .set_status(&self.url, HomeRelayStatus::Connected);
         self.run_connected(client)
             .instrument(info_span!("connected"))
             .await
@@ -559,6 +569,16 @@ impl ActiveRelayActor {
                     match msg {
                         ActiveRelayMessage::SetHomeRelay(is_home) => {
                             self.set_home_relay(is_home);
+                            // We are in `run_connected`, so if we just became the home
+                            // relay, publish `Connected` (the `RelayActor` only sets
+                            // `Connecting` on the URL change since it cannot know our
+                            // actual state).
+                            if is_home {
+                                self.my_relay.set_status(
+                                    &self.url,
+                                    HomeRelayStatus::Connected,
+                                );
+                            }
                         }
                         ActiveRelayMessage::CheckConnection { local_ips } => {
                             match client_stream.local_addr() {
@@ -692,9 +712,9 @@ impl ActiveRelayActor {
             RelayToClientMsg::Health { problem } => {
                 warn!("Relay server reports problem: {problem}");
             }
-            frame => {
-                warn!("Ignoring unknown relay message: {frame:?}")
-            }
+            _ => unreachable!(
+                "got unknown RelayToClientMsg but iroh is released in sync with iroh-relay"
+            ),
         }
     }
 
@@ -842,8 +862,8 @@ pub(super) struct RelayActor {
 }
 
 #[derive(Debug, Clone)]
-pub struct Config {
-    pub my_relay: Watchable<Option<RelayUrl>>,
+pub(crate) struct Config {
+    pub my_relay: HomeRelayWatch,
     pub secret_key: SecretKey,
     #[cfg(not(wasm_browser))]
     pub dns_resolver: DnsResolver,
@@ -853,6 +873,83 @@ pub struct Config {
     pub ipv6_reported: Arc<AtomicBool>,
     pub tls_config: rustls::ClientConfig,
     pub metrics: Arc<SocketMetrics>,
+}
+
+/// Connection status of the home relay.
+///
+/// Published via [`HomeRelayWatch`] so that [`Endpoint::online`] can wait until the
+/// relay is fully connected, not just selected.
+///
+/// [`Endpoint::online`]: crate::Endpoint::online
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub(crate) enum HomeRelayStatus {
+    /// Dialing or performing the relay handshake.
+    Connecting,
+    /// Connected and handshaked, the endpoint is registered and reachable.
+    Connected,
+    /// Connection lost after having been connected.
+    Disconnected,
+}
+
+impl HomeRelayStatus {
+    pub(crate) fn is_connected(&self) -> bool {
+        matches!(self, Self::Connected)
+    }
+}
+
+/// Shared watchable for the home relay URL and connection status.
+///
+/// Owned by [`RelayActor`] and cloned into each [`ActiveRelayActor`].
+///
+/// # Write discipline
+///
+/// The [`RelayActor`] writes the URL (via [`Self::set`] and [`Self::clear`]).
+/// Each [`ActiveRelayActor`] updates only the status (via [`Self::set_status`]),
+/// which guards against stale writes: if another relay has become home since this actor
+/// was designated, the write is silently dropped.
+#[derive(Debug, Clone)]
+pub(crate) struct HomeRelayWatch {
+    inner: Watchable<Option<(RelayUrl, HomeRelayStatus)>>,
+}
+
+impl Default for HomeRelayWatch {
+    fn default() -> Self {
+        Self {
+            inner: Watchable::new(None),
+        }
+    }
+}
+
+impl HomeRelayWatch {
+    /// Set the home relay URL and status. Used by [`RelayActor`] on relay changes.
+    fn set(&self, url: RelayUrl, status: HomeRelayStatus) {
+        let _ = self.inner.set(Some((url, status)));
+    }
+
+    /// Clear the home relay (no preferred relay). Used by [`RelayActor`].
+    fn clear(&self) {
+        let _ = self.inner.set(None);
+    }
+
+    /// Update the status, but only if `url` is still the current home relay.
+    ///
+    /// This is the only write method [`ActiveRelayActor`] should use. It prevents a
+    /// demoted actor from overwriting a newer home relay's status: the [`RelayActor`]
+    /// updates the URL in the watchable *before* sending `SetHomeRelay(false)`, so by
+    /// the time the old actor tries to write, the URL no longer matches.
+    fn set_status(&self, url: &RelayUrl, status: HomeRelayStatus) {
+        if self.inner.get().as_ref().map(|p| &p.0) == Some(url) {
+            let _ = self.inner.set(Some((url.clone(), status)));
+        }
+    }
+
+    fn get(&self) -> Option<(RelayUrl, HomeRelayStatus)> {
+        self.inner.get()
+    }
+
+    pub(crate) fn watch(&self) -> n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>> {
+        self.inner.watch()
+    }
 }
 
 impl RelayActor {
@@ -982,24 +1079,29 @@ impl RelayActor {
     }
 
     async fn on_network_change(&mut self, report: Report) {
-        let my_relay = self.config.my_relay.get();
-        if report.preferred_relay == my_relay {
+        let prev = self.config.my_relay.get();
+        let prev_url = prev.as_ref().map(|p| &p.0);
+        if report.preferred_relay.as_ref() == prev_url {
             // No change.
             return;
         }
-        let old_relay = self
-            .config
-            .my_relay
-            .set(report.preferred_relay.clone())
-            .unwrap_or_else(|e| e);
 
         if let Some(relay_url) = report.preferred_relay {
             self.config.metrics.relay_home_change.inc();
 
             // On change, notify all currently connected relay servers and
             // start connecting to our home relay if we are not already.
-            info!("home is now relay {}, was {:?}", relay_url, old_relay);
+            info!("home is now relay {}, was {:?}", relay_url, prev_url);
+            // Publish `Connecting` initially. If an `ActiveRelayActor` already
+            // exists for this URL it will republish its actual status (e.g.
+            // `Connected`) when it receives the `SetHomeRelay(true)` message
+            // sent below.
+            self.config
+                .my_relay
+                .set(relay_url.clone(), HomeRelayStatus::Connecting);
             self.set_home_relay(relay_url).await;
+        } else {
+            self.config.my_relay.clear();
         }
     }
 
@@ -1071,7 +1173,7 @@ impl RelayActor {
             Some(e) => e.clone(),
             None => {
                 let handle = self.start_active_relay(url.clone());
-                if Some(&url) == self.config.my_relay.get().as_ref()
+                if Some(&url) == self.config.my_relay.get().as_ref().map(|p| &p.0)
                     && let Err(err) = handle
                         .inbox_addr
                         .try_send(ActiveRelayMessage::SetHomeRelay(true))
@@ -1111,6 +1213,7 @@ impl RelayActor {
             connection_opts,
             stop_token: self.cancel_token.child_token(),
             metrics: self.config.metrics.clone(),
+            my_relay: self.config.my_relay.clone(),
         };
         let actor = ActiveRelayActor::new(opts);
         self.active_relay_tasks.spawn(
@@ -1179,7 +1282,7 @@ impl RelayActor {
 
         // Make sure home relay exists
         if let Some(url) = self.config.my_relay.get() {
-            self.active_relay_handle(url);
+            self.active_relay_handle(url.0);
         }
         self.log_active_relay();
     }
@@ -1287,6 +1390,7 @@ mod tests {
             },
             stop_token,
             metrics: Default::default(),
+            my_relay: Default::default(),
         };
         let task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
         AbortOnDropHandle::new(task)
@@ -1591,5 +1695,30 @@ mod tests {
 
         let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
         assert!(res.is_err(), "ping timeout should only happen once");
+    }
+
+    #[test]
+    fn test_home_relay_watch_url_guard() {
+        use super::{HomeRelayStatus::*, HomeRelayWatch};
+
+        let watch = HomeRelayWatch::default();
+        let a: RelayUrl = "https://a.example.com".parse().unwrap();
+        let b: RelayUrl = "https://b.example.com".parse().unwrap();
+
+        // Actor A becomes home and connects
+        watch.set(a.clone(), Connecting);
+        watch.set_status(&a, Connected);
+        assert_eq!(watch.get(), Some((a.clone(), Connected)));
+
+        // RelayActor migrates home to B
+        watch.set(b.clone(), Connecting);
+
+        // Old actor A tries to write -- rejected because URL changed
+        watch.set_status(&a, Disconnected);
+        assert_eq!(watch.get(), Some((b.clone(), Connecting)));
+
+        // Actor B writes normally
+        watch.set_status(&b, Connected);
+        assert_eq!(watch.get(), Some((b.clone(), Connected)));
     }
 }

@@ -2365,7 +2365,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.97.0"
+version = "0.98.0"
 dependencies = [
  "axum",
  "backon",
@@ -2421,7 +2421,6 @@ dependencies = [
  "smallvec",
  "strum 0.28.0",
  "swarm-discovery",
- "sync_wrapper",
  "testdir",
  "time",
  "tokio",
@@ -2438,10 +2437,11 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.97.0"
+version = "0.98.0"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
+ "data-encoding-macro",
  "derive_more",
  "digest",
  "ed25519-dalek",
@@ -2463,7 +2463,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bench"
-version = "0.97.0"
+version = "0.98.0"
 dependencies = [
  "bytes",
  "clap",
@@ -2483,10 +2483,8 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns"
-version = "0.97.0"
+version = "0.98.0"
 dependencies = [
- "data-encoding",
- "data-encoding-macro",
  "derive_more",
  "iroh-base",
  "n0-error",
@@ -2497,7 +2495,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.97.0"
+version = "0.98.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2587,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.97.0"
+version = "0.98.0"
 dependencies = [
  "ahash",
  "blake3",

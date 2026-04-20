@@ -1409,7 +1409,7 @@ mod tests {
     async fn make_test_client(client: tokio::io::DuplexStream, key: &SecretKey) -> Result<Conn> {
         let client = crate::client::streams::MaybeTlsStream::Test(client);
         let client = tokio_websockets::ClientBuilder::new().take_over(client);
-        let client = Conn::new(client, KeyCache::test(), key).await?;
+        let client = Conn::new(client, KeyCache::test(), key, Default::default()).await?;
         Ok(client)
     }
 

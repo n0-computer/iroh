@@ -15,7 +15,7 @@ use hickory_server::proto::{
     serialize::binary::BinDecodable,
 };
 use iroh_base::PublicKey;
-use iroh_dns::{EndpointIdExt, pkarr::SignedPacket};
+use iroh_dns::pkarr::SignedPacket;
 use n0_error::{e, stack_error};
 
 /// A lightweight `[u8; 32]` wrapper used as a key for caches and database lookups.
