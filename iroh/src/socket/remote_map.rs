@@ -244,13 +244,6 @@ impl RemoteMap {
         }
     }
 
-    pub(super) async fn remote_info(&mut self, id: EndpointId) -> Option<RemoteInfo> {
-        let actor = self.remote_state_actor_if_exists(id)?;
-        let (tx, rx) = oneshot::channel();
-        actor.send(RemoteStateMessage::RemoteInfo(tx)).await.ok()?;
-        rx.await.ok()
-    }
-
     pub(super) async fn add_connection(
         &mut self,
         remote: EndpointId,
@@ -288,13 +281,6 @@ impl RemoteMap {
         } else {
             sender.clone()
         }
-    }
-
-    pub(super) fn remote_state_actor_if_exists(
-        &self,
-        eid: EndpointId,
-    ) -> Option<mpsc::Sender<RemoteStateMessage>> {
-        self.senders.get(&eid)
     }
 
     pub(super) fn senders(&self) -> ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>> {
