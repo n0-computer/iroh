@@ -2,6 +2,15 @@
 
 All notable changes to iroh will be documented in this file.
 
+## [0.98.1](https://github.com/n0-computer/iroh/compare/v0.98.0..0.98.1) - 2026-04-20
+
+### 🐛 Bug Fixes
+
+- *(ci)* Fix arm builds and some cleanup ([#4139](https://github.com/n0-computer/iroh/issues/4139)) - ([867471d](https://github.com/n0-computer/iroh/commit/867471dd76599ffed4ce7278a74753a44001500e))
+- *(iroh)* Don't block socket actor loop on address lookups ([#4138](https://github.com/n0-computer/iroh/issues/4138)) - ([c7dba4a](https://github.com/n0-computer/iroh/commit/c7dba4a265c76af1c597d9f8dcd2ab2d88f06f5f))
+- *(iroh)* Reduce await points in socket actor loop ([#4143](https://github.com/n0-computer/iroh/issues/4143)) - ([28b4cfe](https://github.com/n0-computer/iroh/commit/28b4cfea00fd1958971e22d6d8359214c2fc6bdc))
+- Set default crypto provider for iroh-dns-server binary ([#4142](https://github.com/n0-computer/iroh/issues/4142)) - ([aed36e1](https://github.com/n0-computer/iroh/commit/aed36e1a2495503c5075a2aa55e53a58c04a1798))
+
 ## [0.98.0](https://github.com/n0-computer/iroh/compare/v0.97.0..0.98.0) - 2026-04-17
 
 ### ⛰️  Features
