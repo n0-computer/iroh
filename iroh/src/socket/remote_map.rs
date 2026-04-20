@@ -248,14 +248,13 @@ impl RemoteMap {
         &mut self,
         remote: EndpointId,
         conn: noq::WeakConnectionHandle,
-    ) -> Option<PathWatchable> {
+        tx: oneshot::Sender<PathWatchable>,
+    ) -> Result<(), RemoteStateActorStoppedError> {
         let actor = self.remote_state_actor(remote);
-        let (tx, rx) = oneshot::channel();
         actor
             .send(RemoteStateMessage::AddConnection(conn, tx))
-            .await
-            .ok()?;
-        rx.await.ok()
+            .await?;
+        Ok(())
     }
 
     /// Returns the sender for the [`RemoteStateActor`].

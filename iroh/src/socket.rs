@@ -1729,9 +1729,10 @@ impl Actor {
                 tx.send(self.remote_map.resolve_remote(addr).await).ok();
             }
             ActorMessage::AddConnection(remote, conn, tx) => {
-                if let Some(watcher) = self.remote_map.add_connection(remote, conn).await {
-                    tx.send(watcher).ok();
-                }
+                // Swallowing the error is fine here; if a send on the channel to the
+                // remote state actor ever fails (which it shouldn't), `tx` will be
+                // dropped and thus the failure will be propagated to the caller.
+                self.remote_map.add_connection(remote, conn, tx).await.ok();
             }
             ActorMessage::DirectAddrRefresh => {
                 #[cfg(not(wasm_browser))]
