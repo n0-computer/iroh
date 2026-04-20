@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["IROH_TXT_NAME"],"enum":["EncodingError","ParseError"],"struct":["AddrFilter","EndpointData","EndpointInfo","MaxLengthExceededError","UserData"]};
