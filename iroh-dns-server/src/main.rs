@@ -15,6 +15,16 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
+
+    // Install `ring` as default crypto provider for rustls.
+    // This helps when both ring and aws-lc-rs rustls features are enabled
+    // (e.g. via `--all-features` in the release build), otherwise rustls
+    // panics because it can't determine a default provider from crate features.
+    // `ring` is enabled by the default `ring` feature of this crate.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to set default crypto provider");
+
     let args = Cli::parse();
 
     let config = if let Some(path) = args.config {
