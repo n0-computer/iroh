@@ -238,25 +238,17 @@ impl RemoteMap {
         Ok(())
     }
 
-    pub(super) async fn remote_info(&mut self, id: EndpointId) -> Option<RemoteInfo> {
-        let actor = self.remote_state_actor_if_exists(id)?;
-        let (tx, rx) = oneshot::channel();
-        actor.send(RemoteStateMessage::RemoteInfo(tx)).await.ok()?;
-        rx.await.ok()
-    }
-
     pub(super) async fn add_connection(
         &mut self,
         remote: EndpointId,
         conn: noq::WeakConnectionHandle,
-    ) -> Option<PathWatchable> {
+        tx: oneshot::Sender<PathWatchable>,
+    ) -> Result<(), RemoteStateActorStoppedError> {
         let actor = self.remote_state_actor(remote);
-        let (tx, rx) = oneshot::channel();
         actor
             .send(RemoteStateMessage::AddConnection(conn, tx))
-            .await
-            .ok()?;
-        rx.await.ok()
+            .await?;
+        Ok(())
     }
 
     /// Returns the sender for the [`RemoteStateActor`].
@@ -282,13 +274,6 @@ impl RemoteMap {
         } else {
             sender.clone()
         }
-    }
-
-    pub(super) fn remote_state_actor_if_exists(
-        &self,
-        eid: EndpointId,
-    ) -> Option<mpsc::Sender<RemoteStateMessage>> {
-        self.senders.get(&eid)
     }
 
     pub(super) fn senders(&self) -> ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>> {
