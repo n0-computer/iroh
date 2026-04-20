@@ -317,9 +317,13 @@ impl ShutdownState {
 /// possible.
 #[derive(Debug)]
 pub(crate) struct Socket {
-    /// Channels for sending time-crucial messages to `RemoteStateActors`.
+    /// Read-only view of the per-remote `RemoteStateActor` inboxes.
     ///
-    /// Currently only exists to support sending `SendDatagram` messages.
+    /// Lets callers send to an existing `RemoteStateActor` without going through
+    /// the socket actor.
+    ///
+    /// A missing entry means no actor is running for that remote. Spawning new
+    /// `RemoteStateActor`s must go through the socket actor channel.
     remote_actors: ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
 
     /// EndpointId of this endpoint.
