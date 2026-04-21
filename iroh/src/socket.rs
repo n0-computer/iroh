@@ -572,12 +572,21 @@ impl Socket {
             let noq_meta = &mut metas[i];
             let source_addr = &source_addrs[i];
 
-            let datagram_count = noq_meta.len.div_ceil(noq_meta.stride);
+            // Custom transports (e.g. BLE) can surface zero-length metadata
+            // where `stride == 0`, and `u*::div_ceil(0)` panics. Treat a
+            // zero-stride entry as a single datagram for the purposes of
+            // the per-packet metric - there is no GRO fan-out to compute
+            // (iroh#4144).
+            let datagram_count = if noq_meta.stride == 0 {
+                1
+            } else {
+                noq_meta.len.div_ceil(noq_meta.stride)
+            };
             self.metrics
                 .socket
                 .recv_datagrams
                 .inc_by(datagram_count as _);
-            if noq_meta.len > noq_meta.stride {
+            if noq_meta.stride > 0 && noq_meta.len > noq_meta.stride {
                 trace!(
                     src = ?source_addr,
                     len = noq_meta.len,
