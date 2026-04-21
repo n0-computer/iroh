@@ -44,7 +44,7 @@ use iroh_relay::{
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, Status},
 };
-use n0_error::{e, stack_error};
+use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     FuturesUnorderedBounded, SinkExt, StreamExt,
     task::JoinSet,
@@ -59,7 +59,9 @@ use url::Url;
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-use crate::{net_report::Report, socket::Metrics as SocketMetrics, util::MaybeFuture};
+use crate::{
+    endpoint::RelayStatus, net_report::Report, socket::Metrics as SocketMetrics, util::MaybeFuture,
+};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -319,24 +321,23 @@ impl ActiveRelayActor {
 
         while let Err(err) = self.run_once().await {
             warn!("{err:#}");
+            let was_established = matches!(err, RelayConnectionError::Established { .. });
+            let last_error = Some(Arc::new(AnyError::from(err)));
             self.my_relay
-                .set_status(&self.url, HomeRelayStatus::Disconnected);
-            match err {
-                RelayConnectionError::Dial { .. } | RelayConnectionError::Handshake { .. } => {
-                    // If dialing failed, or if the relay connection failed before we received a pong,
-                    // we wait an exponentially increasing time until we attempt to reconnect again.
-                    let Some(delay) = backoff.next() else {
-                        warn!("retries exceeded");
-                        break;
-                    };
-                    debug!("retry in {delay:?}");
-                    time::sleep(delay).await;
-                }
-                RelayConnectionError::Established { .. } => {
-                    // If the relay connection remained established long enough so that we received a pong
-                    // from the relay server, we reset the backoff and attempt to reconnect immediately.
-                    backoff = Self::build_backoff();
-                }
+                .set_status(&self.url, HomeRelayStatus::Disconnected { last_error });
+            if !was_established {
+                // If dialing failed, or if the relay connection failed before we received a pong,
+                // we wait an exponentially increasing time until we attempt to reconnect again.
+                let Some(delay) = backoff.next() else {
+                    warn!("retries exceeded");
+                    break;
+                };
+                debug!("retry in {delay:?}");
+                time::sleep(delay).await;
+            } else {
+                // If the relay connection remained established long enough so that we received a pong
+                // from the relay server, we reset the backoff and attempt to reconnect immediately.
+                backoff = Self::build_backoff();
             }
         }
         debug!("exiting");
@@ -574,10 +575,8 @@ impl ActiveRelayActor {
                             // `Connecting` on the URL change since it cannot know our
                             // actual state).
                             if is_home {
-                                self.my_relay.set_status(
-                                    &self.url,
-                                    HomeRelayStatus::Connected,
-                                );
+                                self.my_relay
+                                    .set_status(&self.url, HomeRelayStatus::Connected);
                             }
                         }
                         ActiveRelayMessage::CheckConnection { local_ips } => {
@@ -877,25 +876,65 @@ pub(crate) struct Config {
 
 /// Connection status of the home relay.
 ///
-/// Published via [`HomeRelayWatch`] so that [`Endpoint::online`] can wait until the
-/// relay is fully connected, not just selected.
+/// Published via [`HomeRelayWatch`] so that [`Endpoint::online`] and the public
+/// [`Endpoint::home_relay_status`] watcher can observe the connection state.
+/// This type is `pub(crate)`; the public surface lives on
+/// [`crate::endpoint::RelayStatus`], and this enum is intentionally free to
+/// evolve without affecting the public API.
 ///
 /// [`Endpoint::online`]: crate::Endpoint::online
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+/// [`Endpoint::home_relay_status`]: crate::Endpoint::home_relay_status
+#[derive(Debug, Clone)]
 pub(crate) enum HomeRelayStatus {
     /// Dialing or performing the relay handshake.
     Connecting,
-    /// Connected and handshaked, the endpoint is registered and reachable.
+    /// Connected and handshaked. The endpoint can send datagrams through
+    /// this relay.
     Connected,
-    /// Connection lost after having been connected.
-    Disconnected,
+    /// Not connected. Either the connection was lost after having been
+    /// established, or an attempt to connect failed.
+    ///
+    /// `last_error` carries the most recent connection error, if any. The
+    /// initial transition into this state (before any attempt has produced
+    /// an error) carries `None`.
+    ///
+    /// The `Arc` is compared by pointer identity: each new failure produces
+    /// a fresh allocation, so the watcher fires on every new error.
+    Disconnected { last_error: Option<Arc<AnyError>> },
 }
 
 impl HomeRelayStatus {
     pub(crate) fn is_connected(&self) -> bool {
         matches!(self, Self::Connected)
     }
+
+    pub(crate) fn last_error(&self) -> Option<&AnyError> {
+        match self {
+            Self::Disconnected {
+                last_error: Some(err),
+            } => Some(err),
+            _ => None,
+        }
+    }
 }
+
+impl PartialEq for HomeRelayStatus {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Connecting, Self::Connecting) | (Self::Connected, Self::Connected) => true,
+            (Self::Disconnected { last_error: a }, Self::Disconnected { last_error: b }) => {
+                match (a, b) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for HomeRelayStatus {}
 
 /// Shared watchable for the home relay URL and connection status.
 ///
@@ -909,7 +948,7 @@ impl HomeRelayStatus {
 /// was designated, the write is silently dropped.
 #[derive(Debug, Clone)]
 pub(crate) struct HomeRelayWatch {
-    inner: Watchable<Option<(RelayUrl, HomeRelayStatus)>>,
+    inner: Watchable<Option<RelayStatus>>,
 }
 
 impl Default for HomeRelayWatch {
@@ -923,7 +962,7 @@ impl Default for HomeRelayWatch {
 impl HomeRelayWatch {
     /// Set the home relay URL and status. Used by [`RelayActor`] on relay changes.
     fn set(&self, url: RelayUrl, status: HomeRelayStatus) {
-        let _ = self.inner.set(Some((url, status)));
+        let _ = self.inner.set(Some(RelayStatus::new(url, status)));
     }
 
     /// Clear the home relay (no preferred relay). Used by [`RelayActor`].
@@ -938,16 +977,16 @@ impl HomeRelayWatch {
     /// updates the URL in the watchable *before* sending `SetHomeRelay(false)`, so by
     /// the time the old actor tries to write, the URL no longer matches.
     fn set_status(&self, url: &RelayUrl, status: HomeRelayStatus) {
-        if self.inner.get().as_ref().map(|p| &p.0) == Some(url) {
-            let _ = self.inner.set(Some((url.clone(), status)));
+        if self.inner.get().as_ref().map(RelayStatus::url) == Some(url) {
+            let _ = self.inner.set(Some(RelayStatus::new(url.clone(), status)));
         }
     }
 
-    fn get(&self) -> Option<(RelayUrl, HomeRelayStatus)> {
+    fn get(&self) -> Option<RelayStatus> {
         self.inner.get()
     }
 
-    pub(crate) fn watch(&self) -> n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>> {
+    pub(crate) fn watch(&self) -> n0_watcher::Direct<Option<RelayStatus>> {
         self.inner.watch()
     }
 }
@@ -1080,7 +1119,7 @@ impl RelayActor {
 
     async fn on_network_change(&mut self, report: Report) {
         let prev = self.config.my_relay.get();
-        let prev_url = prev.as_ref().map(|p| &p.0);
+        let prev_url = prev.as_ref().map(RelayStatus::url);
         if report.preferred_relay.as_ref() == prev_url {
             // No change.
             return;
@@ -1173,7 +1212,7 @@ impl RelayActor {
             Some(e) => e.clone(),
             None => {
                 let handle = self.start_active_relay(url.clone());
-                if Some(&url) == self.config.my_relay.get().as_ref().map(|p| &p.0)
+                if Some(&url) == self.config.my_relay.get().as_ref().map(RelayStatus::url)
                     && let Err(err) = handle
                         .inbox_addr
                         .try_send(ActiveRelayMessage::SetHomeRelay(true))
@@ -1281,8 +1320,8 @@ impl RelayActor {
             .retain(|_url, handle| !handle.inbox_addr.is_closed());
 
         // Make sure home relay exists
-        if let Some(url) = self.config.my_relay.get() {
-            self.active_relay_handle(url.0);
+        if let Some(status) = self.config.my_relay.get() {
+            self.active_relay_handle(status.url().clone());
         }
         self.log_active_relay();
     }
@@ -1699,26 +1738,36 @@ mod tests {
 
     #[test]
     fn test_home_relay_watch_url_guard() {
-        use super::{HomeRelayStatus::*, HomeRelayWatch};
+        use super::{HomeRelayStatus, HomeRelayWatch};
+        use crate::endpoint::RelayStatus;
 
         let watch = HomeRelayWatch::default();
         let a: RelayUrl = "https://a.example.com".parse().unwrap();
         let b: RelayUrl = "https://b.example.com".parse().unwrap();
 
         // Actor A becomes home and connects
-        watch.set(a.clone(), Connecting);
-        watch.set_status(&a, Connected);
-        assert_eq!(watch.get(), Some((a.clone(), Connected)));
+        watch.set(a.clone(), HomeRelayStatus::Connecting);
+        watch.set_status(&a, HomeRelayStatus::Connected);
+        assert_eq!(
+            watch.get(),
+            Some(RelayStatus::new(a.clone(), HomeRelayStatus::Connected)),
+        );
 
         // RelayActor migrates home to B
-        watch.set(b.clone(), Connecting);
+        watch.set(b.clone(), HomeRelayStatus::Connecting);
 
         // Old actor A tries to write -- rejected because URL changed
-        watch.set_status(&a, Disconnected);
-        assert_eq!(watch.get(), Some((b.clone(), Connecting)));
+        watch.set_status(&a, HomeRelayStatus::Disconnected { last_error: None });
+        assert_eq!(
+            watch.get(),
+            Some(RelayStatus::new(b.clone(), HomeRelayStatus::Connecting)),
+        );
 
         // Actor B writes normally
-        watch.set_status(&b, Connected);
-        assert_eq!(watch.get(), Some((b.clone(), Connected)));
+        watch.set_status(&b, HomeRelayStatus::Connected);
+        assert_eq!(
+            watch.get(),
+            Some(RelayStatus::new(b, HomeRelayStatus::Connected)),
+        );
     }
 }
