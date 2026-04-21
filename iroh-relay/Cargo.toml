@@ -87,7 +87,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "=0.26.0-beta.4", features = ["tokio", "system-config"] }
+simple-dns = "0.9.3"
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -98,6 +98,10 @@ tokio = { version = "1", features = [
     "io-std",
 ] }
 tokio-websockets = { version = "0.13", features = ["rustls-bring-your-own-connector", "getrandom", "rand", "client", "sha1_smol"] }
+
+# Windows-only dependencies
+[target.'cfg(windows)'.dependencies]
+ipconfig = "0.3"
 
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
@@ -133,6 +137,7 @@ platform-verifier = ["dep:rustls-platform-verifier"]
 server = [
     "metrics",
     "tokio/signal",
+    "tokio/rt-multi-thread",
     "dep:clap",
     "dep:dashmap",
     "dep:ahash",
@@ -160,14 +165,12 @@ tls-ring = [
     "rustls/ring",
     "tokio-rustls/ring",
     "tokio-websockets/ring",
-    "hickory-resolver/https-ring",
 ]
 tls-aws-lc-rs = [
     "noq/aws-lc-rs",
     "rustls/aws-lc-rs",
     "tokio-rustls/aws-lc-rs",
     "tokio-websockets/aws_lc_rs",
-    "hickory-resolver/https-aws-lc-rs",
 ]
 
 [[bin]]

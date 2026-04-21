@@ -78,10 +78,9 @@ axum = { version = "0.8", optional = true }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-
-hickory-resolver = { version = "=0.26.0-beta.4", default-features = false }
-portmapper = { version = "0.16", optional = true, default-features = false }
 noq = { version = "0.18.0", default-features = false, features = ["runtime-tokio", "rustls"] }
+portmapper = { version = "0.16", optional = true, default-features = false }
+simple-dns = "0.9.3"
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -117,6 +116,7 @@ tokio = { version = "1", features = [
     "io-util",
     "sync",
     "rt",
+    "rt-multi-thread",
     "net",
     "fs",
     "macros",
