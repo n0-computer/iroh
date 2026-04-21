@@ -19,7 +19,7 @@ use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap, tls::CaRootsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
-use n0_error::{e, ensure, stack_error};
+use n0_error::{AnyError, e, ensure, stack_error};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
@@ -58,6 +58,7 @@ use crate::{
     metrics::EndpointMetrics,
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
+        transports::RelayConnectionState,
     },
     tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
@@ -1285,11 +1286,7 @@ impl Endpoint {
         let mut watcher = self.inner.home_relay_status();
         let mut value = watcher.get();
         loop {
-            if value
-                .into_iter()
-                .flatten()
-                .any(|(_url, status)| status.is_connected())
-            {
+            if value.into_iter().any(|status| status.is_connected()) {
                 return;
             }
             value = match watcher.updated().await {
@@ -1300,6 +1297,22 @@ impl Endpoint {
                 }
             }
         }
+    }
+
+    /// Returns a [`Watcher`] over the connection status of the endpoint's home relays.
+    ///
+    /// The watched value has one entry per home relay whose URL is known,
+    /// and is empty when no relays are configured or before the endpoint has
+    /// selected one the home relay from the list of configured relays.
+    /// The watcher updates whenever any home relay's connection status changes.
+    /// See [`RelayStatus`] for the information available on each entry.
+    ///
+    /// The returned watcher only becomes disconnected once the last clone of
+    /// the [`Endpoint`] is dropped. Closing the endpoint does not disconnect
+    /// the watcher. To stop a task once the endpoint stops, combine with
+    /// [`Self::closed`].
+    pub fn home_relay_status(&self) -> impl Watcher<Value = Vec<RelayStatus>> + use<> {
+        self.inner.home_relay_status()
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -1804,6 +1817,40 @@ fn proxy_url_from_env() -> Option<Url> {
     }
 
     None
+}
+
+/// Connection status of a single home relay.
+///
+/// Observed via [`Endpoint::home_relay_status`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayStatus {
+    url: RelayUrl,
+    state: RelayConnectionState,
+}
+
+impl RelayStatus {
+    pub(crate) fn new(url: RelayUrl, state: RelayConnectionState) -> Self {
+        Self { url, state }
+    }
+
+    /// Returns the URL of the home relay.
+    pub fn url(&self) -> &RelayUrl {
+        &self.url
+    }
+
+    /// Returns `true` if the endpoint is connected to the relay.
+    pub fn is_connected(&self) -> bool {
+        self.state.is_connected()
+    }
+
+    /// Returns the most recent connection error, if the relay is currently
+    /// disconnected.
+    ///
+    /// Returns `None` when the relay is connected, or when the endpoint has
+    /// not yet observed a failed connection attempt.
+    pub fn last_error(&self) -> Option<&AnyError> {
+        self.state.last_error().map(Arc::as_ref)
+    }
 }
 
 /// Configuration of the relay servers for an [`Endpoint`].
