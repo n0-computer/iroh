@@ -154,6 +154,13 @@ struct ActiveRelayActor {
     stop_token: CancellationToken,
     metrics: Arc<SocketMetrics>,
     my_relay: HomeRelayWatch,
+    /// Latest degraded-state signal from the relay server.
+    ///
+    /// Set to `true` on `Status::SameEndpointIdConnected`, cleared on
+    /// `Status::Healthy`. Reset to `false` on every fresh dial. Used to
+    /// publish the correct flag on [`HomeRelayStatus::Connected`] without
+    /// having to interrogate the server on every status republish.
+    is_degraded: bool,
 }
 
 #[derive(Debug)]
@@ -283,6 +290,7 @@ impl ActiveRelayActor {
             stop_token,
             metrics,
             my_relay,
+            is_degraded: false,
         }
     }
 
@@ -358,6 +366,10 @@ impl ActiveRelayActor {
     /// or if the relay connection failed while connected. In both cases, the connection should
     /// be retried with a backoff.
     async fn run_once(&mut self) -> Result<(), RelayConnectionError> {
+        // A fresh dial resets any degraded state left from a previous
+        // connection: the server will re-send `SameEndpointIdConnected`
+        // if the condition still applies.
+        self.is_degraded = false;
         self.my_relay
             .set_status(&self.url, HomeRelayStatus::Connecting);
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
@@ -365,7 +377,7 @@ impl ActiveRelayActor {
             None => return Ok(()),
         };
         self.my_relay
-            .set_status(&self.url, HomeRelayStatus::Connected);
+            .set_status(&self.url, HomeRelayStatus::Connected { degraded: false });
         self.run_connected(client)
             .instrument(info_span!("connected"))
             .await
@@ -575,8 +587,12 @@ impl ActiveRelayActor {
                             // `Connecting` on the URL change since it cannot know our
                             // actual state).
                             if is_home {
-                                self.my_relay
-                                    .set_status(&self.url, HomeRelayStatus::Connected);
+                                self.my_relay.set_status(
+                                    &self.url,
+                                    HomeRelayStatus::Connected {
+                                        degraded: self.is_degraded,
+                                    },
+                                );
                             }
                         }
                         ActiveRelayMessage::CheckConnection { local_ips } => {
@@ -701,7 +717,18 @@ impl ActiveRelayActor {
                 state.established = true;
             }
             RelayToClientMsg::Status(status) => match status {
-                Status::Healthy => info!("Relay server reports: {status}"),
+                Status::Healthy => {
+                    info!("Relay server reports: {status}");
+                    self.is_degraded = false;
+                    self.my_relay
+                        .set_status(&self.url, HomeRelayStatus::Connected { degraded: false });
+                }
+                Status::SameEndpointIdConnected => {
+                    warn!("Relay server reports problem: {status}");
+                    self.is_degraded = true;
+                    self.my_relay
+                        .set_status(&self.url, HomeRelayStatus::Connected { degraded: true });
+                }
                 _ => warn!("Relay server reports problem: {status}"),
             },
             RelayToClientMsg::Restarting { .. } => {
@@ -890,7 +917,11 @@ pub(crate) enum HomeRelayStatus {
     Connecting,
     /// Connected and handshaked. The endpoint can send datagrams through
     /// this relay.
-    Connected,
+    ///
+    /// `degraded` is `true` when the relay reports that another endpoint
+    /// with the same endpoint id is its active connection: sending still
+    /// works, but incoming datagrams are routed to the other endpoint.
+    Connected { degraded: bool },
     /// Not connected. Either the connection was lost after having been
     /// established, or an attempt to connect failed.
     ///
@@ -905,7 +936,7 @@ pub(crate) enum HomeRelayStatus {
 
 impl HomeRelayStatus {
     pub(crate) fn is_connected(&self) -> bool {
-        matches!(self, Self::Connected)
+        matches!(self, Self::Connected { .. })
     }
 
     pub(crate) fn last_error(&self) -> Option<&AnyError> {
@@ -921,7 +952,8 @@ impl HomeRelayStatus {
 impl PartialEq for HomeRelayStatus {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Connecting, Self::Connecting) | (Self::Connected, Self::Connected) => true,
+            (Self::Connecting, Self::Connecting) => true,
+            (Self::Connected { degraded: a }, Self::Connected { degraded: b }) => a == b,
             (Self::Disconnected { last_error: a }, Self::Disconnected { last_error: b }) => {
                 match (a, b) {
                     (None, None) => true,
@@ -1744,13 +1776,14 @@ mod tests {
         let watch = HomeRelayWatch::default();
         let a: RelayUrl = "https://a.example.com".parse().unwrap();
         let b: RelayUrl = "https://b.example.com".parse().unwrap();
+        let connected = HomeRelayStatus::Connected { degraded: false };
 
         // Actor A becomes home and connects
         watch.set(a.clone(), HomeRelayStatus::Connecting);
-        watch.set_status(&a, HomeRelayStatus::Connected);
+        watch.set_status(&a, connected.clone());
         assert_eq!(
             watch.get(),
-            Some(RelayStatus::new(a.clone(), HomeRelayStatus::Connected)),
+            Some(RelayStatus::new(a.clone(), connected.clone())),
         );
 
         // RelayActor migrates home to B
@@ -1764,10 +1797,45 @@ mod tests {
         );
 
         // Actor B writes normally
-        watch.set_status(&b, HomeRelayStatus::Connected);
+        watch.set_status(&b, connected.clone());
+        assert_eq!(watch.get(), Some(RelayStatus::new(b, connected)));
+    }
+
+    #[test]
+    fn test_home_relay_watch_degraded_transitions() {
+        use super::{HomeRelayStatus, HomeRelayWatch};
+        use crate::endpoint::RelayStatus;
+
+        let watch = HomeRelayWatch::default();
+        let url: RelayUrl = "https://a.example.com".parse().unwrap();
+
+        watch.set(url.clone(), HomeRelayStatus::Connecting);
+        watch.set_status(&url, HomeRelayStatus::Connected { degraded: false });
         assert_eq!(
             watch.get(),
-            Some(RelayStatus::new(b, HomeRelayStatus::Connected)),
+            Some(RelayStatus::new(
+                url.clone(),
+                HomeRelayStatus::Connected { degraded: false }
+            )),
+        );
+
+        watch.set_status(&url, HomeRelayStatus::Connected { degraded: true });
+        assert_eq!(
+            watch.get(),
+            Some(RelayStatus::new(
+                url.clone(),
+                HomeRelayStatus::Connected { degraded: true }
+            )),
+        );
+
+        // Healthy clears the degraded state.
+        watch.set_status(&url, HomeRelayStatus::Connected { degraded: false });
+        assert_eq!(
+            watch.get(),
+            Some(RelayStatus::new(
+                url,
+                HomeRelayStatus::Connected { degraded: false }
+            )),
         );
     }
 }

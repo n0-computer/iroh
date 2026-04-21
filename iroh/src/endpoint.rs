@@ -1839,8 +1839,28 @@ impl RelayStatus {
     }
 
     /// Returns `true` if the endpoint is connected to the relay.
+    ///
+    /// A connection may still be degraded (see [`Self::is_degraded`]):
+    /// `true` means the endpoint can send datagrams through this relay,
+    /// not that all relay-mediated traffic is flowing.
     pub fn is_connected(&self) -> bool {
         self.status.is_connected()
+    }
+
+    /// Returns `true` if the home relay connection is degraded.
+    ///
+    /// A degraded connection is one where the endpoint is connected to
+    /// the relay but the relay is not delivering incoming datagrams to
+    /// this endpoint. Sending still works; replies will not arrive.
+    ///
+    /// Today this occurs when another endpoint with the same endpoint id
+    /// is connected to the same relay server, which usually points to
+    /// two processes started with the same secret key.
+    pub fn is_degraded(&self) -> bool {
+        matches!(
+            self.status,
+            socket::transports::HomeRelayStatus::Connected { degraded: true }
+        )
     }
 
     /// Returns the most recent connection error, if the relay is currently
