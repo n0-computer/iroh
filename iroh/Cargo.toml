@@ -133,6 +133,7 @@ tracing-subscriber = { version = "0.3", features = [
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
 iroh-base = { version = "0.98.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-tickets = "0.5"
 console = { version = "0.16" }
 
 # wasm-in-browser test/dev dependencies

@@ -2391,6 +2391,7 @@ dependencies = [
  "iroh-dns",
  "iroh-metrics",
  "iroh-relay",
+ "iroh-tickets",
  "mainline",
  "n0-error",
  "n0-future",
@@ -2643,6 +2644,20 @@ dependencies = [
  "vergen-gitcl",
  "webpki-roots",
  "ws_stream_wasm",
+]
+
+[[package]]
+name = "iroh-tickets"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09579438a34a147dcdce8a67cdf59bd53a197bfefe71da1a8e94df9aec0583ae"
+dependencies = [
+ "data-encoding",
+ "derive_more",
+ "iroh-base",
+ "n0-error",
+ "postcard",
+ "serde",
 ]
 
 [[package]]
