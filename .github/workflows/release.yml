@@ -106,7 +106,7 @@ jobs:
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: amd64
-                cargo_targets: "x86_64-unknown-linux-musl"
+                cargo_targets: "x86_64-unknown-linux-gnu"
                 runner: [self-hosted, linux, X64]
               - name: macOS-latest
                 os: macOS-latest
