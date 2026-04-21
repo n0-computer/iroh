@@ -44,3 +44,6 @@ unused-async = "warn"
 
 [patch.crates-io]
 iroh-base = { path = "iroh-base" }
+noq = { git = "https://github.com/n0-computer/noq", branch = "fix-retry" }
+noq-proto = { git = "https://github.com/n0-computer/noq", branch = "fix-retry" }
+noq-udp = { git = "https://github.com/n0-computer/noq", branch = "fix-retry" }
