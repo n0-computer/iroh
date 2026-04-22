@@ -31,7 +31,7 @@ use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
 use iroh_base::{PublicKey, SecretKey};
-use n0_error::{e, ensure, stack_error};
+use n0_error::{AnyError, anyerr, e, ensure, stack_error};
 use n0_future::{SinkExt, TryStreamExt};
 #[cfg(feature = "server")]
 use rand::CryptoRng;
@@ -136,15 +136,9 @@ impl Frame for ServerDeniesAuth {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum Error {
-    #[error(transparent)]
-    Websocket {
-        #[cfg(not(wasm_browser))]
-        #[error(from, std_err)]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        #[error(from, std_err)]
-        source: ws_stream_wasm::WsErr,
-    },
+    /// or a `ws_stream_wasm::WsErr` (when running in wasm). You can use [`AnyError::downcast_ref`]
+    #[error("WebSocket error")]
+    Websocket { source: AnyError },
     #[error("Handshake stream ended prematurely")]
     UnexpectedEnd {},
     #[error(transparent)]
@@ -162,8 +156,7 @@ pub enum Error {
     #[error("Handshake failed while deserializing {frame_type:?} frame")]
     DeserializationError {
         frame_type: FrameType,
-        #[error(std_err)]
-        source: postcard::Error,
+        source: AnyError,
     },
     #[cfg(feature = "server")]
     /// Failed to deserialize client auth header
@@ -512,8 +505,12 @@ async fn write_frame<F: serde::Serialize + Frame>(
         .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
         .into_inner()
         .freeze();
-    io.send(bytes).await?;
-    io.flush().await?;
+    io.send(bytes)
+        .await
+        .map_err(|err| e!(Error::Websocket, anyerr!(err)))?;
+    io.flush()
+        .await
+        .map_err(|err| e!(Error::Websocket, anyerr!(err)))?;
     Ok(())
 }
 
@@ -523,7 +520,8 @@ async fn read_frame(
 ) -> Result<(FrameType, Bytes), Error> {
     let mut payload = io
         .try_next()
-        .await?
+        .await
+        .map_err(|err| e!(Error::Websocket, anyerr!(err)))?
         .ok_or_else(|| e!(Error::UnexpectedEnd))?;
 
     let frame_type = FrameType::from_bytes(&mut payload)?;
@@ -543,7 +541,7 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
     postcard::from_bytes(&frame).map_err(|err| {
         e!(Error::DeserializationError {
             frame_type: F::TAG,
-            source: err
+            source: anyerr!(err)
         })
     })
 }
@@ -552,7 +550,7 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
 mod tests {
     use bytes::BytesMut;
     use iroh_base::{PublicKey, SecretKey};
-    use n0_error::{Result, StackResultExt, StdResultExt};
+    use n0_error::{AnyError, Result, StackResultExt, StdResultExt};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use n0_tracing_test::traced_test;
     use rand::{RngExt, SeedableRng};
@@ -651,13 +649,13 @@ mod tests {
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(tokio_websockets::Error::Io)
-            .sink_map_err(tokio_websockets::Error::Io)
+            .map_err(AnyError::from_std)
+            .sink_map_err(AnyError::from_std)
             .with_shared_secret(client_shared_secret);
         let mut server_io = Framed::new(server, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(tokio_websockets::Error::Io)
-            .sink_map_err(tokio_websockets::Error::Io)
+            .map_err(AnyError::from_std)
+            .sink_map_err(AnyError::from_std)
             .with_shared_secret(server_shared_secret);
 
         let client_auth_header = KeyMaterialClientAuth::new(secret_key, &client_io)

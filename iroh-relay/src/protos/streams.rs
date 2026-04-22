@@ -6,6 +6,8 @@ use std::{
 };
 
 use bytes::Bytes;
+#[cfg(not(wasm_browser))]
+use n0_error::{AnyError, anyerr};
 use n0_future::{Sink, Stream, ready};
 #[cfg(not(wasm_browser))]
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -29,21 +31,14 @@ pub(crate) struct WsBytesFramed {
 
 /// Error type for WebSocket stream operations.
 ///
-/// This type alias represents errors that can occur during WebSocket communication.
-/// The underlying error type depends on the platform:
+/// This is a generic [`AnyError`] and represents errors that can occur during WebSocket
+/// communication. The underlying error type depends on the platform:
 /// - On non-browser platforms: `tokio_websockets::Error`
 /// - On browser WASM: `ws_stream_wasm::WsErr`
-#[cfg(not(wasm_browser))]
-pub type StreamError = tokio_websockets::Error;
-
-/// Error type for WebSocket stream operations.
 ///
-/// This type alias represents errors that can occur during WebSocket communication.
-/// The underlying error type depends on the platform:
-/// - On non-browser platforms: `tokio_websockets::Error`
-/// - On browser WASM: `ws_stream_wasm::WsErr`
-#[cfg(wasm_browser)]
-pub type StreamError = ws_stream_wasm::WsErr;
+/// You can use [`AnyError::downcast_ref`] to downcast to the concrete error. However, the
+/// downcast is not covered by any semver guarantees and the underlying error may change.
+pub type StreamError = AnyError;
 
 /// Shorthand for a type that implements both a websocket-based stream & sink for [`Bytes`].
 pub trait BytesStreamSink:
@@ -92,7 +87,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for WsBytesFramed<T> {
         loop {
             match ready!(Pin::new(&mut self.io).poll_next(cx)) {
                 None => return Poll::Ready(None),
-                Some(Err(e)) => return Poll::Ready(Some(Err(e))),
+                Some(Err(e)) => return Poll::Ready(Some(Err(anyerr!(e)))),
                 Some(Ok(msg)) => {
                     if msg.is_close() {
                         // Indicate the stream is done when we receive a close message.
@@ -139,19 +134,27 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Sink<Bytes> for WsBytesFramed<T> {
 
     fn start_send(mut self: Pin<&mut Self>, bytes: Bytes) -> Result<(), Self::Error> {
         let msg = tokio_websockets::Message::binary(tokio_websockets::Payload::from(bytes));
-        Pin::new(&mut self.io).start_send(msg)
+        Pin::new(&mut self.io)
+            .start_send(msg)
+            .map_err(AnyError::from_std)
     }
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.io).poll_ready(cx).map_err(Into::into)
+        Pin::new(&mut self.io)
+            .poll_ready(cx)
+            .map_err(AnyError::from_std)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.io).poll_flush(cx).map_err(Into::into)
+        Pin::new(&mut self.io)
+            .poll_flush(cx)
+            .map_err(AnyError::from_std)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.io).poll_close(cx).map_err(Into::into)
+        Pin::new(&mut self.io)
+            .poll_close(cx)
+            .map_err(AnyError::from_std)
     }
 }
 
@@ -161,18 +164,26 @@ impl Sink<Bytes> for WsBytesFramed {
 
     fn start_send(mut self: Pin<&mut Self>, bytes: Bytes) -> Result<(), Self::Error> {
         let msg = ws_stream_wasm::WsMessage::Binary(Vec::from(bytes));
-        Pin::new(&mut self.io).start_send(msg).map_err(Into::into)
+        Pin::new(&mut self.io)
+            .start_send(msg)
+            .map_err(AnyError::from_std)
     }
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.io).poll_ready(cx).map_err(Into::into)
+        Pin::new(&mut self.io)
+            .poll_ready(cx)
+            .map_err(AnyError::from_std)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.io).poll_flush(cx).map_err(Into::into)
+        Pin::new(&mut self.io)
+            .poll_flush(cx)
+            .map_err(AnyError::from_std)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.io).poll_close(cx).map_err(Into::into)
+        Pin::new(&mut self.io)
+            .poll_close(cx)
+            .map_err(AnyError::from_std)
     }
 }

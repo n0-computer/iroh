@@ -11,7 +11,7 @@ use std::{
 
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
-use n0_error::{e, stack_error};
+use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     Sink, Stream,
     split::{SplitSink, SplitStream, split},
@@ -53,14 +53,7 @@ pub enum ConnectError {
     #[error("Invalid relay URL: {url}")]
     InvalidRelayUrl { url: Url },
     #[error(transparent)]
-    Websocket {
-        #[cfg(not(wasm_browser))]
-        #[error(std_err)]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        #[error(std_err)]
-        source: ws_stream_wasm::WsErr,
-    },
+    Websocket { source: AnyError },
     #[error(
         "Server replied with invalid iroh-relay version header: {}",
         server_version.as_deref().unwrap_or("<empty>")
@@ -232,6 +225,7 @@ impl ClientBuilder {
     #[cfg(not(wasm_browser))]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
         use http::header::SEC_WEBSOCKET_PROTOCOL;
+        use n0_error::StdResultExt;
         use tls::MaybeTlsStreamBuilder;
 
         use crate::{
@@ -298,7 +292,7 @@ impl ClientBuilder {
                     "impossible: CLIENT_AUTH_HEADER isn't a disallowed header value for websockets",
                 );
         }
-        let (conn, response) = builder.connect_on(stream).await?;
+        let (conn, response) = builder.connect_on(stream).await.anyerr()?;
 
         n0_error::ensure!(
             response.status() == hyper::StatusCode::SWITCHING_PROTOCOLS,
