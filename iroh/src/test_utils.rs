@@ -265,8 +265,8 @@ pub(crate) mod dns_server {
             buf: &[u8],
         ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
             let packet = Message::from_bytes(buf)?;
-            debug!(queries = ?packet.queries(), %from, "received query");
-            let mut reply = packet.to_response();
+            debug!(queries = ?packet.queries, %from, "received query");
+            let mut reply = packet.clone().into_response();
             self.resolver.resolve(&packet, &mut reply).await?;
             debug!(?reply, %from, "send reply");
             let buf = reply.to_vec()?;
@@ -362,7 +362,7 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use iroh_base::EndpointId;
-    use iroh_dns::{attrs::IROH_TXT_NAME, endpoint_info::EndpointInfo, pkarr::SignedPacket};
+    use iroh_dns::{IROH_TXT_NAME, endpoint_info::EndpointInfo, pkarr::SignedPacket};
     use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;
@@ -448,7 +448,7 @@ pub(crate) mod pkarr_dns_state {
             reply: &mut hickory_resolver::proto::op::Message,
             ttl: u32,
         ) -> std::io::Result<()> {
-            for query in query.queries() {
+            for query in &query.queries {
                 let domain_name = query.name().to_string();
                 let Some(endpoint_id) = endpoint_id_from_domain_name(&domain_name) else {
                     continue;

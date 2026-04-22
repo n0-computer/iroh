@@ -16,7 +16,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use n0_error::{e, ensure, stack_error};
 use serde::{Deserialize, Serialize, de, ser};
 
-/// z-base-32 encoding as used by [pkarr](https://pkarr.org).
+/// z-base-32 encoding as used by [pkarr](https://pkarr.org) for endpoint id domain names.
 const Z_BASE_32: Encoding = new_encoding! {
     symbols: "ybndrfg8ejkmcpqxot1uwisza345h769",
 };

@@ -28,7 +28,7 @@ use super::{
     transports,
 };
 use crate::{
-    address_lookup,
+    address_lookup::{self, AddressLookupFailed},
     socket::{
         RemoteStateActorStoppedError,
         concurrent_read_map::{ConcurrentReadMap, ReadOnlyMap},
@@ -128,7 +128,7 @@ struct Tasks {
     metrics: Arc<SocketMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    address_lookup: address_lookup::ConcurrentAddressLookup,
+    address_lookup: address_lookup::AddressLookupServices,
     shutdown_token: CancellationToken,
 
     //
@@ -152,7 +152,7 @@ impl RemoteMap {
     pub(super) fn new(
         metrics: Arc<SocketMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        address_lookup: address_lookup::ConcurrentAddressLookup,
+        address_lookup: address_lookup::AddressLookupServices,
         shutdown_token: CancellationToken,
         transport_bias: TransportBiasMap,
         span: Span,
@@ -228,41 +228,27 @@ impl RemoteMap {
     pub(super) async fn resolve_remote(
         &mut self,
         addr: EndpointAddr,
-    ) -> Result<Result<EndpointIdMappedAddr, address_lookup::Error>, RemoteStateActorStoppedError>
-    {
+        tx: oneshot::Sender<Result<(), AddressLookupFailed>>,
+    ) -> Result<(), RemoteStateActorStoppedError> {
         let EndpointAddr { id, addrs } = addr;
         let actor = self.remote_state_actor(id);
-        let (tx, rx) = oneshot::channel();
         actor
             .send(RemoteStateMessage::ResolveRemote(addrs, tx))
             .await?;
-
-        match rx.await {
-            Ok(Ok(())) => Ok(Ok(self.mapped_addrs.endpoint_addrs.get(&id))),
-            Ok(Err(err)) => Ok(Err(err)),
-            Err(_) => Err(RemoteStateActorStoppedError::new()),
-        }
-    }
-
-    pub(super) async fn remote_info(&mut self, id: EndpointId) -> Option<RemoteInfo> {
-        let actor = self.remote_state_actor_if_exists(id)?;
-        let (tx, rx) = oneshot::channel();
-        actor.send(RemoteStateMessage::RemoteInfo(tx)).await.ok()?;
-        rx.await.ok()
+        Ok(())
     }
 
     pub(super) async fn add_connection(
         &mut self,
         remote: EndpointId,
         conn: noq::WeakConnectionHandle,
-    ) -> Option<PathWatchable> {
+        tx: oneshot::Sender<PathWatchable>,
+    ) -> Result<(), RemoteStateActorStoppedError> {
         let actor = self.remote_state_actor(remote);
-        let (tx, rx) = oneshot::channel();
         actor
             .send(RemoteStateMessage::AddConnection(conn, tx))
-            .await
-            .ok()?;
-        rx.await.ok()
+            .await?;
+        Ok(())
     }
 
     /// Returns the sender for the [`RemoteStateActor`].
@@ -288,13 +274,6 @@ impl RemoteMap {
         } else {
             sender.clone()
         }
-    }
-
-    pub(super) fn remote_state_actor_if_exists(
-        &self,
-        eid: EndpointId,
-    ) -> Option<mpsc::Sender<RemoteStateMessage>> {
-        self.senders.get(&eid)
     }
 
     pub(super) fn senders(&self) -> ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>> {

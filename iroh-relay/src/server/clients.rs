@@ -270,6 +270,7 @@ mod tests {
         key: EndpointId,
     ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
         let (server, client) = tokio::io::duplex(1024);
+        let protocol_version = Default::default();
         (
             Config {
                 endpoint_id: key,
@@ -278,7 +279,7 @@ mod tests {
                 channel_capacity: 10,
                 protocol_version: Default::default(),
             },
-            Conn::test(client),
+            Conn::test(client, protocol_version),
         )
     }
 

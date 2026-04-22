@@ -1130,6 +1130,7 @@ mod tests {
     use std::sync::Arc;
 
     use iroh_base::{PublicKey, SecretKey};
+    use iroh_dns::dns::DnsResolver;
     use n0_error::{Result, StdResultExt, bail_any};
     use n0_future::{SinkExt, StreamExt};
     use n0_tracing_test::traced_test;
@@ -1137,8 +1138,6 @@ mod tests {
     use reqwest::Url;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tracing::info;
-
-    use iroh_dns::dns::DnsResolver;
 
     use super::*;
     use crate::{
@@ -1410,7 +1409,7 @@ mod tests {
     async fn make_test_client(client: tokio::io::DuplexStream, key: &SecretKey) -> Result<Conn> {
         let client = crate::client::streams::MaybeTlsStream::Test(client);
         let client = tokio_websockets::ClientBuilder::new().take_over(client);
-        let client = Conn::new(client, KeyCache::test(), key).await?;
+        let client = Conn::new(client, KeyCache::test(), key, Default::default()).await?;
         Ok(client)
     }
 

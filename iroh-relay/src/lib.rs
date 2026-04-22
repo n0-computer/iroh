@@ -44,7 +44,6 @@ mod ping_tracker;
 mod key_cache;
 mod relay_map;
 pub use key_cache::KeyCache;
-
 pub use protos::relay::MAX_PACKET_SIZE;
 
 pub use self::{

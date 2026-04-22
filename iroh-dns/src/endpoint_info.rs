@@ -21,10 +21,8 @@ use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use n0_error::{ensure, stack_error};
 use url::Url;
 
-// Re-export commonly used items so they're accessible via iroh::endpoint_info::*
-pub use crate::attrs::{EncodingError, IROH_TXT_NAME, ParseError};
 use crate::{
-    attrs::{IrohAttr, TxtAttrs},
+    attrs::{EncodingError, IrohAttr, ParseError, TxtAttrs},
     pkarr,
 };
 
@@ -666,8 +664,8 @@ mod tests {
         let lookup = lookup
             .answers()
             .iter()
-            .filter_map(|record| match record.data() {
-                RData::TXT(txt) => Some(TxtRecordData::from(txt.txt_data().to_vec())),
+            .filter_map(|record| match &record.data {
+                RData::TXT(txt) => Some(TxtRecordData::from(txt.txt_data.to_vec())),
                 _ => None,
             });
 

@@ -106,7 +106,7 @@ jobs:
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: amd64
-                cargo_targets: "x86_64-unknown-linux-musl"
+                cargo_targets: "x86_64-unknown-linux-gnu"
                 runner: [self-hosted, linux, X64]
               - name: macOS-latest
                 os: macOS-latest
@@ -178,31 +178,16 @@ jobs:
           if: matrix.os != 'windows-latest'
           shell: bash
           run: |
-            if [ "${{ matrix.name }}" = "ubuntu-arm-latest" ]; then
-              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
-              export CC=aarch64-linux-gnu-gcc
+            if [ "${{ contains(matrix.cargo_targets, '-musl') }}" = "true" ]; then
+              # Native build on self-hosted linux runners; use musl-gcc from musl-tools.
+              export CARGO_TARGET_$(echo ${{ matrix.cargo_targets }} | tr 'a-z-' 'A-Z_')_LINKER=musl-gcc
+              export CC=musl-gcc
             fi
             cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
 
         - name: build release
           if: matrix.os == 'windows-latest'
           run: cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
-
-        - name: attach artifacts
-          if: matrix.os != 'windows-latest'
-          uses: actions/upload-artifact@v7
-          with:
-            name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}
-            path: target/${{ matrix.cargo_targets }}/optimized-release/iroh
-            compression-level: 0
-
-        - name: attach artifacts
-          if: matrix.os == 'windows-latest'
-          uses: actions/upload-artifact@v7
-          with:
-            name: iroh-windows-amd64.exe
-            path: target/${{ matrix.cargo_targets }}/optimized-release/iroh.exe
-            compression-level: 0
 
         - name: Cache AWS CLI
           if: matrix.os != 'windows-latest'

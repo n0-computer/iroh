@@ -19,7 +19,7 @@ use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap, tls::CaRootsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
-use n0_error::{e, ensure, stack_error};
+use n0_error::{AnyError, e, ensure, stack_error};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
@@ -51,13 +51,14 @@ pub use crate::tls::TlsConfigError;
 use crate::{
     NetReport,
     address_lookup::{
-        AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
-        Error as AddressLookupError, UserData,
+        AddrFilter, AddressLookupBuilder, AddressLookupFailed, AddressLookupServices,
+        DynAddressLookupBuilder, UserData,
     },
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
+        transports::RelayConnectionState,
     },
     tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
@@ -571,7 +572,7 @@ impl Builder {
     ///
     /// This method can be called multiple times and all the Address Lookup's passed in
     /// will be combined using an internal instance of the
-    /// [`crate::address_lookup::ConcurrentAddressLookup`]. To clear all Address Lookup's, use
+    /// [`crate::address_lookup::AddressLookupServices`]. To clear all Address Lookup's, use
     /// [`Self::clear_address_lookup`].
     ///
     /// If no Address Lookup is set, connecting to an endpoint without providing its
@@ -585,11 +586,11 @@ impl Builder {
 
     /// Sets the address filter applied to all address data before publishing.
     ///
-    /// This filter is applied once, at the [`ConcurrentAddressLookup`] level, before
+    /// This filter is applied once, at the [`AddressLookupServices`] level, before
     /// distributing data to any individual address lookup service. This ensures
     /// consistent filtering regardless of how the services configured.
     ///
-    /// [`ConcurrentAddressLookup`]: crate::address_lookup::ConcurrentAddressLookup
+    /// [`AddressLookupServices`]: crate::address_lookup::AddressLookupServices
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
         self.addr_filter = Some(filter);
         self
@@ -838,7 +839,7 @@ pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
     #[error("No addressing information available")]
-    NoAddress { source: AddressLookupError },
+    NoAddress { source: AddressLookupFailed },
     #[error("Unable to connect to remote")]
     Noq {
         #[error(std_err)]
@@ -1238,11 +1239,11 @@ impl Endpoint {
 
     /// A convenience method that waits for the endpoint to be considered "online".
     ///
-    /// This currently means at least one relay server was connected,
-    /// and at least one local IP address is available.
-    /// Even if no relays are configured, this will still wait for a relay connection.
+    /// This currently means at least one relay server has completed its
+    /// connection handshake (i.e. the endpoint is registered and reachable
+    /// via that relay). Merely selecting a relay URL is not sufficient.
     ///
-    /// Once this has been resolved the first time, this will always immediately resolve.
+    /// If no relays are configured, this will pend forever.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
@@ -1282,7 +1283,36 @@ impl Endpoint {
     /// }
     /// ```
     pub async fn online(&self) {
-        self.inner.home_relay().initialized().await;
+        let mut watcher = self.inner.home_relay_status();
+        let mut value = watcher.get();
+        loop {
+            if value.into_iter().any(|status| status.is_connected()) {
+                return;
+            }
+            value = match watcher.updated().await {
+                Ok(value) => value,
+                Err(_disconnected) => {
+                    std::future::pending::<()>().await;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Returns a [`Watcher`] over the connection status of the endpoint's home relays.
+    ///
+    /// The watched value has one entry per home relay whose URL is known,
+    /// and is empty when no relays are configured or before the endpoint has
+    /// selected one the home relay from the list of configured relays.
+    /// The watcher updates whenever any home relay's connection status changes.
+    /// See [`RelayStatus`] for the information available on each entry.
+    ///
+    /// The returned watcher only becomes disconnected once the last clone of
+    /// the [`Endpoint`] is dropped. Closing the endpoint does not disconnect
+    /// the watcher. To stop a task once the endpoint stops, combine with
+    /// [`Self::closed`].
+    pub fn home_relay_status(&self) -> impl Watcher<Value = Vec<RelayStatus>> + use<> {
+        self.inner.home_relay_status()
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -1389,7 +1419,7 @@ impl Endpoint {
     /// Returns a `EndpointError::Closed` error if the endpoint is closed.
     ///
     /// See [`Builder::address_lookup`].
-    pub fn address_lookup(&self) -> Result<&ConcurrentAddressLookup, EndpointError> {
+    pub fn address_lookup(&self) -> Result<&AddressLookupServices, EndpointError> {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
@@ -1787,6 +1817,40 @@ fn proxy_url_from_env() -> Option<Url> {
     }
 
     None
+}
+
+/// Connection status of a single home relay.
+///
+/// Observed via [`Endpoint::home_relay_status`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayStatus {
+    url: RelayUrl,
+    state: RelayConnectionState,
+}
+
+impl RelayStatus {
+    pub(crate) fn new(url: RelayUrl, state: RelayConnectionState) -> Self {
+        Self { url, state }
+    }
+
+    /// Returns the URL of the home relay.
+    pub fn url(&self) -> &RelayUrl {
+        &self.url
+    }
+
+    /// Returns `true` if the endpoint is connected to the relay.
+    pub fn is_connected(&self) -> bool {
+        self.state.is_connected()
+    }
+
+    /// Returns the most recent connection error, if the relay is currently
+    /// disconnected.
+    ///
+    /// Returns `None` when the relay is connected, or when the endpoint has
+    /// not yet observed a failed connection attempt.
+    pub fn last_error(&self) -> Option<&AnyError> {
+        self.state.last_error().map(Arc::as_ref)
+    }
 }
 
 /// Configuration of the relay servers for an [`Endpoint`].
@@ -3784,6 +3848,55 @@ mod tests {
         let incoming = accept_task.await.expect("accept task panicked");
         assert!(incoming.is_none());
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_online_add_relay() -> Result {
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(RelayMap::empty()))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        // should not come online without relays.
+        let res = tokio::time::timeout(Duration::from_millis(500), ep.online()).await;
+        assert!(res.is_err());
+
+        // should come online after a relay is added.
+        let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
+        ep.insert_relay(relay_url.clone(), relay_map.get(&relay_url).unwrap())
+            .await;
+        let res = tokio::time::timeout(Duration::from_millis(1000), ep.online()).await;
+        assert!(res.is_ok());
+
+        // online should still return after endpoint close, if the endpoint was last online
+        let ep_clone = ep.clone();
+        let task = tokio::task::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(500), ep_clone.online()).await
+        });
+        ep.close().await;
+        let res = task.await.unwrap();
+        assert!(res.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_online_close() -> Result {
+        let ep = Endpoint::bind(presets::Minimal).await?;
+        // should not come online without relays.
+        let res = tokio::time::timeout(Duration::from_millis(500), ep.online()).await;
+        assert!(res.is_err());
+
+        // online should remain pending after the endpoint is closed.
+        let ep_clone = ep.clone();
+        let task = tokio::task::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(500), ep_clone.online()).await
+        });
+        ep.close().await;
+        let res = task.await.unwrap();
+        assert!(res.is_err());
         Ok(())
     }
 }

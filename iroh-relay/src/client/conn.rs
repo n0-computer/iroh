@@ -17,6 +17,7 @@ use super::KeyCache;
 use crate::client::streams::{MaybeTlsStream, ProxyStream};
 use crate::{
     MAX_PACKET_SIZE,
+    http::ProtocolVersion,
     protos::{
         handshake,
         relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg},
@@ -73,6 +74,7 @@ pub(crate) struct Conn {
     #[debug("ws_stream_wasm::WsStream")]
     pub(crate) conn: WsBytesFramed,
     pub(crate) key_cache: KeyCache,
+    pub(crate) protocol_version: ProtocolVersion,
 }
 
 impl Conn {
@@ -84,6 +86,7 @@ impl Conn {
         #[cfg(wasm_browser)] io: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: &SecretKey,
+        protocol_version: ProtocolVersion,
     ) -> Result<Self, handshake::Error> {
         let mut conn = WsBytesFramed { io };
 
@@ -92,11 +95,15 @@ impl Conn {
         handshake::clientside(&mut conn, secret_key).await?;
         trace!("server_handshake: done");
 
-        Ok(Self { conn, key_cache })
+        Ok(Self {
+            conn,
+            key_cache,
+            protocol_version,
+        })
     }
 
     #[cfg(all(test, feature = "server"))]
-    pub(crate) fn test(io: tokio::io::DuplexStream) -> Self {
+    pub(crate) fn test(io: tokio::io::DuplexStream, protocol_version: ProtocolVersion) -> Self {
         use crate::protos::relay::MAX_FRAME_SIZE;
         Self {
             conn: WsBytesFramed {
@@ -107,6 +114,7 @@ impl Conn {
                     .take_over(MaybeTlsStream::Test(io)),
             },
             key_cache: KeyCache::test(),
+            protocol_version,
         }
     }
 }
@@ -117,7 +125,8 @@ impl Stream for Conn {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(Pin::new(&mut self.conn).poll_next(cx)) {
             Some(Ok(msg)) => {
-                let message = RelayToClientMsg::from_bytes(msg, &self.key_cache);
+                let message =
+                    RelayToClientMsg::from_bytes(msg, &self.key_cache, self.protocol_version);
                 Poll::Ready(Some(message.map_err(Into::into)))
             }
             Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
