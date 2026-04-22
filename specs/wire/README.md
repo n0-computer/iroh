@@ -4,7 +4,7 @@ This specification defines the wire-level protocol details of iroh. It is intend
 
 For a high-level conceptual overview, see the [Design specification](../design/README.md).
 
-**Version:** 1.0
+**Version:** 1.1
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in these documents are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 

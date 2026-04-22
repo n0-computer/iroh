@@ -1,12 +1,16 @@
 # TLS
 
-**Version:** 1.0
+**Version:** 1.1
 
 Iroh uses a specific TLS 1.3 profile for endpoint authentication and encryption. This profile replaces X.509 certificate chains with Raw Public Keys.
 
 ## TLS Version
 
 Implementations MUST use TLS 1.3 ([RFC 8446](https://www.rfc-editor.org/rfc/rfc8446)). Earlier TLS versions MUST NOT be used.
+
+## Crypto Provider
+
+The TLS implementation requires a crypto provider that supplies the cryptographic primitives for TLS operations. Two providers are supported in the reference implementation: `ring` (default) and `aws-lc-rs`. Custom providers implementing the `rustls::crypto::CryptoProvider` interface MAY be used. The provider MUST support TLS 1.3 cipher suites required by QUIC (specifically `TLS13_AES_128_GCM_SHA256` for QUIC initial packets).
 
 ## Raw Public Keys
 

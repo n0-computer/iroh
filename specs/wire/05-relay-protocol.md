@@ -1,8 +1,19 @@
 # Relay Protocol
 
-**Version:** 1.0
+**Version:** 1.1
 
 The relay protocol is iroh's custom packet forwarding protocol. It runs over WebSocket and allows endpoints to exchange encrypted QUIC packets through a relay server.
+
+## Protocol Versioning
+
+The relay protocol supports versioned negotiation. The client sends all supported protocol versions in the `Sec-WebSocket-Protocol` header during the WebSocket upgrade (e.g., `iroh-relay-v2,iroh-relay-v1`). The server selects the highest mutually-supported version and returns it in the response header. The current protocol version is **v2**.
+
+| Version | Identifier | Notes |
+|---------|-----------|-------|
+| v1 | `iroh-relay-v1` | Original protocol |
+| v2 | `iroh-relay-v2` | Replaced `Health` frame with `Status` frame |
+
+Frames not valid for the negotiated protocol version MUST be treated as an error. Unknown frame types SHOULD be ignored for forward compatibility.
 
 ## Transport
 
@@ -30,21 +41,22 @@ For all currently defined frame types (0-12), the VarInt encoding is a single by
 
 ## Frame Types
 
-| Value | Name | Direction | Description |
-|-------|------|-----------|-------------|
-| 0 | ServerChallenge | S → C | Authentication challenge (handshake) |
-| 1 | ClientAuth | C → S | Authentication response (handshake) |
-| 2 | ServerConfirmsAuth | S → C | Authentication accepted (handshake) |
-| 3 | ServerDeniesAuth | S → C | Authentication denied (handshake) |
-| 4 | ClientToRelayDatagram | C → S | Single datagram to relay |
-| 5 | ClientToRelayDatagramBatch | C → S | Batched datagrams to relay |
-| 6 | RelayToClientDatagram | S → C | Single datagram from relay |
-| 7 | RelayToClientDatagramBatch | S → C | Batched datagrams from relay |
-| 8 | EndpointGone | S → C | Remote endpoint disconnected |
-| 9 | Ping | Both | Keepalive ping |
-| 10 | Pong | Both | Keepalive pong |
-| 11 | Health | S → C | Connection health status |
-| 12 | Restarting | S → C | Server restarting notification |
+| Value | Name | Direction | Version | Description |
+|-------|------|-----------|---------|-------------|
+| 0 | ServerChallenge | S → C | v1+ | Authentication challenge (handshake) |
+| 1 | ClientAuth | C → S | v1+ | Authentication response (handshake) |
+| 2 | ServerConfirmsAuth | S → C | v1+ | Authentication accepted (handshake) |
+| 3 | ServerDeniesAuth | S → C | v1+ | Authentication denied (handshake) |
+| 4 | ClientToRelayDatagram | C → S | v1+ | Single datagram to relay |
+| 5 | ClientToRelayDatagramBatch | C → S | v1+ | Batched datagrams to relay |
+| 6 | RelayToClientDatagram | S → C | v1+ | Single datagram from relay |
+| 7 | RelayToClientDatagramBatch | S → C | v1+ | Batched datagrams from relay |
+| 8 | EndpointGone | S → C | v1+ | Remote endpoint disconnected |
+| 9 | Ping | Both | v1+ | Keepalive ping |
+| 10 | Pong | Both | v1+ | Keepalive pong |
+| 11 | Health | S → C | v1 only | Connection health status (deprecated) |
+| 12 | Restarting | S → C | v1+ | Server restarting notification |
+| 13 | Status | S → C | v2+ | Connection status (replaces Health) |
 
 Direction: S = Server (relay), C = Client (endpoint).
 
@@ -217,9 +229,9 @@ Response to a Ping. The payload MUST match the payload of the Ping being replied
 +-------+----------+
 ```
 
-### Health (type 11)
+### Health (type 11) — v1 only, deprecated
 
-Server-to-client message indicating connection health issues.
+Server-to-client message indicating connection health issues. This frame is only valid in protocol v1. In v2+, use `Status` (type 13) instead.
 
 ```
 +-------+-------------------+
@@ -243,6 +255,31 @@ Server-to-client notification that the relay server is restarting.
 
 - `reconnect_in`: Advisory duration in milliseconds before the client should attempt to reconnect. MAY be zero.
 - `try_for`: Advisory duration in milliseconds for how long the client should keep attempting to reconnect before giving up.
+
+### Status (type 13) — v2+
+
+Server-to-client message indicating connection status. This replaces the `Health` frame from v1 with a binary-encoded, extensible enum. This frame MUST NOT be sent on v1 connections.
+
+```
++-------+---------------+
+| 0x0D  | status        |
+| (1B)  | (1 byte)      |
++-------+---------------+
+```
+
+The `status` byte is a discriminant for the status type:
+
+| Value | Status | Description |
+|-------|--------|-------------|
+| 0 | Healthy | Connection recovered from a previous problem |
+| 1 | SameEndpointIdConnected | Another endpoint connected with the same Endpoint ID |
+| 2+ | Unknown | Reserved for future use; implementations SHOULD handle gracefully |
+
+The server sends `SameEndpointIdConnected` when a duplicate Endpoint ID connects, notifying the existing connection. The server sends `Healthy` when a previously problematic connection recovers.
+
+## Connection Establishment Timeout
+
+The relay server MUST enforce a timeout on connection establishment. The connection MUST be fully established (TLS handshake complete and WebSocket upgrade processed) within 30 seconds of the TCP connection being accepted. If the timeout expires, the server MUST close the connection.
 
 ## Constants
 
