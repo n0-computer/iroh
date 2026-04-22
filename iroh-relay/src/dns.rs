@@ -20,7 +20,7 @@ use hickory_resolver::{
     proto::rr::RData,
 };
 use iroh_base::EndpointId;
-use n0_error::{StackError, e, stack_error};
+use n0_error::{AnyError, StackError, StdResultExt, e, stack_error};
 use n0_future::{
     StreamExt,
     boxed::BoxFuture,
@@ -74,22 +74,20 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 #[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum DnsError {
-    #[error(transparent)]
-    Timeout { source: tokio::time::error::Elapsed },
+    #[error("Request timed out")]
+    Timeout {},
     #[error("No response")]
     NoResponse {},
-    #[error("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}")]
+    #[error("Resolve failed, IPv4: {ipv4}, IPv6: {ipv6}")]
     ResolveBoth {
         ipv4: Box<DnsError>,
         ipv6: Box<DnsError>,
     },
-    #[error("missing host")]
+    #[error("Missing host")]
     MissingHost {},
-    #[error(transparent)]
-    Resolve {
-        source: hickory_resolver::net::NetError,
-    },
-    #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
+    #[error("Failed to resolve")]
+    Resolve { source: AnyError },
+    #[error("Invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
 }
 
@@ -274,7 +272,9 @@ impl DnsResolver {
     ) -> Result<impl Iterator<Item = TxtRecordData>, DnsError> {
         let host = host.to_string();
         let fut = self.0.read().await.lookup_txt(host);
-        let res = time::timeout(timeout, fut).await??;
+        let res = time::timeout(timeout, fut)
+            .await
+            .map_err(|_| e!(DnsError::Timeout))??;
         Ok(res)
     }
 
@@ -286,7 +286,9 @@ impl DnsResolver {
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
         let fut = self.0.read().await.lookup_ipv4(host);
-        let addrs = time::timeout(timeout, fut).await??;
+        let addrs = time::timeout(timeout, fut)
+            .await
+            .map_err(|_| e!(DnsError::Timeout))??;
         Ok(addrs.into_iter().map(IpAddr::V4))
     }
 
@@ -298,7 +300,9 @@ impl DnsResolver {
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
         let fut = self.0.read().await.lookup_ipv6(host);
-        let addrs = time::timeout(timeout, fut).await??;
+        let addrs = time::timeout(timeout, fut)
+            .await
+            .map_err(|_| e!(DnsError::Timeout))??;
         Ok(addrs.into_iter().map(IpAddr::V6))
     }
 
@@ -564,7 +568,7 @@ impl Resolver for HickoryResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.ipv4_lookup(host).await?;
+            let lookup = resolver.ipv4_lookup(host).await.anyerr()?;
             let iter: BoxIter<Ipv4Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
@@ -579,7 +583,7 @@ impl Resolver for HickoryResolver {
     fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.ipv6_lookup(host).await?;
+            let lookup = resolver.ipv6_lookup(host).await.anyerr()?;
             let iter: BoxIter<Ipv6Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
@@ -594,7 +598,7 @@ impl Resolver for HickoryResolver {
     fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.txt_lookup(host).await?;
+            let lookup = resolver.txt_lookup(host).await.anyerr()?;
             let iter: BoxIter<TxtRecordData> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
