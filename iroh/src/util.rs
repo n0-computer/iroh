@@ -92,7 +92,7 @@ pub(crate) fn reqwest_client_builder(
 
 #[cfg(not(wasm_browser))]
 mod reqwest_dns_resolver {
-    //! Implementation of [`reqwest::dns::Resolver`] for [`DnsResolver`].
+    //! Implementation of [`reqwest::dns::Resolve`] for [`DnsResolver`].
     //!
     //! Wrapped in a newtype to not expose this in the public iroh API.
 
