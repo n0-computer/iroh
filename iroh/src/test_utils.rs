@@ -1,5 +1,5 @@
 //! Internal utilities to support testing.
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, sync::Arc};
 
 use iroh_base::RelayUrl;
 use iroh_relay::{
@@ -49,6 +49,7 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
         https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
         quic_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
         server_config,
+        crypto_provider: Arc::new(rustls::crypto::ring::default_provider()),
     };
     let quic = if quic {
         Some(QuicConfig {

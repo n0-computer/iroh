@@ -493,7 +493,10 @@ fn addr_relay_only(addr: EndpointAddr) -> EndpointAddr {
 }
 
 mod relay {
-    use std::net::{IpAddr, Ipv6Addr};
+    use std::{
+        net::{IpAddr, Ipv6Addr},
+        sync::Arc,
+    };
 
     use iroh_base::RelayUrl;
     use iroh_relay::{
@@ -520,6 +523,7 @@ mod relay {
             https_bind_addr: (bind_ip, 443).into(),
             quic_bind_addr: (bind_ip, 7842).into(),
             server_config,
+            crypto_provider: Arc::new(rustls::crypto::ring::default_provider()),
         };
         let quic = Some(QuicConfig {
             server_config: tls.server_config.clone(),

@@ -28,6 +28,7 @@ use iroh_base::EndpointId;
 use iroh_base::RelayUrl;
 use n0_error::{e, stack_error};
 use n0_future::{StreamExt, future::Boxed};
+use rustls::crypto::CryptoProvider;
 use serde::Serialize;
 use tokio::{
     net::TcpListener,
@@ -194,6 +195,8 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub cert: CertConfig<EC, EA>,
     /// The server configuration.
     pub server_config: rustls::ServerConfig,
+    /// The rustls crypto provider to use for all crypto.
+    pub crypto_provider: Arc<CryptoProvider>,
 }
 
 /// Rate limits.
@@ -394,8 +397,11 @@ impl Server {
                     Some(tls_config) => {
                         let server_tls_config = match tls_config.cert {
                             CertConfig::LetsEncrypt { mut state } => {
-                                let acceptor =
-                                    http_server::TlsAcceptor::LetsEncrypt(state.acceptor());
+                                let acceptor = http_server::TlsAcceptor::LetsEncrypt(
+                                    state.acceptor_with_crypto_provider(
+                                        tls_config.crypto_provider.clone(),
+                                    ),
+                                );
                                 tasks.spawn(
                                     async move {
                                         while let Some(event) = state.next().await {
