@@ -585,8 +585,8 @@
 <a href=#585 id=585 data-nosnippet>585</a>        }
 <a href=#586 id=586 data-nosnippet>586</a>    };
 <a href=#587 id=587 data-nosnippet>587</a>
-<a href=#588 id=588 data-nosnippet>588</a>    <span class="kw">let </span><span class="kw-2">mut </span>builder =
-<a href=#589 id=589 data-nosnippet>589</a>        reqwest_client_builder(<span class="prelude-val">Some</span>(tls_config)).redirect(reqwest::redirect::Policy::none());
+<a href=#588 id=588 data-nosnippet>588</a>    <span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest_client_builder(tls_config, dns_resolver.clone())
+<a href=#589 id=589 data-nosnippet>589</a>        .redirect(reqwest::redirect::Policy::none());
 <a href=#590 id=590 data-nosnippet>590</a>
 <a href=#591 id=591 data-nosnippet>591</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(Host::Domain(domain)) = url.host() {
 <a href=#592 id=592 data-nosnippet>592</a>        <span class="comment">// Use our own resolver rather than getaddrinfo
@@ -818,9 +818,9 @@
 <a href=#818 id=818 data-nosnippet>818</a>    // needs to be more configurable so users can do more crazy things:
 <a href=#819 id=819 data-nosnippet>819</a>    // https://github.com/n0-computer/iroh/issues/2901
 <a href=#820 id=820 data-nosnippet>820</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#821 id=821 data-nosnippet>821</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest_client_builder(<span class="prelude-val">Some</span>(tls_config));
+<a href=#821 id=821 data-nosnippet>821</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest_client_builder(tls_config, dns_resolver.clone());
 <a href=#822 id=822 data-nosnippet>822</a>    <span class="attr">#[cfg(wasm_browser)]
-<a href=#823 id=823 data-nosnippet>823</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest_client_builder(<span class="prelude-val">None</span>);
+<a href=#823 id=823 data-nosnippet>823</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest_client_builder();
 <a href=#824 id=824 data-nosnippet>824</a>
 <a href=#825 id=825 data-nosnippet>825</a>    <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#826 id=826 data-nosnippet>826</a>    </span>{
