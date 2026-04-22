@@ -590,7 +590,7 @@ async fn maybe_load_tls(
         }
         CertMode::Reloading => {
             let resolver = reloading_resolver(
-                &server_config.crypto_provider(),
+                server_config.crypto_provider(),
                 tls.cert_path(),
                 tls.key_path(),
                 DEFAULT_CERT_RELOAD_INTERVAL,
