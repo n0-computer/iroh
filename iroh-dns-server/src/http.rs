@@ -346,7 +346,11 @@ mod tests {
         let tls_config = CaRootsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
-        let pkarr = PkarrRelayClient::new(format!("{http_url}pkarr").parse().anyerr()?, tls_config);
+        let pkarr = PkarrRelayClient::new(
+            format!("{http_url}pkarr").parse().anyerr()?,
+            tls_config,
+            Default::default(),
+        );
         pkarr.publish(&signed_packet).await?;
 
         // Create a reqwest client that does not verify certificates.

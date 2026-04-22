@@ -586,8 +586,8 @@ async fn check_captive_portal(
         }
     };
 
-    let mut builder =
-        reqwest_client_builder(Some(tls_config)).redirect(reqwest::redirect::Policy::none());
+    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone())
+        .redirect(reqwest::redirect::Policy::none());
 
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
@@ -819,9 +819,9 @@ async fn run_https_probe(
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
     #[cfg(not(wasm_browser))]
-    let mut builder = reqwest_client_builder(Some(tls_config));
+    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone());
     #[cfg(wasm_browser)]
-    let mut builder = reqwest_client_builder(None);
+    let mut builder = reqwest_client_builder();
 
     #[cfg(not(wasm_browser))]
     {

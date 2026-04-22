@@ -134,7 +134,7 @@ mod tests {
         let tls_config = CaRootsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
-        let pkarr_client = PkarrRelayClient::new(pkarr_relay_url, tls_config);
+        let pkarr_client = PkarrRelayClient::new(pkarr_relay_url, tls_config, Default::default());
         pkarr_client.publish(&signed_packet).await?;
 
         use hickory_server::proto::rr::Name;
@@ -202,7 +202,7 @@ mod tests {
         let tls_config = CaRootsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
-        let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
+        let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config, Default::default());
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
