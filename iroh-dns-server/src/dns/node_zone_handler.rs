@@ -22,21 +22,21 @@ use crate::{
 };
 
 #[derive(derive_more::Debug)]
-pub struct NodeAuthority {
+pub struct NodeZoneHandler {
     serial: u32,
     origins: Vec<Name>,
     #[debug("InMemoryZoneHandler")]
-    static_authority: InMemoryZoneHandler,
+    static_zone_handler: InMemoryZoneHandler,
     zones: ZoneStore,
     // TODO: This is used by ZoneHandler::origin
     // Find out what exactly this is used for - we don't have a primary origin.
     first_origin: LowerName,
 }
 
-impl NodeAuthority {
+impl NodeZoneHandler {
     pub fn new(
         zones: ZoneStore,
-        static_authority: InMemoryZoneHandler,
+        static_zone_handler: InMemoryZoneHandler,
         origins: Vec<Name>,
         serial: u32,
     ) -> Result<Self> {
@@ -45,7 +45,7 @@ impl NodeAuthority {
         }
         let first_origin = LowerName::from(&origins[0]);
         Ok(Self {
-            static_authority,
+            static_zone_handler,
             origins,
             serial,
             zones,
@@ -92,7 +92,7 @@ impl NodeAuthority {
 }
 
 #[async_trait]
-impl ZoneHandler for NodeAuthority {
+impl ZoneHandler for NodeZoneHandler {
     fn zone_type(&self) -> ZoneType {
         ZoneType::Primary
     }
@@ -115,7 +115,7 @@ impl ZoneHandler for NodeAuthority {
         debug!(name=%name, "lookup in node authority");
         match record_type {
             RecordType::SOA | RecordType::NS => {
-                self.static_authority
+                self.static_zone_handler
                     .lookup(name, record_type, request_info, lookup_options)
                     .await
             }
@@ -128,7 +128,7 @@ impl ZoneHandler for NodeAuthority {
                 }
                 Err(err) => {
                     debug!(%name, failed_with=%err, "not a pkarr name, resolve in static authority");
-                    self.static_authority
+                    self.static_zone_handler
                         .lookup(name, record_type, request_info, lookup_options)
                         .await
                 }
@@ -150,7 +150,7 @@ impl ZoneHandler for NodeAuthority {
         let record_type: RecordType = request_info.query.query_type();
         let result = match record_type {
             RecordType::SOA => {
-                self.static_authority
+                self.static_zone_handler
                     .lookup(
                         self.origin(),
                         record_type,

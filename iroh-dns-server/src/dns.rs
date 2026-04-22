@@ -31,10 +31,10 @@ use tokio::{
 };
 use tracing::{debug, info};
 
-use self::node_authority::NodeAuthority;
+use self::node_zone_handler::NodeZoneHandler;
 use crate::{metrics::Metrics, store::ZoneStore};
 
-mod node_authority;
+mod node_zone_handler;
 
 const DEFAULT_NS_TTL: u32 = 60 * 60 * 12; // 12h
 const DEFAULT_SOA_TTL: u32 = 60 * 60 * 24 * 14; // 14d
@@ -139,7 +139,7 @@ impl DnsHandler {
             .anyerr()?;
 
         let (static_authority, serial) = create_static_authority(&origins, config)?;
-        let authority = Arc::new(NodeAuthority::new(
+        let authority = Arc::new(NodeZoneHandler::new(
             zone_store,
             static_authority,
             origins,
