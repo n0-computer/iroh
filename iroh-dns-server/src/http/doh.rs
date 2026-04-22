@@ -36,7 +36,7 @@ pub async fn get(
     let message_bytes = state.dns_handler.answer_request(request).await?;
     let message = proto::op::Message::from_bytes(&message_bytes).anyerr()?;
 
-    let min_ttl = message.answers().iter().map(|rec| rec.ttl()).min();
+    let min_ttl = message.answers.iter().map(|rec| rec.ttl).min();
 
     let mut response = match accept_type {
         DnsMimeType::Message => (StatusCode::OK, message_bytes).into_response(),

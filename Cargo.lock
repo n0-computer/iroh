@@ -1841,9 +1841,9 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hickory-net"
-version = "0.26.0-beta.4"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e232f503c4cfe3f4ea6594971255ecab9f6a0080c4c8e0e17630cc701322aa4"
+checksum = "0c61c8db47fae51ba9f8f2a2748bd87542acfbe22f2ec9cf9c8ec72d1ee6e9a6"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1853,7 +1853,7 @@ dependencies = [
  "futures-io",
  "futures-util",
  "h2",
- "hickory-proto 0.26.0-beta.4",
+ "hickory-proto 0.26.0",
  "http",
  "idna",
  "ipnet",
@@ -1875,44 +1875,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8a6fe56c0038198998a6f217ca4e7ef3a5e51f46163bd6dd60b5c71ca6c6502"
 dependencies = [
  "async-trait",
- "bytes",
  "cfg-if",
  "data-encoding",
  "enum-as-inner",
  "futures-channel",
- "futures-io",
  "futures-util",
- "h2",
- "http",
  "idna",
  "ipnet",
  "once_cell",
  "rand 0.9.4",
- "ring",
- "rustls",
- "serde",
  "thiserror 2.0.18",
  "tinyvec",
- "tokio",
- "tokio-rustls",
  "tracing",
  "url",
 ]
 
 [[package]]
 name = "hickory-proto"
-version = "0.26.0-beta.4"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcca12171ce774c549f35510be702f4da00ef12ca486f0f2acb2ee96f2f5ca0f"
+checksum = "a916d0494600d99ecb15aadfab677ad97c4de559e8f1af0c129353a733ac1fcc"
 dependencies = [
  "data-encoding",
  "idna",
  "ipnet",
  "jni 0.22.4",
  "once_cell",
- "prefix-trie 0.8.2",
+ "prefix-trie",
  "rand 0.10.1",
  "ring",
+ "serde",
  "thiserror 2.0.18",
  "tinyvec",
  "tracing",
@@ -1921,38 +1913,14 @@ dependencies = [
 
 [[package]]
 name = "hickory-resolver"
-version = "0.25.2"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc62a9a99b0bfb44d2ab95a7208ac952d31060efc16241c87eaf36406fecf87a"
-dependencies = [
- "cfg-if",
- "futures-util",
- "hickory-proto 0.25.2",
- "ipconfig",
- "moka",
- "once_cell",
- "parking_lot",
- "rand 0.9.4",
- "resolv-conf",
- "rustls",
- "serde",
- "smallvec",
- "thiserror 2.0.18",
- "tokio",
- "tokio-rustls",
- "tracing",
-]
-
-[[package]]
-name = "hickory-resolver"
-version = "0.26.0-beta.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e7d2c928fa078e6640f26cf1b537b212e1688829c3944780025c7084e8bbbf6"
+checksum = "a10bd64d950b4d38ca21e25c8ae230712e4955fb8290cfcb29a5e5dc6017e544"
 dependencies = [
  "cfg-if",
  "futures-util",
  "hickory-net",
- "hickory-proto 0.26.0-beta.4",
+ "hickory-proto 0.26.0",
  "ipconfig",
  "ipnet",
  "jni 0.22.4",
@@ -1963,6 +1931,7 @@ dependencies = [
  "rand 0.10.1",
  "resolv-conf",
  "rustls",
+ "serde",
  "smallvec",
  "system-configuration",
  "thiserror 2.0.18",
@@ -1973,22 +1942,22 @@ dependencies = [
 
 [[package]]
 name = "hickory-server"
-version = "0.25.2"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d53e5fe811b941c74ee46b8818228bfd2bc2688ba276a0eaeb0f2c95ea3b2585"
+checksum = "91725f56e8e6b1fc4e68d4f86cf15714f1050f68ae817da6916da67041949f02"
 dependencies = [
  "async-trait",
  "bytes",
  "cfg-if",
  "data-encoding",
- "enum-as-inner",
  "futures-util",
  "h2",
- "hickory-proto 0.25.2",
- "hickory-resolver 0.25.2",
+ "hickory-net",
+ "hickory-proto 0.26.0",
+ "hickory-resolver",
  "http",
  "ipnet",
- "prefix-trie 0.7.0",
+ "prefix-trie",
  "rustls",
  "serde",
  "thiserror 2.0.18",
@@ -2383,7 +2352,7 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.4.2",
- "hickory-resolver 0.26.0-beta.4",
+ "hickory-resolver",
  "http",
  "indicatif",
  "ipnet",
@@ -2508,7 +2477,7 @@ dependencies = [
  "derive_more",
  "dirs-next",
  "governor",
- "hickory-resolver 0.25.2",
+ "hickory-resolver",
  "hickory-server",
  "http",
  "humantime",
@@ -2596,7 +2565,7 @@ dependencies = [
  "data-encoding",
  "derive_more",
  "getrandom 0.4.2",
- "hickory-resolver 0.26.0-beta.4",
+ "hickory-resolver",
  "http",
  "http-body-util",
  "hyper",
@@ -3784,16 +3753,6 @@ dependencies = [
 
 [[package]]
 name = "prefix-trie"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85cf4c7c25f1dd66c76b451e9041a8cfce26e4ca754934fa7aed8d5a59a01d20"
-dependencies = [
- "ipnet",
- "num-traits",
-]
-
-[[package]]
-name = "prefix-trie"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23370be78b7e5bcbb0cab4a02047eb040279a693c78daad04c2c5f1c24a83503"
@@ -4912,12 +4871,12 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swarm-discovery"
-version = "0.6.0-alpha.2"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf5ccbd3c5abd6e7314768de12649c1b0a29bea38fca4370f9408340c0f364a6"
+checksum = "7a5e3cb18dc0532c89b4fd9f5c9a44cb2db3c15520b6fa37d604b878ba431afb"
 dependencies = [
  "acto",
- "hickory-proto 0.26.0-beta.4",
+ "hickory-proto 0.26.0",
  "rand 0.10.1",
  "socket2",
  "thiserror 2.0.18",

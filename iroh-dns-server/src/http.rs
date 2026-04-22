@@ -295,11 +295,14 @@ async fn metrics_middleware(
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+    };
 
     use hickory_resolver::{
-        config::{NameServerConfig, ResolverConfig, ResolverOpts},
-        name_server::TokioConnectionProvider,
+        config::{NameServerConfig, ResolverConfig},
+        net::runtime::TokioRuntimeProvider,
     };
     use hickory_server::proto::rr::RecordType;
     use iroh::{
@@ -395,39 +398,31 @@ mod tests {
 
         // Fetch over HTTPS via hickory-resolver
         let client = {
-            let config = {
-                let mut config = ResolverConfig::new();
-                let mut name_server = NameServerConfig::new(
-                    server.https_addr().expect("https is bound"),
-                    hickory_server::proto::xfer::Protocol::Https,
-                );
-                name_server.tls_dns_name = Some("localhost".to_string());
-                config.add_name_server(name_server);
-                config
-            };
+            let https_addr = server.https_addr().expect("https is bound");
+            let mut name_server =
+                NameServerConfig::https(https_addr.ip(), Arc::from("localhost"), None);
+            for connection in &mut name_server.connections {
+                connection.port = https_addr.port();
+            }
+            let config = ResolverConfig::from_parts(None, vec![], vec![name_server]);
 
-            let opts = {
-                let mut opts = ResolverOpts::default();
-                opts.tls_config = self::tls::insecure_tls_config();
-                opts
-            };
-
-            hickory_resolver::Resolver::builder_with_config(
-                config,
-                TokioConnectionProvider::default(),
-            )
-            .with_options(opts)
-            .build()
+            hickory_resolver::Resolver::builder_with_config(config, TokioRuntimeProvider::default())
+                .with_tls_config(self::tls::insecure_tls_config())
+                .build()
+                .anyerr()?
         };
 
         let res = client
             .txt_lookup(format!("_iroh.{name_z32}."))
             .await
             .anyerr()?;
-        let records = res.as_lookup().records();
+        let records = res.answers();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].record_type(), RecordType::TXT);
-        let txt_data = records[0].data().as_txt().unwrap().txt_data();
+        let txt_data = match &records[0].data {
+            hickory_server::proto::rr::RData::TXT(txt) => &txt.txt_data,
+            other => panic!("expected TXT record, got {other:?}"),
+        };
         assert_eq!(&txt_data[0][..], format!("relay={RELAY_URL}").as_bytes());
 
         server.shutdown().await?;
