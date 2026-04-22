@@ -11,6 +11,7 @@ use rustls::{
     server::{ClientHello, ResolvesServerCert},
     sign::CertifiedKey,
 };
+use rustls_cert_file_reader::{FileReader, Format};
 use rustls_cert_reloadable_resolver::{CertifiedKeyLoader, key_provider::Dyn};
 use tokio_util::sync::CancellationToken;
 
@@ -39,10 +40,8 @@ pub async fn reloading_resolver(
     key_path: PathBuf,
     interval: std::time::Duration,
 ) -> Result<Arc<dyn ResolvesServerCert>, AnyError> {
-    let key_reader =
-        rustls_cert_file_reader::FileReader::new(key_path, rustls_cert_file_reader::Format::PEM);
-    let certs_reader =
-        rustls_cert_file_reader::FileReader::new(cert_path, rustls_cert_file_reader::Format::PEM);
+    let key_reader = FileReader::new(key_path, Format::PEM);
+    let certs_reader = FileReader::new(cert_path, Format::PEM);
     let loader = CertifiedKeyLoader {
         key_provider: Dyn(crypto_provider.key_provider),
         key_reader,
