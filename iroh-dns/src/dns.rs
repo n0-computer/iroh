@@ -1,7 +1,10 @@
 //! Configurable DNS resolver.
 //!
 //! The main export is the [`DnsResolver`] struct. It provides methods to resolve domain names
-//! to IPv4 and IPv6 addresses, and to look up TXT records.
+//! to IPv4 and IPv6 addresses, and to look up TXT records. Additionally, the resolver features
+//! methods to resolve the [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
+//! See the [`crate::endpoint_info`] module documentation for details on how iroh endpoint records
+//! are structured.
 
 use std::{
     fmt,
@@ -16,6 +19,7 @@ use hickory_resolver::{
     net::runtime::TokioRuntimeProvider,
     proto::rr::RData,
 };
+use iroh_base::EndpointId;
 use n0_error::{StackError, e, stack_error};
 use n0_future::{
     StreamExt,
@@ -26,7 +30,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 use url::Url;
 
-use crate::attrs::ParseError;
+use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
 
 /// Default DNS query timeout.
 pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
@@ -90,6 +94,7 @@ pub enum DnsError {
 }
 
 /// Potential errors related to DNS endpoint address lookups.
+#[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
@@ -413,18 +418,18 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Looks up endpoint info by `EndpointId` and origin domain name.
+    /// Looks up endpoint info by [`EndpointId`] and origin domain name.
     ///
     /// To lookup endpoints that published their endpoint info to the DNS servers run by n0,
     /// pass [`N0_DNS_ENDPOINT_ORIGIN_PROD`] as `origin`.
     pub async fn lookup_endpoint_by_id(
         &self,
-        endpoint_id: &iroh_base::EndpointId,
+        endpoint_id: &EndpointId,
         origin: &str,
-    ) -> Result<crate::endpoint_info::EndpointInfo, LookupError> {
+    ) -> Result<EndpointInfo, LookupError> {
         let name = format!("_iroh.{}.{}", endpoint_id.to_z32(), origin);
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
-        let info = crate::endpoint_info::EndpointInfo::from_txt_lookup(name, lookup)?;
+        let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
     }
 
@@ -432,34 +437,44 @@ impl DnsResolver {
     pub async fn lookup_endpoint_by_domain_name(
         &self,
         name: &str,
-    ) -> Result<crate::endpoint_info::EndpointInfo, LookupError> {
+    ) -> Result<EndpointInfo, LookupError> {
         let name = if name.starts_with("_iroh.") {
             name.to_string()
         } else {
             format!("_iroh.{name}")
         };
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
-        let info = crate::endpoint_info::EndpointInfo::from_txt_lookup(name, lookup)?;
+        let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
     }
 
     /// Looks up endpoint info by DNS name in a staggered fashion.
+    ///
+    /// From the moment this function is called, each lookup is scheduled after the delays in
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
+    /// summary of all errors otherwise.
     pub async fn lookup_endpoint_by_domain_name_staggered(
         &self,
         name: &str,
         delays_ms: &[u64],
-    ) -> Result<crate::endpoint_info::EndpointInfo, StaggeredError<LookupError>> {
+    ) -> Result<EndpointInfo, StaggeredError<LookupError>> {
         let f = || self.lookup_endpoint_by_domain_name(name);
         stagger_call(f, delays_ms).await
     }
 
-    /// Looks up endpoint info by `EndpointId` and origin domain name in a staggered fashion.
+    /// Looks up endpoint info by [`EndpointId`] and origin domain name.
+    ///
+    /// From the moment this function is called, each lookup is scheduled after the delays in
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
+    /// summary of all errors otherwise.
     pub async fn lookup_endpoint_by_id_staggered(
         &self,
-        endpoint_id: &iroh_base::EndpointId,
+        endpoint_id: &EndpointId,
         origin: &str,
         delays_ms: &[u64],
-    ) -> Result<crate::endpoint_info::EndpointInfo, StaggeredError<LookupError>> {
+    ) -> Result<EndpointInfo, StaggeredError<LookupError>> {
         let f = || self.lookup_endpoint_by_id(endpoint_id, origin);
         stagger_call(f, delays_ms).await
     }

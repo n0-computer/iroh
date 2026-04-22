@@ -112,21 +112,6 @@ impl PublicKey {
         self.0.as_bytes()
     }
 
-    /// Encodes this public key in [z-base-32](https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt) encoding.
-    ///
-    /// This is the encoding used by [pkarr](https://pkarr.org) domain names.
-    pub fn to_z32(&self) -> String {
-        Z_BASE_32.encode(self.as_bytes())
-    }
-
-    /// Parses a [`PublicKey`] from [z-base-32](https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt) encoding.
-    pub fn from_z32(s: &str) -> Result<PublicKey, KeyParsingError> {
-        let bytes = Z_BASE_32
-            .decode(s.as_bytes())
-            .map_err(|_| e!(KeyParsingError::FailedToDecodeBase32))?;
-        PublicKey::try_from(bytes.as_slice())
-    }
-
     /// Construct a `PublicKey` from a slice of bytes.
     ///
     /// # Warning
@@ -172,6 +157,20 @@ impl PublicKey {
     #[doc(hidden)]
     pub fn from_verifying_key(key: VerifyingKey) -> Self {
         Self(CompressedEdwardsY(key.to_bytes()))
+    }
+
+    /// Encodes this key in [z-base-32](https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt),
+    /// the encoding used by [pkarr](https://pkarr.org) domain names.
+    pub fn to_z32(&self) -> String {
+        Z_BASE_32.encode(self.as_bytes())
+    }
+
+    /// Parses a key from its [z-base-32](https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt) encoding.
+    pub fn from_z32(s: &str) -> Result<Self, KeyParsingError> {
+        let bytes = Z_BASE_32
+            .decode(s.as_bytes())
+            .map_err(|_| e!(KeyParsingError::FailedToDecodeBase32))?;
+        Self::try_from(bytes.as_slice())
     }
 }
 
