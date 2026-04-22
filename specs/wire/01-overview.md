@@ -7,18 +7,18 @@
 Iroh's protocol stack is layered as follows:
 
 ```
-┌─────────────────────────────────────┐
-│         Application (ALPN)          │
-├─────────────────────────────────────┤
-│       QUIC v1 + Multipath           │
-│  (RFC 9000, draft-ietf-quic-mp)     │
-├─────────────────────────────────────┤
-│     TLS 1.3 + Raw Public Keys       │
-│      (RFC 8446, RFC 7250)           │
-├──────────┬──────────┬───────────────┤
-│  UDP/IP  │  Relay   │   Custom      │
-│          │ (WebSocket)│  Transport   │
-└──────────┴──────────┴───────────────┘
+┌───────────────────────────────────────┐
+│          Application (ALPN)           │
+├───────────────────────────────────────┤
+│         QUIC v1 + Multipath           │
+│    (RFC 9000, draft-ietf-quic-mp)     │
+├───────────────────────────────────────┤
+│       TLS 1.3 + Raw Public Keys       │
+│         (RFC 8446, RFC 7250)          │
+├──────────┬────────────┬───────────────┤
+│  UDP/IP  │  Relay     │    Custom     │
+│          │ (WebSocket)│   Transport   │
+└──────────┴────────────┴───────────────┘
 ```
 
 All layers are standard or based on IETF drafts except the relay protocol, which is iroh-specific.
