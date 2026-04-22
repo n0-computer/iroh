@@ -531,7 +531,7 @@ async fn main() -> Result<()> {
     tokio::select! {
         biased;
         _ = tokio::signal::ctrl_c() => (),
-        _ = relay.task_handle() => (),
+        _ = relay.join() => (),
     }
 
     relay.shutdown().await?;
