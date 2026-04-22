@@ -70,12 +70,12 @@ impl ZoneStore {
     ///
     /// Optionally set custom bootstrap nodes. If `bootstrap` is empty it will use the default
     /// mainline bootstrap nodes.
-    pub fn with_mainline_fallback(self, bootstrap: BootstrapOption) -> Self {
+    pub async fn with_mainline_fallback(self, bootstrap: BootstrapOption) -> Self {
         let mut builder = DhtBuilder::default();
         if let BootstrapOption::Custom(ref nodes) = bootstrap {
             builder.bootstrap(nodes);
         }
-        let dht = builder.build().expect("failed to build DHT node");
+        let dht = builder.build().await.expect("failed to build DHT node");
         Self {
             dht: Some(dht),
             ..self
@@ -139,8 +139,6 @@ impl ZoneStore {
         if let Some(dht) = self.dht.as_ref() {
             debug!("DHT resolve {}", pubkey.to_z32());
             let maybe_item = dht
-                .clone()
-                .as_async()
                 .get_mutable_most_recent(pubkey.as_bytes(), None)
                 .await;
             if let Some(item) = maybe_item

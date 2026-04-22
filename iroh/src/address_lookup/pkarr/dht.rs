@@ -18,9 +18,8 @@ use n0_future::{
 };
 
 use crate::{
-    Endpoint,
     address_lookup::{
-        AddrFilter, AddressLookup, AddressLookupBuilder, AddressLookupBuilderError, EndpointData,
+        AddrFilter, AddressLookup, AddressLookupBuilderError, EndpointData,
         Error as AddressLookupError, Item as AddressLookupItem, pkarr::DEFAULT_PKARR_TTL,
     },
     endpoint_info::EndpointInfo,
@@ -104,8 +103,6 @@ impl Inner {
 
         let maybe_item = self
             .dht
-            .clone()
-            .as_async()
             .get_mutable_most_recent(public_key.as_bytes(), None)
             .await;
         match maybe_item {
@@ -211,10 +208,17 @@ impl Builder {
     }
 
     /// Builds the address lookup mechanism.
-    pub fn build(self) -> Result<DhtAddressLookup, AddressLookupBuilderError> {
+    ///
+    /// Constructing the DHT is async (it binds a UDP socket and bootstraps the
+    /// routing table), so this must be awaited. The resulting [`DhtAddressLookup`]
+    /// implements [`AddressLookup`], which via the blanket impl also satisfies
+    /// `AddressLookupBuilder` and can be passed directly to
+    /// [`crate::endpoint::Builder::address_lookup`].
+    pub async fn build(self) -> Result<DhtAddressLookup, AddressLookupBuilderError> {
         let dht_builder = self.dht_builder.unwrap_or_default();
         let dht = dht_builder
             .build()
+            .await
             .map_err(|e| AddressLookupBuilderError::from_err("pkarr-dht", e))?;
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         let secret_key = self.secret_key.filter(|_| self.enable_publish);
@@ -227,15 +231,6 @@ impl Builder {
             task: Default::default(),
             filter: self.addr_filter,
         })))
-    }
-}
-
-impl AddressLookupBuilder for Builder {
-    fn into_address_lookup(
-        self,
-        endpoint: &Endpoint,
-    ) -> Result<impl AddressLookup, AddressLookupBuilderError> {
-        self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
 
@@ -260,20 +255,12 @@ impl DhtAddressLookup {
         let initial_cas = this
             .0
             .dht
-            .clone()
-            .as_async()
             .get_mutable_most_recent(public_key.as_bytes(), None)
             .await
             .map(|item| item.seq());
         let mut cas = initial_cas;
         loop {
-            let res = this
-                .0
-                .dht
-                .clone()
-                .as_async()
-                .put_mutable(item.clone(), cas)
-                .await;
+            let res = this.0.dht.put_mutable(item.clone(), cas).await;
             match res {
                 Ok(_) => {
                     tracing::debug!("pkarr publish success. published under {z32}");

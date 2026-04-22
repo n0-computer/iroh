@@ -40,7 +40,7 @@ netwatch = "0.16"
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-mainline = { version = "6", optional = true }
+mainline = { package = "iroh-mainline", git = "https://github.com/n0-computer/iroh-mainline.git", branch = "rename-crate", optional = true }
 noq = { version = "0.18.0", default-features = false, features = ["rustls"] }
 noq-proto = { version = "0.17", default-features = false }
 noq-udp = { version = "0.10", default-features = false }

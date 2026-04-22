@@ -1267,15 +1267,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "document-features"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
-dependencies = [
- "litrs",
-]
-
-[[package]]
 name = "dtor"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1430,17 +1421,6 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
-
-[[package]]
-name = "flume"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
-dependencies = [
- "futures-core",
- "futures-sink",
- "spin 0.9.8",
-]
 
 [[package]]
 name = "fnv"
@@ -2387,11 +2367,11 @@ dependencies = [
  "http",
  "indicatif",
  "ipnet",
- "iroh-base",
+ "iroh-base 0.98.0",
  "iroh-dns",
+ "iroh-mainline",
  "iroh-metrics",
  "iroh-relay",
- "mainline",
  "n0-error",
  "n0-future",
  "n0-tracing-test",
@@ -2462,6 +2442,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-base"
+version = "0.98.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "738865784637830fb14204ebd3047922db83bc1816a59027af29579b9c27bd99"
+dependencies = [
+ "curve25519-dalek",
+ "data-encoding",
+ "data-encoding-macro",
+ "derive_more",
+ "digest",
+ "ed25519-dalek",
+ "getrandom 0.4.2",
+ "n0-error",
+ "rand 0.10.1",
+ "serde",
+ "sha2",
+ "url",
+ "zeroize",
+ "zeroize_derive",
+]
+
+[[package]]
 name = "iroh-bench"
 version = "0.98.0"
 dependencies = [
@@ -2486,7 +2488,7 @@ name = "iroh-dns"
 version = "0.98.0"
 dependencies = [
  "derive_more",
- "iroh-base",
+ "iroh-base 0.98.0",
  "n0-error",
  "n0-future",
  "simple-dns",
@@ -2514,11 +2516,11 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "iroh",
- "iroh-base",
+ "iroh-base 0.98.0",
  "iroh-dns",
+ "iroh-mainline",
  "iroh-metrics",
- "lru",
- "mainline",
+ "lru 0.16.3",
  "n0-error",
  "n0-future",
  "n0-tracing-test",
@@ -2548,6 +2550,28 @@ dependencies = [
  "ttl_cache",
  "url",
  "vergen-gitcl",
+]
+
+[[package]]
+name = "iroh-mainline"
+version = "6.4.0"
+source = "git+https://github.com/n0-computer/iroh-mainline.git?branch=rename-crate#0647aea900899fb4b1e8c8cbeb648485afe83284"
+dependencies = [
+ "crc",
+ "dyn-clone",
+ "ed25519-dalek",
+ "futures-core",
+ "getrandom 0.3.4",
+ "iroh-base 0.98.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lru 0.13.0",
+ "n0-error",
+ "noq-udp",
+ "serde",
+ "serde_bencode",
+ "serde_bytes",
+ "sha1_smol",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2601,10 +2625,10 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "iroh-base",
+ "iroh-base 0.98.0",
  "iroh-dns",
  "iroh-metrics",
- "lru",
+ "lru 0.16.3",
  "n0-error",
  "n0-future",
  "n0-tracing-test",
@@ -2814,12 +2838,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
-name = "litrs"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2849,6 +2867,12 @@ dependencies = [
 
 [[package]]
 name = "lru"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "227748d55f2f0ab4735d87fd623798cb6b664512fe979705f829c9f81c934465"
+
+[[package]]
+name = "lru"
 version = "0.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1dc47f592c06f33f8e3aea9591776ec7c9f9e4124778ff8a3c3b87159f7e593"
@@ -2867,28 +2891,6 @@ name = "mac-addr"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3d25b0e0b648a86960ac23b7ad4abb9717601dec6f66c165f5b037f3f03065f"
-
-[[package]]
-name = "mainline"
-version = "6.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ff27d378ca495eaf3be8616d5d7319c1c18e93fd60e13698fcdc7e19448f1a4"
-dependencies = [
- "crc",
- "document-features",
- "dyn-clone",
- "ed25519-dalek",
- "flume",
- "futures-lite",
- "getrandom 0.3.4",
- "lru",
- "serde",
- "serde_bencode",
- "serde_bytes",
- "sha1_smol",
- "thiserror 2.0.18",
- "tracing",
-]
 
 [[package]]
 name = "matchers"

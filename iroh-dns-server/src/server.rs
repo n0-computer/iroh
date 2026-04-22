@@ -31,7 +31,7 @@ pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
     )?;
     if let Some(bootstrap) = config.mainline_enabled() {
         info!("mainline fallback enabled");
-        store = store.with_mainline_fallback(bootstrap);
+        store = store.with_mainline_fallback(bootstrap).await;
     };
     let server = Server::spawn(config, store, metrics).await?;
     tokio::signal::ctrl_c().await.anyerr()?;
@@ -148,7 +148,7 @@ impl Server {
         let mut store = ZoneStore::in_memory(options.unwrap_or_default(), Default::default())?;
         if let Some(bootstrap) = mainline {
             info!("mainline fallback enabled");
-            store = store.with_mainline_fallback(bootstrap);
+            store = store.with_mainline_fallback(bootstrap).await;
         }
         let server = Self::spawn(config, store, Default::default()).await?;
         Ok(server)

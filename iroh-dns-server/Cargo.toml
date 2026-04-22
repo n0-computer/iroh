@@ -32,7 +32,7 @@ iroh-base = { version = "0.98", path = "../iroh-base", features = ["key"] }
 iroh-metrics = { version = "0.38", features = ["service"] }
 iroh-dns = { version = "0.98", path = "../iroh-dns" }
 lru = "0.16.3"
-mainline = "6"
+mainline = { package = "iroh-mainline", git = "https://github.com/n0-computer/iroh-mainline.git", branch = "rename-crate" }
 n0-future = "0.3"
 rcgen = "0.14"
 redb = "3.1.0"
