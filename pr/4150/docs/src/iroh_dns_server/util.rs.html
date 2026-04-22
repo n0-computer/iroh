@@ -108,7 +108,7 @@
 <a href=#108 id=108 data-nosnippet>108</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Label, BTreeMap&lt;RrKey, Arc&lt;RecordSet&gt;&gt;), ProtoError&gt; {
 <a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">let </span>common_zone = Label::from_utf8(<span class="kw-2">&amp;</span>signed_packet.public_key().to_z32())<span class="question-mark">?</span>;
 <a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">let </span><span class="kw-2">mut </span>message = signed_packet_to_hickory_message(signed_packet)<span class="question-mark">?</span>;
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">let </span>answers = message.take_answers();
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">let </span>answers = std::mem::take(<span class="kw-2">&amp;mut </span>message.answers);
 <a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">let </span><span class="kw-2">mut </span>output: BTreeMap&lt;RrKey, Arc&lt;RecordSet&gt;&gt; = BTreeMap::new();
 <a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">for </span><span class="kw-2">mut </span>record <span class="kw">in </span>answers.into_iter() {
 <a href=#114 id=114 data-nosnippet>114</a>        <span class="comment">// disallow SOA and NS records
@@ -116,7 +116,7 @@
 <a href=#116 id=116 data-nosnippet>116</a>            <span class="kw">continue</span>;
 <a href=#117 id=117 data-nosnippet>117</a>        }
 <a href=#118 id=118 data-nosnippet>118</a>        <span class="comment">// expect the z32 encoded pubkey as root name
-<a href=#119 id=119 data-nosnippet>119</a>        </span><span class="kw">let </span>name = record.name();
+<a href=#119 id=119 data-nosnippet>119</a>        </span><span class="kw">let </span>name = <span class="kw-2">&amp;</span>record.name;
 <a href=#120 id=120 data-nosnippet>120</a>        <span class="kw">if </span>name.num_labels() &lt; <span class="number">1 </span>{
 <a href=#121 id=121 data-nosnippet>121</a>            <span class="kw">continue</span>;
 <a href=#122 id=122 data-nosnippet>122</a>        }
@@ -130,9 +130,9 @@
 <a href=#130 id=130 data-nosnippet>130</a>
 <a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">let </span>name_without_zone =
 <a href=#132 id=132 data-nosnippet>132</a>            Name::from_labels(name.iter().take(name.num_labels() <span class="kw">as </span>usize - <span class="number">1</span>))<span class="question-mark">?</span>;
-<a href=#133 id=133 data-nosnippet>133</a>        record.set_name(name_without_zone);
+<a href=#133 id=133 data-nosnippet>133</a>        record.name = name_without_zone;
 <a href=#134 id=134 data-nosnippet>134</a>
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span>rrkey = RrKey::new(record.name().into(), record.record_type());
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span>rrkey = RrKey::new(record.name.clone().into(), record.record_type());
 <a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">match </span>output.entry(rrkey) {
 <a href=#137 id=137 data-nosnippet>137</a>            btree_map::Entry::Vacant(e) =&gt; {
 <a href=#138 id=138 data-nosnippet>138</a>                <span class="kw">let </span>set: RecordSet = record.into();
@@ -159,7 +159,7 @@
 <a href=#159 id=159 data-nosnippet>159</a>    <span class="comment">// TODO: less clones
 <a href=#160 id=160 data-nosnippet>160</a>    </span><span class="kw">for </span>record <span class="kw">in </span>input.records_without_rrsigs() {
 <a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span><span class="kw-2">mut </span>record = record.clone();
-<a href=#162 id=162 data-nosnippet>162</a>        record.set_name(new_name.clone());
+<a href=#162 id=162 data-nosnippet>162</a>        record.name = new_name.clone();
 <a href=#163 id=163 data-nosnippet>163</a>        output.insert(record, serial);
 <a href=#164 id=164 data-nosnippet>164</a>    }
 <a href=#165 id=165 data-nosnippet>165</a>    <span class="prelude-val">Ok</span>(output)
