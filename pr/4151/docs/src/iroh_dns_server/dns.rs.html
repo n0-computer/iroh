@@ -31,10 +31,10 @@
 <a href=#31 id=31 data-nosnippet>31</a>};
 <a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>tracing::{debug, info};
 <a href=#33 id=33 data-nosnippet>33</a>
-<a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span><span class="self">self</span>::node_authority::NodeAuthority;
+<a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span><span class="self">self</span>::node_zone_handler::NodeZoneHandler;
 <a href=#35 id=35 data-nosnippet>35</a><span class="kw">use crate</span>::{metrics::Metrics, store::ZoneStore};
 <a href=#36 id=36 data-nosnippet>36</a>
-<a href=#37 id=37 data-nosnippet>37</a><span class="kw">mod </span>node_authority;
+<a href=#37 id=37 data-nosnippet>37</a><span class="kw">mod </span>node_zone_handler;
 <a href=#38 id=38 data-nosnippet>38</a>
 <a href=#39 id=39 data-nosnippet>39</a><span class="kw">const </span>DEFAULT_NS_TTL: u32 = <span class="number">60 </span>* <span class="number">60 </span>* <span class="number">12</span>; <span class="comment">// 12h
 <a href=#40 id=40 data-nosnippet>40</a></span><span class="kw">const </span>DEFAULT_SOA_TTL: u32 = <span class="number">60 </span>* <span class="number">60 </span>* <span class="number">24 </span>* <span class="number">14</span>; <span class="comment">// 14d
@@ -139,7 +139,7 @@
 <a href=#139 id=139 data-nosnippet>139</a>            .anyerr()<span class="question-mark">?</span>;
 <a href=#140 id=140 data-nosnippet>140</a>
 <a href=#141 id=141 data-nosnippet>141</a>        <span class="kw">let </span>(static_authority, serial) = create_static_authority(<span class="kw-2">&amp;</span>origins, config)<span class="question-mark">?</span>;
-<a href=#142 id=142 data-nosnippet>142</a>        <span class="kw">let </span>authority = Arc::new(NodeAuthority::new(
+<a href=#142 id=142 data-nosnippet>142</a>        <span class="kw">let </span>authority = Arc::new(NodeZoneHandler::new(
 <a href=#143 id=143 data-nosnippet>143</a>            zone_store,
 <a href=#144 id=144 data-nosnippet>144</a>            static_authority,
 <a href=#145 id=145 data-nosnippet>145</a>            origins,
