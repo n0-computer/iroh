@@ -81,12 +81,29 @@ pub(crate) fn reqwest_client_builder(
     tls_client_config: rustls::ClientConfig,
     dns_resolver: crate::dns::DnsResolver,
 ) -> reqwest::ClientBuilder {
-    use std::{net::SocketAddr, sync::Arc, time::Duration};
+    use std::sync::Arc;
+
+    use self::reqwest_dns_resolver::ReqwestDnsResolver;
+
+    reqwest::Client::builder()
+        .use_preconfigured_tls(tls_client_config)
+        .dns_resolver(Arc::new(ReqwestDnsResolver(dns_resolver)))
+}
+
+#[cfg(not(wasm_browser))]
+mod reqwest_dns_resolver {
+    //! Implementation of [`reqwest::dns::Resolver`] for [`DnsResolver`].
+    //!
+    //! Wrapped in a newtype to not expose this in the public iroh API.
+
+    use std::{net::SocketAddr, time::Duration};
 
     use iroh_relay::dns::DnsResolver;
 
-    struct ReqwestDnsResolver(DnsResolver);
     const DNS_TIMEOUT: Duration = Duration::from_secs(3);
+
+    pub(super) struct ReqwestDnsResolver(pub(super) DnsResolver);
+
     impl reqwest::dns::Resolve for ReqwestDnsResolver {
         fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
             let this = self.0.clone();
@@ -107,10 +124,6 @@ pub(crate) fn reqwest_client_builder(
             })
         }
     }
-
-    reqwest::Client::builder()
-        .use_preconfigured_tls(tls_client_config)
-        .dns_resolver(Arc::new(ReqwestDnsResolver(dns_resolver)))
 }
 
 #[cfg(test)]

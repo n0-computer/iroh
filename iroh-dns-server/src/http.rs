@@ -305,6 +305,7 @@ mod tests {
     use iroh::{
         RelayUrl, SecretKey,
         address_lookup::{EndpointInfo, PkarrRelayClient},
+        dns::DnsResolver,
         tls::{CaRootsConfig, default_provider},
     };
     use n0_error::StdResultExt;
@@ -349,7 +350,7 @@ mod tests {
         let pkarr = PkarrRelayClient::new(
             format!("{http_url}pkarr").parse().anyerr()?,
             tls_config,
-            Default::default(),
+            DnsResolver::default(),
         );
         pkarr.publish(&signed_packet).await?;
 
