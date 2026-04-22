@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>iroh_relay::{RelayConfig, RelayMap};
 <a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>mapped_addrs::MultipathMappedAddr;
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>n0_error::{bail, e, stack_error};
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>n0_error::{AnyError, anyerr, bail, e, stack_error};
 <a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>n0_future::{
 <a href=#34 id=34 data-nosnippet>34</a>    MaybeFuture,
 <a href=#35 id=35 data-nosnippet>35</a>    task::{<span class="self">self</span>, AbortOnDropHandle},
@@ -803,7 +803,7 @@
 <a href=#803 id=803 data-nosnippet>803</a>    <span class="attr">#[error(<span class="string">"Failed to create internal QUIC endpoint"</span>)]
 <a href=#804 id=804 data-nosnippet>804</a>    </span>CreateQuicEndpoint { source: io::Error },
 <a href=#805 id=805 data-nosnippet>805</a>    <span class="attr">#[error(<span class="string">"Failed to create netmon monitor"</span>)]
-<a href=#806 id=806 data-nosnippet>806</a>    </span>CreateNetmonMonitor { source: netmon::Error },
+<a href=#806 id=806 data-nosnippet>806</a>    </span>CreateNetmonMonitor { source: AnyError },
 <a href=#807 id=807 data-nosnippet>807</a>    <span class="attr">#[error(<span class="string">"Invalid transport configuration"</span>)]
 <a href=#808 id=808 data-nosnippet>808</a>    </span>InvalidTransportConfig,
 <a href=#809 id=809 data-nosnippet>809</a>    <span class="attr">#[error(<span class="string">"Invalid CA root configuration"</span>)]
@@ -986,7 +986,7 @@
 <a href=#986 id=986 data-nosnippet>986</a>
 <a href=#987 id=987 data-nosnippet>987</a>        <span class="kw">let </span>network_monitor = netmon::Monitor::new()
 <a href=#988 id=988 data-nosnippet>988</a>            .<span class="kw">await
-<a href=#989 id=989 data-nosnippet>989</a>            </span>.map_err(|err| <span class="macro">e!</span>(BindError::CreateNetmonMonitor, err))<span class="question-mark">?</span>;
+<a href=#989 id=989 data-nosnippet>989</a>            </span>.map_err(|err| <span class="macro">e!</span>(BindError::CreateNetmonMonitor, <span class="macro">anyerr!</span>(err)))<span class="question-mark">?</span>;
 <a href=#990 id=990 data-nosnippet>990</a>
 <a href=#991 id=991 data-nosnippet>991</a>        <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#992 id=992 data-nosnippet>992</a>        </span><span class="kw">let </span>net_report_config = {
