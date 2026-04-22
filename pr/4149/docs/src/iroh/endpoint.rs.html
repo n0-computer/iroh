@@ -58,7 +58,7 @@
 <a href=#58 id=58 data-nosnippet>58</a>    metrics::EndpointMetrics,
 <a href=#59 id=59 data-nosnippet>59</a>    socket::{
 <a href=#60 id=60 data-nosnippet>60</a>        <span class="self">self</span>, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
-<a href=#61 id=61 data-nosnippet>61</a>        transports::HomeRelayStatus,
+<a href=#61 id=61 data-nosnippet>61</a>        transports::RelayConnectionState,
 <a href=#62 id=62 data-nosnippet>62</a>    },
 <a href=#63 id=63 data-nosnippet>63</a>    tls::{<span class="self">self</span>, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 <a href=#64 id=64 data-nosnippet>64</a>};
@@ -1825,12 +1825,12 @@
 <a href=#1825 id=1825 data-nosnippet>1825</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 <a href=#1826 id=1826 data-nosnippet>1826</a></span><span class="kw">pub struct </span>RelayStatus {
 <a href=#1827 id=1827 data-nosnippet>1827</a>    url: RelayUrl,
-<a href=#1828 id=1828 data-nosnippet>1828</a>    status: HomeRelayStatus,
+<a href=#1828 id=1828 data-nosnippet>1828</a>    state: RelayConnectionState,
 <a href=#1829 id=1829 data-nosnippet>1829</a>}
 <a href=#1830 id=1830 data-nosnippet>1830</a>
 <a href=#1831 id=1831 data-nosnippet>1831</a><span class="kw">impl </span>RelayStatus {
-<a href=#1832 id=1832 data-nosnippet>1832</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(url: RelayUrl, status: HomeRelayStatus) -&gt; <span class="self">Self </span>{
-<a href=#1833 id=1833 data-nosnippet>1833</a>        <span class="self">Self </span>{ url, status }
+<a href=#1832 id=1832 data-nosnippet>1832</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(url: RelayUrl, state: RelayConnectionState) -&gt; <span class="self">Self </span>{
+<a href=#1833 id=1833 data-nosnippet>1833</a>        <span class="self">Self </span>{ url, state }
 <a href=#1834 id=1834 data-nosnippet>1834</a>    }
 <a href=#1835 id=1835 data-nosnippet>1835</a>
 <a href=#1836 id=1836 data-nosnippet>1836</a>    <span class="doccomment">/// Returns the URL of the home relay.
@@ -1840,7 +1840,7 @@
 <a href=#1840 id=1840 data-nosnippet>1840</a>
 <a href=#1841 id=1841 data-nosnippet>1841</a>    <span class="doccomment">/// Returns `true` if the endpoint is connected to the relay.
 <a href=#1842 id=1842 data-nosnippet>1842</a>    </span><span class="kw">pub fn </span>is_connected(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#1843 id=1843 data-nosnippet>1843</a>        <span class="self">self</span>.status.is_connected()
+<a href=#1843 id=1843 data-nosnippet>1843</a>        <span class="self">self</span>.state.is_connected()
 <a href=#1844 id=1844 data-nosnippet>1844</a>    }
 <a href=#1845 id=1845 data-nosnippet>1845</a>
 <a href=#1846 id=1846 data-nosnippet>1846</a>    <span class="doccomment">/// Returns the most recent connection error, if the relay is currently
@@ -1849,7 +1849,7 @@
 <a href=#1849 id=1849 data-nosnippet>1849</a>    /// Returns `None` when the relay is connected, or when the endpoint has
 <a href=#1850 id=1850 data-nosnippet>1850</a>    /// not yet observed a failed connection attempt.
 <a href=#1851 id=1851 data-nosnippet>1851</a>    </span><span class="kw">pub fn </span>last_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>AnyError&gt; {
-<a href=#1852 id=1852 data-nosnippet>1852</a>        <span class="self">self</span>.status.last_error()
+<a href=#1852 id=1852 data-nosnippet>1852</a>        <span class="self">self</span>.state.last_error().map(Arc::as_ref)
 <a href=#1853 id=1853 data-nosnippet>1853</a>    }
 <a href=#1854 id=1854 data-nosnippet>1854</a>}
 <a href=#1855 id=1855 data-nosnippet>1855</a>
