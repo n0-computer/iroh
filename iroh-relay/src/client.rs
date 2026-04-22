@@ -11,6 +11,8 @@ use std::{
 
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
+#[cfg(wasm_browser)]
+use n0_error::StdResultExt;
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     Sink, Stream,
@@ -379,7 +381,8 @@ impl ClientBuilder {
             dial_url.as_str(),
             Some(ProtocolVersion::all().collect()),
         )
-        .await?;
+        .await
+        .anyerr()?;
 
         let protocol_version =
             ProtocolVersion::match_from_str(&ws_meta.protocol()).ok_or_else(|| {

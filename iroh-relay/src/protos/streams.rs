@@ -6,8 +6,9 @@ use std::{
 };
 
 use bytes::Bytes;
+use n0_error::AnyError;
 #[cfg(not(wasm_browser))]
-use n0_error::{AnyError, anyerr};
+use n0_error::anyerr;
 use n0_future::{Sink, Stream, ready};
 #[cfg(not(wasm_browser))]
 use tokio::io::{AsyncRead, AsyncWrite};
