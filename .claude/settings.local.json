@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:crates.io)",
+      "mcp__acp__Bash",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.rs)",
+      "mcp__acp__Write",
+      "mcp__acp__Edit"
+    ]
+  }
+}
