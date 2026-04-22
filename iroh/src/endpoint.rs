@@ -439,7 +439,8 @@ impl Builder {
                     bail!(InvalidSocketAddr::DuplicateDefaultAddr);
                 }
 
-                let ip_net = Ipv4Net::new(*addr.ip(), opts.prefix_len())?;
+                let ip_net = Ipv4Net::new(*addr.ip(), opts.prefix_len())
+                    .map_err(|_| e!(InvalidSocketAddr::InvalidPrefixLength))?;
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V4 {
                         ip_net,
@@ -459,7 +460,8 @@ impl Builder {
                     bail!(InvalidSocketAddr::DuplicateDefaultAddr);
                 }
 
-                let ip_net = Ipv6Net::new(*addr.ip(), opts.prefix_len())?;
+                let ip_net = Ipv6Net::new(*addr.ip(), opts.prefix_len())
+                    .map_err(|_| e!(InvalidSocketAddr::InvalidPrefixLength))?;
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V6 {
                         ip_net,
