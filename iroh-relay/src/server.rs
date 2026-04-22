@@ -42,6 +42,8 @@ use crate::{
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
 };
 
+use self::http_server::{BytesBody, HyperError, HyperResult};
+
 pub mod client;
 pub mod clients;
 pub mod http_server;
@@ -78,13 +80,9 @@ const TLS_HEADERS: [(&str, &str); 2] = [
     ),
 ];
 
-type BytesBody = http_body_util::Full<hyper::body::Bytes>;
-type HyperError = Box<dyn std::error::Error + Send + Sync>;
-type HyperResult<T> = std::result::Result<T, HyperError>;
-
 /// Creates a new [`BytesBody`] with no content.
 fn body_empty() -> BytesBody {
-    http_body_util::Full::new(hyper::body::Bytes::new())
+    Box::new(http_body_util::Full::new(hyper::body::Bytes::new()))
 }
 
 /// Configuration for the full Relay.
@@ -620,10 +618,11 @@ fn root_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
+    let body: BytesBody = Box::new(Full::from(INDEX));
     response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
-        .body(INDEX.into())
+        .body(body)
         .map_err(|err| Box::new(err) as HyperError)
 }
 
@@ -643,9 +642,10 @@ fn robots_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
+    let body: BytesBody = Box::new(Full::from(ROBOTS_TXT));
     response
         .status(StatusCode::OK)
-        .body(ROBOTS_TXT.into())
+        .body(body)
         .map_err(|err| Box::new(err) as HyperError)
 }
 
@@ -701,10 +701,11 @@ fn healthz_handler(
         git_hash: option_env!("VERGEN_GIT_SHA").unwrap_or("unknown"),
     };
     let body = serde_json::to_string(&health).unwrap_or_else(|_| r#"{"status":"error"}"#.into());
+    let body: BytesBody = Box::new(Full::from(body));
     response
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
-        .body(body.into())
+        .body(body)
         .map_err(|err| Box::new(err) as HyperError)
 }
 
@@ -773,9 +774,10 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
             }
             _ => {
                 // Return 404 not found response.
+                let body: BytesBody = Box::new(Full::from(NOTFOUND));
                 let r = Response::builder()
                     .status(StatusCode::NOT_FOUND)
-                    .body(NOTFOUND.into())
+                    .body(body)
                     .map_err(|err| Box::new(err) as HyperError);
                 Box::pin(async move { r })
             }
