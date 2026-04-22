@@ -4,7 +4,7 @@ This specification describes how iroh works at a conceptual level. It is intende
 
 For the low-level wire protocol specification, see [../wire/](../wire/README.md).
 
-**Version:** 1.0
+**Version:** 1.1
 
 ## Table of Contents
 

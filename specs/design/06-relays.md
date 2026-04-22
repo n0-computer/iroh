@@ -1,6 +1,6 @@
 # Relays
 
-**Version:** 1.0
+**Version:** 1.1
 
 Relay servers are publicly-reachable infrastructure that ensure any two iroh endpoints can always communicate, regardless of NAT, firewall, or network topology.
 
@@ -55,3 +55,7 @@ The QAD service uses the ALPN `/iroh-qad/0` and implements the QUIC Address Disc
 An endpoint may be connected to multiple relay servers simultaneously, but only one is designated as the home relay. Connections to non-home relays are established as needed — for example, when communicating with a peer whose home relay is different from the local endpoint's home relay.
 
 The relay connection is kept alive with periodic pings (every 15 seconds). If a relay connection drops, the endpoint reconnects automatically.
+
+## Health Checking After Network Changes
+
+When a major network change is detected, the endpoint sends an immediate health check ping to all active relay connections rather than waiting for the next scheduled ping. The health check uses an RTT-based timeout of 3x the last observed RTT (clamped between 500ms and 5s). This allows broken relay connections to be detected and recovered within ~500ms–1s instead of waiting up to 15s for the next scheduled ping.

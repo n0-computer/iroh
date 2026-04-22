@@ -1,6 +1,6 @@
 # Address Lookup
 
-**Version:** 1.0
+**Version:** 1.1
 
 Address lookup is the process of resolving an Endpoint ID to the transport addresses needed to establish a connection. It is a pluggable system — different lookup implementations can be used depending on the deployment scenario.
 
@@ -67,3 +67,9 @@ Publishing is continuous: the endpoint monitors its own addressing information (
 ## Address Filtering
 
 When publishing addresses, endpoints apply an **address filter** that controls which address types are included. The default filter publishes only relay URLs, which provides reachability without leaking IP addresses to public infrastructure. Applications can configure the filter to include direct IP addresses when appropriate for their use case.
+
+IPv6 addresses with the `deprecated` flag (as defined in [RFC 4862](https://www.rfc-editor.org/rfc/rfc4862)) are automatically excluded from published addresses, regardless of filter configuration. Deprecated addresses are being phased out by the operating system and should not be used for new connections.
+
+## Error Handling
+
+When multiple lookup services are configured, a failure in one service does not abort the overall lookup. Each service runs to completion independently, and results are merged. Only if all services fail or return no results is the lookup considered failed. This ensures that a transient error in one service (e.g., DNS timeout) does not prevent results from another service (e.g., mDNS) from being used.

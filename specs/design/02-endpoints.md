@@ -1,6 +1,6 @@
 # Endpoints
 
-**Version:** 1.0
+**Version:** 1.1
 
 An iroh endpoint is the central object that manages peer-to-peer connectivity. It combines a cryptographic identity with network services — relay connections, address discovery, and hole punching — to establish and maintain QUIC connections with other endpoints.
 
@@ -17,9 +17,13 @@ The Endpoint ID serves three roles:
 
 When an endpoint starts up, it performs several initialization steps to become reachable on the network.
 
+### Crypto Provider
+
+The endpoint requires a TLS crypto provider for all cryptographic operations (TLS handshakes, QUIC packet protection, etc.). Two built-in providers are supported: `ring` (default) and `aws-lc-rs`. Applications may also supply a custom `rustls::crypto::CryptoProvider` implementation. The crypto provider is selected at build time via Cargo features (`tls-ring`, `tls-aws-lc-rs`) or at runtime via the endpoint builder.
+
 ### Key Generation
 
-If no secret key is provided, the endpoint generates a new Ed25519 key pair. The public key becomes the Endpoint ID. If a secret key is provided, the endpoint uses it directly, allowing a stable identity across restarts.
+If no secret key is provided, the endpoint generates a new Ed25519 key pair using the system's default random number generator. The public key becomes the Endpoint ID. If a secret key is provided, the endpoint uses it directly, allowing a stable identity across restarts.
 
 ### Home Relay Selection
 
@@ -38,9 +42,21 @@ If network conditions change — for example, the endpoint moves to a different 
 
 Once the home relay is selected, the endpoint publishes its addressing information so that remote endpoints can find it. This typically includes the home relay URL and, depending on configuration, direct IP addresses. See [Address Lookup](05-address-lookup.md) for details on the publication mechanism.
 
+### External Addresses
+
+An endpoint can be configured with **external addresses** — manually-specified socket addresses that the endpoint should advertise as direct addresses. These are useful when the endpoint's public address is known out-of-band (e.g., a server with a static IP, or a port-forwarded host). External addresses can be set at build time or added and removed at runtime. They are advertised alongside discovered addresses.
+
+### Online Status
+
+The endpoint exposes an `online` status that resolves once the endpoint is **fully connected** to its home relay (i.e., the relay handshake is complete and the endpoint is registered and reachable). This ensures that callers waiting for online status can be confident the endpoint is actually reachable by peers, not merely in the process of connecting.
+
 ### Accepting Connections
 
 To accept incoming connections, the endpoint must be configured with one or more ALPN protocol identifiers. These declare which application protocols the endpoint supports. Without ALPNs configured, the endpoint can initiate connections but cannot accept them.
+
+### Incoming Connection Filtering
+
+When using a router to accept connections, an **incoming filter** can be configured to evaluate connections before the TLS handshake completes. The filter can accept, reject (with a CONNECTION_REFUSED error), retry (requesting QUIC address validation), or silently ignore incoming connections. This provides early protection against denial-of-service attacks without the cost of completing a TLS handshake.
 
 ## TLS Authentication
 
