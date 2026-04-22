@@ -14,18 +14,18 @@ use n0_future::{
     task::JoinSet,
     time::{self, Duration, Instant},
 };
-use n0_watcher::{Watchable, Watcher};
-use noq::{ConnectionError, PathStatus, WeakConnectionHandle};
-use noq_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
+use n0_watcher::Watcher;
+use noq::{Closed, PathStatus, WeakConnectionHandle};
+use noq_proto::{PathError, PathEvent as NoqPathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 
 use self::path_state::RemotePathState;
-pub(crate) use self::path_watcher::PathWatchable;
+pub(crate) use self::path_watcher::{PathStateReceiver, PathStateSender};
 pub use self::{
-    path_watcher::{PathInfo, PathInfoList, PathInfoListIter, PathWatcher},
+    path_watcher::{Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream},
     remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage},
 };
 use super::Source;
@@ -81,7 +81,7 @@ const RTT_SWITCHING_MIN_IP: Duration = Duration::from_millis(5);
 /// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
 /// actor has lagged processing the events, which is rather critical for us.
 type PathEvents = MergeUnbounded<
-    Pin<Box<dyn Stream<Item = (ConnId, Result<PathEvent, noq::Lagged>)> + Send + Sync>>,
+    Pin<Box<dyn Stream<Item = (ConnId, Result<NoqPathEvent, noq::Lagged>)> + Send + Sync>>,
 >;
 
 /// A stream of events of announced NAT traversal candidate addresses for all connections.
@@ -147,7 +147,7 @@ pub(super) struct RemoteStateActor {
     /// holepunching regularly.
     ///
     /// We only select a path once the path is functional in Noq.
-    selected_path: Watchable<Option<transports::Addr>>,
+    selected_path: Option<transports::Addr>,
     /// Time at which we should schedule the next holepunch attempt.
     scheduled_holepunch: Option<Instant>,
     /// When to next attempt opening paths in [`Self::pending_open_paths`].
@@ -283,8 +283,8 @@ impl RemoteStateActor {
                     trace!(?id, ?evt, "remote addrs updated, triggering holepunching");
                     self.trigger_holepunching();
                 }
-                Some((conn_id, reason)) = self.connections_close.next(), if !self.connections_close.is_empty() => {
-                    self.handle_connection_close(conn_id, reason);
+                Some((conn_id, closed)) = self.connections_close.next(), if !self.connections_close.is_empty() => {
+                    self.handle_connection_close(conn_id, closed);
                 }
                 res = self.local_direct_addrs.updated() => {
                     if let Err(n0_watcher::Disconnected) = res {
@@ -378,7 +378,7 @@ impl RemoteStateActor {
         // though we might not have a relay transport or ip-capable transport set up.
         // So these errors must not be fatal for this actor (or even this operation).
 
-        if let Some(addr) = self.selected_path.get() {
+        if let Some(addr) = self.selected_path.as_ref() {
             trace!(?addr, "sending datagram to selected path");
 
             if let Err(err) = send_datagram(&mut sender, addr.clone(), transmit).await {
@@ -422,9 +422,9 @@ impl RemoteStateActor {
     fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
-        tx: oneshot::Sender<PathWatchable>,
+        tx: oneshot::Sender<PathStateReceiver>,
     ) {
-        let path_watchable = PathWatchable::new(self.selected_path.clone());
+        let (path_state_sender, path_state_receiver) = PathStateSender::new();
         if let Some(conn) = handle.upgrade() {
             self.metrics.num_conns_opened.inc();
             // Remove any conflicting stable_ids from the local state.
@@ -454,7 +454,7 @@ impl RemoteStateActor {
                 .entry(conn_id)
                 .insert_entry(ConnectionState {
                     handle: handle.clone(),
-                    path_watchable: path_watchable.clone(),
+                    path_state: path_state_sender,
                     paths: Default::default(),
                     has_been_direct: false,
                 })
@@ -494,8 +494,7 @@ impl RemoteStateActor {
             }
             self.trigger_holepunching();
         }
-
-        tx.send(path_watchable).ok();
+        tx.send(path_state_receiver).ok();
     }
 
     /// Handles [`RemoteStateMessage::ResolveRemote`].
@@ -532,21 +531,22 @@ impl RemoteStateActor {
         }
     }
 
-    fn handle_connection_close(&mut self, conn_id: ConnId, reason: ConnectionError) {
+    fn handle_connection_close(&mut self, conn_id: ConnId, closed: Closed) {
         event!(
             target: "iroh::_events::conn::closed",
             Level::DEBUG,
             %conn_id,
             remote_id = %self.endpoint_id.fmt_short(),
-            ?reason,
+            reason=?closed.reason,
         );
 
-        if self.connections.remove(&conn_id).is_some() {
+        if let Some(conn_state) = self.connections.remove(&conn_id) {
             self.metrics.num_conns_closed.inc();
+            conn_state.path_state.close(closed);
         }
         if self.connections.is_empty() {
             trace!("last connection closed - clearing selected_path");
-            self.selected_path.set(None).ok();
+            self.selected_path = None;
         }
     }
 
@@ -555,7 +555,7 @@ impl RemoteStateActor {
     /// Does not start Address Lookup if we have a selected path or if Address Lookup is
     /// currently running.
     fn trigger_address_lookup(&mut self) {
-        if self.selected_path.get().is_some() || self.address_lookup_stream.is_some() {
+        if self.selected_path.is_some() || self.address_lookup_stream.is_some() {
             return;
         }
         let stream = self.address_lookup.resolve(self.endpoint_id);
@@ -782,7 +782,7 @@ impl RemoteStateActor {
             debug!(?e, "failed to set relay path idle timeout");
         }
 
-        let status = if Some(addr) == self.selected_path.get().as_ref() {
+        let status = if Some(addr) == self.selected_path.as_ref() {
             PathStatus::Available
         } else {
             PathStatus::Backup
@@ -809,7 +809,7 @@ impl RemoteStateActor {
     /// the path exists, or opens it.
     #[instrument(level = "warn", skip(self))]
     fn open_path(&mut self, open_addr: &transports::Addr) {
-        let path_status = if Some(open_addr) == self.selected_path.get().as_ref() {
+        let path_status = if Some(open_addr) == self.selected_path.as_ref() {
             PathStatus::Available
         } else {
             PathStatus::Backup
@@ -862,7 +862,7 @@ impl RemoteStateActor {
     }
 
     #[instrument(skip(self))]
-    fn handle_path_event(&mut self, conn_id: ConnId, event: Result<PathEvent, noq::Lagged>) {
+    fn handle_path_event(&mut self, conn_id: ConnId, event: Result<NoqPathEvent, noq::Lagged>) {
         let Ok(event) = event else {
             warn!("missed a PathEvent, RemoteStateActor lagging");
             // TODO: Is it possible to recover using the sync APIs to figure out what the
@@ -879,7 +879,7 @@ impl RemoteStateActor {
         };
         trace!("path event");
         match event {
-            PathEvent::Opened { id: path_id } => {
+            NoqPathEvent::Opened { id: path_id } => {
                 let Some(path) = conn.path(path_id) else {
                     trace!("path open event for unknown path");
                     return;
@@ -907,9 +907,9 @@ impl RemoteStateActor {
                     self.select_path();
                 }
             }
-            PathEvent::Abandoned { id, .. } => {
+            NoqPathEvent::Abandoned { id, reason } => {
                 // Remove abandoned path from the conn state.
-                let Some(path_remote) = conn_state.remove_path(&id) else {
+                let Some(path_remote) = conn_state.remove_path(&id, &conn) else {
                     debug!(%id, "path not in path_id_map");
                     return;
                 };
@@ -923,6 +923,7 @@ impl RemoteStateActor {
                     ?path_remote,
                     %conn_id,
                     path_id = ?id,
+                    ?reason
                 );
 
                 // If one connection abandons a path, close it on all connections.
@@ -952,10 +953,10 @@ impl RemoteStateActor {
                 // If the remote closed our selected path, select a new one.
                 self.select_path();
             }
-            PathEvent::Discarded { id, path_stats } => {
+            NoqPathEvent::Discarded { id, path_stats } => {
                 trace!(%id, ?path_stats, "path discarded");
             }
-            PathEvent::RemoteStatus { .. } | PathEvent::ObservedAddr { .. } => {
+            NoqPathEvent::RemoteStatus { .. } | NoqPathEvent::ObservedAddr { .. } => {
                 // Nothing to do for these events.
             }
         }
@@ -998,14 +999,14 @@ impl RemoteStateActor {
             })
             .collect();
 
-        let current_path = self.selected_path.get();
-        let selected_path = select_best_path(path_rtts, &current_path);
+        let current_path = self.selected_path.as_ref();
+        let selected_path = select_best_path(path_rtts, current_path);
 
         // Apply our new path
         if let Some((addr, rtt)) = selected_path
-            && self.selected_path.get().as_ref() != Some(&addr)
+            && self.selected_path.as_ref() != Some(&addr)
         {
-            let prev_remote = self.selected_path.set(Some(addr.clone()));
+            let prev_remote = self.selected_path.replace(addr.clone());
             event!(
                 target: "iroh::_events::path::selected",
                 Level::DEBUG,
@@ -1032,6 +1033,11 @@ impl RemoteStateActor {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
+
+            // Record the new selected path in the path watcher.
+            conn_state
+                .path_state
+                .record_selected(selected.clone().into());
 
             for (path_id, path_remote) in conn_state.paths.iter() {
                 let Some(path) = conn.path(*path_id) else {
@@ -1131,7 +1137,7 @@ impl RemoteStateActor {
 /// continued to be used.
 fn select_best_path(
     all_paths: FxHashMap<transports::Addr, PathSelectionData>,
-    current_path: &Option<transports::Addr>,
+    current_path: Option<&transports::Addr>,
 ) -> Option<(transports::Addr, Duration)> {
     // Determine the best new path according to sort_key.
     // If there is no path, return None.
@@ -1194,7 +1200,7 @@ pub(crate) enum RemoteStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, oneshot::Sender<PathWatchable>),
+    AddConnection(WeakConnectionHandle, oneshot::Sender<PathStateReceiver>),
     /// Asks if there is any possible path that could be used.
     ///
     /// This adds the provided transport addresses to the list of potential paths for this
@@ -1250,20 +1256,18 @@ struct ConnId(usize);
 struct ConnectionState {
     /// Weak handle to the connection.
     handle: WeakConnectionHandle,
-    /// The information we publish to users about the paths used in this connection.
-    path_watchable: PathWatchable,
+    /// Writer-side handle for the connection's path observation state.
+    ///
+    /// The matching [`PathStateReceiver`] is held by the [`Connection`].
+    ///
+    /// [`Connection`]: crate::endpoint::Connection
+    path_state: PathStateSender,
     /// The open paths that exist on this connection.
     paths: FxHashMap<PathId, transports::Addr>,
     /// Whether this connection has ever had a direct path.
     ///
     /// Used for recording metrics.
     has_been_direct: bool,
-}
-
-impl Drop for ConnectionState {
-    fn drop(&mut self) {
-        self.path_watchable.close();
-    }
 }
 
 impl ConnectionState {
@@ -1285,16 +1289,23 @@ impl ConnectionState {
         }
 
         self.paths.insert(path_id, remote.clone());
-        if let Some(conn) = self.handle.upgrade() {
-            self.path_watchable.insert(&conn, path_id, remote.into());
+        if let Some(conn) = self.handle.upgrade()
+            && let Some(path) = conn.path(path_id)
+        {
+            let handle = path.weak_handle();
+            self.path_state.record_opened(handle, remote.into());
         }
     }
 
     /// Removes a path from this connection.
-    fn remove_path(&mut self, path_id: &PathId) -> Option<transports::Addr> {
-        let addr = self.paths.remove(path_id);
-        self.path_watchable.set_abandoned(*path_id);
-        addr
+    fn remove_path(
+        &mut self,
+        path_id: &PathId,
+        conn: &noq::Connection,
+    ) -> Option<transports::Addr> {
+        let addr = self.paths.remove(path_id)?;
+        self.path_state.record_abandoned(*path_id, conn);
+        Some(addr)
     }
 }
 
@@ -1326,11 +1337,11 @@ impl OnClosed {
 }
 
 impl Future for OnClosed {
-    type Output = (ConnId, ConnectionError);
+    type Output = (ConnId, Closed);
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let closed = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
-        Poll::Ready((self.conn_id, closed.reason))
+        Poll::Ready((self.conn_id, closed))
     }
 }
 
@@ -1413,7 +1424,7 @@ mod tests {
         paths.insert(v4(1), psd(TransportType::Primary, 10));
         paths.insert(v6(1), psd_v6(TransportType::Primary, 10));
 
-        let result = select_best_path(paths, &None);
+        let result = select_best_path(paths, None);
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
         assert!(matches!(addr, transports::Addr::Ip(SocketAddr::V6(_))));
@@ -1423,7 +1434,7 @@ mod tests {
         paths.insert(v4(1), psd(TransportType::Primary, 10));
         paths.insert(v6(1), psd_v6(TransportType::Primary, 12)); // 2ms slower, but 3ms bias
 
-        let result = select_best_path(paths, &None);
+        let result = select_best_path(paths, None);
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
         assert!(matches!(addr, transports::Addr::Ip(SocketAddr::V6(_))));
@@ -1433,7 +1444,7 @@ mod tests {
         paths.insert(v4(1), psd(TransportType::Primary, 10));
         paths.insert(v6(1), psd_v6(TransportType::Primary, 20)); // 10ms slower, exceeds 3ms bias
 
-        let result = select_best_path(paths, &None);
+        let result = select_best_path(paths, None);
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
         assert!(matches!(addr, transports::Addr::Ip(SocketAddr::V4(_))));
@@ -1446,7 +1457,7 @@ mod tests {
         paths.insert(v4(1), psd(TransportType::Primary, 100)); // High RTT but Available
         paths.insert(relay(1), psd(TransportType::Backup, 10)); // Low RTT but Backup
 
-        let result = select_best_path(paths, &None);
+        let result = select_best_path(paths, None);
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
         assert!(addr.is_ip());
@@ -1456,7 +1467,7 @@ mod tests {
         paths.insert(v4(1), psd(TransportType::Primary, 1000));
         paths.insert(relay(1), psd(TransportType::Backup, 1));
 
-        let result = select_best_path(paths, &None);
+        let result = select_best_path(paths, None);
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
         assert!(addr.is_ip());
@@ -1471,7 +1482,7 @@ mod tests {
         paths.insert(v4(1), psd(TransportType::Primary, 20));
         paths.insert(v4(2), psd(TransportType::Primary, 18));
 
-        let result = select_best_path(paths, &Some(current.clone()));
+        let result = select_best_path(paths, Some(&current));
         assert!(result.is_none()); // Should keep current
 
         // Should NOT switch: new path is just under threshold (4ms < 5ms)
@@ -1479,7 +1490,7 @@ mod tests {
         paths.insert(v4(1), psd(TransportType::Primary, 20));
         paths.insert(v4(2), psd(TransportType::Primary, 16));
 
-        let result = select_best_path(paths, &Some(current.clone()));
+        let result = select_best_path(paths, Some(&current));
         assert!(result.is_none()); // Should keep current
 
         // SHOULD switch: new path is exactly at threshold (5ms, condition is <=)
@@ -1487,7 +1498,7 @@ mod tests {
         paths.insert(v4(1), psd(TransportType::Primary, 20));
         paths.insert(v4(2), psd(TransportType::Primary, 15));
 
-        let result = select_best_path(paths, &Some(current.clone()));
+        let result = select_best_path(paths, Some(&current));
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
         assert_eq!(addr, v4(2));
@@ -1497,7 +1508,7 @@ mod tests {
         paths.insert(v4(1), psd(TransportType::Primary, 20));
         paths.insert(v4(2), psd(TransportType::Primary, 14));
 
-        let result = select_best_path(paths, &Some(current.clone()));
+        let result = select_best_path(paths, Some(&current));
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
         assert_eq!(addr, v4(2));
@@ -1509,7 +1520,7 @@ mod tests {
         paths.insert(v4(1), psd(TransportType::Primary, 20));
         paths.insert(v4(2), psd(TransportType::Primary, 10));
 
-        let result = select_best_path(paths, &None);
+        let result = select_best_path(paths, None);
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
         assert_eq!(addr, v4(2)); // Lower RTT wins
@@ -1518,11 +1529,11 @@ mod tests {
     #[test]
     fn test_empty_paths_returns_none() {
         let paths: FxHashMap<transports::Addr, PathSelectionData> = FxHashMap::default();
-        let result = select_best_path(paths, &None);
+        let result = select_best_path(paths, None);
         assert!(result.is_none());
 
         let paths: FxHashMap<transports::Addr, PathSelectionData> = FxHashMap::default();
-        let result = select_best_path(paths, &Some(v4(1)));
+        let result = select_best_path(paths, Some(&v4(1)));
         assert!(result.is_none());
     }
 }

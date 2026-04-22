@@ -40,7 +40,6 @@ use indicatif::HumanBytes;
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
-    Watcher,
     address_lookup::{
         AddrFilter,
         dns::DnsAddressLookup,
@@ -48,16 +47,17 @@ use iroh::{
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{
-        BindOpts, Connection, ConnectionError, PathId, PathWatcher, QuicTransportConfig,
-        RecvStream, SendStream, VarInt, WriteError, presets,
+        BindOpts, Connection, ConnectionError, PathEvent, PathId, QuicTransportConfig, RecvStream,
+        SendStream, VarInt, WriteError, presets,
     },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
-use n0_future::{stream::StreamExt, task::AbortOnDropHandle};
+use n0_future::StreamExt;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
+    task::JoinHandle,
     time::timeout,
 };
 use tracing::{Instrument, Span, debug, error, info, info_span, instrument, warn};
@@ -654,8 +654,8 @@ async fn provide(endpoint: &Endpoint, output: Output) -> Result<()> {
 async fn handle_connection(conn: Connection, output: Output) {
     let start = Instant::now();
     let remote_id = conn.remote_id();
-    let watcher = conn.paths();
-    let _guard = watch_conn_type(&conn, Some(remote_id), output);
+    // Spawn a background task that prints connection type changes and collects stats of all paths.
+    let stats_task = spawn_path_watcher(conn.clone(), Some(remote_id), output);
 
     // Accept incoming streams in a loop until the connection is closed by the remote.
     let close_reason = loop {
@@ -663,10 +663,9 @@ async fn handle_connection(conn: Connection, output: Output) {
             Ok(streams) => streams,
             Err(err) => break err,
         };
-        let conn = conn.clone();
         tokio::spawn(
             async move {
-                if let Err(err) = handle_request(&conn, send, recv, output).await {
+                if let Err(err) = handle_request(remote_id, send, recv, output).await {
                     warn!("[{}] Request failed: {err:#}", remote_id.fmt_short());
                 }
             }
@@ -687,12 +686,12 @@ async fn handle_connection(conn: Connection, output: Output) {
             duration: start.elapsed(),
         },
     );
-    output.emit_with_remote(remote_id, PathStats::from_watcher(watcher));
+    stats_task.await.expect("stats task panicked");
 }
 
 #[instrument("handle", skip_all, fields(id=send.id().index()))]
 async fn handle_request(
-    conn: &Connection,
+    remote_id: EndpointId,
     send: SendStream,
     mut recv: RecvStream,
     output: Output,
@@ -700,15 +699,15 @@ async fn handle_request(
     let request = Request::read(&mut recv)
         .await
         .context("failed to read request")?;
-    output.emit_with_remote(conn.remote_id(), HandleRequest { request: &request });
+    output.emit_with_remote(remote_id, HandleRequest { request: &request });
     match request {
         Request::Download(length) => {
             let stats = send_data(send, recv, length).await?;
-            output.emit_with_remote(conn.remote_id(), UploadComplete { stats });
+            output.emit_with_remote(remote_id, UploadComplete { stats });
         }
         Request::Upload => {
             let stats = drain_stream(recv, send, None).await?;
-            output.emit_with_remote(conn.remote_id(), DownloadComplete { stats });
+            output.emit_with_remote(remote_id, DownloadComplete { stats });
         }
     }
     Ok(())
@@ -724,15 +723,13 @@ async fn fetch(
     // Attempt to connect, over the given ALPN. Returns a connection.
     let start = Instant::now();
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
-    let conn_info = conn.weak_handle();
     let remote_id = conn.remote_id();
     output.emit(Connected {
         remote_id,
         duration: start.elapsed(),
     });
-    let watcher = conn.paths();
-    // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(&conn, None, output);
+    // Spawn a background task that prints connection type changes and collects stats of all paths.
+    let stats_task = spawn_path_watcher(conn.clone(), None, output);
 
     output.emit(StartRequest { mode, length });
     // Perform requests depending on the request mode.
@@ -768,6 +765,11 @@ async fn fetch(
         _ = tokio::signal::ctrl_c() => Err(anyerr!("Cancelled"))
     };
 
+    // If the connection hasn't been closed above, close it now.
+    if conn.close_reason().is_none() {
+        conn.close(0u32.into(), b"shutdown");
+    }
+
     let error = conn
         .close_reason()
         .filter(|reason| !matches!(reason, ConnectionError::LocallyClosed))
@@ -777,12 +779,7 @@ async fn fetch(
         duration: start.elapsed(),
     });
 
-    // Stats are collected by the paths watcher, so we do not look at the stats returned by
-    // this call. It is however the only API we currently have to tell us when the
-    // connection is drained and the stats will no longer change.
-    conn_info.closed().await;
-    output.emit(PathStats::from_watcher(watcher));
-
+    stats_task.await.expect("stats task panicked");
     res
 }
 
@@ -937,41 +934,47 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
     cfg.parse_size(s)
 }
 
-fn watch_conn_type(
-    conn: &Connection,
+fn spawn_path_watcher(
+    conn: Connection,
     remote_id: Option<EndpointId>,
     output: Output,
-) -> AbortOnDropHandle<()> {
-    let print = move |path: SelectedPath| {
-        let event = ConnectionTypeChanged { path };
-        if let Some(remote_id) = remote_id {
-            output.emit_with_remote(remote_id, event)
-        } else {
-            output.emit(event)
-        }
+) -> JoinHandle<()> {
+    let print = move |conn: &Connection| {
+        let path = match conn.paths().selected() {
+            Some(p) => SelectedPath::Selected {
+                id: p.id(),
+                addr: p.remote_addr().clone(),
+                rtt: p.rtt(),
+            },
+            None => SelectedPath::None,
+        };
+        output.emit_maybe_remote(remote_id, ConnectionTypeChanged { path });
     };
-    let mut stream = conn.paths().stream();
-    let task = tokio::task::spawn(async move {
-        let mut previous = None;
-        while let Some(paths) = stream.next().await {
-            if let Some(path) = paths.iter().find(|p| p.is_selected()) {
-                // We can get path updates without the selected path changing. We don't want to log again in that case.
-                if Some(path) == previous.as_ref() {
-                    continue;
+    tokio::spawn(async move {
+        let mut events = conn.path_events();
+        print(&conn);
+        let mut paths = Vec::new();
+        while let Some(event) = events.next().await {
+            match event {
+                PathEvent::Selected { .. } => print(&conn),
+                PathEvent::Closed {
+                    id,
+                    remote_addr,
+                    last_stats,
+                } => {
+                    paths.push(PathData {
+                        id,
+                        remote_addr,
+                        rtt: last_stats.rtt,
+                        bytes_sent: last_stats.udp_tx.bytes,
+                        bytes_recv: last_stats.udp_rx.bytes,
+                    });
                 }
-                print(SelectedPath::Selected {
-                    id: path.id(),
-                    addr: path.remote_addr().clone(),
-                    rtt: path.rtt().expect("conn is not dropped"),
-                });
-                previous = Some(path.clone());
-            } else {
-                output.emit(SelectedPath::None);
-                previous = None;
+                _ => {}
             }
         }
-    });
-    AbortOnDropHandle::new(task)
+        output.emit_maybe_remote(remote_id, PathStats { paths });
+    })
 }
 
 fn parse_ipv4_net(s: &str) -> Result<(SocketAddrV4, u8)> {
@@ -1047,6 +1050,13 @@ impl Output {
         }
     }
 
+    fn emit_maybe_remote(&self, remote: Option<EndpointId>, event: impl Serialize + fmt::Display) {
+        match remote {
+            None => self.emit(event),
+            Some(remote) => self.emit_with_remote(remote, event),
+        }
+    }
+
     fn emit_if_json(&self, event: &impl Serialize) {
         if matches!(self.mode, OutputMode::Json) {
             println!(
@@ -1110,13 +1120,11 @@ enum SelectedPath {
 
 impl fmt::Display for SelectedPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self {
+        match self {
             Self::Selected { addr, rtt, id } => {
                 write!(f, "{addr:?} [id:{id}] (RTT: {})", fmt_duration(*rtt))
             }
-            Self::None => {
-                write!(f, "none")
-            }
+            Self::None => write!(f, "none"),
         }
     }
 }
@@ -1171,26 +1179,6 @@ struct PathData {
 #[serde(tag = "kind")]
 struct PathStats {
     paths: Vec<PathData>,
-}
-
-impl PathStats {
-    fn from_watcher(mut watcher: PathWatcher) -> Self {
-        let list = watcher
-            .get()
-            .iter()
-            .filter_map(|info| {
-                let stats = info.stats()?;
-                Some(PathData {
-                    id: info.id(),
-                    remote_addr: info.remote_addr().clone(),
-                    rtt: stats.rtt,
-                    bytes_sent: stats.udp_tx.bytes,
-                    bytes_recv: stats.udp_rx.bytes,
-                })
-            })
-            .collect();
-        PathStats { paths: list }
-    }
 }
 
 impl fmt::Display for PathStats {

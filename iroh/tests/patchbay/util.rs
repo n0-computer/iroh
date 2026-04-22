@@ -1,13 +1,13 @@
 use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
 
 use iroh::{
-    Endpoint, EndpointAddr, RelayMap, RelayMode, Watcher,
-    endpoint::{Connection, PathInfo, PathWatcher, presets},
+    Endpoint, EndpointAddr, RelayMap, RelayMode, TransportAddr,
+    endpoint::{Connection, Path, PathEvent, presets},
     tls::CaRootsConfig,
 };
 use iroh_metrics::MetricsGroupSet;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
-use n0_future::{boxed::BoxFuture, task::AbortOnDropHandle};
+use n0_future::{StreamExt, boxed::BoxFuture, task::AbortOnDropHandle};
 use noq::Side;
 use patchbay::{Device, IpSupport, Lab, OutDir, TestGuard};
 use tokio::sync::{Barrier, oneshot};
@@ -336,67 +336,52 @@ fn log_result_on_device<E: std::fmt::Display + Send + 'static>(dev: &Device, res
     });
 }
 
-/// Extension methods on [`PathWatcher`] for common waiting patterns in tests.
-#[allow(unused)]
-pub trait PathWatcherExt {
-    /// Waits until the selected path fulfills a condition.
-    ///
-    /// Calls `f` with the currently-selected path, and again after each path update,
-    /// until `f` returns true or `timeout` elapses.
-    ///
-    /// Returns an error if the timeout elapses before `f` returned true.
+/// Extension trait on [`Connection`] providing timeout-bounded wait helpers
+/// on top of [`Connection::paths`] and [`PathList::stream`].
+pub trait PathConnectionExt {
+    /// Waits until the selected path satisfies `f`. Returns the matching
+    /// path's [`TransportAddr`].
     async fn wait_selected(
-        &mut self,
+        &self,
         timeout: Duration,
-        f: impl Fn(&PathInfo) -> bool,
-    ) -> Result<PathInfo>;
+        f: impl FnMut(&Path<'_>) -> bool,
+    ) -> Result<TransportAddr>;
 
-    /// Returns the currently selected path.
-    ///
-    /// Panics if no path is marked as selected.
-    fn selected(&mut self) -> PathInfo;
-
-    /// Wait until the selected path is a direct (IP) path.
-    async fn wait_ip(&mut self, timeout: Duration) -> Result<PathInfo> {
-        self.wait_selected(timeout, PathInfo::is_ip)
+    /// Waits until the selected path is a direct (IP) path.
+    async fn wait_ip(&self, timeout: Duration) -> Result<TransportAddr> {
+        self.wait_selected(timeout, |p| p.is_ip())
             .await
             .context("wait_ip")
     }
-
-    /// Wait until the selected path is a relay path.
-    async fn wait_relay(&mut self, timeout: Duration) -> Result<PathInfo> {
-        self.wait_selected(timeout, PathInfo::is_relay)
-            .await
-            .context("wait_relay")
-    }
 }
 
-impl PathWatcherExt for PathWatcher {
-    fn selected(&mut self) -> PathInfo {
-        let p = self.get();
-        p.iter()
-            .find(|p| p.is_selected())
-            .cloned()
-            .expect("no selected path")
-    }
-
+impl PathConnectionExt for Connection {
     async fn wait_selected(
-        &mut self,
+        &self,
         timeout: Duration,
-        f: impl Fn(&PathInfo) -> bool,
-    ) -> Result<PathInfo> {
+        mut f: impl FnMut(&Path<'_>) -> bool,
+    ) -> Result<TransportAddr> {
+        let mut stream = self.path_updates();
         tokio::time::timeout(timeout, async {
-            loop {
-                let selected = self.selected();
+            while let Some(paths) = stream.next().await {
+                let selected = paths.selected().expect("no selected path");
                 if f(&selected) {
-                    return n0_error::Ok(selected);
+                    return Ok(selected.remote_addr().clone());
                 }
-                self.updated().await?;
             }
+            Err(anyerr!("path stream ended"))
         })
         .await
         .with_std_context(|_| format!("wait_selected timed out after {timeout:?}"))?
     }
+}
+
+/// Returns `true` if the currently selected path is a relay path.
+pub fn is_relayed(conn: &iroh::endpoint::Connection) -> bool {
+    conn.paths()
+        .selected()
+        .expect("no selected path")
+        .is_relay()
 }
 
 /// Opens a bidi stream, sends 8 bytes of data, and waits to receive the same data back.
@@ -438,24 +423,15 @@ pub async fn ping_accept(conn: &Connection, timeout: Duration) -> Result {
 }
 
 fn watch_selected_path(conn: &Connection) {
-    let mut watcher = conn.paths();
+    let mut events = conn.path_events();
+    if let Some(path) = conn.paths().selected() {
+        debug!("selected path: [{}] {}", path.id(), path.remote_addr());
+    }
     tokio::spawn(
         async move {
-            let mut prev = None;
-            loop {
-                let paths = watcher.get();
-                let selected = paths.iter().find(|p| p.is_selected()).unwrap();
-                if Some(selected) != prev.as_ref() {
-                    debug!(
-                        "selected path: [{}] {:?} rtt {:?}",
-                        selected.id(),
-                        selected.remote_addr(),
-                        selected.rtt().unwrap()
-                    );
-                    prev = Some(selected.clone());
-                }
-                if watcher.updated().await.is_err() {
-                    break;
+            while let Some(event) = events.next().await {
+                if let PathEvent::Selected { id, remote_addr } = event {
+                    debug!("selected path: [{id}] {remote_addr}");
                 }
             }
         }
