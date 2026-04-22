@@ -36,7 +36,7 @@
 <a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">let </span>message_bytes = state.dns_handler.answer_request(request).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#37 id=37 data-nosnippet>37</a>    <span class="kw">let </span>message = proto::op::Message::from_bytes(<span class="kw-2">&amp;</span>message_bytes).anyerr()<span class="question-mark">?</span>;
 <a href=#38 id=38 data-nosnippet>38</a>
-<a href=#39 id=39 data-nosnippet>39</a>    <span class="kw">let </span>min_ttl = message.answers().iter().map(|rec| rec.ttl()).min();
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="kw">let </span>min_ttl = message.answers.iter().map(|rec| rec.ttl).min();
 <a href=#40 id=40 data-nosnippet>40</a>
 <a href=#41 id=41 data-nosnippet>41</a>    <span class="kw">let </span><span class="kw-2">mut </span>response = <span class="kw">match </span>accept_type {
 <a href=#42 id=42 data-nosnippet>42</a>        DnsMimeType::Message =&gt; (StatusCode::OK, message_bytes).into_response(),
