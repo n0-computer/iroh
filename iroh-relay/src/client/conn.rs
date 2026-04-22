@@ -30,6 +30,12 @@ use crate::{
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum SendError {
+    /// Error returned from the underlying WebSocket stream while sending.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
     #[error("Stream error")]
     StreamError { source: AnyError },
     #[error("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}")]
@@ -45,6 +51,12 @@ pub enum SendError {
 pub enum RecvError {
     #[error(transparent)]
     Protocol { source: ProtoError },
+    /// Error returned from the underlying WebSocket stream while receiving.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
     #[error("Stream error")]
     StreamError { source: AnyError },
 }

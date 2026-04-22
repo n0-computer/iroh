@@ -136,7 +136,12 @@ impl Frame for ServerDeniesAuth {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum Error {
-    /// or a `ws_stream_wasm::WsErr` (when running in wasm). You can use [`AnyError::downcast_ref`]
+    /// Error returned from the underlying WebSocket stream during the handshake.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
     #[error("WebSocket error")]
     Websocket { source: AnyError },
     #[error("Handshake stream ended prematurely")]

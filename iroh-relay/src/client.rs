@@ -52,6 +52,12 @@ pub enum ConnectError {
     InvalidWebsocketUrl { url: Url },
     #[error("Invalid relay URL: {url}")]
     InvalidRelayUrl { url: Url },
+    /// Error returned from the underlying WebSocket stream while establishing the connection.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
     #[error(transparent)]
     Websocket { source: AnyError },
     #[error(
