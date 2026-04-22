@@ -4,6 +4,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use iroh::{
     SecretKey,
     address_lookup::pkarr::PkarrRelayClient,
+    dns::DnsResolver,
     endpoint_info::EndpointInfo,
     tls::{CaRootsConfig, default_provider},
 };
@@ -45,7 +46,8 @@ fn benchmark_dns_server(c: &mut Criterion) {
                         .client_config(default_provider())
                         .expect("infallible");
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
-                    let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
+                    let pkarr =
+                        PkarrRelayClient::new(pkarr_relay, tls_config, DnsResolver::default());
                     let relay_url = "http://localhost:8080".parse().unwrap();
                     let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url);
                     let signed_packet = endpoint_info

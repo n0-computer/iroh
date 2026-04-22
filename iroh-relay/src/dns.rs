@@ -486,27 +486,6 @@ impl Default for DnsResolver {
     }
 }
 
-impl reqwest::dns::Resolve for DnsResolver {
-    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        let this = self.clone();
-        let name = name.as_str().to_string();
-        Box::pin(async move {
-            let res = this.lookup_ipv4_ipv6(name, DNS_TIMEOUT).await;
-            match res {
-                Ok(addrs) => {
-                    let addrs: reqwest::dns::Addrs =
-                        Box::new(addrs.map(|addr| SocketAddr::new(addr, 0)));
-                    Ok(addrs)
-                }
-                Err(err) => {
-                    let err: Box<dyn std::error::Error + Send + Sync> = Box::new(err);
-                    Err(err)
-                }
-            }
-        })
-    }
-}
-
 #[derive(Debug)]
 struct HickoryResolver {
     resolver: TokioResolver,
