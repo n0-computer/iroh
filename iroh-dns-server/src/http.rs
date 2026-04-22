@@ -308,6 +308,7 @@ mod tests {
     use iroh::{
         RelayUrl, SecretKey,
         address_lookup::{EndpointInfo, PkarrRelayClient},
+        dns::DnsResolver,
         tls::{CaRootsConfig, default_provider},
     };
     use n0_error::StdResultExt;
@@ -349,7 +350,11 @@ mod tests {
         let tls_config = CaRootsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
-        let pkarr = PkarrRelayClient::new(format!("{http_url}pkarr").parse().anyerr()?, tls_config);
+        let pkarr = PkarrRelayClient::new(
+            format!("{http_url}pkarr").parse().anyerr()?,
+            tls_config,
+            DnsResolver::default(),
+        );
         pkarr.publish(&signed_packet).await?;
 
         // Create a reqwest client that does not verify certificates.
