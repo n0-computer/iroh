@@ -69,7 +69,7 @@ use crate::net_report::QuicConfig;
 use crate::{
     address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
+    endpoint::{RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
     portmapper,
@@ -77,7 +77,7 @@ use crate::{
     socket::{
         concurrent_read_map::ReadOnlyMap,
         remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
-        transports::{HomeRelayStatus, HomeRelayWatch, HomeRelayWatcher, TransportBiasMap},
+        transports::{HomeRelayWatch, HomeRelayWatcher, TransportBiasMap},
     },
     tls::{
         self,
@@ -485,9 +485,7 @@ impl Socket {
         })
     }
 
-    pub(crate) fn home_relay_status(
-        &self,
-    ) -> impl Watcher<Value = Vec<Option<(RelayUrl, HomeRelayStatus)>>> + use<> {
+    pub(crate) fn home_relay_status(&self) -> impl Watcher<Value = Vec<RelayStatus>> + use<> {
         self.home_relay_watch.clone()
     }
 
