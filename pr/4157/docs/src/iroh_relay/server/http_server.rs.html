@@ -1130,18 +1130,18 @@
 <a href=#1130 id=1130 data-nosnippet>1130</a>    <span class="kw">use </span>std::sync::Arc;
 <a href=#1131 id=1131 data-nosnippet>1131</a>
 <a href=#1132 id=1132 data-nosnippet>1132</a>    <span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
-<a href=#1133 id=1133 data-nosnippet>1133</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, bail_any};
-<a href=#1134 id=1134 data-nosnippet>1134</a>    <span class="kw">use </span>n0_future::{SinkExt, StreamExt};
-<a href=#1135 id=1135 data-nosnippet>1135</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#1136 id=1136 data-nosnippet>1136</a>    <span class="kw">use </span>rand::{RngExt, SeedableRng};
-<a href=#1137 id=1137 data-nosnippet>1137</a>    <span class="kw">use </span>reqwest::Url;
-<a href=#1138 id=1138 data-nosnippet>1138</a>    <span class="kw">use </span>tokio::io::{AsyncReadExt, AsyncWriteExt};
-<a href=#1139 id=1139 data-nosnippet>1139</a>    <span class="kw">use </span>tracing::info;
-<a href=#1140 id=1140 data-nosnippet>1140</a>
-<a href=#1141 id=1141 data-nosnippet>1141</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#1142 id=1142 data-nosnippet>1142</a>    <span class="kw">use crate</span>::{
-<a href=#1143 id=1143 data-nosnippet>1143</a>        client::{Client, ClientBuilder, ConnectError, conn::Conn},
-<a href=#1144 id=1144 data-nosnippet>1144</a>        dns::DnsResolver,
+<a href=#1133 id=1133 data-nosnippet>1133</a>    <span class="kw">use </span>iroh_dns::dns::DnsResolver;
+<a href=#1134 id=1134 data-nosnippet>1134</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, bail_any};
+<a href=#1135 id=1135 data-nosnippet>1135</a>    <span class="kw">use </span>n0_future::{SinkExt, StreamExt};
+<a href=#1136 id=1136 data-nosnippet>1136</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
+<a href=#1137 id=1137 data-nosnippet>1137</a>    <span class="kw">use </span>rand::{RngExt, SeedableRng};
+<a href=#1138 id=1138 data-nosnippet>1138</a>    <span class="kw">use </span>reqwest::Url;
+<a href=#1139 id=1139 data-nosnippet>1139</a>    <span class="kw">use </span>tokio::io::{AsyncReadExt, AsyncWriteExt};
+<a href=#1140 id=1140 data-nosnippet>1140</a>    <span class="kw">use </span>tracing::info;
+<a href=#1141 id=1141 data-nosnippet>1141</a>
+<a href=#1142 id=1142 data-nosnippet>1142</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#1143 id=1143 data-nosnippet>1143</a>    <span class="kw">use crate</span>::{
+<a href=#1144 id=1144 data-nosnippet>1144</a>        client::{Client, ClientBuilder, ConnectError, conn::Conn},
 <a href=#1145 id=1145 data-nosnippet>1145</a>        protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 <a href=#1146 id=1146 data-nosnippet>1146</a>        tls::{CaRootsConfig, default_provider},
 <a href=#1147 id=1147 data-nosnippet>1147</a>    };

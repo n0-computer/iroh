@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["attrs","pkarr"]};
+window.SIDEBAR_ITEMS = {"constant":["IROH_TXT_NAME"],"enum":["EncodingError","ParseError"],"mod":["dns","endpoint_info","pkarr"]};

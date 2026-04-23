@@ -786,19 +786,19 @@
 <a href=#786 id=786 data-nosnippet>786</a>
 <a href=#787 id=787 data-nosnippet>787</a>    <span class="kw">use </span>http::StatusCode;
 <a href=#788 id=788 data-nosnippet>788</a>    <span class="kw">use </span>iroh_base::{EndpointId, RelayUrl, SecretKey};
-<a href=#789 id=789 data-nosnippet>789</a>    <span class="kw">use </span>n0_error::Result;
-<a href=#790 id=790 data-nosnippet>790</a>    <span class="kw">use </span>n0_future::{FutureExt, SinkExt, StreamExt};
-<a href=#791 id=791 data-nosnippet>791</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
-<a href=#792 id=792 data-nosnippet>792</a>    <span class="kw">use </span>rand::{RngExt, SeedableRng};
-<a href=#793 id=793 data-nosnippet>793</a>    <span class="kw">use </span>tracing::{info, instrument};
-<a href=#794 id=794 data-nosnippet>794</a>
-<a href=#795 id=795 data-nosnippet>795</a>    <span class="kw">use super</span>::{
-<a href=#796 id=796 data-nosnippet>796</a>        Access, AccessConfig, NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER, RelayConfig,
-<a href=#797 id=797 data-nosnippet>797</a>        Server, ServerConfig, SpawnError,
-<a href=#798 id=798 data-nosnippet>798</a>    };
-<a href=#799 id=799 data-nosnippet>799</a>    <span class="kw">use crate</span>::{
-<a href=#800 id=800 data-nosnippet>800</a>        client::{ClientBuilder, ConnectError},
-<a href=#801 id=801 data-nosnippet>801</a>        dns::DnsResolver,
+<a href=#789 id=789 data-nosnippet>789</a>    <span class="kw">use </span>iroh_dns::dns::DnsResolver;
+<a href=#790 id=790 data-nosnippet>790</a>    <span class="kw">use </span>n0_error::Result;
+<a href=#791 id=791 data-nosnippet>791</a>    <span class="kw">use </span>n0_future::{FutureExt, SinkExt, StreamExt};
+<a href=#792 id=792 data-nosnippet>792</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
+<a href=#793 id=793 data-nosnippet>793</a>    <span class="kw">use </span>rand::{RngExt, SeedableRng};
+<a href=#794 id=794 data-nosnippet>794</a>    <span class="kw">use </span>tracing::{info, instrument};
+<a href=#795 id=795 data-nosnippet>795</a>
+<a href=#796 id=796 data-nosnippet>796</a>    <span class="kw">use super</span>::{
+<a href=#797 id=797 data-nosnippet>797</a>        Access, AccessConfig, NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER, RelayConfig,
+<a href=#798 id=798 data-nosnippet>798</a>        Server, ServerConfig, SpawnError,
+<a href=#799 id=799 data-nosnippet>799</a>    };
+<a href=#800 id=800 data-nosnippet>800</a>    <span class="kw">use crate</span>::{
+<a href=#801 id=801 data-nosnippet>801</a>        client::{ClientBuilder, ConnectError},
 <a href=#802 id=802 data-nosnippet>802</a>        protos::{
 <a href=#803 id=803 data-nosnippet>803</a>            handshake,
 <a href=#804 id=804 data-nosnippet>804</a>            relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
