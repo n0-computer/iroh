@@ -22,20 +22,21 @@ use http::{
     HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header::InvalidHeaderValue,
     response::Builder as ResponseBuilder,
 };
+use http_body_util::Full;
 use hyper::body::Incoming;
 use iroh_base::EndpointId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use n0_error::{e, stack_error};
-use n0_future::{StreamExt, future::Boxed};
+use n0_future::{StreamExt, future::Boxed, task::AbortOnDropHandle};
 use serde::Serialize;
 use tokio::{
     net::TcpListener,
     task::{JoinError, JoinSet},
 };
-use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument, debug, error, info, info_span, instrument};
 
+use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::RELAY_PROBE_PATH,
@@ -78,13 +79,9 @@ const TLS_HEADERS: [(&str, &str); 2] = [
     ),
 ];
 
-type BytesBody = http_body_util::Full<hyper::body::Bytes>;
-type HyperError = Box<dyn std::error::Error + Send + Sync>;
-type HyperResult<T> = std::result::Result<T, HyperError>;
-
 /// Creates a new [`BytesBody`] with no content.
 fn body_empty() -> BytesBody {
-    http_body_util::Full::new(hyper::body::Bytes::new())
+    Box::new(http_body_util::Full::new(hyper::body::Bytes::new()))
 }
 
 /// Configuration for the full Relay.
@@ -492,12 +489,15 @@ impl Server {
         self.supervisor.await?
     }
 
-    /// Returns the handle for the task.
+    /// Waits for the server's supervisor task to finish.
     ///
-    /// This allows waiting for the server's supervisor task to finish.  Can be useful in
-    /// case there is an error in the server before it is shut down.
-    pub fn task_handle(&mut self) -> &mut AbortOnDropHandle<Result<(), SupervisorError>> {
-        &mut self.supervisor
+    /// Returns the exit result of the supervisor task. Unlike [`Self::shutdown`], this does
+    /// *not* request shutdown, it only waits for the server to terminate on its own (for
+    /// example, after an internal error or because the supervisor was aborted from
+    /// elsewhere). The outer [`JoinError`] is only produced if the supervisor task itself
+    /// panics or is aborted.
+    pub async fn join(&mut self) -> Result<Result<(), SupervisorError>, JoinError> {
+        (&mut self.supervisor).await
     }
 
     /// The socket address the HTTPS server is listening on.
@@ -617,10 +617,11 @@ fn root_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
+    let body: BytesBody = Box::new(Full::from(INDEX));
     response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
-        .body(INDEX.into())
+        .body(body)
         .map_err(|err| Box::new(err) as HyperError)
 }
 
@@ -640,9 +641,10 @@ fn robots_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
+    let body: BytesBody = Box::new(Full::from(ROBOTS_TXT));
     response
         .status(StatusCode::OK)
-        .body(ROBOTS_TXT.into())
+        .body(body)
         .map_err(|err| Box::new(err) as HyperError)
 }
 
@@ -698,10 +700,11 @@ fn healthz_handler(
         git_hash: option_env!("VERGEN_GIT_SHA").unwrap_or("unknown"),
     };
     let body = serde_json::to_string(&health).unwrap_or_else(|_| r#"{"status":"error"}"#.into());
+    let body: BytesBody = Box::new(Full::from(body));
     response
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
-        .body(body.into())
+        .body(body)
         .map_err(|err| Box::new(err) as HyperError)
 }
 
@@ -770,9 +773,10 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
             }
             _ => {
                 // Return 404 not found response.
+                let body: BytesBody = Box::new(Full::from(NOTFOUND));
                 let r = Response::builder()
                     .status(StatusCode::NOT_FOUND)
-                    .body(NOTFOUND.into())
+                    .body(body)
                     .map_err(|err| Box::new(err) as HyperError);
                 Box::pin(async move { r })
             }
@@ -866,7 +870,7 @@ mod tests {
         let mut server = Server::spawn(ServerConfig::<(), ()>::default())
             .await
             .unwrap();
-        let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
+        let res = tokio::time::timeout(Duration::from_secs(5), server.join())
             .await
             .expect("timeout, server not finished")
             .expect("server task JoinError");
@@ -889,7 +893,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
+        let res = tokio::time::timeout(Duration::from_secs(5), server.join())
             .await
             .expect("timeout, server not finished")
             .expect("server task JoinError");
