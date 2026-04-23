@@ -40,7 +40,7 @@ pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay
 // Only used by the `all_is_exhaustive` to validate that `Self::ALL` is up to date.
 #[cfg_attr(test, derive(strum::EnumCount))]
 #[strum(parse_err_ty = UnsupportedRelayProtocolVersion, parse_err_fn = strum_err_fn)]
-// Needs to be ordered with newwest version last, so that the `Ord` impl orders by latest version as max.
+// Needs to be ordered with newest version last, so that the `Ord` impl orders by latest version as max.
 pub enum ProtocolVersion {
     /// Version 1 (the only version supported until iroh 0.98.0)
     #[strum(serialize = "iroh-relay-v1")]
