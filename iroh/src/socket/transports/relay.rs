@@ -17,16 +17,15 @@ use tokio_util::sync::{CancellationToken, PollSender};
 use tracing::{Instrument, error, info_span, warn};
 
 use super::{Addr, Transmit};
+use crate::endpoint::RelayStatus;
 
 mod actor;
 
-pub(crate) use self::actor::{Config as RelayActorConfig, HomeRelayStatus, HomeRelayWatch};
+pub(crate) use self::actor::{Config as RelayActorConfig, HomeRelayWatch, RelayConnectionState};
 use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
 
-type RelayAddrWatcher = n0_watcher::Map<
-    n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>>,
-    Option<(RelayUrl, EndpointId)>,
->;
+type RelayAddrWatcher =
+    n0_watcher::Map<n0_watcher::Direct<Option<RelayStatus>>, Option<(RelayUrl, EndpointId)>>;
 
 #[derive(Debug)]
 pub(crate) struct RelayTransport {
@@ -171,12 +170,10 @@ impl RelayTransport {
         let my_endpoint_id = self.my_endpoint_id;
         self.my_relay
             .watch()
-            .map(move |url| url.map(|url| (url.0, my_endpoint_id)))
+            .map(move |status| status.map(|status| (status.url().clone(), my_endpoint_id)))
     }
 
-    pub(super) fn my_relay_status(
-        &self,
-    ) -> n0_watcher::Direct<Option<(RelayUrl, HomeRelayStatus)>> {
+    pub(super) fn my_relay_status(&self) -> n0_watcher::Direct<Option<RelayStatus>> {
         self.my_relay.watch()
     }
 

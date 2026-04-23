@@ -24,7 +24,7 @@ derive_more = { version = "2.0.1", features = [
 ] }
 dirs-next = "2.0.0"
 governor = "0.10"
-hickory-server = { version = "0.25.1", features = ["https-ring"] }
+hickory-server = { version = "0.26.0", features = ["https-ring"] }
 http = "1.0.0"
 humantime = "2.2.0"
 humantime-serde = "1.1.1"
@@ -59,7 +59,7 @@ url = "2.5.3"
 [dev-dependencies]
 criterion = "0.7.0"
 data-encoding = "2.3.3"
-hickory-resolver = { version = "0.25.0", features = ["tls-ring", "https-ring"] }
+hickory-resolver = { version = "0.26.0", features = ["tls-ring", "https-ring"] }
 iroh = { path = "../iroh" }
 n0-tracing-test = "0.3"
 rand = "0.10"

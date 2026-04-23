@@ -1130,6 +1130,7 @@ mod tests {
     use std::sync::Arc;
 
     use iroh_base::{PublicKey, SecretKey};
+    use iroh_dns::dns::DnsResolver;
     use n0_error::{Result, StdResultExt, bail_any};
     use n0_future::{SinkExt, StreamExt};
     use n0_tracing_test::traced_test;
@@ -1141,7 +1142,6 @@ mod tests {
     use super::*;
     use crate::{
         client::{Client, ClientBuilder, ConnectError, conn::Conn},
-        dns::DnsResolver,
         protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         tls::{CaRootsConfig, default_provider},
     };

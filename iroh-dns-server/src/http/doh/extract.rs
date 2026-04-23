@@ -17,11 +17,10 @@ use axum::{
 };
 use bytes::Bytes;
 use hickory_server::{
-    authority::MessageRequest,
+    net::xfer::Protocol,
     proto::{
-        serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
-        xfer::Protocol,
-        {self},
+        self,
+        serialize::binary::{BinEncodable, BinEncoder},
     },
     server::Request as DNSRequest,
 };
@@ -212,16 +211,12 @@ pub(crate) fn encode_query_as_request(
 
     let query = proto::op::Query::query(name, query_type);
 
-    let mut message = proto::op::Message::new();
-
-    message
-        .add_query(query)
-        .set_message_type(proto::op::MessageType::Query)
-        .set_op_code(proto::op::OpCode::Query)
-        .set_checking_disabled(question.cd.unwrap_or(false))
-        .set_recursion_desired(question.recursion_desired.unwrap_or(true))
-        .set_recursion_available(true)
-        .set_authentic_data(question.dnssec_ok.unwrap_or(false));
+    let mut message = proto::op::Message::query();
+    message.metadata.checking_disabled = question.cd.unwrap_or(false);
+    message.metadata.recursion_desired = question.recursion_desired.unwrap_or(true);
+    message.metadata.recursion_available = true;
+    message.metadata.authentic_data = question.dnssec_ok.unwrap_or(false);
+    message.add_query(query);
 
     // This is kind of a hack, but the only way I can find to
     // create a MessageRequest is by decoding a buffer of bytes,
@@ -239,20 +234,15 @@ pub(crate) fn encode_query_as_request(
 }
 
 fn decode_request(bytes: &[u8], src_addr: SocketAddr) -> Result<DNSRequest, AppError> {
-    let mut decoder = BinDecoder::new(bytes);
-
-    match MessageRequest::read(&mut decoder) {
-        Ok(message) => {
-            info!("received message {message:?}");
-            if message.message_type() != proto::op::MessageType::Query {
+    match DNSRequest::from_bytes(bytes.to_vec(), src_addr, Protocol::Https) {
+        Ok(request) => {
+            info!("received message {:?}", *request);
+            if request.metadata.message_type != proto::op::MessageType::Query {
                 return Err(AppError::new(
                     StatusCode::BAD_REQUEST,
                     Some("Invalid message type: expected query"),
                 ));
             }
-
-            let request = DNSRequest::new(message, src_addr, Protocol::Https);
-
             Ok(request)
         }
         Err(err) => Err(AppError::new(

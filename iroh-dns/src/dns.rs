@@ -1,8 +1,8 @@
-//! Configurable DNS resolver for `iroh-relay` and `iroh`.
+//! Configurable DNS resolver.
 //!
 //! The main export is the [`DnsResolver`] struct. It provides methods to resolve domain names
-//! to IPv4 and IPv6 addresses. Additionally, the resolver features methods to resolve the
-//! [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
+//! to IPv4 and IPv6 addresses, and to look up TXT records. Additionally, the resolver features
+//! methods to resolve the [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
 //! See the [`crate::endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
@@ -21,7 +21,7 @@ use hickory_resolver::{
     proto::rr::RData,
 };
 use iroh_base::EndpointId;
-use n0_error::{StackError, e, stack_error};
+use n0_error::{AnyError, StackError, StdResultExt, e, stack_error};
 use n0_future::{
     StreamExt,
     boxed::BoxFuture,
@@ -31,10 +31,10 @@ use tokio::sync::Notify;
 use tracing::debug;
 use url::Url;
 
-use crate::{
-    defaults::timeouts::DNS_TIMEOUT,
-    endpoint_info::{EndpointInfo, ParseError},
-};
+use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
+
+/// Default DNS query timeout.
+pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The n0 address lookup DNS origin, for production.
 pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link.";
@@ -82,18 +82,16 @@ pub enum DnsError {
     Timeout {},
     #[error("No response")]
     NoResponse {},
-    #[error("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}")]
+    #[error("Resolve failed, IPv4: {ipv4}, IPv6: {ipv6}")]
     ResolveBoth {
         ipv4: Box<DnsError>,
         ipv6: Box<DnsError>,
     },
-    #[error("missing host")]
+    #[error("Missing host")]
     MissingHost {},
-    #[error(transparent)]
-    Resolve {
-        source: hickory_resolver::net::NetError,
-    },
-    #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
+    #[error("Failed to resolve")]
+    Resolve { source: AnyError },
+    #[error("Invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
 }
 
@@ -588,27 +586,6 @@ impl Default for DnsResolver {
     }
 }
 
-impl reqwest::dns::Resolve for DnsResolver {
-    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        let this = self.clone();
-        let name = name.as_str().to_string();
-        Box::pin(async move {
-            let res = this.lookup_ipv4_ipv6(name, DNS_TIMEOUT).await;
-            match res {
-                Ok(addrs) => {
-                    let addrs: reqwest::dns::Addrs =
-                        Box::new(addrs.map(|addr| SocketAddr::new(addr, 0)));
-                    Ok(addrs)
-                }
-                Err(err) => {
-                    let err: Box<dyn std::error::Error + Send + Sync> = Box::new(err);
-                    Err(err)
-                }
-            }
-        })
-    }
-}
-
 #[derive(Debug)]
 struct HickoryResolver {
     resolver: TokioResolver,
@@ -687,7 +664,7 @@ impl Resolver for HickoryResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.ipv4_lookup(host).await?;
+            let lookup = resolver.ipv4_lookup(host).await.anyerr()?;
             let iter: BoxIter<Ipv4Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
@@ -702,7 +679,7 @@ impl Resolver for HickoryResolver {
     fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.ipv6_lookup(host).await?;
+            let lookup = resolver.ipv6_lookup(host).await.anyerr()?;
             let iter: BoxIter<Ipv6Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
@@ -717,7 +694,7 @@ impl Resolver for HickoryResolver {
     fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.txt_lookup(host).await?;
+            let lookup = resolver.txt_lookup(host).await.anyerr()?;
             let iter: BoxIter<TxtRecordData> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {

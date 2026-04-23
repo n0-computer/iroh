@@ -29,7 +29,7 @@ use std::{
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use mapped_addrs::MultipathMappedAddr;
-use n0_error::{bail, e, stack_error};
+use n0_error::{AnyError, anyerr, bail, e, stack_error};
 use n0_future::{
     MaybeFuture,
     task::{self, AbortOnDropHandle},
@@ -69,7 +69,7 @@ use crate::net_report::QuicConfig;
 use crate::{
     address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    endpoint::{hooks::EndpointHooksList, quic::QuicTransportConfig},
+    endpoint::{RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
     portmapper,
@@ -77,7 +77,7 @@ use crate::{
     socket::{
         concurrent_read_map::ReadOnlyMap,
         remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
-        transports::{HomeRelayStatus, HomeRelayWatch, HomeRelayWatcher, TransportBiasMap},
+        transports::{HomeRelayWatch, HomeRelayWatcher, TransportBiasMap},
     },
     tls::{
         self,
@@ -485,9 +485,7 @@ impl Socket {
         })
     }
 
-    pub(crate) fn home_relay_status(
-        &self,
-    ) -> impl Watcher<Value = Vec<Option<(RelayUrl, HomeRelayStatus)>>> + use<> {
+    pub(crate) fn home_relay_status(&self) -> impl Watcher<Value = Vec<RelayStatus>> + use<> {
         self.home_relay_watch.clone()
     }
 
@@ -805,7 +803,7 @@ pub enum BindError {
     #[error("Failed to create internal QUIC endpoint")]
     CreateQuicEndpoint { source: io::Error },
     #[error("Failed to create netmon monitor")]
-    CreateNetmonMonitor { source: netmon::Error },
+    CreateNetmonMonitor { source: AnyError },
     #[error("Invalid transport configuration")]
     InvalidTransportConfig,
     #[error("Invalid CA root configuration")]
@@ -988,7 +986,7 @@ impl EndpointInner {
 
         let network_monitor = netmon::Monitor::new()
             .await
-            .map_err(|err| e!(BindError::CreateNetmonMonitor, err))?;
+            .map_err(|err| e!(BindError::CreateNetmonMonitor, anyerr!(err)))?;
 
         #[cfg(not(wasm_browser))]
         let net_report_config = {

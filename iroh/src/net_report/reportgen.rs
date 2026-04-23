@@ -25,13 +25,12 @@ use std::{
 
 use http::StatusCode;
 use iroh_base::RelayUrl;
+#[cfg(not(wasm_browser))]
+use iroh_dns::dns::{DnsError, DnsResolver, StaggeredError};
+#[cfg(not(wasm_browser))]
+use iroh_relay::quic::QuicClient;
 use iroh_relay::{
     RelayConfig, RelayMap, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH,
-};
-#[cfg(not(wasm_browser))]
-use iroh_relay::{
-    dns::{DnsError, DnsResolver, StaggeredError},
-    quic::QuicClient,
 };
 use n0_error::{e, stack_error};
 #[cfg(wasm_browser)]
@@ -586,8 +585,8 @@ async fn check_captive_portal(
         }
     };
 
-    let mut builder =
-        reqwest_client_builder(Some(tls_config)).redirect(reqwest::redirect::Policy::none());
+    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone())
+        .redirect(reqwest::redirect::Policy::none());
 
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
@@ -819,9 +818,9 @@ async fn run_https_probe(
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
     #[cfg(not(wasm_browser))]
-    let mut builder = reqwest_client_builder(Some(tls_config));
+    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone());
     #[cfg(wasm_browser)]
-    let mut builder = reqwest_client_builder(None);
+    let mut builder = reqwest_client_builder();
 
     #[cfg(not(wasm_browser))]
     {
@@ -882,10 +881,8 @@ async fn run_https_probe(
 mod tests {
     use std::net::Ipv4Addr;
 
-    use iroh_relay::{
-        dns::DnsResolver,
-        tls::{CaRootsConfig, default_provider},
-    };
+    use iroh_dns::dns::DnsResolver;
+    use iroh_relay::tls::{CaRootsConfig, default_provider};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
 
