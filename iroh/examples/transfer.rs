@@ -581,18 +581,9 @@ impl EndpointArgs {
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
         if self.mdns {
-            #[cfg(feature = "address-lookup-mdns")]
-            {
-                use iroh::address_lookup::MdnsAddressLookup;
-
-                endpoint
-                    .address_lookup()?
-                    .add(MdnsAddressLookup::builder().build(endpoint.id())?);
-            }
-            #[cfg(not(feature = "address-lookup-mdns"))]
-            {
-                n0_error::bail_any!("Must have the `mdns` enabled when using the `--mdns` flag");
-            }
+            n0_error::bail_any!(
+                "mDNS address lookup is no longer built into iroh; use the `iroh-mdns-address-lookup` crate instead",
+            );
         }
 
         if self.relay_only {
