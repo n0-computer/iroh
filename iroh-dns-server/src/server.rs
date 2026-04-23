@@ -29,6 +29,7 @@ pub struct Server {
     http_server: HttpServer,
     dns_server: DnsServer,
     metrics_task: tokio::task::JoinHandle<Result<()>>,
+    metrics: Arc<Metrics>,
 }
 
 impl Server {
@@ -79,16 +80,19 @@ impl Server {
             metrics: metrics.clone(),
         };
 
-        let metrics_addr = config.metrics_addr();
-        let metrics_task = tokio::task::spawn(async move {
-            if let Some(addr) = metrics_addr {
-                let mut registry = iroh_metrics::Registry::default();
-                registry.register(metrics);
-                start_metrics_server(addr, Arc::new(registry))
-                    .await
-                    .anyerr()?;
+        let metrics_task = tokio::task::spawn({
+            let metrics_addr = config.metrics_addr();
+            let metrics = metrics.clone();
+            async move {
+                if let Some(addr) = metrics_addr {
+                    let mut registry = iroh_metrics::Registry::default();
+                    registry.register(metrics);
+                    start_metrics_server(addr, Arc::new(registry))
+                        .await
+                        .anyerr()?;
+                }
+                Ok(())
             }
-            Ok(())
         });
         let http_server = HttpServer::spawn(
             config.http,
@@ -103,6 +107,7 @@ impl Server {
             http_server,
             dns_server,
             metrics_task,
+            metrics,
         })
     }
 
@@ -126,6 +131,11 @@ impl Server {
         }
         self.metrics_task.abort();
         Ok(())
+    }
+
+    /// Returns the [`Metrics`] for this server.
+    pub fn metrics(&self) -> &Arc<Metrics> {
+        &self.metrics
     }
 
     /// Spawn a server suitable for testing.
