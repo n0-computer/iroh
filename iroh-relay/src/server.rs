@@ -786,6 +786,7 @@ mod tests {
 
     use http::StatusCode;
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
+    use iroh_dns::dns::DnsResolver;
     use n0_error::Result;
     use n0_future::{FutureExt, SinkExt, StreamExt};
     use n0_tracing_test::traced_test;
@@ -798,7 +799,6 @@ mod tests {
     };
     use crate::{
         client::{ClientBuilder, ConnectError},
-        dns::DnsResolver,
         protos::{
             handshake,
             relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},

@@ -161,6 +161,7 @@ tls-ring = [
     "tokio-rustls/ring",
     "tokio-websockets/ring",
     "hickory-resolver/https-ring",
+    "iroh-dns/tls-ring",
 ]
 tls-aws-lc-rs = [
     "noq/aws-lc-rs",
@@ -168,6 +169,7 @@ tls-aws-lc-rs = [
     "tokio-rustls/aws-lc-rs",
     "tokio-websockets/aws_lc_rs",
     "hickory-resolver/https-aws-lc-rs",
+    "iroh-dns/tls-aws-lc-rs",
 ]
 
 [[bin]]
