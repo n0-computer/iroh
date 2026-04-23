@@ -1,41 +1,45 @@
-//! Metrics support for the server
+//! Metrics exposed by the server.
 
 use iroh_metrics::{Counter, MetricsGroup};
 
-/// Metrics for iroh-dns-server
+/// Counters exposed by iroh-dns-server.
+///
+/// Populated by the DNS, HTTP, and signed-packet store subsystems, and exposed by
+/// the metrics server (see [`MetricsConfig`](crate::config::MetricsConfig)).
 #[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = "dns_server")]
+#[non_exhaustive]
 pub struct Metrics {
-    /// Number of pkarr relay puts that updated the state
+    /// Number of pkarr relay puts that updated the stored packet.
     pub pkarr_publish_update: Counter,
-    /// Number of pkarr relay puts that did not update the state
+    /// Number of pkarr relay puts that did not change the stored packet.
     pub pkarr_publish_noop: Counter,
-    /// DNS requests (total)
+    /// Total number of DNS requests across all transports.
     pub dns_requests: Counter,
-    /// DNS requests via UDP
+    /// Number of DNS requests received over UDP or TCP.
     pub dns_requests_udp: Counter,
-    /// DNS requests via HTTPS (DoH)
+    /// Number of DNS requests received over HTTPS (DoH).
     pub dns_requests_https: Counter,
-    /// DNS lookup responses with at least one answer
+    /// Number of DNS lookups that returned at least one answer.
     pub dns_lookup_success: Counter,
-    /// DNS lookup responses with no answers
+    /// Number of DNS lookups that returned no answers.
     pub dns_lookup_notfound: Counter,
-    /// DNS lookup responses which failed
+    /// Number of DNS lookups that failed with an error.
     pub dns_lookup_error: Counter,
-    /// Number of HTTP requests
+    /// Number of HTTP requests served.
     pub http_requests: Counter,
-    /// Number of HTTP requests with a 2xx status code
+    /// Number of HTTP requests that returned a 2xx status code.
     pub http_requests_success: Counter,
-    /// Number of HTTP requests with a non-2xx status code
+    /// Number of HTTP requests that returned a non-2xx status code.
     pub http_requests_error: Counter,
-    /// Total duration of all HTTP requests
+    /// Cumulative duration of all HTTP requests, in milliseconds.
     pub http_requests_duration_ms: Counter,
-    /// Signed packets inserted into the store
+    /// Number of signed packets newly inserted into the store.
     pub store_packets_inserted: Counter,
-    /// Signed packets removed from the store
+    /// Number of signed packets removed from the store.
     pub store_packets_removed: Counter,
-    /// Number of updates to existing packets
+    /// Number of times an existing signed packet was replaced by a newer one.
     pub store_packets_updated: Counter,
-    /// Number of expired packets
+    /// Number of signed packets removed by the eviction task.
     pub store_packets_expired: Counter,
 }

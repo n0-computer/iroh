@@ -8,22 +8,26 @@ use tower_governor::{
     key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor},
 };
 
-/// Config for http server rate limit.
+/// Rate limiting strategy for the HTTP server.
 #[derive(Debug, Deserialize, Default, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum RateLimitConfig {
-    /// Disable rate limit.
+    /// Disables rate limiting entirely.
     Disabled,
-    /// Enable rate limit based on the connection's peer IP address.
+    /// Rate limits by the connection's peer IP address.
     ///
-    /// <https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html>
+    /// See [`PeerIpKeyExtractor`].
+    ///
+    /// [`PeerIpKeyExtractor`]: https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html
     #[default]
     Simple,
-    /// Enable rate limit based on headers commonly used by reverse proxies.
+    /// Rate limits by the client IP, extracted from reverse-proxy headers.
     ///
-    /// Uses headers commonly used by reverse proxies to extract the original IP address,
-    /// falling back to the connection's peer IP address.
-    /// <https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html>
+    /// Uses the headers commonly set by reverse proxies (for example
+    /// `X-Forwarded-For`) to extract the original client IP, falling back to the
+    /// connection's peer IP address. See [`SmartIpKeyExtractor`].
+    ///
+    /// [`SmartIpKeyExtractor`]: https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html
     Smart,
 }
 

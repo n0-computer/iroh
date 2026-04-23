@@ -40,38 +40,42 @@ const DEFAULT_NS_TTL: u32 = 60 * 60 * 12; // 12h
 const DEFAULT_SOA_TTL: u32 = 60 * 60 * 24 * 14; // 14d
 const DEFAULT_A_TTL: u32 = 60 * 60; // 1h
 
-/// DNS server settings
+/// Configuration for the DNS listener.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DnsConfig {
-    /// The port to serve a local UDP DNS server at
+    /// Port to bind the DNS listener to, for both UDP and TCP.
     pub port: u16,
-    /// The IPv4 or IPv6 address to bind the UDP DNS server.
-    /// Uses `0.0.0.0` if unspecified.
+    /// Address to bind the DNS listener to.
+    ///
+    /// If unspecified, binds to `0.0.0.0`.
     pub bind_addr: Option<IpAddr>,
-    /// SOA record data for any authoritative DNS records
+    /// SOA record data served for authoritative zones, in zone-file format.
     pub default_soa: String,
-    /// Default time to live for returned DNS records (TXT & SOA)
+    /// Default time-to-live, in seconds, for returned DNS records.
     pub default_ttl: u32,
-    /// Domain used for serving the `_iroh.<endpointid>.<origin>` DNS TXT entry
+    /// Origins under which the server publishes pkarr-signed zones.
+    ///
+    /// For each origin, the server answers queries for any published
+    /// `<endpointid>.<origin>` name.
     pub origins: Vec<String>,
 
-    /// `A` record to set for all origins
+    /// Optional `A` record to serve at each origin apex.
     pub rr_a: Option<Ipv4Addr>,
-    /// `AAAA` record to set for all origins
+    /// Optional `AAAA` record to serve at each origin apex.
     pub rr_aaaa: Option<Ipv6Addr>,
-    /// `NS` record to set for all origins
+    /// Optional `NS` record to serve at each origin apex.
     pub rr_ns: Option<String>,
 }
 
 /// A DNS server that serves pkarr signed packets.
-pub struct DnsServer {
+pub(crate) struct DnsServer {
     local_addr: SocketAddr,
     server: hickory_server::Server<DnsHandler>,
 }
 
 impl DnsServer {
     /// Spawn the server.
-    pub async fn spawn(config: DnsConfig, dns_handler: DnsHandler) -> Result<Self> {
+    pub(crate) async fn spawn(config: DnsConfig, dns_handler: DnsHandler) -> Result<Self> {
         const TCP_TIMEOUT: Duration = Duration::from_millis(1000);
         let mut server = hickory_server::Server::new(dns_handler);
 
@@ -100,12 +104,12 @@ impl DnsServer {
     }
 
     /// Get the local address of the UDP/TCP socket.
-    pub fn local_addr(&self) -> SocketAddr {
+    pub(crate) fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
     /// Shutdown the server an wait for all tasks to complete.
-    pub async fn shutdown(mut self) -> Result<()> {
+    pub(crate) async fn shutdown(mut self) -> Result<()> {
         self.server.shutdown_gracefully().await.anyerr()?;
         Ok(())
     }
@@ -113,7 +117,7 @@ impl DnsServer {
     /// Wait for all tasks to complete.
     ///
     /// Runs forever unless tasks fail.
-    pub async fn run_until_done(mut self) -> Result<()> {
+    pub(crate) async fn run_until_done(mut self) -> Result<()> {
         self.server.block_until_done().await.anyerr()?;
         Ok(())
     }
@@ -121,7 +125,7 @@ impl DnsServer {
 
 /// State for serving DNS
 #[derive(Clone, derive_more::Debug)]
-pub struct DnsHandler {
+pub(crate) struct DnsHandler {
     #[debug("Catalog")]
     catalog: Arc<Catalog>,
     metrics: Arc<Metrics>,
@@ -130,7 +134,11 @@ pub struct DnsHandler {
 impl DnsHandler {
     /// Create a DNS server given some settings, a connection to the DB for DID-by-username lookups
     /// and the server DID to serve under `_did.<origin>`.
-    pub fn new(zone_store: ZoneStore, config: &DnsConfig, metrics: Arc<Metrics>) -> Result<Self> {
+    pub(crate) fn new(
+        zone_store: ZoneStore,
+        config: &DnsConfig,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self> {
         let origins = config
             .origins
             .iter()
@@ -158,7 +166,7 @@ impl DnsHandler {
     }
 
     /// Handle a DNS request
-    pub async fn answer_request(&self, request: Request) -> Result<Bytes> {
+    pub(crate) async fn answer_request(&self, request: Request) -> Result<Bytes> {
         let (tx, mut rx) = broadcast::channel(1);
         let response_handle = Handle(tx);
         self.handle_request::<_, TokioTime>(&request, response_handle)
@@ -204,7 +212,7 @@ impl RequestHandler for DnsHandler {
 
 /// A handle to the channel over which the response to a DNS request will be sent
 #[derive(Debug, Clone)]
-pub struct Handle(pub broadcast::Sender<Bytes>);
+pub(crate) struct Handle(pub broadcast::Sender<Bytes>);
 
 #[async_trait]
 impl ResponseHandler for Handle {

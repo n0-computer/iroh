@@ -33,34 +33,47 @@ mod tls;
 pub use self::{rate_limiting::RateLimitConfig, tls::CertMode};
 use crate::state::AppState;
 
-/// Config for the HTTP server
+/// Configuration for the HTTP listener.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HttpConfig {
-    /// Port to bind to
+    /// Port to bind the HTTP listener to.
     pub port: u16,
-    /// Optionally set a custom bind address (will use 0.0.0.0 if unset)
+    /// Address to bind the HTTP listener to.
+    ///
+    /// If unset, binds to `0.0.0.0`.
     pub bind_addr: Option<IpAddr>,
 }
 
-/// Config for the HTTPS server
+/// Configuration for the HTTPS listener.
+///
+/// Certificates are obtained according to [`Self::cert_mode`]; see [`CertMode`] for
+/// the available strategies.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HttpsConfig {
-    /// Port to bind to
+    /// Port to bind the HTTPS listener to.
     pub port: u16,
-    /// Optionally set a custom bind address (will use 0.0.0.0 if unset)
+    /// Address to bind the HTTPS listener to.
+    ///
+    /// If unset, binds to `0.0.0.0`.
     pub bind_addr: Option<IpAddr>,
-    /// The list of domains for which SSL certificates should be created.
+    /// Domains for which TLS certificates are issued or loaded.
     pub domains: Vec<String>,
-    /// The mode of SSL certificate creation
+    /// Strategy used to obtain TLS certificates.
     pub cert_mode: CertMode,
-    /// Letsencrypt contact email address (required if using [`CertMode::LetsEncrypt`])
+    /// Contact email address passed to Let's Encrypt.
+    ///
+    /// Required when [`Self::cert_mode`] is [`CertMode::LetsEncrypt`]; ignored
+    /// otherwise.
     pub letsencrypt_contact: Option<String>,
-    /// Whether to use the letsenrypt production servers (only applies to [`CertMode::LetsEncrypt`])
+    /// Whether to use the Let's Encrypt production endpoint instead of staging.
+    ///
+    /// Only applies when [`Self::cert_mode`] is [`CertMode::LetsEncrypt`]. When
+    /// unset, the ACME staging endpoint is used.
     pub letsencrypt_prod: Option<bool>,
 }
 
 /// The HTTP(S) server part of iroh-dns-server
-pub struct HttpServer {
+pub(crate) struct HttpServer {
     tasks: JoinSet<std::io::Result<()>>,
     http_addr: Option<SocketAddr>,
     https_addr: Option<SocketAddr>,
@@ -68,7 +81,7 @@ pub struct HttpServer {
 
 impl HttpServer {
     /// Spawn the server
-    pub async fn spawn(
+    pub(crate) async fn spawn(
         http_config: Option<HttpConfig>,
         https_config: Option<HttpsConfig>,
         rate_limit_config: RateLimitConfig,
@@ -154,17 +167,17 @@ impl HttpServer {
     }
 
     /// Get the bound address of the HTTP socket.
-    pub fn http_addr(&self) -> Option<SocketAddr> {
+    pub(crate) fn http_addr(&self) -> Option<SocketAddr> {
         self.http_addr
     }
 
     /// Get the bound address of the HTTPS socket.
-    pub fn https_addr(&self) -> Option<SocketAddr> {
+    pub(crate) fn https_addr(&self) -> Option<SocketAddr> {
         self.https_addr
     }
 
     /// Shutdown the server and wait for all tasks to complete.
-    pub async fn shutdown(mut self) -> Result<()> {
+    pub(crate) async fn shutdown(mut self) -> Result<()> {
         // TODO: Graceful cancellation.
         self.tasks.abort_all();
         self.run_until_done().await?;
@@ -174,7 +187,7 @@ impl HttpServer {
     /// Wait for all tasks to complete.
     ///
     /// Runs forever unless tasks fail.
-    pub async fn run_until_done(mut self) -> Result<()> {
+    pub(crate) async fn run_until_done(mut self) -> Result<()> {
         let mut final_res: Result<()> = Ok(());
         while let Some(res) = self.tasks.join_next().await {
             match res {

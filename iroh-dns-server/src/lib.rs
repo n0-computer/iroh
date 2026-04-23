@@ -1,18 +1,46 @@
-//! A DNS server and pkarr relay
+//! A DNS server and [pkarr] relay.
+//!
+//! This crate provides [`Server`], which combines a DNS server (UDP and TCP) and an
+//! HTTP/HTTPS server into a single process. Clients publish self-signed DNS records as
+//! [pkarr] signed packets over the HTTP `/pkarr` endpoint; the server stores them and
+//! answers DNS queries for the published names. DNS-over-HTTPS queries are accepted on
+//! the `/dns-query` endpoint.
+//!
+//! Published packets are persisted in an on-disk store and served for a configurable
+//! eviction window. When enabled in the config, the server can additionally fall back
+//! to the mainline DHT for packets that are not in the local store.
+//!
+//! The server is driven through the [`config::Config`] struct. For a ready-to-run
+//! binary that loads a TOML config, see the `iroh-dns-server` binary target in this
+//! crate.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use iroh_dns_server::{Server, config::Config};
+//! # async fn run() -> n0_error::Result<()> {
+//! let config = Config::load("config.toml").await?;
+//! let server = Server::bind(config).await?;
+//! server.join().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [pkarr]: https://github.com/Nuhvi/pkarr/
 
+// #![deny(missing_docs, rustdoc::broken_intra_doc_links, unreachable_pub)]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 pub mod config;
-pub mod dns;
-pub mod http;
-pub mod metrics;
-pub mod server;
-pub mod state;
+mod dns;
+mod http;
+mod metrics;
+mod server;
+mod state;
 mod store;
 mod util;
 
-// Re-export to be able to construct your own dns-server
-pub use store::ZoneStore;
+pub use crate::{metrics::Metrics, server::Server};
 
 #[cfg(test)]
 mod tests {
@@ -35,10 +63,10 @@ mod tests {
     use rand::{CryptoRng, RngExt, SeedableRng};
 
     use crate::{
-        ZoneStore,
         config::BootstrapOption,
         server::Server,
-        store::{PacketSource, ZoneStoreOptions},
+        store::ZoneStore,
+        store::{PacketSource, ZoneStoreConfig},
         util::PublicKeyBytes,
     };
 
@@ -225,7 +253,7 @@ mod tests {
     async fn store_eviction() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let options = ZoneStoreOptions {
+        let options = ZoneStoreConfig {
             eviction: Duration::from_millis(100),
             eviction_interval: Duration::from_millis(100),
             max_batch_time: Duration::from_millis(100),

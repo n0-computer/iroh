@@ -1,7 +1,7 @@
 //! The main server which combines the DNS and HTTP(S) servers.
-use std::sync::Arc;
 #[cfg(test)]
-use std::{net::SocketAddr, path::Path};
+use std::path::Path;
+use std::{net::SocketAddr, sync::Arc};
 
 use iroh_metrics::service::start_metrics_server;
 use n0_error::{Result, StdResultExt};
@@ -20,27 +20,11 @@ use crate::{
     store::ZoneStore,
 };
 
-/// Spawn the server and run until the `Ctrl-C` signal is received, then shutdown.
-pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
-    let metrics = Arc::new(Metrics::default());
-    let zone_store_options = config.zone_store.clone().unwrap_or_default();
-    let mut store = ZoneStore::persistent(
-        config.signed_packet_store_path()?,
-        zone_store_options.into(),
-        metrics.clone(),
-    )?;
-    if let Some(bootstrap) = config.mainline_enabled() {
-        info!("mainline fallback enabled");
-        store = store.with_mainline_fallback(bootstrap);
-    };
-    let server = Server::spawn(config, store, metrics).await?;
-    tokio::signal::ctrl_c().await.anyerr()?;
-    info!("shutdown");
-    server.shutdown().await?;
-    Ok(())
-}
-
-/// The iroh-dns server.
+/// A running iroh-dns server.
+///
+/// Combines a DNS listener and an HTTP/HTTPS listener into a single handle.
+/// Construct with [`Self::bind`] and drive to completion with [`Self::join`], or
+/// stop the tasks with [`Self::shutdown`].
 pub struct Server {
     http_server: HttpServer,
     dns_server: DnsServer,
@@ -48,13 +32,44 @@ pub struct Server {
 }
 
 impl Server {
+    /// Binds and spawns the server from a [`Config`].
+    ///
+    /// Opens (or creates) the persistent signed-packet store at the path returned
+    /// by [`Config::signed_packet_store_path`], enables the mainline DHT fallback
+    /// when configured, and then spawns the DNS, HTTP(S), and metrics tasks.
+    ///
+    /// Returns once all listeners are bound. Use [`Self::join`] to wait for the
+    /// tasks to finish.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the data directory cannot be created, the store
+    /// cannot be opened, or any of the listeners fails to bind.
+    pub async fn bind(config: Config) -> Result<Self> {
+        let metrics = Arc::new(Metrics::default());
+        let mut store = ZoneStore::persistent(
+            config.signed_packet_store_path()?,
+            config.zone_store.clone().unwrap_or_default(),
+            metrics.clone(),
+        )?;
+        if let Some(bootstrap) = config.mainline_enabled() {
+            info!("mainline fallback enabled");
+            store = store.with_mainline_fallback(bootstrap);
+        };
+        Self::bind_with_store(config, store, metrics).await
+    }
+
     /// Spawn the server.
     ///
     /// This will spawn several background tasks:
     /// * A DNS server task
     /// * A HTTP server task, if `config.http` is not empty
     /// * A HTTPS server task, if `config.https` is not empty
-    pub async fn spawn(config: Config, store: ZoneStore, metrics: Arc<Metrics>) -> Result<Self> {
+    async fn bind_with_store(
+        config: Config,
+        store: ZoneStore,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self> {
         let cert_cache_dir = config.data_dir()?.join("cert_cache");
         let dns_handler = DnsHandler::new(store.clone(), &config.dns, metrics.clone())?;
 
@@ -91,7 +106,7 @@ impl Server {
         })
     }
 
-    /// Cancel the server tasks and wait for all tasks to complete.
+    /// Cancels the server tasks and waits for them to complete.
     pub async fn shutdown(self) -> Result<()> {
         self.metrics_task.abort();
         let (res1, res2) = tokio::join!(self.dns_server.shutdown(), self.http_server.shutdown(),);
@@ -100,10 +115,11 @@ impl Server {
         Ok(())
     }
 
-    /// Wait for all tasks to complete.
+    /// Waits for the server tasks to complete.
     ///
-    /// This will run forever unless all tasks close with an error, or `Self::cancel` is called.
-    pub async fn run_until_error(self) -> Result<()> {
+    /// Runs until one of the listener tasks returns (with success or an error),
+    /// or until [`Self::shutdown`] is called on a separate handle.
+    pub async fn join(self) -> Result<()> {
         tokio::select! {
             res = self.dns_server.run_until_done() => res?,
             res = self.http_server.run_until_done() => res?,
@@ -119,17 +135,17 @@ impl Server {
     /// It returns the server handle, the [`SocketAddr`] of the DNS server and the [`Url`] of the
     /// HTTP server.
     #[cfg(test)]
-    pub async fn spawn_for_tests(dir: impl AsRef<Path>) -> Result<Self> {
+    pub(crate) async fn spawn_for_tests(dir: impl AsRef<Path>) -> Result<Self> {
         Self::spawn_for_tests_with_options(dir, None, None, None).await
     }
 
     /// Spawn a server suitable for testing, while optionally enabling mainline with custom
     /// bootstrap addresses.
     #[cfg(test)]
-    pub async fn spawn_for_tests_with_options(
+    pub(crate) async fn spawn_for_tests_with_options(
         dir: impl AsRef<Path>,
         mainline: Option<crate::config::BootstrapOption>,
-        options: Option<crate::store::ZoneStoreOptions>,
+        options: Option<crate::store::ZoneStoreConfig>,
         https: Option<HttpsConfig>,
     ) -> Result<Self> {
         use std::net::{IpAddr, Ipv4Addr};
@@ -150,13 +166,32 @@ impl Server {
             info!("mainline fallback enabled");
             store = store.with_mainline_fallback(bootstrap);
         }
-        let server = Self::spawn(config, store, Default::default()).await?;
+        let server = Self::bind_with_store(config, store, Default::default()).await?;
         Ok(server)
     }
 
-    #[cfg(test)]
-    pub(crate) fn dns_addr(&self) -> SocketAddr {
+    /// Returns the local address that the DNS listener is bound to.
+    ///
+    /// Useful when the config requested port `0` and the actual port needs to be
+    /// discovered after binding.
+    pub fn dns_addr(&self) -> SocketAddr {
         self.dns_server.local_addr()
+    }
+
+    /// Returns the local address of the HTTP listener, if one is running.
+    ///
+    /// Returns `None` when no [`HttpConfig`](crate::config::HttpConfig) was
+    /// configured.
+    pub fn http_addr(&self) -> Option<SocketAddr> {
+        self.http_server.http_addr()
+    }
+
+    /// Returns the local address of the HTTPS listener, if one is running.
+    ///
+    /// Returns `None` when no [`HttpsConfig`](crate::config::HttpsConfig) was
+    /// configured.
+    pub fn https_addr(&self) -> Option<SocketAddr> {
+        self.http_server.https_addr()
     }
 
     #[cfg(test)]
@@ -177,10 +212,5 @@ impl Server {
                 .parse::<url::Url>()
                 .expect("valid url"),
         )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn https_addr(&self) -> Option<SocketAddr> {
-        self.http_server.https_addr()
     }
 }
