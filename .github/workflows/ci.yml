@@ -22,7 +22,7 @@ env:
 
 jobs:
   pick-runner:
-    uses: n0-computer/tools/.github/workflows/pick-runner.yml@main
+    uses: "./.github/workflows/pick-runner.yml"
     with:
       min_free_runners: 3
     secrets:

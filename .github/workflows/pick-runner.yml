@@ -1,0 +1,227 @@
+# Reusable workflow: pick-runner — live-availability overflow routing
+# with per-slot spreading.
+#
+# Lives at `.github/workflows/pick-runner.yml` in `n0-computer/tools`.
+#
+# HOW ROUTING WORKS:
+#   pick-runner queries self-hosted linux X64 idle count once at dispatch
+#   time, then emits up to 16 per-slot runs-on arrays (`overflow_1` through
+#   `overflow_16`). Each caller job picks a slot number; the first `idle`
+#   slots resolve to self-hosted, the rest resolve to Blacksmith-4vcpu.
+#
+#   Example, with idle=2 and 5 overflow jobs (slots 1..5):
+#     slot 1 → self-hosted       (1 <= 2)
+#     slot 2 → self-hosted       (2 <= 2)
+#     slot 3 → Blacksmith        (3 > 2)
+#     slot 4 → Blacksmith
+#     slot 5 → Blacksmith
+#
+#   MIN_FREE_RUNNERS acts as a quality gate: if idle < min_free_runners, we
+#   don't spread at all and send the whole batch to Blacksmith. This avoids
+#   stranding a single job on a nearly-full self-hosted pool where the batch
+#   wall-clock would be dominated by that one job's queue wait.
+#
+# CALLER PATTERN:
+#   jobs:
+#     pick-runner:
+#       uses: n0-computer/tools/.github/workflows/pick-runner.yml@main
+#       with:
+#         min_free_runners: 3
+#       secrets:
+#         RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
+#
+#     clippy_check:
+#       needs: pick-runner
+#       runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_1) }}
+#       ...
+#
+#     check_docs:
+#       needs: pick-runner
+#       runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_2) }}
+#       ...
+#
+#   Assign slot numbers 1..N to the overflow jobs in your workflow. Slot
+#   assignment is arbitrary (jobs run in parallel regardless) — it just
+#   determines the routing split.
+#
+# PREREQUISITES:
+#   1. Shared repo accessible to callers: Settings → Actions → General →
+#      Access: "Accessible from repositories in the 'n0-computer' organization"
+#      on the tools repo.
+#   2. RUNNER_READ_TOKEN secret (per-repo or at org level scoped to callers).
+#      Required permission for GET /orgs/{org}/actions/runners:
+#        - Fine-grained PAT: Organization permissions →
+#          "Self-hosted runners: Read"   ← recommended
+#        - Classic PAT: `admin:org` scope (broader; use if fine-grained tokens
+#          aren't available — note `read:org` alone is NOT sufficient for
+#          this endpoint, despite the name).
+#        - GitHub App: Organization permissions → Self-hosted runners: Read.
+#      Without the secret, pick-runner falls back to all-self-hosted (safe).
+
+name: Pick runner (reusable, per-slot)
+
+on:
+  workflow_call:
+    inputs:
+      org:
+        description: GitHub org that owns the self-hosted runners
+        type: string
+        default: n0-computer
+      min_free_runners:
+        description: >
+          Below this idle count, don't spread — send the whole batch to
+          Blacksmith. Avoids stranding a single job behind a slow self-hosted
+          queue. Set to 1 to always use any idle self-hosted slot.
+        type: number
+        default: 3
+      core_runner:
+        description: JSON array for the `core` class (always this)
+        type: string
+        default: '["self-hosted","linux","X64"]'
+      overflow_runner:
+        description: JSON array for overflow slots that land on Blacksmith
+        type: string
+        default: '["blacksmith-4vcpu-ubuntu-2204"]'
+    outputs:
+      core:
+        description: JSON array for `runs-on` — always self-hosted
+        value: ${{ jobs.pick.outputs.core }}
+      idle:
+        description: Idle self-hosted linux X64 runners at decision time
+        value: ${{ jobs.pick.outputs.idle }}
+      decision:
+        description: Human-readable routing summary (for logs/debugging)
+        value: ${{ jobs.pick.outputs.decision }}
+      # Per-slot overflow outputs. Caller picks a slot per job.
+      overflow_1:
+        description: overflow slot 1 (lowest — most likely self-hosted)
+        value: ${{ jobs.pick.outputs.overflow_1 }}
+      overflow_2:
+        description: overflow slot 2
+        value: ${{ jobs.pick.outputs.overflow_2 }}
+      overflow_3:
+        description: overflow slot 3
+        value: ${{ jobs.pick.outputs.overflow_3 }}
+      overflow_4:
+        description: overflow slot 4
+        value: ${{ jobs.pick.outputs.overflow_4 }}
+      overflow_5:
+        description: overflow slot 5
+        value: ${{ jobs.pick.outputs.overflow_5 }}
+      overflow_6:
+        description: overflow slot 6
+        value: ${{ jobs.pick.outputs.overflow_6 }}
+      overflow_7:
+        description: overflow slot 7
+        value: ${{ jobs.pick.outputs.overflow_7 }}
+      overflow_8:
+        description: overflow slot 8
+        value: ${{ jobs.pick.outputs.overflow_8 }}
+      overflow_9:
+        description: overflow slot 9
+        value: ${{ jobs.pick.outputs.overflow_9 }}
+      overflow_10:
+        description: overflow slot 10
+        value: ${{ jobs.pick.outputs.overflow_10 }}
+      overflow_11:
+        description: overflow slot 11
+        value: ${{ jobs.pick.outputs.overflow_11 }}
+      overflow_12:
+        description: overflow slot 12
+        value: ${{ jobs.pick.outputs.overflow_12 }}
+      overflow_13:
+        description: overflow slot 13
+        value: ${{ jobs.pick.outputs.overflow_13 }}
+      overflow_14:
+        description: overflow slot 14
+        value: ${{ jobs.pick.outputs.overflow_14 }}
+      overflow_15:
+        description: overflow slot 15
+        value: ${{ jobs.pick.outputs.overflow_15 }}
+      overflow_16:
+        description: overflow slot 16
+        value: ${{ jobs.pick.outputs.overflow_16 }}
+    secrets:
+      RUNNER_READ_TOKEN:
+        description: PAT with read:org scope for runner availability query
+        required: false
+
+jobs:
+  pick:
+    name: Pick runner (live availability, per-slot)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      core: ${{ steps.p.outputs.core }}
+      idle: ${{ steps.p.outputs.idle }}
+      decision: ${{ steps.p.outputs.decision }}
+      overflow_1:  ${{ steps.p.outputs.overflow_1 }}
+      overflow_2:  ${{ steps.p.outputs.overflow_2 }}
+      overflow_3:  ${{ steps.p.outputs.overflow_3 }}
+      overflow_4:  ${{ steps.p.outputs.overflow_4 }}
+      overflow_5:  ${{ steps.p.outputs.overflow_5 }}
+      overflow_6:  ${{ steps.p.outputs.overflow_6 }}
+      overflow_7:  ${{ steps.p.outputs.overflow_7 }}
+      overflow_8:  ${{ steps.p.outputs.overflow_8 }}
+      overflow_9:  ${{ steps.p.outputs.overflow_9 }}
+      overflow_10: ${{ steps.p.outputs.overflow_10 }}
+      overflow_11: ${{ steps.p.outputs.overflow_11 }}
+      overflow_12: ${{ steps.p.outputs.overflow_12 }}
+      overflow_13: ${{ steps.p.outputs.overflow_13 }}
+      overflow_14: ${{ steps.p.outputs.overflow_14 }}
+      overflow_15: ${{ steps.p.outputs.overflow_15 }}
+      overflow_16: ${{ steps.p.outputs.overflow_16 }}
+    steps:
+      - id: p
+        env:
+          MIN_FREE_RUNNERS: ${{ inputs.min_free_runners }}
+          CORE_RUNNER: ${{ inputs.core_runner }}
+          OVERFLOW_RUNNER: ${{ inputs.overflow_runner }}
+          ORG: ${{ inputs.org }}
+          GH_TOKEN: ${{ secrets.RUNNER_READ_TOKEN || github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "core=${CORE_RUNNER}" >> "$GITHUB_OUTPUT"
+
+          IDLE="$(gh api "/orgs/${ORG}/actions/runners" --paginate \
+            --jq '[.runners[]
+                   | select(.status=="online" and .busy==false
+                            and ([.labels[].name | ascii_downcase]
+                                 | contains(["self-hosted","linux","x64"])))]
+                  | length' 2>/dev/null || echo "")"
+
+          # Decide how many slots get self-hosted.
+          #
+          #   API failed       -> all self-hosted (safe default)
+          #   idle < threshold -> all Blacksmith  (don't strand single jobs)
+          #   idle >= threshold-> first `idle` slots self-hosted, rest Blacksmith
+          if [[ -z "$IDLE" || ! "$IDLE" =~ ^[0-9]+$ ]]; then
+            echo "::warning::runner availability query failed; defaulting to all self-hosted"
+            IDLE="unknown"
+            SELF_HOSTED_SLOTS=16
+            ROUTE="all self-hosted (api-failed)"
+          elif (( IDLE < MIN_FREE_RUNNERS )); then
+            SELF_HOSTED_SLOTS=0
+            ROUTE="all Blacksmith (idle=${IDLE} < min=${MIN_FREE_RUNNERS})"
+          else
+            SELF_HOSTED_SLOTS="$IDLE"
+            ROUTE="spread (idle=${IDLE}: first ${IDLE} slots self-hosted, rest Blacksmith)"
+          fi
+
+          for i in $(seq 1 16); do
+            if (( i <= SELF_HOSTED_SLOTS )); then
+              echo "overflow_${i}=${CORE_RUNNER}" >> "$GITHUB_OUTPUT"
+            else
+              echo "overflow_${i}=${OVERFLOW_RUNNER}" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+          echo "decision=${ROUTE}" >> "$GITHUB_OUTPUT"
+          echo "idle=${IDLE}" >> "$GITHUB_OUTPUT"
+          echo "--------------------------------------------------------"
+          echo "Idle linux-X64=${IDLE}  threshold=${MIN_FREE_RUNNERS}"
+          echo "Self-hosted slots:  1..${SELF_HOSTED_SLOTS}"
+          echo "Blacksmith slots:   $((SELF_HOSTED_SLOTS+1))..16"
+          echo "Decision: ${ROUTE}"
+          echo "--------------------------------------------------------"
