@@ -1557,7 +1557,7 @@ impl Actor {
                     );
                     current_netmon_state = state;
                     self.sock.metrics.socket.actor_link_change.inc();
-                    self.handle_network_change(is_major).await;
+                    self.handle_network_change(is_major);
                 }
                 remote_id = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
                     trace!(%remote_id, "cleaned up RemoteStateActor");
@@ -1607,7 +1607,7 @@ impl Actor {
     ///
     /// This is triggered when the netmon actor detects a change in the local network
     /// interfaces, assigned IP addresses and routes.
-    async fn handle_network_change(&mut self, is_major: bool) {
+    fn handle_network_change(&mut self, is_major: bool) {
         debug!(is_major, "link change detected");
 
         if is_major {
@@ -1617,7 +1617,7 @@ impl Actor {
             self.transports_network_change.check_relay_connection();
 
             #[cfg(not(wasm_browser))]
-            self.sock.dns_resolver.reset().await;
+            self.sock.dns_resolver.reset();
             self.re_stun(UpdateReason::LinkChangeMajor);
         } else {
             self.re_stun(UpdateReason::LinkChangeMinor);
@@ -1751,7 +1751,7 @@ impl Actor {
             }
             #[cfg(all(test, with_crypto_provider))]
             ActorMessage::ForceNetworkChange(is_major) => {
-                self.handle_network_change(is_major).await;
+                self.handle_network_change(is_major);
             }
         }
     }

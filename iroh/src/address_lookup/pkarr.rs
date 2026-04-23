@@ -37,9 +37,10 @@
 //!
 //! - [`address_lookup::DnsAddressLookup`], which resolves from a DNS server.
 //!
-//! - [`address_lookup::DhtAddressLookup`], which resolves and publishes from both pkarr relay servers and well
-//!   as the Mainline DHT.
+//! Mainline-DHT-based pkarr publishing/lookup lives in the
+//! [`iroh-mainline-address-lookup`] crate.
 //!
+//! [`iroh-mainline-address-lookup`]: https://docs.rs/iroh-mainline-address-lookup
 //! [pkarr]: https://pkarr.org
 //! [DNS Resource Records]: https://en.wikipedia.org/wiki/Domain_Name_System#Resource_records
 //! [Mainline DHT]: https://en.wikipedia.org/wiki/Mainline_DHT
@@ -47,7 +48,6 @@
 //! [`PublicKey`]: crate::PublicKey
 //! [`EndpointId`]: crate::EndpointId
 //! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
-//! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
 //! [`N0` preset]: crate::endpoint::presets::N0
 //! [`AddrFilter`]: crate::address_lookup::AddrFilter
 //! [`AddrFilter::relay_only`]: crate::address_lookup::AddrFilter::relay_only
@@ -83,9 +83,6 @@ use crate::{
     endpoint::force_staging_infra,
     util::reqwest_client_builder,
 };
-
-#[cfg(feature = "address-lookup-pkarr-dht")]
-pub mod dht;
 
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
