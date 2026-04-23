@@ -26,9 +26,9 @@ pub(crate) mod server {
 
     use super::*;
     use crate::server::Metrics;
-    pub use crate::server::QuicConfig;
+    pub(crate) use crate::server::QuicConfig;
 
-    pub struct QuicServer {
+    pub(crate) struct QuicServer {
         bind_addr: SocketAddr,
         cancel: CancellationToken,
         handle: AbortOnDropHandle<()>,
@@ -61,7 +61,7 @@ pub(crate) mod server {
         ///
         /// The server runs in the background as several async tasks.  This allows controlling
         /// the server, in particular it allows gracefully shutting down the server.
-        pub fn handle(&self) -> ServerHandle {
+        pub(crate) fn handle(&self) -> ServerHandle {
             ServerHandle {
                 cancel_token: self.cancel.clone(),
             }
@@ -72,12 +72,12 @@ pub(crate) mod server {
         /// This is the root of all the tasks for the QUIC address discovery service.  Aborting it will abort all the
         /// other tasks for the service.  Awaiting it will complete when all the service tasks are
         /// completed.[]
-        pub fn task_handle(&mut self) -> &mut AbortOnDropHandle<()> {
+        pub(crate) fn task_handle(&mut self) -> &mut AbortOnDropHandle<()> {
             &mut self.handle
         }
 
         /// Returns the socket address for this QUIC server.
-        pub fn bind_addr(&self) -> SocketAddr {
+        pub(crate) fn bind_addr(&self) -> SocketAddr {
             self.bind_addr
         }
 
@@ -177,7 +177,7 @@ pub(crate) mod server {
 
         /// Closes the underlying QUIC endpoint and the tasks running the
         /// QUIC connections.
-        pub async fn shutdown(mut self) {
+        pub(crate) async fn shutdown(mut self) {
             self.cancel.cancel();
             if !self.task_handle().is_finished() {
                 // only possible error is a `JoinError`, no errors about what might
@@ -191,13 +191,13 @@ pub(crate) mod server {
     ///
     /// This does not allow access to the task but can communicate with it.
     #[derive(Debug, Clone)]
-    pub struct ServerHandle {
+    pub(crate) struct ServerHandle {
         cancel_token: CancellationToken,
     }
 
     impl ServerHandle {
         /// Gracefully shut down the quic endpoint.
-        pub fn shutdown(&self) {
+        pub(crate) fn shutdown(&self) {
             self.cancel_token.cancel()
         }
     }
