@@ -2437,6 +2437,7 @@ dependencies = [
 name = "iroh-dns"
 version = "0.98.0"
 dependencies = [
+ "arc-swap",
  "cfg_aliases",
  "derive_more",
  "hickory-resolver",
