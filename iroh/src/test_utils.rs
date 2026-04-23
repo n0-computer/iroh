@@ -362,8 +362,7 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use iroh_base::EndpointId;
-    use iroh_dns::pkarr::SignedPacket;
-    use iroh_relay::endpoint_info::{EndpointInfo, IROH_TXT_NAME};
+    use iroh_dns::{IROH_TXT_NAME, endpoint_info::EndpointInfo, pkarr::SignedPacket};
     use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;

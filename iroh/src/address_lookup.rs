@@ -135,12 +135,12 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId};
-pub use iroh_relay::endpoint_info::AddrFilter;
+pub use iroh_dns::{ParseError, endpoint_info::AddrFilter};
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{MergeBounded, Stream, boxed::BoxStream};
 use tracing::debug;
 
-pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData};
+pub use crate::endpoint_info::{EndpointData, EndpointInfo, UserData};
 use crate::{Endpoint, endpoint::EndpointError};
 
 #[cfg(not(wasm_browser))]
@@ -1192,10 +1192,8 @@ mod tests {
 #[cfg(test)]
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-    use iroh_relay::{
-        endpoint_info::UserData,
-        tls::{CaRootsConfig, default_provider},
-    };
+    use iroh_dns::endpoint_info::UserData;
+    use iroh_relay::tls::{CaRootsConfig, default_provider};
     use n0_error::{Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
