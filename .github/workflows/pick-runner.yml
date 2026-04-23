@@ -82,6 +82,14 @@ on:
         description: JSON array for overflow slots that land on Blacksmith
         type: string
         default: '["blacksmith-4vcpu-ubuntu-2204"]'
+      max_blacksmith_concurrent:
+        description: >
+          Soft cap on total Blacksmith runners busy across the org. If the
+          current busy count is >= this value, this batch is forced to
+          self-hosted regardless of idle count. Prevents unbounded overflow
+          spend when multiple repos spill simultaneously. Set to 0 to disable.
+        type: number
+        default: 10
     outputs:
       core:
         description: JSON array for `runs-on` — always self-hosted
@@ -154,6 +162,7 @@ jobs:
     outputs:
       core: ${{ steps.p.outputs.core }}
       idle: ${{ steps.p.outputs.idle }}
+      blacksmith_busy: ${{ steps.p.outputs.blacksmith_busy }}
       decision: ${{ steps.p.outputs.decision }}
       overflow_1:  ${{ steps.p.outputs.overflow_1 }}
       overflow_2:  ${{ steps.p.outputs.overflow_2 }}
@@ -175,6 +184,7 @@ jobs:
       - id: p
         env:
           MIN_FREE_RUNNERS: ${{ inputs.min_free_runners }}
+          MAX_BLACKSMITH_CONCURRENT: ${{ inputs.max_blacksmith_concurrent }}
           CORE_RUNNER: ${{ inputs.core_runner }}
           OVERFLOW_RUNNER: ${{ inputs.overflow_runner }}
           ORG: ${{ inputs.org }}
@@ -184,23 +194,39 @@ jobs:
           set -euo pipefail
           echo "core=${CORE_RUNNER}" >> "$GITHUB_OUTPUT"
 
-          IDLE="$(gh api "/orgs/${ORG}/actions/runners" --paginate \
-            --jq '[.runners[]
-                   | select(.status=="online" and .busy==false
-                            and ([.labels[].name | ascii_downcase]
-                                 | contains(["self-hosted","linux","x64"])))]
-                  | length' 2>/dev/null || echo "")"
+          # One paginated fetch, counted twice. Avoid a second round-trip.
+          RUNNERS_JSON="$(gh api "/orgs/${ORG}/actions/runners" --paginate 2>/dev/null || echo '')"
+
+          IDLE="$(echo "$RUNNERS_JSON" | jq -s '[.[] | .runners[]?]
+                 | [.[] | select(.status=="online" and .busy==false
+                                 and ([.labels[].name | ascii_downcase]
+                                      | contains(["self-hosted","linux","x64"])))]
+                 | length' 2>/dev/null || echo "")"
+
+          # Count busy runners whose labels include any "blacksmith-" prefixed
+          # label. Blacksmith runners are ephemeral — they only exist while
+          # executing a job, so busy==true is always the relevant state.
+          BS_BUSY="$(echo "$RUNNERS_JSON" | jq -s '[.[] | .runners[]?]
+                    | [.[] | select(.busy==true
+                                    and ([.labels[].name | ascii_downcase]
+                                         | any(startswith("blacksmith-"))))]
+                    | length' 2>/dev/null || echo "")"
 
           # Decide how many slots get self-hosted.
           #
-          #   API failed       -> all self-hosted (safe default)
-          #   idle < threshold -> all Blacksmith  (don't strand single jobs)
-          #   idle >= threshold-> first `idle` slots self-hosted, rest Blacksmith
+          #   API failed              -> all self-hosted (safe default)
+          #   blacksmith at cap       -> all self-hosted (prevent runaway spend)
+          #   idle < min threshold    -> all Blacksmith (don't strand jobs)
+          #   idle >= min threshold   -> first `idle` slots self-hosted, rest Blacksmith
           if [[ -z "$IDLE" || ! "$IDLE" =~ ^[0-9]+$ ]]; then
             echo "::warning::runner availability query failed; defaulting to all self-hosted"
             IDLE="unknown"
+            BS_BUSY="unknown"
             SELF_HOSTED_SLOTS=16
             ROUTE="all self-hosted (api-failed)"
+          elif (( MAX_BLACKSMITH_CONCURRENT > 0 )) && [[ "$BS_BUSY" =~ ^[0-9]+$ ]] && (( BS_BUSY >= MAX_BLACKSMITH_CONCURRENT )); then
+            SELF_HOSTED_SLOTS=16
+            ROUTE="all self-hosted (blacksmith at cap: bs_busy=${BS_BUSY} >= max=${MAX_BLACKSMITH_CONCURRENT})"
           elif (( IDLE < MIN_FREE_RUNNERS )); then
             SELF_HOSTED_SLOTS=0
             ROUTE="all Blacksmith (idle=${IDLE} < min=${MIN_FREE_RUNNERS})"
@@ -219,9 +245,11 @@ jobs:
 
           echo "decision=${ROUTE}" >> "$GITHUB_OUTPUT"
           echo "idle=${IDLE}" >> "$GITHUB_OUTPUT"
+          echo "blacksmith_busy=${BS_BUSY}" >> "$GITHUB_OUTPUT"
           echo "--------------------------------------------------------"
-          echo "Idle linux-X64=${IDLE}  threshold=${MIN_FREE_RUNNERS}"
-          echo "Self-hosted slots:  1..${SELF_HOSTED_SLOTS}"
-          echo "Blacksmith slots:   $((SELF_HOSTED_SLOTS+1))..16"
+          echo "Idle self-hosted linux-X64: ${IDLE}  (min threshold: ${MIN_FREE_RUNNERS})"
+          echo "Blacksmith runners busy:    ${BS_BUSY}  (max: ${MAX_BLACKSMITH_CONCURRENT})"
+          echo "Self-hosted slots:          1..${SELF_HOSTED_SLOTS}"
+          echo "Blacksmith slots:           $((SELF_HOSTED_SLOTS+1))..16"
           echo "Decision: ${ROUTE}"
           echo "--------------------------------------------------------"
