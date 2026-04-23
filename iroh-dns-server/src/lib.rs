@@ -28,8 +28,7 @@
 //!
 //! [pkarr]: https://github.com/Nuhvi/pkarr/
 
-// #![deny(missing_docs, rustdoc::broken_intra_doc_links, unreachable_pub)]
-#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![deny(missing_docs, rustdoc::broken_intra_doc_links, unreachable_pub)]
 
 pub mod config;
 mod dns;

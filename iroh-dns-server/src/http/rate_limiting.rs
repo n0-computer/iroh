@@ -40,7 +40,7 @@ impl Default for &RateLimitConfig {
 /// Create the default rate-limiting layer.
 ///
 /// This spawns a background thread to clean up the rate limiting cache.
-pub fn create<RespBody>(
+pub(super) fn create<RespBody>(
     rate_limit_config: &RateLimitConfig,
 ) -> Option<GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>, RespBody>> {
     let use_smart_extractor = match rate_limit_config {

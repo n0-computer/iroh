@@ -21,15 +21,16 @@ use n0_error::StdResultExt;
 use super::error::AppResult;
 use crate::state::AppState;
 
-mod extract;
-mod response;
+use self::{
+    extract::{DnsMimeType, DnsRequestBody, DnsRequestQuery},
+    response::DnsResponse,
+};
 
-use self::extract::{DnsMimeType, DnsRequestBody, DnsRequestQuery};
-#[cfg(test)]
-pub(crate) use self::response::DnsResponse;
+mod extract;
+pub(crate) mod response;
 
 /// GET handler for resolving DoH queries
-pub async fn get(
+pub(super) async fn get(
     State(state): State<AppState>,
     DnsRequestQuery(request, accept_type): DnsRequestQuery,
 ) -> AppResult<Response> {
@@ -41,7 +42,7 @@ pub async fn get(
     let mut response = match accept_type {
         DnsMimeType::Message => (StatusCode::OK, message_bytes).into_response(),
         DnsMimeType::Json => {
-            let response = self::response::DnsResponse::from_message(message)?;
+            let response = DnsResponse::from_message(message)?;
             (StatusCode::OK, Json(response)).into_response()
         }
     };
@@ -59,7 +60,7 @@ pub async fn get(
 }
 
 /// POST handler for resolvng DoH queries
-pub async fn post(
+pub(super) async fn post(
     State(state): State<AppState>,
     DnsRequestBody(request): DnsRequestBody,
 ) -> Response {

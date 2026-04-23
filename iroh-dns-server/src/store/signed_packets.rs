@@ -16,7 +16,8 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
-pub type SignedPacketsKey = [u8; 32];
+type SignedPacketsKey = [u8; 32];
+
 const SIGNED_PACKETS_TABLE: TableDefinition<&SignedPacketsKey, &[u8]> =
     TableDefinition::new("signed-packets-1");
 const UPDATE_TIME_TABLE: MultimapTableDefinition<[u8; 8], SignedPacketsKey> =
@@ -273,13 +274,13 @@ fn fmt_time(t: Timestamp) -> String {
 
 /// A struct similar to [`redb::Table`] but for all tables that make up the
 /// signed packet store.
-pub(super) struct Tables<'a> {
+struct Tables<'a> {
     pub signed_packets: redb::Table<'a, &'static SignedPacketsKey, &'static [u8]>,
     pub update_time: redb::MultimapTable<'a, [u8; 8], SignedPacketsKey>,
 }
 
 impl<'txn> Tables<'txn> {
-    pub fn new(tx: &'txn redb::WriteTransaction) -> result::Result<Self, redb::TableError> {
+    fn new(tx: &'txn redb::WriteTransaction) -> result::Result<Self, redb::TableError> {
         Ok(Self {
             signed_packets: tx.open_table(SIGNED_PACKETS_TABLE)?,
             update_time: tx.open_multimap_table(UPDATE_TIME_TABLE)?,
@@ -287,14 +288,14 @@ impl<'txn> Tables<'txn> {
     }
 }
 
-pub(super) struct Snapshot {
+struct Snapshot {
     #[allow(dead_code)]
     pub signed_packets: redb::ReadOnlyTable<&'static SignedPacketsKey, &'static [u8]>,
     pub update_time: redb::ReadOnlyMultimapTable<[u8; 8], SignedPacketsKey>,
 }
 
 impl Snapshot {
-    pub fn new(db: &Database) -> Result<Self> {
+    fn new(db: &Database) -> Result<Self> {
         let tx = db.begin_read().anyerr()?;
         Ok(Self {
             signed_packets: tx.open_table(SIGNED_PACKETS_TABLE).anyerr()?,

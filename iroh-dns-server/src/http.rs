@@ -388,7 +388,7 @@ mod tests {
             .send()
             .await
             .anyerr()?
-            .json::<super::doh::DnsResponse>()
+            .json::<super::doh::response::DnsResponse>()
             .await
             .anyerr()?;
         assert_eq!(res.answer.len(), 1);
@@ -407,7 +407,7 @@ mod tests {
             .send()
             .await
             .anyerr()?
-            .json::<super::doh::DnsResponse>()
+            .json::<super::doh::response::DnsResponse>()
             .await
             .anyerr()?;
         assert_eq!(res.answer.len(), 1);

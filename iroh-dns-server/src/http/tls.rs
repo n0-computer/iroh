@@ -56,7 +56,7 @@ impl CertMode {
 
 /// TLS Certificate Authority acceptor.
 #[derive(Clone)]
-pub enum TlsAcceptor {
+pub(crate) enum TlsAcceptor {
     LetsEncrypt(AxumAcceptor),
     Manual(RustlsAcceptor),
 }
