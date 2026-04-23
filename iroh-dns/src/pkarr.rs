@@ -10,7 +10,7 @@ use std::{
 };
 
 use iroh_base::{PublicKey, SecretKey, Signature};
-use n0_error::{e, stack_error};
+use n0_error::{AnyError, anyerr, e, stack_error};
 use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata::RData};
 
 /// Maximum size of the encoded DNS packet within a signed packet.
@@ -55,7 +55,7 @@ impl SignedPacket {
         for value in values {
             let mut txt = simple_dns::rdata::TXT::new();
             txt.add_string(value.as_ref())
-                .map_err(|e| e!(SignedPacketBuildError::DnsError, e))?;
+                .map_err(|e| e!(SignedPacketBuildError::DnsError, anyerr!(e)))?;
             packet.answers.push(ResourceRecord::new(
                 dns_name.clone(),
                 CLASS::IN,
@@ -66,7 +66,7 @@ impl SignedPacket {
 
         let encoded_packet = packet
             .build_bytes_vec_compressed()
-            .map_err(|e| e!(SignedPacketBuildError::DnsError, e))?;
+            .map_err(|e| e!(SignedPacketBuildError::DnsError, anyerr!(e)))?;
 
         if encoded_packet.len() > MAX_DNS_PACKET_SIZE {
             return Err(e!(SignedPacketBuildError::PacketTooLarge {
@@ -107,7 +107,8 @@ impl SignedPacket {
             .verify(&signable(timestamp, encoded_packet), &signature)
             .map_err(|e| e!(SignedPacketVerifyError::SignatureError, e))?;
 
-        Packet::parse(encoded_packet).map_err(|e| e!(SignedPacketVerifyError::DnsError, e))?;
+        Packet::parse(encoded_packet)
+            .map_err(|e| e!(SignedPacketVerifyError::DnsError, anyerr!(e)))?;
 
         Ok(SignedPacket {
             bytes: bytes.to_vec(),
@@ -135,7 +136,8 @@ impl SignedPacket {
         if bytes.len() > MAX_SIGNED_PACKET_SIZE {
             return Err(e!(SignedPacketVerifyError::TooLarge { len: bytes.len() }));
         }
-        Packet::parse(&bytes[104..]).map_err(|e| e!(SignedPacketVerifyError::DnsError, e))?;
+        Packet::parse(&bytes[104..])
+            .map_err(|e| e!(SignedPacketVerifyError::DnsError, anyerr!(e)))?;
         Ok(SignedPacket {
             bytes: bytes.to_vec(),
         })
@@ -387,10 +389,7 @@ pub enum SignedPacketBuildError {
     #[error("DNS packet too large: {len} bytes (max {MAX_DNS_PACKET_SIZE})")]
     PacketTooLarge { len: usize },
     #[error("DNS encoding error")]
-    DnsError {
-        #[error(std_err)]
-        source: simple_dns::SimpleDnsError,
-    },
+    DnsError { source: AnyError },
 }
 
 /// Error verifying a signed packet.
@@ -408,10 +407,7 @@ pub enum SignedPacketVerifyError {
         source: iroh_base::SignatureError,
     },
     #[error("DNS decoding error")]
-    DnsError {
-        #[error(std_err)]
-        source: simple_dns::SimpleDnsError,
-    },
+    DnsError { source: AnyError },
     #[error("Invalid public key")]
     InvalidKey { source: iroh_base::KeyParsingError },
 }
