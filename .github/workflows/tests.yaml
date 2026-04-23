@@ -39,12 +39,13 @@ jobs:
     timeout-minutes: 30
     name: "Tests"
     needs: pick-runner
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
     strategy:
       fail-fast: false
       matrix:
         name: [ubuntu-latest, macOS-arm-latest]
         rust: ["${{ inputs.rust-version }}"]
+        features: [all, none, default]
         include:                                                                                                                                                         
             # ubuntu cells route via pick-runner slots 1-3                                                                                                                 
             - name: ubuntu-latest                                                                                   
