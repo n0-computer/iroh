@@ -33,7 +33,7 @@ pub mod timeouts {
 
     /// Default timeout for DNS queries issued by [`DnsResolver`].
     ///
-    /// [`DnsResolver`]: crate::dns::DnsResolver
+    /// [`DnsResolver`]: iroh_dns::dns::DnsResolver
     pub(crate) const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
     /// Maximum time the server will attempt to get a successful write to the connection.

@@ -55,7 +55,7 @@ pub enum ParseError {
 ///
 /// Takes a DNS name and expects the first label to be [`IROH_TXT_NAME`] and the second
 /// label to be a z32 encoded [`EndpointId`]. Ignores subsequent labels.
-pub fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
+pub(crate) fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
     let num_labels = name.split(".").count();
     if num_labels < 2 {
         return Err(e!(ParseError::NumLabels { num_labels }));
@@ -79,7 +79,7 @@ pub fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
     Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
 )]
 #[strum(serialize_all = "kebab-case")]
-pub enum IrohAttr {
+pub(crate) enum IrohAttr {
     /// URL of home relay.
     Relay,
     /// Address (IP or custom transport).
@@ -94,7 +94,7 @@ pub enum IrohAttr {
 /// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
 /// [`Display`].
 #[derive(Debug)]
-pub struct TxtAttrs<T> {
+pub(crate) struct TxtAttrs<T> {
     endpoint_id: EndpointId,
     attrs: BTreeMap<T, Vec<String>>,
 }

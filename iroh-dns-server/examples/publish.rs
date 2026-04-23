@@ -9,9 +9,10 @@ use iroh::{
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrRelayClient},
     },
     dns::DnsResolver,
-    endpoint_info::{EndpointInfo, IROH_TXT_NAME},
+    endpoint_info::EndpointInfo,
     tls::{CaRootsConfig, default_provider},
 };
+use iroh_dns::IROH_TXT_NAME;
 use n0_error::{Result, StackResultExt};
 use url::Url;
 

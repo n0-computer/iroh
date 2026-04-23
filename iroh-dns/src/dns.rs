@@ -1,8 +1,8 @@
-//! Configurable DNS resolver for `iroh-relay` and `iroh`.
+//! Configurable DNS resolver.
 //!
 //! The main export is the [`DnsResolver`] struct. It provides methods to resolve domain names
-//! to IPv4 and IPv6 addresses. Additionally, the resolver features methods to resolve the
-//! [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
+//! to IPv4 and IPv6 addresses, and to look up TXT records. Additionally, the resolver features
+//! methods to resolve the [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
 //! See the [`crate::endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
@@ -30,10 +30,10 @@ use tokio::sync::RwLock;
 use tracing::debug;
 use url::Url;
 
-use crate::{
-    defaults::timeouts::DNS_TIMEOUT,
-    endpoint_info::{EndpointInfo, ParseError},
-};
+use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
+
+/// Default DNS query timeout.
+pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The n0 address lookup DNS origin, for production.
 pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link.";

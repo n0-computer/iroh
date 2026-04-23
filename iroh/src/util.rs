@@ -98,7 +98,7 @@ mod reqwest_dns_resolver {
 
     use std::{net::SocketAddr, time::Duration};
 
-    use iroh_relay::dns::DnsResolver;
+    use iroh_dns::dns::DnsResolver;
 
     const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
