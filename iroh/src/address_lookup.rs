@@ -678,7 +678,7 @@ mod tests {
     }
 
     impl TestAddressLookupShared {
-        pub fn create_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
+        fn create_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
             TestAddressLookup {
                 endpoint_id,
                 shared: self.clone(),
@@ -688,7 +688,7 @@ mod tests {
             }
         }
 
-        pub fn create_lying_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
+        fn create_lying_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
             TestAddressLookup {
                 endpoint_id,
                 shared: self.clone(),
@@ -1224,8 +1224,8 @@ mod test_dns_pkarr {
         let tls_config = CaRootsConfig::insecure_skip_verify()
             .client_config(default_provider())
             .expect("infallible");
-        let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
-        let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
+        let resolver = dns_pkarr_server.dns_resolver();
+        let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url().clone())
             .build(secret_key, tls_config);
         let user_data: UserData = "foobar".parse().unwrap();
         let data = EndpointData::from_iter(relay_url.clone()).with_user_data(user_data.clone());

@@ -15,7 +15,7 @@ use crate::ExportKeyingMaterial;
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum ProxyStream {
+pub(crate) enum ProxyStream {
     Raw(TcpStream),
     Proxied(util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<TcpStream>>),
 }
@@ -85,14 +85,14 @@ impl AsyncWrite for ProxyStream {
 }
 
 impl ProxyStream {
-    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    pub(super) fn local_addr(&self) -> std::io::Result<SocketAddr> {
         match self {
             Self::Raw(s) => s.local_addr(),
             Self::Proxied(s) => s.get_ref().1.as_ref().local_addr(),
         }
     }
 
-    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
+    pub(super) fn peer_addr(&self) -> std::io::Result<SocketAddr> {
         match self {
             Self::Raw(s) => s.peer_addr(),
             Self::Proxied(s) => s.get_ref().1.as_ref().peer_addr(),
@@ -102,7 +102,7 @@ impl ProxyStream {
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum MaybeTlsStream<IO> {
+pub(crate) enum MaybeTlsStream<IO> {
     Raw(IO),
     Tls(tokio_rustls::client::TlsStream<IO>),
     #[cfg(all(test, feature = "server"))]

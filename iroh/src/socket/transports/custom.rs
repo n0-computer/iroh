@@ -1,3 +1,7 @@
+// The items in this module are exported from [`crate::endpoint::transports`] only if
+// the "unstable-custom-transports" feature is enabled
+#![cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
+
 use std::{
     io,
     num::NonZeroUsize,
