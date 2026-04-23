@@ -24,6 +24,7 @@ use tracing::{Instrument, debug, error, info_span};
 /// Strategy used to obtain TLS certificates for the HTTPS server.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, strum::Display)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CertMode {
     /// Load pre-existing certificates from the `cert_cache` directory.
     Manual,

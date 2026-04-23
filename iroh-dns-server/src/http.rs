@@ -35,6 +35,7 @@ use crate::state::AppState;
 
 /// Configuration for the HTTP listener.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct HttpConfig {
     /// Port to bind the HTTP listener to.
     pub port: u16,
@@ -49,6 +50,7 @@ pub struct HttpConfig {
 /// Certificates are obtained according to [`Self::cert_mode`]; see [`CertMode`] for
 /// the available strategies.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct HttpsConfig {
     /// Port to bind the HTTPS listener to.
     pub port: u16,

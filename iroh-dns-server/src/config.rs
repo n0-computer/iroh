@@ -10,16 +10,17 @@ use std::{
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use n0_error::{Result, StdResultExt};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
+use crate::store::Options;
 pub use crate::{
     dns::DnsConfig,
     http::{CertMode, HttpConfig, HttpsConfig, RateLimitConfig},
-    store::ZoneStoreConfig,
 };
 
 const DEFAULT_METRICS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9117);
@@ -68,9 +69,9 @@ pub struct Config {
 
     /// Configuration for the signed-packet zone store.
     ///
-    /// Controls write-batching and eviction; see [`ZoneStoreConfig`]. When
+    /// Controls write-batching and eviction; see [`StoreConfig`]. When
     /// `None`, the defaults are used.
-    pub zone_store: Option<ZoneStoreConfig>,
+    pub zone_store: Option<StoreConfig>,
 
     /// Rate limit applied to `PUT /pkarr` requests.
     #[serde(default)]
@@ -84,6 +85,63 @@ pub struct Config {
     pub data_dir: Option<PathBuf>,
 }
 
+/// Configuration for the signed-packet store.
+///
+/// Controls how incoming packets are batched into write transactions and how
+/// long packets are retained before the eviction task removes them.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[non_exhaustive]
+pub struct StoreConfig {
+    /// Maximum number of packets processed in a single write transaction.
+    ///
+    /// A transaction commits early when this many messages have been batched.
+    pub max_batch_size: usize,
+
+    /// Maximum time a write transaction stays open before it is committed.
+    ///
+    /// Bounds the amount of data that can be lost on a crash: at most
+    /// `max_batch_time` of writes are in flight at any moment.
+    #[serde(with = "humantime_serde")]
+    pub max_batch_time: Duration,
+
+    /// Time a packet is retained in the store before it becomes eligible for
+    /// eviction.
+    #[serde(with = "humantime_serde")]
+    pub eviction: Duration,
+
+    /// Interval between two runs of the eviction task.
+    #[serde(with = "humantime_serde")]
+    pub eviction_interval: Duration,
+}
+
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Options::default().into()
+    }
+}
+
+impl From<Options> for StoreConfig {
+    fn from(value: Options) -> Self {
+        Self {
+            max_batch_size: value.max_batch_size,
+            max_batch_time: value.max_batch_time,
+            eviction: value.eviction,
+            eviction_interval: value.eviction_interval,
+        }
+    }
+}
+
+impl From<StoreConfig> for Options {
+    fn from(value: StoreConfig) -> Self {
+        Self {
+            max_batch_size: value.max_batch_size,
+            max_batch_time: value.max_batch_time,
+            eviction: value.eviction,
+            eviction_interval: value.eviction_interval,
+        }
+    }
+}
+
 /// Configuration for the metrics server.
 ///
 /// The metrics server exposes [Prometheus]-format counters for the server's
@@ -94,6 +152,7 @@ pub struct Config {
 ///
 /// [Prometheus]: https://prometheus.io/docs/instrumenting/exposition_formats/
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MetricsConfig {
     /// Disables the metrics server when set to `true`.
     pub disabled: bool,
@@ -118,6 +177,7 @@ impl MetricsConfig {
 /// When enabled, the server looks up signed packets on the BitTorrent mainline
 /// DHT for keys that are not present in the local store.
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MainlineConfig {
     /// Enables the mainline DHT fallback when set to `true`.
     pub enabled: bool,

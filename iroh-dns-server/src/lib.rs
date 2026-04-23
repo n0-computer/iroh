@@ -65,7 +65,7 @@ mod tests {
         config::BootstrapOption,
         server::Server,
         store::ZoneStore,
-        store::{PacketSource, ZoneStoreConfig},
+        store::{Options, PacketSource},
         util::PublicKeyBytes,
     };
 
@@ -252,7 +252,7 @@ mod tests {
     async fn store_eviction() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let options = ZoneStoreConfig {
+        let options = Options {
             eviction: Duration::from_millis(100),
             eviction_interval: Duration::from_millis(100),
             max_batch_time: Duration::from_millis(100),

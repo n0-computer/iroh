@@ -11,6 +11,7 @@ use tower_governor::{
 /// Rate limiting strategy for the HTTP server.
 #[derive(Debug, Deserialize, Default, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum RateLimitConfig {
     /// Disables rate limiting entirely.
     Disabled,

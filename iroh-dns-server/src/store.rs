@@ -21,8 +21,9 @@ use crate::{
     util::{PublicKeyBytes, signed_packet_to_hickory_records_without_origin},
 };
 
+pub(crate) use signed_packets::Options;
+
 mod signed_packets;
-pub use signed_packets::Options as ZoneStoreConfig;
 
 /// Cache up to 1 million pkarr zones by default
 const DEFAULT_CACHE_CAPACITY: usize = 1024 * 1024;
@@ -51,7 +52,7 @@ impl ZoneStore {
     /// Create a persistent store
     pub(crate) fn persistent(
         path: impl AsRef<Path>,
-        options: ZoneStoreConfig,
+        options: Options,
         metrics: Arc<Metrics>,
     ) -> Result<Self> {
         let packet_store = SignedPacketStore::persistent(path, options, metrics.clone())?;
@@ -60,7 +61,7 @@ impl ZoneStore {
 
     /// Create an in-memory store.
     #[cfg(test)]
-    pub(crate) fn in_memory(options: ZoneStoreConfig, metrics: Arc<Metrics>) -> Result<Self> {
+    pub(crate) fn in_memory(options: Options, metrics: Arc<Metrics>) -> Result<Self> {
         let packet_store = SignedPacketStore::in_memory(options, metrics.clone())?;
         Ok(Self::new(packet_store, metrics))
     }

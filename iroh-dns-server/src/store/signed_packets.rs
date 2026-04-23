@@ -9,7 +9,6 @@ use std::{
 use iroh_dns::pkarr::{SignedPacket, Timestamp};
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
 use redb::{Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition};
-use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
@@ -76,28 +75,25 @@ struct Actor {
 ///
 /// Controls how incoming packets are batched into write transactions and how
 /// long packets are retained before the eviction task removes them.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Options {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Options {
     /// Maximum number of packets processed in a single write transaction.
     ///
     /// A transaction commits early when this many messages have been batched.
-    pub max_batch_size: usize,
+    pub(crate) max_batch_size: usize,
 
     /// Maximum time a write transaction stays open before it is committed.
     ///
     /// Bounds the amount of data that can be lost on a crash: at most
     /// `max_batch_time` of writes are in flight at any moment.
-    #[serde(with = "humantime_serde")]
-    pub max_batch_time: Duration,
+    pub(crate) max_batch_time: Duration,
 
     /// Time a packet is retained in the store before it becomes eligible for
     /// eviction.
-    #[serde(with = "humantime_serde")]
-    pub eviction: Duration,
+    pub(crate) eviction: Duration,
 
     /// Interval between two runs of the eviction task.
-    #[serde(with = "humantime_serde")]
-    pub eviction_interval: Duration,
+    pub(crate) eviction_interval: Duration,
 }
 
 impl Default for Options {

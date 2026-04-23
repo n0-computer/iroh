@@ -49,7 +49,7 @@ impl Server {
         let metrics = Arc::new(Metrics::default());
         let mut store = ZoneStore::persistent(
             config.signed_packet_store_path()?,
-            config.zone_store.clone().unwrap_or_default(),
+            config.zone_store.clone().unwrap_or_default().into(),
             metrics.clone(),
         )?;
         if let Some(bootstrap) = config.mainline_enabled() {
@@ -145,7 +145,7 @@ impl Server {
     pub(crate) async fn spawn_for_tests_with_options(
         dir: impl AsRef<Path>,
         mainline: Option<crate::config::BootstrapOption>,
-        options: Option<crate::store::ZoneStoreConfig>,
+        options: Option<crate::store::Options>,
         https: Option<HttpsConfig>,
     ) -> Result<Self> {
         use std::net::{IpAddr, Ipv4Addr};
