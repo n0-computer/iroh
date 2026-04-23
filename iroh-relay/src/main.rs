@@ -17,7 +17,10 @@ use iroh_relay::{
     defaults::{
         DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
     },
-    server::{self as relay, ClientRateLimit, QuicConfig},
+    server::{
+        self as relay, ClientRateLimit, DEFAULT_CERT_RELOAD_INTERVAL, QuicConfig,
+        reloading_resolver,
+    },
 };
 use n0_error::{Result, StdResultExt, bail_any};
 use n0_future::FutureExt;
@@ -585,40 +588,14 @@ async fn maybe_load_tls(
             let server_config = server_config.with_cert_resolver(resolver);
             (relay::CertConfig::LetsEncrypt { state }, server_config)
         }
-        #[cfg(feature = "server")]
         CertMode::Reloading => {
-            use rustls_cert_file_reader::FileReader;
-            use rustls_cert_reloadable_resolver::{CertifiedKeyLoader, key_provider::Dyn};
-            use webpki_types::{CertificateDer, PrivateKeyDer};
-
-            let cert_path = tls.cert_path();
-            let key_path = tls.key_path();
-            let interval = relay::DEFAULT_CERT_RELOAD_INTERVAL;
-
-            let key_reader = rustls_cert_file_reader::FileReader::new(
-                key_path,
-                rustls_cert_file_reader::Format::PEM,
-            );
-            let certs_reader = rustls_cert_file_reader::FileReader::new(
-                cert_path,
-                rustls_cert_file_reader::Format::PEM,
-            );
-
-            let loader: CertifiedKeyLoader<
-                Dyn,
-                FileReader<PrivateKeyDer<'_>>,
-                FileReader<Vec<CertificateDer<'_>>>,
-            > = CertifiedKeyLoader {
-                key_provider: Dyn(server_config.crypto_provider().key_provider),
-                key_reader,
-                certs_reader,
-            };
-
-            let resolver = Arc::new(
-                relay::ReloadingResolver::init(loader, interval)
-                    .await
-                    .std_context("cert loading")?,
-            );
+            let resolver = reloading_resolver(
+                server_config.crypto_provider(),
+                tls.cert_path(),
+                tls.key_path(),
+                DEFAULT_CERT_RELOAD_INTERVAL,
+            )
+            .await?;
             let server_config = server_config.with_cert_resolver(resolver);
             (relay::CertConfig::Reloading, server_config)
         }
