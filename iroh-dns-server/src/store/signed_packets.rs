@@ -345,7 +345,7 @@ impl SignedPacketStore {
             db,
             recv: PeekableReceiver::new(recv),
             cancel: cancel2,
-            options: options.clone(),
+            options,
             metrics,
         };
         // start an io thread and donate it to the tokio runtime so we can do blocking IO
