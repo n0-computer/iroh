@@ -54,7 +54,7 @@ pub mod testing;
 pub use self::{
     http_server::{Handlers, RelayService},
     metrics::{Metrics, RelayMetrics},
-    resolver::{DEFAULT_CERT_RELOAD_INTERVAL, ReloadingResolver},
+    resolver::{DEFAULT_CERT_RELOAD_INTERVAL, reloading_resolver},
 };
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Iroh-Challenge";
