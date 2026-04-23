@@ -18,14 +18,13 @@ use iroh_relay::{
         DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
     },
     server::{
-        self as relay, ClientRateLimit, DEFAULT_CERT_RELOAD_INTERVAL, QuicConfig,
+        self as relay, AcmeConfig, ClientRateLimit, DEFAULT_CERT_RELOAD_INTERVAL, QuicConfig,
         reloading_resolver,
     },
 };
 use n0_error::{Result, StdResultExt, bail_any};
 use n0_future::FutureExt;
 use serde::{Deserialize, Serialize};
-use tokio_rustls_acme::{AcmeConfig, caches::DirCache};
 use tracing::{debug, warn};
 use tracing_subscriber::{EnvFilter, prelude::*};
 use url::Url;
@@ -541,9 +540,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn maybe_load_tls(
-    cfg: &Config,
-) -> Result<Option<relay::TlsConfig<std::io::Error, std::io::Error>>> {
+async fn maybe_load_tls(cfg: &Config) -> Result<Option<relay::TlsConfig>> {
     let Some(ref tls) = cfg.tls else {
         return Ok(None);
     };
@@ -553,7 +550,7 @@ async fn maybe_load_tls(
     .with_safe_default_protocol_versions()
     .expect("protocols supported by ring")
     .with_no_client_auth();
-    let (cert_config, server_config) = match tls.cert_mode {
+    let cert_config = match tls.cert_mode {
         CertMode::Manual => {
             let cert_path = tls.cert_path();
             let key_path = tls.key_path();
@@ -566,9 +563,9 @@ async fn maybe_load_tls(
             .await
             .std_context("join")??;
             let server_config = server_config
-                .with_single_cert(certs.clone(), private_key)
+                .with_single_cert(certs, private_key)
                 .std_context("tls config")?;
-            (relay::CertConfig::Manual { certs }, server_config)
+            relay::CertConfig::Manual { server_config }
         }
         CertMode::LetsEncrypt => {
             let hostname = tls
@@ -579,14 +576,14 @@ async fn maybe_load_tls(
                 .contact
                 .clone()
                 .std_context("LetsEncrypt needs a contact email")?;
-            let config = AcmeConfig::new(vec![hostname.clone()])
-                .contact([format!("mailto:{contact}")])
-                .cache_option(Some(DirCache::new(tls.cert_dir())))
-                .directory_lets_encrypt(tls.prod_tls);
-            let state = config.state();
-            let resolver = state.resolver().clone();
-            let server_config = server_config.with_cert_resolver(resolver);
-            (relay::CertConfig::LetsEncrypt { state }, server_config)
+            let acme_config = AcmeConfig::letsencrypt(tls.prod_tls)
+                .domains(vec![hostname])
+                .contact(vec![format!("mailto:{contact}")])
+                .cache_path(tls.cert_dir());
+            relay::CertConfig::LetsEncrypt {
+                acme_config,
+                server_config_builder: server_config,
+            }
         }
         CertMode::Reloading => {
             let resolver = reloading_resolver(
@@ -597,19 +594,18 @@ async fn maybe_load_tls(
             )
             .await?;
             let server_config = server_config.with_cert_resolver(resolver);
-            (relay::CertConfig::Reloading, server_config)
+            relay::CertConfig::Manual { server_config }
         }
     };
     Ok(Some(relay::TlsConfig {
         https_bind_addr: tls.https_bind_addr(cfg),
         cert: cert_config,
-        server_config,
         quic_bind_addr: tls.quic_bind_addr(cfg),
     }))
 }
 
 /// Convert the TOML-loaded config to the [`relay::RelayConfig`] format.
-async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::Error>> {
+async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
     // Don't bind to https, even if tls configuration is available.
     // Is really only relevant if we are in `--dev` mode & we also have TLS configuration
     // enabled to use QUIC address discovery locally.
@@ -620,8 +616,8 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
     if cfg.enable_quic_addr_discovery {
         if let Some(ref tls) = relay_tls {
             quic_config = Some(QuicConfig {
-                server_config: tls.server_config.clone(),
                 bind_addr: tls.quic_bind_addr,
+                server_config: None,
             });
         } else {
             bail_any!(

@@ -26,7 +26,6 @@ pub(crate) mod server {
 
     use super::*;
     use crate::server::Metrics;
-    pub use crate::server::QuicConfig;
 
     pub struct QuicServer {
         bind_addr: SocketAddr,
@@ -39,6 +38,8 @@ pub(crate) mod server {
     #[stack_error(derive, add_meta)]
     #[non_exhaustive]
     pub enum QuicSpawnError {
+        #[error("TLS not configured")]
+        TlsNotConfigured {},
         #[error(transparent)]
         NoInitialCipherSuite {
             #[error(std_err, from)]
@@ -94,12 +95,12 @@ pub(crate) mod server {
         /// up here. Any other errors in a connection will be logged as a
         ///  warning.
         pub(crate) fn spawn(
-            mut quic_config: QuicConfig,
+            bind_addr: SocketAddr,
+            mut server_config: rustls::ServerConfig,
             metrics: Arc<Metrics>,
         ) -> Result<Self, QuicSpawnError> {
-            quic_config.server_config.alpn_protocols =
-                vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
-            let server_config = QuicServerConfig::try_from(quic_config.server_config)?;
+            server_config.alpn_protocols = vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
+            let server_config = QuicServerConfig::try_from(server_config)?;
             let mut server_config = noq::ServerConfig::with_crypto(Arc::new(server_config));
             let transport_config =
                 Arc::get_mut(&mut server_config.transport).expect("not used yet");
@@ -109,7 +110,7 @@ pub(crate) mod server {
                 // enable sending quic address discovery frames
                 .send_observed_address_reports(true);
 
-            let endpoint = noq::Endpoint::server(server_config, quic_config.bind_addr)
+            let endpoint = noq::Endpoint::server(server_config, bind_addr)
                 .map_err(|err| e!(QuicSpawnError::EndpointServer, err))?;
             let bind_addr = endpoint
                 .local_addr()
@@ -382,19 +383,13 @@ mod tests {
     #[traced_test]
     #[cfg(feature = "test-utils")]
     async fn quic_endpoint_basic() -> Result {
-        use super::server::{QuicConfig, QuicServer};
+        use super::server::QuicServer;
 
         let host: Ipv4Addr = "127.0.0.1".parse().unwrap();
         // create a server config with self signed certificates
         let (_, server_config) = super::super::server::testing::self_signed_tls_certs_and_config();
         let bind_addr = SocketAddr::new(host.into(), 0);
-        let quic_server = QuicServer::spawn(
-            QuicConfig {
-                server_config,
-                bind_addr,
-            },
-            Default::default(),
-        )?;
+        let quic_server = QuicServer::spawn(bind_addr, server_config, Default::default())?;
 
         // create a client-side endpoint
         let client_endpoint =

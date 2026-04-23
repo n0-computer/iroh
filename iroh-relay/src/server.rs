@@ -15,7 +15,7 @@
 //! - HTTPS `/ping`: Used for net_report probes.
 //! - HTTPS `/generate_204`: Used for net_report probes.
 
-use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
+use std::{future::Future, net::SocketAddr, num::NonZeroU32, path::PathBuf, pin::Pin, sync::Arc};
 
 use derive_more::Debug;
 use http::{
@@ -28,10 +28,15 @@ use iroh_base::EndpointId;
 use iroh_base::RelayUrl;
 use n0_error::{e, stack_error};
 use n0_future::{StreamExt, future::Boxed};
+use rustls::server::WantsServerCert;
 use serde::Serialize;
 use tokio::{
     net::TcpListener,
     task::{JoinError, JoinSet},
+};
+use tokio_rustls_acme::{
+    acme::{LETS_ENCRYPT_PRODUCTION_DIRECTORY, LETS_ENCRYPT_STAGING_DIRECTORY},
+    caches::DirCache,
 };
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument, debug, error, info, info_span, instrument};
@@ -92,9 +97,9 @@ fn body_empty() -> BytesBody {
 /// Be aware the generic parameters are for when using the Let's Encrypt TLS configuration.
 /// If not used dummy ones need to be provided, e.g. `ServerConfig::<(), ()>::default()`.
 #[derive(Debug, Default)]
-pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+pub struct ServerConfig {
     /// Configuration for the Relay server, disabled if `None`.
-    pub relay: Option<RelayConfig<EC, EA>>,
+    pub relay: Option<RelayConfig>,
     /// Configuration for the QUIC server, disabled if `None`.
     pub quic: Option<QuicConfig>,
     /// Socket to serve metrics on.
@@ -107,7 +112,7 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 /// This includes the HTTP services hosted by the Relay server, the Relay `/relay` HTTP
 /// endpoint is only one of the services served.
 #[derive(Debug)]
-pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+pub struct RelayConfig {
     /// The socket address on which the Relay HTTP server should bind.
     ///
     /// Normally you'd choose port `80`.  The bind address for the HTTPS server is
@@ -120,7 +125,7 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     ///
     /// If *None* all the HTTP services that would be served here are served from
     /// [`RelayConfig::http_bind_addr`].
-    pub tls: Option<TlsConfig<EC, EA>>,
+    pub tls: Option<TlsConfig>,
     /// Rate limits.
     pub limits: Limits,
     /// Key cache capacity.
@@ -172,14 +177,17 @@ pub struct QuicConfig {
     ///
     /// If this [`rustls::ServerConfig`] does not support TLS 1.3, the QUIC server will fail
     /// to spawn.
-    pub server_config: rustls::ServerConfig,
+    ///
+    /// Will use the TLS config from [`RelayConfig::tls`] if unset. If neither is set the QUIC
+    /// server will fail to spawn.
+    pub server_config: Option<rustls::ServerConfig>,
 }
 
 /// TLS configuration for Relay server.
 ///
 /// Normally the Relay server accepts connections on both HTTPS and HTTP.
 #[derive(Debug)]
-pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+pub struct TlsConfig {
     /// The socket address on which to serve the HTTPS server.
     ///
     /// Since the captive portal probe has to run over plain text HTTP and TLS is used for
@@ -191,9 +199,7 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// The socket address on which to server the QUIC server is QUIC is enabled.
     pub quic_bind_addr: SocketAddr,
     /// Mode for getting a cert.
-    pub cert: CertConfig<EC, EA>,
-    /// The server configuration.
-    pub server_config: rustls::ServerConfig,
+    pub cert: CertConfig,
 }
 
 /// Rate limits.
@@ -218,21 +224,77 @@ pub struct ClientRateLimit {
 }
 
 /// TLS certificate configuration.
-#[derive(derive_more::Debug)]
-pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+#[derive(Debug)]
+pub enum CertConfig {
     /// Use Let's Encrypt.
     LetsEncrypt {
-        /// State for Let's Encrypt certificates.
-        #[debug("AcmeConfig")]
-        state: tokio_rustls_acme::AcmeState<EC, EA>,
-    },
-    /// Use a static TLS key and certificate chain.
-    Manual {
-        /// The TLS certificate chain.
-        certs: Vec<rustls::pki_types::CertificateDer<'static>>,
+        /// Configuration for the ACME client.
+        acme_config: AcmeConfig,
+        /// Builder for the [`rustls::ServerConfig`].
+        ///
+        /// The ACME resolver will be injected when starting the server.
+        server_config_builder: rustls::ConfigBuilder<rustls::ServerConfig, WantsServerCert>,
     },
     /// Use a TLS key and certificate chain that can be reloaded.
-    Reloading,
+    Manual {
+        /// The [`rustls::ServerConfig`] to use.
+        ///
+        /// This needs to have the certificates or a certificate loader, it will be used by the server as-is.
+        server_config: rustls::ServerConfig,
+    },
+}
+
+/// Configuration for the ACME client.
+#[derive(Debug, Clone)]
+pub struct AcmeConfig {
+    pub(crate) directory_url: String,
+    pub(crate) domains: Vec<String>,
+    pub(crate) contact: Vec<String>,
+    pub(crate) cache_path: Option<PathBuf>,
+}
+
+impl AcmeConfig {
+    /// Creates a new [`AcmeConfig`] with a ACME directory URL.
+    pub fn new(directory_url: String) -> Self {
+        Self {
+            directory_url,
+            domains: Vec::new(),
+            contact: Vec::new(),
+            cache_path: None,
+        }
+    }
+
+    /// Creates a new [`AcmeConfig`] with the Let's Encrypt directory URL.
+    pub fn letsencrypt(production: bool) -> Self {
+        let url = if production {
+            LETS_ENCRYPT_PRODUCTION_DIRECTORY
+        } else {
+            LETS_ENCRYPT_STAGING_DIRECTORY
+        };
+        Self::new(url.to_string())
+    }
+
+    /// Provides the list of domains for which certificates should be obtained.
+    pub fn domains(mut self, domains: Vec<String>) -> Self {
+        self.domains = domains;
+        self
+    }
+
+    /// Provides a list of contacts for the account.
+    ///
+    /// Note that email addresses must include a `mailto:` prefix.
+    pub fn contact(mut self, contact: Vec<String>) -> Self {
+        self.contact = contact;
+        self
+    }
+
+    /// Sets the directory where to cache certificates.
+    ///
+    /// If not called certificates will not be cached.
+    pub fn cache_path(mut self, path: PathBuf) -> Self {
+        self.cache_path = Some(path);
+        self
+    }
 }
 
 /// A running Relay + QAD server.
@@ -257,11 +319,6 @@ pub struct Server {
     quic_handle: Option<QuicServerHandle>,
     /// The main task running the server.
     supervisor: AbortOnDropHandle<Result<(), SupervisorError>>,
-    /// The certificate for the server.
-    ///
-    /// If the server has manual certificates configured the certificate chain will be
-    /// available here, this can be used by a client to authenticate the server.
-    certificates: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
     metrics: RelayMetrics,
 }
 
@@ -312,11 +369,7 @@ pub enum SupervisorError {
 
 impl Server {
     /// Starts the server.
-    pub async fn spawn<EC, EA>(config: ServerConfig<EC, EA>) -> Result<Self, SpawnError>
-    where
-        EC: fmt::Debug + 'static,
-        EA: fmt::Debug + 'static,
-    {
+    pub async fn spawn(config: ServerConfig) -> Result<Self, SpawnError> {
         let mut tasks = JoinSet::new();
 
         let metrics = RelayMetrics::default();
@@ -336,29 +389,7 @@ impl Server {
             );
         }
 
-        // Start the Relay server, but first clone the certs out.
-        let certificates = config.relay.as_ref().and_then(|relay| {
-            relay.tls.as_ref().and_then(|tls| match tls.cert {
-                CertConfig::LetsEncrypt { .. } => None,
-                CertConfig::Manual { ref certs, .. } => Some(certs.clone()),
-                CertConfig::Reloading => None,
-            })
-        });
-
-        let quic_server = match config.quic {
-            Some(quic_config) => {
-                debug!("Starting QUIC server {}", quic_config.bind_addr);
-                Some(
-                    QuicServer::spawn(quic_config, metrics.server.clone())
-                        .map_err(|err| e!(SpawnError::QuicSpawn, err))?,
-                )
-            }
-            None => None,
-        };
-        let quic_addr = quic_server.as_ref().map(|srv| srv.bind_addr());
-        let quic_handle = quic_server.as_ref().map(|srv| srv.handle());
-
-        let (relay_server, http_addr) = match config.relay {
+        let (relay_server, http_addr, tls_config) = match config.relay {
             Some(relay_config) => {
                 debug!("Starting Relay server");
                 let mut headers = HeaderMap::new();
@@ -390,10 +421,23 @@ impl Server {
                 if let Some(cfg) = relay_config.limits.client_rx {
                     builder = builder.client_rx_ratelimit(cfg);
                 }
-                let http_addr = match relay_config.tls {
+                let (http_addr, tls_config) = match relay_config.tls {
                     Some(tls_config) => {
                         let server_tls_config = match tls_config.cert {
-                            CertConfig::LetsEncrypt { mut state } => {
+                            CertConfig::LetsEncrypt {
+                                acme_config,
+                                server_config_builder,
+                            } => {
+                                let cache = acme_config.cache_path.map(DirCache::new);
+                                let config =
+                                    tokio_rustls_acme::AcmeConfig::new(acme_config.domains)
+                                        .contact(acme_config.contact)
+                                        .directory(acme_config.directory_url)
+                                        .cache_option(cache);
+                                let mut state = config.state();
+                                let resolver = state.resolver().clone();
+                                let server_config =
+                                    server_config_builder.with_cert_resolver(resolver);
                                 let acceptor =
                                     http_server::TlsAcceptor::LetsEncrypt(state.acceptor());
                                 tasks.spawn(
@@ -408,23 +452,23 @@ impl Server {
                                     }
                                     .instrument(info_span!("acme")),
                                 );
-                                Some(http_server::TlsConfig {
-                                    config: Arc::new(tls_config.server_config),
+                                http_server::TlsConfig {
+                                    config: Arc::new(server_config),
                                     acceptor,
-                                })
+                                }
                             }
-                            CertConfig::Manual { .. } | CertConfig::Reloading => {
-                                let server_config = Arc::new(tls_config.server_config);
+                            CertConfig::Manual { server_config } => {
+                                let server_config = Arc::new(server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
                                 let acceptor = http_server::TlsAcceptor::Manual(acceptor);
-                                Some(http_server::TlsConfig {
+                                http_server::TlsConfig {
                                     config: server_config,
                                     acceptor,
-                                })
+                                }
                             }
                         };
-                        builder = builder.tls_config(server_tls_config);
+                        builder = builder.tls_config(Some(server_tls_config.clone()));
 
                         // Some services always need to be served over HTTP without TLS.  Run
                         // these standalone.
@@ -441,7 +485,7 @@ impl Server {
                             }
                             .instrument(info_span!("http-service", addr = %http_addr)),
                         );
-                        Some(http_addr)
+                        (Some(http_addr), Some(server_tls_config))
                     }
                     None => {
                         // If running Relay without TLS add the plain HTTP server directly
@@ -451,18 +495,38 @@ impl Server {
                             "/generate_204",
                             Box::new(serve_no_content_handler),
                         );
-                        None
+                        (None, None)
                     }
                 };
                 let relay_server = builder.spawn().await?;
-                (Some(relay_server), http_addr)
+                (Some(relay_server), http_addr, tls_config)
             }
-            None => (None, None),
+            None => (None, None, None),
         };
         // If http_addr is Some then relay_server is serving HTTPS.  If http_addr is None
         // relay_server is serving HTTP, including the /generate_204 service.
         let relay_addr = relay_server.as_ref().map(|srv| srv.addr());
         let relay_handle = relay_server.as_ref().map(|srv| srv.handle());
+
+        let quic_server = match config.quic {
+            Some(quic_config) => {
+                debug!("Starting QUIC server {}", quic_config.bind_addr);
+                let server_config = quic_config
+                    .server_config
+                    .or(tls_config.map(|config| (*config.config).clone()))
+                    .ok_or_else(|| {
+                        e!(SpawnError::QuicSpawn, e!(QuicSpawnError::TlsNotConfigured))
+                    })?;
+                Some(
+                    QuicServer::spawn(quic_config.bind_addr, server_config, metrics.server.clone())
+                        .map_err(|err| e!(SpawnError::QuicSpawn, err))?,
+                )
+            }
+            None => None,
+        };
+        let quic_addr = quic_server.as_ref().map(|srv| srv.bind_addr());
+        let quic_handle = quic_server.as_ref().map(|srv| srv.handle());
+
         let task = tokio::spawn(relay_supervisor(tasks, relay_server, quic_server));
 
         Ok(Self {
@@ -472,7 +536,6 @@ impl Server {
             relay_handle,
             quic_handle,
             supervisor: AbortOnDropHandle::new(task),
-            certificates,
             metrics,
         })
     }
@@ -513,11 +576,6 @@ impl Server {
     /// The socket address the QUIC server is listening on.
     pub fn quic_addr(&self) -> Option<SocketAddr> {
         self.quic_addr
-    }
-
-    /// The certificates chain if configured with manual TLS certificates.
-    pub fn certificates(&self) -> Option<Vec<rustls::pki_types::CertificateDer<'static>>> {
-        self.certificates.clone()
     }
 
     /// Get the server's https [`RelayUrl`].
@@ -807,8 +865,8 @@ mod tests {
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
-        Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig::<(), ()> {
+        Server::spawn(ServerConfig {
+            relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),
@@ -863,9 +921,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_no_services() {
-        let mut server = Server::spawn(ServerConfig::<(), ()>::default())
-            .await
-            .unwrap();
+        let mut server = Server::spawn(ServerConfig::default()).await.unwrap();
         let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
             .await
             .expect("timeout, server not finished")
@@ -876,7 +932,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_conflicting_bind() {
-        let mut server = Server::spawn(ServerConfig::<(), ()> {
+        let mut server = Server::spawn(ServerConfig {
             relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
                 tls: None,
@@ -1017,8 +1073,8 @@ mod tests {
         let a_secret_key = SecretKey::from_bytes(&rng.random());
         let a_key = a_secret_key.public();
 
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig::<(), ()> {
+        let server = Server::spawn(ServerConfig {
+            relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),
