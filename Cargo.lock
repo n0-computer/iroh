@@ -2369,11 +2369,11 @@ dependencies = [
  "ipnet",
  "iroh-base 0.98.0",
  "iroh-dns",
- "iroh-mainline",
  "iroh-metrics",
  "iroh-relay",
  "n0-error",
  "n0-future",
+ "n0-mainline",
  "n0-tracing-test",
  "n0-watcher",
  "netwatch",
@@ -2518,11 +2518,11 @@ dependencies = [
  "iroh",
  "iroh-base 0.98.0",
  "iroh-dns",
- "iroh-mainline",
  "iroh-metrics",
  "lru 0.16.3",
  "n0-error",
  "n0-future",
+ "n0-mainline",
  "n0-tracing-test",
  "rand 0.10.1",
  "rand_chacha 0.10.0",
@@ -2550,28 +2550,6 @@ dependencies = [
  "ttl_cache",
  "url",
  "vergen-gitcl",
-]
-
-[[package]]
-name = "iroh-mainline"
-version = "6.4.0"
-source = "git+https://github.com/n0-computer/iroh-mainline.git?branch=rename-crate#0647aea900899fb4b1e8c8cbeb648485afe83284"
-dependencies = [
- "crc",
- "dyn-clone",
- "ed25519-dalek",
- "futures-core",
- "getrandom 0.3.4",
- "iroh-base 0.98.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "lru 0.13.0",
- "n0-error",
- "noq-udp",
- "serde",
- "serde_bencode",
- "serde_bytes",
- "sha1_smol",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -3013,6 +2991,28 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-time",
+]
+
+[[package]]
+name = "n0-mainline"
+version = "6.4.0"
+source = "git+https://github.com/n0-computer/n0-mainline.git?branch=rename-crate#1bcdb5f5879e9acf58e20e8499c51bf9e01afba0"
+dependencies = [
+ "crc",
+ "dyn-clone",
+ "ed25519-dalek",
+ "futures-core",
+ "getrandom 0.3.4",
+ "iroh-base 0.98.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lru 0.13.0",
+ "n0-error",
+ "noq-udp",
+ "serde",
+ "serde_bencode",
+ "serde_bytes",
+ "sha1_smol",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
