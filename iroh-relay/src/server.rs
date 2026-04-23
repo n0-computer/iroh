@@ -36,13 +36,12 @@ use tokio::{
 };
 use tracing::{Instrument, debug, error, info, info_span, instrument};
 
+use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::RELAY_PROBE_PATH,
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
 };
-
-use self::http_server::{BytesBody, HyperError, HyperResult};
 
 pub mod client;
 pub mod clients;
