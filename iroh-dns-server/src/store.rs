@@ -140,7 +140,9 @@ impl ZoneStore {
             debug!("DHT resolve {}", pubkey.to_z32());
             let maybe_item = dht
                 .get_mutable_most_recent(pubkey.as_bytes(), None)
-                .await;
+                .await
+                .ok()
+                .flatten();
             if let Some(item) = maybe_item
                 && let Ok(packet) = mutable_item_to_signed_packet(&item)
             {

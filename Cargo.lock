@@ -2367,7 +2367,7 @@ dependencies = [
  "http",
  "indicatif",
  "ipnet",
- "iroh-base 0.98.0",
+ "iroh-base",
  "iroh-dns",
  "iroh-metrics",
  "iroh-relay",
@@ -2442,28 +2442,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iroh-base"
-version = "0.98.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "738865784637830fb14204ebd3047922db83bc1816a59027af29579b9c27bd99"
-dependencies = [
- "curve25519-dalek",
- "data-encoding",
- "data-encoding-macro",
- "derive_more",
- "digest",
- "ed25519-dalek",
- "getrandom 0.4.2",
- "n0-error",
- "rand 0.10.1",
- "serde",
- "sha2",
- "url",
- "zeroize",
- "zeroize_derive",
-]
-
-[[package]]
 name = "iroh-bench"
 version = "0.98.0"
 dependencies = [
@@ -2488,7 +2466,7 @@ name = "iroh-dns"
 version = "0.98.0"
 dependencies = [
  "derive_more",
- "iroh-base 0.98.0",
+ "iroh-base",
  "n0-error",
  "n0-future",
  "simple-dns",
@@ -2516,7 +2494,7 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "iroh",
- "iroh-base 0.98.0",
+ "iroh-base",
  "iroh-dns",
  "iroh-metrics",
  "lru 0.16.3",
@@ -2603,7 +2581,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "iroh-base 0.98.0",
+ "iroh-base",
  "iroh-dns",
  "iroh-metrics",
  "lru 0.16.3",
@@ -2995,18 +2973,18 @@ dependencies = [
 
 [[package]]
 name = "n0-mainline"
-version = "6.4.0"
-source = "git+https://github.com/n0-computer/n0-mainline.git?branch=rename-crate#1bcdb5f5879e9acf58e20e8499c51bf9e01afba0"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9945c678818bd9a0763efa732b36257767734df839399a74cb969a0e9273e7c"
 dependencies = [
  "crc",
  "dyn-clone",
  "ed25519-dalek",
  "futures-core",
- "getrandom 0.3.4",
- "iroh-base 0.98.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lru 0.13.0",
  "n0-error",
  "noq-udp",
+ "rand 0.10.1",
  "serde",
  "serde_bencode",
  "serde_bytes",
