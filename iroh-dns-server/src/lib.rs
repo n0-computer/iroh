@@ -64,8 +64,7 @@ mod tests {
     use crate::{
         config::BootstrapOption,
         server::Server,
-        store::ZoneStore,
-        store::{Options, PacketSource},
+        store::{Options, PacketSource, ZoneStore},
         util::PublicKeyBytes,
     };
 

@@ -10,6 +10,7 @@ use iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError, Timestamp};
 use lru::LruCache;
 use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_error::{Result, StdResultExt};
+pub(crate) use signed_packets::Options;
 use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};
 use ttl_cache::TtlCache;
@@ -20,8 +21,6 @@ use crate::{
     metrics::Metrics,
     util::{PublicKeyBytes, signed_packet_to_hickory_records_without_origin},
 };
-
-pub(crate) use signed_packets::Options;
 
 mod signed_packets;
 

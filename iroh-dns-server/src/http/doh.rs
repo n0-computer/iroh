@@ -18,13 +18,12 @@ use http::{
 };
 use n0_error::StdResultExt;
 
-use super::error::AppResult;
-use crate::state::AppState;
-
 use self::{
     extract::{DnsMimeType, DnsRequestBody, DnsRequestQuery},
     response::DnsResponse,
 };
+use super::error::AppResult;
+use crate::state::AppState;
 
 mod extract;
 pub(crate) mod response;
