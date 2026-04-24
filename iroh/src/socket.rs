@@ -569,8 +569,21 @@ impl Socket {
         for i in 0..metas.len() {
             let noq_meta = &mut metas[i];
             let source_addr = &source_addrs[i];
-
-            let datagram_count = noq_meta.len.div_ceil(noq_meta.stride);
+            let datagram_count = if noq_meta.stride == 0 {
+                if noq_meta.len > 0 {
+                    warn!(
+                        src = ?source_addr,
+                        len = noq_meta.len,
+                        "received datagram with stride=0 but len>0",
+                    );
+                    // fix the weird len
+                    noq_meta.len = 0;
+                }
+                // one empty datagram
+                1
+            } else {
+                noq_meta.len.div_ceil(noq_meta.stride)
+            };
             self.metrics
                 .socket
                 .recv_datagrams
@@ -580,7 +593,7 @@ impl Socket {
                     src = ?source_addr,
                     len = noq_meta.len,
                     stride = %noq_meta.stride,
-                    datagram_count = noq_meta.len.div_ceil(noq_meta.stride),
+                    datagram_count,
                     "GRO datagram received",
                 );
                 self.metrics.socket.recv_gro_datagrams.inc();
