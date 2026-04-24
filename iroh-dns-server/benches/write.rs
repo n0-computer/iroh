@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use iroh::{
     SecretKey,
@@ -8,23 +6,12 @@ use iroh::{
     endpoint_info::EndpointInfo,
     tls::{CaRootsConfig, default_provider},
 };
-use iroh_dns_server::{ZoneStore, config::Config, metrics::Metrics, server::Server};
-use n0_error::Result;
+use iroh_dns_server::{Server, config::Config};
 use rand::RngExt;
 use rand_chacha::rand_core::SeedableRng;
 use tokio::runtime::Runtime;
 
 const LOCALHOST_PKARR: &str = "http://localhost:8080/pkarr";
-
-async fn start_dns_server(config: Config) -> Result<Server> {
-    let metrics = Arc::new(Metrics::default());
-    let store = ZoneStore::persistent(
-        config.signed_packet_store_path()?,
-        Default::default(),
-        metrics.clone(),
-    )?;
-    Server::spawn(config, store, metrics).await
-}
 
 fn benchmark_dns_server(c: &mut Criterion) {
     let mut group = c.benchmark_group("dns_server_writes");
@@ -36,7 +23,7 @@ fn benchmark_dns_server(c: &mut Criterion) {
                 let rt = Runtime::new().unwrap();
                 rt.block_on(async move {
                     let config = Config::load("./config.dev.toml").await.unwrap();
-                    let server = start_dns_server(config).await.unwrap();
+                    let server = Server::bind(config).await.unwrap();
 
                     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
                     let secret_key = SecretKey::from_bytes(&rng.random());

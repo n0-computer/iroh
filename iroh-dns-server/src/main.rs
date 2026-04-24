@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use iroh_dns_server::{config::Config, server::run_with_config_until_ctrl_c};
-use n0_error::Result;
-use tracing::debug;
+use iroh_dns_server::{Server, config::Config};
+use n0_error::{Result, StdResultExt};
+use tracing::{debug, info};
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -35,5 +35,9 @@ async fn main() -> Result<()> {
         Config::default()
     };
 
-    run_with_config_until_ctrl_c(config).await
+    let server = Server::bind(config).await?;
+    tokio::signal::ctrl_c().await.anyerr()?;
+    info!("shutdown");
+    server.shutdown().await?;
+    Ok(())
 }

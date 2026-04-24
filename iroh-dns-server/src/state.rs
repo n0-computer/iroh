@@ -6,7 +6,7 @@ use crate::{dns::DnsHandler, metrics::Metrics, store::ZoneStore};
 
 /// The shared app state.
 #[derive(Clone)]
-pub struct AppState {
+pub(crate) struct AppState {
     /// The pkarr DNS store
     pub store: ZoneStore,
     /// Handler for DNS requests
