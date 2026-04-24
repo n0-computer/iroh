@@ -512,18 +512,18 @@ mod relay {
     pub async fn run_relay_server() -> Result<(RelayMap, Server), SpawnError> {
         let bind_ip: IpAddr = Ipv6Addr::UNSPECIFIED.into();
 
-        let (certs, server_config) =
+        let (_certs, server_config) =
             iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
         let tls = TlsConfig {
-            cert: CertConfig::<(), ()>::Manual { certs },
+            cert: CertConfig::Manual {
+                server_config: server_config.clone(),
+            },
             https_bind_addr: (bind_ip, 443).into(),
-            quic_bind_addr: (bind_ip, 7842).into(),
-            server_config,
         };
         let quic = Some(QuicConfig {
-            server_config: tls.server_config.clone(),
-            bind_addr: tls.quic_bind_addr,
+            bind_addr: (bind_ip, 7842).into(),
+            server_config: None,
         });
         let config = ServerConfig {
             relay: Some(RelayServerConfig {
