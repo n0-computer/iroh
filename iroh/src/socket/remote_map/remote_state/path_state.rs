@@ -127,13 +127,18 @@ impl RemotePathState {
 
     /// Inserts multiple addresses of unknown status into our list of potential paths.
     ///
-    /// This will emit pending resolve requests and trigger pruning paths.
+    /// If this caused the path set to transition from empty to non-empty, any
+    /// pending resolve requests are woken with `Ok(())`. Inserts that add no
+    /// new paths (empty iterator, or only duplicates) are a no-op: waking
+    /// pending requests while the path set is still empty would send a bogus
+    /// `AddressLookupFailed::NoResults` while an address lookup is in flight.
     pub(super) fn insert_multiple(
         &mut self,
         addrs: impl Iterator<Item = transports::Addr>,
         source: Source,
     ) {
         let now = Instant::now();
+        let was_empty = self.paths.is_empty();
         for addr in addrs {
             self.paths
                 .entry(addr)
@@ -142,7 +147,9 @@ impl RemotePathState {
                 .insert(source.clone(), now);
         }
         trace!("added addressing information");
-        self.emit_pending_resolve_requests(None);
+        if was_empty && !self.paths.is_empty() {
+            self.emit_pending_resolve_requests(None);
+        }
         self.prune_paths();
     }
 
