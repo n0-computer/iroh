@@ -9,7 +9,7 @@
 <a href=#9 id=9 data-nosnippet>9</a>///
 <a href=#10 id=10 data-nosnippet>10</a>/// This can be obtained from looking through available ciphers from a
 <a href=#11 id=11 data-nosnippet>11</a>/// [`rustls::crypto::CryptoProvider`].
-<a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">pub struct </span>RustlsTokenKey {
+<a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RustlsTokenKey {
 <a href=#13 id=13 data-nosnippet>13</a>    key: [u8; <span class="number">32</span>],
 <a href=#14 id=14 data-nosnippet>14</a>    aead: <span class="kw-2">&amp;</span><span class="lifetime">'static </span><span class="kw">dyn </span>Tls13AeadAlgorithm,
 <a href=#15 id=15 data-nosnippet>15</a>}
@@ -24,7 +24,7 @@
 <a href=#24 id=24 data-nosnippet>24</a>    ///
 <a href=#25 id=25 data-nosnippet>25</a>    /// Returns `None` when this can't find a suitable TLS cipher suite in the given crypto
 <a href=#26 id=26 data-nosnippet>26</a>    /// provider.
-<a href=#27 id=27 data-nosnippet>27</a>    </span><span class="kw">pub fn </span>new(
+<a href=#27 id=27 data-nosnippet>27</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
 <a href=#28 id=28 data-nosnippet>28</a>        rng: <span class="kw-2">&amp;mut </span><span class="kw">impl </span>rand::CryptoRng,
 <a href=#29 id=29 data-nosnippet>29</a>        crypto_provider: <span class="kw-2">&amp;</span>rustls::crypto::CryptoProvider,
 <a href=#30 id=30 data-nosnippet>30</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
@@ -96,7 +96,7 @@
 <a href=#96 id=96 data-nosnippet>96</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Blake3HmacKey([u8; <span class="number">32</span>]);
 <a href=#97 id=97 data-nosnippet>97</a>
 <a href=#98 id=98 data-nosnippet>98</a><span class="kw">impl </span>Blake3HmacKey {
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">pub fn </span>new(rng: <span class="kw-2">&amp;mut </span><span class="kw">impl </span>rand::CryptoRng) -&gt; <span class="self">Self </span>{
+<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(rng: <span class="kw-2">&amp;mut </span><span class="kw">impl </span>rand::CryptoRng) -&gt; <span class="self">Self </span>{
 <a href=#100 id=100 data-nosnippet>100</a>        <span class="kw">let </span><span class="kw-2">mut </span>key = [<span class="number">0u8</span>; <span class="number">32</span>];
 <a href=#101 id=101 data-nosnippet>101</a>        rng.fill_bytes(<span class="kw-2">&amp;mut </span>key);
 <a href=#102 id=102 data-nosnippet>102</a>        <span class="self">Self</span>(key)
