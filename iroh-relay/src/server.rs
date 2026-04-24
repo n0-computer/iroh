@@ -193,8 +193,6 @@ pub struct TlsConfig {
     ///
     /// Normally you'd choose port `80`.
     pub https_bind_addr: SocketAddr,
-    /// The socket address on which to server the QUIC server is QUIC is enabled.
-    pub quic_bind_addr: SocketAddr,
     /// Mode for getting a cert.
     pub cert: CertConfig,
 }

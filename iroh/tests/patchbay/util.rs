@@ -520,10 +520,9 @@ mod relay {
                 server_config: server_config.clone(),
             },
             https_bind_addr: (bind_ip, 443).into(),
-            quic_bind_addr: (bind_ip, 7842).into(),
         };
         let quic = Some(QuicConfig {
-            bind_addr: tls.quic_bind_addr,
+            bind_addr: (bind_ip, 7842).into(),
             server_config: None,
         });
         let config = ServerConfig {

@@ -49,11 +49,10 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
             server_config: server_config.clone(),
         },
         https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        quic_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
     };
     let quic = if quic {
         Some(QuicConfig {
-            bind_addr: tls.quic_bind_addr,
+            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             server_config: None,
         })
     } else {

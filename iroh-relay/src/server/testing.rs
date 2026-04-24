@@ -42,7 +42,6 @@ pub fn tls_config() -> TlsConfig {
     TlsConfig {
         cert: CertConfig::Manual { server_config },
         https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        quic_bind_addr: (Ipv4Addr::UNSPECIFIED, 0).into(),
     }
 }
 

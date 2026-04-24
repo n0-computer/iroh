@@ -540,10 +540,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn maybe_load_tls(cfg: &Config) -> Result<Option<relay::TlsConfig>> {
-    let Some(ref tls) = cfg.tls else {
-        return Ok(None);
-    };
+async fn load_cert_config(tls: &TlsConfig) -> Result<relay::CertConfig> {
     let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -597,34 +594,51 @@ async fn maybe_load_tls(cfg: &Config) -> Result<Option<relay::TlsConfig>> {
             relay::CertConfig::Manual { server_config }
         }
     };
-    Ok(Some(relay::TlsConfig {
-        https_bind_addr: tls.https_bind_addr(cfg),
-        cert: cert_config,
-        quic_bind_addr: tls.quic_bind_addr(cfg),
-    }))
+    Ok(cert_config)
 }
 
 /// Convert the TOML-loaded config to the [`relay::RelayConfig`] format.
 async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
-    // Don't bind to https, even if tls configuration is available.
-    // Is really only relevant if we are in `--dev` mode & we also have TLS configuration
-    // enabled to use QUIC address discovery locally.
-    let dangerous_http_only = cfg.tls.as_ref().is_some_and(|tls| tls.dangerous_http_only);
-    let relay_tls = maybe_load_tls(&cfg).await?;
+    let (tls_config, quic_config) = if let Some(cfg_tls) = &cfg.tls {
+        let cert = load_cert_config(&cfg_tls).await?;
 
-    let mut quic_config = None;
-    if cfg.enable_quic_addr_discovery {
-        if let Some(ref tls) = relay_tls {
-            quic_config = Some(QuicConfig {
-                bind_addr: tls.quic_bind_addr,
-                server_config: None,
-            });
+        let quic_config = cfg.enable_quic_addr_discovery.then(|| QuicConfig {
+            bind_addr: cfg_tls.quic_bind_addr(&cfg),
+            // Use the server config from the relay::TlsConfig
+            server_config: None,
+        });
+
+        if cfg_tls.dangerous_http_only {
+            // When `dangerous_http_only` is set through the --dev argument,
+            // we disable HTTPS by setting `RelayConfig::tls` to `None`.
+            // We still enable the QUIC server, and thus pass the TLS config
+            // from the loaded TLS config only to the QUIC server.
+            let quic_config = match quic_config {
+                None => None,
+                Some(mut quic_config) => {
+                    quic_config.server_config = match cert {
+                        relay::CertConfig::Manual { server_config } => Some(server_config),
+                        relay::CertConfig::LetsEncrypt { .. } => {
+                            bail_any!("--dev is incompatible with cert_mode LetsEncrypt")
+                        }
+                    };
+                    Some(quic_config)
+                }
+            };
+            (None, quic_config)
         } else {
-            bail_any!(
-                "Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery"
-            )
+            let tls_config = relay::TlsConfig {
+                https_bind_addr: cfg_tls.https_bind_addr(&cfg),
+                cert,
+            };
+            (Some(tls_config), quic_config)
         }
+    } else if cfg.enable_quic_addr_discovery {
+        bail_any!("Must have TLS configuration to enable a QUIC server for QUIC address discovery");
+    } else {
+        (None, None)
     };
+
     let limits = match cfg.limits {
         Some(ref limits) => {
             let client_rx = match &limits.client {
@@ -661,8 +675,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
     let relay_config = if cfg.enable_relay {
         Some(relay::RelayConfig {
             http_bind_addr: cfg.http_bind_addr(),
-            // if `dangerous_http_only` is set, do not pass in any tls configuration
-            tls: relay_tls.and_then(|tls| if dangerous_http_only { None } else { Some(tls) }),
+            tls: tls_config,
             limits,
             key_cache_capacity: cfg.key_cache_capacity,
             access: cfg.access.clone().into(),
