@@ -26,9 +26,9 @@
 <a href=#26 id=26 data-nosnippet>26</a>
 <a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">use </span><span class="kw">crate</span>::server::Metrics;
-<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">pub use </span><span class="kw">crate</span>::server::QuicConfig;
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="kw">crate</span>::server::QuicConfig;
 <a href=#30 id=30 data-nosnippet>30</a>
-<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">pub struct </span>QuicServer {
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>QuicServer {
 <a href=#32 id=32 data-nosnippet>32</a>        bind_addr: SocketAddr,
 <a href=#33 id=33 data-nosnippet>33</a>        cancel: CancellationToken,
 <a href=#34 id=34 data-nosnippet>34</a>        handle: AbortOnDropHandle&lt;()&gt;,
@@ -61,7 +61,7 @@
 <a href=#61 id=61 data-nosnippet>61</a>        ///
 <a href=#62 id=62 data-nosnippet>62</a>        /// The server runs in the background as several async tasks.  This allows controlling
 <a href=#63 id=63 data-nosnippet>63</a>        /// the server, in particular it allows gracefully shutting down the server.
-<a href=#64 id=64 data-nosnippet>64</a>        </span><span class="kw">pub fn </span>handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ServerHandle {
+<a href=#64 id=64 data-nosnippet>64</a>        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ServerHandle {
 <a href=#65 id=65 data-nosnippet>65</a>            ServerHandle {
 <a href=#66 id=66 data-nosnippet>66</a>                cancel_token: <span class="self">self</span>.cancel.clone(),
 <a href=#67 id=67 data-nosnippet>67</a>            }
@@ -72,12 +72,12 @@
 <a href=#72 id=72 data-nosnippet>72</a>        /// This is the root of all the tasks for the QUIC address discovery service.  Aborting it will abort all the
 <a href=#73 id=73 data-nosnippet>73</a>        /// other tasks for the service.  Awaiting it will complete when all the service tasks are
 <a href=#74 id=74 data-nosnippet>74</a>        /// completed.[]
-<a href=#75 id=75 data-nosnippet>75</a>        </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;()&gt; {
+<a href=#75 id=75 data-nosnippet>75</a>        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;()&gt; {
 <a href=#76 id=76 data-nosnippet>76</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>.handle
 <a href=#77 id=77 data-nosnippet>77</a>        }
 <a href=#78 id=78 data-nosnippet>78</a>
 <a href=#79 id=79 data-nosnippet>79</a>        <span class="doccomment">/// Returns the socket address for this QUIC server.
-<a href=#80 id=80 data-nosnippet>80</a>        </span><span class="kw">pub fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+<a href=#80 id=80 data-nosnippet>80</a>        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
 <a href=#81 id=81 data-nosnippet>81</a>            <span class="self">self</span>.bind_addr
 <a href=#82 id=82 data-nosnippet>82</a>        }
 <a href=#83 id=83 data-nosnippet>83</a>
@@ -177,7 +177,7 @@
 <a href=#177 id=177 data-nosnippet>177</a>
 <a href=#178 id=178 data-nosnippet>178</a>        <span class="doccomment">/// Closes the underlying QUIC endpoint and the tasks running the
 <a href=#179 id=179 data-nosnippet>179</a>        /// QUIC connections.
-<a href=#180 id=180 data-nosnippet>180</a>        </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">mut </span><span class="self">self</span>) {
+<a href=#180 id=180 data-nosnippet>180</a>        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>shutdown(<span class="kw-2">mut </span><span class="self">self</span>) {
 <a href=#181 id=181 data-nosnippet>181</a>            <span class="self">self</span>.cancel.cancel();
 <a href=#182 id=182 data-nosnippet>182</a>            <span class="kw">if </span>!<span class="self">self</span>.task_handle().is_finished() {
 <a href=#183 id=183 data-nosnippet>183</a>                <span class="comment">// only possible error is a `JoinError`, no errors about what might
@@ -191,13 +191,13 @@
 <a href=#191 id=191 data-nosnippet>191</a>    ///
 <a href=#192 id=192 data-nosnippet>192</a>    /// This does not allow access to the task but can communicate with it.
 <a href=#193 id=193 data-nosnippet>193</a>    </span><span class="attr">#[derive(Debug, Clone)]
-<a href=#194 id=194 data-nosnippet>194</a>    </span><span class="kw">pub struct </span>ServerHandle {
+<a href=#194 id=194 data-nosnippet>194</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ServerHandle {
 <a href=#195 id=195 data-nosnippet>195</a>        cancel_token: CancellationToken,
 <a href=#196 id=196 data-nosnippet>196</a>    }
 <a href=#197 id=197 data-nosnippet>197</a>
 <a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">impl </span>ServerHandle {
 <a href=#199 id=199 data-nosnippet>199</a>        <span class="doccomment">/// Gracefully shut down the quic endpoint.
-<a href=#200 id=200 data-nosnippet>200</a>        </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+<a href=#200 id=200 data-nosnippet>200</a>        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
 <a href=#201 id=201 data-nosnippet>201</a>            <span class="self">self</span>.cancel_token.cancel()
 <a href=#202 id=202 data-nosnippet>202</a>        }
 <a href=#203 id=203 data-nosnippet>203</a>    }
