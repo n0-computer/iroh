@@ -45,7 +45,7 @@ impl<S> RelayedStream<S> {
 
 /// Type alias for the standard server-side relay stream
 #[allow(dead_code)]
-pub(crate) type ServerRelayedStream = RelayedStream<WsBytesFramed<RateLimited<MaybeTlsStream>>>;
+pub(super) type ServerRelayedStream = RelayedStream<WsBytesFramed<RateLimited<MaybeTlsStream>>>;
 
 #[cfg(test)]
 impl ServerRelayedStream {
@@ -187,7 +187,7 @@ where
 /// Allows choosing whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum MaybeTlsStream {
+pub(super) enum MaybeTlsStream {
     /// A plain non-Tls [`tokio::net::TcpStream`]
     Plain(tokio::net::TcpStream),
     /// A Tls wrapped [`tokio::net::TcpStream`]
@@ -204,7 +204,7 @@ impl MaybeTlsStream {
     /// nagle algorithm for coalecing writes together.
     ///
     /// If this fails, this will print a warning the first time it fails.
-    pub fn disable_nagle(&self) {
+    pub(super) fn disable_nagle(&self) {
         let stream = match self {
             #[cfg(test)]
             Self::Test(_) => return,
