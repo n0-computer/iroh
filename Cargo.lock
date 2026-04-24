@@ -3,21 +3,6 @@
 version = 4
 
 [[package]]
-name = "acto"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "148541f13c28e3e840354ee4d6c99046c10be2c81068bbd23b9e3a38f95a917e"
-dependencies = [
- "parking_lot",
- "pin-project-lite",
- "rustc_version",
- "smol_str",
- "sync_wrapper",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "addr2line"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2360,7 +2345,6 @@ dependencies = [
  "iroh-dns",
  "iroh-metrics",
  "iroh-relay",
- "mainline",
  "n0-error",
  "n0-future",
  "n0-tracing-test",
@@ -2389,7 +2373,6 @@ dependencies = [
  "serde_json",
  "smallvec",
  "strum 0.28.0",
- "swarm-discovery",
  "testdir",
  "time",
  "tokio",
@@ -2454,6 +2437,7 @@ dependencies = [
 name = "iroh-dns"
 version = "0.98.0"
 dependencies = [
+ "arc-swap",
  "cfg_aliases",
  "derive_more",
  "hickory-resolver",
@@ -4723,12 +4707,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "smol_str"
-version = "0.1.24"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fad6c857cbab2627dcf01ec85a623ca4e7dcb5691cbaa3d7fb7653671f0d09c9"
-
-[[package]]
 name = "socket2"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4877,21 +4855,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "swarm-discovery"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a5e3cb18dc0532c89b4fd9f5c9a44cb2db3c15520b6fa37d604b878ba431afb"
-dependencies = [
- "acto",
- "hickory-proto 0.26.0",
- "rand 0.10.1",
- "socket2",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "syn"

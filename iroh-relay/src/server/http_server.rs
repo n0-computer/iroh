@@ -6,7 +6,7 @@
 //!
 //! For a complete relay server implementation, see the parent [`server`](super) module.
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use derive_more::Debug;
@@ -52,10 +52,13 @@ use crate::{
     },
 };
 
-type BytesBody = http_body_util::Full<hyper::body::Bytes>;
-type HyperError = Box<dyn std::error::Error + Send + Sync>;
-type HyperResult<T> = std::result::Result<T, HyperError>;
-type HyperHandler = Box<
+// type BytesBody = http_body_util::Full<hyper::body::Bytes>;
+pub(super) type BytesBody = Box<
+    dyn 'static + Send + Unpin + hyper::body::Body<Data = hyper::body::Bytes, Error = Infallible>,
+>;
+pub(super) type HyperError = Box<dyn std::error::Error + Send + Sync>;
+pub(super) type HyperResult<T> = std::result::Result<T, HyperError>;
+pub(super) type HyperHandler = Box<
     dyn Fn(Request<Incoming>, ResponseBuilder) -> HyperResult<Response<BytesBody>>
         + Send
         + Sync
@@ -84,7 +87,7 @@ fn derive_accept_key(client_key: &HeaderValue) -> String {
 
 /// Creates a new [`BytesBody`] with given content.
 fn body_full(content: impl Into<hyper::body::Bytes>) -> BytesBody {
-    http_body_util::Full::new(content.into())
+    Box::new(http_body_util::Full::new(content.into()))
 }
 
 #[allow(clippy::result_large_err)]
@@ -423,7 +426,7 @@ impl ServerBuilder {
     }
 
     /// Set the capacity of the cache for public keys.
-    pub fn key_cache_capacity(mut self, capacity: usize) -> Self {
+    pub(super) fn key_cache_capacity(mut self, capacity: usize) -> Self {
         self.key_cache_capacity = capacity;
         self
     }

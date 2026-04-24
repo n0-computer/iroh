@@ -43,11 +43,12 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - [`address_lookup::MdnsAddressLookup`]: mdns::MdnsAddressLookup which uses the crate `swarm-discovery`, an
-//!   opinionated mDNS implementation, to discover endpoints on the local network.
+//! mDNS-based and Mainline-DHT-based Address Lookup services live in
+//! separate crates: [`iroh-mdns-address-lookup`] and
+//! [`iroh-mainline-address-lookup`].
 //!
-//! - The [`address_lookup::DhtAddressLookup`] also uses the [`pkarr`] system but can also publish and lookup
-//!   records to/from the Mainline DHT. It requires enabling the `address-lookup-pkarr-dht` feature.
+//! [`iroh-mdns-address-lookup`]: https://docs.rs/iroh-mdns-address-lookup
+//! [`iroh-mainline-address-lookup`]: https://docs.rs/iroh-mainline-address-lookup
 //!
 //! To use multiple Address Lookup'ssimultaneously you can call [`Builder::address_lookup`].
 //! This will use [`AddressLookupServices`] under the hood, which performs lookups to all
@@ -89,31 +90,6 @@
 //! # }
 //! ```
 //!
-//! To also enable [`address_lookup::MdnsAddressLookup`] it can be added as another service.
-//!
-//! ```no_run
-//! #[cfg(feature = "address-lookup-mdns")]
-//! # {
-//! # use iroh::{
-//! #    address_lookup::{self, AddrFilter, PkarrPublisher},
-//! #    endpoint::{presets, RelayMode},
-//! #    Endpoint, SecretKey,
-//! # };
-//! #
-//! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::builder(presets::Minimal)
-//!     .relay_mode(RelayMode::Default)
-//!     .addr_filter(AddrFilter::relay_only())
-//!     .address_lookup(PkarrPublisher::n0_dns())
-//!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
-//!     .address_lookup(address_lookup::MdnsAddressLookup::builder())
-//!     .bind()
-//!     .await?;
-//! # Ok(())
-//! # }
-//! # }
-//! ```
-//!
 //! [`EndpointAddr`]: iroh_base::EndpointAddr
 //! [`RelayUrl`]: crate::RelayUrl
 //! [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
@@ -122,9 +98,7 @@
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
 //! [`PkarrPublisherBuilder::addr_filter`]: pkarr::PkarrPublisherBuilder::addr_filter
-//! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
 //! [pkarr relay servers]: https://pkarr.org/#servers
-//! [`address_lookup::MdnsAddressLookup`]: crate::address_lookup::MdnsAddressLookup
 //! [`MemoryLookup`]: memory::MemoryLookup
 
 use std::{
@@ -145,18 +119,12 @@ use crate::{Endpoint, endpoint::EndpointError};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
-#[cfg(feature = "address-lookup-mdns")]
-pub mod mdns;
 pub mod memory;
 pub mod pkarr;
 
 #[cfg(not(wasm_browser))]
 pub use dns::*;
-#[cfg(feature = "address-lookup-mdns")]
-pub use mdns::*;
 pub use memory::*;
-#[cfg(feature = "address-lookup-pkarr-dht")]
-pub use pkarr::dht::*;
 pub use pkarr::*;
 
 /// Trait for structs that can be converted into [`AddressLookup`]s.
@@ -710,7 +678,7 @@ mod tests {
     }
 
     impl TestAddressLookupShared {
-        pub fn create_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
+        fn create_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
             TestAddressLookup {
                 endpoint_id,
                 shared: self.clone(),
@@ -720,7 +688,7 @@ mod tests {
             }
         }
 
-        pub fn create_lying_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
+        fn create_lying_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
             TestAddressLookup {
                 endpoint_id,
                 shared: self.clone(),
@@ -1256,8 +1224,8 @@ mod test_dns_pkarr {
         let tls_config = CaRootsConfig::insecure_skip_verify()
             .client_config(default_provider())
             .expect("infallible");
-        let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
-        let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
+        let resolver = dns_pkarr_server.dns_resolver();
+        let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url().clone())
             .build(secret_key, tls_config);
         let user_data: UserData = "foobar".parse().unwrap();
         let data = EndpointData::from_iter(relay_url.clone()).with_user_data(user_data.clone());
