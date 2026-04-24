@@ -32,7 +32,7 @@
 <a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">const </span>ENDPOINT_ID_SUBNET: [u8; <span class="number">2</span>] = [<span class="number">0</span>; <span class="number">2</span>];
 <a href=#33 id=33 data-nosnippet>33</a>
 <a href=#34 id=34 data-nosnippet>34</a><span class="doccomment">/// A default fake addr, using the maximum addr that the internal fake addrs could be using.
-<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">pub const </span>DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
+<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
 <a href=#36 id=36 data-nosnippet>36</a>    Ipv6Addr::new(
 <a href=#37 id=37 data-nosnippet>37</a>        u16::from_be_bytes([ADDR_PREFIXL, <span class="number">21</span>]),
 <a href=#38 id=38 data-nosnippet>38</a>        u16::from_be_bytes([<span class="number">7</span>, <span class="number">10</span>]),
