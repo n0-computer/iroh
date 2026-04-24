@@ -600,7 +600,7 @@ async fn load_cert_config(tls: &TlsConfig) -> Result<relay::CertConfig> {
 /// Convert the TOML-loaded config to the [`relay::RelayConfig`] format.
 async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
     let (tls_config, quic_config) = if let Some(cfg_tls) = &cfg.tls {
-        let cert = load_cert_config(&cfg_tls).await?;
+        let cert = load_cert_config(cfg_tls).await?;
 
         let quic_config = cfg.enable_quic_addr_discovery.then(|| QuicConfig {
             bind_addr: cfg_tls.quic_bind_addr(&cfg),
