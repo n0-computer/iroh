@@ -32,7 +32,7 @@ use crate::http::error::AppError;
 
 /// A DNS packet encoding type
 #[derive(Debug)]
-pub enum DnsMimeType {
+pub(super) enum DnsMimeType {
     /// application/dns-message
     Message,
     /// application/dns-json
@@ -50,7 +50,7 @@ impl Display for DnsMimeType {
 
 impl DnsMimeType {
     /// Turn this mime type to an `Accept` HTTP header value
-    pub fn to_header_value(&self) -> HeaderValue {
+    pub(super) fn to_header_value(&self) -> HeaderValue {
         HeaderValue::from_static(match self {
             Self::Message => "application/dns-message",
             Self::Json => "application/dns-json",
@@ -65,38 +65,38 @@ struct DnsMessageQuery {
 
 // See: https://developers.google.com/speed/public-dns/docs/doh/json#supported_parameters
 #[derive(Debug, Deserialize)]
-pub struct DnsQuery {
+struct DnsQuery {
     /// Record name to look up, e.g. example.com
-    pub name: String,
+    name: String,
     /// Record type, e.g. A/AAAA/TXT, etc.
     #[serde(rename = "type")]
-    pub record_type: Option<String>,
+    record_type: Option<String>,
     /// Used to disable DNSSEC validation
-    pub cd: Option<bool>,
+    cd: Option<bool>,
     /// Desired content type. E.g. "application/dns-message" or "application/dns-json"
     #[allow(dead_code)]
-    pub ct: Option<String>,
+    ct: Option<String>,
     /// Whether to return DNSSEC entries such as RRSIG, NSEC or NSEC3
     #[serde(rename = "do")]
-    pub dnssec_ok: Option<bool>,
+    dnssec_ok: Option<bool>,
     /// Privacy setting for how your IP address is forwarded to authoritative nameservers
     #[allow(dead_code)]
-    pub edns_client_subnet: Option<String>,
+    edns_client_subnet: Option<String>,
     /// Some url-safe random characters to pad your messages for privacy (to avoid being fingerprinted by encrypted message length)
     #[allow(dead_code)]
-    pub random_padding: Option<String>,
+    random_padding: Option<String>,
     /// Whether to provide answers for all records up to the root
     #[serde(rename = "rd")]
-    pub recursion_desired: Option<bool>,
+    recursion_desired: Option<bool>,
 }
 
 /// A DNS request encoded in the query string
 #[derive(Debug)]
-pub struct DnsRequestQuery(pub(crate) DNSRequest, pub(crate) DnsMimeType);
+pub(crate) struct DnsRequestQuery(pub(super) DNSRequest, pub(super) DnsMimeType);
 
 /// A DNS request encoded in the body
 #[derive(Debug)]
-pub struct DnsRequestBody(pub(crate) DNSRequest);
+pub(crate) struct DnsRequestBody(pub(crate) DNSRequest);
 
 impl<S> FromRequestParts<S> for DnsRequestQuery
 where
@@ -192,7 +192,7 @@ where
 }
 
 /// Exposed to make it usable internally...
-pub(crate) fn encode_query_as_request(
+fn encode_query_as_request(
     question: DnsQuery,
     src_addr: SocketAddr,
 ) -> Result<DNSRequest, AppError> {

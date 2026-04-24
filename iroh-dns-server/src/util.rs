@@ -25,10 +25,10 @@ use n0_error::{e, stack_error};
 /// will panic. In practice, bytes always originate from a validated `PublicKey`
 /// or a database that was written from one.
 #[derive(derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy)]
-pub struct PublicKeyBytes([u8; 32]);
+pub(crate) struct PublicKeyBytes([u8; 32]);
 
 #[stack_error(derive, add_meta, from_sources)]
-pub enum InvalidPublicKeyBytes {
+pub(crate) enum InvalidPublicKeyBytes {
     #[error("invalid z-base-32 encoding")]
     InvalidEncoding,
     #[error("invalid length, must be 32 bytes")]
@@ -42,28 +42,24 @@ impl PublicKeyBytes {
     ///
     /// The caller must ensure the bytes represent a valid Ed25519 public key.
     /// Passing invalid bytes will cause panics in `Display`, `Debug`, and `to_z32`.
-    pub fn new_unchecked(bytes: [u8; 32]) -> Self {
+    pub(crate) fn new_unchecked(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    pub fn from_z32(s: &str) -> Result<Self, InvalidPublicKeyBytes> {
+    pub(crate) fn from_z32(s: &str) -> Result<Self, InvalidPublicKeyBytes> {
         let pk = PublicKey::from_z32(s).map_err(|_| e!(InvalidPublicKeyBytes::InvalidEncoding))?;
         Ok(Self(*pk.as_bytes()))
     }
 
-    pub fn to_z32(self) -> String {
+    pub(crate) fn to_z32(self) -> String {
         PublicKey::from_bytes(&self.0).expect("valid key").to_z32()
     }
 
-    pub fn to_bytes(self) -> [u8; 32] {
-        self.0
-    }
-
-    pub fn as_bytes(&self) -> &[u8; 32] {
+    pub(crate) fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 
-    pub fn from_signed_packet(packet: &SignedPacket) -> Self {
+    pub(crate) fn from_signed_packet(packet: &SignedPacket) -> Self {
         Self(*packet.public_key().as_bytes())
     }
 }
@@ -94,7 +90,7 @@ impl AsRef<[u8; 32]> for PublicKeyBytes {
     }
 }
 
-pub fn signed_packet_to_hickory_message(
+pub(crate) fn signed_packet_to_hickory_message(
     signed_packet: &SignedPacket,
 ) -> Result<Message, ProtoError> {
     let encoded = signed_packet.encoded_packet();
@@ -102,7 +98,7 @@ pub fn signed_packet_to_hickory_message(
     Ok(message)
 }
 
-pub fn signed_packet_to_hickory_records_without_origin(
+pub(crate) fn signed_packet_to_hickory_records_without_origin(
     signed_packet: &SignedPacket,
     filter: impl Fn(&Record) -> bool,
 ) -> Result<(Label, BTreeMap<RrKey, Arc<RecordSet>>), ProtoError> {
@@ -149,7 +145,7 @@ pub fn signed_packet_to_hickory_records_without_origin(
     Ok((common_zone, output))
 }
 
-pub fn record_set_append_origin(
+pub(crate) fn record_set_append_origin(
     input: &RecordSet,
     origin: &Name,
     serial: u32,
