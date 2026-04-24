@@ -1,8 +1,6 @@
 //! Configuration for the [`Server`].
 //!
-//! The top-level [`Config`] struct composes all sub-configs that the server needs.
-//! It is typically deserialized from a TOML file with [`Config::load`], but can also
-//! be constructed in code (for tests or embedding).
+//! [`Config`] is the entry point. It is usually loaded from a TOML file via [`Config::load`].
 //!
 //! [`Server`]: crate::Server
 
@@ -27,13 +25,8 @@ const DEFAULT_METRICS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LO
 
 /// Top-level configuration for the server.
 ///
-/// Groups all sub-configs needed to run the server: DNS listener, HTTP(S)
-/// listeners, metrics endpoint, signed-packet store, mainline DHT fallback, and
-/// data directory.
-///
-/// Typically loaded from a TOML file with [`Self::load`]. The [`Default`] impl
-/// produces a config suitable for local development and testing: self-signed TLS
-/// on `localhost`, DNS on port 5300, HTTP on 8080, and HTTPS on 8443.
+/// Usually loaded from a TOML file via [`Self::load`]. The [`Default`] impl
+/// produces a config suitable for local development and testing.
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Config {
@@ -49,16 +42,8 @@ pub struct Config {
     pub dns: DnsConfig,
     /// Configuration for the metrics server.
     ///
-    /// The metrics server exposes [Prometheus]-format counters for all
-    /// [`Metrics`](crate::Metrics) fields (DNS requests, pkarr publishes, store
-    /// inserts and evictions, HTTP request counts and latencies) over a plain
-    /// HTTP endpoint, intended to be scraped by a Prometheus-compatible collector.
-    ///
-    /// When `None`, the metrics server binds to the default address
-    /// `127.0.0.1:9117`. To disable the metrics server entirely, set this to
-    /// `Some(MetricsConfig::disabled())`.
-    ///
-    /// [Prometheus]: https://prometheus.io/docs/instrumenting/exposition_formats/
+    /// When `None`, the metrics server binds to a default address. To disable
+    /// the metrics server entirely, use [`MetricsConfig::disabled`].
     pub metrics: Option<MetricsConfig>,
 
     /// Configuration for the mainline DHT fallback.
@@ -69,47 +54,38 @@ pub struct Config {
 
     /// Configuration for the signed-packet zone store.
     ///
-    /// Controls write-batching and eviction; see [`StoreConfig`]. When
-    /// `None`, the defaults are used.
+    /// When `None`, the defaults from [`StoreConfig::default`] are used.
     pub zone_store: Option<StoreConfig>,
 
     /// Rate limit applied to `PUT /pkarr` requests.
     #[serde(default)]
     pub pkarr_put_rate_limit: RateLimitConfig,
 
-    /// Location where the server stores all its data.
+    /// Location where the server stores its data.
     ///
-    /// Consumed by [`Self::data_dir`], which also falls back to the
-    /// `IROH_DNS_DATA_DIR` environment variable and the platform's standard data
-    /// directory when this field is unset.
+    /// When `None`, [`Self::data_dir`] falls back to the `IROH_DNS_DATA_DIR`
+    /// environment variable, then to the platform's standard data directory.
     pub data_dir: Option<PathBuf>,
 }
 
 /// Configuration for the signed-packet store.
-///
-/// Controls how incoming packets are batched into write transactions and how
-/// long packets are retained before the eviction task removes them.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct StoreConfig {
     /// Maximum number of packets processed in a single write transaction.
-    ///
-    /// A transaction commits early when this many messages have been batched.
     pub max_batch_size: usize,
 
     /// Maximum time a write transaction stays open before it is committed.
     ///
-    /// Bounds the amount of data that can be lost on a crash: at most
-    /// `max_batch_time` of writes are in flight at any moment.
+    /// Bounds how much data can be lost on a crash.
     #[serde(with = "humantime_serde")]
     pub max_batch_time: Duration,
 
-    /// Time a packet is retained in the store before it becomes eligible for
-    /// eviction.
+    /// Time a packet is retained in the store before it becomes eligible for eviction.
     #[serde(with = "humantime_serde")]
     pub eviction: Duration,
 
-    /// Interval between two runs of the eviction task.
+    /// Interval between runs of the eviction task.
     #[serde(with = "humantime_serde")]
     pub eviction_interval: Duration,
 }
@@ -144,12 +120,11 @@ impl From<StoreConfig> for Options {
 
 /// Configuration for the metrics server.
 ///
-/// The metrics server exposes [Prometheus]-format counters for the server's
-/// [`Metrics`](crate::Metrics) over a plain HTTP endpoint. It is intended to be
-/// scraped by a Prometheus-compatible collector and carries no authentication,
-/// so the bind address should be kept on a trusted network. The default address
-/// binds to loopback.
+/// The metrics server exposes [`Metrics`] as [Prometheus]-format counters over a
+/// plain HTTP endpoint. It carries no authentication, so the bind address should
+/// be kept on a trusted network.
 ///
+/// [`Metrics`]: crate::Metrics
 /// [Prometheus]: https://prometheus.io/docs/instrumenting/exposition_formats/
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -189,15 +164,13 @@ pub struct MainlineConfig {
     pub bootstrap: Option<Vec<String>>,
 }
 
-/// Selects the bootstrap nodes used for mainline DHT resolution.
-///
-/// Typically derived from [`MainlineConfig`] rather than constructed directly.
+/// Bootstrap nodes for mainline DHT resolution.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub(crate) enum BootstrapOption {
-    /// Uses the default bootstrap nodes defined by pkarr.
+    /// The default bootstrap nodes defined by pkarr.
     #[default]
     Default,
-    /// Uses a custom set of bootstrap addresses (`domain:port` or `ipv4:port`).
+    /// A custom set of bootstrap addresses (`domain:port` or `ipv4:port`).
     Custom(Vec<String>),
 }
 
@@ -213,11 +186,6 @@ impl Default for MainlineConfig {
 
 impl Config {
     /// Loads a [`Config`] from a TOML file at `path`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be read, or if its contents do not
-    /// parse as TOML matching the [`Config`] schema.
     pub async fn load(path: impl AsRef<Path>) -> Result<Config> {
         info!(
             "loading config file from {}",
@@ -237,11 +205,6 @@ impl Config {
     /// 2. The `IROH_DNS_DATA_DIR` environment variable.
     /// 3. An `iroh-dns` subdirectory of the platform's standard data directory,
     ///    as reported by `dirs_next::data_dir`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error only when falling back to the platform data directory and
-    /// the platform does not expose one.
     pub fn data_dir(&self) -> Result<PathBuf> {
         let dir = if let Some(dir) = &self.data_dir {
             dir.clone()
@@ -260,10 +223,6 @@ impl Config {
     ///
     /// The path is `<data_dir>/signed-packets-1.db`, where `<data_dir>` is
     /// resolved by [`Self::data_dir`].
-    ///
-    /// # Errors
-    ///
-    /// Returns the same errors as [`Self::data_dir`].
     pub fn signed_packet_store_path(&self) -> Result<PathBuf> {
         Ok(self.data_dir()?.join("signed-packets-1.db"))
     }

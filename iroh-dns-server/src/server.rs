@@ -35,17 +35,9 @@ pub struct Server {
 impl Server {
     /// Binds and spawns the server from a [`Config`].
     ///
-    /// Opens (or creates) the persistent signed-packet store at the path returned
-    /// by [`Config::signed_packet_store_path`], enables the mainline DHT fallback
-    /// when configured, and then spawns the DNS, HTTP(S), and metrics tasks.
-    ///
-    /// Returns once all listeners are bound. Use [`Self::join`] to wait for the
-    /// tasks to finish.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the data directory cannot be created, the store
-    /// cannot be opened, or any of the listeners fails to bind.
+    /// Opens the persistent signed-packet store, enables the mainline DHT
+    /// fallback when configured, and spawns the DNS, HTTP(S), and metrics tasks.
+    /// Returns once all listeners are bound.
     pub async fn bind(config: Config) -> Result<Self> {
         let metrics = Arc::new(Metrics::default());
         let mut store = ZoneStore::persistent(
@@ -122,8 +114,7 @@ impl Server {
 
     /// Waits for the server tasks to complete.
     ///
-    /// Runs until one of the listener tasks returns (with success or an error),
-    /// or until [`Self::shutdown`] is called on a separate handle.
+    /// Returns when a listener task finishes, either with success or an error.
     pub async fn join(self) -> Result<()> {
         tokio::select! {
             res = self.dns_server.run_until_done() => res?,
@@ -181,25 +172,18 @@ impl Server {
     }
 
     /// Returns the local address that the DNS listener is bound to.
-    ///
-    /// Useful when the config requested port `0` and the actual port needs to be
-    /// discovered after binding.
     pub fn dns_addr(&self) -> SocketAddr {
         self.dns_server.local_addr()
     }
 
-    /// Returns the local address of the HTTP listener, if one is running.
-    ///
-    /// Returns `None` when no [`HttpConfig`](crate::config::HttpConfig) was
-    /// configured.
+    /// Returns the local address of the HTTP listener, or `None` if no HTTP
+    /// listener was configured.
     pub fn http_addr(&self) -> Option<SocketAddr> {
         self.http_server.http_addr()
     }
 
-    /// Returns the local address of the HTTPS listener, if one is running.
-    ///
-    /// Returns `None` when no [`HttpsConfig`](crate::config::HttpsConfig) was
-    /// configured.
+    /// Returns the local address of the HTTPS listener, or `None` if no HTTPS
+    /// listener was configured.
     pub fn https_addr(&self) -> Option<SocketAddr> {
         self.http_server.https_addr()
     }

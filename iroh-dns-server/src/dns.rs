@@ -45,9 +45,7 @@ const DEFAULT_A_TTL: u32 = 60 * 60; // 1h
 pub struct DnsConfig {
     /// Port to bind the DNS listener to, for both UDP and TCP.
     pub port: u16,
-    /// Address to bind the DNS listener to.
-    ///
-    /// If unspecified, binds to `0.0.0.0`.
+    /// Address to bind the DNS listener to (defaults to `0.0.0.0`).
     pub bind_addr: Option<IpAddr>,
     /// SOA record data served for authoritative zones, in zone-file format.
     pub default_soa: String,

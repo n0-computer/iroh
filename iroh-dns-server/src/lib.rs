@@ -1,18 +1,12 @@
 //! A DNS server and [pkarr] relay.
 //!
-//! This crate provides [`Server`], which combines a DNS server (UDP and TCP) and an
-//! HTTP/HTTPS server into a single process. Clients publish self-signed DNS records as
-//! [pkarr] signed packets over the HTTP `/pkarr` endpoint; the server stores them and
-//! answers DNS queries for the published names. DNS-over-HTTPS queries are accepted on
-//! the `/dns-query` endpoint.
+//! [`Server`] combines a DNS server (UDP and TCP) with an HTTP/HTTPS server
+//! into a single process. Clients publish self-signed DNS records as [pkarr]
+//! signed packets at `PUT /pkarr`; the server persists them and answers DNS
+//! queries for the published names, including DNS-over-HTTPS at `/dns-query`.
 //!
-//! Published packets are persisted in an on-disk store and served for a configurable
-//! eviction window. When enabled in the config, the server can additionally fall back
-//! to the mainline DHT for packets that are not in the local store.
-//!
-//! The server is driven through the [`config::Config`] struct. For a ready-to-run
-//! binary that loads a TOML config, see the `iroh-dns-server` binary target in this
-//! crate.
+//! With the mainline fallback enabled, keys missing from the local store are
+//! looked up on the BitTorrent mainline DHT.
 //!
 //! # Example
 //!

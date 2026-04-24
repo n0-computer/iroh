@@ -77,22 +77,13 @@ struct Actor {
 /// long packets are retained before the eviction task removes them.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Options {
-    /// Maximum number of packets processed in a single write transaction.
-    ///
-    /// A transaction commits early when this many messages have been batched.
+    /// Maximum number of packets to process in a single write transaction.
     pub(crate) max_batch_size: usize,
-
-    /// Maximum time a write transaction stays open before it is committed.
-    ///
-    /// Bounds the amount of data that can be lost on a crash: at most
-    /// `max_batch_time` of writes are in flight at any moment.
+    /// Maximum time to keep a write transaction open.
     pub(crate) max_batch_time: Duration,
-
-    /// Time a packet is retained in the store before it becomes eligible for
-    /// eviction.
+    /// Time to keep packets in the store before eviction.
     pub(crate) eviction: Duration,
-
-    /// Interval between two runs of the eviction task.
+    /// Pause between eviction checks.
     pub(crate) eviction_interval: Duration,
 }
 

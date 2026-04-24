@@ -3,9 +3,6 @@
 use iroh_metrics::{Counter, MetricsGroup};
 
 /// Counters exposed by iroh-dns-server.
-///
-/// Populated by the DNS, HTTP, and signed-packet store subsystems, and exposed by
-/// the metrics server (see [`MetricsConfig`](crate::config::MetricsConfig)).
 #[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = "dns_server")]
 #[non_exhaustive]

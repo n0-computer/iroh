@@ -39,24 +39,19 @@ use crate::state::AppState;
 pub struct HttpConfig {
     /// Port to bind the HTTP listener to.
     pub port: u16,
-    /// Address to bind the HTTP listener to.
-    ///
-    /// If unset, binds to `0.0.0.0`.
+    /// Address to bind the HTTP listener to (defaults to `0.0.0.0`).
     pub bind_addr: Option<IpAddr>,
 }
 
 /// Configuration for the HTTPS listener.
 ///
-/// Certificates are obtained according to [`Self::cert_mode`]; see [`CertMode`] for
-/// the available strategies.
+/// Certificates are obtained according to [`Self::cert_mode`].
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct HttpsConfig {
     /// Port to bind the HTTPS listener to.
     pub port: u16,
-    /// Address to bind the HTTPS listener to.
-    ///
-    /// If unset, binds to `0.0.0.0`.
+    /// Address to bind the HTTPS listener to (defaults to `0.0.0.0`).
     pub bind_addr: Option<IpAddr>,
     /// Domains for which TLS certificates are issued or loaded.
     pub domains: Vec<String>,
