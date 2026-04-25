@@ -9,19 +9,21 @@
 //! initialized, the API often hands back link-local IPv6 servers
 //! (notably from iPhone Personal Hotspot tethering) that a connected
 //! UDP socket cannot reach without scope IDs. We sidestep both
-//! problems by returning an error on Android, leaving the caller to
-//! fall back to the public DNS defaults; consumers who really want
-//! system DNS can opt in via [`crate::dns::install_android_jni_context`].
+//! problems by skipping that path entirely. Consumers who want real
+//! system DNS on Android can opt into a safe JNI reader by calling
+//! [`android::install_android_jni_context`].
 
-#[cfg(not(target_os = "android"))]
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 #[cfg(not(target_os = "android"))]
 use hickory_resolver::config::NameServerConfig;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use n0_error::{AnyError, stack_error};
 #[cfg(not(target_os = "android"))]
-use n0_error::anyerr;
-use n0_error::{AnyError, e, stack_error};
+use n0_error::{anyerr, e};
+
+#[cfg(target_os = "android")]
+pub(crate) mod android;
 
 /// Errors returned by [`read_system_conf`].
 ///
@@ -37,7 +39,8 @@ pub(crate) enum SystemConfigError {
     Hickory { source: AnyError },
     /// System DNS reads are disabled on this platform.
     ///
-    /// Currently raised on Android: see the module-level docs.
+    /// Currently raised on Android when no JNI context has been
+    /// installed: see the module-level docs.
     #[error("system DNS reads are disabled on this platform")]
     PlatformUnsupported {},
 }
@@ -57,14 +60,16 @@ pub(crate) fn read_system_conf() -> Result<(ResolverConfig, ResolverOpts), Syste
     Ok((sanitize(raw), options))
 }
 
-/// Returns [`SystemConfigError::PlatformUnsupported`] on Android.
+/// Reads system DNS through the consumer-supplied JNI context.
 ///
-/// See the module-level documentation for why we skip the system DNS
-/// path entirely on Android. Callers should treat this as a signal to
-/// use a public fallback resolver.
+/// Returns [`SystemConfigError::PlatformUnsupported`] until the
+/// consumer calls [`android::install_android_jni_context`]. After
+/// that, the JNI reader inspects `LinkProperties.getDnsServers()` for
+/// the active network and returns a [`ResolverConfig`] with the
+/// usable entries.
 #[cfg(target_os = "android")]
 pub(crate) fn read_system_conf() -> Result<(ResolverConfig, ResolverOpts), SystemConfigError> {
-    Err(e!(SystemConfigError::PlatformUnsupported))
+    android::read_system_conf()
 }
 
 /// Copies a [`ResolverConfig`] while filtering out unusable nameservers.
@@ -78,21 +83,32 @@ fn sanitize(raw: ResolverConfig) -> ResolverConfig {
         config.add_search(name.clone());
     }
     for ns in raw.name_servers() {
-        if is_usable_nameserver(ns) {
+        if is_usable_nameserver_config(ns) {
             config.add_name_server(ns.clone());
         }
     }
     config
 }
 
-/// Returns whether a nameserver IP can plausibly be queried from a
-/// connected UDP socket.
+/// Returns whether a configured nameserver can plausibly be queried.
 #[cfg(not(target_os = "android"))]
-fn is_usable_nameserver(ns: &NameServerConfig) -> bool {
+fn is_usable_nameserver_config(ns: &NameServerConfig) -> bool {
     if WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&ns.ip) {
         return false;
     }
-    match ns.ip {
+    is_usable_nameserver(ns.ip)
+}
+
+/// Returns whether a nameserver IP can plausibly be queried from a
+/// connected UDP socket.
+///
+/// Drops link-local IPv6 (`fe80::/10`), link-local IPv4
+/// (`169.254.0.0/16`), and the unspecified addresses. iPhone Personal
+/// Hotspot tethering routinely advertises `fe80::1` as the network's
+/// DNS server; without a scope ID a connected UDP socket cannot route
+/// to it, so attempts time out instead of returning a useful error.
+pub(crate) fn is_usable_nameserver(ip: IpAddr) -> bool {
+    match ip {
         IpAddr::V4(ip) => ip != Ipv4Addr::UNSPECIFIED && !ip.is_link_local(),
         IpAddr::V6(ip) => ip != Ipv6Addr::UNSPECIFIED && (ip.segments()[0] & 0xffc0) != 0xfe80,
     }
@@ -106,8 +122,39 @@ const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
     IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 3)),
 ];
 
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_link_local_v6() {
+        assert!(!is_usable_nameserver("fe80::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn rejects_link_local_v4() {
+        assert!(!is_usable_nameserver("169.254.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn rejects_unspecified() {
+        assert!(!is_usable_nameserver("0.0.0.0".parse().unwrap()));
+        assert!(!is_usable_nameserver("::".parse().unwrap()));
+    }
+
+    #[test]
+    fn accepts_global_unicast() {
+        assert!(is_usable_nameserver("8.8.8.8".parse().unwrap()));
+        assert!(is_usable_nameserver(
+            "2001:4860:4860::8888".parse().unwrap()
+        ));
+        // ULA, valid for routed networks.
+        assert!(is_usable_nameserver("fd00::1".parse().unwrap()));
+    }
+}
+
+#[cfg(all(test, not(target_os = "android")))]
+mod platform_tests {
     use hickory_resolver::config::ConnectionConfig;
 
     use super::*;
@@ -117,38 +164,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_link_local_v6() {
-        let unusable = "fe80::1".parse().unwrap();
-        assert!(!is_usable_nameserver(&ns(unusable)));
-    }
-
-    #[test]
-    fn rejects_link_local_v4() {
-        let unusable = "169.254.1.1".parse().unwrap();
-        assert!(!is_usable_nameserver(&ns(unusable)));
-    }
-
-    #[test]
-    fn rejects_unspecified() {
-        assert!(!is_usable_nameserver(&ns("0.0.0.0".parse().unwrap())));
-        assert!(!is_usable_nameserver(&ns("::".parse().unwrap())));
-    }
-
-    #[test]
     fn rejects_windows_site_local_anycast() {
         for ip in WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS {
-            assert!(!is_usable_nameserver(&ns(ip)));
+            assert!(!is_usable_nameserver_config(&ns(ip)));
         }
-    }
-
-    #[test]
-    fn accepts_global_unicast() {
-        assert!(is_usable_nameserver(&ns("8.8.8.8".parse().unwrap())));
-        assert!(is_usable_nameserver(&ns("2001:4860:4860::8888"
-            .parse()
-            .unwrap())));
-        // ULA, valid for routed networks.
-        assert!(is_usable_nameserver(&ns("fd00::1".parse().unwrap())));
     }
 
     #[test]

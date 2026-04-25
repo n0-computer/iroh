@@ -31,6 +31,10 @@ url = "2.5.3"
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = { version = "0.26.0", features = ["tokio", "system-config"] }
 
+# Android-only dependencies for the opt-in system DNS reader.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22.1"
+
 [build-dependencies]
 cfg_aliases = "0.2.1"
 

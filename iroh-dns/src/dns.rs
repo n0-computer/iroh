@@ -33,6 +33,9 @@ use url::Url;
 
 use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
 
+#[cfg(target_os = "android")]
+pub use crate::system_config::android::install_android_jni_context;
+
 /// Default DNS query timeout.
 pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
