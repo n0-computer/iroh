@@ -182,13 +182,26 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install --version 3.5.4 cargo-ndk
 
-      - name: Build smoke test for x86_64 Android
+      - name: Build smoke test binary for x86_64 Android
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          cargo ndk --target x86_64-linux-android build \
-              --example resolve_smoke -p iroh-dns \
-              --release --features tls-ring
+          # cargo-ndk swallows cargo's --message-format JSON, so we
+          # locate the produced test binary by glob instead. cargo
+          # writes test binaries to target/<target>/<profile>/deps/
+          # with the test target's name plus a content hash suffix.
+          # Clean previous builds of this exact test so the glob
+          # matches a single fresh entry.
+          rm -f target/x86_64-linux-android/release/deps/resolve_smoke-*
+          cargo ndk --target x86_64-linux-android test --no-run \
+              -p iroh-dns --features tls-ring \
+              --test resolve_smoke --release
+          TEST_BIN=$(find target/x86_64-linux-android/release/deps \
+              -maxdepth 1 -name 'resolve_smoke-*' \
+              -type f -executable | head -1)
+          test -n "$TEST_BIN"
+          echo "Test binary: $TEST_BIN"
+          echo "TEST_BIN=$TEST_BIN" >> "$GITHUB_ENV"
 
       - name: Run smoke test on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -207,10 +220,9 @@ jobs:
               i=$((i+1)); if [ $i -gt 300 ]; then
                 echo "boot did not complete within 600s"; exit 1
               fi; sleep 2; done'
-            adb push target/x86_64-linux-android/release/examples/resolve_smoke \
-                /data/local/tmp/iroh-dns-smoke
+            adb push "$TEST_BIN" /data/local/tmp/iroh-dns-smoke
             adb shell chmod +x /data/local/tmp/iroh-dns-smoke
-            adb shell /data/local/tmp/iroh-dns-smoke
+            adb shell /data/local/tmp/iroh-dns-smoke --include-ignored
 
   cross_test:
     name: Cross Test
