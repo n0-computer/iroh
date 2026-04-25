@@ -18,13 +18,13 @@
 //!   link-local address without a scope ID we do not carry, so the
 //!   query times out. We drop those entries here.
 
-use std::{ffi::c_void, net::IpAddr, sync::OnceLock};
+use std::{net::IpAddr, sync::OnceLock};
 
 use hickory_resolver::config::{NameServerConfig, ResolverConfig, ResolverOpts};
 use jni::{
     JavaVM, jni_sig, jni_str,
     objects::{IntoAuto as _, JByteArray, JList, JObject, JValue},
-    sys::jobject,
+    sys::{self, jobject},
 };
 use n0_error::{anyerr, e};
 use tracing::{trace, warn};
@@ -35,18 +35,17 @@ use super::{SystemConfigError, is_usable_nameserver};
 /// consumer.
 ///
 /// Both fields are raw pointers obtained from JNI. They must remain
-/// valid for the lifetime of the process. The struct is `Send + Sync`
-/// because the underlying handles are thread-safe per JNI rules: the
-/// JavaVM is shared across threads and a global `Context` reference
-/// is too. The pointers are not dereferenced outside JNI calls.
+/// valid for the lifetime of the process. The pointers are not
+/// dereferenced outside JNI calls.
 struct JniContext {
-    java_vm: *mut c_void,
-    context_jobject: *mut c_void,
+    java_vm: *mut sys::JavaVM,
+    context_jobject: jobject,
 }
 
-// SAFETY: A `JavaVM` pointer is intended to be shared across threads
-// per the JNI spec. The `context_jobject` is expected to be a global
-// reference, which is also thread-safe to share.
+// SAFETY: a `JavaVM*` is shareable across threads per the JNI
+// invocation spec, and a JNI global reference is too. The
+// install_android_jni_context contract requires the caller to pass a
+// global reference (not a local one) for context_jobject.
 unsafe impl Send for JniContext {}
 unsafe impl Sync for JniContext {}
 
@@ -54,59 +53,87 @@ static JNI_CONTEXT: OnceLock<JniContext> = OnceLock::new();
 
 /// Installs the Android JNI handles used by [`super::read_system_conf`].
 ///
-/// Call this from your library's `JNI_OnLoad` (or otherwise before
-/// any iroh component is created) when you want the resolver to honor
-/// the device's per-network DNS configuration. Without this call, the
-/// resolver uses its built-in public DNS fallback (Cloudflare and
-/// Google) and never touches JNI.
-///
-/// `java_vm` must be a valid [`JavaVM`] pointer; `application_context`
-/// must be a valid [`jobject`] pointing to an
-/// [`android.content.Context`]. The cleanest source for the context
-/// is `ActivityThread.currentApplication()`. Both pointers must
-/// outlive the process; promote a local reference to a global
-/// reference (see `JNIEnv::new_global_ref`) before forgetting it.
+/// Call this once early in the process, typically from your library's
+/// `JNI_OnLoad`, when you want the resolver to honor the device's
+/// per-network DNS configuration. Without this call, the resolver
+/// uses its built-in public DNS fallback (Cloudflare and Google) and
+/// never touches JNI; that is the right behavior for many consumers
+/// but means an enterprise or VPN-injected DNS will not be observed.
 ///
 /// Calling this more than once is a no-op: the first call wins. This
 /// matches the JVM lifecycle, which only loads each `.so` once.
+///
+/// `java_vm` must be a valid [`JavaVM`] pointer for the running JVM.
+/// Pass the `*mut JavaVM` your `JNI_OnLoad` receives. Note that the
+/// JNI `JNIEnv*` is per-thread and is **not** the same thing; passing
+/// a `JNIEnv*` here will produce undefined behavior the next time the
+/// resolver runs.
+///
+/// `application_context` must be a global reference to an
+/// [`android.content.Context`]. Promote your local reference to a
+/// global one with `JNIEnv::NewGlobalRef` (or `jni-rs`'s
+/// `JNIEnv::new_global_ref`) and `mem::forget` the wrapper, or its
+/// drop will release the reference and the next read will dereference
+/// freed memory. Prefer the singleton Application context obtained
+/// from `ActivityThread.currentApplication()`; passing an Activity or
+/// Service Context can keep that component alive for the rest of the
+/// process and breaks `getSystemService("connectivity")` once the
+/// component is destroyed.
 ///
 /// # Safety
 ///
 /// The caller must guarantee that:
 ///
-/// - `java_vm` is a valid `*mut JavaVM` for the running JVM.
-/// - `application_context` is a valid global reference to an
-///   `android.content.Context`.
-/// - Both remain valid until the process exits.
+/// - `java_vm` is a valid `*mut JavaVM` for the running JVM (not a
+///   `*mut JNIEnv`).
+/// - `application_context` is a JNI global reference (not a local
+///   reference) to an `android.content.Context`, ideally the
+///   `Application` singleton.
+/// - Both pointers remain valid until the process exits.
 ///
 /// Violating any of these invariants leads to undefined behavior the
 /// next time the resolver attempts to read system DNS.
 ///
+/// # Notes
+///
+/// The `jni-rs` crate keeps a process-wide `JavaVM` singleton: the
+/// first `JavaVM::from_raw` call wins. If another library in the
+/// process has already registered a different `JavaVM*` (very unusual
+/// outside of test harnesses; only one JVM exists per Android process)
+/// our pointer is silently ignored and the existing `JavaVM` is
+/// reused. This is benign on Android.
+///
 /// [`JavaVM`]: https://docs.oracle.com/en/java/javase/21/docs/specs/jni/invocation.html#javavm
-/// [`jobject`]: https://docs.rs/jni/latest/jni/sys/type.jobject.html
 /// [`android.content.Context`]: https://developer.android.com/reference/android/content/Context
-pub unsafe fn install_android_jni_context(java_vm: *mut c_void, application_context: *mut c_void) {
-    let _ = JNI_CONTEXT.set(JniContext {
-        java_vm,
-        context_jobject: application_context,
-    });
+pub unsafe fn install_android_jni_context(java_vm: *mut sys::JavaVM, application_context: jobject) {
+    if JNI_CONTEXT
+        .set(JniContext {
+            java_vm,
+            context_jobject: application_context,
+        })
+        .is_err()
+    {
+        warn!(
+            "install_android_jni_context called more than once; \
+             keeping the first JavaVM and Context",
+        );
+    }
 }
 
 /// Reads the system DNS configuration through the consumer-supplied
 /// JNI context.
 ///
 /// Returns [`SystemConfigError::PlatformUnsupported`] when no JNI
-/// context has been installed. Returns
-/// [`SystemConfigError::Hickory`] (despite the name) when the JNI
-/// calls themselves fail; the error wraps the underlying JNI error
-/// for diagnostics.
+/// context has been installed. Returns [`SystemConfigError::Read`]
+/// when the JNI calls themselves fail; the source wraps the
+/// underlying JNI error for diagnostics.
 pub(super) fn read_system_conf() -> Result<(ResolverConfig, ResolverOpts), SystemConfigError> {
     let ctx = JNI_CONTEXT
         .get()
         .ok_or_else(|| e!(SystemConfigError::PlatformUnsupported))?;
 
     let nameservers =
-        read_dns_servers(ctx).map_err(|err| e!(SystemConfigError::Hickory, anyerr!(err)))?;
+        read_dns_servers(ctx).map_err(|err| e!(SystemConfigError::Read, anyerr!(err)))?;
 
     let mut config = ResolverConfig::default();
     for ip in nameservers {
@@ -129,12 +156,12 @@ fn read_dns_servers(ctx: &JniContext) -> Result<Vec<IpAddr>, jni::errors::Error>
     // SAFETY: ctx.java_vm is a JavaVM pointer that the consumer
     // guarantees is valid for the process lifetime via the
     // install_android_jni_context contract.
-    let vm = unsafe { JavaVM::from_raw(ctx.java_vm.cast()) };
+    let vm = unsafe { JavaVM::from_raw(ctx.java_vm) };
     vm.attach_current_thread(|env| {
         // SAFETY: ctx.context_jobject is a global Context reference
         // that the consumer guarantees is valid for the process
         // lifetime via the install_android_jni_context contract.
-        let activity = unsafe { JObject::from_raw(env, ctx.context_jobject as jobject) };
+        let activity = unsafe { JObject::from_raw(env, ctx.context_jobject) };
 
         let connectivity_service = env.new_string("connectivity")?;
         let connectivity_manager = env
@@ -175,8 +202,17 @@ fn read_dns_servers(ctx: &JniContext) -> Result<Vec<IpAddr>, jni::errors::Error>
         let dns_servers = env.cast_local::<JList<'_>>(dns_servers)?;
         let dns_servers = dns_servers.iter(env)?;
 
-        let mut out = Vec::new();
+        // Cap the number of servers we accept. A normal Android stack
+        // returns at most a handful; a malicious local app or VPN
+        // could in principle inject a much longer list, which we
+        // would then probe in parallel. The bound keeps us honest.
+        const MAX_SERVERS: usize = 16;
+        let mut out = Vec::with_capacity(MAX_SERVERS);
         while let Some(server) = dns_servers.next(env)? {
+            if out.len() >= MAX_SERVERS {
+                warn!(MAX_SERVERS, "truncating system DNS server list");
+                break;
+            }
             let server = server.auto();
             let ip_bytes_obj = env
                 .call_method(&server, jni_str!("getAddress"), jni_sig!("()[B"), &[])?

@@ -35,8 +35,12 @@ pub(crate) mod android;
 #[non_exhaustive]
 pub(crate) enum SystemConfigError {
     /// The platform reader returned an error.
+    ///
+    /// On non-Android platforms the source is hickory's
+    /// system-config error. On Android (when a JNI context has been
+    /// installed) it wraps the underlying JNI error.
     #[error("failed to read system DNS configuration")]
-    Hickory { source: AnyError },
+    Read { source: AnyError },
     /// System DNS reads are disabled on this platform.
     ///
     /// Currently raised on Android when no JNI context has been
@@ -56,7 +60,7 @@ pub(crate) enum SystemConfigError {
 #[cfg(not(target_os = "android"))]
 pub(crate) fn read_system_conf() -> Result<(ResolverConfig, ResolverOpts), SystemConfigError> {
     let (raw, options) = hickory_resolver::system_conf::read_system_conf()
-        .map_err(|err| e!(SystemConfigError::Hickory, anyerr!(err)))?;
+        .map_err(|err| e!(SystemConfigError::Read, anyerr!(err)))?;
     Ok((sanitize(raw), options))
 }
 
@@ -107,6 +111,12 @@ fn is_usable_nameserver_config(ns: &NameServerConfig) -> bool {
 /// Hotspot tethering routinely advertises `fe80::1` as the network's
 /// DNS server; without a scope ID a connected UDP socket cannot route
 /// to it, so attempts time out instead of returning a useful error.
+///
+/// This filter is for *reachability* only, not trust. A device-local
+/// actor with `ACCESS_NETWORK_STATE` (or a hostile VPN) can still
+/// inject an attacker-controlled global IP that survives the filter;
+/// callers that need authenticated DNS should add DNS-over-HTTPS or
+/// DNSSEC on top.
 pub(crate) fn is_usable_nameserver(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => ip != Ipv4Addr::UNSPECIFIED && !ip.is_link_local(),
@@ -128,12 +138,38 @@ mod tests {
 
     #[test]
     fn rejects_link_local_v6() {
+        // First (`fe80::`) and last (`febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff`)
+        // addresses in `fe80::/10`, the link-local range.
         assert!(!is_usable_nameserver("fe80::1".parse().unwrap()));
+        assert!(!is_usable_nameserver(
+            "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap()
+        ));
+    }
+
+    #[test]
+    fn accepts_addresses_outside_link_local_v6() {
+        // Just below `fe80::/10`: still global.
+        assert!(is_usable_nameserver(
+            "fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap()
+        ));
+        // Just above `fe80::/10`: site-local-deprecated, but still routable
+        // when explicitly configured.
+        assert!(is_usable_nameserver("fec0::1".parse().unwrap()));
     }
 
     #[test]
     fn rejects_link_local_v4() {
-        assert!(!is_usable_nameserver("169.254.1.1".parse().unwrap()));
+        // First and last addresses in `169.254.0.0/16`.
+        assert!(!is_usable_nameserver("169.254.0.0".parse().unwrap()));
+        assert!(!is_usable_nameserver("169.254.255.255".parse().unwrap()));
+    }
+
+    #[test]
+    fn accepts_addresses_outside_link_local_v4() {
+        // Just below `169.254.0.0/16`.
+        assert!(is_usable_nameserver("169.253.255.255".parse().unwrap()));
+        // Just above `169.254.0.0/16`.
+        assert!(is_usable_nameserver("169.255.0.0".parse().unwrap()));
     }
 
     #[test]
@@ -145,6 +181,7 @@ mod tests {
     #[test]
     fn accepts_global_unicast() {
         assert!(is_usable_nameserver("8.8.8.8".parse().unwrap()));
+        assert!(is_usable_nameserver("1.1.1.1".parse().unwrap()));
         assert!(is_usable_nameserver(
             "2001:4860:4860::8888".parse().unwrap()
         ));

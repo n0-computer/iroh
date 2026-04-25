@@ -33,9 +33,6 @@ use url::Url;
 
 use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
 
-#[cfg(target_os = "android")]
-pub use crate::system_config::android::install_android_jni_context;
-
 /// Default DNS query timeout.
 pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -338,6 +335,13 @@ impl DnsResolver {
     /// See [`Builder::with_system_defaults`] for platform behavior; in
     /// particular, the resolver will not panic on Android even when no
     /// JNI context has been provided by the consumer.
+    ///
+    /// On Android (and on any platform when the system reader fails),
+    /// the resolver falls back to public DNS providers (Cloudflare and
+    /// Google). This means DNS queries can be visible to those
+    /// providers in the failure path. Privacy-sensitive consumers can
+    /// build a resolver with explicit nameservers via
+    /// [`Self::builder`] instead.
     pub fn new() -> Self {
         Builder::default().with_system_defaults().build()
     }
@@ -880,6 +884,53 @@ pub(crate) mod tests {
     use n0_tracing_test::traced_test;
 
     use super::*;
+    use crate::system_config::is_usable_nameserver;
+
+    #[test]
+    fn public_fallback_has_useful_servers() {
+        let config = public_fallback_config();
+        let servers: Vec<_> = config.name_servers().iter().map(|n| n.ip).collect();
+        assert!(!servers.is_empty(), "fallback config must list servers");
+        for ip in &servers {
+            assert!(
+                is_usable_nameserver(*ip),
+                "fallback server {ip} must pass the link-local filter",
+            );
+        }
+        // Both providers must be present so a single-provider outage does
+        // not take iroh down.
+        assert!(servers.contains(&"1.1.1.1".parse().unwrap()));
+        assert!(servers.contains(&"8.8.8.8".parse().unwrap()));
+    }
+
+    #[cfg(with_crypto_provider)]
+    #[test]
+    fn public_fallback_includes_doh_when_tls_enabled() {
+        use hickory_resolver::config::ProtocolConfig;
+
+        let config = public_fallback_config();
+        let has_https = config.name_servers().iter().any(|n| {
+            n.connections
+                .iter()
+                .any(|c| matches!(c.protocol, ProtocolConfig::Https { .. }))
+        });
+        assert!(
+            has_https,
+            "fallback config must include DoH when tls feature is enabled",
+        );
+    }
+
+    #[cfg(target_os = "android")]
+    #[test]
+    fn android_system_conf_unsupported_without_jni_context() {
+        // Without `install_android_jni_context`, the platform reader
+        // must report PlatformUnsupported so the resolver picks up the
+        // public fallback instead of trying to query nothing.
+        match crate::system_config::read_system_conf() {
+            Err(crate::system_config::SystemConfigError::PlatformUnsupported { .. }) => {}
+            other => panic!("expected PlatformUnsupported, got {other:?}"),
+        }
+    }
 
     #[tokio::test]
     #[traced_test]

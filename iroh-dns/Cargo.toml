@@ -33,7 +33,7 @@ hickory-resolver = { version = "0.26.0", features = ["tokio", "system-config"] }
 
 # Android-only dependencies for the opt-in system DNS reader.
 [target.'cfg(target_os = "android")'.dependencies]
-jni = "0.22.1"
+jni = "0.22"
 
 [build-dependencies]
 cfg_aliases = "0.2.1"

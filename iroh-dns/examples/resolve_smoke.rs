@@ -6,6 +6,14 @@
 //! to catch regressions like the hickory-0.26 panic on uninitialized
 //! `ndk_context`.
 //!
+//! The example wraps `DnsResolver::new()` in `catch_unwind`. This
+//! catches a panic only when the example is built with the default
+//! `panic = "unwind"` profile, which it is in CI. Production Android
+//! consumers commonly set `panic = "abort"` for binary size, in
+//! which case the panic would still abort the process. The CI
+//! signal is therefore "this regressed and we noticed", not "users
+//! with `panic = abort` are safe."
+//!
 //! Run locally:
 //!
 //! ```ignore

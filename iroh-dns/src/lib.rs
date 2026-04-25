@@ -14,3 +14,5 @@ pub mod pkarr;
 mod system_config;
 
 pub use attrs::{EncodingError, IROH_TXT_NAME, ParseError};
+#[cfg(target_os = "android")]
+pub use system_config::android::install_android_jni_context;

@@ -171,11 +171,12 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
+      # Pinned to a release tag (rather than @main) for supply-chain hygiene.
       - name: Setup Android NDK
-        uses: arqu/setup-ndk@main
+        uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r23
+          ndk-version: r25c
           add-to-path: true
 
       - name: Install cargo-ndk
@@ -198,9 +199,14 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
+          # Wait for boot in POSIX sh (no [[ ... ]]). Fail fast after
+          # ~10 minutes rather than blocking until the job timeout.
           script: |
             adb wait-for-device
-            adb shell 'while [[ -z $(getprop sys.boot_completed | tr -d "\r") ]]; do sleep 2; done'
+            adb shell 'i=0; while [ -z "$(getprop sys.boot_completed | tr -d "\r")" ]; do
+              i=$((i+1)); if [ $i -gt 300 ]; then
+                echo "boot did not complete within 600s"; exit 1
+              fi; sleep 2; done'
             adb push target/x86_64-linux-android/release/examples/resolve_smoke \
                 /data/local/tmp/iroh-dns-smoke
             adb shell chmod +x /data/local/tmp/iroh-dns-smoke
