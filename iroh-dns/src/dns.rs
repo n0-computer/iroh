@@ -179,9 +179,24 @@ impl DnsProtocol {
 impl Builder {
     /// Makes the builder respect the host system's DNS configuration.
     ///
-    /// We first try to read the system's resolver from `/etc/resolv.conf`.
-    /// This does not work at least on some Androids, therefore we fallback
-    /// to a default config which uses Google's `8.8.8.8` or `8.8.4.4`.
+    /// On Linux, macOS, and Windows the resolver picks up the system
+    /// nameserver list (from `/etc/resolv.conf`, the System
+    /// Configuration framework, or the Windows IP helper, respectively).
+    /// On Android we deliberately skip the system reader, which calls
+    /// JNI through `ndk_context` and panics if the consumer has not
+    /// initialized the context, and which often returns unreachable
+    /// link-local IPv6 servers from tethered networks. Consumers who
+    /// want system DNS on Android can opt in via
+    /// [`crate::dns::install_android_jni_context`].
+    ///
+    /// When the platform reader is unavailable (always on Android,
+    /// and on other platforms when reading fails), the builder falls
+    /// back to a public DNS configuration that combines Cloudflare and
+    /// Google over UDP and TCP. With the `tls-ring` or `tls-aws-lc-rs`
+    /// feature enabled, DNS-over-HTTPS endpoints for the same
+    /// providers are appended as a final tier; this is what reliably
+    /// works through iPhone Personal Hotspot and similar IPv6-only or
+    /// NAT64 networks where plain UDP/53 is filtered.
     pub fn with_system_defaults(mut self) -> Self {
         self.use_system_defaults = true;
         self
@@ -316,9 +331,10 @@ impl Inner {
 impl DnsResolver {
     /// Creates a new DNS resolver with sensible cross-platform defaults.
     ///
-    /// We first try to read the system's resolver from `/etc/resolv.conf`.
-    /// This does not work at least on some Androids, therefore we fallback
-    /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
+    /// Equivalent to `Builder::default().with_system_defaults().build()`.
+    /// See [`Builder::with_system_defaults`] for platform behavior; in
+    /// particular, the resolver will not panic on Android even when no
+    /// JNI context has been provided by the consumer.
     pub fn new() -> Self {
         Builder::default().with_system_defaults().build()
     }
@@ -603,11 +619,12 @@ impl HickoryResolver {
             match crate::system_config::read_system_conf() {
                 Ok((config, options)) => (config, options),
                 Err(error) => {
-                    debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
-                    (
-                        ResolverConfig::udp_and_tcp(&hickory_resolver::config::GOOGLE),
-                        ResolverOpts::default(),
-                    )
+                    debug!(
+                        %error,
+                        "Falling back to public DNS resolvers: \
+                         system DNS unavailable.",
+                    );
+                    (public_fallback_config(), ResolverOpts::default())
                 }
             }
         } else {
@@ -638,6 +655,44 @@ impl HickoryResolver {
 
         hickory_builder.build().expect("config works")
     }
+}
+
+/// Returns a resolver config that combines public DNS providers.
+///
+/// Used as the fallback when the platform reader cannot be consulted,
+/// either because the platform is Android (where we never call the
+/// JNI-based reader by default) or because reading the system's DNS
+/// configuration failed at runtime.
+///
+/// The order is intentional: Cloudflare and Google are anycasted on
+/// disjoint networks, so listing both gives us a working resolver
+/// even when one provider is blocked. UDP and TCP come first because
+/// they are the lowest latency on networks where they work; with the
+/// `tls-ring` or `tls-aws-lc-rs` feature the same providers are
+/// appended again over DoH, which works through filtered or
+/// IPv6-only networks (notably iPhone Personal Hotspot tethering)
+/// where plain UDP DNS to a link-local server cannot reach a
+/// reachable resolver.
+fn public_fallback_config() -> ResolverConfig {
+    use hickory_resolver::config::{CLOUDFLARE, GOOGLE};
+
+    let mut config = ResolverConfig::default();
+    for ns in CLOUDFLARE.udp_and_tcp() {
+        config.add_name_server(ns);
+    }
+    for ns in GOOGLE.udp_and_tcp() {
+        config.add_name_server(ns);
+    }
+    #[cfg(with_crypto_provider)]
+    {
+        for ns in CLOUDFLARE.https() {
+            config.add_name_server(ns);
+        }
+        for ns in GOOGLE.https() {
+            config.add_name_server(ns);
+        }
+    }
+    config
 }
 
 impl Resolver for HickoryResolver {
