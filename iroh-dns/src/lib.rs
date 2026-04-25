@@ -10,5 +10,7 @@ mod attrs;
 pub mod dns;
 pub mod endpoint_info;
 pub mod pkarr;
+#[cfg(not(wasm_browser))]
+mod system_config;
 
 pub use attrs::{EncodingError, IROH_TXT_NAME, ParseError};
