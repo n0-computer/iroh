@@ -138,14 +138,14 @@ jobs:
           cargo ndk --target ${{ matrix.target }} build
 
   android_emulator_test:
-    name: Android Emulator iroh-dns Smoke Test
+    name: Android Emulator Test Suite
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    timeout-minutes: 45
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        api-level: [30, 35]
+        api-level: [35]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -182,29 +182,28 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install --version 3.5.4 cargo-ndk
 
-      - name: Build smoke test binary for x86_64 Android
+      # Build all the test binaries up front so the emulator boot can
+      # overlap with compilation. cargo-ndk runs `cargo test --no-run`
+      # against each crate; the binaries land in
+      # target/x86_64-linux-android/debug/deps/.
+      - name: Build workspace test binaries
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          # cargo-ndk swallows cargo's --message-format JSON, so we
-          # locate the produced test binary by glob instead. cargo
-          # writes test binaries to target/<target>/<profile>/deps/
-          # with the test target's name plus a content hash suffix.
-          # Clean previous builds of this exact test so the glob
-          # matches a single fresh entry.
-          rm -f target/x86_64-linux-android/release/deps/resolve_smoke-*
           cargo ndk --target x86_64-linux-android test --no-run \
-              -p iroh-dns --features tls-ring \
-              --test resolve_smoke --release
-          TEST_BIN=$(find target/x86_64-linux-android/release/deps \
-              -maxdepth 1 -name 'resolve_smoke-*' \
-              -type f -executable | head -1)
-          test -n "$TEST_BIN"
-          echo "Test binary: $TEST_BIN"
-          echo "TEST_BIN=$TEST_BIN" >> "$GITHUB_ENV"
+              -p iroh-base --all-features
+          cargo ndk --target x86_64-linux-android test --no-run \
+              -p iroh-dns --features tls-ring
+          cargo ndk --target x86_64-linux-android test --no-run \
+              -p iroh-relay --features tls-ring,metrics
+          cargo ndk --target x86_64-linux-android test --no-run \
+              -p iroh \
+              --features tls-ring,metrics,portmapper,test-utils
 
-      - name: Run smoke test on Android emulator
+      - name: Run workspace tests on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         with:
           api-level: ${{ matrix.api-level }}
           arch: x86_64
@@ -212,6 +211,17 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
+          # cargo-ndk's built-in runner pushes each test binary to
+          # /data/local/tmp on the running emulator (it shells out to
+          # `adb`), so we just invoke `cargo ndk test` from inside the
+          # emulator-runner action's script context. The crate-by-crate
+          # split mirrors the local verification: iroh-base (defaults)
+          # and iroh-dns (tls-ring) run cleanly, iroh-relay is only the
+          # client-side feature set, iroh is the largest crate. We then
+          # run the iroh-dns smoke test with --include-ignored so the
+          # network-dependent ones we deliberately ignore on host runs
+          # still execute on Android.
+          #
           # Wait for boot in POSIX sh (no [[ ... ]]). Fail fast after
           # ~10 minutes rather than blocking until the job timeout.
           script: |
@@ -220,9 +230,18 @@ jobs:
               i=$((i+1)); if [ $i -gt 300 ]; then
                 echo "boot did not complete within 600s"; exit 1
               fi; sleep 2; done'
-            adb push "$TEST_BIN" /data/local/tmp/iroh-dns-smoke
-            adb shell chmod +x /data/local/tmp/iroh-dns-smoke
-            adb shell /data/local/tmp/iroh-dns-smoke --include-ignored
+            cargo ndk --target x86_64-linux-android test \
+                -p iroh-base --all-features
+            cargo ndk --target x86_64-linux-android test \
+                -p iroh-dns --features tls-ring
+            cargo ndk --target x86_64-linux-android test \
+                -p iroh-relay --features tls-ring,metrics
+            cargo ndk --target x86_64-linux-android test \
+                -p iroh \
+                --features tls-ring,metrics,portmapper,test-utils
+            cargo ndk --target x86_64-linux-android test \
+                -p iroh-dns --features tls-ring \
+                --test resolve_smoke -- --include-ignored
 
   cross_test:
     name: Cross Test

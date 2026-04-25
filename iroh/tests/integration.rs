@@ -32,6 +32,8 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 
 const ECHO_ALPN: &[u8] = b"echo";
 
+// Skipped on Android: Test is flaky in the emulator.
+#[cfg_attr(target_os = "android", ignore = "flaky against staging from emulator")]
 #[test]
 async fn simple_endpoint_id_based_connection_transfer() -> Result {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
