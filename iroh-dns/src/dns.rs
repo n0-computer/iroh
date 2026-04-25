@@ -187,7 +187,8 @@ impl Builder {
     /// initialized the context, and which often returns unreachable
     /// link-local IPv6 servers from tethered networks. Consumers who
     /// want system DNS on Android can opt in via
-    /// [`crate::dns::install_android_jni_context`].
+    /// `iroh_dns::install_android_jni_context` (only compiled on
+    /// `target_os = "android"`).
     ///
     /// When the platform reader is unavailable (always on Android,
     /// and on other platforms when reading fails), the builder falls
