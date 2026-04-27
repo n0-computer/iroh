@@ -579,7 +579,7 @@
 <a href=#579 id=579 data-nosnippet>579</a>        </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..metas.len() {
 <a href=#580 id=580 data-nosnippet>580</a>            <span class="kw">let </span>noq_meta = <span class="kw-2">&amp;mut </span>metas[i];
 <a href=#581 id=581 data-nosnippet>581</a>            <span class="kw">let </span>recv_info = <span class="kw-2">&amp;</span>recv_infos[i];
-<a href=#582 id=582 data-nosnippet>582</a>            <span class="kw">let </span>remote_addr = <span class="kw-2">&amp;</span>recv_info.remote;
+<a href=#582 id=582 data-nosnippet>582</a>            <span class="kw">let </span>remote_addr = recv_info.remote();
 <a href=#583 id=583 data-nosnippet>583</a>            <span class="kw">let </span>datagram_count = <span class="kw">if </span>noq_meta.stride == <span class="number">0 </span>{
 <a href=#584 id=584 data-nosnippet>584</a>                <span class="kw">if </span>noq_meta.len &gt; <span class="number">0 </span>{
 <a href=#585 id=585 data-nosnippet>585</a>                    <span class="macro">warn!</span>(
@@ -639,7 +639,7 @@
 <a href=#639 id=639 data-nosnippet>639</a>                    <span class="comment">// Fill in the correct mapped address
 <a href=#640 id=640 data-nosnippet>640</a>                    </span><span class="kw">let </span>mapped_addr = <span class="self">self</span>.mapped_addrs.custom_addrs.get(remote);
 <a href=#641 id=641 data-nosnippet>641</a>                    noq_meta.addr = mapped_addr.private_socket_addr();
-<a href=#642 id=642 data-nosnippet>642</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(local) = <span class="kw-2">&amp;</span>recv_info.local {
+<a href=#642 id=642 data-nosnippet>642</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(local) = recv_info.local() {
 <a href=#643 id=643 data-nosnippet>643</a>                        <span class="kw">let </span>local_mapped = <span class="self">self</span>.mapped_addrs.custom_addrs.get(local);
 <a href=#644 id=644 data-nosnippet>644</a>                        noq_meta.dst_ip = <span class="prelude-val">Some</span>(local_mapped.private_socket_addr().ip());
 <a href=#645 id=645 data-nosnippet>645</a>                    }
