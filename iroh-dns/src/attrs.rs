@@ -101,7 +101,10 @@ pub(crate) struct TxtAttrs<T> {
 
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates [`TxtAttrs`] from an endpoint id and an iterator of key-value pairs.
-    pub fn from_parts(endpoint_id: EndpointId, pairs: impl Iterator<Item = (T, String)>) -> Self {
+    pub(crate) fn from_parts(
+        endpoint_id: EndpointId,
+        pairs: impl Iterator<Item = (T, String)>,
+    ) -> Self {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for (k, v) in pairs {
             attrs.entry(k).or_default().push(v);
@@ -110,7 +113,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Creates [`TxtAttrs`] from an endpoint id and an iterator of "{key}={value}" strings.
-    pub fn from_strings(
+    pub(crate) fn from_strings(
         endpoint_id: EndpointId,
         strings: impl Iterator<Item = String>,
     ) -> Result<Self, ParseError> {
@@ -131,12 +134,12 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Returns the parsed attributes.
-    pub fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
+    pub(crate) fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
         &self.attrs
     }
 
     /// Returns the endpoint id.
-    pub fn endpoint_id(&self) -> EndpointId {
+    pub(crate) fn endpoint_id(&self) -> EndpointId {
         self.endpoint_id
     }
 
@@ -144,7 +147,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     ///
     /// The `name` is the queried DNS name. The `lookup` iterator yields TXT record
     /// values that implement [`Display`].
-    pub fn from_txt_lookup(
+    pub(crate) fn from_txt_lookup(
         name: String,
         lookup: impl Iterator<Item = impl Display>,
     ) -> Result<Self, ParseError> {
@@ -154,7 +157,9 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Parses a [`pkarr::SignedPacket`].
-    pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self, ParseError> {
+    pub(crate) fn from_pkarr_signed_packet(
+        packet: &pkarr::SignedPacket,
+    ) -> Result<Self, ParseError> {
         let pubkey = packet.public_key();
         let endpoint_id = EndpointId::from_bytes(pubkey.as_bytes()).expect("valid key");
         let txt_strs = packet.txt_records(IROH_TXT_NAME);
@@ -162,7 +167,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Converts to `{key}={value}` strings.
-    pub fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
+    pub(crate) fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
         self.attrs
             .iter()
             .flat_map(move |(k, vs)| vs.iter().map(move |v| format!("{k}={v}")))
@@ -171,7 +176,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates a [`pkarr::SignedPacket`]
     ///
     /// This constructs a DNS packet and signs it with a [`SecretKey`].
-    pub fn to_pkarr_signed_packet(
+    pub(crate) fn to_pkarr_signed_packet(
         &self,
         secret_key: &SecretKey,
         ttl: u32,

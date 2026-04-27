@@ -40,7 +40,6 @@ netwatch = "0.16"
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-mainline = { version = "6", optional = true }
 noq = { version = "0.18.0", default-features = false, features = ["rustls"] }
 noq-proto = { version = "0.17", default-features = false }
 noq-udp = { version = "0.10", default-features = false }
@@ -69,8 +68,6 @@ pkcs8 = "0.11.0-rc.9"
 # metrics
 iroh-metrics = { version = "0.38", default-features = false }
 
-# mdns
-swarm-discovery = { version = "0.6.0", optional = true }
 futures-util = "0.3"
 
 # test_utils
@@ -142,7 +139,7 @@ wasm-bindgen-test = "0.3.62"
 
 # patchbay netsim test dependencies (linux only)
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-ctor = "0.8"
+ctor = "0.10"
 patchbay = { version = "0.5", features = ["iroh-metrics"] }
 testdir = "0.10"
 
@@ -154,8 +151,6 @@ default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring"]
 portmapper = ["dep:portmapper"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper?/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
-address-lookup-mdns = ["dep:swarm-discovery"]
-address-lookup-pkarr-dht = ["dep:mainline"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["iroh-relay/platform-verifier"]
 qlog = ["noq/qlog"]
@@ -195,14 +190,6 @@ required-features = []
 [[example]]
 name = "connect-unreliable"
 required-features = []
-
-[[example]]
-name = "dht_address_lookup"
-required-features = ["address-lookup-pkarr-dht"]
-
-[[example]]
-name = "mdns_address_lookup"
-required-features = ["address-lookup-mdns"]
 
 [[example]]
 name = "search"

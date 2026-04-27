@@ -22,7 +22,7 @@ use crate::{
 };
 
 #[derive(derive_more::Debug)]
-pub struct NodeZoneHandler {
+pub(super) struct NodeZoneHandler {
     serial: u32,
     origins: Vec<Name>,
     #[debug("InMemoryZoneHandler")]
@@ -34,7 +34,7 @@ pub struct NodeZoneHandler {
 }
 
 impl NodeZoneHandler {
-    pub fn new(
+    pub(super) fn new(
         zones: ZoneStore,
         static_zone_handler: InMemoryZoneHandler,
         origins: Vec<Name>,
@@ -53,11 +53,11 @@ impl NodeZoneHandler {
         })
     }
 
-    pub fn origins(&self) -> impl Iterator<Item = &Name> {
+    pub(super) fn origins(&self) -> impl Iterator<Item = &Name> {
         self.origins.iter()
     }
 
-    pub fn serial(&self) -> u32 {
+    pub(super) fn serial(&self) -> u32 {
         self.serial
     }
 

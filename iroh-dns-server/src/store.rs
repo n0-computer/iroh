@@ -10,6 +10,7 @@ use iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError, Timestamp};
 use lru::LruCache;
 use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_error::{Result, StdResultExt};
+pub(crate) use signed_packets::Options;
 use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};
 use ttl_cache::TtlCache;
@@ -22,15 +23,14 @@ use crate::{
 };
 
 mod signed_packets;
-pub use signed_packets::Options as ZoneStoreOptions;
 
 /// Cache up to 1 million pkarr zones by default
-pub const DEFAULT_CACHE_CAPACITY: usize = 1024 * 1024;
+const DEFAULT_CACHE_CAPACITY: usize = 1024 * 1024;
 /// Default TTL for DHT cache entries
-pub const DHT_CACHE_TTL: Duration = Duration::from_secs(300);
+const DHT_CACHE_TTL: Duration = Duration::from_secs(300);
 
 /// Where a new pkarr packet comes from
-pub enum PacketSource {
+pub(crate) enum PacketSource {
     /// Received via HTTPS relay PUT
     PkarrPublish,
 }
@@ -40,7 +40,7 @@ pub enum PacketSource {
 /// Packets are stored in the persistent `SignedPacketStore`, and cached on-demand in an in-memory LRU
 /// cache used for resolving DNS queries.
 #[derive(Debug, Clone)]
-pub struct ZoneStore {
+pub(crate) struct ZoneStore {
     cache: Arc<Mutex<ZoneCache>>,
     store: Arc<SignedPacketStore>,
     dht: Option<Dht>,
@@ -49,9 +49,9 @@ pub struct ZoneStore {
 
 impl ZoneStore {
     /// Create a persistent store
-    pub fn persistent(
+    pub(crate) fn persistent(
         path: impl AsRef<Path>,
-        options: ZoneStoreOptions,
+        options: Options,
         metrics: Arc<Metrics>,
     ) -> Result<Self> {
         let packet_store = SignedPacketStore::persistent(path, options, metrics.clone())?;
@@ -59,7 +59,8 @@ impl ZoneStore {
     }
 
     /// Create an in-memory store.
-    pub fn in_memory(options: ZoneStoreOptions, metrics: Arc<Metrics>) -> Result<Self> {
+    #[cfg(test)]
+    pub(crate) fn in_memory(options: Options, metrics: Arc<Metrics>) -> Result<Self> {
         let packet_store = SignedPacketStore::in_memory(options, metrics.clone())?;
         Ok(Self::new(packet_store, metrics))
     }
@@ -70,7 +71,7 @@ impl ZoneStore {
     ///
     /// Optionally set custom bootstrap nodes. If `bootstrap` is empty it will use the default
     /// mainline bootstrap nodes.
-    pub fn with_mainline_fallback(self, bootstrap: BootstrapOption) -> Self {
+    pub(crate) fn with_mainline_fallback(self, bootstrap: BootstrapOption) -> Self {
         let mut builder = DhtBuilder::default();
         if let BootstrapOption::Custom(ref nodes) = bootstrap {
             builder.bootstrap(nodes);
@@ -83,7 +84,7 @@ impl ZoneStore {
     }
 
     /// Create a new zone store.
-    pub fn new(store: SignedPacketStore, metrics: Arc<Metrics>) -> Self {
+    fn new(store: SignedPacketStore, metrics: Arc<Metrics>) -> Self {
         let zone_cache = ZoneCache::new(DEFAULT_CACHE_CAPACITY);
         Self {
             store: Arc::new(store),
@@ -95,7 +96,7 @@ impl ZoneStore {
 
     /// Resolve a DNS query.
     #[tracing::instrument("resolve", skip_all, fields(pubkey=%pubkey,name=%name,typ=%record_type))]
-    pub async fn resolve(
+    pub(crate) async fn resolve(
         &self,
         pubkey: &PublicKeyBytes,
         name: &Name,
@@ -161,7 +162,10 @@ impl ZoneStore {
     /// Get the latest signed packet for a pubkey.
     // allow unused async: this will be async soon.
     #[allow(clippy::unused_async)]
-    pub async fn get_signed_packet(&self, pubkey: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
+    pub(crate) async fn get_signed_packet(
+        &self,
+        pubkey: &PublicKeyBytes,
+    ) -> Result<Option<SignedPacket>> {
         self.store.get(pubkey).await
     }
 
@@ -171,7 +175,11 @@ impl ZoneStore {
     /// pubkey.
     // allow unused async: this will be async soon.
     #[allow(clippy::unused_async)]
-    pub async fn insert(&self, signed_packet: SignedPacket, _source: PacketSource) -> Result<bool> {
+    pub(crate) async fn insert(
+        &self,
+        signed_packet: SignedPacket,
+        _source: PacketSource,
+    ) -> Result<bool> {
         let pubkey = PublicKeyBytes::from_signed_packet(&signed_packet);
         if self.store.upsert(signed_packet).await? {
             self.metrics.pkarr_publish_update.inc();

@@ -7,10 +7,10 @@ use hickory_server::proto;
 use n0_error::{Result, ensure_any};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
 /// JSON representation of a DNS response
 /// See: <https://developers.google.com/speed/public-dns/docs/doh/json>
-pub struct DnsResponse {
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct DnsResponse {
     /// Standard DNS response code
     #[serde(rename = "Status")]
     pub status: u32,
@@ -46,7 +46,7 @@ pub struct DnsResponse {
 
 impl DnsResponse {
     /// Create a new JSON response from a DNS message
-    pub fn from_message(message: proto::op::Message) -> Result<Self> {
+    pub(crate) fn from_message(message: proto::op::Message) -> Result<Self> {
         ensure_any!(
             message.metadata.message_type == proto::op::MessageType::Response,
             "Expected message type to be response"
@@ -84,17 +84,17 @@ impl DnsResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 /// JSON representation of a DNS question
-pub struct DohQuestionJson {
+pub(crate) struct DohQuestionJson {
     /// FQDN with trailing dot
-    pub name: String,
+    pub(crate) name: String,
     /// Standard DNS RR type
     #[serde(rename = "type")]
-    pub question_type: u16,
+    pub(crate) question_type: u16,
 }
 
 impl DohQuestionJson {
     /// Create a new JSON question from a DNS query
-    pub fn from_query(query: &proto::op::Query) -> Self {
+    pub(crate) fn from_query(query: &proto::op::Query) -> Self {
         Self {
             name: query.name().to_string(),
             question_type: query.query_type().into(),
@@ -104,22 +104,22 @@ impl DohQuestionJson {
 
 #[derive(Debug, Serialize, Deserialize)]
 /// JSON representation of a DNS record
-pub struct DohRecordJson {
+pub(crate) struct DohRecordJson {
     /// FQDN with trailing dot
-    pub name: String,
+    pub(crate) name: String,
     /// Standard DNS RR type
     #[serde(rename = "type")]
-    pub record_type: u16,
+    pub(crate) record_type: u16,
     /// Time-to-live, in seconds
     #[serde(rename = "TTL")]
-    pub ttl: u32,
+    pub(crate) ttl: u32,
     /// Record data
-    pub data: String,
+    pub(crate) data: String,
 }
 
 impl DohRecordJson {
     /// Create a new JSON record from a DNS record
-    pub fn from_record(record: &proto::rr::Record) -> Result<Self> {
+    pub(crate) fn from_record(record: &proto::rr::Record) -> Result<Self> {
         Ok(Self {
             name: record.name.to_string(),
             record_type: record.record_type().into(),

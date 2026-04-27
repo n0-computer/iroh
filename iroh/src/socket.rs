@@ -569,8 +569,21 @@ impl Socket {
         for i in 0..metas.len() {
             let noq_meta = &mut metas[i];
             let source_addr = &source_addrs[i];
-
-            let datagram_count = noq_meta.len.div_ceil(noq_meta.stride);
+            let datagram_count = if noq_meta.stride == 0 {
+                if noq_meta.len > 0 {
+                    warn!(
+                        src = ?source_addr,
+                        len = noq_meta.len,
+                        "received datagram with stride=0 but len>0",
+                    );
+                    // fix the weird len
+                    noq_meta.len = 0;
+                }
+                // one empty datagram
+                1
+            } else {
+                noq_meta.len.div_ceil(noq_meta.stride)
+            };
             self.metrics
                 .socket
                 .recv_datagrams
@@ -580,7 +593,7 @@ impl Socket {
                     src = ?source_addr,
                     len = noq_meta.len,
                     stride = %noq_meta.stride,
-                    datagram_count = noq_meta.len.div_ceil(noq_meta.stride),
+                    datagram_count,
                     "GRO datagram received",
                 );
                 self.metrics.socket.recv_gro_datagrams.inc();
@@ -1557,7 +1570,7 @@ impl Actor {
                     );
                     current_netmon_state = state;
                     self.sock.metrics.socket.actor_link_change.inc();
-                    self.handle_network_change(is_major).await;
+                    self.handle_network_change(is_major);
                 }
                 remote_id = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
                     trace!(%remote_id, "cleaned up RemoteStateActor");
@@ -1607,7 +1620,7 @@ impl Actor {
     ///
     /// This is triggered when the netmon actor detects a change in the local network
     /// interfaces, assigned IP addresses and routes.
-    async fn handle_network_change(&mut self, is_major: bool) {
+    fn handle_network_change(&mut self, is_major: bool) {
         debug!(is_major, "link change detected");
 
         if is_major {
@@ -1617,7 +1630,7 @@ impl Actor {
             self.transports_network_change.check_relay_connection();
 
             #[cfg(not(wasm_browser))]
-            self.sock.dns_resolver.reset().await;
+            self.sock.dns_resolver.reset();
             self.re_stun(UpdateReason::LinkChangeMajor);
         } else {
             self.re_stun(UpdateReason::LinkChangeMinor);
@@ -1751,7 +1764,7 @@ impl Actor {
             }
             #[cfg(all(test, with_crypto_provider))]
             ActorMessage::ForceNetworkChange(is_major) => {
-                self.handle_network_change(is_major).await;
+                self.handle_network_change(is_major);
             }
         }
     }

@@ -13,6 +13,7 @@ rust-version = "1.89"
 workspace = true
 
 [dependencies]
+arc-swap = "1.9.1"
 derive_more = { version = "2.0.1", features = ["debug"] }
 iroh-base = { version = "0.98.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 n0-error = "0.1.3"

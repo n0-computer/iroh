@@ -32,7 +32,7 @@ const CUSTOM_MAPPED_SUBNET: [u8; 2] = [0, 3];
 const ENDPOINT_ID_SUBNET: [u8; 2] = [0; 2];
 
 /// A default fake addr, using the maximum addr that the internal fake addrs could be using.
-pub const DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
+pub(crate) const DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
     Ipv6Addr::new(
         u16::from_be_bytes([ADDR_PREFIXL, 21]),
         u16::from_be_bytes([7, 10]),

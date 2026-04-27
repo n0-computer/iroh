@@ -751,7 +751,7 @@ impl TransportBias {
 /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
 /// - Relay is a backup transport (only used when no primary transport is available)
 #[derive(Debug, Clone)]
-pub struct TransportBiasMap {
+pub(crate) struct TransportBiasMap {
     map: Arc<FxHashMap<AddrKind, TransportBias>>,
 }
 
@@ -773,7 +773,7 @@ impl Default for TransportBiasMap {
 
 impl TransportBiasMap {
     /// Returns a new map with the given bias added or updated.
-    pub fn with_bias(self, kind: AddrKind, bias: TransportBias) -> Self {
+    pub(crate) fn with_bias(self, kind: AddrKind, bias: TransportBias) -> Self {
         let mut map = (*self.map).clone();
         map.insert(kind, bias);
         Self { map: Arc::new(map) }
@@ -782,7 +782,7 @@ impl TransportBiasMap {
     /// Gets the bias for the given address.
     ///
     /// Returns a primary transport with no RTT bias if no specific bias is configured.
-    pub fn get(&self, addr: &Addr) -> TransportBias {
+    pub(crate) fn get(&self, addr: &Addr) -> TransportBias {
         self.map
             .get(&addr.addr_kind())
             .cloned()
@@ -790,7 +790,7 @@ impl TransportBiasMap {
     }
 
     /// Computes path selection data for a given address and RTT.
-    pub fn path_selection_data(&self, addr: &Addr, rtt: Duration) -> PathSelectionData {
+    pub(crate) fn path_selection_data(&self, addr: &Addr, rtt: Duration) -> PathSelectionData {
         let bias = self.get(addr);
         let tpe = bias.transport_type;
         let biased_rtt = rtt.as_nanos() as i128 + bias.rtt_bias;
@@ -804,15 +804,15 @@ impl TransportBiasMap {
 
 /// Data used during path selection.
 #[derive(Debug)]
-pub struct PathSelectionData {
+pub(crate) struct PathSelectionData {
     /// Type of the transport.
-    pub transport_type: TransportType,
+    pub(crate) transport_type: TransportType,
     /// Measured RTT for path selection.
-    pub rtt: Duration,
+    pub(crate) rtt: Duration,
     /// Biased RTT for path selection.
     ///
     /// This is an i128 so we can subtract an advantage for e.g. IPv6 without underflowing.
-    pub biased_rtt: i128,
+    pub(crate) biased_rtt: i128,
 }
 
 impl PathSelectionData {
@@ -820,7 +820,7 @@ impl PathSelectionData {
     ///
     /// First part is the status, 0 for Available, 1 for Backup.
     /// Second part is the biased RTT.
-    pub fn sort_key(&self) -> (u8, i128) {
+    pub(crate) fn sort_key(&self) -> (u8, i128) {
         (self.transport_type as u8, self.biased_rtt)
     }
 }

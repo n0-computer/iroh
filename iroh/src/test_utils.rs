@@ -42,18 +42,18 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server), SpawnErr
 ///
 /// The return value is similar to [`run_relay_server`].
 pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
-    let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+    let (_certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
     let tls = TlsConfig {
-        cert: CertConfig::<(), ()>::Manual { certs },
+        cert: CertConfig::Manual {
+            server_config: server_config.clone(),
+        },
         https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        quic_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        server_config,
     };
     let quic = if quic {
         Some(QuicConfig {
-            server_config: tls.server_config.clone(),
-            bind_addr: tls.quic_bind_addr,
+            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+            server_config: None,
         })
     } else {
         None
@@ -81,7 +81,7 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
     Ok((n, url, server))
 }
 
-pub(crate) mod dns_and_pkarr_servers {
+mod dns_and_pkarr_servers {
     use std::{net::SocketAddr, time::Duration};
 
     use iroh_base::EndpointId;
@@ -105,13 +105,13 @@ pub(crate) mod dns_and_pkarr_servers {
     #[derive(Debug)]
     pub struct DnsPkarrServer {
         /// The endpoint origin domain.
-        pub endpoint_origin: String,
+        endpoint_origin: String,
         /// The shared state of the DNS and Pkarr servers.
         state: State,
         /// The socket address of the DNS server.
-        pub nameserver: SocketAddr,
+        nameserver: SocketAddr,
         /// The HTTP URL of the Pkarr server.
-        pub pkarr_url: Url,
+        pkarr_url: Url,
         _dns_drop_guard: CleanupDropGuard,
         _pkarr_drop_guard: CleanupDropGuard,
     }
@@ -167,6 +167,11 @@ pub(crate) mod dns_and_pkarr_servers {
             DnsResolver::with_nameserver(self.nameserver)
         }
 
+        /// Returns the PKARR server HTTP URL.
+        pub fn pkarr_url(&self) -> &Url {
+            &self.pkarr_url
+        }
+
         /// Wait until a Pkarr announce for an endpoint is published to the server.
         ///
         /// If `timeout` elapses an error is returned.
@@ -194,7 +199,7 @@ pub(crate) mod dns_server {
     use super::CleanupDropGuard;
 
     /// Trait used by [`run_dns_server`] for answering DNS queries.
-    pub trait QueryHandler: Send + Sync + 'static {
+    pub(crate) trait QueryHandler: Send + Sync + 'static {
         fn resolve(
             &self,
             query: &Message,
@@ -202,7 +207,7 @@ pub(crate) mod dns_server {
         ) -> impl Future<Output = std::io::Result<()>> + Send;
     }
 
-    pub type QueryHandlerFunction = Box<
+    pub(crate) type QueryHandlerFunction = Box<
         dyn Fn(&Message, &mut Message) -> BoxFuture<std::io::Result<()>> + Send + Sync + 'static,
     >;
 
@@ -219,7 +224,7 @@ pub(crate) mod dns_server {
     /// Run a DNS server.
     ///
     /// Must pass a [`QueryHandler`] that answers queries.
-    pub async fn run_dns_server(
+    pub(crate) async fn run_dns_server(
         resolver: impl QueryHandler,
     ) -> std::io::Result<(SocketAddr, CleanupDropGuard)> {
         let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
@@ -298,7 +303,9 @@ pub(crate) mod pkarr_relay {
     use super::CleanupDropGuard;
     use crate::test_utils::pkarr_dns_state::State as AppState;
 
-    pub async fn run_pkarr_relay(state: AppState) -> std::io::Result<(Url, CleanupDropGuard)> {
+    pub(crate) async fn run_pkarr_relay(
+        state: AppState,
+    ) -> std::io::Result<(Url, CleanupDropGuard)> {
         let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
         let app = Router::new()
             .route("/pkarr/{key}", put(pkarr_put))
@@ -368,14 +375,14 @@ pub(crate) mod pkarr_dns_state {
     use crate::test_utils::dns_server::QueryHandler;
 
     #[derive(Debug, Clone)]
-    pub struct State {
+    pub(crate) struct State {
         packets: Arc<Mutex<HashMap<EndpointId, SignedPacket>>>,
         origin: String,
         notify: Arc<tokio::sync::Notify>,
     }
 
     impl State {
-        pub fn new(origin: String) -> Self {
+        pub(crate) fn new(origin: String) -> Self {
             Self {
                 packets: Default::default(),
                 origin,
@@ -383,11 +390,11 @@ pub(crate) mod pkarr_dns_state {
             }
         }
 
-        pub fn on_update(&self) -> tokio::sync::futures::Notified<'_> {
+        pub(crate) fn on_update(&self) -> tokio::sync::futures::Notified<'_> {
             self.notify.notified()
         }
 
-        pub async fn on_endpoint(
+        pub(crate) async fn on_endpoint(
             &self,
             endpoint: &EndpointId,
             timeout: Duration,
@@ -409,7 +416,7 @@ pub(crate) mod pkarr_dns_state {
             Ok(())
         }
 
-        pub fn upsert(&self, signed_packet: SignedPacket) -> std::io::Result<bool> {
+        pub(crate) fn upsert(&self, signed_packet: SignedPacket) -> std::io::Result<bool> {
             let endpoint_id = signed_packet.public_key();
             let mut map = self.packets.lock().expect("poisoned");
             let updated = match map.entry(endpoint_id) {
@@ -433,7 +440,7 @@ pub(crate) mod pkarr_dns_state {
         }
 
         /// Returns a mutex guard, do not hold over await points
-        pub fn get<F, T>(&self, endpoint_id: &EndpointId, cb: F) -> T
+        pub(crate) fn get<F, T>(&self, endpoint_id: &EndpointId, cb: F) -> T
         where
             F: FnOnce(Option<&mut SignedPacket>) -> T,
         {
@@ -442,7 +449,7 @@ pub(crate) mod pkarr_dns_state {
             cb(packet)
         }
 
-        pub fn resolve_dns(
+        pub(crate) fn resolve_dns(
             &self,
             query: &hickory_resolver::proto::op::Message,
             reply: &mut hickory_resolver::proto::op::Message,

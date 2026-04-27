@@ -11,7 +11,7 @@ use tracing::info;
 use super::error::AppError;
 use crate::{state::AppState, store::PacketSource, util::PublicKeyBytes};
 
-pub async fn put(
+pub(super) async fn put(
     State(state): State<AppState>,
     Path(key): Path<String>,
     body: Bytes,
@@ -34,7 +34,7 @@ pub async fn put(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn get(
+pub(super) async fn get(
     State(state): State<AppState>,
     Path(pubkey): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
