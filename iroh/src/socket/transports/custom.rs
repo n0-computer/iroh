@@ -11,7 +11,7 @@ use std::{
 
 use iroh_base::CustomAddr;
 
-use super::{Addr, Transmit};
+use super::{RecvInfo, Transmit};
 
 /// Custom transport.
 ///
@@ -40,7 +40,7 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
     fn create_sender(&self) -> Arc<dyn CustomSender>;
     /// poll receiving a packet on this custom endpoint.
     ///
-    /// This will be called with `bufs`, `metas` and `source_addrs` of the same length.
+    /// This will be called with `bufs`, `metas` and `recv_infos` of the same length.
     /// It is acceptable to panic if this is not the case.
     ///
     /// The maximum length of the slices is [`noq_udp::BATCH_SIZE`].
@@ -51,15 +51,16 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
     ///
     /// It does not make much sense to return addresses unrelated to this transport.
     ///
-    /// Set `local` on each [`Addr::Custom`] if the transport can identify which
-    /// of its local addresses received this packet; it surfaces via
+    /// For each filled slot, write a [`RecvInfo::new`] carrying the remote
+    /// custom address and, if the transport can identify it, the local custom
+    /// address that received the packet. The latter surfaces via
     /// [`crate::endpoint::Incoming::local_addr`].
     fn poll_recv(
         &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>>;
 
     /// Maximum number of segments to transmit (GSO).

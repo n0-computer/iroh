@@ -29,6 +29,8 @@ use url::Url;
 /// Types for defining custom transports
 pub mod transports {
     #[cfg(feature = "unstable-custom-transports")]
+    pub use super::socket::transports::RecvInfo;
+    #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
     pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias};
 }

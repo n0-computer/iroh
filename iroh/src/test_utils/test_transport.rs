@@ -20,7 +20,7 @@ use crate::{
     endpoint::{
         Builder,
         presets::Preset,
-        transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit},
+        transports::{CustomEndpoint, CustomSender, CustomTransport, RecvInfo, Transmit},
     },
 };
 
@@ -264,11 +264,11 @@ impl CustomEndpoint for TestTransport {
         cx: &mut std::task::Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
         let n = bufs.len();
         debug_assert_eq!(n, metas.len());
-        debug_assert_eq!(n, source_addrs.len());
+        debug_assert_eq!(n, recv_infos.len());
         if n == 0 {
             return Poll::Ready(Ok(0));
         }
@@ -284,8 +284,8 @@ impl CustomEndpoint for TestTransport {
             Poll::Ready(n) => n,
         };
         let mut count = 0;
-        for (((packet, meta), buf), source_addr) in
-            packets.into_iter().zip(metas).zip(bufs).zip(source_addrs)
+        for (((packet, meta), buf), recv_info) in
+            packets.into_iter().zip(metas).zip(bufs).zip(recv_infos)
         {
             if buf.len() < packet.data.len() {
                 break;
@@ -298,10 +298,7 @@ impl CustomEndpoint for TestTransport {
                 packet.data.len()
             );
             buf[..packet.data.len()].copy_from_slice(&packet.data);
-            *source_addr = Addr::Custom {
-                remote: packet.from,
-                local: Some(to_custom_addr(self.id)),
-            };
+            *recv_info = RecvInfo::new(packet.from, Some(to_custom_addr(self.id)));
             meta.len = packet.data.len();
             meta.stride = packet.data.len();
             count += 1;
