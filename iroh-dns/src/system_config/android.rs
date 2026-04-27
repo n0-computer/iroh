@@ -1,22 +1,16 @@
-//! Reads the Android system DNS configuration via JNI.
+//! Reader for Android's system DNS configuration via JNI.
 //!
-//! This module is the opt-in path enabled by
-//! [`install_android_jni_context`]. Without that call, the parent
-//! module returns [`super::SystemConfigError::PlatformUnsupported`] and
-//! the resolver falls back to the public DNS list.
+//! [`install_android_jni_context`] is the opt-in entry point: a
+//! caller that wants the device's per-network DNS supplies the
+//! `JavaVM` and the `Application` `Context` here, and subsequent
+//! [`super::read_system_conf`] calls query
+//! `LinkProperties.getDnsServers()` for the active network.
 //!
-//! Why we ship our own JNI reader instead of relying on
-//! `hickory-resolver`'s `system_conf::android`:
-//!
-//! - Hickory dereferences `ndk_context::android_context()` with
-//!   `.expect()`, panicking when no consumer has initialized the
-//!   context. We detect that case explicitly and return an error.
-//! - Hickory does not filter unreachable servers. The most painful
-//!   case in production is iPhone Personal Hotspot tethering, which
-//!   advertises a link-local IPv6 address (often `fe80::1`) as the
-//!   network's DNS server. A connected UDP socket cannot route to a
-//!   link-local address without a scope ID we do not carry, so the
-//!   query times out. We drop those entries here.
+//! This is a small reimplementation of `hickory-resolver`'s Android
+//! `system_conf` module, narrowed to return errors instead of
+//! panicking when no JNI context is installed and to drop
+//! unreachable nameservers (link-local and unspecified addresses)
+//! before handing the result back.
 
 use std::{net::IpAddr, sync::OnceLock};
 
@@ -51,57 +45,27 @@ unsafe impl Sync for JniContext {}
 
 static JNI_CONTEXT: OnceLock<JniContext> = OnceLock::new();
 
-/// Installs the Android JNI handles used by [`super::read_system_conf`].
+/// Installs the JNI handles used to read system DNS on Android.
 ///
-/// Call this once early in the process, typically from your library's
-/// `JNI_OnLoad`, when you want the resolver to honor the device's
-/// per-network DNS configuration. Without this call, the resolver
-/// uses its built-in public DNS fallback (Cloudflare and Google) and
-/// never touches JNI; that is the right behavior for many consumers
-/// but means an enterprise or VPN-injected DNS will not be observed.
+/// Call this once early in your process, typically from `JNI_OnLoad`,
+/// to make the resolver honor the device's per-network DNS
+/// configuration. Without it the resolver uses its built-in public
+/// DNS fallback and never touches JNI.
 ///
-/// Calling this more than once is a no-op: the first call wins. This
-/// matches the JVM lifecycle, which only loads each `.so` once.
-///
-/// `java_vm` must be a valid [`JavaVM`] pointer for the running JVM.
-/// Pass the `*mut JavaVM` your `JNI_OnLoad` receives. Note that the
-/// JNI `JNIEnv*` is per-thread and is **not** the same thing; passing
-/// a `JNIEnv*` here will produce undefined behavior the next time the
-/// resolver runs.
-///
-/// `application_context` must be a global reference to an
-/// [`android.content.Context`]. Promote your local reference to a
-/// global one with `JNIEnv::NewGlobalRef` (or `jni-rs`'s
-/// `JNIEnv::new_global_ref`) and `mem::forget` the wrapper, or its
-/// drop will release the reference and the next read will dereference
-/// freed memory. Prefer the singleton Application context obtained
-/// from `ActivityThread.currentApplication()`; passing an Activity or
-/// Service Context can keep that component alive for the rest of the
-/// process and breaks `getSystemService("connectivity")` once the
-/// component is destroyed.
+/// Calling this more than once is a no-op; the first call wins.
 ///
 /// # Safety
 ///
-/// The caller must guarantee that:
-///
-/// - `java_vm` is a valid `*mut JavaVM` for the running JVM (not a
-///   `*mut JNIEnv`).
-/// - `application_context` is a JNI global reference (not a local
-///   reference) to an `android.content.Context`, ideally the
-///   `Application` singleton.
-/// - Both pointers remain valid until the process exits.
-///
-/// Violating any of these invariants leads to undefined behavior the
-/// next time the resolver attempts to read system DNS.
-///
-/// # Notes
-///
-/// The `jni-rs` crate keeps a process-wide `JavaVM` singleton: the
-/// first `JavaVM::from_raw` call wins. If another library in the
-/// process has already registered a different `JavaVM*` (very unusual
-/// outside of test harnesses; only one JVM exists per Android process)
-/// our pointer is silently ignored and the existing `JavaVM` is
-/// reused. This is benign on Android.
+/// - `java_vm` must be a valid [`JavaVM`] pointer for the running
+///   JVM. The per-thread `JNIEnv*` is not the same thing.
+/// - `application_context` must be a JNI global reference (not a
+///   local one) to an [`android.content.Context`]. Promote a local
+///   reference with `JNIEnv::NewGlobalRef` and prevent its drop, or
+///   the next read dereferences freed memory. Pass the singleton
+///   `Application` from `ActivityThread.currentApplication()`
+///   rather than an `Activity` or `Service`, since the latter
+///   become unusable once their component is destroyed.
+/// - Both pointers must remain valid until the process exits.
 ///
 /// [`JavaVM`]: https://docs.oracle.com/en/java/javase/21/docs/specs/jni/invocation.html#javavm
 /// [`android.content.Context`]: https://developer.android.com/reference/android/content/Context

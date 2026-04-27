@@ -1,17 +1,9 @@
 //! Reader for the host system's DNS configuration.
 //!
 //! Wraps [`hickory_resolver::system_conf::read_system_conf`] in a
-//! crate-local error type and applies platform-specific sanitization.
-//!
-//! On Android the upstream reader is unsafe to call from a non-JVM
-//! context: it dereferences an `ndk_context` that the consumer has not
-//! necessarily initialized, panicking on `.expect()`. Even when
-//! initialized, the API often hands back link-local IPv6 servers
-//! (notably from iPhone Personal Hotspot tethering) that a connected
-//! UDP socket cannot reach without scope IDs. We sidestep both
-//! problems by skipping that path entirely. Consumers who want real
-//! system DNS on Android can opt into a safe JNI reader by calling
-//! [`android::install_android_jni_context`].
+//! crate-local error type and filters out nameservers that cannot
+//! plausibly be reached from a connected UDP socket. On Android the
+//! reader is opt-in: see [`android::install_android_jni_context`].
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -26,37 +18,30 @@ use n0_error::{anyerr, e};
 pub(crate) mod android;
 
 /// Errors returned by [`read_system_conf`].
-///
-/// Each variant is constructed on a subset of platforms; the
-/// `dead_code` allow keeps the cross-platform definition compile-clean
-/// without forcing callers into cfg-gated match arms.
 #[allow(dead_code, reason = "variants are platform-specific")]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub(crate) enum SystemConfigError {
     /// The platform reader returned an error.
     ///
-    /// On non-Android platforms the source is hickory's
-    /// system-config error. On Android (when a JNI context has been
-    /// installed) it wraps the underlying JNI error.
+    /// The source wraps either hickory's system-config error
+    /// (non-Android) or the underlying JNI error (Android).
     #[error("failed to read system DNS configuration")]
     Read { source: AnyError },
-    /// System DNS reads are disabled on this platform.
+    /// No system reader is available on this platform.
     ///
-    /// Currently raised on Android when no JNI context has been
-    /// installed: see the module-level docs.
+    /// Raised on Android until [`android::install_android_jni_context`]
+    /// has been called.
     #[error("system DNS reads are disabled on this platform")]
     PlatformUnsupported {},
 }
 
-/// Reads the host system's DNS configuration into a hickory [`ResolverConfig`].
+/// Reads the host system's DNS configuration into a [`ResolverConfig`].
 ///
-/// Drops nameservers that are known to be unusable from a regular UDP
-/// socket: Windows site-local IPv6 anycast (`fec0:0:0:ffff::{1,2,3}`),
-/// IPv6 link-local (`fe80::/10`), IPv4 link-local (`169.254.0.0/16`),
-/// and the IPv4 and IPv6 unspecified addresses. These either need a
-/// scope ID we do not carry or are not routable at all; probing them
-/// would burn the per-attempt budget waiting for the timeout.
+/// Drops nameservers that cannot plausibly be queried from a connected
+/// UDP socket: Windows site-local IPv6 anycast, IPv6 and IPv4
+/// link-local, and the unspecified addresses. See
+/// [`is_usable_nameserver`] for the exact filter.
 #[cfg(not(target_os = "android"))]
 pub(crate) fn read_system_conf() -> Result<(ResolverConfig, ResolverOpts), SystemConfigError> {
     let (raw, options) = hickory_resolver::system_conf::read_system_conf()
@@ -64,13 +49,11 @@ pub(crate) fn read_system_conf() -> Result<(ResolverConfig, ResolverOpts), Syste
     Ok((sanitize(raw), options))
 }
 
-/// Reads system DNS through the consumer-supplied JNI context.
+/// Reads the system DNS configuration through the JNI handles installed
+/// by [`android::install_android_jni_context`].
 ///
-/// Returns [`SystemConfigError::PlatformUnsupported`] until the
-/// consumer calls [`android::install_android_jni_context`]. After
-/// that, the JNI reader inspects `LinkProperties.getDnsServers()` for
-/// the active network and returns a [`ResolverConfig`] with the
-/// usable entries.
+/// Returns [`SystemConfigError::PlatformUnsupported`] until that
+/// function has been called.
 #[cfg(target_os = "android")]
 pub(crate) fn read_system_conf() -> Result<(ResolverConfig, ResolverOpts), SystemConfigError> {
     android::read_system_conf()
@@ -107,16 +90,12 @@ fn is_usable_nameserver_config(ns: &NameServerConfig) -> bool {
 /// connected UDP socket.
 ///
 /// Drops link-local IPv6 (`fe80::/10`), link-local IPv4
-/// (`169.254.0.0/16`), and the unspecified addresses. iPhone Personal
-/// Hotspot tethering routinely advertises `fe80::1` as the network's
-/// DNS server; without a scope ID a connected UDP socket cannot route
-/// to it, so attempts time out instead of returning a useful error.
+/// (`169.254.0.0/16`), and the unspecified addresses. These either
+/// need a scope ID we do not carry (link-local) or are not routable
+/// at all (unspecified).
 ///
-/// This filter is for *reachability* only, not trust. A device-local
-/// actor with `ACCESS_NETWORK_STATE` (or a hostile VPN) can still
-/// inject an attacker-controlled global IP that survives the filter;
-/// callers that need authenticated DNS should add DNS-over-HTTPS or
-/// DNSSEC on top.
+/// This is a reachability filter, not a trust boundary. Authenticated
+/// DNS still requires DNS-over-HTTPS or DNSSEC on top.
 pub(crate) fn is_usable_nameserver(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => ip != Ipv4Addr::UNSPECIFIED && !ip.is_link_local(),
