@@ -208,8 +208,6 @@ impl Incoming {
     }
 
     /// Returns the local address that received this incoming connection.
-    ///
-    /// The variant matches the transport class of [`Incoming::remote_addr`].
     pub fn local_addr(&self) -> IncomingLocalAddr {
         match self.ep.to_transport_addr(self.inner.remote_address()) {
             transports::Addr::Ip(_) => IncomingLocalAddr::Ip(self.inner.local_ip()),

@@ -500,8 +500,7 @@ mod tests {
         Ok(())
     }
 
-    /// Custom transports can surface a local address per incoming packet, which
-    /// is reported by [`crate::endpoint::Incoming::local_addr`].
+    /// Test that custom transports can surface a local address per incoming packet.
     #[tokio::test]
     #[traced_test]
     async fn test_custom_transport_local_addr() -> Result<()> {
