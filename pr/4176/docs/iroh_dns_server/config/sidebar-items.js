@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["BootstrapOption"],"struct":["Config","MainlineConfig","MetricsConfig","StoreConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["CertMode","RateLimitConfig"],"struct":["Config","DnsConfig","HttpConfig","HttpsConfig","MainlineConfig","MetricsConfig","StoreConfig"]};
