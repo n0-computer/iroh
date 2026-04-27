@@ -11,7 +11,7 @@
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>iroh_base::CustomAddr;
 <a href=#13 id=13 data-nosnippet>13</a>
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use super</span>::{Addr, Transmit};
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use super</span>::{RecvInfo, Transmit};
 <a href=#15 id=15 data-nosnippet>15</a>
 <a href=#16 id=16 data-nosnippet>16</a><span class="doccomment">/// Custom transport.
 <a href=#17 id=17 data-nosnippet>17</a>///
@@ -40,7 +40,7 @@
 <a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;<span class="kw">dyn </span>CustomSender&gt;;
 <a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// poll receiving a packet on this custom endpoint.
 <a href=#42 id=42 data-nosnippet>42</a>    ///
-<a href=#43 id=43 data-nosnippet>43</a>    /// This will be called with `bufs`, `metas` and `source_addrs` of the same length.
+<a href=#43 id=43 data-nosnippet>43</a>    /// This will be called with `bufs`, `metas` and `recv_infos` of the same length.
 <a href=#44 id=44 data-nosnippet>44</a>    /// It is acceptable to panic if this is not the case.
 <a href=#45 id=45 data-nosnippet>45</a>    ///
 <a href=#46 id=46 data-nosnippet>46</a>    /// The maximum length of the slices is [`noq_udp::BATCH_SIZE`].
@@ -51,47 +51,48 @@
 <a href=#51 id=51 data-nosnippet>51</a>    ///
 <a href=#52 id=52 data-nosnippet>52</a>    /// It does not make much sense to return addresses unrelated to this transport.
 <a href=#53 id=53 data-nosnippet>53</a>    ///
-<a href=#54 id=54 data-nosnippet>54</a>    /// Set `local` on each [`Addr::Custom`] if the transport can identify which
-<a href=#55 id=55 data-nosnippet>55</a>    /// of its local addresses received this packet; it surfaces via
-<a href=#56 id=56 data-nosnippet>56</a>    /// [`crate::endpoint::Incoming::local_addr`].
-<a href=#57 id=57 data-nosnippet>57</a>    </span><span class="kw">fn </span>poll_recv(
-<a href=#58 id=58 data-nosnippet>58</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#59 id=59 data-nosnippet>59</a>        cx: <span class="kw-2">&amp;mut </span>Context,
-<a href=#60 id=60 data-nosnippet>60</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#61 id=61 data-nosnippet>61</a>        metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
-<a href=#62 id=62 data-nosnippet>62</a>        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
-<a href=#63 id=63 data-nosnippet>63</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt;;
-<a href=#64 id=64 data-nosnippet>64</a>
-<a href=#65 id=65 data-nosnippet>65</a>    <span class="doccomment">/// Maximum number of segments to transmit (GSO).
-<a href=#66 id=66 data-nosnippet>66</a>    ///
-<a href=#67 id=67 data-nosnippet>67</a>    /// This controls how many datagrams Noq will batch into a single transmit.
-<a href=#68 id=68 data-nosnippet>68</a>    /// The default is 1 (no batching). Custom transports that support batching
-<a href=#69 id=69 data-nosnippet>69</a>    /// can override this to allow more efficient transmission.
-<a href=#70 id=70 data-nosnippet>70</a>    </span><span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NonZeroUsize {
-<a href=#71 id=71 data-nosnippet>71</a>        NonZeroUsize::MIN
-<a href=#72 id=72 data-nosnippet>72</a>    }
-<a href=#73 id=73 data-nosnippet>73</a>}
-<a href=#74 id=74 data-nosnippet>74</a>
-<a href=#75 id=75 data-nosnippet>75</a><span class="doccomment">/// Custom sender
-<a href=#76 id=76 data-nosnippet>76</a>///
-<a href=#77 id=77 data-nosnippet>77</a>/// A sender provides a poll based interface to send packets to custom addresses.
-<a href=#78 id=78 data-nosnippet>78</a>/// It can decide whether it wants to send to a given custom address type.
-<a href=#79 id=79 data-nosnippet>79</a>///
-<a href=#80 id=80 data-nosnippet>80</a>/// This is not enforced at type level, but [CustomSender::poll_send] should
-<a href=#81 id=81 data-nosnippet>81</a>/// only be called with addresses for which [CustomSender::is_valid_send_addr]
-<a href=#82 id=82 data-nosnippet>82</a>/// returns true.
-<a href=#83 id=83 data-nosnippet>83</a></span><span class="kw">pub trait </span>CustomSender: std::fmt::Debug + Send + Sync + <span class="lifetime">'static </span>{
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="doccomment">/// True if this sender can send to the given address.
-<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>CustomAddr) -&gt; bool;
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// poll sending a packet on this sender.
-<a href=#87 id=87 data-nosnippet>87</a>    ///
-<a href=#88 id=88 data-nosnippet>88</a>    /// This will only be called from iroh with addresses for which [CustomSender::is_valid_send_addr] returns true.
-<a href=#89 id=89 data-nosnippet>89</a>    ///
-<a href=#90 id=90 data-nosnippet>90</a>    /// You should handle invalid addresses by returning an error.
-<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="kw">fn </span>poll_send(
-<a href=#92 id=92 data-nosnippet>92</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#93 id=93 data-nosnippet>93</a>        cx: <span class="kw-2">&amp;mut </span>std::task::Context,
-<a href=#94 id=94 data-nosnippet>94</a>        dst: <span class="kw-2">&amp;</span>CustomAddr,
-<a href=#95 id=95 data-nosnippet>95</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#96 id=96 data-nosnippet>96</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt;;
-<a href=#97 id=97 data-nosnippet>97</a>}</code></pre></div></section></main></body></html>
+<a href=#54 id=54 data-nosnippet>54</a>    /// For each filled slot, write a [`RecvInfo::new`] carrying the remote
+<a href=#55 id=55 data-nosnippet>55</a>    /// custom address and, if the transport can identify it, the local custom
+<a href=#56 id=56 data-nosnippet>56</a>    /// address that received the packet. The latter surfaces via
+<a href=#57 id=57 data-nosnippet>57</a>    /// [`crate::endpoint::Incoming::local_addr`].
+<a href=#58 id=58 data-nosnippet>58</a>    </span><span class="kw">fn </span>poll_recv(
+<a href=#59 id=59 data-nosnippet>59</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#60 id=60 data-nosnippet>60</a>        cx: <span class="kw-2">&amp;mut </span>Context,
+<a href=#61 id=61 data-nosnippet>61</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#62 id=62 data-nosnippet>62</a>        metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
+<a href=#63 id=63 data-nosnippet>63</a>        recv_infos: <span class="kw-2">&amp;mut </span>[RecvInfo],
+<a href=#64 id=64 data-nosnippet>64</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt;;
+<a href=#65 id=65 data-nosnippet>65</a>
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// Maximum number of segments to transmit (GSO).
+<a href=#67 id=67 data-nosnippet>67</a>    ///
+<a href=#68 id=68 data-nosnippet>68</a>    /// This controls how many datagrams Noq will batch into a single transmit.
+<a href=#69 id=69 data-nosnippet>69</a>    /// The default is 1 (no batching). Custom transports that support batching
+<a href=#70 id=70 data-nosnippet>70</a>    /// can override this to allow more efficient transmission.
+<a href=#71 id=71 data-nosnippet>71</a>    </span><span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NonZeroUsize {
+<a href=#72 id=72 data-nosnippet>72</a>        NonZeroUsize::MIN
+<a href=#73 id=73 data-nosnippet>73</a>    }
+<a href=#74 id=74 data-nosnippet>74</a>}
+<a href=#75 id=75 data-nosnippet>75</a>
+<a href=#76 id=76 data-nosnippet>76</a><span class="doccomment">/// Custom sender
+<a href=#77 id=77 data-nosnippet>77</a>///
+<a href=#78 id=78 data-nosnippet>78</a>/// A sender provides a poll based interface to send packets to custom addresses.
+<a href=#79 id=79 data-nosnippet>79</a>/// It can decide whether it wants to send to a given custom address type.
+<a href=#80 id=80 data-nosnippet>80</a>///
+<a href=#81 id=81 data-nosnippet>81</a>/// This is not enforced at type level, but [CustomSender::poll_send] should
+<a href=#82 id=82 data-nosnippet>82</a>/// only be called with addresses for which [CustomSender::is_valid_send_addr]
+<a href=#83 id=83 data-nosnippet>83</a>/// returns true.
+<a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">pub trait </span>CustomSender: std::fmt::Debug + Send + Sync + <span class="lifetime">'static </span>{
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// True if this sender can send to the given address.
+<a href=#86 id=86 data-nosnippet>86</a>    </span><span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>CustomAddr) -&gt; bool;
+<a href=#87 id=87 data-nosnippet>87</a>    <span class="doccomment">/// poll sending a packet on this sender.
+<a href=#88 id=88 data-nosnippet>88</a>    ///
+<a href=#89 id=89 data-nosnippet>89</a>    /// This will only be called from iroh with addresses for which [CustomSender::is_valid_send_addr] returns true.
+<a href=#90 id=90 data-nosnippet>90</a>    ///
+<a href=#91 id=91 data-nosnippet>91</a>    /// You should handle invalid addresses by returning an error.
+<a href=#92 id=92 data-nosnippet>92</a>    </span><span class="kw">fn </span>poll_send(
+<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#94 id=94 data-nosnippet>94</a>        cx: <span class="kw-2">&amp;mut </span>std::task::Context,
+<a href=#95 id=95 data-nosnippet>95</a>        dst: <span class="kw-2">&amp;</span>CustomAddr,
+<a href=#96 id=96 data-nosnippet>96</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#97 id=97 data-nosnippet>97</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt;;
+<a href=#98 id=98 data-nosnippet>98</a>}</code></pre></div></section></main></body></html>

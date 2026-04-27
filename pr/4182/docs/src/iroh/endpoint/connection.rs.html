@@ -87,7 +87,7 @@
 <a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">match </span>addr {
 <a href=#88 id=88 data-nosnippet>88</a>            transports::Addr::Ip(addr) =&gt; <span class="self">Self</span>::Ip(addr),
 <a href=#89 id=89 data-nosnippet>89</a>            transports::Addr::Relay(url, endpoint_id) =&gt; <span class="self">Self</span>::Relay { url, endpoint_id },
-<a href=#90 id=90 data-nosnippet>90</a>            transports::Addr::Custom { remote, .. } =&gt; <span class="self">Self</span>::Custom(remote),
+<a href=#90 id=90 data-nosnippet>90</a>            transports::Addr::Custom(addr) =&gt; <span class="self">Self</span>::Custom(addr),
 <a href=#91 id=91 data-nosnippet>91</a>        }
 <a href=#92 id=92 data-nosnippet>92</a>    }
 <a href=#93 id=93 data-nosnippet>93</a>}
@@ -212,7 +212,7 @@
 <a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">match </span><span class="self">self</span>.ep.to_transport_addr(<span class="self">self</span>.inner.remote_address()) {
 <a href=#213 id=213 data-nosnippet>213</a>            transports::Addr::Ip(<span class="kw">_</span>) =&gt; IncomingLocalAddr::Ip(<span class="self">self</span>.inner.local_ip()),
 <a href=#214 id=214 data-nosnippet>214</a>            transports::Addr::Relay(url, <span class="kw">_</span>) =&gt; IncomingLocalAddr::Relay { url },
-<a href=#215 id=215 data-nosnippet>215</a>            transports::Addr::Custom { .. } =&gt; {
+<a href=#215 id=215 data-nosnippet>215</a>            transports::Addr::Custom(<span class="kw">_</span>) =&gt; {
 <a href=#216 id=216 data-nosnippet>216</a>                <span class="kw">let </span>local = <span class="self">self
 <a href=#217 id=217 data-nosnippet>217</a>                    </span>.inner
 <a href=#218 id=218 data-nosnippet>218</a>                    .local_ip()
