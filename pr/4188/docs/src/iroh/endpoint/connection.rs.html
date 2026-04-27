@@ -1579,9 +1579,9 @@
 <a href=#1579 id=1579 data-nosnippet>1579</a>        <span class="kw">let </span><span class="kw-2">mut </span>events_client = conn_client.path_events();
 <a href=#1580 id=1580 data-nosnippet>1580</a>        <span class="kw">let </span><span class="kw-2">mut </span>events_server = conn_server.path_events();
 <a href=#1581 id=1581 data-nosnippet>1581</a>
-<a href=#1582 id=1582 data-nosnippet>1582</a>        <span class="doccomment">/// Advance the event stream until we have seen at least one IP and
-<a href=#1583 id=1583 data-nosnippet>1583</a>        /// one relay Opened event (current snapshot may also already satisfy
-<a href=#1584 id=1584 data-nosnippet>1584</a>        /// the condition, which is checked first).
+<a href=#1582 id=1582 data-nosnippet>1582</a>        <span class="doccomment">/// Advances the path stream until at least one IP and one relay paths are available.
+<a href=#1583 id=1583 data-nosnippet>1583</a>        ///
+<a href=#1584 id=1584 data-nosnippet>1584</a>        /// Panics if the path stream finishes before that happens.
 <a href=#1585 id=1585 data-nosnippet>1585</a>        </span><span class="kw">async fn </span>wait_for_paths(conn: <span class="kw-2">&amp;</span>Connection) {
 <a href=#1586 id=1586 data-nosnippet>1586</a>            <span class="kw">let </span><span class="kw-2">mut </span>events = conn.path_events();
 <a href=#1587 id=1587 data-nosnippet>1587</a>            <span class="kw">loop </span>{
