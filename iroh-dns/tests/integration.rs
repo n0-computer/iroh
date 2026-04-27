@@ -11,22 +11,26 @@ use iroh_dns::dns::DnsResolver;
 const TIMEOUT: Duration = Duration::from_secs(8);
 const HOST: &str = "dns.iroh.link";
 
+fn install_tracing() {
+    use tracing_subscriber::{EnvFilter, fmt};
+    let _ = fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("hickory_resolver=trace,hickory_proto=debug,hickory_net=debug,iroh_dns=trace")),
+        )
+        .with_test_writer()
+        .try_init();
+}
+
 #[tokio::test]
 async fn resolver_constructs_without_panic() {
+    install_tracing();
     let _resolver = DnsResolver::new();
 }
 
-// Ignored on Android: in the GitHub-hosted emulator the public DNS
-// fallback's hickory connection pool repeatedly returns
-// "no connections available" within ~30 ms, well before the 8s
-// per-lookup timeout, so a resolution that works locally fails in
-// CI. Tracking the actual fix separately; see Frando/android-dns-fix.
-#[cfg_attr(
-    target_os = "android",
-    ignore = "flaky on emulator (no connections available)"
-)]
 #[tokio::test]
 async fn resolver_resolves_dns_iroh_link() {
+    install_tracing();
     let resolver = DnsResolver::new();
     let mut hits: Vec<String> = Vec::new();
 
@@ -36,7 +40,7 @@ async fn resolver_resolves_dns_iroh_link() {
                 hits.push(format!("A {ip}"));
             }
         }
-        Err(err) => eprintln!("IPv4 lookup failed (continuing): {err:#}"),
+        Err(err) => eprintln!("IPv4 lookup failed (continuing): {err:#} :: debug={err:?}"),
     }
 
     match resolver.lookup_ipv6(HOST, TIMEOUT).await {
@@ -45,7 +49,7 @@ async fn resolver_resolves_dns_iroh_link() {
                 hits.push(format!("AAAA {ip}"));
             }
         }
-        Err(err) => eprintln!("IPv6 lookup failed (continuing): {err:#}"),
+        Err(err) => eprintln!("IPv6 lookup failed (continuing): {err:#} :: debug={err:?}"),
     }
 
     assert!(
