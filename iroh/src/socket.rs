@@ -526,6 +526,16 @@ impl Socket {
         .unwrap_or(transports::Addr::Ip(addr))
     }
 
+    /// Reverse-resolves a custom mapped address back to its [`iroh_base::CustomAddr`].
+    pub(crate) fn lookup_custom_addr(&self, addr: SocketAddr) -> Option<iroh_base::CustomAddr> {
+        match MultipathMappedAddr::from(addr) {
+            MultipathMappedAddr::Custom(custom_mapped) => {
+                self.mapped_addrs.custom_addrs.lookup(&custom_mapped)
+            }
+            _ => None,
+        }
+    }
+
     /// Reference to the internal Address Lookup
     pub(crate) fn address_lookup(&self) -> &address_lookup::AddressLookupServices {
         &self.address_lookup
@@ -620,14 +630,18 @@ impl Socket {
                         .get(&(src_url.clone(), *src_node));
                     noq_meta.addr = mapped_addr.private_socket_addr();
                 }
-                transports::Addr::Custom(addr) => {
+                transports::Addr::Custom { remote, local } => {
                     self.metrics
                         .socket
                         .recv_data_custom
                         .inc_by(noq_meta.len as _);
                     // Fill in the correct mapped address
-                    let mapped_addr = self.mapped_addrs.custom_addrs.get(addr);
+                    let mapped_addr = self.mapped_addrs.custom_addrs.get(remote);
                     noq_meta.addr = mapped_addr.private_socket_addr();
+                    if let Some(local) = local {
+                        let local_mapped = self.mapped_addrs.custom_addrs.get(local);
+                        noq_meta.dst_ip = Some(local_mapped.private_socket_addr().ip());
+                    }
                 }
             }
         }

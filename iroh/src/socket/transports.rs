@@ -537,7 +537,15 @@ pub enum Addr {
     /// A relay address.
     Relay(RelayUrl, EndpointId),
     /// A custom transport address.
-    Custom(CustomAddr),
+    ///
+    /// `local` is set on incoming packets when the transport reports the local
+    /// address that received the packet, and ignored on outgoing.
+    Custom {
+        /// The remote custom address.
+        remote: CustomAddr,
+        /// The local custom address, if the transport reports one.
+        local: Option<CustomAddr>,
+    },
 }
 
 impl fmt::Debug for Addr {
@@ -545,7 +553,16 @@ impl fmt::Debug for Addr {
         match self {
             Addr::Ip(addr) => write!(f, "Ip({addr})"),
             Addr::Relay(url, node_id) => write!(f, "Relay({url}, {})", node_id.fmt_short()),
-            Addr::Custom(custom_addr) => write!(f, "Custom({custom_addr:?})"),
+            Addr::Custom {
+                remote,
+                local: None,
+            } => write!(f, "Custom({remote:?})"),
+            Addr::Custom {
+                remote,
+                local: Some(local),
+            } => {
+                write!(f, "Custom({remote:?} via {local:?})")
+            }
         }
     }
 }
@@ -585,7 +602,10 @@ impl From<&SocketAddr> for Addr {
 
 impl From<CustomAddr> for Addr {
     fn from(value: CustomAddr) -> Self {
-        Self::Custom(value)
+        Self::Custom {
+            remote: value,
+            local: None,
+        }
     }
 }
 
@@ -600,7 +620,7 @@ impl From<Addr> for TransportAddr {
         match value {
             Addr::Ip(addr) => TransportAddr::Ip(addr),
             Addr::Relay(url, _) => TransportAddr::Relay(url),
-            Addr::Custom(custom_addr) => TransportAddr::Custom(custom_addr),
+            Addr::Custom { remote, .. } => TransportAddr::Custom(remote),
         }
     }
 }
@@ -619,7 +639,7 @@ impl Addr {
         match self {
             Self::Ip(ip) => Some(ip),
             Self::Relay(..) => None,
-            Self::Custom(..) => None,
+            Self::Custom { .. } => None,
         }
     }
 
@@ -631,7 +651,7 @@ impl Addr {
                 SocketAddr::V6(_) => AddrKind::IpV6,
             },
             Self::Relay(_, _) => AddrKind::Relay,
-            Self::Custom(addr) => AddrKind::Custom(addr.id()),
+            Self::Custom { remote, .. } => AddrKind::Custom(remote.id()),
         }
     }
 }
@@ -834,8 +854,8 @@ impl PartialEq<TransportAddr> for Addr {
             Addr::Relay(relay_url, _) => {
                 matches!(other, TransportAddr::Relay(a) if a == relay_url)
             }
-            Addr::Custom(custom_addr) => {
-                matches!(other, TransportAddr::Custom(a) if a == custom_addr)
+            Addr::Custom { remote, .. } => {
+                matches!(other, TransportAddr::Custom(a) if a == remote)
             }
         }
     }
@@ -913,10 +933,10 @@ impl TransportsSender {
                     return Poll::Pending;
                 }
             }
-            Addr::Custom(addr) => {
+            Addr::Custom { remote, .. } => {
                 for sender in &mut self.custom {
-                    if sender.is_valid_send_addr(addr) {
-                        match sender.poll_send(cx, addr, transmit) {
+                    if sender.is_valid_send_addr(remote) {
+                        match sender.poll_send(cx, remote, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
@@ -977,7 +997,7 @@ impl noq::AsyncUdpSocket for Transport {
                 match addr {
                     Addr::Ip(addr) => addr,
                     Addr::Relay(..) => DEFAULT_FAKE_ADDR.into(),
-                    Addr::Custom(_) => DEFAULT_FAKE_ADDR.into(),
+                    Addr::Custom { .. } => DEFAULT_FAKE_ADDR.into(),
                 }
             })
             .collect();
@@ -1129,7 +1149,10 @@ impl noq::UdpSender for Sender {
                     .custom_addrs
                     .lookup(&custom_mapped_addr)
                 {
-                    Some(addr) => Addr::Custom(addr),
+                    Some(addr) => Addr::Custom {
+                        remote: addr,
+                        local: None,
+                    },
                     None => {
                         error!("unknown CustomMappedAddr, dropped transmit");
                         return Poll::Ready(Ok(()));

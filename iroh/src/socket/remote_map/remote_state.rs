@@ -810,8 +810,8 @@ impl RemoteStateActor {
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *eid))
                 .private_socket_addr(),
-            transports::Addr::Custom(addr) => {
-                self.custom_mapped_addrs.get(addr).private_socket_addr()
+            transports::Addr::Custom { remote, .. } => {
+                self.custom_mapped_addrs.get(remote).private_socket_addr()
             }
         };
 
@@ -1285,7 +1285,7 @@ impl ConnectionState {
         match remote {
             transports::Addr::Ip(_) => metrics.paths_direct.inc(),
             transports::Addr::Relay(_, _) => metrics.paths_relay.inc(),
-            transports::Addr::Custom(_) => metrics.paths_custom.inc(),
+            transports::Addr::Custom { .. } => metrics.paths_custom.inc(),
         };
         if !self.has_been_direct && remote.is_ip() {
             self.has_been_direct = true;

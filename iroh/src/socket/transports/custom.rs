@@ -50,6 +50,10 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
     /// and the returned length must be less than or equal to the length of the slices.
     ///
     /// It does not make much sense to return addresses unrelated to this transport.
+    ///
+    /// Set `local` on each [`Addr::Custom`] if the transport can identify which
+    /// of its local addresses received this packet; it surfaces via
+    /// [`crate::endpoint::Incoming::local_addr`].
     fn poll_recv(
         &mut self,
         cx: &mut Context,

@@ -106,7 +106,10 @@ pub(super) fn to_transport_addr(
         }
         MultipathMappedAddr::Custom(custom_mapped_addr) => {
             match custom_addrs.lookup(&custom_mapped_addr) {
-                Some(custom_addr) => Some(transports::Addr::Custom(custom_addr)),
+                Some(custom_addr) => Some(transports::Addr::Custom {
+                    remote: custom_addr,
+                    local: None,
+                }),
                 None => {
                     error!("Failed to convert addr to transport addr: Unknown custom mapped addr");
                     None
