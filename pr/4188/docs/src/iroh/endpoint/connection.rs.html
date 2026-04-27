@@ -1111,7 +1111,7 @@
 <a href=#1111 id=1111 data-nosnippet>1111</a>    /// }
 <a href=#1112 id=1112 data-nosnippet>1112</a>    /// ```
 <a href=#1113 id=1113 data-nosnippet>1113</a>    </span><span class="kw">pub fn </span>paths(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathList&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#1114 id=1114 data-nosnippet>1114</a>        <span class="self">self</span>.data.paths.paths(<span class="kw-2">&amp;</span><span class="self">self</span>.inner)
+<a href=#1114 id=1114 data-nosnippet>1114</a>        <span class="self">self</span>.data.paths.get(<span class="kw-2">&amp;</span><span class="self">self</span>.inner)
 <a href=#1115 id=1115 data-nosnippet>1115</a>    }
 <a href=#1116 id=1116 data-nosnippet>1116</a>
 <a href=#1117 id=1117 data-nosnippet>1117</a>    <span class="doccomment">/// Returns a stream of [`PathEvent`]s for this connection.
@@ -1134,7 +1134,7 @@
 <a href=#1134 id=1134 data-nosnippet>1134</a>    /// [`PathEvent`]: crate::endpoint::PathEvent
 <a href=#1135 id=1135 data-nosnippet>1135</a>    /// [`PathEvent::Lagged`]: crate::endpoint::PathEvent::Lagged
 <a href=#1136 id=1136 data-nosnippet>1136</a>    </span><span class="kw">pub fn </span>path_events(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathEventStream {
-<a href=#1137 id=1137 data-nosnippet>1137</a>        <span class="self">self</span>.data.paths.event_stream()
+<a href=#1137 id=1137 data-nosnippet>1137</a>        <span class="self">self</span>.data.paths.updates()
 <a href=#1138 id=1138 data-nosnippet>1138</a>    }
 <a href=#1139 id=1139 data-nosnippet>1139</a>
 <a href=#1140 id=1140 data-nosnippet>1140</a>    <span class="doccomment">/// Returns the side of the connection (client or server).
