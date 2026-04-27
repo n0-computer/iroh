@@ -3,15 +3,23 @@ use std::{
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     num::NonZeroUsize,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
+    time::Duration,
 };
 
 use ipnet::{Ipv4Net, Ipv6Net};
+use n0_future::task::AbortOnDropHandle;
 use n0_watcher::Watchable;
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
-use tracing::{debug, info, trace};
+use tokio::time;
+use tracing::{debug, info, trace, warn};
+
+/// Total budget for retrying a rebind that fails with `EADDRINUSE`.
+const REBIND_RETRY_ATTEMPTS: u32 = 12;
+/// Delay between rebind attempts that failed with `EADDRINUSE`.
+const REBIND_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 use super::{Addr, Transmit};
 use crate::metrics::{EndpointMetrics, SocketMetrics};
@@ -242,6 +250,7 @@ impl IpTransport {
         IpNetworkChangeSender {
             socket: self.socket.clone(),
             local_addr: self.local_addr.clone(),
+            rebind_task: Default::default(),
         }
     }
 
@@ -259,17 +268,58 @@ impl IpTransport {
 pub(super) struct IpNetworkChangeSender {
     socket: Arc<UdpSocket>,
     local_addr: Watchable<SocketAddr>,
+    rebind_task: Mutex<Option<AbortOnDropHandle<()>>>,
 }
 
 impl IpNetworkChangeSender {
     pub(super) fn rebind(&self) -> io::Result<()> {
         let old_addr = self.local_addr.get();
-        self.socket.rebind()?;
-        let addr = self.socket.local_addr()?;
-        self.local_addr.set(addr).ok();
-        trace!("rebound from {} to {}", old_addr, addr);
-
-        Ok(())
+        // Clear any previous rebind task.
+        let mut rebind_task = self.rebind_task.lock().expect("poisoned");
+        *rebind_task = None;
+        // Try to rebind immediately.
+        match self.socket.rebind() {
+            Ok(()) => {
+                let addr = self.socket.local_addr()?;
+                self.local_addr.set(addr).ok();
+                trace!("rebound from {} to {}", old_addr, addr);
+                Ok(())
+            }
+            Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
+                let socket = self.socket.clone();
+                let local_addr = self.local_addr.clone();
+                let fut = async move {
+                    let mut attempt = 0;
+                    loop {
+                        match socket.rebind() {
+                            Ok(()) => break,
+                            Err(err)
+                                if err.kind() == io::ErrorKind::AddrInUse
+                                    && attempt < REBIND_RETRY_ATTEMPTS =>
+                            {
+                                attempt += 1;
+                                debug!(
+                                    ?err,
+                                    attempt, "rebind hit EADDRINUSE on {old_addr}, retrying"
+                                );
+                                time::sleep(REBIND_RETRY_DELAY).await;
+                            }
+                            Err(err) => {
+                                warn!("rebinding IP transport failed: {err:#}");
+                                return;
+                            }
+                        }
+                    }
+                    if let Ok(addr) = socket.local_addr() {
+                        local_addr.set(addr).ok();
+                        trace!("rebound from {} to {}", old_addr, addr);
+                    }
+                };
+                *rebind_task = Some(AbortOnDropHandle::new(n0_future::task::spawn(fut)));
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub(super) fn on_network_change(&self, _info: &crate::socket::Report) {

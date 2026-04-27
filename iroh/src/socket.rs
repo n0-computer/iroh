@@ -2370,15 +2370,6 @@ mod tests {
         Ok(())
     }
 
-    // Skipped on Android: the GitHub-hosted emulator's network stack
-    // returns EADDRINUSE long enough after force_network_change() that
-    // the rebind here fails and the subsequent connect() never wakes
-    // the connection driver. Locally on a real emulator this passes,
-    // so the test is only ignored under cfg(target_os = "android").
-    #[cfg_attr(
-        target_os = "android",
-        ignore = "rebind flakes against the GitHub Android emulator"
-    )]
     #[tokio::test]
     #[traced_test]
     async fn test_regression_network_change_rebind_wakes_connection_driver() -> Result {
