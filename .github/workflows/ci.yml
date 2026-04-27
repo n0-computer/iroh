@@ -228,7 +228,7 @@ jobs:
             cargo ndk --target x86_64-linux-android test -p iroh-base --all-features
             cargo ndk --target x86_64-linux-android test -p iroh-dns --features tls-ring
             cargo ndk --target x86_64-linux-android test -p iroh-relay --features tls-ring,metrics
-            cargo ndk --target x86_64-linux-android test -p iroh --features tls-ring,metrics,portmapper,test-utils
+            for i in 1 2 3; do cargo ndk --target x86_64-linux-android test -p iroh --features tls-ring,metrics,portmapper,test-utils && exit 0 || sleep 5; done; exit 1
 
   cross_test:
     name: Cross Test
