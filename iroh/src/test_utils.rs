@@ -42,18 +42,18 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server), SpawnErr
 ///
 /// The return value is similar to [`run_relay_server`].
 pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
-    let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+    let (_certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
     let tls = TlsConfig {
-        cert: CertConfig::<(), ()>::Manual { certs },
+        cert: CertConfig::Manual {
+            server_config: server_config.clone(),
+        },
         https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        quic_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        server_config,
     };
     let quic = if quic {
         Some(QuicConfig {
-            server_config: tls.server_config.clone(),
-            bind_addr: tls.quic_bind_addr,
+            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+            server_config: None,
         })
     } else {
         None
