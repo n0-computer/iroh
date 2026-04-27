@@ -192,11 +192,10 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          ndk_test() { cargo ndk --target "$ANDROID_TARGET" test --no-run "$@"; }
-          ndk_test -p iroh-base --all-features
-          ndk_test -p iroh-dns --features tls-ring
-          ndk_test -p iroh-relay --features tls-ring,metrics
-          ndk_test -p iroh --features tls-ring,metrics,portmapper,test-utils
+          cargo ndk --target "$ANDROID_TARGET" test --no-run -p iroh-base --all-features
+          cargo ndk --target "$ANDROID_TARGET" test --no-run -p iroh-dns --features tls-ring
+          cargo ndk --target "$ANDROID_TARGET" test --no-run -p iroh-relay --features tls-ring,metrics
+          cargo ndk --target "$ANDROID_TARGET" test --no-run -p iroh --features tls-ring,metrics,portmapper,test-utils
 
       - name: Run workspace tests on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -210,9 +209,7 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
           # cargo-ndk pushes each test binary to /data/local/tmp on the
-          # emulator and runs it via adb. Each script line runs in its
-          # own `sh -c`, so per-line shell functions or aliases would
-          # not survive; we rely on $ANDROID_TARGET from the job env.
+          # emulator and runs it via adb.
           script: |
             adb wait-for-device
             adb shell 'i=0; while [ -z "$(getprop sys.boot_completed | tr -d "\r")" ]; do i=$((i+1)); if [ $i -gt 300 ]; then echo "boot did not complete within 600s"; exit 1; fi; sleep 2; done'
