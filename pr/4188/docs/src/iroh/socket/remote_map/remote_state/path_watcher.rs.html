@@ -331,7 +331,7 @@
 <a href=#331 id=331 data-nosnippet>331</a>    /// The stream ends as soon as the [`PathStateSender`] is dropped. If
 <a href=#332 id=332 data-nosnippet>332</a>    /// the sender has already been dropped at the time this is called,
 <a href=#333 id=333 data-nosnippet>333</a>    /// the returned stream yields no events and terminates immediately.
-<a href=#334 id=334 data-nosnippet>334</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>updates(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathEventStream {
+<a href=#334 id=334 data-nosnippet>334</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>events(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathEventStream {
 <a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span>receiver = <span class="kw">if let </span><span class="prelude-val">Some</span>(sender) = <span class="self">self</span>.events.upgrade() {
 <a href=#336 id=336 data-nosnippet>336</a>            sender.subscribe()
 <a href=#337 id=337 data-nosnippet>337</a>        } <span class="kw">else </span>{
@@ -583,7 +583,7 @@
 <a href=#583 id=583 data-nosnippet>583</a>    <span class="attr">#[tokio::test]
 <a href=#584 id=584 data-nosnippet>584</a>    </span><span class="kw">async fn </span>event_stream_ends_when_sender_drops() {
 <a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">let </span>(sender, receiver) = PathStateSender::new();
-<a href=#586 id=586 data-nosnippet>586</a>        <span class="kw">let </span><span class="kw-2">mut </span>stream = receiver.updates();
+<a href=#586 id=586 data-nosnippet>586</a>        <span class="kw">let </span><span class="kw-2">mut </span>stream = receiver.events();
 <a href=#587 id=587 data-nosnippet>587</a>
 <a href=#588 id=588 data-nosnippet>588</a>        sender.record_selected(<span class="prelude-val">Some</span>((pid(<span class="number">1</span>), ip_addr(<span class="number">1</span>))));
 <a href=#589 id=589 data-nosnippet>589</a>        drop(sender);
@@ -600,14 +600,14 @@
 <a href=#600 id=600 data-nosnippet>600</a>    </span><span class="kw">async fn </span>event_stream_after_sender_drop_is_immediately_empty() {
 <a href=#601 id=601 data-nosnippet>601</a>        <span class="kw">let </span>(sender, receiver) = PathStateSender::new();
 <a href=#602 id=602 data-nosnippet>602</a>        drop(sender);
-<a href=#603 id=603 data-nosnippet>603</a>        <span class="kw">let </span><span class="kw-2">mut </span>stream = receiver.updates();
+<a href=#603 id=603 data-nosnippet>603</a>        <span class="kw">let </span><span class="kw-2">mut </span>stream = receiver.events();
 <a href=#604 id=604 data-nosnippet>604</a>        <span class="macro">assert!</span>(stream.next().<span class="kw">await</span>.is_none());
 <a href=#605 id=605 data-nosnippet>605</a>    }
 <a href=#606 id=606 data-nosnippet>606</a>
 <a href=#607 id=607 data-nosnippet>607</a>    <span class="attr">#[tokio::test]
 <a href=#608 id=608 data-nosnippet>608</a>    </span><span class="kw">async fn </span>lagged_surfaces_after_overflow() {
 <a href=#609 id=609 data-nosnippet>609</a>        <span class="kw">let </span>(sender, receiver) = PathStateSender::new();
-<a href=#610 id=610 data-nosnippet>610</a>        <span class="kw">let </span><span class="kw-2">mut </span>stream = receiver.updates();
+<a href=#610 id=610 data-nosnippet>610</a>        <span class="kw">let </span><span class="kw-2">mut </span>stream = receiver.events();
 <a href=#611 id=611 data-nosnippet>611</a>
 <a href=#612 id=612 data-nosnippet>612</a>        <span class="comment">// Fill the channel beyond its capacity. Every record_selected
 <a href=#613 id=613 data-nosnippet>613</a>        // call here is a real transition because each id differs from
