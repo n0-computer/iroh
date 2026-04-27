@@ -6,10 +6,10 @@
 <a href=#6 id=6 data-nosnippet>6</a>};
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">pub type </span>AppResult&lt;T&gt; = <span class="prelude-ty">Result</span>&lt;T, AppError&gt;;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>AppResult&lt;T&gt; = <span class="prelude-ty">Result</span>&lt;T, AppError&gt;;
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
-<a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">pub struct </span>AppError {
+<a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>AppError {
 <a href=#13 id=13 data-nosnippet>13</a>    <span class="attr">#[serde(with = <span class="string">"serde_status_code"</span>)]
 <a href=#14 id=14 data-nosnippet>14</a>    </span>status: StatusCode,
 <a href=#15 id=15 data-nosnippet>15</a>    detail: <span class="prelude-ty">Option</span>&lt;String&gt;,
@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>}
 <a href=#26 id=26 data-nosnippet>26</a>
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">impl </span>AppError {
-<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">pub fn </span>with_status(status: StatusCode) -&gt; AppError {
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_status(status: StatusCode) -&gt; AppError {
 <a href=#29 id=29 data-nosnippet>29</a>        <span class="self">Self </span>{
 <a href=#30 id=30 data-nosnippet>30</a>            status,
 <a href=#31 id=31 data-nosnippet>31</a>            detail: <span class="prelude-val">None</span>,
@@ -33,7 +33,7 @@
 <a href=#33 id=33 data-nosnippet>33</a>    }
 <a href=#34 id=34 data-nosnippet>34</a>
 <a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// Create a new [`AppError`].
-<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">pub fn </span>new(status_code: StatusCode, message: <span class="prelude-ty">Option</span>&lt;<span class="kw">impl </span>ToString&gt;) -&gt; AppError {
+<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(status_code: StatusCode, message: <span class="prelude-ty">Option</span>&lt;<span class="kw">impl </span>ToString&gt;) -&gt; AppError {
 <a href=#37 id=37 data-nosnippet>37</a>        <span class="self">Self </span>{
 <a href=#38 id=38 data-nosnippet>38</a>            status: status_code,
 <a href=#39 id=39 data-nosnippet>39</a>            <span class="comment">// title: Self::canonical_reason_to_string(&amp;status_code),
@@ -76,17 +76,17 @@
 <a href=#76 id=76 data-nosnippet>76</a>/// be the status code as a STRING.
 <a href=#77 id=77 data-nosnippet>77</a>///
 <a href=#78 id=78 data-nosnippet>78</a>/// We could have used http_serde, but it encodes the status code as a NUMBER.
-<a href=#79 id=79 data-nosnippet>79</a></span><span class="kw">pub mod </span>serde_status_code {
+<a href=#79 id=79 data-nosnippet>79</a></span><span class="kw">mod </span>serde_status_code {
 <a href=#80 id=80 data-nosnippet>80</a>    <span class="kw">use </span>http::StatusCode;
 <a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">use </span>serde::{Deserialize, Deserializer, Serialize, Serializer, de::Unexpected};
 <a href=#82 id=82 data-nosnippet>82</a>
 <a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// Serialize [StatusCode]s.
-<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="kw">pub fn </span>serialize&lt;S: Serializer&gt;(status: <span class="kw-2">&amp;</span>StatusCode, ser: S) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {
+<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>serialize&lt;S: Serializer&gt;(status: <span class="kw-2">&amp;</span>StatusCode, ser: S) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {
 <a href=#85 id=85 data-nosnippet>85</a>        String::serialize(<span class="kw-2">&amp;</span>status.as_u16().to_string(), ser)
 <a href=#86 id=86 data-nosnippet>86</a>    }
 <a href=#87 id=87 data-nosnippet>87</a>
 <a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// Deserialize [StatusCode]s.
-<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub fn </span>deserialize&lt;<span class="lifetime">'de</span>, D&gt;(de: D) -&gt; <span class="prelude-ty">Result</span>&lt;StatusCode, D::Error&gt;
+<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>deserialize&lt;<span class="lifetime">'de</span>, D&gt;(de: D) -&gt; <span class="prelude-ty">Result</span>&lt;StatusCode, D::Error&gt;
 <a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">where
 <a href=#91 id=91 data-nosnippet>91</a>        </span>D: Deserializer&lt;<span class="lifetime">'de</span>&gt;,
 <a href=#92 id=92 data-nosnippet>92</a>    {

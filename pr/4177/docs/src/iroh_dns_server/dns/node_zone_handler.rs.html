@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a>};
 <a href=#23 id=23 data-nosnippet>23</a>
 <a href=#24 id=24 data-nosnippet>24</a><span class="attr">#[derive(derive_more::Debug)]
-<a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">pub struct </span>NodeZoneHandler {
+<a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>NodeZoneHandler {
 <a href=#26 id=26 data-nosnippet>26</a>    serial: u32,
 <a href=#27 id=27 data-nosnippet>27</a>    origins: Vec&lt;Name&gt;,
 <a href=#28 id=28 data-nosnippet>28</a>    <span class="attr">#[debug(<span class="string">"InMemoryZoneHandler"</span>)]
@@ -34,7 +34,7 @@
 <a href=#34 id=34 data-nosnippet>34</a>}
 <a href=#35 id=35 data-nosnippet>35</a>
 <a href=#36 id=36 data-nosnippet>36</a><span class="kw">impl </span>NodeZoneHandler {
-<a href=#37 id=37 data-nosnippet>37</a>    <span class="kw">pub fn </span>new(
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
 <a href=#38 id=38 data-nosnippet>38</a>        zones: ZoneStore,
 <a href=#39 id=39 data-nosnippet>39</a>        static_zone_handler: InMemoryZoneHandler,
 <a href=#40 id=40 data-nosnippet>40</a>        origins: Vec&lt;Name&gt;,
@@ -53,11 +53,11 @@
 <a href=#53 id=53 data-nosnippet>53</a>        })
 <a href=#54 id=54 data-nosnippet>54</a>    }
 <a href=#55 id=55 data-nosnippet>55</a>
-<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">pub fn </span>origins(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>Name&gt; {
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>origins(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>Name&gt; {
 <a href=#57 id=57 data-nosnippet>57</a>        <span class="self">self</span>.origins.iter()
 <a href=#58 id=58 data-nosnippet>58</a>    }
 <a href=#59 id=59 data-nosnippet>59</a>
-<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">pub fn </span>serial(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u32 {
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>serial(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u32 {
 <a href=#61 id=61 data-nosnippet>61</a>        <span class="self">self</span>.serial
 <a href=#62 id=62 data-nosnippet>62</a>    }
 <a href=#63 id=63 data-nosnippet>63</a>
