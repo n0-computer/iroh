@@ -201,18 +201,32 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          RUST_LOG: trace
         with:
           api-level: ${{ matrix.api-level }}
           arch: x86_64
           target: google_apis
           force-avd-creation: false
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          # `-dns-server` + `-netfast` + `-no-metrics` are the combination
+          # reported to give working public-internet connectivity on the
+          # GH-hosted runner; without them `wlan0` stays NO-CARRIER and
+          # every connect() to a public IP fails with ENETUNREACH. See
+          # https://github.com/ReactiveCircus/android-emulator-runner/issues/348#issuecomment-2578082030
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -dns-server 8.8.8.8 -netfast -no-metrics
           disable-animations: true
           # cargo-ndk pushes each test binary to /data/local/tmp on the
           # emulator and runs it via adb.
           script: |
             adb wait-for-device
             adb shell 'i=0; while [ -z "$(getprop sys.boot_completed | tr -d "\r")" ]; do i=$((i+1)); if [ $i -gt 300 ]; then echo "boot did not complete within 600s"; exit 1; fi; sleep 2; done'
+            # `sys.boot_completed=1` only signals that Android finished
+            # booting, not that the radio/Wi-Fi stack is up. Poll until
+            # the kernel actually has a route to a public IP, otherwise
+            # any test that hits the network fails with ENETUNREACH.
+            adb shell 'i=0; while ! ip route get 8.8.8.8 >/dev/null 2>&1; do i=$((i+1)); if [ $i -gt 60 ]; then echo "no route to 8.8.8.8 after 60s"; ip addr; ip route; exit 1; fi; sleep 1; done'
+            echo "=== ip addr ===" && adb shell ip addr
+            echo "=== ip route ===" && adb shell ip route
+            echo "=== net.dns1 ===" && adb shell getprop net.dns1
             cargo ndk test -p iroh-base --all-features
             cargo ndk test -p iroh-dns --features tls-ring
             cargo ndk test -p iroh-relay --features tls-ring,metrics

@@ -6,25 +6,13 @@
 
 use std::time::Duration;
 
+#[cfg(target_os = "android")]
+use iroh_dns::dns::DnsProtocol;
 use iroh_dns::dns::DnsResolver;
 
 const TIMEOUT: Duration = Duration::from_secs(8);
 const HOST: &str = "dns.iroh.link";
 
-#[tokio::test]
-async fn resolver_constructs_without_panic() {
-    let _resolver = DnsResolver::new();
-}
-
-// Ignored on Android: in the GitHub-hosted emulator the public DNS
-// fallback's hickory connection pool repeatedly returns
-// "no connections available" within ~30 ms, well before the 8s
-// per-lookup timeout, so a resolution that works locally fails in
-// CI. Tracking the actual fix separately; see Frando/android-dns-fix.
-#[cfg_attr(
-    target_os = "android",
-    ignore = "flaky on emulator (no connections available)"
-)]
 #[tokio::test]
 async fn resolver_resolves_dns_iroh_link() {
     let resolver = DnsResolver::new();
@@ -53,4 +41,34 @@ async fn resolver_resolves_dns_iroh_link() {
         "neither IPv4 nor IPv6 lookup returned an answer for {HOST}",
     );
     eprintln!("{HOST} resolved to: {hits:?}");
+}
+
+/// Resolves through the Android emulator's QEMU NAT DNS proxy.
+///
+/// 10.0.2.3 is the well-known emulator DNS gateway, documented at
+/// <https://developer.android.com/studio/run/emulator-networking>.
+/// Pointing the resolver at it explicitly sidesteps the missing
+/// system-DNS reader (no JNI context here) so this test exercises
+/// hickory's pool, sockets, and our `DnsResolver` plumbing against a
+/// nameserver that is always reachable inside the emulator,
+/// independent of whether public DNS is reachable on the runner.
+#[cfg(target_os = "android")]
+#[tokio::test]
+async fn resolves_via_emulator_dns_proxy() {
+    let nameserver = "10.0.2.3:53".parse().unwrap();
+    let resolver = DnsResolver::builder()
+        .with_nameserver(nameserver, DnsProtocol::Udp)
+        .build();
+
+    let addrs: Vec<_> = resolver
+        .lookup_ipv4(HOST, TIMEOUT)
+        .await
+        .expect("IPv4 lookup via 10.0.2.3 should succeed in the emulator")
+        .collect();
+
+    assert!(
+        !addrs.is_empty(),
+        "expected at least one A record for {HOST} via 10.0.2.3",
+    );
+    eprintln!("{HOST} resolved via 10.0.2.3 to: {addrs:?}");
 }
