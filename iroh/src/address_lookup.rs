@@ -1032,6 +1032,59 @@ mod tests {
         Ok(())
     }
 
+    /// Concurrent `connect` calls to the same peer must both wait for the in-flight address lookup.
+    ///
+    /// Reproduces the race where the second `ResolveRemote` for the same
+    /// remote used to drain the first call's pending resolve tx with a
+    /// spurious `NoResults` while the address lookup was still in flight. In
+    /// that state the first call returned `Err(NoAddress)` immediately; the
+    /// second call waited for the lookup and succeeded.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[traced_test]
+    async fn concurrent_connects_do_not_race_on_empty_resolve() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let shared = TestAddressLookupShared::default();
+
+        let (ep_server, _guard_server) =
+            new_endpoint(&mut rng, |ep| shared.create_address_lookup(ep.id())).await;
+
+        // Client shares the same lookup, so the server's real address is
+        // discoverable; the 200ms lookup delay opens the race window.
+        let (ep_client, _guard_client) =
+            new_endpoint(&mut rng, |ep| shared.create_address_lookup(ep.id())).await;
+
+        let server_id = ep_server.id();
+        let first = tokio::spawn({
+            let ep = ep_client.clone();
+            async move { ep.connect(server_id, TEST_ALPN).await }
+        });
+
+        // Let the first call register its resolve request and trigger the
+        // address lookup before the second call arrives.
+        time::sleep(Duration::from_millis(10)).await;
+
+        let second = tokio::spawn({
+            let ep = ep_client.clone();
+            async move { ep.connect(server_id, TEST_ALPN).await }
+        });
+
+        let (first, second) = tokio::join!(first, second);
+        let first = first.unwrap();
+        let second = second.unwrap();
+
+        assert!(
+            first.is_ok(),
+            "first connect must wait for lookup, got: {:?}",
+            first.err()
+        );
+        assert!(
+            second.is_ok(),
+            "second connect must wait for lookup, got: {:?}",
+            second.err()
+        );
+        Ok(())
+    }
+
     /// This test only has the "lying" address lookup system. It is here to make sure that this actually fails.
     #[tokio::test]
     #[traced_test]
