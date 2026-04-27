@@ -48,5 +48,5 @@ n0-tracing-test = "0.3"
 tokio = { version = "1", features = ["macros", "rt"] }
 
 [[test]]
-name = "resolve_smoke"
+name = "integration"
 required-features = ["tls-ring"]

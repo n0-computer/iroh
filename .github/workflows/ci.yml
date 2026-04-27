@@ -217,10 +217,7 @@ jobs:
           # emulator-runner action's script context. The crate-by-crate
           # split mirrors the local verification: iroh-base (defaults)
           # and iroh-dns (tls-ring) run cleanly, iroh-relay is only the
-          # client-side feature set, iroh is the largest crate. We then
-          # run the iroh-dns smoke test with --include-ignored so the
-          # network-dependent ones we deliberately ignore on host runs
-          # still execute on Android.
+          # client-side feature set, iroh is the largest crate.
           #
           # The action runs each line of `script:` through a separate
           # `sh -c`, so multi-line shell snippets and `\` continuations
@@ -232,7 +229,6 @@ jobs:
             cargo ndk --target x86_64-linux-android test -p iroh-dns --features tls-ring
             cargo ndk --target x86_64-linux-android test -p iroh-relay --features tls-ring,metrics
             cargo ndk --target x86_64-linux-android test -p iroh --features tls-ring,metrics,portmapper,test-utils
-            cargo ndk --target x86_64-linux-android test -p iroh-dns --features tls-ring --test resolve_smoke -- --include-ignored
 
   cross_test:
     name: Cross Test
