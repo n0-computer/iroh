@@ -153,8 +153,7 @@ impl RelayTransport {
             meta_out.ecn = None;
             meta_out.dst_ip = None;
 
-            recv_info.remote = (dm.url, dm.src).into();
-            recv_info.local = None;
+            *recv_info = RecvInfo::from_addr((dm.url, dm.src).into());
             num_msgs += 1;
         }
 

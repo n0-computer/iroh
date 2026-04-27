@@ -564,8 +564,27 @@ impl fmt::Debug for Addr {
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 #[derive(Clone, Debug, Default)]
 pub struct RecvInfo {
-    pub(crate) remote: Addr,
-    pub(crate) local: Option<CustomAddr>,
+    remote: Addr,
+    local: Option<CustomAddr>,
+}
+
+impl RecvInfo {
+    /// Creates a [`RecvInfo`] from an internal [`Addr`], with no local custom
+    /// address. Used by IP and relay recv paths.
+    pub(crate) fn from_addr(remote: Addr) -> Self {
+        Self {
+            remote,
+            local: None,
+        }
+    }
+
+    pub(crate) fn remote(&self) -> &Addr {
+        &self.remote
+    }
+
+    pub(crate) fn local(&self) -> Option<&CustomAddr> {
+        self.local.as_ref()
+    }
 }
 
 #[cfg(feature = "unstable-custom-transports")]

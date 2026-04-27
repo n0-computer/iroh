@@ -579,7 +579,7 @@ impl Socket {
         for i in 0..metas.len() {
             let noq_meta = &mut metas[i];
             let recv_info = &recv_infos[i];
-            let remote_addr = &recv_info.remote;
+            let remote_addr = recv_info.remote();
             let datagram_count = if noq_meta.stride == 0 {
                 if noq_meta.len > 0 {
                     warn!(
@@ -639,7 +639,7 @@ impl Socket {
                     // Fill in the correct mapped address
                     let mapped_addr = self.mapped_addrs.custom_addrs.get(remote);
                     noq_meta.addr = mapped_addr.private_socket_addr();
-                    if let Some(local) = &recv_info.local {
+                    if let Some(local) = recv_info.local() {
                         let local_mapped = self.mapped_addrs.custom_addrs.get(local);
                         noq_meta.dst_ip = Some(local_mapped.private_socket_addr().ip());
                     }

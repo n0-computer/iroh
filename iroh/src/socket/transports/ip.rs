@@ -209,9 +209,9 @@ impl IpTransport {
                     }
                     // The transport addresses are internal to iroh and we always want those
                     // to remain the canonical address.
-                    recv_info.remote =
-                        SocketAddr::new(meta.addr.ip().to_canonical(), meta.addr.port()).into();
-                    recv_info.local = None;
+                    *recv_info = RecvInfo::from_addr(
+                        SocketAddr::new(meta.addr.ip().to_canonical(), meta.addr.port()).into(),
+                    );
                 }
                 Poll::Ready(Ok(n))
             }
