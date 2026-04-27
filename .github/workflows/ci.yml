@@ -142,6 +142,8 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 60
     runs-on: ubuntu-latest
+    env:
+      ANDROID_TARGET: x86_64-linux-android
     strategy:
       fail-fast: false
       matrix:
@@ -160,7 +162,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          target: x86_64-linux-android
+          target: ${{ env.ANDROID_TARGET }}
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -185,20 +187,16 @@ jobs:
       # Build all the test binaries up front so the emulator boot can
       # overlap with compilation. cargo-ndk runs `cargo test --no-run`
       # against each crate; the binaries land in
-      # target/x86_64-linux-android/debug/deps/.
+      # target/$ANDROID_TARGET/debug/deps/.
       - name: Build workspace test binaries
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          cargo ndk --target x86_64-linux-android test --no-run \
-              -p iroh-base --all-features
-          cargo ndk --target x86_64-linux-android test --no-run \
-              -p iroh-dns --features tls-ring
-          cargo ndk --target x86_64-linux-android test --no-run \
-              -p iroh-relay --features tls-ring,metrics
-          cargo ndk --target x86_64-linux-android test --no-run \
-              -p iroh \
-              --features tls-ring,metrics,portmapper,test-utils
+          ndk_test() { cargo ndk --target "$ANDROID_TARGET" test --no-run "$@"; }
+          ndk_test -p iroh-base --all-features
+          ndk_test -p iroh-dns --features tls-ring
+          ndk_test -p iroh-relay --features tls-ring,metrics
+          ndk_test -p iroh --features tls-ring,metrics,portmapper,test-utils
 
       - name: Run workspace tests on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -211,24 +209,17 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
-          # cargo-ndk's built-in runner pushes each test binary to
-          # /data/local/tmp on the running emulator (it shells out to
-          # `adb`), so we just invoke `cargo ndk test` from inside the
-          # emulator-runner action's script context. The crate-by-crate
-          # split mirrors the local verification: iroh-base (defaults)
-          # and iroh-dns (tls-ring) run cleanly, iroh-relay is only the
-          # client-side feature set, iroh is the largest crate.
-          #
-          # The action runs each line of `script:` through a separate
-          # `sh -c`, so multi-line shell snippets and `\` continuations
-          # do not work here: every command must fit on one line.
+          # cargo-ndk pushes each test binary to /data/local/tmp on the
+          # emulator and runs it via adb. Each script line runs in its
+          # own `sh -c`, so per-line shell functions or aliases would
+          # not survive; we rely on $ANDROID_TARGET from the job env.
           script: |
             adb wait-for-device
             adb shell 'i=0; while [ -z "$(getprop sys.boot_completed | tr -d "\r")" ]; do i=$((i+1)); if [ $i -gt 300 ]; then echo "boot did not complete within 600s"; exit 1; fi; sleep 2; done'
-            cargo ndk --target x86_64-linux-android test -p iroh-base --all-features
-            cargo ndk --target x86_64-linux-android test -p iroh-dns --features tls-ring
-            cargo ndk --target x86_64-linux-android test -p iroh-relay --features tls-ring,metrics
-            for i in 1 2 3; do cargo ndk --target x86_64-linux-android test -p iroh --features tls-ring,metrics,portmapper,test-utils && exit 0 || sleep 5; done; exit 1
+            cargo ndk --target "$ANDROID_TARGET" test -p iroh-base --all-features
+            cargo ndk --target "$ANDROID_TARGET" test -p iroh-dns --features tls-ring
+            cargo ndk --target "$ANDROID_TARGET" test -p iroh-relay --features tls-ring,metrics
+            cargo ndk --target "$ANDROID_TARGET" test -p iroh --features tls-ring,metrics,portmapper,test-utils
 
   cross_test:
     name: Cross Test
