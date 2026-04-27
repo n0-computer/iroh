@@ -143,7 +143,7 @@ jobs:
     timeout-minutes: 60
     runs-on: ubuntu-latest
     env:
-      ANDROID_TARGET: x86_64-linux-android
+      CARGO_NDK_TARGET: x86_64-linux-android
     strategy:
       fail-fast: false
       matrix:
@@ -162,7 +162,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          target: ${{ env.ANDROID_TARGET }}
+          target: ${{ env.CARGO_NDK_TARGET }}
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -187,15 +187,15 @@ jobs:
       # Build all the test binaries up front so the emulator boot can
       # overlap with compilation. cargo-ndk runs `cargo test --no-run`
       # against each crate; the binaries land in
-      # target/$ANDROID_TARGET/debug/deps/.
+      # target/$CARGO_NDK_TARGET/debug/deps/.
       - name: Build workspace test binaries
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          cargo ndk --target "$ANDROID_TARGET" test --no-run -p iroh-base --all-features
-          cargo ndk --target "$ANDROID_TARGET" test --no-run -p iroh-dns --features tls-ring
-          cargo ndk --target "$ANDROID_TARGET" test --no-run -p iroh-relay --features tls-ring,metrics
-          cargo ndk --target "$ANDROID_TARGET" test --no-run -p iroh --features tls-ring,metrics,portmapper,test-utils
+          cargo ndk test --no-run -p iroh-base --all-features
+          cargo ndk test --no-run -p iroh-dns --features tls-ring
+          cargo ndk test --no-run -p iroh-relay --features tls-ring,metrics
+          cargo ndk test --no-run -p iroh --features tls-ring,metrics,portmapper,test-utils
 
       - name: Run workspace tests on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -213,10 +213,10 @@ jobs:
           script: |
             adb wait-for-device
             adb shell 'i=0; while [ -z "$(getprop sys.boot_completed | tr -d "\r")" ]; do i=$((i+1)); if [ $i -gt 300 ]; then echo "boot did not complete within 600s"; exit 1; fi; sleep 2; done'
-            cargo ndk --target "$ANDROID_TARGET" test -p iroh-base --all-features
-            cargo ndk --target "$ANDROID_TARGET" test -p iroh-dns --features tls-ring
-            cargo ndk --target "$ANDROID_TARGET" test -p iroh-relay --features tls-ring,metrics
-            cargo ndk --target "$ANDROID_TARGET" test -p iroh --features tls-ring,metrics,portmapper,test-utils
+            cargo ndk test -p iroh-base --all-features
+            cargo ndk test -p iroh-dns --features tls-ring
+            cargo ndk test -p iroh-relay --features tls-ring,metrics
+            cargo ndk test -p iroh --features tls-ring,metrics,portmapper,test-utils
 
   cross_test:
     name: Cross Test

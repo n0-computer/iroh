@@ -21,7 +21,10 @@ async fn resolver_constructs_without_panic() {
 // "no connections available" within ~30 ms, well before the 8s
 // per-lookup timeout, so a resolution that works locally fails in
 // CI. Tracking the actual fix separately; see Frando/android-dns-fix.
-#[cfg_attr(target_os = "android", ignore = "flaky on emulator (no connections available)")]
+#[cfg_attr(
+    target_os = "android",
+    ignore = "flaky on emulator (no connections available)"
+)]
 #[tokio::test]
 async fn resolver_resolves_dns_iroh_link() {
     let resolver = DnsResolver::new();
