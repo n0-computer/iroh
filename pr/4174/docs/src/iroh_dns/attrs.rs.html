@@ -101,88 +101,93 @@
 <a href=#101 id=101 data-nosnippet>101</a>
 <a href=#102 id=102 data-nosnippet>102</a><span class="kw">impl</span>&lt;T: FromStr + Display + Hash + Ord&gt; TxtAttrs&lt;T&gt; {
 <a href=#103 id=103 data-nosnippet>103</a>    <span class="doccomment">/// Creates [`TxtAttrs`] from an endpoint id and an iterator of key-value pairs.
-<a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">pub fn </span>from_parts(endpoint_id: EndpointId, pairs: <span class="kw">impl </span>Iterator&lt;Item = (T, String)&gt;) -&gt; <span class="self">Self </span>{
-<a href=#105 id=105 data-nosnippet>105</a>        <span class="kw">let </span><span class="kw-2">mut </span>attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt; = BTreeMap::new();
-<a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">for </span>(k, v) <span class="kw">in </span>pairs {
-<a href=#107 id=107 data-nosnippet>107</a>            attrs.entry(k).or_default().push(v);
-<a href=#108 id=108 data-nosnippet>108</a>        }
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="self">Self </span>{ attrs, endpoint_id }
-<a href=#110 id=110 data-nosnippet>110</a>    }
-<a href=#111 id=111 data-nosnippet>111</a>
-<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// Creates [`TxtAttrs`] from an endpoint id and an iterator of "{key}={value}" strings.
-<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="kw">pub fn </span>from_strings(
-<a href=#114 id=114 data-nosnippet>114</a>        endpoint_id: EndpointId,
-<a href=#115 id=115 data-nosnippet>115</a>        strings: <span class="kw">impl </span>Iterator&lt;Item = String&gt;,
-<a href=#116 id=116 data-nosnippet>116</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
-<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span><span class="kw-2">mut </span>attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt; = BTreeMap::new();
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">for </span>s <span class="kw">in </span>strings {
-<a href=#119 id=119 data-nosnippet>119</a>            <span class="kw">let </span><span class="kw-2">mut </span>parts = s.split(<span class="string">'='</span>);
-<a href=#120 id=120 data-nosnippet>120</a>            <span class="kw">let </span>(<span class="prelude-val">Some</span>(key), <span class="prelude-val">Some</span>(value)) = (parts.next(), parts.next()) <span class="kw">else </span>{
-<a href=#121 id=121 data-nosnippet>121</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(ParseError::UnexpectedFormat { s }));
-<a href=#122 id=122 data-nosnippet>122</a>            };
-<a href=#123 id=123 data-nosnippet>123</a>            <span class="kw">let </span>attr = T::from_str(key).map_err(|<span class="kw">_</span>| {
-<a href=#124 id=124 data-nosnippet>124</a>                <span class="macro">e!</span>(ParseError::AttrFromString {
-<a href=#125 id=125 data-nosnippet>125</a>                    key: key.to_string()
-<a href=#126 id=126 data-nosnippet>126</a>                })
-<a href=#127 id=127 data-nosnippet>127</a>            })<span class="question-mark">?</span>;
-<a href=#128 id=128 data-nosnippet>128</a>            attrs.entry(attr).or_default().push(value.to_string());
-<a href=#129 id=129 data-nosnippet>129</a>        }
-<a href=#130 id=130 data-nosnippet>130</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ attrs, endpoint_id })
-<a href=#131 id=131 data-nosnippet>131</a>    }
-<a href=#132 id=132 data-nosnippet>132</a>
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="doccomment">/// Returns the parsed attributes.
-<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">pub fn </span>attrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>BTreeMap&lt;T, Vec&lt;String&gt;&gt; {
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.attrs
-<a href=#136 id=136 data-nosnippet>136</a>    }
-<a href=#137 id=137 data-nosnippet>137</a>
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// Returns the endpoint id.
-<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="kw">pub fn </span>endpoint_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; EndpointId {
-<a href=#140 id=140 data-nosnippet>140</a>        <span class="self">self</span>.endpoint_id
-<a href=#141 id=141 data-nosnippet>141</a>    }
-<a href=#142 id=142 data-nosnippet>142</a>
-<a href=#143 id=143 data-nosnippet>143</a>    <span class="doccomment">/// Parses TXT record lookup results.
-<a href=#144 id=144 data-nosnippet>144</a>    ///
-<a href=#145 id=145 data-nosnippet>145</a>    /// The `name` is the queried DNS name. The `lookup` iterator yields TXT record
-<a href=#146 id=146 data-nosnippet>146</a>    /// values that implement [`Display`].
-<a href=#147 id=147 data-nosnippet>147</a>    </span><span class="kw">pub fn </span>from_txt_lookup(
-<a href=#148 id=148 data-nosnippet>148</a>        name: String,
-<a href=#149 id=149 data-nosnippet>149</a>        lookup: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw">impl </span>Display&gt;,
-<a href=#150 id=150 data-nosnippet>150</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">let </span>queried_endpoint_id = endpoint_id_from_txt_name(<span class="kw-2">&amp;</span>name)<span class="question-mark">?</span>;
-<a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">let </span>strings = lookup.map(|record| record.to_string());
-<a href=#153 id=153 data-nosnippet>153</a>        <span class="self">Self</span>::from_strings(queried_endpoint_id, strings)
-<a href=#154 id=154 data-nosnippet>154</a>    }
-<a href=#155 id=155 data-nosnippet>155</a>
-<a href=#156 id=156 data-nosnippet>156</a>    <span class="doccomment">/// Parses a [`pkarr::SignedPacket`].
-<a href=#157 id=157 data-nosnippet>157</a>    </span><span class="kw">pub fn </span>from_pkarr_signed_packet(packet: <span class="kw-2">&amp;</span>pkarr::SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span>pubkey = packet.public_key();
-<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">let </span>endpoint_id = EndpointId::from_bytes(pubkey.as_bytes()).expect(<span class="string">"valid key"</span>);
-<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span>txt_strs = packet.txt_records(IROH_TXT_NAME);
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="self">Self</span>::from_strings(endpoint_id, txt_strs.into_iter())
-<a href=#162 id=162 data-nosnippet>162</a>    }
-<a href=#163 id=163 data-nosnippet>163</a>
-<a href=#164 id=164 data-nosnippet>164</a>    <span class="doccomment">/// Converts to `{key}={value}` strings.
-<a href=#165 id=165 data-nosnippet>165</a>    </span><span class="kw">pub fn </span>to_txt_strings(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = String&gt; + <span class="lifetime">'_ </span>{
-<a href=#166 id=166 data-nosnippet>166</a>        <span class="self">self</span>.attrs
-<a href=#167 id=167 data-nosnippet>167</a>            .iter()
-<a href=#168 id=168 data-nosnippet>168</a>            .flat_map(<span class="kw">move </span>|(k, vs)| vs.iter().map(<span class="kw">move </span>|v| <span class="macro">format!</span>(<span class="string">"{k}={v}"</span>)))
-<a href=#169 id=169 data-nosnippet>169</a>    }
-<a href=#170 id=170 data-nosnippet>170</a>
-<a href=#171 id=171 data-nosnippet>171</a>    <span class="doccomment">/// Creates a [`pkarr::SignedPacket`]
-<a href=#172 id=172 data-nosnippet>172</a>    ///
-<a href=#173 id=173 data-nosnippet>173</a>    /// This constructs a DNS packet and signs it with a [`SecretKey`].
-<a href=#174 id=174 data-nosnippet>174</a>    </span><span class="kw">pub fn </span>to_pkarr_signed_packet(
-<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#176 id=176 data-nosnippet>176</a>        secret_key: <span class="kw-2">&amp;</span>SecretKey,
-<a href=#177 id=177 data-nosnippet>177</a>        ttl: u32,
-<a href=#178 id=178 data-nosnippet>178</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;pkarr::SignedPacket, EncodingError&gt; {
-<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">let </span>signed_packet = pkarr::SignedPacket::from_txt_strings(
-<a href=#180 id=180 data-nosnippet>180</a>            secret_key,
-<a href=#181 id=181 data-nosnippet>181</a>            IROH_TXT_NAME,
-<a href=#182 id=182 data-nosnippet>182</a>            <span class="self">self</span>.to_txt_strings(),
-<a href=#183 id=183 data-nosnippet>183</a>            ttl,
-<a href=#184 id=184 data-nosnippet>184</a>        )
-<a href=#185 id=185 data-nosnippet>185</a>        .map_err(|err| <span class="macro">e!</span>(EncodingError::FailedBuildingPacket, err))<span class="question-mark">?</span>;
-<a href=#186 id=186 data-nosnippet>186</a>        <span class="prelude-val">Ok</span>(signed_packet)
-<a href=#187 id=187 data-nosnippet>187</a>    }
-<a href=#188 id=188 data-nosnippet>188</a>}</code></pre></div></section></main></body></html>
+<a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_parts(
+<a href=#105 id=105 data-nosnippet>105</a>        endpoint_id: EndpointId,
+<a href=#106 id=106 data-nosnippet>106</a>        pairs: <span class="kw">impl </span>Iterator&lt;Item = (T, String)&gt;,
+<a href=#107 id=107 data-nosnippet>107</a>    ) -&gt; <span class="self">Self </span>{
+<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">let </span><span class="kw-2">mut </span>attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt; = BTreeMap::new();
+<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">for </span>(k, v) <span class="kw">in </span>pairs {
+<a href=#110 id=110 data-nosnippet>110</a>            attrs.entry(k).or_default().push(v);
+<a href=#111 id=111 data-nosnippet>111</a>        }
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="self">Self </span>{ attrs, endpoint_id }
+<a href=#113 id=113 data-nosnippet>113</a>    }
+<a href=#114 id=114 data-nosnippet>114</a>
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Creates [`TxtAttrs`] from an endpoint id and an iterator of "{key}={value}" strings.
+<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_strings(
+<a href=#117 id=117 data-nosnippet>117</a>        endpoint_id: EndpointId,
+<a href=#118 id=118 data-nosnippet>118</a>        strings: <span class="kw">impl </span>Iterator&lt;Item = String&gt;,
+<a href=#119 id=119 data-nosnippet>119</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
+<a href=#120 id=120 data-nosnippet>120</a>        <span class="kw">let </span><span class="kw-2">mut </span>attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt; = BTreeMap::new();
+<a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">for </span>s <span class="kw">in </span>strings {
+<a href=#122 id=122 data-nosnippet>122</a>            <span class="kw">let </span><span class="kw-2">mut </span>parts = s.split(<span class="string">'='</span>);
+<a href=#123 id=123 data-nosnippet>123</a>            <span class="kw">let </span>(<span class="prelude-val">Some</span>(key), <span class="prelude-val">Some</span>(value)) = (parts.next(), parts.next()) <span class="kw">else </span>{
+<a href=#124 id=124 data-nosnippet>124</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(ParseError::UnexpectedFormat { s }));
+<a href=#125 id=125 data-nosnippet>125</a>            };
+<a href=#126 id=126 data-nosnippet>126</a>            <span class="kw">let </span>attr = T::from_str(key).map_err(|<span class="kw">_</span>| {
+<a href=#127 id=127 data-nosnippet>127</a>                <span class="macro">e!</span>(ParseError::AttrFromString {
+<a href=#128 id=128 data-nosnippet>128</a>                    key: key.to_string()
+<a href=#129 id=129 data-nosnippet>129</a>                })
+<a href=#130 id=130 data-nosnippet>130</a>            })<span class="question-mark">?</span>;
+<a href=#131 id=131 data-nosnippet>131</a>            attrs.entry(attr).or_default().push(value.to_string());
+<a href=#132 id=132 data-nosnippet>132</a>        }
+<a href=#133 id=133 data-nosnippet>133</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ attrs, endpoint_id })
+<a href=#134 id=134 data-nosnippet>134</a>    }
+<a href=#135 id=135 data-nosnippet>135</a>
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// Returns the parsed attributes.
+<a href=#137 id=137 data-nosnippet>137</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>attrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>BTreeMap&lt;T, Vec&lt;String&gt;&gt; {
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.attrs
+<a href=#139 id=139 data-nosnippet>139</a>    }
+<a href=#140 id=140 data-nosnippet>140</a>
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="doccomment">/// Returns the endpoint id.
+<a href=#142 id=142 data-nosnippet>142</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>endpoint_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; EndpointId {
+<a href=#143 id=143 data-nosnippet>143</a>        <span class="self">self</span>.endpoint_id
+<a href=#144 id=144 data-nosnippet>144</a>    }
+<a href=#145 id=145 data-nosnippet>145</a>
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="doccomment">/// Parses TXT record lookup results.
+<a href=#147 id=147 data-nosnippet>147</a>    ///
+<a href=#148 id=148 data-nosnippet>148</a>    /// The `name` is the queried DNS name. The `lookup` iterator yields TXT record
+<a href=#149 id=149 data-nosnippet>149</a>    /// values that implement [`Display`].
+<a href=#150 id=150 data-nosnippet>150</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_txt_lookup(
+<a href=#151 id=151 data-nosnippet>151</a>        name: String,
+<a href=#152 id=152 data-nosnippet>152</a>        lookup: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw">impl </span>Display&gt;,
+<a href=#153 id=153 data-nosnippet>153</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
+<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">let </span>queried_endpoint_id = endpoint_id_from_txt_name(<span class="kw-2">&amp;</span>name)<span class="question-mark">?</span>;
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span>strings = lookup.map(|record| record.to_string());
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="self">Self</span>::from_strings(queried_endpoint_id, strings)
+<a href=#157 id=157 data-nosnippet>157</a>    }
+<a href=#158 id=158 data-nosnippet>158</a>
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="doccomment">/// Parses a [`pkarr::SignedPacket`].
+<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_pkarr_signed_packet(
+<a href=#161 id=161 data-nosnippet>161</a>        packet: <span class="kw-2">&amp;</span>pkarr::SignedPacket,
+<a href=#162 id=162 data-nosnippet>162</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="kw">let </span>pubkey = packet.public_key();
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span>endpoint_id = EndpointId::from_bytes(pubkey.as_bytes()).expect(<span class="string">"valid key"</span>);
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="kw">let </span>txt_strs = packet.txt_records(IROH_TXT_NAME);
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="self">Self</span>::from_strings(endpoint_id, txt_strs.into_iter())
+<a href=#167 id=167 data-nosnippet>167</a>    }
+<a href=#168 id=168 data-nosnippet>168</a>
+<a href=#169 id=169 data-nosnippet>169</a>    <span class="doccomment">/// Converts to `{key}={value}` strings.
+<a href=#170 id=170 data-nosnippet>170</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_txt_strings(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = String&gt; + <span class="lifetime">'_ </span>{
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="self">self</span>.attrs
+<a href=#172 id=172 data-nosnippet>172</a>            .iter()
+<a href=#173 id=173 data-nosnippet>173</a>            .flat_map(<span class="kw">move </span>|(k, vs)| vs.iter().map(<span class="kw">move </span>|v| <span class="macro">format!</span>(<span class="string">"{k}={v}"</span>)))
+<a href=#174 id=174 data-nosnippet>174</a>    }
+<a href=#175 id=175 data-nosnippet>175</a>
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="doccomment">/// Creates a [`pkarr::SignedPacket`]
+<a href=#177 id=177 data-nosnippet>177</a>    ///
+<a href=#178 id=178 data-nosnippet>178</a>    /// This constructs a DNS packet and signs it with a [`SecretKey`].
+<a href=#179 id=179 data-nosnippet>179</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_pkarr_signed_packet(
+<a href=#180 id=180 data-nosnippet>180</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#181 id=181 data-nosnippet>181</a>        secret_key: <span class="kw-2">&amp;</span>SecretKey,
+<a href=#182 id=182 data-nosnippet>182</a>        ttl: u32,
+<a href=#183 id=183 data-nosnippet>183</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;pkarr::SignedPacket, EncodingError&gt; {
+<a href=#184 id=184 data-nosnippet>184</a>        <span class="kw">let </span>signed_packet = pkarr::SignedPacket::from_txt_strings(
+<a href=#185 id=185 data-nosnippet>185</a>            secret_key,
+<a href=#186 id=186 data-nosnippet>186</a>            IROH_TXT_NAME,
+<a href=#187 id=187 data-nosnippet>187</a>            <span class="self">self</span>.to_txt_strings(),
+<a href=#188 id=188 data-nosnippet>188</a>            ttl,
+<a href=#189 id=189 data-nosnippet>189</a>        )
+<a href=#190 id=190 data-nosnippet>190</a>        .map_err(|err| <span class="macro">e!</span>(EncodingError::FailedBuildingPacket, err))<span class="question-mark">?</span>;
+<a href=#191 id=191 data-nosnippet>191</a>        <span class="prelude-val">Ok</span>(signed_packet)
+<a href=#192 id=192 data-nosnippet>192</a>    }
+<a href=#193 id=193 data-nosnippet>193</a>}</code></pre></div></section></main></body></html>
