@@ -222,26 +222,17 @@ jobs:
           # network-dependent ones we deliberately ignore on host runs
           # still execute on Android.
           #
-          # Wait for boot in POSIX sh (no [[ ... ]]). Fail fast after
-          # ~10 minutes rather than blocking until the job timeout.
+          # The action runs each line of `script:` through a separate
+          # `sh -c`, so multi-line shell snippets and `\` continuations
+          # do not work here: every command must fit on one line.
           script: |
             adb wait-for-device
-            adb shell 'i=0; while [ -z "$(getprop sys.boot_completed | tr -d "\r")" ]; do
-              i=$((i+1)); if [ $i -gt 300 ]; then
-                echo "boot did not complete within 600s"; exit 1
-              fi; sleep 2; done'
-            cargo ndk --target x86_64-linux-android test \
-                -p iroh-base --all-features
-            cargo ndk --target x86_64-linux-android test \
-                -p iroh-dns --features tls-ring
-            cargo ndk --target x86_64-linux-android test \
-                -p iroh-relay --features tls-ring,metrics
-            cargo ndk --target x86_64-linux-android test \
-                -p iroh \
-                --features tls-ring,metrics,portmapper,test-utils
-            cargo ndk --target x86_64-linux-android test \
-                -p iroh-dns --features tls-ring \
-                --test resolve_smoke -- --include-ignored
+            adb shell 'i=0; while [ -z "$(getprop sys.boot_completed | tr -d "\r")" ]; do i=$((i+1)); if [ $i -gt 300 ]; then echo "boot did not complete within 600s"; exit 1; fi; sleep 2; done'
+            cargo ndk --target x86_64-linux-android test -p iroh-base --all-features
+            cargo ndk --target x86_64-linux-android test -p iroh-dns --features tls-ring
+            cargo ndk --target x86_64-linux-android test -p iroh-relay --features tls-ring,metrics
+            cargo ndk --target x86_64-linux-android test -p iroh --features tls-ring,metrics,portmapper,test-utils
+            cargo ndk --target x86_64-linux-android test -p iroh-dns --features tls-ring --test resolve_smoke -- --include-ignored
 
   cross_test:
     name: Cross Test

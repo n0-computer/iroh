@@ -3,7 +3,8 @@
 //! Wraps [`hickory_resolver::system_conf::read_system_conf`] in a
 //! crate-local error type and filters out nameservers that cannot
 //! plausibly be reached from a connected UDP socket. On Android the
-//! reader is opt-in: see [`android::install_android_jni_context`].
+//! reader is opt-in: see `android::install_android_jni_context`
+//! (compiled only on `target_os = "android"`).
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -30,7 +31,7 @@ pub(crate) enum SystemConfigError {
     Read { source: AnyError },
     /// No system reader is available on this platform.
     ///
-    /// Raised on Android until [`android::install_android_jni_context`]
+    /// Raised on Android until `android::install_android_jni_context`
     /// has been called.
     #[error("system DNS reads are disabled on this platform")]
     PlatformUnsupported {},
