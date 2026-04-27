@@ -134,7 +134,7 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          cargo install --version 3.5.4 cargo-ndk
+          cargo install --version 4.1.2 cargo-ndk
           cargo ndk --target ${{ matrix.target }} build
 
   android_emulator_test:
@@ -180,7 +180,7 @@ jobs:
           add-to-path: true
 
       - name: Install cargo-ndk
-        run: cargo install --version 3.5.4 cargo-ndk
+        run: cargo install --version 4.1.2 cargo-ndk
 
       # Build all the test binaries up front so the emulator boot can
       # overlap with compilation. cargo-ndk runs `cargo test --no-run`
