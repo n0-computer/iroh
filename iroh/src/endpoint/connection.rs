@@ -87,7 +87,7 @@ impl From<transports::Addr> for IncomingAddr {
         match addr {
             transports::Addr::Ip(addr) => Self::Ip(addr),
             transports::Addr::Relay(url, endpoint_id) => Self::Relay { url, endpoint_id },
-            transports::Addr::Custom { remote, .. } => Self::Custom(remote),
+            transports::Addr::Custom(addr) => Self::Custom(addr),
         }
     }
 }
@@ -212,7 +212,7 @@ impl Incoming {
         match self.ep.to_transport_addr(self.inner.remote_address()) {
             transports::Addr::Ip(_) => IncomingLocalAddr::Ip(self.inner.local_ip()),
             transports::Addr::Relay(url, _) => IncomingLocalAddr::Relay { url },
-            transports::Addr::Custom { .. } => {
+            transports::Addr::Custom(_) => {
                 let local = self
                     .inner
                     .local_ip()

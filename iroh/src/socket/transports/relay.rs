@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, PollSender};
 use tracing::{Instrument, error, info_span, warn};
 
-use super::{Addr, Transmit};
+use super::{RecvInfo, Transmit};
 use crate::endpoint::RelayStatus;
 
 mod actor;
@@ -85,13 +85,13 @@ impl RelayTransport {
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
         let mut num_msgs = 0;
-        for ((buf_out, meta_out), addr) in bufs
+        for ((buf_out, meta_out), recv_info) in bufs
             .iter_mut()
             .zip(metas.iter_mut())
-            .zip(source_addrs.iter_mut())
+            .zip(recv_infos.iter_mut())
         {
             let dm = match self.poll_recv_queue(cx) {
                 Poll::Ready(Some(recv)) => recv,
@@ -153,7 +153,8 @@ impl RelayTransport {
             meta_out.ecn = None;
             meta_out.dst_ip = None;
 
-            *addr = (dm.url, dm.src).into();
+            recv_info.remote = (dm.url, dm.src).into();
+            recv_info.local = None;
             num_msgs += 1;
         }
 
