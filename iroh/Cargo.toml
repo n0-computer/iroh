@@ -26,6 +26,7 @@ blake3 = { version = "1.8.3", default-features = false }
 bytes = "1.11"
 ctutils = { version = "0.4.0", default-features = false }
 data-encoding = "2.2"
+der = "=0.8.0-rc.10" # only needed for exact version pin (until ed25519-dalek is updated)
 derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_into", "deref", "from_str", "into_iterator"] }
 ed25519-dalek = { version = "=3.0.0-pre.6", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
@@ -38,6 +39,7 @@ n0-error = "0.1.3"
 n0-watcher = "0.6"
 netwatch = "0.16"
 papaya = { version = "0.2.3", default-features = false }
+pkcs8 = "=0.11.0-rc.10" # only needed for exact version pin (until ed25519-dalek is updated)
 pin-project = "1"
 portable-atomic = "1"
 mainline = { version = "6", optional = true }
@@ -64,7 +66,6 @@ url = { version = "2.5", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.103.7", default-features = false, features = ["std"] }
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 webpki-roots = "1.0.3"
-pkcs8 = "0.11.0-rc.9"
 
 # metrics
 iroh-metrics = { version = "0.38", default-features = false }
