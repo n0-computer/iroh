@@ -227,8 +227,18 @@ jobs:
             # the kernel actually has a route to a public IP, otherwise
             # any test that hits the network fails with ENETUNREACH.
             adb shell 'i=0; while ! ip route get 8.8.8.8 >/dev/null 2>&1; do i=$((i+1)); if [ $i -gt 60 ]; then echo "no route to 8.8.8.8 after 60s"; ip addr; ip route; exit 1; fi; sleep 1; done'
+            # The emulator has site-local + link-local IPv6 but no global v6 route, and QEMU's slirp
+            # NAT does not forward v6 outbound, so connect() to a global v6 address hangs instead
+            # of failing fast with ENETUNREACH. Disable v6 in the kernel so AF_INET6 fails
+            # immediately and callers fall back to v4.
+            adb root
+            adb wait-for-device
+            adb shell sysctl -w net.ipv6.conf.all.disable_ipv6=1 || true
+            adb shell sysctl -w net.ipv6.conf.default.disable_ipv6=1 || true
+            adb shell sysctl -w net.ipv6.conf.lo.disable_ipv6=1 || true
             echo "=== ip addr ===" && adb shell ip addr
             echo "=== ip route ===" && adb shell ip route
+            echo "=== ip -6 route ===" && adb shell ip -6 route || true
             echo "=== net.dns1 ===" && adb shell getprop net.dns1
             cargo ndk test -p iroh-base --all-features
             cargo ndk test -p iroh-dns --features tls-ring
