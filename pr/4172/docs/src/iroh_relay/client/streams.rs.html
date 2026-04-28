@@ -15,7 +15,7 @@
 <a href=#15 id=15 data-nosnippet>15</a>
 <a href=#16 id=16 data-nosnippet>16</a><span class="attr">#[derive(Debug)]
 <a href=#17 id=17 data-nosnippet>17</a>#[allow(clippy::large_enum_variant)]
-<a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">pub enum </span>ProxyStream {
+<a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>ProxyStream {
 <a href=#19 id=19 data-nosnippet>19</a>    Raw(TcpStream),
 <a href=#20 id=20 data-nosnippet>20</a>    Proxied(util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, MaybeTlsStream&lt;TcpStream&gt;&gt;),
 <a href=#21 id=21 data-nosnippet>21</a>}
@@ -85,14 +85,14 @@
 <a href=#85 id=85 data-nosnippet>85</a>}
 <a href=#86 id=86 data-nosnippet>86</a>
 <a href=#87 id=87 data-nosnippet>87</a><span class="kw">impl </span>ProxyStream {
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;SocketAddr&gt; {
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;SocketAddr&gt; {
 <a href=#89 id=89 data-nosnippet>89</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#90 id=90 data-nosnippet>90</a>            <span class="self">Self</span>::Raw(s) =&gt; s.local_addr(),
 <a href=#91 id=91 data-nosnippet>91</a>            <span class="self">Self</span>::Proxied(s) =&gt; s.get_ref().<span class="number">1</span>.as_ref().local_addr(),
 <a href=#92 id=92 data-nosnippet>92</a>        }
 <a href=#93 id=93 data-nosnippet>93</a>    }
 <a href=#94 id=94 data-nosnippet>94</a>
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">pub fn </span>peer_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;SocketAddr&gt; {
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>peer_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;SocketAddr&gt; {
 <a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#97 id=97 data-nosnippet>97</a>            <span class="self">Self</span>::Raw(s) =&gt; s.peer_addr(),
 <a href=#98 id=98 data-nosnippet>98</a>            <span class="self">Self</span>::Proxied(s) =&gt; s.get_ref().<span class="number">1</span>.as_ref().peer_addr(),
@@ -102,7 +102,7 @@
 <a href=#102 id=102 data-nosnippet>102</a>
 <a href=#103 id=103 data-nosnippet>103</a><span class="attr">#[derive(Debug)]
 <a href=#104 id=104 data-nosnippet>104</a>#[allow(clippy::large_enum_variant)]
-<a href=#105 id=105 data-nosnippet>105</a></span><span class="kw">pub enum </span>MaybeTlsStream&lt;IO&gt; {
+<a href=#105 id=105 data-nosnippet>105</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>MaybeTlsStream&lt;IO&gt; {
 <a href=#106 id=106 data-nosnippet>106</a>    Raw(IO),
 <a href=#107 id=107 data-nosnippet>107</a>    Tls(tokio_rustls::client::TlsStream&lt;IO&gt;),
 <a href=#108 id=108 data-nosnippet>108</a>    <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]

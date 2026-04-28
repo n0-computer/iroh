@@ -18,18 +18,18 @@
 <a href=#18 id=18 data-nosnippet>18</a>};
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>n0_error::StdResultExt;
 <a href=#20 id=20 data-nosnippet>20</a>
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span><span class="kw">super</span>::error::AppResult;
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">crate</span>::state::AppState;
-<a href=#23 id=23 data-nosnippet>23</a>
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">mod </span>extract;
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">mod </span>response;
-<a href=#26 id=26 data-nosnippet>26</a>
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span><span class="self">self</span>::extract::{DnsMimeType, DnsRequestBody, DnsRequestQuery};
-<a href=#28 id=28 data-nosnippet>28</a><span class="attr">#[cfg(test)]
-<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::response::DnsResponse;
+<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span><span class="self">self</span>::{
+<a href=#22 id=22 data-nosnippet>22</a>    extract::{DnsMimeType, DnsRequestBody, DnsRequestQuery},
+<a href=#23 id=23 data-nosnippet>23</a>    response::DnsResponse,
+<a href=#24 id=24 data-nosnippet>24</a>};
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span><span class="kw">super</span>::error::AppResult;
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span><span class="kw">crate</span>::state::AppState;
+<a href=#27 id=27 data-nosnippet>27</a>
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">mod </span>extract;
+<a href=#29 id=29 data-nosnippet>29</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>response;
 <a href=#30 id=30 data-nosnippet>30</a>
 <a href=#31 id=31 data-nosnippet>31</a><span class="doccomment">/// GET handler for resolving DoH queries
-<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub async fn </span>get(
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>get(
 <a href=#33 id=33 data-nosnippet>33</a>    State(state): State&lt;AppState&gt;,
 <a href=#34 id=34 data-nosnippet>34</a>    DnsRequestQuery(request, accept_type): DnsRequestQuery,
 <a href=#35 id=35 data-nosnippet>35</a>) -&gt; AppResult&lt;Response&gt; {
@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>    <span class="kw">let </span><span class="kw-2">mut </span>response = <span class="kw">match </span>accept_type {
 <a href=#42 id=42 data-nosnippet>42</a>        DnsMimeType::Message =&gt; (StatusCode::OK, message_bytes).into_response(),
 <a href=#43 id=43 data-nosnippet>43</a>        DnsMimeType::Json =&gt; {
-<a href=#44 id=44 data-nosnippet>44</a>            <span class="kw">let </span>response = <span class="self">self</span>::response::DnsResponse::from_message(message)<span class="question-mark">?</span>;
+<a href=#44 id=44 data-nosnippet>44</a>            <span class="kw">let </span>response = DnsResponse::from_message(message)<span class="question-mark">?</span>;
 <a href=#45 id=45 data-nosnippet>45</a>            (StatusCode::OK, Json(response)).into_response()
 <a href=#46 id=46 data-nosnippet>46</a>        }
 <a href=#47 id=47 data-nosnippet>47</a>    };
@@ -59,7 +59,7 @@
 <a href=#59 id=59 data-nosnippet>59</a>}
 <a href=#60 id=60 data-nosnippet>60</a>
 <a href=#61 id=61 data-nosnippet>61</a><span class="doccomment">/// POST handler for resolvng DoH queries
-<a href=#62 id=62 data-nosnippet>62</a></span><span class="kw">pub async fn </span>post(
+<a href=#62 id=62 data-nosnippet>62</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>post(
 <a href=#63 id=63 data-nosnippet>63</a>    State(state): State&lt;AppState&gt;,
 <a href=#64 id=64 data-nosnippet>64</a>    DnsRequestBody(request): DnsRequestBody,
 <a href=#65 id=65 data-nosnippet>65</a>) -&gt; Response {
