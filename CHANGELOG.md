@@ -2,6 +2,25 @@
 
 All notable changes to iroh will be documented in this file.
 
+## [0.98.2](https://github.com/n0-computer/iroh/compare/v0.98.1..0.98.2) - 2026-04-28
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Don't abort connection attempts when an empty `EndpointAddr` is added concurrently ([#4177](https://github.com/n0-computer/iroh/issues/4177)) - ([60f6f09](https://github.com/n0-computer/iroh/commit/60f6f092260557840b76b338ed7f85eb45b3db7b))
+- Protect against division by zero in process_datagram ([#4178](https://github.com/n0-computer/iroh/issues/4178)) - ([70cec3d](https://github.com/n0-computer/iroh/commit/70cec3deaa5b007a788243e90d8e3bbe1674edf2))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(ci)* Fix sccache for netsim ([#4176](https://github.com/n0-computer/iroh/issues/4176)) - ([59e6363](https://github.com/n0-computer/iroh/commit/59e636340a3f75e39e2d5a16dc823975a87dd59c))
+- *(ci)* Fix musl/gnu build setup ([#4184](https://github.com/n0-computer/iroh/issues/4184)) - ([7fe7ffc](https://github.com/n0-computer/iroh/commit/7fe7ffcba53990ebedcee7f81ba289080d14ed14))
+- Enable ci on this branch - ([44b2336](https://github.com/n0-computer/iroh/commit/44b2336bd2d9362c09e2f52aa633db1292f808a5))
+- Fix release build targets ([#4146](https://github.com/n0-computer/iroh/issues/4146)) - ([18f6e2d](https://github.com/n0-computer/iroh/commit/18f6e2dbf80be88f023a40ba4722a94e5e0ea6d4))
+
+### Deps
+
+- Pin pkcs8 and der ([#4197](https://github.com/n0-computer/iroh/issues/4197)) - ([8c1461b](https://github.com/n0-computer/iroh/commit/8c1461b7f8271def0edf677457644178e11bc0d1))
+- Bump rustls-webpki from 0.103.12 to 0.103.13 - ([4baa9b1](https://github.com/n0-computer/iroh/commit/4baa9b1d032e5c2e8208ef22dfe24a19ebb7fd12))
+
 ## [0.98.1](https://github.com/n0-computer/iroh/compare/v0.98.0..0.98.1) - 2026-04-20
 
 ### 🐛 Bug Fixes
