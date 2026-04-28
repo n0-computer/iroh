@@ -280,6 +280,11 @@ jobs:
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
+      # The tool drives an internal rustdoc invocation that only emits JSON
+      # for the analyzer, so the workflow-wide `-Dwarnings` would just turn
+      # unrelated rustdoc lints (e.g. `private-intra-doc-links`) into hard
+      # failures here. Clear it for this job.
+      RUSTDOCFLAGS: ""
       # Pin to the nightly that the pinned `cargo-check-external-types`
       # release was last tested against. Update both together.
       CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.4.0"
