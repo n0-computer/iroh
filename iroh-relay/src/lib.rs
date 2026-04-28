@@ -81,3 +81,9 @@ pub trait ExportKeyingMaterial {
         context: Option<&[u8]>,
     ) -> Option<T>;
 }
+
+#[cfg(all(test, target_os = "android"))]
+#[ctor::ctor]
+fn android_test_init() {
+    iroh_dns::install_test_jni_context_stub();
+}

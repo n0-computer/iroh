@@ -30,6 +30,12 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 // #[cfg(wasm_browser)]
 // wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
+#[cfg(target_os = "android")]
+#[ctor::ctor]
+fn android_test_init() {
+    iroh::install_test_jni_context_stub();
+}
+
 const ECHO_ALPN: &[u8] = b"echo";
 
 #[test]
