@@ -127,13 +127,18 @@ impl RemotePathState {
 
     /// Inserts multiple addresses of unknown status into our list of potential paths.
     ///
-    /// This will emit pending resolve requests and trigger pruning paths.
+    /// If this caused the path set to transition from empty to non-empty, any
+    /// pending resolve requests are woken with `Ok(())`. Inserts that add no
+    /// new paths (empty iterator, or only duplicates) are a no-op: waking
+    /// pending requests while the path set is still empty would send a bogus
+    /// `AddressLookupFailed::NoResults` while an address lookup is in flight.
     pub(super) fn insert_multiple(
         &mut self,
         addrs: impl Iterator<Item = transports::Addr>,
         source: Source,
     ) {
         let now = Instant::now();
+        let was_empty = self.paths.is_empty();
         for addr in addrs {
             self.paths
                 .entry(addr)
@@ -142,7 +147,9 @@ impl RemotePathState {
                 .insert(source.clone(), now);
         }
         trace!("added addressing information");
-        self.emit_pending_resolve_requests(None);
+        if was_empty && !self.paths.is_empty() {
+            self.emit_pending_resolve_requests(None);
+        }
         self.prune_paths();
     }
 
@@ -622,5 +629,56 @@ mod tests {
         ));
         assert_eq!(metrics.transport_ip_paths_added.get(), 2);
         assert_eq!(metrics.transport_ip_paths_removed.get(), 1);
+    }
+
+    /// An empty `insert_multiple` must not drain pending resolve requests.
+    ///
+    /// This reproduces the race where multiple concurrent `connect_with_opts`
+    /// calls send `ResolveRemote` messages with empty addrs. The first pushes
+    /// a tx, then the second's `insert_multiple([])` used to drain that tx
+    /// with `NoResults { errors: [] }`, even though an address lookup was
+    /// still in flight and would shortly have resolved it.
+    #[test]
+    fn empty_insert_does_not_drain_pending() {
+        let metrics = Arc::new(SocketMetrics::default());
+        let mut state = RemotePathState::new(metrics);
+
+        let (tx, mut rx) = oneshot::channel();
+        state.resolve_remote(tx);
+
+        // Second concurrent resolve arrives with empty addrs (no app-provided
+        // addresses) while address lookup is still running.
+        state.insert_multiple(std::iter::empty(), Source::App);
+
+        assert!(
+            rx.try_recv().is_err(),
+            "pending tx must stay pending while paths are empty and lookup is in flight"
+        );
+
+        // When real addresses arrive, the tx resolves Ok.
+        state.insert_multiple([ip_addr(4242)].into_iter(), Source::App);
+        let resolved = rx.try_recv().expect("tx should have been woken");
+        assert!(resolved.is_ok(), "expected Ok once a path was added");
+    }
+
+    /// `address_lookup_finished(Ok(()))` drains pending requests with `NoResults` when no paths are known.
+    ///
+    /// This is the "lookup done but nothing was found" signal and it must
+    /// still reach callers.
+    #[test]
+    fn address_lookup_finished_empty_emits_no_results() {
+        let metrics = Arc::new(SocketMetrics::default());
+        let mut state = RemotePathState::new(metrics);
+
+        let (tx, mut rx) = oneshot::channel();
+        state.resolve_remote(tx);
+
+        state.address_lookup_finished(Ok(()));
+
+        let resolved = rx.try_recv().expect("tx should have been woken");
+        assert!(matches!(
+            resolved,
+            Err(AddressLookupFailed::NoResults { .. })
+        ));
     }
 }
