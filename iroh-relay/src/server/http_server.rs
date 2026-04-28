@@ -612,6 +612,9 @@ impl RelayServiceWithNotify {
             })?;
 
         let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
+        // Snapshot the full request headers so the `AccessConfig` hook can
+        // inspect them after the WebSocket handshake completes.
+        let request_headers = req.headers().clone();
 
         // Setup a future that will eventually receive the upgraded
         // connection and talk a new protocol, and spawn the future
@@ -631,6 +634,7 @@ impl RelayServiceWithNotify {
                             .relay_connection_handler(
                                 upgraded,
                                 client_auth_header,
+                                request_headers,
                                 protocol_version,
                             )
                             .await
@@ -815,6 +819,7 @@ impl Inner {
         &self,
         upgraded: Upgraded,
         client_auth_header: Option<HeaderValue>,
+        request_headers: HeaderMap,
         protocol_version: ProtocolVersion,
     ) -> Result<(), ConnectionHandlerError> {
         debug!("relay_connection upgraded");
@@ -823,7 +828,7 @@ impl Inner {
             return Err(e!(ConnectionHandlerError::BufferNotEmpty { buf: read_buf }));
         }
 
-        self.accept(io, client_auth_header, protocol_version)
+        self.accept(io, client_auth_header, request_headers, protocol_version)
             .await?;
         Ok(())
     }
@@ -842,6 +847,7 @@ impl Inner {
         &self,
         io: MaybeTlsStream,
         client_auth_header: Option<HeaderValue>,
+        request_headers: HeaderMap,
         protocol_version: ProtocolVersion,
     ) -> Result<(), AcceptError> {
         trace!("accept: start");
@@ -864,7 +870,10 @@ impl Inner {
 
         trace!(?authentication.mechanism, "accept: verified authentication");
 
-        let is_authorized = self.access.is_allowed(authentication.client_key).await;
+        let is_authorized = self
+            .access
+            .is_allowed(authentication.client_key, &request_headers)
+            .await;
         let client_key = authentication.authorize_if(is_authorized, &mut io).await?;
 
         trace!("accept: verified authorization");
@@ -1478,8 +1487,13 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_a), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_a),
+                None,
+                HeaderMap::new(),
+                Default::default(),
+            )
+            .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.std_context("join")??;
@@ -1490,8 +1504,13 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_b), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_b),
+                None,
+                HeaderMap::new(),
+                Default::default(),
+            )
+            .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
@@ -1582,8 +1601,13 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_a), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_a),
+                None,
+                HeaderMap::new(),
+                Default::default(),
+            )
+            .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.std_context("join")??;
@@ -1594,8 +1618,13 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_b), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_b),
+                None,
+                HeaderMap::new(),
+                Default::default(),
+            )
+            .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
@@ -1646,8 +1675,13 @@ mod tests {
         let (new_client_b, new_rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(new_rw_b), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(new_rw_b),
+                None,
+                HeaderMap::new(),
+                Default::default(),
+            )
+            .await
         });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
         handler_task.await.std_context("join")??;

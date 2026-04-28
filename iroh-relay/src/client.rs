@@ -94,6 +94,8 @@ pub enum ConnectError {
         "No rustls crypto provider configured while both ring and aws-lc-rs feature flags are disabled"
     )]
     MissingCryptoProvider,
+    #[error("Configured request header {name} is not allowed for the WebSocket upgrade")]
+    DisallowedHeader { name: http::HeaderName },
     #[cfg(wasm_browser)]
     #[error("The relay protocol is not available in browsers")]
     RelayProtoNotAvailable {},
@@ -150,6 +152,8 @@ pub struct ClientBuilder {
     proxy_url: Option<Url>,
     /// The secret key of this client.
     secret_key: SecretKey,
+    /// Additional HTTP headers to send on the WebSocket upgrade request.
+    headers: http::HeaderMap,
     /// The DNS resolver to use.
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
@@ -170,6 +174,7 @@ impl ClientBuilder {
             tls_config: None,
             proxy_url: None,
             secret_key,
+            headers: http::HeaderMap::new(),
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
@@ -220,6 +225,18 @@ impl ClientBuilder {
     /// Set an explicit proxy url to proxy all HTTP(S) traffic through.
     pub fn proxy_url(mut self, url: Url) -> Self {
         self.proxy_url.replace(url);
+        self
+    }
+
+    /// Adds an HTTP header to the WebSocket upgrade request.
+    ///
+    /// Multiple calls append to the request; calling this with the same name
+    /// twice keeps both values. The standard WebSocket upgrade headers
+    /// (`Upgrade`, `Connection`, `Sec-WebSocket-*`) are reserved and must
+    /// not be set here; passing one of them surfaces as
+    /// [`ConnectError::DisallowedHeader`] from [`ClientBuilder::connect`].
+    pub fn header(mut self, name: http::HeaderName, value: http::HeaderValue) -> Self {
+        self.headers.append(name, value);
         self
     }
 
@@ -299,6 +316,11 @@ impl ClientBuilder {
                 .expect(
                     "impossible: CLIENT_AUTH_HEADER isn't a disallowed header value for websockets",
                 );
+        }
+        for (name, value) in &self.headers {
+            builder = builder
+                .add_header(name.clone(), value.clone())
+                .map_err(|_| e!(ConnectError::DisallowedHeader { name: name.clone() }))?;
         }
         let (conn, response) = builder.connect_on(stream).await.anyerr()?;
 

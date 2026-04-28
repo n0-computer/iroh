@@ -131,6 +131,13 @@ pub struct RelayConfig {
     pub access: AccessConfig,
 }
 
+/// Access check callback used by [`AccessConfig::Restricted`].
+///
+/// Receives the [`EndpointId`] proven by the relay handshake alongside the
+/// original HTTP request headers from the WebSocket upgrade.  Returning
+/// [`Access::Allow`] admits the endpoint, otherwise it is rejected.
+pub type AccessCheck = Box<dyn Fn(EndpointId, &HeaderMap) -> Boxed<Access> + Send + Sync + 'static>;
+
 /// Controls which endpoints are allowed to use the relay.
 #[derive(derive_more::Debug)]
 #[non_exhaustive]
@@ -138,17 +145,24 @@ pub enum AccessConfig {
     /// Everyone
     Everyone,
     /// Only endpoints for which the function returns `Access::Allow`.
+    ///
+    /// The closure receives the [`EndpointId`] proven by the relay handshake
+    /// alongside the original HTTP request headers from the WebSocket upgrade.
+    /// This makes it possible to bind an `Authorization: Bearer` token (or any
+    /// other header) to the endpoint key actually connecting, e.g. to assert
+    /// the endpoint id described in the bearer credential matches the one
+    /// proven by the handshake.
     #[debug("restricted")]
-    Restricted(Box<dyn Fn(EndpointId) -> Boxed<Access> + Send + Sync + 'static>),
+    Restricted(AccessCheck),
 }
 
 impl AccessConfig {
     /// Is this endpoint allowed?
-    pub async fn is_allowed(&self, endpoint: EndpointId) -> bool {
+    pub async fn is_allowed(&self, endpoint: EndpointId, headers: &HeaderMap) -> bool {
         match self {
             Self::Everyone => true,
             Self::Restricted(check) => {
-                let res = check(endpoint).await;
+                let res = check(endpoint, headers).await;
                 matches!(res, Access::Allow)
             }
         }
@@ -1082,7 +1096,7 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
-                access: AccessConfig::Restricted(Box::new(move |endpoint_id| {
+                access: AccessConfig::Restricted(Box::new(move |endpoint_id, _headers| {
                     async move {
                         info!("checking {}", endpoint_id);
                         // reject endpoint a
@@ -1150,6 +1164,88 @@ mod tests {
         } else {
             panic!("client_c received unexpected message {res:?}");
         }
+
+        Ok(())
+    }
+
+    /// Verifies that [`ClientBuilder::header`] forwards an HTTP header on the
+    /// WebSocket upgrade so the [`AccessConfig::Restricted`] hook can read it.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_relay_client_header_forwarded() -> Result<()> {
+        const TOKEN: &str = "secret-token";
+
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
+        let server = Server::spawn(ServerConfig {
+            relay: Some(RelayConfig {
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+                key_cache_capacity: Some(1024),
+                access: AccessConfig::Restricted(Box::new(move |_endpoint_id, headers| {
+                    let bearer = headers
+                        .get(http::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.strip_prefix("Bearer "))
+                        .map(str::to_owned);
+                    async move {
+                        if bearer.as_deref() == Some(TOKEN) {
+                            Access::Allow
+                        } else {
+                            Access::Deny
+                        }
+                    }
+                    .boxed()
+                })),
+            }),
+            quic: None,
+            metrics_addr: None,
+        })
+        .await?;
+
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse()?;
+
+        let bearer = |token: &str| {
+            http::HeaderValue::try_from(format!("Bearer {token}")).expect("ascii header value")
+        };
+
+        // No header: denied.
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let result = ClientBuilder::new(relay_url.clone(), secret_key, dns_resolver())
+            .tls_client_config(client_config.clone())
+            .connect()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. })
+                if reason == "not authorized"
+        ));
+
+        // Wrong header value: denied.
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let result = ClientBuilder::new(relay_url.clone(), secret_key, dns_resolver())
+            .tls_client_config(client_config.clone())
+            .header(http::header::AUTHORIZATION, bearer("wrong-token"))
+            .connect()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. })
+                if reason == "not authorized"
+        ));
+
+        // Correct header value: connection succeeds.
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let _client = ClientBuilder::new(relay_url, secret_key, dns_resolver())
+            .tls_client_config(client_config)
+            .header(http::header::AUTHORIZATION, bearer(TOKEN))
+            .connect()
+            .await?;
 
         Ok(())
     }
