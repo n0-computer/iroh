@@ -94,6 +94,8 @@ pub enum ConnectError {
         "No rustls crypto provider configured while both ring and aws-lc-rs feature flags are disabled"
     )]
     MissingCryptoProvider,
+    #[error("Configured auth token is not a valid HTTP header value")]
+    InvalidAuthToken,
     #[cfg(wasm_browser)]
     #[error("The relay protocol is not available in browsers")]
     RelayProtoNotAvailable {},
@@ -150,6 +152,8 @@ pub struct ClientBuilder {
     proxy_url: Option<Url>,
     /// The secret key of this client.
     secret_key: SecretKey,
+    /// Optional bearer token sent on the WebSocket upgrade request.
+    auth_token: Option<String>,
     /// The DNS resolver to use.
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
@@ -170,6 +174,7 @@ impl ClientBuilder {
             tls_config: None,
             proxy_url: None,
             secret_key,
+            auth_token: None,
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
@@ -220,6 +225,16 @@ impl ClientBuilder {
     /// Set an explicit proxy url to proxy all HTTP(S) traffic through.
     pub fn proxy_url(mut self, url: Url) -> Self {
         self.proxy_url.replace(url);
+        self
+    }
+
+    /// Sets a bearer token to authenticate to the relay server.
+    ///
+    /// The token is sent on the WebSocket upgrade request as the credential
+    /// portion of an `Authorization: Bearer <token>` header. Used by
+    /// multitenant relay deployments to attribute and route the connection.
+    pub fn auth_token(mut self, token: impl Into<String>) -> Self {
+        self.auth_token = Some(token.into());
         self
     }
 
@@ -299,6 +314,13 @@ impl ClientBuilder {
                 .expect(
                     "impossible: CLIENT_AUTH_HEADER isn't a disallowed header value for websockets",
                 );
+        }
+        if let Some(token) = &self.auth_token {
+            let value = http::HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| e!(ConnectError::InvalidAuthToken))?;
+            builder = builder
+                .add_header(http::header::AUTHORIZATION, value)
+                .expect("AUTHORIZATION isn't a disallowed header value for websockets");
         }
         let (conn, response) = builder.connect_on(stream).await.anyerr()?;
 

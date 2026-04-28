@@ -39,8 +39,8 @@ use derive_more::{Display, From};
 use indicatif::HumanBytes;
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
-    Watcher,
+    Endpoint, EndpointAddr, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey,
+    TransportAddr, Watcher,
     address_lookup::{
         AddrFilter,
         dns::DnsAddressLookup,
@@ -277,6 +277,12 @@ struct EndpointArgs {
     /// Set one or more relay servers to use.
     #[clap(long)]
     relay_url: Vec<RelayUrl>,
+    /// Bearer token sent on the WebSocket upgrade to each `--relay-url`.
+    ///
+    /// Used by multitenant relay deployments to attribute and route the
+    /// connection. Has no effect unless `--relay-url` is also set.
+    #[clap(long)]
+    relay_auth_token: Option<String>,
     /// Disable relays completely.
     #[clap(long, conflicts_with = "relay_url")]
     no_relay: bool,
@@ -474,7 +480,15 @@ impl EndpointArgs {
         if self.no_relay {
             // nothing to do
         } else if !self.relay_url.is_empty() {
-            builder = builder.relay_mode(RelayMode::Custom(RelayMap::from_iter(self.relay_url)));
+            let token = self.relay_auth_token.clone();
+            let configs = self.relay_url.into_iter().map(|url| {
+                let mut cfg = RelayConfig::from(url);
+                if let Some(ref token) = token {
+                    cfg = cfg.with_auth_token(token.clone());
+                }
+                cfg
+            });
+            builder = builder.relay_mode(RelayMode::Custom(RelayMap::from_iter(configs)));
         } else {
             builder = builder.relay_mode(self.env.relay_mode());
         };

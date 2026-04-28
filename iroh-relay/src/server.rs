@@ -131,23 +131,37 @@ pub struct RelayConfig {
     pub access: AccessConfig,
 }
 
+/// Access check callback used by [`AccessConfig::Restricted`].
+///
+/// Receives the [`EndpointId`] proven by the relay handshake alongside the
+/// original HTTP request headers from the WebSocket upgrade.  Returning
+/// [`Access::Allow`] admits the endpoint, otherwise it is rejected.
+pub type AccessCheck = Box<dyn Fn(EndpointId, &HeaderMap) -> Boxed<Access> + Send + Sync + 'static>;
+
 /// Controls which endpoints are allowed to use the relay.
 #[derive(derive_more::Debug)]
 pub enum AccessConfig {
     /// Everyone
     Everyone,
     /// Only endpoints for which the function returns `Access::Allow`.
+    ///
+    /// The closure receives the [`EndpointId`] proven by the relay handshake
+    /// alongside the original HTTP request headers from the WebSocket upgrade.
+    /// This makes it possible to bind an `Authorization: Bearer` token (or any
+    /// other header) to the endpoint key actually connecting, e.g. to assert
+    /// the endpoint id described in the bearer credential matches the one
+    /// proven by the handshake.
     #[debug("restricted")]
-    Restricted(Box<dyn Fn(EndpointId) -> Boxed<Access> + Send + Sync + 'static>),
+    Restricted(AccessCheck),
 }
 
 impl AccessConfig {
     /// Is this endpoint allowed?
-    pub async fn is_allowed(&self, endpoint: EndpointId) -> bool {
+    pub async fn is_allowed(&self, endpoint: EndpointId, headers: &HeaderMap) -> bool {
         match self {
             Self::Everyone => true,
             Self::Restricted(check) => {
-                let res = check(endpoint).await;
+                let res = check(endpoint, headers).await;
                 matches!(res, Access::Allow)
             }
         }
@@ -1081,7 +1095,7 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
-                access: AccessConfig::Restricted(Box::new(move |endpoint_id| {
+                access: AccessConfig::Restricted(Box::new(move |endpoint_id, _headers| {
                     async move {
                         info!("checking {}", endpoint_id);
                         // reject endpoint a

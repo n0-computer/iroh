@@ -188,31 +188,35 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
             AccessConfig::Everyone => iroh_relay::server::AccessConfig::Everyone,
             AccessConfig::Allowlist(allow_list) => {
                 let allow_list = Arc::new(allow_list);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |endpoint_id| {
-                    let allow_list = allow_list.clone();
-                    async move {
-                        if allow_list.contains(&endpoint_id) {
-                            iroh_relay::server::Access::Allow
-                        } else {
-                            iroh_relay::server::Access::Deny
+                iroh_relay::server::AccessConfig::Restricted(Box::new(
+                    move |endpoint_id, _headers| {
+                        let allow_list = allow_list.clone();
+                        async move {
+                            if allow_list.contains(&endpoint_id) {
+                                iroh_relay::server::Access::Allow
+                            } else {
+                                iroh_relay::server::Access::Deny
+                            }
                         }
-                    }
-                    .boxed()
-                }))
+                        .boxed()
+                    },
+                ))
             }
             AccessConfig::Denylist(deny_list) => {
                 let deny_list = Arc::new(deny_list);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |endpoint_id| {
-                    let deny_list = deny_list.clone();
-                    async move {
-                        if deny_list.contains(&endpoint_id) {
-                            iroh_relay::server::Access::Deny
-                        } else {
-                            iroh_relay::server::Access::Allow
+                iroh_relay::server::AccessConfig::Restricted(Box::new(
+                    move |endpoint_id, _headers| {
+                        let deny_list = deny_list.clone();
+                        async move {
+                            if deny_list.contains(&endpoint_id) {
+                                iroh_relay::server::Access::Deny
+                            } else {
+                                iroh_relay::server::Access::Allow
+                            }
                         }
-                    }
-                    .boxed()
-                }))
+                        .boxed()
+                    },
+                ))
             }
             AccessConfig::Http(mut config) => {
                 let client = reqwest::Client::builder()
@@ -224,11 +228,14 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                     config.bearer_token = Some(token);
                 }
                 let config = Arc::new(config);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |endpoint_id| {
-                    let client = client.clone();
-                    let config = config.clone();
-                    async move { http_access_check(&client, &config, endpoint_id).await }.boxed()
-                }))
+                iroh_relay::server::AccessConfig::Restricted(Box::new(
+                    move |endpoint_id, _headers| {
+                        let client = client.clone();
+                        let config = config.clone();
+                        async move { http_access_check(&client, &config, endpoint_id).await }
+                            .boxed()
+                    },
+                ))
             }
         }
     }

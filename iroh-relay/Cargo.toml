@@ -177,6 +177,10 @@ name = "iroh-relay"
 path = "src/main.rs"
 required-features = ["server"]
 
+[[example]]
+name = "multitenant"
+required-features = ["server"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "iroh_docsrs"]
