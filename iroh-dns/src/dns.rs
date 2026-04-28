@@ -187,10 +187,8 @@ impl Builder {
     /// `install_android_jni_context` (exported at the crate root,
     /// Android only).
     ///
-    /// The same public fallback (Cloudflare and Google over UDP and
-    /// TCP, plus DNS-over-HTTPS when the `tls-ring` or
-    /// `tls-aws-lc-rs` feature is enabled) is used on any platform
-    /// where the system reader returns nothing.
+    /// The same public fallback (Google over UDP and TCP) is used on
+    /// any platform where the system reader returns nothing.
     pub fn with_system_defaults(mut self) -> Self {
         self.use_system_defaults = true;
         self
@@ -330,10 +328,9 @@ impl DnsResolver {
     /// behavior, including the public DNS fallback that takes over
     /// when the system reader returns nothing.
     ///
-    /// The fallback can route queries through public providers
-    /// (Cloudflare and Google). To keep DNS traffic on caller-supplied
-    /// servers only, build the resolver through [`Self::builder`]
-    /// with explicit nameservers.
+    /// The fallback routes queries through Google's public DNS. To
+    /// keep DNS traffic on caller-supplied servers only, build the
+    /// resolver through [`Self::builder`] with explicit nameservers.
     pub fn new() -> Self {
         Builder::default().with_system_defaults().build()
     }
@@ -620,10 +617,12 @@ impl HickoryResolver {
                 Err(error) => {
                     debug!(
                         %error,
-                        "Falling back to public DNS resolvers: \
-                         system DNS unavailable.",
+                        "Failed to read the system's DNS config, using fallback DNS servers."
                     );
-                    (public_fallback_config(), ResolverOpts::default())
+                    (
+                        ResolverConfig::udp_and_tcp(&hickory_resolver::config::GOOGLE),
+                        ResolverOpts::default(),
+                    )
                 }
             }
         } else {
@@ -654,37 +653,6 @@ impl HickoryResolver {
 
         hickory_builder.build().expect("config works")
     }
-}
-
-/// Returns the public DNS fallback used when the system reader is
-/// unavailable.
-///
-/// Lists Cloudflare and Google over UDP and TCP in that order: both
-/// providers are anycasted on disjoint networks, so a single
-/// provider outage still leaves a working resolver. With a TLS
-/// feature enabled the same providers are appended again over DoH,
-/// which keeps the resolver functional on networks that filter
-/// plain UDP/53.
-fn public_fallback_config() -> ResolverConfig {
-    use hickory_resolver::config::{CLOUDFLARE, GOOGLE};
-
-    let mut config = ResolverConfig::default();
-    for ns in CLOUDFLARE.udp_and_tcp() {
-        config.add_name_server(ns);
-    }
-    for ns in GOOGLE.udp_and_tcp() {
-        config.add_name_server(ns);
-    }
-    #[cfg(with_crypto_provider)]
-    {
-        for ns in CLOUDFLARE.https() {
-            config.add_name_server(ns);
-        }
-        for ns in GOOGLE.https() {
-            config.add_name_server(ns);
-        }
-    }
-    config
 }
 
 impl Resolver for HickoryResolver {
@@ -869,41 +837,6 @@ pub(crate) mod tests {
     use n0_tracing_test::traced_test;
 
     use super::*;
-    use crate::system_config::is_usable_nameserver;
-
-    #[test]
-    fn public_fallback_has_useful_servers() {
-        let config = public_fallback_config();
-        let servers: Vec<_> = config.name_servers().iter().map(|n| n.ip).collect();
-        assert!(!servers.is_empty(), "fallback config must list servers");
-        for ip in &servers {
-            assert!(
-                is_usable_nameserver(*ip),
-                "fallback server {ip} must pass the link-local filter",
-            );
-        }
-        // Both providers must be present so a single-provider outage does
-        // not take iroh down.
-        assert!(servers.contains(&"1.1.1.1".parse().unwrap()));
-        assert!(servers.contains(&"8.8.8.8".parse().unwrap()));
-    }
-
-    #[cfg(with_crypto_provider)]
-    #[test]
-    fn public_fallback_includes_doh_when_tls_enabled() {
-        use hickory_resolver::config::ProtocolConfig;
-
-        let config = public_fallback_config();
-        let has_https = config.name_servers().iter().any(|n| {
-            n.connections
-                .iter()
-                .any(|c| matches!(c.protocol, ProtocolConfig::Https { .. }))
-        });
-        assert!(
-            has_https,
-            "fallback config must include DoH when tls feature is enabled",
-        );
-    }
 
     #[cfg(target_os = "android")]
     #[test]
