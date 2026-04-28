@@ -11,7 +11,7 @@
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">super</span>::error::AppError;
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use crate</span>::{state::AppState, store::PacketSource, util::PublicKeyBytes};
 <a href=#13 id=13 data-nosnippet>13</a>
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">pub async fn </span>put(
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>put(
 <a href=#15 id=15 data-nosnippet>15</a>    State(state): State&lt;AppState&gt;,
 <a href=#16 id=16 data-nosnippet>16</a>    Path(key): Path&lt;String&gt;,
 <a href=#17 id=17 data-nosnippet>17</a>    body: Bytes,
@@ -34,7 +34,7 @@
 <a href=#34 id=34 data-nosnippet>34</a>    <span class="prelude-val">Ok</span>(StatusCode::NO_CONTENT)
 <a href=#35 id=35 data-nosnippet>35</a>}
 <a href=#36 id=36 data-nosnippet>36</a>
-<a href=#37 id=37 data-nosnippet>37</a><span class="kw">pub async fn </span>get(
+<a href=#37 id=37 data-nosnippet>37</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>get(
 <a href=#38 id=38 data-nosnippet>38</a>    State(state): State&lt;AppState&gt;,
 <a href=#39 id=39 data-nosnippet>39</a>    Path(pubkey): Path&lt;String&gt;,
 <a href=#40 id=40 data-nosnippet>40</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>IntoResponse, AppError&gt; {
