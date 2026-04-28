@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - maint-0.98
   workflow_dispatch:
     inputs:
       pr_number:

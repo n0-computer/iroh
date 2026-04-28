@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - maint-0.98
 
 concurrency:
   group: patchbay-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

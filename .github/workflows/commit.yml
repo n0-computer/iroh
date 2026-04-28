@@ -2,7 +2,7 @@ name: Commits
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, maint-0.98]
     types: [opened, edited, synchronize]
 
 env:

@@ -2,7 +2,7 @@ name: Wine Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, maint-0.98]
   pull_request:
   workflow_dispatch:
 
