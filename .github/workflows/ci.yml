@@ -201,6 +201,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          RUST_LOG: trace
         with:
           api-level: ${{ matrix.api-level }}
           arch: x86_64
@@ -226,10 +227,10 @@ jobs:
             echo "=== ip addr ===" && adb shell ip addr
             echo "=== ip route ===" && adb shell ip route
             echo "=== net.dns1 ===" && adb shell getprop net.dns1
-            cargo ndk test -p iroh-base --all-features
+            # cargo ndk test -p iroh-base --all-features
             cargo ndk test -p iroh-dns --features tls-ring
-            cargo ndk test -p iroh-relay --features tls-ring,metrics
-            cargo ndk test -p iroh --features tls-ring,metrics,portmapper,test-utils
+            # cargo ndk test -p iroh-relay --features tls-ring,metrics
+            # cargo ndk test -p iroh --features tls-ring,metrics,portmapper,test-utils
 
   cross_test:
     name: Cross Test

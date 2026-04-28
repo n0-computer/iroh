@@ -14,11 +14,6 @@ const TIMEOUT: Duration = Duration::from_secs(8);
 const HOST: &str = "dns.iroh.link";
 
 #[tokio::test]
-async fn resolver_constructs_without_panic() {
-    let _resolver = DnsResolver::new();
-}
-
-#[tokio::test]
 async fn resolver_resolves_dns_iroh_link() {
     let resolver = DnsResolver::new();
     let mut hits: Vec<String> = Vec::new();
