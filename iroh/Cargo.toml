@@ -214,3 +214,7 @@ required-features = []
 [[example]]
 name = "incoming-filter"
 required-features = []
+
+[[example]]
+name = "pq-key-exchange"
+required-features = ["tls-aws-lc-rs"]
