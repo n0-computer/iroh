@@ -669,9 +669,52 @@ impl RelayServiceWithNotify {
 
 /// Combines [`RelayService`] with a notification token.
 ///
-/// This struct implements [`Service`].
+/// This struct implements [`Service`]. Note that the service has to be called with hyper's `io`
+/// argument set to [`MaybeTlsStream`] wrapped by [`hyper_util::rt::TokioIo`], otherwise handling
+/// WebSocket requests at `/relay` will fail at runtime with [`ConnectionHandlerError::DowncastUpgrade`].
 ///
-/// The notification token is triggered once the relay connection is fully established.
+/// The notification token is triggered once the relay connection is fully established. It can be used
+/// to cancel a timeout aborting the TCP connection if no upgrade request is received in some time.
+///
+/// ## Example
+///
+/// ```no_run
+/// # use std::sync::Arc;
+/// # use http::HeaderMap;
+/// # use hyper::server::conn::http1;
+/// # use hyper_util::rt::TokioIo;
+/// # use tokio::{net::TcpListener, sync::Notify};
+/// # use iroh_relay::{
+/// #     KeyCache,
+/// #     server::{
+/// #         AccessConfig, Metrics,
+/// #         http_server::{Handlers, RelayService, RelayServiceWithNotify},
+/// #         streams::MaybeTlsStream
+/// #     },
+/// # };
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let service = RelayService::new(
+///     Handlers::default(),
+///     HeaderMap::new(),
+///     None,
+///     KeyCache::new(1024),
+///     AccessConfig::Everyone,
+///     Arc::new(Metrics::default()),
+/// );
+/// let service = RelayServiceWithNotify::new(service, Arc::new(Notify::new()));
+///
+/// let listener = TcpListener::bind("127.0.0.1:0").await?;
+/// let (stream, _peer) = listener.accept().await?;
+/// // Wrap the TCP stream in `MaybeTlsStream`, otherwise the relay WebSocket handler will error at runtime
+/// // for all WebSocket requests to `/relay`.
+/// let stream = MaybeTlsStream::Plain(stream);
+/// http1::Builder::new()
+///     .serve_connection(TokioIo::new(stream), service)
+///     .with_upgrades()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct RelayServiceWithNotify {
     service: RelayService,
@@ -1054,10 +1097,7 @@ impl RelayServiceWithNotify {
     }
 
     /// Wrapper for the actual http connection (with upgrades)
-    async fn serve_connection<I>(self, io: I) -> Result<(), ServeConnectionError>
-    where
-        I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
-    {
+    async fn serve_connection(self, io: MaybeTlsStream) -> Result<(), ServeConnectionError> {
         hyper::server::conn::http1::Builder::new()
             .serve_connection(hyper_util::rt::TokioIo::new(io), self)
             .with_upgrades()
