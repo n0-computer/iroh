@@ -269,6 +269,56 @@ jobs:
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
+  check_external_types:
+    timeout-minutes: 30
+    name: Check external types in public API
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_9) }}
+    # Enforces https://github.com/n0-computer/iroh/issues/3177: foreign types
+    # in our public API are gated by `external-types.toml`.
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+      # Pin to the nightly that the pinned `cargo-check-external-types`
+      # release was last tested against. Update both together.
+      CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.4.0"
+      CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY: "nightly-2025-10-18"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY }}
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache cargo-check-external-types
+        id: cache-cet
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/cargo-check-external-types
+          key: cargo-check-external-types-${{ env.CARGO_CHECK_EXTERNAL_TYPES_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-check-external-types
+        if: steps.cache-cet.outputs.cache-hit != 'true'
+        run: cargo install --locked --version "$CARGO_CHECK_EXTERNAL_TYPES_VERSION" cargo-check-external-types
+
+      - name: Check external types
+        run: |
+          set -e
+          fail=0
+          for crate in iroh-base iroh-dns iroh-dns-server iroh iroh-relay; do
+            echo "::group::$crate"
+            if ! cargo check-external-types \
+                --manifest-path "$crate/Cargo.toml" \
+                --config external-types.toml \
+                --all-features; then
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
   check_fmt:
     timeout-minutes: 30
     name: Checking fmt
