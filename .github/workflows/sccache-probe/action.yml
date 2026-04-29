@@ -9,7 +9,12 @@ runs:
   using: composite
   steps:
     - name: Probe sccache backend
-      if: env.RUSTC_WRAPPER == 'sccache'
+      # Skip on Windows: our Windows runners are self-hosted hetz with
+      # local-disk sccache (no GHA backend → no 502s to handle), and
+      # `shell: bash` on those runners resolves to the WSL launcher
+      # which fails outright. Probe only matters where SCCACHE_GHA_ENABLED
+      # is in play, i.e. Linux self-hosted (Blacksmith) and ubuntu-latest.
+      if: env.RUSTC_WRAPPER == 'sccache' && runner.os != 'Windows'
       shell: bash
       env:
         # Cap each --start-server attempt at 5s in case sccache hangs on
