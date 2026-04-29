@@ -1,0 +1,32 @@
+name: Probe sccache backend
+description: >
+  Verify the sccache backend is reachable; if not, unset RUSTC_WRAPPER so
+  the job runs without sccache rather than failing. Handles transient
+  outages of GHA cache (Blacksmith proxy 502, GitHub cache hiccups, etc.)
+  without requiring a re-run.
+
+runs:
+  using: composite
+  steps:
+    - name: Probe sccache backend
+      if: env.RUSTC_WRAPPER == 'sccache'
+      shell: bash
+      run: |
+        # sccache --start-server triggers a backend probe (.sccache_check
+        # read). On failure (e.g. Blacksmith's GHA cache proxy returning
+        # 502 Bad Gateway), the daemon won't start and every rustc call
+        # fails. Try a few times in case the outage is brief; if it
+        # persists, fall through to plain rustc — slower, but the job
+        # will still succeed.
+        for attempt in 1 2 3; do
+          if timeout 15 sccache --start-server >/dev/null 2>&1; then
+            echo "sccache backend OK (attempt $attempt)"
+            exit 0
+          fi
+          echo "sccache start failed (attempt $attempt/3)"
+          [ $attempt -lt 3 ] && sleep $((attempt * 3))
+        done
+        echo "::warning::sccache backend unreachable; running this job without sccache"
+        # mozilla-actions/sccache-action exports these via $GITHUB_ENV — override.
+        echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+        echo "SCCACHE_GHA_ENABLED=" >> "$GITHUB_ENV"
