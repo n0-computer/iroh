@@ -4,7 +4,11 @@
 //! iroh-dns's system DNS reader runs through real JNI against
 //! `ConnectivityService`.
 
-use std::time::Duration;
+use std::{
+    ffi::CString,
+    os::raw::{c_char, c_int},
+    time::Duration,
+};
 
 use android_activity::AndroidApp;
 use iroh_dns::dns::DnsResolver;
@@ -29,9 +33,24 @@ fn android_main(_app: AndroidApp) {
         .expect("tokio runtime");
     rt.block_on(run());
 
-    println!("RESULT=ok");
-    eprintln!("RESULT=ok");
+    // NativeActivity processes' stdout/stderr are not captured by logcat,
+    // so write the marker through the Android log API directly.
+    log_to_logcat("RESULT=ok");
     std::process::exit(0);
+}
+
+fn log_to_logcat(msg: &str) {
+    let msg = CString::new(msg).unwrap();
+    let tag = c"iroh_dns_smoke";
+    // ANDROID_LOG_INFO == 4
+    unsafe {
+        __android_log_write(4, tag.as_ptr(), msg.as_ptr());
+    }
+}
+
+#[link(name = "log")]
+unsafe extern "C" {
+    fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
 }
 
 fn init_tracing() {
