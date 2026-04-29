@@ -250,6 +250,7 @@ jobs:
           fetch-depth: 0
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
       - name: Setup Environment (PR)
@@ -283,6 +284,7 @@ jobs:
         with:
           components: rustfmt
       - uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
       - uses: taiki-e/install-action@cargo-make
       - run: cargo make format-check
@@ -304,6 +306,7 @@ jobs:
           toolchain: nightly-2025-10-09
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
       - name: Docs
@@ -324,6 +327,7 @@ jobs:
           components: clippy
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
       # TODO: We have a bunch of platform-dependent code so should
@@ -375,6 +379,7 @@ jobs:
           toolchain: ${{ env.MSRV }}
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
       - name: Check MSRV all features

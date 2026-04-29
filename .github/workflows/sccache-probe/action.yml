@@ -24,6 +24,14 @@ runs:
         # Linux/macOS/Windows bash (no coreutils `timeout` needed).
         SCCACHE_STARTUP_NOTIFY_TIMEOUT: "5"
       run: |
+        # If the sccache binary isn't installed (e.g. mozilla-actions/sccache-action
+        # failed to download from GitHub releases), bail out fast.
+        if ! command -v sccache >/dev/null 2>&1; then
+          echo "::warning::sccache binary not found (install likely failed); running this job without sccache"
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=" >> "$GITHUB_ENV"
+          exit 0
+        fi
         # sccache --start-server triggers a backend probe (.sccache_check
         # read). On failure (e.g. Blacksmith's GHA cache proxy returning
         # 502 Bad Gateway), the daemon won't start and every rustc call
