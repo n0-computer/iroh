@@ -860,111 +860,99 @@
 <a href=#860 id=860 data-nosnippet>860</a>
 <a href=#861 id=861 data-nosnippet>861</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#862 id=862 data-nosnippet>862</a>
-<a href=#863 id=863 data-nosnippet>863</a>    <span class="attr">#[cfg(target_os = <span class="string">"android"</span>)]
-<a href=#864 id=864 data-nosnippet>864</a>    #[test]
-<a href=#865 id=865 data-nosnippet>865</a>    </span><span class="kw">fn </span>android_system_conf_unsupported_without_jni_context() {
-<a href=#866 id=866 data-nosnippet>866</a>        <span class="comment">// Without `install_android_jni_context`, the platform reader
-<a href=#867 id=867 data-nosnippet>867</a>        // must report PlatformUnsupported so the resolver picks up the
-<a href=#868 id=868 data-nosnippet>868</a>        // public fallback instead of trying to query nothing.
-<a href=#869 id=869 data-nosnippet>869</a>        </span><span class="kw">match </span><span class="kw">crate</span>::system_config::read_system_conf() {
-<a href=#870 id=870 data-nosnippet>870</a>            <span class="prelude-val">Err</span>(<span class="kw">crate</span>::system_config::SystemConfigError::PlatformUnsupported { .. }) =&gt; {}
-<a href=#871 id=871 data-nosnippet>871</a>            other =&gt; <span class="macro">panic!</span>(<span class="string">"expected PlatformUnsupported, got {other:?}"</span>),
-<a href=#872 id=872 data-nosnippet>872</a>        }
-<a href=#873 id=873 data-nosnippet>873</a>    }
-<a href=#874 id=874 data-nosnippet>874</a>
-<a href=#875 id=875 data-nosnippet>875</a>    <span class="attr">#[tokio::test]
-<a href=#876 id=876 data-nosnippet>876</a>    #[traced_test]
-<a href=#877 id=877 data-nosnippet>877</a>    </span><span class="kw">async fn </span>stagger_basic() {
-<a href=#878 id=878 data-nosnippet>878</a>        <span class="kw">const </span>CALL_RESULTS: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Result</span>&lt;u8, u8&gt;] = <span class="kw-2">&amp;</span>[<span class="prelude-val">Err</span>(<span class="number">2</span>), <span class="prelude-val">Ok</span>(<span class="number">3</span>), <span class="prelude-val">Ok</span>(<span class="number">5</span>), <span class="prelude-val">Ok</span>(<span class="number">7</span>)];
-<a href=#879 id=879 data-nosnippet>879</a>        <span class="kw">static </span>DONE_CALL: AtomicUsize = AtomicUsize::new(<span class="number">0</span>);
-<a href=#880 id=880 data-nosnippet>880</a>        <span class="kw">let </span>f = || {
-<a href=#881 id=881 data-nosnippet>881</a>            <span class="kw">let </span>r_pos = DONE_CALL.fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
-<a href=#882 id=882 data-nosnippet>882</a>            <span class="kw">async move </span>{
-<a href=#883 id=883 data-nosnippet>883</a>                <span class="macro">tracing::info!</span>(r_pos, <span class="string">"call"</span>);
-<a href=#884 id=884 data-nosnippet>884</a>                CALL_RESULTS[r_pos].map_err(|<span class="kw">_</span>| <span class="macro">e!</span>(DnsError::InvalidResponse))
-<a href=#885 id=885 data-nosnippet>885</a>            }
-<a href=#886 id=886 data-nosnippet>886</a>        };
+<a href=#863 id=863 data-nosnippet>863</a>    <span class="attr">#[tokio::test]
+<a href=#864 id=864 data-nosnippet>864</a>    #[traced_test]
+<a href=#865 id=865 data-nosnippet>865</a>    </span><span class="kw">async fn </span>stagger_basic() {
+<a href=#866 id=866 data-nosnippet>866</a>        <span class="kw">const </span>CALL_RESULTS: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Result</span>&lt;u8, u8&gt;] = <span class="kw-2">&amp;</span>[<span class="prelude-val">Err</span>(<span class="number">2</span>), <span class="prelude-val">Ok</span>(<span class="number">3</span>), <span class="prelude-val">Ok</span>(<span class="number">5</span>), <span class="prelude-val">Ok</span>(<span class="number">7</span>)];
+<a href=#867 id=867 data-nosnippet>867</a>        <span class="kw">static </span>DONE_CALL: AtomicUsize = AtomicUsize::new(<span class="number">0</span>);
+<a href=#868 id=868 data-nosnippet>868</a>        <span class="kw">let </span>f = || {
+<a href=#869 id=869 data-nosnippet>869</a>            <span class="kw">let </span>r_pos = DONE_CALL.fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
+<a href=#870 id=870 data-nosnippet>870</a>            <span class="kw">async move </span>{
+<a href=#871 id=871 data-nosnippet>871</a>                <span class="macro">tracing::info!</span>(r_pos, <span class="string">"call"</span>);
+<a href=#872 id=872 data-nosnippet>872</a>                CALL_RESULTS[r_pos].map_err(|<span class="kw">_</span>| <span class="macro">e!</span>(DnsError::InvalidResponse))
+<a href=#873 id=873 data-nosnippet>873</a>            }
+<a href=#874 id=874 data-nosnippet>874</a>        };
+<a href=#875 id=875 data-nosnippet>875</a>
+<a href=#876 id=876 data-nosnippet>876</a>        <span class="kw">let </span>delays = [<span class="number">1000</span>, <span class="number">15</span>];
+<a href=#877 id=877 data-nosnippet>877</a>        <span class="kw">let </span>result = stagger_call(f, <span class="kw-2">&amp;</span>delays).<span class="kw">await</span>.unwrap();
+<a href=#878 id=878 data-nosnippet>878</a>        <span class="macro">assert_eq!</span>(result, <span class="number">5</span>)
+<a href=#879 id=879 data-nosnippet>879</a>    }
+<a href=#880 id=880 data-nosnippet>880</a>
+<a href=#881 id=881 data-nosnippet>881</a>    <span class="attr">#[test]
+<a href=#882 id=882 data-nosnippet>882</a>    #[traced_test]
+<a href=#883 id=883 data-nosnippet>883</a>    </span><span class="kw">fn </span>jitter_test_zero() {
+<a href=#884 id=884 data-nosnippet>884</a>        <span class="kw">let </span>jittered_delay = add_jitter(<span class="kw-2">&amp;</span><span class="number">0</span>);
+<a href=#885 id=885 data-nosnippet>885</a>        <span class="macro">assert_eq!</span>(jittered_delay, Duration::from_secs(<span class="number">0</span>));
+<a href=#886 id=886 data-nosnippet>886</a>    }
 <a href=#887 id=887 data-nosnippet>887</a>
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">let </span>delays = [<span class="number">1000</span>, <span class="number">15</span>];
-<a href=#889 id=889 data-nosnippet>889</a>        <span class="kw">let </span>result = stagger_call(f, <span class="kw-2">&amp;</span>delays).<span class="kw">await</span>.unwrap();
-<a href=#890 id=890 data-nosnippet>890</a>        <span class="macro">assert_eq!</span>(result, <span class="number">5</span>)
-<a href=#891 id=891 data-nosnippet>891</a>    }
-<a href=#892 id=892 data-nosnippet>892</a>
-<a href=#893 id=893 data-nosnippet>893</a>    <span class="attr">#[test]
-<a href=#894 id=894 data-nosnippet>894</a>    #[traced_test]
-<a href=#895 id=895 data-nosnippet>895</a>    </span><span class="kw">fn </span>jitter_test_zero() {
-<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let </span>jittered_delay = add_jitter(<span class="kw-2">&amp;</span><span class="number">0</span>);
-<a href=#897 id=897 data-nosnippet>897</a>        <span class="macro">assert_eq!</span>(jittered_delay, Duration::from_secs(<span class="number">0</span>));
-<a href=#898 id=898 data-nosnippet>898</a>    }
-<a href=#899 id=899 data-nosnippet>899</a>
-<a href=#900 id=900 data-nosnippet>900</a>    <span class="comment">//Sanity checks that I did the math right
-<a href=#901 id=901 data-nosnippet>901</a>    </span><span class="attr">#[test]
-<a href=#902 id=902 data-nosnippet>902</a>    #[traced_test]
-<a href=#903 id=903 data-nosnippet>903</a>    </span><span class="kw">fn </span>jitter_test_nonzero_lower_bound() {
-<a href=#904 id=904 data-nosnippet>904</a>        <span class="kw">let </span>delay: u64 = <span class="number">300</span>;
-<a href=#905 id=905 data-nosnippet>905</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">100 </span>{
-<a href=#906 id=906 data-nosnippet>906</a>            <span class="macro">assert!</span>(add_jitter(<span class="kw-2">&amp;</span>delay) &gt;= Duration::from_millis(delay * <span class="number">8 </span>/ <span class="number">10</span>));
-<a href=#907 id=907 data-nosnippet>907</a>        }
-<a href=#908 id=908 data-nosnippet>908</a>    }
-<a href=#909 id=909 data-nosnippet>909</a>
-<a href=#910 id=910 data-nosnippet>910</a>    <span class="attr">#[test]
-<a href=#911 id=911 data-nosnippet>911</a>    #[traced_test]
-<a href=#912 id=912 data-nosnippet>912</a>    </span><span class="kw">fn </span>jitter_test_nonzero_upper_bound() {
-<a href=#913 id=913 data-nosnippet>913</a>        <span class="kw">let </span>delay: u64 = <span class="number">300</span>;
-<a href=#914 id=914 data-nosnippet>914</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">100 </span>{
-<a href=#915 id=915 data-nosnippet>915</a>            <span class="macro">assert!</span>(add_jitter(<span class="kw-2">&amp;</span>delay) &lt; Duration::from_millis(delay * <span class="number">12 </span>/ <span class="number">10</span>));
-<a href=#916 id=916 data-nosnippet>916</a>        }
-<a href=#917 id=917 data-nosnippet>917</a>    }
-<a href=#918 id=918 data-nosnippet>918</a>
-<a href=#919 id=919 data-nosnippet>919</a>    <span class="attr">#[tokio::test]
-<a href=#920 id=920 data-nosnippet>920</a>    #[traced_test]
-<a href=#921 id=921 data-nosnippet>921</a>    </span><span class="kw">async fn </span>custom_resolver() {
-<a href=#922 id=922 data-nosnippet>922</a>        <span class="attr">#[derive(Debug)]
-<a href=#923 id=923 data-nosnippet>923</a>        </span><span class="kw">struct </span>MyResolver;
-<a href=#924 id=924 data-nosnippet>924</a>        <span class="kw">impl </span>Resolver <span class="kw">for </span>MyResolver {
-<a href=#925 id=925 data-nosnippet>925</a>            <span class="kw">fn </span>lookup_ipv4(<span class="kw-2">&amp;</span><span class="self">self</span>, host: String) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;Ipv4Addr&gt;, DnsError&gt;&gt; {
-<a href=#926 id=926 data-nosnippet>926</a>                Box::pin(<span class="kw">async move </span>{
-<a href=#927 id=927 data-nosnippet>927</a>                    <span class="kw">let </span>addr = <span class="kw">if </span>host == <span class="string">"foo.example" </span>{
-<a href=#928 id=928 data-nosnippet>928</a>                        Ipv4Addr::new(<span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>)
-<a href=#929 id=929 data-nosnippet>929</a>                    } <span class="kw">else </span>{
-<a href=#930 id=930 data-nosnippet>930</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(DnsError::NoResponse));
-<a href=#931 id=931 data-nosnippet>931</a>                    };
-<a href=#932 id=932 data-nosnippet>932</a>                    <span class="kw">let </span>iter: BoxIter&lt;Ipv4Addr&gt; = Box::new(<span class="macro">vec!</span>[addr].into_iter());
-<a href=#933 id=933 data-nosnippet>933</a>                    <span class="prelude-val">Ok</span>(iter)
-<a href=#934 id=934 data-nosnippet>934</a>                })
-<a href=#935 id=935 data-nosnippet>935</a>            }
-<a href=#936 id=936 data-nosnippet>936</a>
-<a href=#937 id=937 data-nosnippet>937</a>            <span class="kw">fn </span>lookup_ipv6(<span class="kw-2">&amp;</span><span class="self">self</span>, _host: String) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;Ipv6Addr&gt;, DnsError&gt;&gt; {
-<a href=#938 id=938 data-nosnippet>938</a>                <span class="macro">todo!</span>()
-<a href=#939 id=939 data-nosnippet>939</a>            }
-<a href=#940 id=940 data-nosnippet>940</a>
-<a href=#941 id=941 data-nosnippet>941</a>            <span class="kw">fn </span>lookup_txt(
-<a href=#942 id=942 data-nosnippet>942</a>                <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#943 id=943 data-nosnippet>943</a>                _host: String,
-<a href=#944 id=944 data-nosnippet>944</a>            ) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;TxtRecordData&gt;, DnsError&gt;&gt; {
-<a href=#945 id=945 data-nosnippet>945</a>                <span class="macro">todo!</span>()
-<a href=#946 id=946 data-nosnippet>946</a>            }
-<a href=#947 id=947 data-nosnippet>947</a>
-<a href=#948 id=948 data-nosnippet>948</a>            <span class="kw">fn </span>clear_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#949 id=949 data-nosnippet>949</a>                <span class="macro">todo!</span>()
-<a href=#950 id=950 data-nosnippet>950</a>            }
-<a href=#951 id=951 data-nosnippet>951</a>
-<a href=#952 id=952 data-nosnippet>952</a>            <span class="kw">fn </span>reset(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Box&lt;<span class="kw">dyn </span>Resolver&gt; {
-<a href=#953 id=953 data-nosnippet>953</a>                <span class="macro">todo!</span>()
-<a href=#954 id=954 data-nosnippet>954</a>            }
-<a href=#955 id=955 data-nosnippet>955</a>        }
-<a href=#956 id=956 data-nosnippet>956</a>
-<a href=#957 id=957 data-nosnippet>957</a>        <span class="kw">let </span>resolver = DnsResolver::custom(MyResolver);
-<a href=#958 id=958 data-nosnippet>958</a>        <span class="kw">let </span><span class="kw-2">mut </span>iter = resolver
-<a href=#959 id=959 data-nosnippet>959</a>            .lookup_ipv4(<span class="string">"foo.example"</span>, Duration::from_secs(<span class="number">1</span>))
-<a href=#960 id=960 data-nosnippet>960</a>            .<span class="kw">await
-<a href=#961 id=961 data-nosnippet>961</a>            </span>.expect(<span class="string">"not to fail"</span>);
-<a href=#962 id=962 data-nosnippet>962</a>        <span class="kw">let </span>addr = iter.next().expect(<span class="string">"one result"</span>);
-<a href=#963 id=963 data-nosnippet>963</a>        <span class="macro">assert_eq!</span>(addr, <span class="string">"1.1.1.1"</span>.parse::&lt;IpAddr&gt;().unwrap());
-<a href=#964 id=964 data-nosnippet>964</a>
-<a href=#965 id=965 data-nosnippet>965</a>        <span class="kw">let </span>res = resolver
-<a href=#966 id=966 data-nosnippet>966</a>            .lookup_ipv4(<span class="string">"bar.example"</span>, Duration::from_secs(<span class="number">1</span>))
-<a href=#967 id=967 data-nosnippet>967</a>            .<span class="kw">await</span>;
-<a href=#968 id=968 data-nosnippet>968</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(res, <span class="prelude-val">Err</span>(DnsError::NoResponse { .. })))
-<a href=#969 id=969 data-nosnippet>969</a>    }
-<a href=#970 id=970 data-nosnippet>970</a>}</code></pre></div></section></main></body></html>
+<a href=#888 id=888 data-nosnippet>888</a>    <span class="comment">//Sanity checks that I did the math right
+<a href=#889 id=889 data-nosnippet>889</a>    </span><span class="attr">#[test]
+<a href=#890 id=890 data-nosnippet>890</a>    #[traced_test]
+<a href=#891 id=891 data-nosnippet>891</a>    </span><span class="kw">fn </span>jitter_test_nonzero_lower_bound() {
+<a href=#892 id=892 data-nosnippet>892</a>        <span class="kw">let </span>delay: u64 = <span class="number">300</span>;
+<a href=#893 id=893 data-nosnippet>893</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">100 </span>{
+<a href=#894 id=894 data-nosnippet>894</a>            <span class="macro">assert!</span>(add_jitter(<span class="kw-2">&amp;</span>delay) &gt;= Duration::from_millis(delay * <span class="number">8 </span>/ <span class="number">10</span>));
+<a href=#895 id=895 data-nosnippet>895</a>        }
+<a href=#896 id=896 data-nosnippet>896</a>    }
+<a href=#897 id=897 data-nosnippet>897</a>
+<a href=#898 id=898 data-nosnippet>898</a>    <span class="attr">#[test]
+<a href=#899 id=899 data-nosnippet>899</a>    #[traced_test]
+<a href=#900 id=900 data-nosnippet>900</a>    </span><span class="kw">fn </span>jitter_test_nonzero_upper_bound() {
+<a href=#901 id=901 data-nosnippet>901</a>        <span class="kw">let </span>delay: u64 = <span class="number">300</span>;
+<a href=#902 id=902 data-nosnippet>902</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">100 </span>{
+<a href=#903 id=903 data-nosnippet>903</a>            <span class="macro">assert!</span>(add_jitter(<span class="kw-2">&amp;</span>delay) &lt; Duration::from_millis(delay * <span class="number">12 </span>/ <span class="number">10</span>));
+<a href=#904 id=904 data-nosnippet>904</a>        }
+<a href=#905 id=905 data-nosnippet>905</a>    }
+<a href=#906 id=906 data-nosnippet>906</a>
+<a href=#907 id=907 data-nosnippet>907</a>    <span class="attr">#[tokio::test]
+<a href=#908 id=908 data-nosnippet>908</a>    #[traced_test]
+<a href=#909 id=909 data-nosnippet>909</a>    </span><span class="kw">async fn </span>custom_resolver() {
+<a href=#910 id=910 data-nosnippet>910</a>        <span class="attr">#[derive(Debug)]
+<a href=#911 id=911 data-nosnippet>911</a>        </span><span class="kw">struct </span>MyResolver;
+<a href=#912 id=912 data-nosnippet>912</a>        <span class="kw">impl </span>Resolver <span class="kw">for </span>MyResolver {
+<a href=#913 id=913 data-nosnippet>913</a>            <span class="kw">fn </span>lookup_ipv4(<span class="kw-2">&amp;</span><span class="self">self</span>, host: String) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;Ipv4Addr&gt;, DnsError&gt;&gt; {
+<a href=#914 id=914 data-nosnippet>914</a>                Box::pin(<span class="kw">async move </span>{
+<a href=#915 id=915 data-nosnippet>915</a>                    <span class="kw">let </span>addr = <span class="kw">if </span>host == <span class="string">"foo.example" </span>{
+<a href=#916 id=916 data-nosnippet>916</a>                        Ipv4Addr::new(<span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>, <span class="number">1</span>)
+<a href=#917 id=917 data-nosnippet>917</a>                    } <span class="kw">else </span>{
+<a href=#918 id=918 data-nosnippet>918</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(DnsError::NoResponse));
+<a href=#919 id=919 data-nosnippet>919</a>                    };
+<a href=#920 id=920 data-nosnippet>920</a>                    <span class="kw">let </span>iter: BoxIter&lt;Ipv4Addr&gt; = Box::new(<span class="macro">vec!</span>[addr].into_iter());
+<a href=#921 id=921 data-nosnippet>921</a>                    <span class="prelude-val">Ok</span>(iter)
+<a href=#922 id=922 data-nosnippet>922</a>                })
+<a href=#923 id=923 data-nosnippet>923</a>            }
+<a href=#924 id=924 data-nosnippet>924</a>
+<a href=#925 id=925 data-nosnippet>925</a>            <span class="kw">fn </span>lookup_ipv6(<span class="kw-2">&amp;</span><span class="self">self</span>, _host: String) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;Ipv6Addr&gt;, DnsError&gt;&gt; {
+<a href=#926 id=926 data-nosnippet>926</a>                <span class="macro">todo!</span>()
+<a href=#927 id=927 data-nosnippet>927</a>            }
+<a href=#928 id=928 data-nosnippet>928</a>
+<a href=#929 id=929 data-nosnippet>929</a>            <span class="kw">fn </span>lookup_txt(
+<a href=#930 id=930 data-nosnippet>930</a>                <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#931 id=931 data-nosnippet>931</a>                _host: String,
+<a href=#932 id=932 data-nosnippet>932</a>            ) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;TxtRecordData&gt;, DnsError&gt;&gt; {
+<a href=#933 id=933 data-nosnippet>933</a>                <span class="macro">todo!</span>()
+<a href=#934 id=934 data-nosnippet>934</a>            }
+<a href=#935 id=935 data-nosnippet>935</a>
+<a href=#936 id=936 data-nosnippet>936</a>            <span class="kw">fn </span>clear_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+<a href=#937 id=937 data-nosnippet>937</a>                <span class="macro">todo!</span>()
+<a href=#938 id=938 data-nosnippet>938</a>            }
+<a href=#939 id=939 data-nosnippet>939</a>
+<a href=#940 id=940 data-nosnippet>940</a>            <span class="kw">fn </span>reset(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Box&lt;<span class="kw">dyn </span>Resolver&gt; {
+<a href=#941 id=941 data-nosnippet>941</a>                <span class="macro">todo!</span>()
+<a href=#942 id=942 data-nosnippet>942</a>            }
+<a href=#943 id=943 data-nosnippet>943</a>        }
+<a href=#944 id=944 data-nosnippet>944</a>
+<a href=#945 id=945 data-nosnippet>945</a>        <span class="kw">let </span>resolver = DnsResolver::custom(MyResolver);
+<a href=#946 id=946 data-nosnippet>946</a>        <span class="kw">let </span><span class="kw-2">mut </span>iter = resolver
+<a href=#947 id=947 data-nosnippet>947</a>            .lookup_ipv4(<span class="string">"foo.example"</span>, Duration::from_secs(<span class="number">1</span>))
+<a href=#948 id=948 data-nosnippet>948</a>            .<span class="kw">await
+<a href=#949 id=949 data-nosnippet>949</a>            </span>.expect(<span class="string">"not to fail"</span>);
+<a href=#950 id=950 data-nosnippet>950</a>        <span class="kw">let </span>addr = iter.next().expect(<span class="string">"one result"</span>);
+<a href=#951 id=951 data-nosnippet>951</a>        <span class="macro">assert_eq!</span>(addr, <span class="string">"1.1.1.1"</span>.parse::&lt;IpAddr&gt;().unwrap());
+<a href=#952 id=952 data-nosnippet>952</a>
+<a href=#953 id=953 data-nosnippet>953</a>        <span class="kw">let </span>res = resolver
+<a href=#954 id=954 data-nosnippet>954</a>            .lookup_ipv4(<span class="string">"bar.example"</span>, Duration::from_secs(<span class="number">1</span>))
+<a href=#955 id=955 data-nosnippet>955</a>            .<span class="kw">await</span>;
+<a href=#956 id=956 data-nosnippet>956</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(res, <span class="prelude-val">Err</span>(DnsError::NoResponse { .. })))
+<a href=#957 id=957 data-nosnippet>957</a>    }
+<a href=#958 id=958 data-nosnippet>958</a>}</code></pre></div></section></main></body></html>
