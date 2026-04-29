@@ -1324,248 +1324,246 @@
 <a href=#1324 id=1324 data-nosnippet>1324</a>
 <a href=#1325 id=1325 data-nosnippet>1325</a>    <span class="doccomment">/// Removes a path from this connection and records it as closed in
 <a href=#1326 id=1326 data-nosnippet>1326</a>    /// the [`PathStateSender`].
-<a href=#1327 id=1327 data-nosnippet>1327</a>    ///
-<a href=#1328 id=1328 data-nosnippet>1328</a>    /// Final per-path statistics are read inside [`PathStateSender::record_closed`]
-<a href=#1329 id=1329 data-nosnippet>1329</a>    /// from the path handle stored when the path was opened; the `conn`
-<a href=#1330 id=1330 data-nosnippet>1330</a>    /// reference is required by that method as a lifetime witness that
-<a href=#1331 id=1331 data-nosnippet>1331</a>    /// the path is still upgradable.
-<a href=#1332 id=1332 data-nosnippet>1332</a>    </span><span class="kw">fn </span>remove_path(
-<a href=#1333 id=1333 data-nosnippet>1333</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#1334 id=1334 data-nosnippet>1334</a>        path_id: <span class="kw-2">&amp;</span>PathId,
-<a href=#1335 id=1335 data-nosnippet>1335</a>        conn: <span class="kw-2">&amp;</span>noq::Connection,
-<a href=#1336 id=1336 data-nosnippet>1336</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;transports::Addr&gt; {
-<a href=#1337 id=1337 data-nosnippet>1337</a>        <span class="kw">let </span>addr = <span class="self">self</span>.paths.remove(path_id)<span class="question-mark">?</span>;
-<a href=#1338 id=1338 data-nosnippet>1338</a>        <span class="self">self</span>.path_store
-<a href=#1339 id=1339 data-nosnippet>1339</a>            .record_closed(<span class="kw-2">*</span>path_id, addr.clone().into(), conn);
-<a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="prelude-val">Some</span>(addr)
-<a href=#1341 id=1341 data-nosnippet>1341</a>    }
-<a href=#1342 id=1342 data-nosnippet>1342</a>}
-<a href=#1343 id=1343 data-nosnippet>1343</a>
-<a href=#1344 id=1344 data-nosnippet>1344</a><span class="doccomment">/// Poll a future once, like n0_future::future::poll_once but sync.
-<a href=#1345 id=1345 data-nosnippet>1345</a></span><span class="kw">fn </span>now_or_never&lt;T, F: Future&lt;Output = T&gt;&gt;(fut: F) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
-<a href=#1346 id=1346 data-nosnippet>1346</a>    <span class="kw">let </span>fut = <span class="macro">std::pin::pin!</span>(fut);
-<a href=#1347 id=1347 data-nosnippet>1347</a>    <span class="kw">match </span>fut.poll(<span class="kw-2">&amp;mut </span>std::task::Context::from_waker(std::task::Waker::noop())) {
-<a href=#1348 id=1348 data-nosnippet>1348</a>        Poll::Ready(res) =&gt; <span class="prelude-val">Some</span>(res),
-<a href=#1349 id=1349 data-nosnippet>1349</a>        Poll::Pending =&gt; <span class="prelude-val">None</span>,
-<a href=#1350 id=1350 data-nosnippet>1350</a>    }
-<a href=#1351 id=1351 data-nosnippet>1351</a>}
-<a href=#1352 id=1352 data-nosnippet>1352</a>
-<a href=#1353 id=1353 data-nosnippet>1353</a><span class="doccomment">/// Future that resolves to the `conn_id` once a connection is closed.
-<a href=#1354 id=1354 data-nosnippet>1354</a>///
-<a href=#1355 id=1355 data-nosnippet>1355</a>/// This uses [`noq::Connection::on_closed`], which does not keep the connection alive
-<a href=#1356 id=1356 data-nosnippet>1356</a>/// while awaiting the future.
-<a href=#1357 id=1357 data-nosnippet>1357</a></span><span class="kw">struct </span>OnClosed {
-<a href=#1358 id=1358 data-nosnippet>1358</a>    conn_id: ConnId,
-<a href=#1359 id=1359 data-nosnippet>1359</a>    inner: noq::OnClosed,
-<a href=#1360 id=1360 data-nosnippet>1360</a>}
-<a href=#1361 id=1361 data-nosnippet>1361</a>
-<a href=#1362 id=1362 data-nosnippet>1362</a><span class="kw">impl </span>OnClosed {
-<a href=#1363 id=1363 data-nosnippet>1363</a>    <span class="kw">fn </span>new(conn: <span class="kw-2">&amp;</span>noq::Connection) -&gt; <span class="self">Self </span>{
-<a href=#1364 id=1364 data-nosnippet>1364</a>        <span class="self">Self </span>{
-<a href=#1365 id=1365 data-nosnippet>1365</a>            conn_id: ConnId(conn.stable_id()),
-<a href=#1366 id=1366 data-nosnippet>1366</a>            inner: conn.on_closed(),
-<a href=#1367 id=1367 data-nosnippet>1367</a>        }
-<a href=#1368 id=1368 data-nosnippet>1368</a>    }
-<a href=#1369 id=1369 data-nosnippet>1369</a>}
-<a href=#1370 id=1370 data-nosnippet>1370</a>
-<a href=#1371 id=1371 data-nosnippet>1371</a><span class="kw">impl </span>Future <span class="kw">for </span>OnClosed {
-<a href=#1372 id=1372 data-nosnippet>1372</a>    <span class="kw">type </span>Output = (ConnId, Closed);
-<a href=#1373 id=1373 data-nosnippet>1373</a>
-<a href=#1374 id=1374 data-nosnippet>1374</a>    <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-<a href=#1375 id=1375 data-nosnippet>1375</a>        <span class="kw">let </span>closed = <span class="macro">std::task::ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx));
-<a href=#1376 id=1376 data-nosnippet>1376</a>        Poll::Ready((<span class="self">self</span>.conn_id, closed))
-<a href=#1377 id=1377 data-nosnippet>1377</a>    }
-<a href=#1378 id=1378 data-nosnippet>1378</a>}
-<a href=#1379 id=1379 data-nosnippet>1379</a>
-<a href=#1380 id=1380 data-nosnippet>1380</a><span class="doccomment">/// Converts an iterator of [`TransportAddr'] into an iterator of [`transports::Addr`].
-<a href=#1381 id=1381 data-nosnippet>1381</a></span><span class="kw">fn </span>to_transports_addr(
-<a href=#1382 id=1382 data-nosnippet>1382</a>    endpoint_id: EndpointId,
-<a href=#1383 id=1383 data-nosnippet>1383</a>    addrs: <span class="kw">impl </span>IntoIterator&lt;Item = TransportAddr&gt;,
-<a href=#1384 id=1384 data-nosnippet>1384</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = transports::Addr&gt; {
-<a href=#1385 id=1385 data-nosnippet>1385</a>    addrs.into_iter().filter_map(<span class="kw">move </span>|addr| <span class="kw">match </span>addr {
-<a href=#1386 id=1386 data-nosnippet>1386</a>        TransportAddr::Relay(relay_url) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from((relay_url, endpoint_id))),
-<a href=#1387 id=1387 data-nosnippet>1387</a>        TransportAddr::Ip(sockaddr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(sockaddr)),
-<a href=#1388 id=1388 data-nosnippet>1388</a>        TransportAddr::Custom(custom_addr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(custom_addr)),
-<a href=#1389 id=1389 data-nosnippet>1389</a>        <span class="kw">_ </span>=&gt; {
-<a href=#1390 id=1390 data-nosnippet>1390</a>            <span class="macro">warn!</span>(<span class="question-mark">?</span>addr, <span class="string">"Unsupported TransportAddr"</span>);
-<a href=#1391 id=1391 data-nosnippet>1391</a>            <span class="prelude-val">None
-<a href=#1392 id=1392 data-nosnippet>1392</a>        </span>}
-<a href=#1393 id=1393 data-nosnippet>1393</a>    })
-<a href=#1394 id=1394 data-nosnippet>1394</a>}
-<a href=#1395 id=1395 data-nosnippet>1395</a>
-<a href=#1396 id=1396 data-nosnippet>1396</a><span class="doccomment">/// Returns the next item if `maybe_stream` is `Some`, or `None` otherwise.
-<a href=#1397 id=1397 data-nosnippet>1397</a></span><span class="kw">async fn </span>maybe_next&lt;S: Stream + Unpin&gt;(maybe_stream: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>S&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Option</span>&lt;S::Item&gt;&gt; {
-<a href=#1398 id=1398 data-nosnippet>1398</a>    <span class="kw">match </span>maybe_stream {
-<a href=#1399 id=1399 data-nosnippet>1399</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#1400 id=1400 data-nosnippet>1400</a>        <span class="prelude-val">Some</span>(s) =&gt; <span class="prelude-val">Some</span>(s.next().<span class="kw">await</span>),
-<a href=#1401 id=1401 data-nosnippet>1401</a>    }
-<a href=#1402 id=1402 data-nosnippet>1402</a>}
-<a href=#1403 id=1403 data-nosnippet>1403</a>
-<a href=#1404 id=1404 data-nosnippet>1404</a><span class="attr">#[cfg(test)]
-<a href=#1405 id=1405 data-nosnippet>1405</a></span><span class="kw">mod </span>tests {
-<a href=#1406 id=1406 data-nosnippet>1406</a>    <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-<a href=#1407 id=1407 data-nosnippet>1407</a>
-<a href=#1408 id=1408 data-nosnippet>1408</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#1409 id=1409 data-nosnippet>1409</a>    <span class="kw">use </span><span class="kw">crate</span>::socket::transports::TransportType;
-<a href=#1410 id=1410 data-nosnippet>1410</a>
-<a href=#1411 id=1411 data-nosnippet>1411</a>    <span class="kw">fn </span>v4(port: u16) -&gt; transports::Addr {
-<a href=#1412 id=1412 data-nosnippet>1412</a>        transports::Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
-<a href=#1413 id=1413 data-nosnippet>1413</a>    }
-<a href=#1414 id=1414 data-nosnippet>1414</a>
-<a href=#1415 id=1415 data-nosnippet>1415</a>    <span class="kw">fn </span>v6(port: u16) -&gt; transports::Addr {
-<a href=#1416 id=1416 data-nosnippet>1416</a>        transports::Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
-<a href=#1417 id=1417 data-nosnippet>1417</a>            Ipv6Addr::LOCALHOST,
-<a href=#1418 id=1418 data-nosnippet>1418</a>            port,
-<a href=#1419 id=1419 data-nosnippet>1419</a>            <span class="number">0</span>,
-<a href=#1420 id=1420 data-nosnippet>1420</a>            <span class="number">0</span>,
-<a href=#1421 id=1421 data-nosnippet>1421</a>        )))
-<a href=#1422 id=1422 data-nosnippet>1422</a>    }
-<a href=#1423 id=1423 data-nosnippet>1423</a>
-<a href=#1424 id=1424 data-nosnippet>1424</a>    <span class="kw">fn </span>relay(port: u16) -&gt; transports::Addr {
-<a href=#1425 id=1425 data-nosnippet>1425</a>        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"https://relay{port}.iroh.computer"</span>)
-<a href=#1426 id=1426 data-nosnippet>1426</a>            .parse::&lt;RelayUrl&gt;()
-<a href=#1427 id=1427 data-nosnippet>1427</a>            .unwrap();
-<a href=#1428 id=1428 data-nosnippet>1428</a>        transports::Addr::Relay(url, EndpointId::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]).unwrap())
-<a href=#1429 id=1429 data-nosnippet>1429</a>    }
-<a href=#1430 id=1430 data-nosnippet>1430</a>
-<a href=#1431 id=1431 data-nosnippet>1431</a>    <span class="kw">fn </span>psd(transport_type: TransportType, rtt_ms: u64) -&gt; PathSelectionData {
-<a href=#1432 id=1432 data-nosnippet>1432</a>        <span class="kw">let </span>rtt = Duration::from_millis(rtt_ms);
-<a href=#1433 id=1433 data-nosnippet>1433</a>        <span class="kw">let </span>biased_rtt = rtt.as_nanos() <span class="kw">as </span>i128;
-<a href=#1434 id=1434 data-nosnippet>1434</a>        PathSelectionData {
-<a href=#1435 id=1435 data-nosnippet>1435</a>            transport_type,
-<a href=#1436 id=1436 data-nosnippet>1436</a>            rtt,
-<a href=#1437 id=1437 data-nosnippet>1437</a>            biased_rtt,
-<a href=#1438 id=1438 data-nosnippet>1438</a>        }
-<a href=#1439 id=1439 data-nosnippet>1439</a>    }
-<a href=#1440 id=1440 data-nosnippet>1440</a>
-<a href=#1441 id=1441 data-nosnippet>1441</a>    <span class="kw">fn </span>psd_v6(transport_type: TransportType, rtt_ms: u64) -&gt; PathSelectionData {
-<a href=#1442 id=1442 data-nosnippet>1442</a>        <span class="kw">let </span>rtt = Duration::from_millis(rtt_ms);
-<a href=#1443 id=1443 data-nosnippet>1443</a>        <span class="comment">// IPv6 gets a bias advantage
-<a href=#1444 id=1444 data-nosnippet>1444</a>        </span><span class="kw">let </span>biased_rtt = rtt.as_nanos() <span class="kw">as </span>i128 - transports::IPV6_RTT_ADVANTAGE.as_nanos() <span class="kw">as </span>i128;
-<a href=#1445 id=1445 data-nosnippet>1445</a>        PathSelectionData {
-<a href=#1446 id=1446 data-nosnippet>1446</a>            transport_type,
-<a href=#1447 id=1447 data-nosnippet>1447</a>            rtt,
-<a href=#1448 id=1448 data-nosnippet>1448</a>            biased_rtt,
-<a href=#1449 id=1449 data-nosnippet>1449</a>        }
-<a href=#1450 id=1450 data-nosnippet>1450</a>    }
-<a href=#1451 id=1451 data-nosnippet>1451</a>
-<a href=#1452 id=1452 data-nosnippet>1452</a>    <span class="attr">#[test]
-<a href=#1453 id=1453 data-nosnippet>1453</a>    </span><span class="kw">fn </span>test_ipv6_wins_over_ipv4_within_bias() {
-<a href=#1454 id=1454 data-nosnippet>1454</a>        <span class="comment">// IPv6 should win over IPv4 when RTTs are the same
-<a href=#1455 id=1455 data-nosnippet>1455</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
-<a href=#1456 id=1456 data-nosnippet>1456</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">10</span>));
-<a href=#1457 id=1457 data-nosnippet>1457</a>        paths.insert(v6(<span class="number">1</span>), psd_v6(TransportType::Primary, <span class="number">10</span>));
-<a href=#1458 id=1458 data-nosnippet>1458</a>
-<a href=#1459 id=1459 data-nosnippet>1459</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
-<a href=#1460 id=1460 data-nosnippet>1460</a>        <span class="macro">assert!</span>(result.is_some());
-<a href=#1461 id=1461 data-nosnippet>1461</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
-<a href=#1462 id=1462 data-nosnippet>1462</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(addr, transports::Addr::Ip(SocketAddr::V6(<span class="kw">_</span>))));
-<a href=#1463 id=1463 data-nosnippet>1463</a>
-<a href=#1464 id=1464 data-nosnippet>1464</a>        <span class="comment">// IPv6 should still win when it's slightly slower (within bias range)
-<a href=#1465 id=1465 data-nosnippet>1465</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
-<a href=#1466 id=1466 data-nosnippet>1466</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">10</span>));
-<a href=#1467 id=1467 data-nosnippet>1467</a>        paths.insert(v6(<span class="number">1</span>), psd_v6(TransportType::Primary, <span class="number">12</span>)); <span class="comment">// 2ms slower, but 3ms bias
-<a href=#1468 id=1468 data-nosnippet>1468</a>
-<a href=#1469 id=1469 data-nosnippet>1469</a>        </span><span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
-<a href=#1470 id=1470 data-nosnippet>1470</a>        <span class="macro">assert!</span>(result.is_some());
-<a href=#1471 id=1471 data-nosnippet>1471</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
-<a href=#1472 id=1472 data-nosnippet>1472</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(addr, transports::Addr::Ip(SocketAddr::V6(<span class="kw">_</span>))));
-<a href=#1473 id=1473 data-nosnippet>1473</a>
-<a href=#1474 id=1474 data-nosnippet>1474</a>        <span class="comment">// IPv4 should win when IPv6 is significantly slower
-<a href=#1475 id=1475 data-nosnippet>1475</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
-<a href=#1476 id=1476 data-nosnippet>1476</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">10</span>));
-<a href=#1477 id=1477 data-nosnippet>1477</a>        paths.insert(v6(<span class="number">1</span>), psd_v6(TransportType::Primary, <span class="number">20</span>)); <span class="comment">// 10ms slower, exceeds 3ms bias
-<a href=#1478 id=1478 data-nosnippet>1478</a>
-<a href=#1479 id=1479 data-nosnippet>1479</a>        </span><span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
-<a href=#1480 id=1480 data-nosnippet>1480</a>        <span class="macro">assert!</span>(result.is_some());
-<a href=#1481 id=1481 data-nosnippet>1481</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
-<a href=#1482 id=1482 data-nosnippet>1482</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(addr, transports::Addr::Ip(SocketAddr::V4(<span class="kw">_</span>))));
-<a href=#1483 id=1483 data-nosnippet>1483</a>    }
-<a href=#1484 id=1484 data-nosnippet>1484</a>
-<a href=#1485 id=1485 data-nosnippet>1485</a>    <span class="attr">#[test]
-<a href=#1486 id=1486 data-nosnippet>1486</a>    </span><span class="kw">fn </span>test_available_wins_over_backup_regardless_of_rtt() {
-<a href=#1487 id=1487 data-nosnippet>1487</a>        <span class="comment">// Available path should win even with much higher RTT
-<a href=#1488 id=1488 data-nosnippet>1488</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
-<a href=#1489 id=1489 data-nosnippet>1489</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">100</span>)); <span class="comment">// High RTT but Available
-<a href=#1490 id=1490 data-nosnippet>1490</a>        </span>paths.insert(relay(<span class="number">1</span>), psd(TransportType::Backup, <span class="number">10</span>)); <span class="comment">// Low RTT but Backup
-<a href=#1491 id=1491 data-nosnippet>1491</a>
-<a href=#1492 id=1492 data-nosnippet>1492</a>        </span><span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
-<a href=#1493 id=1493 data-nosnippet>1493</a>        <span class="macro">assert!</span>(result.is_some());
-<a href=#1494 id=1494 data-nosnippet>1494</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
-<a href=#1495 id=1495 data-nosnippet>1495</a>        <span class="macro">assert!</span>(addr.is_ip());
-<a href=#1496 id=1496 data-nosnippet>1496</a>
-<a href=#1497 id=1497 data-nosnippet>1497</a>        <span class="comment">// Even more extreme: 1000ms Available vs 1ms Backup
-<a href=#1498 id=1498 data-nosnippet>1498</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
-<a href=#1499 id=1499 data-nosnippet>1499</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">1000</span>));
-<a href=#1500 id=1500 data-nosnippet>1500</a>        paths.insert(relay(<span class="number">1</span>), psd(TransportType::Backup, <span class="number">1</span>));
-<a href=#1501 id=1501 data-nosnippet>1501</a>
-<a href=#1502 id=1502 data-nosnippet>1502</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
-<a href=#1503 id=1503 data-nosnippet>1503</a>        <span class="macro">assert!</span>(result.is_some());
-<a href=#1504 id=1504 data-nosnippet>1504</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
-<a href=#1505 id=1505 data-nosnippet>1505</a>        <span class="macro">assert!</span>(addr.is_ip());
-<a href=#1506 id=1506 data-nosnippet>1506</a>    }
-<a href=#1507 id=1507 data-nosnippet>1507</a>
-<a href=#1508 id=1508 data-nosnippet>1508</a>    <span class="attr">#[test]
-<a href=#1509 id=1509 data-nosnippet>1509</a>    </span><span class="kw">fn </span>test_same_category_only_switches_with_significant_rtt_diff() {
-<a href=#1510 id=1510 data-nosnippet>1510</a>        <span class="kw">let </span>current = v4(<span class="number">1</span>);
-<a href=#1511 id=1511 data-nosnippet>1511</a>
-<a href=#1512 id=1512 data-nosnippet>1512</a>        <span class="comment">// Should NOT switch: new path is only slightly better (2ms &lt; 5ms threshold)
-<a href=#1513 id=1513 data-nosnippet>1513</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
-<a href=#1514 id=1514 data-nosnippet>1514</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">20</span>));
-<a href=#1515 id=1515 data-nosnippet>1515</a>        paths.insert(v4(<span class="number">2</span>), psd(TransportType::Primary, <span class="number">18</span>));
-<a href=#1516 id=1516 data-nosnippet>1516</a>
-<a href=#1517 id=1517 data-nosnippet>1517</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>current));
-<a href=#1518 id=1518 data-nosnippet>1518</a>        <span class="macro">assert!</span>(result.is_none()); <span class="comment">// Should keep current
-<a href=#1519 id=1519 data-nosnippet>1519</a>
-<a href=#1520 id=1520 data-nosnippet>1520</a>        // Should NOT switch: new path is just under threshold (4ms &lt; 5ms)
-<a href=#1521 id=1521 data-nosnippet>1521</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
-<a href=#1522 id=1522 data-nosnippet>1522</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">20</span>));
-<a href=#1523 id=1523 data-nosnippet>1523</a>        paths.insert(v4(<span class="number">2</span>), psd(TransportType::Primary, <span class="number">16</span>));
-<a href=#1524 id=1524 data-nosnippet>1524</a>
-<a href=#1525 id=1525 data-nosnippet>1525</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>current));
-<a href=#1526 id=1526 data-nosnippet>1526</a>        <span class="macro">assert!</span>(result.is_none()); <span class="comment">// Should keep current
-<a href=#1527 id=1527 data-nosnippet>1527</a>
-<a href=#1528 id=1528 data-nosnippet>1528</a>        // SHOULD switch: new path is exactly at threshold (5ms, condition is &lt;=)
-<a href=#1529 id=1529 data-nosnippet>1529</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
-<a href=#1530 id=1530 data-nosnippet>1530</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">20</span>));
-<a href=#1531 id=1531 data-nosnippet>1531</a>        paths.insert(v4(<span class="number">2</span>), psd(TransportType::Primary, <span class="number">15</span>));
-<a href=#1532 id=1532 data-nosnippet>1532</a>
-<a href=#1533 id=1533 data-nosnippet>1533</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>current));
-<a href=#1534 id=1534 data-nosnippet>1534</a>        <span class="macro">assert!</span>(result.is_some());
-<a href=#1535 id=1535 data-nosnippet>1535</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
-<a href=#1536 id=1536 data-nosnippet>1536</a>        <span class="macro">assert_eq!</span>(addr, v4(<span class="number">2</span>));
-<a href=#1537 id=1537 data-nosnippet>1537</a>
-<a href=#1538 id=1538 data-nosnippet>1538</a>        <span class="comment">// SHOULD switch: new path is significantly better (6ms &gt; 5ms threshold)
-<a href=#1539 id=1539 data-nosnippet>1539</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
-<a href=#1540 id=1540 data-nosnippet>1540</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">20</span>));
-<a href=#1541 id=1541 data-nosnippet>1541</a>        paths.insert(v4(<span class="number">2</span>), psd(TransportType::Primary, <span class="number">14</span>));
-<a href=#1542 id=1542 data-nosnippet>1542</a>
-<a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>current));
-<a href=#1544 id=1544 data-nosnippet>1544</a>        <span class="macro">assert!</span>(result.is_some());
-<a href=#1545 id=1545 data-nosnippet>1545</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
-<a href=#1546 id=1546 data-nosnippet>1546</a>        <span class="macro">assert_eq!</span>(addr, v4(<span class="number">2</span>));
-<a href=#1547 id=1547 data-nosnippet>1547</a>    }
-<a href=#1548 id=1548 data-nosnippet>1548</a>
-<a href=#1549 id=1549 data-nosnippet>1549</a>    <span class="attr">#[test]
-<a href=#1550 id=1550 data-nosnippet>1550</a>    </span><span class="kw">fn </span>test_no_current_path_selects_best() {
-<a href=#1551 id=1551 data-nosnippet>1551</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
-<a href=#1552 id=1552 data-nosnippet>1552</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">20</span>));
-<a href=#1553 id=1553 data-nosnippet>1553</a>        paths.insert(v4(<span class="number">2</span>), psd(TransportType::Primary, <span class="number">10</span>));
-<a href=#1554 id=1554 data-nosnippet>1554</a>
-<a href=#1555 id=1555 data-nosnippet>1555</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
-<a href=#1556 id=1556 data-nosnippet>1556</a>        <span class="macro">assert!</span>(result.is_some());
-<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
-<a href=#1558 id=1558 data-nosnippet>1558</a>        <span class="macro">assert_eq!</span>(addr, v4(<span class="number">2</span>)); <span class="comment">// Lower RTT wins
-<a href=#1559 id=1559 data-nosnippet>1559</a>    </span>}
-<a href=#1560 id=1560 data-nosnippet>1560</a>
-<a href=#1561 id=1561 data-nosnippet>1561</a>    <span class="attr">#[test]
-<a href=#1562 id=1562 data-nosnippet>1562</a>    </span><span class="kw">fn </span>test_empty_paths_returns_none() {
-<a href=#1563 id=1563 data-nosnippet>1563</a>        <span class="kw">let </span>paths: FxHashMap&lt;transports::Addr, PathSelectionData&gt; = FxHashMap::default();
-<a href=#1564 id=1564 data-nosnippet>1564</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
-<a href=#1565 id=1565 data-nosnippet>1565</a>        <span class="macro">assert!</span>(result.is_none());
-<a href=#1566 id=1566 data-nosnippet>1566</a>
-<a href=#1567 id=1567 data-nosnippet>1567</a>        <span class="kw">let </span>paths: FxHashMap&lt;transports::Addr, PathSelectionData&gt; = FxHashMap::default();
-<a href=#1568 id=1568 data-nosnippet>1568</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4(<span class="number">1</span>)));
-<a href=#1569 id=1569 data-nosnippet>1569</a>        <span class="macro">assert!</span>(result.is_none());
-<a href=#1570 id=1570 data-nosnippet>1570</a>    }
-<a href=#1571 id=1571 data-nosnippet>1571</a>}</code></pre></div></section></main></body></html>
+<a href=#1327 id=1327 data-nosnippet>1327</a>    </span><span class="kw">fn </span>remove_path(
+<a href=#1328 id=1328 data-nosnippet>1328</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#1329 id=1329 data-nosnippet>1329</a>        path_id: <span class="kw-2">&amp;</span>PathId,
+<a href=#1330 id=1330 data-nosnippet>1330</a>        conn: <span class="kw-2">&amp;</span>noq::Connection,
+<a href=#1331 id=1331 data-nosnippet>1331</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;transports::Addr&gt; {
+<a href=#1332 id=1332 data-nosnippet>1332</a>        <span class="kw">let </span>addr = <span class="self">self</span>.paths.remove(path_id)<span class="question-mark">?</span>;
+<a href=#1333 id=1333 data-nosnippet>1333</a>        <span class="kw">let </span>stats = conn
+<a href=#1334 id=1334 data-nosnippet>1334</a>            .path_stats(<span class="kw-2">*</span>path_id)
+<a href=#1335 id=1335 data-nosnippet>1335</a>            .expect(<span class="string">"path_store holds a WeakPathHandle for this id, so noq retains its stats"</span>);
+<a href=#1336 id=1336 data-nosnippet>1336</a>        <span class="self">self</span>.path_store
+<a href=#1337 id=1337 data-nosnippet>1337</a>            .record_closed(<span class="kw-2">*</span>path_id, addr.clone().into(), stats);
+<a href=#1338 id=1338 data-nosnippet>1338</a>        <span class="prelude-val">Some</span>(addr)
+<a href=#1339 id=1339 data-nosnippet>1339</a>    }
+<a href=#1340 id=1340 data-nosnippet>1340</a>}
+<a href=#1341 id=1341 data-nosnippet>1341</a>
+<a href=#1342 id=1342 data-nosnippet>1342</a><span class="doccomment">/// Poll a future once, like n0_future::future::poll_once but sync.
+<a href=#1343 id=1343 data-nosnippet>1343</a></span><span class="kw">fn </span>now_or_never&lt;T, F: Future&lt;Output = T&gt;&gt;(fut: F) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+<a href=#1344 id=1344 data-nosnippet>1344</a>    <span class="kw">let </span>fut = <span class="macro">std::pin::pin!</span>(fut);
+<a href=#1345 id=1345 data-nosnippet>1345</a>    <span class="kw">match </span>fut.poll(<span class="kw-2">&amp;mut </span>std::task::Context::from_waker(std::task::Waker::noop())) {
+<a href=#1346 id=1346 data-nosnippet>1346</a>        Poll::Ready(res) =&gt; <span class="prelude-val">Some</span>(res),
+<a href=#1347 id=1347 data-nosnippet>1347</a>        Poll::Pending =&gt; <span class="prelude-val">None</span>,
+<a href=#1348 id=1348 data-nosnippet>1348</a>    }
+<a href=#1349 id=1349 data-nosnippet>1349</a>}
+<a href=#1350 id=1350 data-nosnippet>1350</a>
+<a href=#1351 id=1351 data-nosnippet>1351</a><span class="doccomment">/// Future that resolves to the `conn_id` once a connection is closed.
+<a href=#1352 id=1352 data-nosnippet>1352</a>///
+<a href=#1353 id=1353 data-nosnippet>1353</a>/// This uses [`noq::Connection::on_closed`], which does not keep the connection alive
+<a href=#1354 id=1354 data-nosnippet>1354</a>/// while awaiting the future.
+<a href=#1355 id=1355 data-nosnippet>1355</a></span><span class="kw">struct </span>OnClosed {
+<a href=#1356 id=1356 data-nosnippet>1356</a>    conn_id: ConnId,
+<a href=#1357 id=1357 data-nosnippet>1357</a>    inner: noq::OnClosed,
+<a href=#1358 id=1358 data-nosnippet>1358</a>}
+<a href=#1359 id=1359 data-nosnippet>1359</a>
+<a href=#1360 id=1360 data-nosnippet>1360</a><span class="kw">impl </span>OnClosed {
+<a href=#1361 id=1361 data-nosnippet>1361</a>    <span class="kw">fn </span>new(conn: <span class="kw-2">&amp;</span>noq::Connection) -&gt; <span class="self">Self </span>{
+<a href=#1362 id=1362 data-nosnippet>1362</a>        <span class="self">Self </span>{
+<a href=#1363 id=1363 data-nosnippet>1363</a>            conn_id: ConnId(conn.stable_id()),
+<a href=#1364 id=1364 data-nosnippet>1364</a>            inner: conn.on_closed(),
+<a href=#1365 id=1365 data-nosnippet>1365</a>        }
+<a href=#1366 id=1366 data-nosnippet>1366</a>    }
+<a href=#1367 id=1367 data-nosnippet>1367</a>}
+<a href=#1368 id=1368 data-nosnippet>1368</a>
+<a href=#1369 id=1369 data-nosnippet>1369</a><span class="kw">impl </span>Future <span class="kw">for </span>OnClosed {
+<a href=#1370 id=1370 data-nosnippet>1370</a>    <span class="kw">type </span>Output = (ConnId, Closed);
+<a href=#1371 id=1371 data-nosnippet>1371</a>
+<a href=#1372 id=1372 data-nosnippet>1372</a>    <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
+<a href=#1373 id=1373 data-nosnippet>1373</a>        <span class="kw">let </span>closed = <span class="macro">std::task::ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx));
+<a href=#1374 id=1374 data-nosnippet>1374</a>        Poll::Ready((<span class="self">self</span>.conn_id, closed))
+<a href=#1375 id=1375 data-nosnippet>1375</a>    }
+<a href=#1376 id=1376 data-nosnippet>1376</a>}
+<a href=#1377 id=1377 data-nosnippet>1377</a>
+<a href=#1378 id=1378 data-nosnippet>1378</a><span class="doccomment">/// Converts an iterator of [`TransportAddr'] into an iterator of [`transports::Addr`].
+<a href=#1379 id=1379 data-nosnippet>1379</a></span><span class="kw">fn </span>to_transports_addr(
+<a href=#1380 id=1380 data-nosnippet>1380</a>    endpoint_id: EndpointId,
+<a href=#1381 id=1381 data-nosnippet>1381</a>    addrs: <span class="kw">impl </span>IntoIterator&lt;Item = TransportAddr&gt;,
+<a href=#1382 id=1382 data-nosnippet>1382</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = transports::Addr&gt; {
+<a href=#1383 id=1383 data-nosnippet>1383</a>    addrs.into_iter().filter_map(<span class="kw">move </span>|addr| <span class="kw">match </span>addr {
+<a href=#1384 id=1384 data-nosnippet>1384</a>        TransportAddr::Relay(relay_url) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from((relay_url, endpoint_id))),
+<a href=#1385 id=1385 data-nosnippet>1385</a>        TransportAddr::Ip(sockaddr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(sockaddr)),
+<a href=#1386 id=1386 data-nosnippet>1386</a>        TransportAddr::Custom(custom_addr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(custom_addr)),
+<a href=#1387 id=1387 data-nosnippet>1387</a>        <span class="kw">_ </span>=&gt; {
+<a href=#1388 id=1388 data-nosnippet>1388</a>            <span class="macro">warn!</span>(<span class="question-mark">?</span>addr, <span class="string">"Unsupported TransportAddr"</span>);
+<a href=#1389 id=1389 data-nosnippet>1389</a>            <span class="prelude-val">None
+<a href=#1390 id=1390 data-nosnippet>1390</a>        </span>}
+<a href=#1391 id=1391 data-nosnippet>1391</a>    })
+<a href=#1392 id=1392 data-nosnippet>1392</a>}
+<a href=#1393 id=1393 data-nosnippet>1393</a>
+<a href=#1394 id=1394 data-nosnippet>1394</a><span class="doccomment">/// Returns the next item if `maybe_stream` is `Some`, or `None` otherwise.
+<a href=#1395 id=1395 data-nosnippet>1395</a></span><span class="kw">async fn </span>maybe_next&lt;S: Stream + Unpin&gt;(maybe_stream: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>S&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Option</span>&lt;S::Item&gt;&gt; {
+<a href=#1396 id=1396 data-nosnippet>1396</a>    <span class="kw">match </span>maybe_stream {
+<a href=#1397 id=1397 data-nosnippet>1397</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#1398 id=1398 data-nosnippet>1398</a>        <span class="prelude-val">Some</span>(s) =&gt; <span class="prelude-val">Some</span>(s.next().<span class="kw">await</span>),
+<a href=#1399 id=1399 data-nosnippet>1399</a>    }
+<a href=#1400 id=1400 data-nosnippet>1400</a>}
+<a href=#1401 id=1401 data-nosnippet>1401</a>
+<a href=#1402 id=1402 data-nosnippet>1402</a><span class="attr">#[cfg(test)]
+<a href=#1403 id=1403 data-nosnippet>1403</a></span><span class="kw">mod </span>tests {
+<a href=#1404 id=1404 data-nosnippet>1404</a>    <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+<a href=#1405 id=1405 data-nosnippet>1405</a>
+<a href=#1406 id=1406 data-nosnippet>1406</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#1407 id=1407 data-nosnippet>1407</a>    <span class="kw">use </span><span class="kw">crate</span>::socket::transports::TransportType;
+<a href=#1408 id=1408 data-nosnippet>1408</a>
+<a href=#1409 id=1409 data-nosnippet>1409</a>    <span class="kw">fn </span>v4(port: u16) -&gt; transports::Addr {
+<a href=#1410 id=1410 data-nosnippet>1410</a>        transports::Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
+<a href=#1411 id=1411 data-nosnippet>1411</a>    }
+<a href=#1412 id=1412 data-nosnippet>1412</a>
+<a href=#1413 id=1413 data-nosnippet>1413</a>    <span class="kw">fn </span>v6(port: u16) -&gt; transports::Addr {
+<a href=#1414 id=1414 data-nosnippet>1414</a>        transports::Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
+<a href=#1415 id=1415 data-nosnippet>1415</a>            Ipv6Addr::LOCALHOST,
+<a href=#1416 id=1416 data-nosnippet>1416</a>            port,
+<a href=#1417 id=1417 data-nosnippet>1417</a>            <span class="number">0</span>,
+<a href=#1418 id=1418 data-nosnippet>1418</a>            <span class="number">0</span>,
+<a href=#1419 id=1419 data-nosnippet>1419</a>        )))
+<a href=#1420 id=1420 data-nosnippet>1420</a>    }
+<a href=#1421 id=1421 data-nosnippet>1421</a>
+<a href=#1422 id=1422 data-nosnippet>1422</a>    <span class="kw">fn </span>relay(port: u16) -&gt; transports::Addr {
+<a href=#1423 id=1423 data-nosnippet>1423</a>        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"https://relay{port}.iroh.computer"</span>)
+<a href=#1424 id=1424 data-nosnippet>1424</a>            .parse::&lt;RelayUrl&gt;()
+<a href=#1425 id=1425 data-nosnippet>1425</a>            .unwrap();
+<a href=#1426 id=1426 data-nosnippet>1426</a>        transports::Addr::Relay(url, EndpointId::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]).unwrap())
+<a href=#1427 id=1427 data-nosnippet>1427</a>    }
+<a href=#1428 id=1428 data-nosnippet>1428</a>
+<a href=#1429 id=1429 data-nosnippet>1429</a>    <span class="kw">fn </span>psd(transport_type: TransportType, rtt_ms: u64) -&gt; PathSelectionData {
+<a href=#1430 id=1430 data-nosnippet>1430</a>        <span class="kw">let </span>rtt = Duration::from_millis(rtt_ms);
+<a href=#1431 id=1431 data-nosnippet>1431</a>        <span class="kw">let </span>biased_rtt = rtt.as_nanos() <span class="kw">as </span>i128;
+<a href=#1432 id=1432 data-nosnippet>1432</a>        PathSelectionData {
+<a href=#1433 id=1433 data-nosnippet>1433</a>            transport_type,
+<a href=#1434 id=1434 data-nosnippet>1434</a>            rtt,
+<a href=#1435 id=1435 data-nosnippet>1435</a>            biased_rtt,
+<a href=#1436 id=1436 data-nosnippet>1436</a>        }
+<a href=#1437 id=1437 data-nosnippet>1437</a>    }
+<a href=#1438 id=1438 data-nosnippet>1438</a>
+<a href=#1439 id=1439 data-nosnippet>1439</a>    <span class="kw">fn </span>psd_v6(transport_type: TransportType, rtt_ms: u64) -&gt; PathSelectionData {
+<a href=#1440 id=1440 data-nosnippet>1440</a>        <span class="kw">let </span>rtt = Duration::from_millis(rtt_ms);
+<a href=#1441 id=1441 data-nosnippet>1441</a>        <span class="comment">// IPv6 gets a bias advantage
+<a href=#1442 id=1442 data-nosnippet>1442</a>        </span><span class="kw">let </span>biased_rtt = rtt.as_nanos() <span class="kw">as </span>i128 - transports::IPV6_RTT_ADVANTAGE.as_nanos() <span class="kw">as </span>i128;
+<a href=#1443 id=1443 data-nosnippet>1443</a>        PathSelectionData {
+<a href=#1444 id=1444 data-nosnippet>1444</a>            transport_type,
+<a href=#1445 id=1445 data-nosnippet>1445</a>            rtt,
+<a href=#1446 id=1446 data-nosnippet>1446</a>            biased_rtt,
+<a href=#1447 id=1447 data-nosnippet>1447</a>        }
+<a href=#1448 id=1448 data-nosnippet>1448</a>    }
+<a href=#1449 id=1449 data-nosnippet>1449</a>
+<a href=#1450 id=1450 data-nosnippet>1450</a>    <span class="attr">#[test]
+<a href=#1451 id=1451 data-nosnippet>1451</a>    </span><span class="kw">fn </span>test_ipv6_wins_over_ipv4_within_bias() {
+<a href=#1452 id=1452 data-nosnippet>1452</a>        <span class="comment">// IPv6 should win over IPv4 when RTTs are the same
+<a href=#1453 id=1453 data-nosnippet>1453</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
+<a href=#1454 id=1454 data-nosnippet>1454</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">10</span>));
+<a href=#1455 id=1455 data-nosnippet>1455</a>        paths.insert(v6(<span class="number">1</span>), psd_v6(TransportType::Primary, <span class="number">10</span>));
+<a href=#1456 id=1456 data-nosnippet>1456</a>
+<a href=#1457 id=1457 data-nosnippet>1457</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
+<a href=#1458 id=1458 data-nosnippet>1458</a>        <span class="macro">assert!</span>(result.is_some());
+<a href=#1459 id=1459 data-nosnippet>1459</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
+<a href=#1460 id=1460 data-nosnippet>1460</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(addr, transports::Addr::Ip(SocketAddr::V6(<span class="kw">_</span>))));
+<a href=#1461 id=1461 data-nosnippet>1461</a>
+<a href=#1462 id=1462 data-nosnippet>1462</a>        <span class="comment">// IPv6 should still win when it's slightly slower (within bias range)
+<a href=#1463 id=1463 data-nosnippet>1463</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
+<a href=#1464 id=1464 data-nosnippet>1464</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">10</span>));
+<a href=#1465 id=1465 data-nosnippet>1465</a>        paths.insert(v6(<span class="number">1</span>), psd_v6(TransportType::Primary, <span class="number">12</span>)); <span class="comment">// 2ms slower, but 3ms bias
+<a href=#1466 id=1466 data-nosnippet>1466</a>
+<a href=#1467 id=1467 data-nosnippet>1467</a>        </span><span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
+<a href=#1468 id=1468 data-nosnippet>1468</a>        <span class="macro">assert!</span>(result.is_some());
+<a href=#1469 id=1469 data-nosnippet>1469</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
+<a href=#1470 id=1470 data-nosnippet>1470</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(addr, transports::Addr::Ip(SocketAddr::V6(<span class="kw">_</span>))));
+<a href=#1471 id=1471 data-nosnippet>1471</a>
+<a href=#1472 id=1472 data-nosnippet>1472</a>        <span class="comment">// IPv4 should win when IPv6 is significantly slower
+<a href=#1473 id=1473 data-nosnippet>1473</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
+<a href=#1474 id=1474 data-nosnippet>1474</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">10</span>));
+<a href=#1475 id=1475 data-nosnippet>1475</a>        paths.insert(v6(<span class="number">1</span>), psd_v6(TransportType::Primary, <span class="number">20</span>)); <span class="comment">// 10ms slower, exceeds 3ms bias
+<a href=#1476 id=1476 data-nosnippet>1476</a>
+<a href=#1477 id=1477 data-nosnippet>1477</a>        </span><span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
+<a href=#1478 id=1478 data-nosnippet>1478</a>        <span class="macro">assert!</span>(result.is_some());
+<a href=#1479 id=1479 data-nosnippet>1479</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
+<a href=#1480 id=1480 data-nosnippet>1480</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(addr, transports::Addr::Ip(SocketAddr::V4(<span class="kw">_</span>))));
+<a href=#1481 id=1481 data-nosnippet>1481</a>    }
+<a href=#1482 id=1482 data-nosnippet>1482</a>
+<a href=#1483 id=1483 data-nosnippet>1483</a>    <span class="attr">#[test]
+<a href=#1484 id=1484 data-nosnippet>1484</a>    </span><span class="kw">fn </span>test_available_wins_over_backup_regardless_of_rtt() {
+<a href=#1485 id=1485 data-nosnippet>1485</a>        <span class="comment">// Available path should win even with much higher RTT
+<a href=#1486 id=1486 data-nosnippet>1486</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
+<a href=#1487 id=1487 data-nosnippet>1487</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">100</span>)); <span class="comment">// High RTT but Available
+<a href=#1488 id=1488 data-nosnippet>1488</a>        </span>paths.insert(relay(<span class="number">1</span>), psd(TransportType::Backup, <span class="number">10</span>)); <span class="comment">// Low RTT but Backup
+<a href=#1489 id=1489 data-nosnippet>1489</a>
+<a href=#1490 id=1490 data-nosnippet>1490</a>        </span><span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
+<a href=#1491 id=1491 data-nosnippet>1491</a>        <span class="macro">assert!</span>(result.is_some());
+<a href=#1492 id=1492 data-nosnippet>1492</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
+<a href=#1493 id=1493 data-nosnippet>1493</a>        <span class="macro">assert!</span>(addr.is_ip());
+<a href=#1494 id=1494 data-nosnippet>1494</a>
+<a href=#1495 id=1495 data-nosnippet>1495</a>        <span class="comment">// Even more extreme: 1000ms Available vs 1ms Backup
+<a href=#1496 id=1496 data-nosnippet>1496</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
+<a href=#1497 id=1497 data-nosnippet>1497</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">1000</span>));
+<a href=#1498 id=1498 data-nosnippet>1498</a>        paths.insert(relay(<span class="number">1</span>), psd(TransportType::Backup, <span class="number">1</span>));
+<a href=#1499 id=1499 data-nosnippet>1499</a>
+<a href=#1500 id=1500 data-nosnippet>1500</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
+<a href=#1501 id=1501 data-nosnippet>1501</a>        <span class="macro">assert!</span>(result.is_some());
+<a href=#1502 id=1502 data-nosnippet>1502</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
+<a href=#1503 id=1503 data-nosnippet>1503</a>        <span class="macro">assert!</span>(addr.is_ip());
+<a href=#1504 id=1504 data-nosnippet>1504</a>    }
+<a href=#1505 id=1505 data-nosnippet>1505</a>
+<a href=#1506 id=1506 data-nosnippet>1506</a>    <span class="attr">#[test]
+<a href=#1507 id=1507 data-nosnippet>1507</a>    </span><span class="kw">fn </span>test_same_category_only_switches_with_significant_rtt_diff() {
+<a href=#1508 id=1508 data-nosnippet>1508</a>        <span class="kw">let </span>current = v4(<span class="number">1</span>);
+<a href=#1509 id=1509 data-nosnippet>1509</a>
+<a href=#1510 id=1510 data-nosnippet>1510</a>        <span class="comment">// Should NOT switch: new path is only slightly better (2ms &lt; 5ms threshold)
+<a href=#1511 id=1511 data-nosnippet>1511</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
+<a href=#1512 id=1512 data-nosnippet>1512</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">20</span>));
+<a href=#1513 id=1513 data-nosnippet>1513</a>        paths.insert(v4(<span class="number">2</span>), psd(TransportType::Primary, <span class="number">18</span>));
+<a href=#1514 id=1514 data-nosnippet>1514</a>
+<a href=#1515 id=1515 data-nosnippet>1515</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>current));
+<a href=#1516 id=1516 data-nosnippet>1516</a>        <span class="macro">assert!</span>(result.is_none()); <span class="comment">// Should keep current
+<a href=#1517 id=1517 data-nosnippet>1517</a>
+<a href=#1518 id=1518 data-nosnippet>1518</a>        // Should NOT switch: new path is just under threshold (4ms &lt; 5ms)
+<a href=#1519 id=1519 data-nosnippet>1519</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
+<a href=#1520 id=1520 data-nosnippet>1520</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">20</span>));
+<a href=#1521 id=1521 data-nosnippet>1521</a>        paths.insert(v4(<span class="number">2</span>), psd(TransportType::Primary, <span class="number">16</span>));
+<a href=#1522 id=1522 data-nosnippet>1522</a>
+<a href=#1523 id=1523 data-nosnippet>1523</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>current));
+<a href=#1524 id=1524 data-nosnippet>1524</a>        <span class="macro">assert!</span>(result.is_none()); <span class="comment">// Should keep current
+<a href=#1525 id=1525 data-nosnippet>1525</a>
+<a href=#1526 id=1526 data-nosnippet>1526</a>        // SHOULD switch: new path is exactly at threshold (5ms, condition is &lt;=)
+<a href=#1527 id=1527 data-nosnippet>1527</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
+<a href=#1528 id=1528 data-nosnippet>1528</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">20</span>));
+<a href=#1529 id=1529 data-nosnippet>1529</a>        paths.insert(v4(<span class="number">2</span>), psd(TransportType::Primary, <span class="number">15</span>));
+<a href=#1530 id=1530 data-nosnippet>1530</a>
+<a href=#1531 id=1531 data-nosnippet>1531</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>current));
+<a href=#1532 id=1532 data-nosnippet>1532</a>        <span class="macro">assert!</span>(result.is_some());
+<a href=#1533 id=1533 data-nosnippet>1533</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
+<a href=#1534 id=1534 data-nosnippet>1534</a>        <span class="macro">assert_eq!</span>(addr, v4(<span class="number">2</span>));
+<a href=#1535 id=1535 data-nosnippet>1535</a>
+<a href=#1536 id=1536 data-nosnippet>1536</a>        <span class="comment">// SHOULD switch: new path is significantly better (6ms &gt; 5ms threshold)
+<a href=#1537 id=1537 data-nosnippet>1537</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
+<a href=#1538 id=1538 data-nosnippet>1538</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">20</span>));
+<a href=#1539 id=1539 data-nosnippet>1539</a>        paths.insert(v4(<span class="number">2</span>), psd(TransportType::Primary, <span class="number">14</span>));
+<a href=#1540 id=1540 data-nosnippet>1540</a>
+<a href=#1541 id=1541 data-nosnippet>1541</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>current));
+<a href=#1542 id=1542 data-nosnippet>1542</a>        <span class="macro">assert!</span>(result.is_some());
+<a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
+<a href=#1544 id=1544 data-nosnippet>1544</a>        <span class="macro">assert_eq!</span>(addr, v4(<span class="number">2</span>));
+<a href=#1545 id=1545 data-nosnippet>1545</a>    }
+<a href=#1546 id=1546 data-nosnippet>1546</a>
+<a href=#1547 id=1547 data-nosnippet>1547</a>    <span class="attr">#[test]
+<a href=#1548 id=1548 data-nosnippet>1548</a>    </span><span class="kw">fn </span>test_no_current_path_selects_best() {
+<a href=#1549 id=1549 data-nosnippet>1549</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths = FxHashMap::default();
+<a href=#1550 id=1550 data-nosnippet>1550</a>        paths.insert(v4(<span class="number">1</span>), psd(TransportType::Primary, <span class="number">20</span>));
+<a href=#1551 id=1551 data-nosnippet>1551</a>        paths.insert(v4(<span class="number">2</span>), psd(TransportType::Primary, <span class="number">10</span>));
+<a href=#1552 id=1552 data-nosnippet>1552</a>
+<a href=#1553 id=1553 data-nosnippet>1553</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
+<a href=#1554 id=1554 data-nosnippet>1554</a>        <span class="macro">assert!</span>(result.is_some());
+<a href=#1555 id=1555 data-nosnippet>1555</a>        <span class="kw">let </span>(addr, <span class="kw">_</span>) = result.unwrap();
+<a href=#1556 id=1556 data-nosnippet>1556</a>        <span class="macro">assert_eq!</span>(addr, v4(<span class="number">2</span>)); <span class="comment">// Lower RTT wins
+<a href=#1557 id=1557 data-nosnippet>1557</a>    </span>}
+<a href=#1558 id=1558 data-nosnippet>1558</a>
+<a href=#1559 id=1559 data-nosnippet>1559</a>    <span class="attr">#[test]
+<a href=#1560 id=1560 data-nosnippet>1560</a>    </span><span class="kw">fn </span>test_empty_paths_returns_none() {
+<a href=#1561 id=1561 data-nosnippet>1561</a>        <span class="kw">let </span>paths: FxHashMap&lt;transports::Addr, PathSelectionData&gt; = FxHashMap::default();
+<a href=#1562 id=1562 data-nosnippet>1562</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">None</span>);
+<a href=#1563 id=1563 data-nosnippet>1563</a>        <span class="macro">assert!</span>(result.is_none());
+<a href=#1564 id=1564 data-nosnippet>1564</a>
+<a href=#1565 id=1565 data-nosnippet>1565</a>        <span class="kw">let </span>paths: FxHashMap&lt;transports::Addr, PathSelectionData&gt; = FxHashMap::default();
+<a href=#1566 id=1566 data-nosnippet>1566</a>        <span class="kw">let </span>result = select_best_path(paths, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4(<span class="number">1</span>)));
+<a href=#1567 id=1567 data-nosnippet>1567</a>        <span class="macro">assert!</span>(result.is_none());
+<a href=#1568 id=1568 data-nosnippet>1568</a>    }
+<a href=#1569 id=1569 data-nosnippet>1569</a>}</code></pre></div></section></main></body></html>
