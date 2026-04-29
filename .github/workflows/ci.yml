@@ -275,8 +275,7 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     needs: pick-runner
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_9) }}
-    # Enforces https://github.com/n0-computer/iroh/issues/3177: foreign types
-    # in our public API are gated by `external-types.toml`.
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -297,22 +296,18 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
-      - name: Cache cargo-check-external-types
-        id: cache-cet
-        uses: actions/cache@v5
-        with:
-          path: ~/.cargo/bin/cargo-check-external-types
-          key: cargo-check-external-types-${{ env.CARGO_CHECK_EXTERNAL_TYPES_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.18.1
 
       - name: Install cargo-check-external-types
-        if: steps.cache-cet.outputs.cache-hit != 'true'
-        run: cargo install --locked --version "$CARGO_CHECK_EXTERNAL_TYPES_VERSION" cargo-check-external-types
+        # Match the version of wasm-bindgen used in Cargo.lock
+        run: cargo binstall cargo-check-external-types@${{ env.CARGO_CHECK_EXTERNAL_TYPES_VERSION }} --locked --no-confirm
 
       - name: Check external types
         run: |
           set -e
           fail=0
-          for crate in iroh-base iroh-dns iroh-dns-server iroh iroh-relay; do
+          for crate in iroh-base iroh-dns iroh-relay iroh iroh-dns-server; do
             echo "::group::$crate"
             if ! cargo check-external-types \
                 --manifest-path "$crate/Cargo.toml" \

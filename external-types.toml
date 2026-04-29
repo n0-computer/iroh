@@ -1,9 +1,12 @@
-# Allow-list for `cargo-check-external-types`.
+# List of types from foreign crates allowed to appear in our public APIs.
 #
-# Used by the `check_external_types` CI job to enforce
-# https://github.com/n0-computer/iroh/issues/3177: each foreign type in the
-# public API blocks a semver-breaking update of that crate during 1.0, so we
-# keep this list as small as possible.
+# This can be used with `cargo check-external-types` to ensure that no other
+# items than the ones allow-listed here appear in our public APIs. A semver-breaking
+# update to any crate listed here automatically becomes a semver-breaking update
+# to one of our workspace crates.
+#
+# There's a `check_external_types` CI job that fails when any foreign item not listed
+# here appears in the public API of a workspace crate.
 
 allowed_external_types = [
     # workspace crates
