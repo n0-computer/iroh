@@ -184,10 +184,11 @@ where
 
 /// The main underlying IO stream type used for the relay server.
 ///
-/// Allows choosing whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
+/// Allows choosing whether or not the underlying [`tokio::net::TcpStream`] is served over TLS.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub(super) enum MaybeTlsStream {
+#[non_exhaustive]
+pub enum MaybeTlsStream {
     /// A plain non-Tls [`tokio::net::TcpStream`]
     Plain(tokio::net::TcpStream),
     /// A Tls wrapped [`tokio::net::TcpStream`]

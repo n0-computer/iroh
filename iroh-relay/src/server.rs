@@ -133,6 +133,7 @@ pub struct RelayConfig {
 
 /// Controls which endpoints are allowed to use the relay.
 #[derive(derive_more::Debug)]
+#[non_exhaustive]
 pub enum AccessConfig {
     /// Everyone
     Everyone,
