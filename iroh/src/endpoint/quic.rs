@@ -83,7 +83,9 @@ pub use noq_proto::{
 };
 use tracing::warn;
 
-use crate::socket::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT};
+use crate::socket::{
+    HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, MAX_QNT_ADDRESSES, PATH_MAX_IDLE_TIMEOUT,
+};
 
 /// Builder for a [`QuicTransportConfig`].
 #[derive(Debug, Clone)]
@@ -154,8 +156,8 @@ impl QuicTransportConfigBuilder {
         cfg.keep_alive_interval(Some(HEARTBEAT_INTERVAL));
         cfg.default_path_keep_alive_interval(Some(HEARTBEAT_INTERVAL));
         cfg.default_path_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT));
-        cfg.max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS + 1);
-        cfg.set_max_remote_nat_traversal_addresses(MAX_MULTIPATH_PATHS as u8);
+        cfg.max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS);
+        cfg.max_remote_nat_traversal_addresses(MAX_QNT_ADDRESSES);
         Self(cfg)
     }
 
@@ -528,10 +530,10 @@ impl QuicTransportConfigBuilder {
     ///
     /// This implementation expects the multipath extension to be enabled as well. If not yet
     /// enabled via [`Self::max_concurrent_multipath_paths`], a default value of
-    /// 12 will be used.
+    /// 8 will be used.
     ///
-    /// Note: this method will ignore values less than the recommended 12 and will log a warning.
-    pub fn set_max_remote_nat_traversal_addresses(mut self, max_addresses: u8) -> Self {
+    /// Note: this method will ignore values less than the recommended 8 and will log a warning.
+    pub fn max_remote_nat_traversal_addresses(mut self, max_addresses: u8) -> Self {
         if max_addresses < MAX_MULTIPATH_PATHS as u8 {
             warn!(
                 "QuicTransportConfig::max_remote_nat_traversal_addresses must be at least {}, ignoring user supplied value",
@@ -539,7 +541,7 @@ impl QuicTransportConfigBuilder {
             );
             return self;
         }
-        self.0.set_max_remote_nat_traversal_addresses(max_addresses);
+        self.0.max_remote_nat_traversal_addresses(max_addresses);
         self
     }
 
