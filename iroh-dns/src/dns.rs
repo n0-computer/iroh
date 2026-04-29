@@ -28,7 +28,7 @@ use n0_future::{
     time::{self, Duration},
 };
 use tokio::sync::Notify;
-use tracing::debug;
+use tracing::warn;
 use url::Url;
 
 use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
@@ -224,6 +224,12 @@ impl Builder {
 /// The nameservers can be customized by constructing the resolver with [`Self::builder`].
 /// Alternatively, you can create a fully custom DNS resolver by implementing the [`Resolver`]
 /// trait and creating the resolver with [`Self::custom`].
+///
+/// On Android, the system-defaults reader goes through `ndk_context`. Initialize
+/// it (via ndk-glue, android-activity, or `iroh_dns::install_android_jni_context`)
+/// before constructing a resolver that uses system defaults; otherwise the JNI
+/// lookup panics in release builds. Debug builds catch the panic and fall back
+/// to public DNS so unit tests still run.
 #[derive(Debug, Clone)]
 pub struct DnsResolver {
     inner: Arc<Inner>,
@@ -603,7 +609,7 @@ impl HickoryResolver {
             match Self::system_config() {
                 Ok((config, options)) => (config, options),
                 Err(error) => {
-                    debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
+                    warn!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
                     (
                         ResolverConfig::udp_and_tcp(&hickory_resolver::config::GOOGLE),
                         ResolverOpts::default(),
