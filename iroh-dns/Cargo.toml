@@ -31,9 +31,6 @@ url = "2.5.3"
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = { version = "0.26.0", features = ["tokio", "system-config"] }
 
-# Android-only dependency for the opt-in system DNS reader. The actual
-# JNI work is done by `hickory-resolver`'s Android `system_conf` module
-# (which uses `jni`); we just route handles into ndk-context.
 [target.'cfg(target_os = "android")'.dependencies]
 ndk-context = "0.1"
 
@@ -48,12 +45,3 @@ tls-aws-lc-rs = ["rustls/aws-lc-rs", "hickory-resolver/https-aws-lc-rs"]
 [dev-dependencies]
 n0-tracing-test = "0.3"
 tokio = { version = "1", features = ["macros", "rt"] }
-
-# Android-only dev deps. The test ctor calls `install_test_jni_context_stub`
-# so unit tests can construct a `DnsResolver` without a JVM in scope.
-[target.'cfg(target_os = "android")'.dev-dependencies]
-ctor = "0.10"
-
-[[test]]
-name = "integration"
-required-features = ["tls-ring"]

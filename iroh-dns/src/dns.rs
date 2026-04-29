@@ -177,16 +177,11 @@ impl DnsProtocol {
 }
 
 impl Builder {
-    /// Reads the host system's DNS configuration when the resolver builds.
+    /// Makes the builder respect the host system's DNS configuration.
     ///
-    /// On Linux, macOS, and Windows this picks up the operating system's
-    /// nameserver list. On Android the reader uses `ndk_context` to call
-    /// `LinkProperties.getDnsServers()`; populate `ndk_context` (via
-    /// ndk-glue, android-activity, or `iroh_dns::install_android_jni_context`)
-    /// before constructing the resolver, or the build will panic.
-    ///
-    /// Falls back to Google's public DNS when the system reader returns
-    /// nothing.
+    /// We first try to read the system's resolver from `/etc/resolv.conf`.
+    /// This does not work at least on some Androids, therefore we fallback
+    /// to a default config which uses Google's `8.8.8.8` or `8.8.4.4`.
     pub fn with_system_defaults(mut self) -> Self {
         self.use_system_defaults = true;
         self
@@ -319,10 +314,11 @@ impl Inner {
 }
 
 impl DnsResolver {
-    /// Creates a new resolver with sensible cross-platform defaults.
+    /// Creates a new DNS resolver with sensible cross-platform defaults.
     ///
-    /// Equivalent to `Builder::default().with_system_defaults().build()`.
-    /// See [`Builder::with_system_defaults`] for per-platform behavior.
+    /// We first try to read the system's resolver from `/etc/resolv.conf`.
+    /// This does not work at least on some Androids, therefore we fallback
+    /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
     pub fn new() -> Self {
         Builder::default().with_system_defaults().build()
     }
@@ -604,7 +600,7 @@ impl HickoryResolver {
 
     fn build_resolver(builder: &Builder) -> TokioResolver {
         let (mut config, mut options) = if builder.use_system_defaults {
-            match crate::system_config::read_system_conf() {
+            match Self::system_config() {
                 Ok((config, options)) => (config, options),
                 Err(error) => {
                     debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
@@ -641,6 +637,29 @@ impl HickoryResolver {
         }
 
         hickory_builder.build().expect("config works")
+    }
+
+    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::net::NetError> {
+        #[cfg(target_os = "android")]
+        let (system_config, options) = crate::android::read_system_conf()?;
+        #[cfg(not(target_os = "android"))]
+        let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
+
+        // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
+        // there is no easy way to do this.
+        let mut config = hickory_resolver::config::ResolverConfig::default();
+        if let Some(name) = system_config.domain() {
+            config.set_domain(name.clone());
+        }
+        for name in system_config.search() {
+            config.add_search(name.clone());
+        }
+        for nameserver_cfg in system_config.name_servers() {
+            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.ip) {
+                config.add_name_server(nameserver_cfg.clone());
+            }
+        }
+        Ok((config, options))
     }
 }
 
@@ -680,12 +699,17 @@ impl Resolver for HickoryResolver {
         Box::pin(async move {
             let lookup = resolver.txt_lookup(host).await.anyerr()?;
             let iter: BoxIter<TxtRecordData> =
-                Box::new(lookup.answers().to_vec().into_iter().filter_map(
-                    |record| match record.data {
-                        RData::TXT(txt) => Some(TxtRecordData(txt.txt_data)),
+                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
+                    match &record.data {
+                        RData::TXT(txt) => {
+                            // I don't know a way of avoiding this deep copy, even if it's agonizing.
+                            // The representation of `TxtRecrodData` and `hickory_proto::rr::rdata::TXT`
+                            // is identical.
+                            Some(TxtRecordData::from(txt.txt_data.to_vec()))
+                        }
                         _ => None,
-                    },
-                ));
+                    }
+                }));
             Ok(iter)
         })
     }
@@ -744,6 +768,20 @@ impl From<Vec<Box<[u8]>>> for TxtRecordData {
         Self(value.into_boxed_slice())
     }
 }
+
+/// Deprecated IPv6 site-local anycast addresses still configured by windows.
+///
+/// Windows still configures these site-local addresses as soon even as an IPv6 loopback
+/// interface is configured.  We do not want to use these DNS servers, the chances of them
+/// being usable are almost always close to zero, while the chance of DNS configuration
+/// **only** relying on these servers and not also being configured normally are also almost
+/// zero.  The chance of the DNS resolver accidentally trying one of these and taking a
+/// bunch of timeouts to figure out they're no good are on the other hand very high.
+const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
+    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 1)),
+    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 2)),
+    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 3)),
+];
 
 /// Helper enum to give a unified type to the iterators of [`DnsResolver::lookup_ipv4_ipv6`].
 enum LookupIter<A, B> {

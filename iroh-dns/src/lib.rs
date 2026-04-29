@@ -5,23 +5,14 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links, unreachable_pub)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
+#[cfg(target_os = "android")]
+mod android;
 mod attrs;
 #[cfg(not(wasm_browser))]
 pub mod dns;
 pub mod endpoint_info;
 pub mod pkarr;
-#[cfg(not(wasm_browser))]
-mod system_config;
 
+#[cfg(target_os = "android")]
+pub use android::install_android_jni_context;
 pub use attrs::{EncodingError, IROH_TXT_NAME, ParseError};
-#[cfg(target_os = "android")]
-pub use system_config::android::install_android_jni_context;
-#[cfg(target_os = "android")]
-#[doc(hidden)]
-pub use system_config::android::install_test_jni_context_stub;
-
-#[cfg(all(test, target_os = "android"))]
-#[ctor::ctor]
-fn android_test_init() {
-    install_test_jni_context_stub();
-}

@@ -287,18 +287,9 @@ pub use iroh_base::{
 #[cfg(not(wasm_browser))]
 pub use iroh_dns::dns;
 pub use iroh_dns::endpoint_info;
-#[cfg(target_os = "android")]
-#[doc(hidden)]
-pub use iroh_dns::install_test_jni_context_stub;
 pub use iroh_relay::{RelayConfig, RelayMap};
 pub use n0_watcher::Watcher;
 pub use net_report::{Report as NetReport, TIMEOUT as NET_REPORT_TIMEOUT};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
-
-#[cfg(all(test, target_os = "android"))]
-#[ctor::ctor]
-fn android_test_init() {
-    iroh_dns::install_test_jni_context_stub();
-}
