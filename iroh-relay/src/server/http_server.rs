@@ -31,7 +31,9 @@ use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
 
-use super::{AccessConfig, SpawnError, clients::Clients, streams::InvalidBucketConfig};
+use super::{
+    AccessConfig, ClientRequest, SpawnError, clients::Clients, streams::InvalidBucketConfig,
+};
 use crate::{
     KeyCache,
     defaults::{DEFAULT_KEY_CACHE_CAPACITY, timeouts::SERVER_WRITE_TIMEOUT},
@@ -611,8 +613,6 @@ impl RelayServiceWithNotify {
                 })
             })?;
 
-        let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
-
         // Setup a future that will eventually receive the upgraded
         // connection and talk a new protocol, and spawn the future
         // into the runtime.
@@ -625,14 +625,11 @@ impl RelayServiceWithNotify {
             async move {
                 match hyper::upgrade::on(&mut req).await {
                     Ok(upgraded) => {
+                        let (parts, _) = req.into_parts();
                         if let Err(err) = this
                             .service
                             .0
-                            .relay_connection_handler(
-                                upgraded,
-                                client_auth_header,
-                                protocol_version,
-                            )
+                            .relay_connection_handler(upgraded, parts, protocol_version)
                             .await
                         {
                             warn!("error accepting upgraded connection: {err:#}",);
@@ -669,9 +666,52 @@ impl RelayServiceWithNotify {
 
 /// Combines [`RelayService`] with a notification token.
 ///
-/// This struct implements [`Service`].
+/// This struct implements [`Service`]. Note that the service has to be called with hyper's `io`
+/// argument set to [`MaybeTlsStream`] wrapped by [`hyper_util::rt::TokioIo`], otherwise handling
+/// WebSocket requests at `/relay` will fail at runtime with [`ConnectionHandlerError::DowncastUpgrade`].
 ///
-/// The notification token is triggered once the relay connection is fully established.
+/// The notification token is triggered once the relay connection is fully established. It can be used
+/// to cancel a timeout aborting the TCP connection if no upgrade request is received in some time.
+///
+/// ## Example
+///
+/// ```no_run
+/// # use std::sync::Arc;
+/// # use http::HeaderMap;
+/// # use hyper::server::conn::http1;
+/// # use hyper_util::rt::TokioIo;
+/// # use tokio::{net::TcpListener, sync::Notify};
+/// # use iroh_relay::{
+/// #     KeyCache,
+/// #     server::{
+/// #         AccessConfig, Metrics,
+/// #         http_server::{Handlers, RelayService, RelayServiceWithNotify},
+/// #         streams::MaybeTlsStream
+/// #     },
+/// # };
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let service = RelayService::new(
+///     Handlers::default(),
+///     HeaderMap::new(),
+///     None,
+///     KeyCache::new(1024),
+///     AccessConfig::Everyone,
+///     Arc::new(Metrics::default()),
+/// );
+/// let service = RelayServiceWithNotify::new(service, Arc::new(Notify::new()));
+///
+/// let listener = TcpListener::bind("127.0.0.1:0").await?;
+/// let (stream, _peer) = listener.accept().await?;
+/// // Wrap the TCP stream in `MaybeTlsStream`, otherwise the relay WebSocket handler will error at runtime
+/// // for all WebSocket requests to `/relay`.
+/// let stream = MaybeTlsStream::Plain(stream);
+/// http1::Builder::new()
+///     .serve_connection(TokioIo::new(stream), service)
+///     .with_upgrades()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct RelayServiceWithNotify {
     service: RelayService,
@@ -771,7 +811,7 @@ impl Inner {
     async fn relay_connection_handler(
         &self,
         upgraded: Upgraded,
-        client_auth_header: Option<HeaderValue>,
+        request_parts: http::request::Parts,
         protocol_version: ProtocolVersion,
     ) -> Result<(), ConnectionHandlerError> {
         debug!("relay_connection upgraded");
@@ -780,8 +820,7 @@ impl Inner {
             return Err(e!(ConnectionHandlerError::BufferNotEmpty { buf: read_buf }));
         }
 
-        self.accept(io, client_auth_header, protocol_version)
-            .await?;
+        self.accept(io, request_parts, protocol_version).await?;
         Ok(())
     }
 
@@ -798,7 +837,7 @@ impl Inner {
     async fn accept(
         &self,
         io: MaybeTlsStream,
-        client_auth_header: Option<HeaderValue>,
+        request_parts: http::request::Parts,
         protocol_version: ProtocolVersion,
     ) -> Result<(), AcceptError> {
         trace!("accept: start");
@@ -817,11 +856,13 @@ impl Inner {
 
         let mut io = WsBytesFramed { io: websocket };
 
+        let client_auth_header = request_parts.headers.get(CLIENT_AUTH_HEADER).cloned();
         let authentication = handshake::serverside(&mut io, client_auth_header).await?;
 
         trace!(?authentication.mechanism, "accept: verified authentication");
 
-        let is_authorized = self.access.is_allowed(authentication.client_key).await;
+        let request = ClientRequest::new(authentication.client_key, request_parts);
+        let is_authorized = self.access.is_allowed(&request).await;
         let client_key = authentication.authorize_if(is_authorized, &mut io).await?;
 
         trace!("accept: verified authorization");
@@ -1054,10 +1095,7 @@ impl RelayServiceWithNotify {
     }
 
     /// Wrapper for the actual http connection (with upgrades)
-    async fn serve_connection<I>(self, io: I) -> Result<(), ServeConnectionError>
-    where
-        I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
-    {
+    async fn serve_connection(self, io: MaybeTlsStream) -> Result<(), ServeConnectionError> {
         hyper::server::conn::http1::Builder::new()
             .serve_connection(hyper_util::rt::TokioIo::new(io), self)
             .with_upgrades()
@@ -1438,8 +1476,12 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_a), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_a),
+                Request::new(()).into_parts().0,
+                Default::default(),
+            )
+            .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.std_context("join")??;
@@ -1450,8 +1492,12 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_b), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_b),
+                Request::new(()).into_parts().0,
+                Default::default(),
+            )
+            .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
@@ -1542,8 +1588,12 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_a), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_a),
+                Request::new(()).into_parts().0,
+                Default::default(),
+            )
+            .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.std_context("join")??;
@@ -1554,8 +1604,12 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_b), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_b),
+                Request::new(()).into_parts().0,
+                Default::default(),
+            )
+            .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
@@ -1606,8 +1660,12 @@ mod tests {
         let (new_client_b, new_rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(new_rw_b), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(new_rw_b),
+                Request::new(()).into_parts().0,
+                Default::default(),
+            )
+            .await
         });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
