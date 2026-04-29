@@ -235,18 +235,12 @@ jobs:
             # APK smoke test: a real NativeActivity exercises the JNI path
             # against the emulator's ConnectivityService. cargo-apk does not
             # propagate the in-app exit code, so poll logcat for `RESULT=ok`.
+            # `android-emulator-runner` runs each line in its own `sh -c`,
+            # so multi-line constructs have to stay on one line.
             adb logcat -c
             (cd iroh-dns/tests/android_apk && cargo apk run --no-logcat --target $CARGO_NDK_TARGET)
-            ok=
-            for _ in $(seq 1 60); do
-              if adb logcat -d -v raw | grep -q '^RESULT=ok$'; then ok=1; break; fi
-              sleep 1
-            done
-            if [ -z "$ok" ]; then
-              echo "iroh-dns-android-test: timed out waiting for RESULT=ok" >&2
-              adb logcat -d | tail -200
-              exit 1
-            fi
+            for _ in $(seq 1 60); do adb logcat -d -v raw | grep -q '^RESULT=ok$' && break || sleep 1; done
+            adb logcat -d -v raw | grep -q '^RESULT=ok$' || { echo "iroh-dns-android-test: timed out waiting for RESULT=ok" >&2; adb logcat -d | tail -200; exit 1; }
             echo "iroh-dns-android-test: ok"
 
   cross_test:
