@@ -113,7 +113,7 @@ pub struct QuicTransportConfigBuilder(noq::TransportConfig);
 /// - [`QuicTransportConfigBuilder::default_path_keep_alive_interval`]
 /// - [`QuicTransportConfigBuilder::default_path_max_idle_timeout`]
 /// - [`QuicTransportConfigBuilder::max_concurrent_multipath_paths`]
-/// - [`QuicTransportConfigBuilder::set_max_remote_nat_traversal_addresses`]
+/// - [`QuicTransportConfigBuilder::max_remote_nat_traversal_addresses`]
 ///
 /// # Examples
 /// ```
