@@ -11,20 +11,25 @@ runs:
     - name: Probe sccache backend
       if: env.RUSTC_WRAPPER == 'sccache'
       shell: bash
+      env:
+        # Cap each --start-server attempt at 5s in case sccache hangs on
+        # backend init. Empirically 502s from Blacksmith's GHA proxy
+        # already fail in ~5s; this just bounds pathological hangs.
+        # Two attempts × 5s = ~10s worst case. Portable across
+        # Linux/macOS/Windows bash (no coreutils `timeout` needed).
+        SCCACHE_STARTUP_NOTIFY_TIMEOUT: "5"
       run: |
         # sccache --start-server triggers a backend probe (.sccache_check
         # read). On failure (e.g. Blacksmith's GHA cache proxy returning
         # 502 Bad Gateway), the daemon won't start and every rustc call
-        # fails. Try a few times in case the outage is brief; if it
-        # persists, fall through to plain rustc — slower, but the job
-        # will still succeed.
-        for attempt in 1 2 3; do
-          if timeout 15 sccache --start-server >/dev/null 2>&1; then
+        # fails. One quick retry, then fall through to plain rustc —
+        # slower, but the job will still succeed.
+        for attempt in 1 2; do
+          if sccache --start-server >/dev/null 2>&1; then
             echo "sccache backend OK (attempt $attempt)"
             exit 0
           fi
-          echo "sccache start failed (attempt $attempt/3)"
-          [ $attempt -lt 3 ] && sleep $((attempt * 3))
+          echo "sccache start failed (attempt $attempt/2)"
         done
         echo "::warning::sccache backend unreachable; running this job without sccache"
         # mozilla-actions/sccache-action exports these via $GITHUB_ENV — override.
