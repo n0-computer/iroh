@@ -81,4 +81,3 @@ pub trait ExportKeyingMaterial {
         context: Option<&[u8]>,
     ) -> Option<T>;
 }
-
