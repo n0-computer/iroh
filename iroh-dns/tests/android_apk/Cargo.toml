@@ -1,0 +1,33 @@
+# Own [workspace] so android-only deps stay out of the main lock.
+[workspace]
+
+[package]
+name = "iroh-dns-android-test"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+iroh-dns = { path = "../..", features = ["tls-ring"] }
+n0-tracing-test = "0.3"
+tokio = { version = "1", features = ["rt", "macros"] }
+tracing = "0.1"
+
+[package.metadata.android]
+package = "net.iroh.dns.test"
+strip = "default"
+
+# cargo-apk defaults to target_sdk_version 30, which the CI runner image lacks.
+[package.metadata.android.sdk]
+min_sdk_version = 21
+target_sdk_version = 35
+
+[package.metadata.android.application]
+label = "iroh-dns-test"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
