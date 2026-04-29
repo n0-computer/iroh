@@ -18,28 +18,40 @@
 //! [`ndk_context`]: https://docs.rs/ndk-context
 
 use std::ffi::c_void;
+#[cfg(debug_assertions)]
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use hickory_resolver::{
     config::{ResolverConfig, ResolverOpts},
     net::NetError,
 };
+use tracing::debug;
 
 /// Reads the active network's DNS configuration via JNI.
 pub(crate) fn read_system_conf() -> Result<(ResolverConfig, ResolverOpts), NetError> {
-    #[cfg(debug_assertions)]
-    {
-        use std::panic::{AssertUnwindSafe, catch_unwind};
-        match catch_unwind(AssertUnwindSafe(
-            hickory_resolver::system_conf::read_system_conf,
-        )) {
-            Ok(Ok(conf)) => Ok(conf),
-            Ok(Err(err)) => Err(NetError::from(err)),
-            Err(_) => Err(NetError::Msg(
-                "ndk_context not initialized; call install_android_jni_context".to_string(),
-            )),
-        }
+    let (config, options) = read_inner()?;
+    debug!(
+        nameserver_count = config.name_servers().len(),
+        "read system DNS via Android JNI",
+    );
+    Ok((config, options))
+}
+
+#[cfg(debug_assertions)]
+fn read_inner() -> Result<(ResolverConfig, ResolverOpts), NetError> {
+    match catch_unwind(AssertUnwindSafe(
+        hickory_resolver::system_conf::read_system_conf,
+    )) {
+        Ok(Ok(conf)) => Ok(conf),
+        Ok(Err(err)) => Err(NetError::from(err)),
+        Err(_) => Err(NetError::Msg(
+            "ndk_context not initialized; call install_android_jni_context".to_string(),
+        )),
     }
-    #[cfg(not(debug_assertions))]
+}
+
+#[cfg(not(debug_assertions))]
+fn read_inner() -> Result<(ResolverConfig, ResolverOpts), NetError> {
     Ok(hickory_resolver::system_conf::read_system_conf()?)
 }
 
