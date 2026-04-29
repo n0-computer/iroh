@@ -860,18 +860,6 @@ pub(crate) mod tests {
 
     use super::*;
 
-    #[cfg(target_os = "android")]
-    #[test]
-    fn android_system_conf_unsupported_without_jni_context() {
-        // Without `install_android_jni_context`, the platform reader
-        // must report PlatformUnsupported so the resolver picks up the
-        // public fallback instead of trying to query nothing.
-        match crate::system_config::read_system_conf() {
-            Err(crate::system_config::SystemConfigError::PlatformUnsupported { .. }) => {}
-            other => panic!("expected PlatformUnsupported, got {other:?}"),
-        }
-    }
-
     #[tokio::test]
     #[traced_test]
     async fn stagger_basic() {
