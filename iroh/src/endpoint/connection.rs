@@ -1238,14 +1238,13 @@ impl WeakConnectionHandle {
 
     /// Returns a future that resolves once the connection has been closed.
     ///
-    /// The close listener is registered synchronously when this function is called: calling
-    /// it while at least one strong reference to the [`Connection`] is alive guarantees that
-    /// the returned future will receive the close event, even if all other strong references
-    /// are dropped before the future is awaited.
+    /// If no strong references to the [`Connection`] exist at the time this is called,
+    /// the future resolves to `None`. If at least one strong reference still exists at
+    /// the time of this call, the returned future is guaranteed to receive the close
+    /// event with the close reason and final connection statistics, even if all strong
+    /// references are dropped before the future is awaited.
     ///
-    /// The future does not keep the connection alive. The returned future resolves to a
-    /// `Some` with the close reason and final connection statistics, or to `None` if the
-    /// connection had already been fully dropped at the time of this call.
+    /// The future does not keep the connection alive.
     pub fn closed(
         &self,
     ) -> impl Future<Output = Option<(ConnectionError, ConnectionStats)>> + Send + 'static {
