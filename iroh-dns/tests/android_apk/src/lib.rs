@@ -23,7 +23,10 @@ const SCOPE: &str = "android_apk_smoke";
 
 #[unsafe(no_mangle)]
 fn android_main(_app: AndroidApp) {
+    log_to_logcat("MARK: android_main start");
+    install_panic_hook();
     init_tracing();
+    log_to_logcat("MARK: tracing init done");
     let span = info_span!(SCOPE);
     let _enter = span.enter();
 
@@ -31,12 +34,20 @@ fn android_main(_app: AndroidApp) {
         .enable_all()
         .build()
         .expect("tokio runtime");
+    log_to_logcat("MARK: tokio runtime built, entering block_on");
     rt.block_on(run());
+    log_to_logcat("MARK: block_on returned");
 
     // NativeActivity processes' stdout/stderr are not captured by logcat,
     // so write the marker through the Android log API directly.
     log_to_logcat("RESULT=ok");
     std::process::exit(0);
+}
+
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        log_to_logcat(&format!("PANIC: {info}"));
+    }));
 }
 
 fn log_to_logcat(msg: &str) {
@@ -62,7 +73,9 @@ fn init_tracing() {
 }
 
 async fn run() {
+    log_to_logcat("MARK: run() start");
     let resolver = DnsResolver::new();
+    log_to_logcat("MARK: DnsResolver::new returned");
 
     logs_assert(SCOPE, |lines| {
         if lines
@@ -78,12 +91,14 @@ async fn run() {
         }
     })
     .expect("JNI proof failed");
+    log_to_logcat("MARK: JNI proof asserted");
 
     let addrs: Vec<_> = resolver
         .lookup_ipv4(HOST, TIMEOUT)
         .await
         .expect("lookup failed")
         .collect();
+    log_to_logcat(&format!("MARK: lookup_ipv4 returned {} addrs", addrs.len()));
     assert!(!addrs.is_empty(), "no IPs returned for {HOST}");
     info!(count = addrs.len(), "resolved {HOST} via system DNS");
 }
