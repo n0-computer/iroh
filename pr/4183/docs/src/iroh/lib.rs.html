@@ -287,18 +287,9 @@
 <a href=#287 id=287 data-nosnippet>287</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#288 id=288 data-nosnippet>288</a></span><span class="kw">pub use </span>iroh_dns::dns;
 <a href=#289 id=289 data-nosnippet>289</a><span class="kw">pub use </span>iroh_dns::endpoint_info;
-<a href=#290 id=290 data-nosnippet>290</a><span class="attr">#[cfg(target_os = <span class="string">"android"</span>)]
-<a href=#291 id=291 data-nosnippet>291</a>#[doc(hidden)]
-<a href=#292 id=292 data-nosnippet>292</a></span><span class="kw">pub use </span>iroh_dns::install_test_jni_context_stub;
-<a href=#293 id=293 data-nosnippet>293</a><span class="kw">pub use </span>iroh_relay::{RelayConfig, RelayMap};
-<a href=#294 id=294 data-nosnippet>294</a><span class="kw">pub use </span>n0_watcher::Watcher;
-<a href=#295 id=295 data-nosnippet>295</a><span class="kw">pub use </span>net_report::{Report <span class="kw">as </span>NetReport, TIMEOUT <span class="kw">as </span>NET_REPORT_TIMEOUT};
-<a href=#296 id=296 data-nosnippet>296</a>
-<a href=#297 id=297 data-nosnippet>297</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#298 id=298 data-nosnippet>298</a></span><span class="kw">pub mod </span>test_utils;
-<a href=#299 id=299 data-nosnippet>299</a>
-<a href=#300 id=300 data-nosnippet>300</a><span class="attr">#[cfg(all(test, target_os = <span class="string">"android"</span>))]
-<a href=#301 id=301 data-nosnippet>301</a>#[ctor::ctor]
-<a href=#302 id=302 data-nosnippet>302</a></span><span class="kw">fn </span>android_test_init() {
-<a href=#303 id=303 data-nosnippet>303</a>    iroh_dns::install_test_jni_context_stub();
-<a href=#304 id=304 data-nosnippet>304</a>}</code></pre></div></section></main></body></html>
+<a href=#290 id=290 data-nosnippet>290</a><span class="kw">pub use </span>iroh_relay::{RelayConfig, RelayMap};
+<a href=#291 id=291 data-nosnippet>291</a><span class="kw">pub use </span>n0_watcher::Watcher;
+<a href=#292 id=292 data-nosnippet>292</a><span class="kw">pub use </span>net_report::{Report <span class="kw">as </span>NetReport, TIMEOUT <span class="kw">as </span>NET_REPORT_TIMEOUT};
+<a href=#293 id=293 data-nosnippet>293</a>
+<a href=#294 id=294 data-nosnippet>294</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#295 id=295 data-nosnippet>295</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>
