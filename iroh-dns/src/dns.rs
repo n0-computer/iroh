@@ -225,11 +225,18 @@ impl Builder {
 /// Alternatively, you can create a fully custom DNS resolver by implementing the [`Resolver`]
 /// trait and creating the resolver with [`Self::custom`].
 ///
-/// On Android, the system-defaults reader goes through `ndk_context`. Initialize
-/// it (via ndk-glue, android-activity, or `iroh_dns::install_android_jni_context`)
-/// before constructing a resolver that uses system defaults; otherwise the JNI
-/// lookup panics in release builds. Debug builds catch the panic and fall back
-/// to public DNS so unit tests still run.
+/// # Usage on Android
+///
+/// The system-defaults reader uses JNI through [`ndk_context`], which must be
+/// initialized with a `JavaVM` and `Application` context before the resolver
+/// is constructed. Glue crates like ndk-glue and android-activity do this
+/// before `main`. Apps that don't use either can call
+/// `iroh_dns::install_android_jni_context` once at startup. Without an
+/// initialized `ndk_context` the JNI lookup panics in release builds. In
+/// debug builds the panic is caught and the resolver falls back to Google's
+/// public DNS.
+///
+/// [`ndk_context`]: https://docs.rs/ndk-context
 #[derive(Debug, Clone)]
 pub struct DnsResolver {
     inner: Arc<Inner>,

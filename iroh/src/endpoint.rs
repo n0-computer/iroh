@@ -827,13 +827,17 @@ pub enum EndpointError {
 /// Note that due to the light-weight properties of streams a stream will only be accepted
 /// once the initiating peer has sent some data on it.
 ///
-/// On Android, populate `ndk_context` (via ndk-glue, android-activity, or
-/// `iroh_dns::install_android_jni_context`) before calling [`Endpoint::builder`];
-/// otherwise the [`DnsResolver`] build panics on the JNI lookup in release. In
-/// debug builds the panic is caught and the resolver falls back to public DNS.
+/// # Usage on Android
+///
+/// The endpoint's default [`DnsResolver`] reads the system DNS configuration
+/// through JNI, which needs a JVM context published to [`ndk_context`]. Apps
+/// must initialize that context before constructing the endpoint, or the
+/// resolver build panics. See [`DnsResolver`] for the supported
+/// initialization paths.
 ///
 /// [QUIC]: https://quicwg.org
 /// [`DnsResolver`]: crate::dns::DnsResolver
+/// [`ndk_context`]: https://docs.rs/ndk-context
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     inner: Arc<EndpointInner>,
