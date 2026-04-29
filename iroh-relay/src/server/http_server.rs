@@ -31,7 +31,9 @@ use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
 
-use super::{AccessConfig, SpawnError, clients::Clients, streams::InvalidBucketConfig};
+use super::{
+    AccessConfig, ClientRequest, SpawnError, clients::Clients, streams::InvalidBucketConfig,
+};
 use crate::{
     KeyCache,
     defaults::{DEFAULT_KEY_CACHE_CAPACITY, timeouts::SERVER_WRITE_TIMEOUT},
@@ -611,8 +613,6 @@ impl RelayServiceWithNotify {
                 })
             })?;
 
-        let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
-
         // Setup a future that will eventually receive the upgraded
         // connection and talk a new protocol, and spawn the future
         // into the runtime.
@@ -625,14 +625,11 @@ impl RelayServiceWithNotify {
             async move {
                 match hyper::upgrade::on(&mut req).await {
                     Ok(upgraded) => {
+                        let (parts, _) = req.into_parts();
                         if let Err(err) = this
                             .service
                             .0
-                            .relay_connection_handler(
-                                upgraded,
-                                client_auth_header,
-                                protocol_version,
-                            )
+                            .relay_connection_handler(upgraded, parts, protocol_version)
                             .await
                         {
                             warn!("error accepting upgraded connection: {err:#}",);
@@ -814,7 +811,7 @@ impl Inner {
     async fn relay_connection_handler(
         &self,
         upgraded: Upgraded,
-        client_auth_header: Option<HeaderValue>,
+        request_parts: http::request::Parts,
         protocol_version: ProtocolVersion,
     ) -> Result<(), ConnectionHandlerError> {
         debug!("relay_connection upgraded");
@@ -823,8 +820,7 @@ impl Inner {
             return Err(e!(ConnectionHandlerError::BufferNotEmpty { buf: read_buf }));
         }
 
-        self.accept(io, client_auth_header, protocol_version)
-            .await?;
+        self.accept(io, request_parts, protocol_version).await?;
         Ok(())
     }
 
@@ -841,7 +837,7 @@ impl Inner {
     async fn accept(
         &self,
         io: MaybeTlsStream,
-        client_auth_header: Option<HeaderValue>,
+        request_parts: http::request::Parts,
         protocol_version: ProtocolVersion,
     ) -> Result<(), AcceptError> {
         trace!("accept: start");
@@ -860,11 +856,13 @@ impl Inner {
 
         let mut io = WsBytesFramed { io: websocket };
 
+        let client_auth_header = request_parts.headers.get(CLIENT_AUTH_HEADER).cloned();
         let authentication = handshake::serverside(&mut io, client_auth_header).await?;
 
         trace!(?authentication.mechanism, "accept: verified authentication");
 
-        let is_authorized = self.access.is_allowed(authentication.client_key).await;
+        let request = ClientRequest::new(authentication.client_key, request_parts);
+        let is_authorized = self.access.is_allowed(&request).await;
         let client_key = authentication.authorize_if(is_authorized, &mut io).await?;
 
         trace!("accept: verified authorization");
@@ -1478,8 +1476,12 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_a), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_a),
+                Request::new(()).into_parts().0,
+                Default::default(),
+            )
+            .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.std_context("join")??;
@@ -1490,8 +1492,12 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_b), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_b),
+                Request::new(()).into_parts().0,
+                Default::default(),
+            )
+            .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
@@ -1582,8 +1588,12 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_a), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_a),
+                Request::new(()).into_parts().0,
+                Default::default(),
+            )
+            .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.std_context("join")??;
@@ -1594,8 +1604,12 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(rw_b), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(rw_b),
+                Request::new(()).into_parts().0,
+                Default::default(),
+            )
+            .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
@@ -1646,8 +1660,12 @@ mod tests {
         let (new_client_b, new_rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(MaybeTlsStream::Test(new_rw_b), None, Default::default())
-                .await
+            s.0.accept(
+                MaybeTlsStream::Test(new_rw_b),
+                Request::new(()).into_parts().0,
+                Default::default(),
+            )
+            .await
         });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
         handler_task.await.std_context("join")??;
