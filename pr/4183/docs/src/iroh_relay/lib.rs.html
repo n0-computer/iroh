@@ -82,10 +82,8 @@
 <a href=#82 id=82 data-nosnippet>82</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt;;
 <a href=#83 id=83 data-nosnippet>83</a>}
 <a href=#84 id=84 data-nosnippet>84</a>
-<a href=#85 id=85 data-nosnippet>85</a><span class="comment">// Tests on Android need `ndk_context` populated before any `DnsResolver` is
-<a href=#86 id=86 data-nosnippet>86</a>// constructed; see `iroh_dns::install_test_jni_context_stub`.
-<a href=#87 id=87 data-nosnippet>87</a></span><span class="attr">#[cfg(all(test, target_os = <span class="string">"android"</span>))]
-<a href=#88 id=88 data-nosnippet>88</a>#[ctor::ctor]
-<a href=#89 id=89 data-nosnippet>89</a></span><span class="kw">fn </span>android_test_init() {
-<a href=#90 id=90 data-nosnippet>90</a>    iroh_dns::install_test_jni_context_stub();
-<a href=#91 id=91 data-nosnippet>91</a>}</code></pre></div></section></main></body></html>
+<a href=#85 id=85 data-nosnippet>85</a><span class="attr">#[cfg(all(test, target_os = <span class="string">"android"</span>))]
+<a href=#86 id=86 data-nosnippet>86</a>#[ctor::ctor]
+<a href=#87 id=87 data-nosnippet>87</a></span><span class="kw">fn </span>android_test_init() {
+<a href=#88 id=88 data-nosnippet>88</a>    iroh_dns::install_test_jni_context_stub();
+<a href=#89 id=89 data-nosnippet>89</a>}</code></pre></div></section></main></body></html>
