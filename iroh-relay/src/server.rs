@@ -145,7 +145,11 @@ pub struct ClientRequest {
 }
 
 impl ClientRequest {
-    pub(crate) fn new(endpoint_id: EndpointId, request: http::request::Parts) -> Self {
+    /// Creates a new [`ClientRequest`] from an [`EndpointId`] and HTTP request parts.
+    ///
+    /// The [`EndpointId`] must be proven by the relay handshake. The request parts
+    /// come from the client's WebSocket request.
+    pub fn new(endpoint_id: EndpointId, request: http::request::Parts) -> Self {
         Self {
             endpoint_id,
             request,
