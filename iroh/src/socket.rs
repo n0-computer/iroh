@@ -896,6 +896,7 @@ impl EndpointInner {
             ipv6_reported: ipv6_reported.clone(),
             tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
+            relay_map: relay_map.clone(),
         };
 
         let shutdown_state = ShutdownState::default();

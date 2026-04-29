@@ -40,7 +40,7 @@ use std::{
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
-    self as relay, PingTracker,
+    self as relay, PingTracker, RelayMap,
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, Status},
 };
@@ -209,6 +209,7 @@ struct RelayConnectionOptions {
     proxy_url: Option<Url>,
     prefer_ipv6: Arc<AtomicBool>,
     tls_config: rustls::ClientConfig,
+    auth_token: Option<String>,
 }
 
 /// Possible reasons for a failed relay connection.
@@ -297,6 +298,7 @@ impl ActiveRelayActor {
             proxy_url,
             prefer_ipv6,
             tls_config,
+            auth_token,
         } = opts;
 
         let mut builder = relay::client::ClientBuilder::new(
@@ -309,6 +311,9 @@ impl ActiveRelayActor {
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
+        }
+        if let Some(token) = auth_token {
+            builder = builder.query_param("token", token);
         }
         builder
     }
@@ -872,6 +877,9 @@ pub(crate) struct Config {
     pub ipv6_reported: Arc<AtomicBool>,
     pub tls_config: rustls::ClientConfig,
     pub metrics: Arc<SocketMetrics>,
+    /// Per-relay configuration. Consulted when starting a connection to
+    /// look up the auth token and any future per-relay options.
+    pub relay_map: RelayMap,
 }
 
 /// Connection state of the home relay.
@@ -1226,6 +1234,11 @@ impl RelayActor {
     fn start_active_relay(&mut self, url: RelayUrl) -> ActiveRelayHandle {
         debug!(?url, "Adding relay connection");
 
+        let auth_token = self
+            .config
+            .relay_map
+            .get(&url)
+            .and_then(|cfg| cfg.auth_token.clone());
         let connection_opts = RelayConnectionOptions {
             secret_key: self.config.secret_key.clone(),
             #[cfg(not(wasm_browser))]
@@ -1233,6 +1246,7 @@ impl RelayActor {
             proxy_url: self.config.proxy_url.clone(),
             prefer_ipv6: self.config.ipv6_reported.clone(),
             tls_config: self.config.tls_config.clone(),
+            auth_token,
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -1423,6 +1437,7 @@ mod tests {
                 tls_config: CaRootsConfig::insecure_skip_verify()
                     .client_config(default_provider())
                     .expect("infallible"),
+                auth_token: None,
             },
             stop_token,
             metrics: Default::default(),

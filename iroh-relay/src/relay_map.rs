@@ -224,12 +224,31 @@ pub struct RelayConfig {
     /// with this relay server.
     #[serde(default = "quic_config")]
     pub quic: Option<RelayQuicConfig>,
+    /// Optional token sent to the relay as the `token` query parameter.
+    ///
+    /// Set via [`RelayConfig::with_auth_token`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
 }
 
 impl RelayConfig {
     /// Creates a new relay configuration with the given URL and optional QUIC config.
     pub fn new(url: RelayUrl, quic: Option<RelayQuicConfig>) -> Self {
-        Self { url, quic }
+        Self {
+            url,
+            quic,
+            auth_token: None,
+        }
+    }
+
+    /// Sets the token used to authenticate to this relay.
+    ///
+    /// The client appends the token to the relay URL as a `token` query
+    /// parameter. The server can use it to control which clients are
+    /// allowed to connect.
+    pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
+        self.auth_token = Some(token.into());
+        self
     }
 }
 
@@ -238,6 +257,7 @@ impl From<RelayUrl> for RelayConfig {
         Self {
             url: value,
             quic: quic_config(),
+            auth_token: None,
         }
     }
 }
