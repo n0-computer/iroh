@@ -4,29 +4,37 @@
 //! iroh-dns's system DNS reader runs through real JNI against
 //! `ConnectivityService`.
 
-use std::{
-    ffi::CString,
-    os::raw::{c_char, c_int},
-    time::Duration,
-};
+use std::time::Duration;
 
 use android_activity::AndroidApp;
 use iroh_dns::dns::DnsResolver;
-use n0_tracing_test::internal::{
-    INITIALIZED, MockWriter, get_subscriber, global_buf, logs_assert,
-};
-use tracing::{dispatcher::set_global_default, info, info_span};
+use n0_tracing_test::internal::{INITIALIZED, MockWriter, global_buf, logs_assert};
+use tracing::{error, info, info_span};
+use tracing_subscriber::{EnvFilter, Layer, Registry, layer::SubscriberExt};
 
 const HOST: &str = "dns.iroh.link";
 const TIMEOUT: Duration = Duration::from_secs(8);
 const SCOPE: &str = "android_apk_smoke";
 
 #[unsafe(no_mangle)]
-fn android_main(_app: AndroidApp) {
-    log_to_logcat("MARK: android_main start");
-    install_panic_hook();
+fn android_main(app: AndroidApp) {
     init_tracing();
-    log_to_logcat("MARK: tracing init done");
+    install_panic_hook();
+    info!("android_main started");
+
+    // The test runs on a worker thread so the main thread can keep
+    // pumping Android lifecycle events. Without that, the Android
+    // cached-app freezer eventually freezes the process before the
+    // test completes.
+    let test_app = app.clone();
+    std::thread::spawn(move || run_test(test_app));
+
+    loop {
+        app.poll_events(Some(Duration::from_millis(100)), |_event| {});
+    }
+}
+
+fn run_test(_app: AndroidApp) {
     let span = info_span!(SCOPE);
     let _enter = span.enter();
 
@@ -34,48 +42,35 @@ fn android_main(_app: AndroidApp) {
         .enable_all()
         .build()
         .expect("tokio runtime");
-    log_to_logcat("MARK: tokio runtime built, entering block_on");
     rt.block_on(run());
-    log_to_logcat("MARK: block_on returned");
 
-    // NativeActivity processes' stdout/stderr are not captured by logcat,
-    // so write the marker through the Android log API directly.
-    log_to_logcat("RESULT=ok");
+    info!("RESULT=ok");
     std::process::exit(0);
-}
-
-fn install_panic_hook() {
-    std::panic::set_hook(Box::new(|info| {
-        log_to_logcat(&format!("PANIC: {info}"));
-    }));
-}
-
-fn log_to_logcat(msg: &str) {
-    let msg = CString::new(msg).unwrap();
-    let tag = c"iroh_dns_smoke";
-    // ANDROID_LOG_INFO == 4
-    unsafe {
-        __android_log_write(4, tag.as_ptr(), msg.as_ptr());
-    }
-}
-
-#[link(name = "log")]
-unsafe extern "C" {
-    fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
 }
 
 fn init_tracing() {
     INITIALIZED.call_once(|| {
-        let writer = MockWriter::new(global_buf());
-        let subscriber = get_subscriber(writer, "info,iroh_dns=debug");
-        set_global_default(subscriber).expect("set tracing default subscriber");
+        let buf_layer = tracing_subscriber::fmt::layer()
+            .with_writer(MockWriter::new(global_buf()))
+            .with_level(true)
+            .with_ansi(false)
+            .with_filter(EnvFilter::new("info,iroh_dns=debug"));
+        let android_layer =
+            tracing_android::layer("iroh_dns_smoke").expect("tracing-android layer");
+        let subscriber = Registry::default().with(buf_layer).with(android_layer);
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("set tracing default subscriber");
     });
 }
 
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        error!("PANIC: {info}");
+    }));
+}
+
 async fn run() {
-    log_to_logcat("MARK: run() start");
     let resolver = DnsResolver::new();
-    log_to_logcat("MARK: DnsResolver::new returned");
 
     logs_assert(SCOPE, |lines| {
         if lines
@@ -91,14 +86,12 @@ async fn run() {
         }
     })
     .expect("JNI proof failed");
-    log_to_logcat("MARK: JNI proof asserted");
 
     let addrs: Vec<_> = resolver
         .lookup_ipv4(HOST, TIMEOUT)
         .await
         .expect("lookup failed")
         .collect();
-    log_to_logcat(&format!("MARK: lookup_ipv4 returned {} addrs", addrs.len()));
     assert!(!addrs.is_empty(), "no IPs returned for {HOST}");
     info!(count = addrs.len(), "resolved {HOST} via system DNS");
 }

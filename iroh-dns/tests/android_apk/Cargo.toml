@@ -16,6 +16,8 @@ iroh-dns = { path = "../..", features = ["tls-ring"] }
 n0-tracing-test = "0.3"
 tokio = { version = "1", features = ["rt", "macros"] }
 tracing = "0.1"
+tracing-android = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [package.metadata.android]
 package = "net.iroh.dns.test"

@@ -239,8 +239,8 @@ jobs:
             # so multi-line constructs have to stay on one line.
             adb logcat -c
             (cd iroh-dns/tests/android_apk && cargo apk run --no-logcat --target $CARGO_NDK_TARGET)
-            for _ in $(seq 1 60); do adb logcat -d -v raw | grep -q '^RESULT=ok$' && break || sleep 1; done
-            adb logcat -d -v raw | grep -q '^RESULT=ok$' || { echo "iroh-dns-android-test: timed out waiting for RESULT=ok" >&2; adb logcat -d | grep -E 'iroh_dns_smoke|net.iroh.dns.test|FATAL|AndroidRuntime' | tail -100; exit 1; }
+            for _ in $(seq 1 60); do adb logcat -d -v raw | grep -qF 'RESULT=ok' && break || sleep 1; done
+            adb logcat -d -v raw | grep -qF 'RESULT=ok' || { echo "iroh-dns-android-test: timed out waiting for RESULT=ok" >&2; adb logcat -d | grep -E 'iroh_dns_smoke|net.iroh.dns.test|FATAL|AndroidRuntime' | tail -100; exit 1; }
             echo "iroh-dns-android-test: ok"
 
   cross_test:
