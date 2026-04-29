@@ -652,7 +652,7 @@ impl HickoryResolver {
             config.add_search(name.clone());
         }
         for nameserver_cfg in system_config.name_servers() {
-            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.ip) {
+            if is_usable_nameserver(nameserver_cfg) {
                 config.add_name_server(nameserver_cfg.clone());
             }
         }
@@ -780,6 +780,21 @@ const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
     IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 3)),
 ];
 
+/// Returns whether `ns` can plausibly be queried from a connected UDP socket.
+///
+/// Drops the deprecated Windows IPv6 site-local anycast servers, link-local
+/// IPv6 (`fe80::/10`), link-local IPv4 (`169.254.0.0/16`), and the unspecified
+/// addresses.
+fn is_usable_nameserver(ns: &hickory_resolver::config::NameServerConfig) -> bool {
+    if WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&ns.ip) {
+        return false;
+    }
+    match ns.ip {
+        IpAddr::V4(ip) => ip != Ipv4Addr::UNSPECIFIED && !ip.is_link_local(),
+        IpAddr::V6(ip) => ip != Ipv6Addr::UNSPECIFIED && (ip.segments()[0] & 0xffc0) != 0xfe80,
+    }
+}
+
 /// Helper enum to give a unified type to the iterators of [`DnsResolver::lookup_ipv4_ipv6`].
 enum LookupIter<A, B> {
     Ipv4(A),
@@ -853,9 +868,59 @@ fn add_jitter(delay: &u64) -> Duration {
 pub(crate) mod tests {
     use std::sync::atomic::AtomicUsize;
 
+    use hickory_resolver::config::{ConnectionConfig, NameServerConfig};
     use n0_tracing_test::traced_test;
 
     use super::*;
+
+    fn ns(ip: &str) -> NameServerConfig {
+        NameServerConfig::new(ip.parse().unwrap(), false, vec![ConnectionConfig::udp()])
+    }
+
+    #[test]
+    fn is_usable_drops_link_local_v6() {
+        // Bounds of `fe80::/10`.
+        assert!(!is_usable_nameserver(&ns("fe80::1")));
+        assert!(!is_usable_nameserver(&ns(
+            "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
+        )));
+    }
+
+    #[test]
+    fn is_usable_drops_link_local_v4() {
+        assert!(!is_usable_nameserver(&ns("169.254.0.0")));
+        assert!(!is_usable_nameserver(&ns("169.254.255.255")));
+    }
+
+    #[test]
+    fn is_usable_drops_unspecified() {
+        assert!(!is_usable_nameserver(&ns("0.0.0.0")));
+        assert!(!is_usable_nameserver(&ns("::")));
+    }
+
+    #[test]
+    fn is_usable_drops_windows_site_local_anycast() {
+        for ip in WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS {
+            assert!(!is_usable_nameserver(&NameServerConfig::new(
+                ip,
+                false,
+                vec![ConnectionConfig::udp()]
+            )));
+        }
+    }
+
+    #[test]
+    fn is_usable_keeps_global_unicast() {
+        assert!(is_usable_nameserver(&ns("8.8.8.8")));
+        assert!(is_usable_nameserver(&ns("1.1.1.1")));
+        assert!(is_usable_nameserver(&ns("2001:4860:4860::8888")));
+        // ULA, valid for routed networks.
+        assert!(is_usable_nameserver(&ns("fd00::1")));
+        // Just outside `fe80::/10`, still global.
+        assert!(is_usable_nameserver(&ns(
+            "fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
+        )));
+    }
 
     #[tokio::test]
     #[traced_test]
