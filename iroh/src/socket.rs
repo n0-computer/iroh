@@ -537,6 +537,16 @@ impl Socket {
         .unwrap_or(transports::Addr::Ip(addr))
     }
 
+    /// Reverse-resolves a custom mapped address back to its [`iroh_base::CustomAddr`].
+    pub(crate) fn lookup_custom_addr(&self, addr: SocketAddr) -> Option<iroh_base::CustomAddr> {
+        match MultipathMappedAddr::from(addr) {
+            MultipathMappedAddr::Custom(custom_mapped) => {
+                self.mapped_addrs.custom_addrs.lookup(&custom_mapped)
+            }
+            _ => None,
+        }
+    }
+
     /// Reference to the internal Address Lookup
     pub(crate) fn address_lookup(&self) -> &address_lookup::AddressLookupServices {
         &self.address_lookup
@@ -567,23 +577,24 @@ impl Socket {
         &self,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &[transports::Addr],
+        recv_infos: &[transports::RecvInfo],
     ) {
-        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        debug_assert_eq!(
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(
             bufs.len(),
-            source_addrs.len(),
-            "non matching bufs & source_addrs"
+            recv_infos.len(),
+            "non matching bufs & recv_infos"
         );
 
         // zip is slow :(
         for i in 0..metas.len() {
             let noq_meta = &mut metas[i];
-            let source_addr = &source_addrs[i];
+            let recv_info = &recv_infos[i];
+            let remote_addr = recv_info.remote();
             let datagram_count = if noq_meta.stride == 0 {
                 if noq_meta.len > 0 {
                     warn!(
-                        src = ?source_addr,
+                        src = ?remote_addr,
                         len = noq_meta.len,
                         "received datagram with stride=0 but len>0",
                     );
@@ -601,7 +612,7 @@ impl Socket {
                 .inc_by(datagram_count as _);
             if noq_meta.len > noq_meta.stride {
                 trace!(
-                    src = ?source_addr,
+                    src = ?remote_addr,
                     len = noq_meta.len,
                     stride = %noq_meta.stride,
                     datagram_count,
@@ -609,9 +620,9 @@ impl Socket {
                 );
                 self.metrics.socket.recv_gro_datagrams.inc();
             } else {
-                trace!(src = ?source_addr, len = noq_meta.len, "datagram received");
+                trace!(src = ?remote_addr, len = noq_meta.len, "datagram received");
             }
-            match source_addr {
+            match remote_addr {
                 transports::Addr::Ip(SocketAddr::V4(..)) => {
                     self.metrics.socket.recv_data_ipv4.inc_by(noq_meta.len as _);
                 }
@@ -631,14 +642,18 @@ impl Socket {
                         .get(&(src_url.clone(), *src_node));
                     noq_meta.addr = mapped_addr.private_socket_addr();
                 }
-                transports::Addr::Custom(addr) => {
+                transports::Addr::Custom(remote) => {
                     self.metrics
                         .socket
                         .recv_data_custom
                         .inc_by(noq_meta.len as _);
                     // Fill in the correct mapped address
-                    let mapped_addr = self.mapped_addrs.custom_addrs.get(addr);
+                    let mapped_addr = self.mapped_addrs.custom_addrs.get(remote);
                     noq_meta.addr = mapped_addr.private_socket_addr();
+                    if let Some(local) = recv_info.local() {
+                        let local_mapped = self.mapped_addrs.custom_addrs.get(local);
+                        noq_meta.dst_ip = Some(local_mapped.private_socket_addr().ip());
+                    }
                 }
             }
         }
