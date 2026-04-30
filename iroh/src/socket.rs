@@ -558,8 +558,8 @@ impl Socket {
         metas: &mut [noq_udp::RecvMeta],
         source_addrs: &[transports::Addr],
     ) {
-        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        debug_assert_eq!(
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(
             bufs.len(),
             source_addrs.len(),
             "non matching bufs & source_addrs"
