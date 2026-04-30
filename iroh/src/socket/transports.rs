@@ -248,8 +248,8 @@ impl Transports {
         metas: &mut [noq_udp::RecvMeta],
         sock: &Socket,
     ) -> Poll<io::Result<usize>> {
-        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        debug_assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
         if sock.is_closing() {
             return Poll::Pending;
         }
@@ -270,7 +270,7 @@ impl Transports {
         bufs: &mut [IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
         macro_rules! poll_transport {
             ($socket:expr) => {

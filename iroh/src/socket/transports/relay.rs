@@ -159,7 +159,7 @@ impl RelayTransport {
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
-            debug_assert!(num_msgs <= metas.len());
+            assert!(num_msgs <= metas.len());
             Poll::Ready(Ok(num_msgs))
         } else {
             Poll::Pending
