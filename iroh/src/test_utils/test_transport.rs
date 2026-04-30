@@ -20,7 +20,7 @@ use crate::{
     endpoint::{
         Builder,
         presets::Preset,
-        transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit},
+        transports::{CustomEndpoint, CustomSender, CustomTransport, RecvInfo, Transmit},
     },
 };
 
@@ -264,13 +264,13 @@ impl CustomEndpoint for TestTransport {
         cx: &mut std::task::Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
         assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         assert_eq!(
             bufs.len(),
-            source_addrs.len(),
-            "non matching bufs & source_addrs"
+            recv_infos.len(),
+            "non matching bufs & recv_infos"
         );
         let n = bufs.len();
         if n == 0 {
@@ -291,7 +291,7 @@ impl CustomEndpoint for TestTransport {
         for (i, packet) in packets.into_iter().enumerate() {
             let meta = &mut metas[i];
             let buf = &mut bufs[i];
-            let source_addr = &mut source_addrs[i];
+            let recv_info = &mut recv_infos[i];
             if buf.len() < packet.data.len() {
                 break;
             }
@@ -303,7 +303,7 @@ impl CustomEndpoint for TestTransport {
                 packet.data.len()
             );
             buf[..packet.data.len()].copy_from_slice(&packet.data);
-            *source_addr = packet.from.into();
+            *recv_info = RecvInfo::new(packet.from, Some(to_custom_addr(self.id)));
             meta.len = packet.data.len();
             meta.stride = packet.data.len();
             count += 1;
@@ -499,6 +499,44 @@ mod tests {
         verify_echo(&conn, b"custom only").await?;
         conn.close(0u32.into(), b"done");
         router.shutdown().await.anyerr()?;
+        Ok(())
+    }
+
+    /// Test that custom transports can surface a local address per incoming packet.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_custom_transport_local_addr() -> Result<()> {
+        use crate::endpoint::IncomingLocalAddr;
+
+        let network = TestNetwork::new();
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
+
+        let t1 = network.create_transport(s1.public())?;
+        let t2 = network.create_transport(s2.public())?;
+
+        let ep1 = endpoint_builder(s1, t1, EndpointConfig::default())
+            .bind()
+            .await?;
+        let ep2 = endpoint_builder(s2.clone(), t2, EndpointConfig::default())
+            .alpns(vec![ECHO_ALPN.to_vec()])
+            .bind()
+            .await?;
+
+        let connect = tokio::spawn({
+            let ep1 = ep1.clone();
+            let dst = custom_only_addr(s2.public());
+            async move { ep1.connect(dst, ECHO_ALPN).await }
+        });
+
+        let incoming = ep2.accept().await.expect("incoming");
+        assert_eq!(
+            incoming.local_addr(),
+            IncomingLocalAddr::Custom(Some(to_custom_addr(s2.public()))),
+        );
+        let _conn = incoming.accept().anyerr()?.await.anyerr()?;
+
+        connect.await.anyerr()??;
         Ok(())
     }
 

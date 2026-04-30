@@ -13,7 +13,7 @@ use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
 use tracing::{debug, info, trace};
 
-use super::{Addr, Transmit};
+use super::{RecvInfo, Transmit};
 use crate::metrics::{EndpointMetrics, SocketMetrics};
 
 #[derive(Debug)]
@@ -191,20 +191,20 @@ impl IpTransport {
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
         assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         assert_eq!(
             bufs.len(),
-            source_addrs.len(),
-            "non matching bufs & source_addrs"
+            recv_infos.len(),
+            "non matching bufs & recv_infos"
         );
         match self.socket.poll_recv_noq(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(n)) => {
                 for i in 0..n {
                     let meta = &mut metas[i];
-                    let source_addr = &mut source_addrs[i];
+                    let recv_info = &mut recv_infos[i];
                     if meta.addr.is_ipv4() {
                         // The AsyncUdpSocket is an AF_INET6 socket and needs to show this
                         // as coming from an IPv4-mapped IPv6 addresses, since Noq will
@@ -217,8 +217,9 @@ impl IpTransport {
                     }
                     // The transport addresses are internal to iroh and we always want those
                     // to remain the canonical address.
-                    *source_addr =
-                        SocketAddr::new(meta.addr.ip().to_canonical(), meta.addr.port()).into();
+                    *recv_info = RecvInfo::from_addr(
+                        SocketAddr::new(meta.addr.ip().to_canonical(), meta.addr.port()).into(),
+                    );
                 }
                 Poll::Ready(Ok(n))
             }
@@ -473,11 +474,11 @@ impl IpTransports {
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
         macro_rules! poll_transport {
             ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas, source_addrs)? {
+                match $socket.poll_recv(cx, bufs, metas, recv_infos)? {
                     Poll::Pending | Poll::Ready(0) => {}
                     Poll::Ready(n) => {
                         return Poll::Ready(Ok(n));
