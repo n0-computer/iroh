@@ -16,7 +16,7 @@
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>tokio_util::sync::{CancellationToken, PollSender};
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>tracing::{Instrument, error, info_span, warn};
 <a href=#18 id=18 data-nosnippet>18</a>
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use super</span>::{Addr, Transmit};
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use super</span>::{RecvInfo, Transmit};
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span><span class="kw">crate</span>::endpoint::RelayStatus;
 <a href=#21 id=21 data-nosnippet>21</a>
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">mod </span>actor;
@@ -85,19 +85,19 @@
 <a href=#85 id=85 data-nosnippet>85</a>        cx: <span class="kw-2">&amp;mut </span>Context,
 <a href=#86 id=86 data-nosnippet>86</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
 <a href=#87 id=87 data-nosnippet>87</a>        metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
-<a href=#88 id=88 data-nosnippet>88</a>        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
+<a href=#88 id=88 data-nosnippet>88</a>        recv_infos: <span class="kw-2">&amp;mut </span>[RecvInfo],
 <a href=#89 id=89 data-nosnippet>89</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
 <a href=#90 id=90 data-nosnippet>90</a>        <span class="macro">assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
 <a href=#91 id=91 data-nosnippet>91</a>        <span class="macro">assert_eq!</span>(
 <a href=#92 id=92 data-nosnippet>92</a>            bufs.len(),
-<a href=#93 id=93 data-nosnippet>93</a>            source_addrs.len(),
-<a href=#94 id=94 data-nosnippet>94</a>            <span class="string">"non matching bufs &amp; source_addrs"
+<a href=#93 id=93 data-nosnippet>93</a>            recv_infos.len(),
+<a href=#94 id=94 data-nosnippet>94</a>            <span class="string">"non matching bufs &amp; recv_infos"
 <a href=#95 id=95 data-nosnippet>95</a>        </span>);
 <a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span><span class="kw-2">mut </span>num_msgs = <span class="number">0</span>;
 <a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..bufs.len() {
 <a href=#98 id=98 data-nosnippet>98</a>            <span class="kw">let </span>buf_out = <span class="kw-2">&amp;mut </span>bufs[i];
 <a href=#99 id=99 data-nosnippet>99</a>            <span class="kw">let </span>meta_out = <span class="kw-2">&amp;mut </span>metas[i];
-<a href=#100 id=100 data-nosnippet>100</a>            <span class="kw">let </span>addr = <span class="kw-2">&amp;mut </span>source_addrs[i];
+<a href=#100 id=100 data-nosnippet>100</a>            <span class="kw">let </span>recv_info = <span class="kw-2">&amp;mut </span>recv_infos[i];
 <a href=#101 id=101 data-nosnippet>101</a>            <span class="kw">let </span>dm = <span class="kw">match </span><span class="self">self</span>.poll_recv_queue(cx) {
 <a href=#102 id=102 data-nosnippet>102</a>                Poll::Ready(<span class="prelude-val">Some</span>(recv)) =&gt; recv,
 <a href=#103 id=103 data-nosnippet>103</a>                Poll::Ready(<span class="prelude-val">None</span>) =&gt; {
@@ -158,7 +158,7 @@
 <a href=#158 id=158 data-nosnippet>158</a>            meta_out.ecn = <span class="prelude-val">None</span>;
 <a href=#159 id=159 data-nosnippet>159</a>            meta_out.dst_ip = <span class="prelude-val">None</span>;
 <a href=#160 id=160 data-nosnippet>160</a>
-<a href=#161 id=161 data-nosnippet>161</a>            <span class="kw-2">*</span>addr = (dm.url, dm.src).into();
+<a href=#161 id=161 data-nosnippet>161</a>            <span class="kw-2">*</span>recv_info = RecvInfo::from_addr((dm.url, dm.src).into());
 <a href=#162 id=162 data-nosnippet>162</a>            num_msgs += <span class="number">1</span>;
 <a href=#163 id=163 data-nosnippet>163</a>        }
 <a href=#164 id=164 data-nosnippet>164</a>
