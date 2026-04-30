@@ -267,8 +267,8 @@ impl CustomEndpoint for TestTransport {
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         let n = bufs.len();
-        debug_assert_eq!(n, metas.len());
-        debug_assert_eq!(n, source_addrs.len());
+        assert_eq!(n, metas.len(), "non matching bufs & metas");
+        assert_eq!(n, source_addrs.len(), "non matching bufs & source_addrs");
         if n == 0 {
             return Poll::Ready(Ok(0));
         }
