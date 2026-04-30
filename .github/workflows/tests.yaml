@@ -117,6 +117,8 @@ jobs:
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Select features
         run: |
@@ -262,6 +264,8 @@ jobs:
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -362,6 +366,8 @@ jobs:
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - uses: msys2/setup-msys2@v2
         with:
