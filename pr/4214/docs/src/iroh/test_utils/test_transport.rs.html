@@ -20,7 +20,7 @@
 <a href=#20 id=20 data-nosnippet>20</a>    endpoint::{
 <a href=#21 id=21 data-nosnippet>21</a>        Builder,
 <a href=#22 id=22 data-nosnippet>22</a>        presets::Preset,
-<a href=#23 id=23 data-nosnippet>23</a>        transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit},
+<a href=#23 id=23 data-nosnippet>23</a>        transports::{CustomEndpoint, CustomSender, CustomTransport, RecvInfo, Transmit},
 <a href=#24 id=24 data-nosnippet>24</a>    },
 <a href=#25 id=25 data-nosnippet>25</a>};
 <a href=#26 id=26 data-nosnippet>26</a>
@@ -264,11 +264,11 @@
 <a href=#264 id=264 data-nosnippet>264</a>        cx: <span class="kw-2">&amp;mut </span>std::task::Context,
 <a href=#265 id=265 data-nosnippet>265</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
 <a href=#266 id=266 data-nosnippet>266</a>        metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
-<a href=#267 id=267 data-nosnippet>267</a>        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
+<a href=#267 id=267 data-nosnippet>267</a>        recv_infos: <span class="kw-2">&amp;mut </span>[RecvInfo],
 <a href=#268 id=268 data-nosnippet>268</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
 <a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">let </span>n = bufs.len();
 <a href=#270 id=270 data-nosnippet>270</a>        <span class="macro">assert_eq!</span>(n, metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
-<a href=#271 id=271 data-nosnippet>271</a>        <span class="macro">assert_eq!</span>(n, source_addrs.len(), <span class="string">"non matching bufs &amp; source_addrs"</span>);
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="macro">assert_eq!</span>(n, recv_infos.len(), <span class="string">"non matching bufs &amp; source_addrs"</span>);
 <a href=#272 id=272 data-nosnippet>272</a>        <span class="kw">if </span>n == <span class="number">0 </span>{
 <a href=#273 id=273 data-nosnippet>273</a>            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(<span class="number">0</span>));
 <a href=#274 id=274 data-nosnippet>274</a>        }
@@ -284,8 +284,8 @@
 <a href=#284 id=284 data-nosnippet>284</a>            Poll::Ready(n) =&gt; n,
 <a href=#285 id=285 data-nosnippet>285</a>        };
 <a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span><span class="kw-2">mut </span>count = <span class="number">0</span>;
-<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">for </span>(((packet, meta), buf), source_addr) <span class="kw">in
-<a href=#288 id=288 data-nosnippet>288</a>            </span>packets.into_iter().zip(metas).zip(bufs).zip(source_addrs)
+<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">for </span>(((packet, meta), buf), recv_info) <span class="kw">in
+<a href=#288 id=288 data-nosnippet>288</a>            </span>packets.into_iter().zip(metas).zip(bufs).zip(recv_infos)
 <a href=#289 id=289 data-nosnippet>289</a>        {
 <a href=#290 id=290 data-nosnippet>290</a>            <span class="kw">if </span>buf.len() &lt; packet.data.len() {
 <a href=#291 id=291 data-nosnippet>291</a>                <span class="kw">break</span>;
@@ -298,7 +298,7 @@
 <a href=#298 id=298 data-nosnippet>298</a>                packet.data.len()
 <a href=#299 id=299 data-nosnippet>299</a>            );
 <a href=#300 id=300 data-nosnippet>300</a>            buf[..packet.data.len()].copy_from_slice(<span class="kw-2">&amp;</span>packet.data);
-<a href=#301 id=301 data-nosnippet>301</a>            <span class="kw-2">*</span>source_addr = packet.from.into();
+<a href=#301 id=301 data-nosnippet>301</a>            <span class="kw-2">*</span>recv_info = RecvInfo::new(packet.from, <span class="prelude-val">Some</span>(to_custom_addr(<span class="self">self</span>.id)));
 <a href=#302 id=302 data-nosnippet>302</a>            meta.len = packet.data.len();
 <a href=#303 id=303 data-nosnippet>303</a>            meta.stride = packet.data.len();
 <a href=#304 id=304 data-nosnippet>304</a>            count += <span class="number">1</span>;
@@ -497,204 +497,242 @@
 <a href=#497 id=497 data-nosnippet>497</a>        <span class="prelude-val">Ok</span>(())
 <a href=#498 id=498 data-nosnippet>498</a>    }
 <a href=#499 id=499 data-nosnippet>499</a>
-<a href=#500 id=500 data-nosnippet>500</a>    <span class="doccomment">/// Test that custom transport is selected over IP when given an RTT advantage.
+<a href=#500 id=500 data-nosnippet>500</a>    <span class="doccomment">/// Test that custom transports can surface a local address per incoming packet.
 <a href=#501 id=501 data-nosnippet>501</a>    </span><span class="attr">#[tokio::test]
 <a href=#502 id=502 data-nosnippet>502</a>    #[traced_test]
-<a href=#503 id=503 data-nosnippet>503</a>    </span><span class="kw">async fn </span>test_custom_transport_wins_over_ip() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">let </span>network = TestNetwork::new();
-<a href=#505 id=505 data-nosnippet>505</a>        <span class="kw">let </span>s1 = SecretKey::generate();
-<a href=#506 id=506 data-nosnippet>506</a>        <span class="kw">let </span>s2 = SecretKey::generate();
-<a href=#507 id=507 data-nosnippet>507</a>
-<a href=#508 id=508 data-nosnippet>508</a>        <span class="kw">let </span>t1 = network.create_transport(s1.public())<span class="question-mark">?</span>;
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">let </span>t2 = network.create_transport(s2.public())<span class="question-mark">?</span>;
-<a href=#510 id=510 data-nosnippet>510</a>
-<a href=#511 id=511 data-nosnippet>511</a>        <span class="comment">// Strong RTT advantage for custom transport
-<a href=#512 id=512 data-nosnippet>512</a>        </span><span class="kw">let </span>custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_secs(<span class="number">10</span>));
-<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw">let </span>config = EndpointConfig::default()
-<a href=#514 id=514 data-nosnippet>514</a>            .with_ip()
-<a href=#515 id=515 data-nosnippet>515</a>            .with_custom_bias(custom_bias);
-<a href=#516 id=516 data-nosnippet>516</a>
-<a href=#517 id=517 data-nosnippet>517</a>        <span class="kw">let </span>ep1 = endpoint_builder(s1, t1, config.clone()).bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#518 id=518 data-nosnippet>518</a>        <span class="kw">let </span>ep2 = endpoint_builder(s2.clone(), t2, config).bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#519 id=519 data-nosnippet>519</a>        <span class="kw">let </span>router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
+<a href=#503 id=503 data-nosnippet>503</a>    </span><span class="kw">async fn </span>test_custom_transport_local_addr() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">use </span><span class="kw">crate</span>::endpoint::IncomingLocalAddr;
+<a href=#505 id=505 data-nosnippet>505</a>
+<a href=#506 id=506 data-nosnippet>506</a>        <span class="kw">let </span>network = TestNetwork::new();
+<a href=#507 id=507 data-nosnippet>507</a>        <span class="kw">let </span>s1 = SecretKey::generate();
+<a href=#508 id=508 data-nosnippet>508</a>        <span class="kw">let </span>s2 = SecretKey::generate();
+<a href=#509 id=509 data-nosnippet>509</a>
+<a href=#510 id=510 data-nosnippet>510</a>        <span class="kw">let </span>t1 = network.create_transport(s1.public())<span class="question-mark">?</span>;
+<a href=#511 id=511 data-nosnippet>511</a>        <span class="kw">let </span>t2 = network.create_transport(s2.public())<span class="question-mark">?</span>;
+<a href=#512 id=512 data-nosnippet>512</a>
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw">let </span>ep1 = endpoint_builder(s1, t1, EndpointConfig::default())
+<a href=#514 id=514 data-nosnippet>514</a>            .bind()
+<a href=#515 id=515 data-nosnippet>515</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#516 id=516 data-nosnippet>516</a>        <span class="kw">let </span>ep2 = endpoint_builder(s2.clone(), t2, EndpointConfig::default())
+<a href=#517 id=517 data-nosnippet>517</a>            .alpns(<span class="macro">vec!</span>[ECHO_ALPN.to_vec()])
+<a href=#518 id=518 data-nosnippet>518</a>            .bind()
+<a href=#519 id=519 data-nosnippet>519</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#520 id=520 data-nosnippet>520</a>
-<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">let </span>conn = ep1
-<a href=#522 id=522 data-nosnippet>522</a>            .connect(mixed_addr(<span class="kw-2">&amp;</span>ep2, s2.public()), ECHO_ALPN)
-<a href=#523 id=523 data-nosnippet>523</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#524 id=524 data-nosnippet>524</a>
-<a href=#525 id=525 data-nosnippet>525</a>        <span class="comment">// Wait for paths to settle
-<a href=#526 id=526 data-nosnippet>526</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
-<a href=#527 id=527 data-nosnippet>527</a>
-<a href=#528 id=528 data-nosnippet>528</a>        <span class="macro">assert!</span>(
-<a href=#529 id=529 data-nosnippet>529</a>            is_custom_selected(<span class="kw-2">&amp;</span>conn),
-<a href=#530 id=530 data-nosnippet>530</a>            <span class="string">"Custom transport should be selected with RTT advantage"
-<a href=#531 id=531 data-nosnippet>531</a>        </span>);
-<a href=#532 id=532 data-nosnippet>532</a>
-<a href=#533 id=533 data-nosnippet>533</a>        verify_echo(<span class="kw-2">&amp;</span>conn, <span class="string">b"custom wins"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#534 id=534 data-nosnippet>534</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
-<a href=#535 id=535 data-nosnippet>535</a>        router.shutdown().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#536 id=536 data-nosnippet>536</a>        <span class="prelude-val">Ok</span>(())
-<a href=#537 id=537 data-nosnippet>537</a>    }
-<a href=#538 id=538 data-nosnippet>538</a>
-<a href=#539 id=539 data-nosnippet>539</a>    <span class="doccomment">/// Test that IP is selected over custom transport when custom has an RTT disadvantage.
-<a href=#540 id=540 data-nosnippet>540</a>    </span><span class="attr">#[tokio::test]
-<a href=#541 id=541 data-nosnippet>541</a>    #[traced_test]
-<a href=#542 id=542 data-nosnippet>542</a>    </span><span class="kw">async fn </span>test_ip_wins_over_custom() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">let </span>network = TestNetwork::new();
-<a href=#544 id=544 data-nosnippet>544</a>        <span class="kw">let </span>s1 = SecretKey::generate();
-<a href=#545 id=545 data-nosnippet>545</a>        <span class="kw">let </span>s2 = SecretKey::generate();
-<a href=#546 id=546 data-nosnippet>546</a>
-<a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">let </span>t1 = network.create_transport(s1.public())<span class="question-mark">?</span>;
-<a href=#548 id=548 data-nosnippet>548</a>        <span class="kw">let </span>t2 = network.create_transport(s2.public())<span class="question-mark">?</span>;
-<a href=#549 id=549 data-nosnippet>549</a>
-<a href=#550 id=550 data-nosnippet>550</a>        <span class="comment">// Strong RTT disadvantage for custom transport
-<a href=#551 id=551 data-nosnippet>551</a>        </span><span class="kw">let </span>custom_bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_secs(<span class="number">10</span>));
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">let </span>config = EndpointConfig::default()
-<a href=#553 id=553 data-nosnippet>553</a>            .with_ip()
-<a href=#554 id=554 data-nosnippet>554</a>            .with_custom_bias(custom_bias);
-<a href=#555 id=555 data-nosnippet>555</a>
-<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">let </span>ep1 = endpoint_builder(s1, t1, config.clone()).bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#557 id=557 data-nosnippet>557</a>        <span class="kw">let </span>ep2 = endpoint_builder(s2.clone(), t2, config).bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="kw">let </span>router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
-<a href=#559 id=559 data-nosnippet>559</a>
-<a href=#560 id=560 data-nosnippet>560</a>        <span class="kw">let </span>conn = ep1
-<a href=#561 id=561 data-nosnippet>561</a>            .connect(mixed_addr(<span class="kw-2">&amp;</span>ep2, s2.public()), ECHO_ALPN)
-<a href=#562 id=562 data-nosnippet>562</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#563 id=563 data-nosnippet>563</a>
-<a href=#564 id=564 data-nosnippet>564</a>        <span class="comment">// Wait for paths to settle
-<a href=#565 id=565 data-nosnippet>565</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
-<a href=#566 id=566 data-nosnippet>566</a>
-<a href=#567 id=567 data-nosnippet>567</a>        <span class="macro">assert!</span>(
-<a href=#568 id=568 data-nosnippet>568</a>            is_ip_selected_from_ip_and_custom(<span class="kw-2">&amp;</span>conn),
-<a href=#569 id=569 data-nosnippet>569</a>            <span class="string">"IP transport should be selected when custom has RTT disadvantage"
-<a href=#570 id=570 data-nosnippet>570</a>        </span>);
-<a href=#571 id=571 data-nosnippet>571</a>
-<a href=#572 id=572 data-nosnippet>572</a>        verify_echo(<span class="kw-2">&amp;</span>conn, <span class="string">b"ip wins"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#573 id=573 data-nosnippet>573</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
-<a href=#574 id=574 data-nosnippet>574</a>        router.shutdown().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#575 id=575 data-nosnippet>575</a>        <span class="prelude-val">Ok</span>(())
-<a href=#576 id=576 data-nosnippet>576</a>    }
-<a href=#577 id=577 data-nosnippet>577</a>
-<a href=#578 id=578 data-nosnippet>578</a>    <span class="doccomment">/// Test that custom transport (primary) is selected over relay (backup).
-<a href=#579 id=579 data-nosnippet>579</a>    ///
-<a href=#580 id=580 data-nosnippet>580</a>    /// This test first connects using only the relay address, then reconnects with
-<a href=#581 id=581 data-nosnippet>581</a>    /// both relay and custom addresses to verify the custom transport (primary) wins
-<a href=#582 id=582 data-nosnippet>582</a>    /// over the relay (backup).
-<a href=#583 id=583 data-nosnippet>583</a>    </span><span class="attr">#[tokio::test]
-<a href=#584 id=584 data-nosnippet>584</a>    #[traced_test]
-<a href=#585 id=585 data-nosnippet>585</a>    </span><span class="kw">async fn </span>test_custom_transport_wins_over_relay() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#586 id=586 data-nosnippet>586</a>        <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#587 id=587 data-nosnippet>587</a>        <span class="kw">let </span>network = TestNetwork::new();
-<a href=#588 id=588 data-nosnippet>588</a>        <span class="kw">let </span>s1 = SecretKey::generate();
-<a href=#589 id=589 data-nosnippet>589</a>        <span class="kw">let </span>s2 = SecretKey::generate();
-<a href=#590 id=590 data-nosnippet>590</a>
-<a href=#591 id=591 data-nosnippet>591</a>        <span class="kw">let </span>t1 = network.create_transport(s1.public())<span class="question-mark">?</span>;
-<a href=#592 id=592 data-nosnippet>592</a>        <span class="kw">let </span>t2 = network.create_transport(s2.public())<span class="question-mark">?</span>;
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">let </span>connect = tokio::spawn({
+<a href=#522 id=522 data-nosnippet>522</a>            <span class="kw">let </span>ep1 = ep1.clone();
+<a href=#523 id=523 data-nosnippet>523</a>            <span class="kw">let </span>dst = custom_only_addr(s2.public());
+<a href=#524 id=524 data-nosnippet>524</a>            <span class="kw">async move </span>{ ep1.connect(dst, ECHO_ALPN).<span class="kw">await </span>}
+<a href=#525 id=525 data-nosnippet>525</a>        });
+<a href=#526 id=526 data-nosnippet>526</a>
+<a href=#527 id=527 data-nosnippet>527</a>        <span class="kw">let </span>incoming = ep2.accept().<span class="kw">await</span>.expect(<span class="string">"incoming"</span>);
+<a href=#528 id=528 data-nosnippet>528</a>        <span class="macro">assert_eq!</span>(
+<a href=#529 id=529 data-nosnippet>529</a>            incoming.local_addr(),
+<a href=#530 id=530 data-nosnippet>530</a>            IncomingLocalAddr::Custom(<span class="prelude-val">Some</span>(to_custom_addr(s2.public()))),
+<a href=#531 id=531 data-nosnippet>531</a>        );
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">let </span>_conn = incoming.accept().anyerr()<span class="question-mark">?</span>.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#533 id=533 data-nosnippet>533</a>
+<a href=#534 id=534 data-nosnippet>534</a>        connect.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="prelude-val">Ok</span>(())
+<a href=#536 id=536 data-nosnippet>536</a>    }
+<a href=#537 id=537 data-nosnippet>537</a>
+<a href=#538 id=538 data-nosnippet>538</a>    <span class="doccomment">/// Test that custom transport is selected over IP when given an RTT advantage.
+<a href=#539 id=539 data-nosnippet>539</a>    </span><span class="attr">#[tokio::test]
+<a href=#540 id=540 data-nosnippet>540</a>    #[traced_test]
+<a href=#541 id=541 data-nosnippet>541</a>    </span><span class="kw">async fn </span>test_custom_transport_wins_over_ip() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#542 id=542 data-nosnippet>542</a>        <span class="kw">let </span>network = TestNetwork::new();
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">let </span>s1 = SecretKey::generate();
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="kw">let </span>s2 = SecretKey::generate();
+<a href=#545 id=545 data-nosnippet>545</a>
+<a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">let </span>t1 = network.create_transport(s1.public())<span class="question-mark">?</span>;
+<a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">let </span>t2 = network.create_transport(s2.public())<span class="question-mark">?</span>;
+<a href=#548 id=548 data-nosnippet>548</a>
+<a href=#549 id=549 data-nosnippet>549</a>        <span class="comment">// Strong RTT advantage for custom transport
+<a href=#550 id=550 data-nosnippet>550</a>        </span><span class="kw">let </span>custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_secs(<span class="number">10</span>));
+<a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">let </span>config = EndpointConfig::default()
+<a href=#552 id=552 data-nosnippet>552</a>            .with_ip()
+<a href=#553 id=553 data-nosnippet>553</a>            .with_custom_bias(custom_bias);
+<a href=#554 id=554 data-nosnippet>554</a>
+<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>ep1 = endpoint_builder(s1, t1, config.clone()).bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">let </span>ep2 = endpoint_builder(s2.clone(), t2, config).bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#557 id=557 data-nosnippet>557</a>        <span class="kw">let </span>router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
+<a href=#558 id=558 data-nosnippet>558</a>
+<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">let </span>conn = ep1
+<a href=#560 id=560 data-nosnippet>560</a>            .connect(mixed_addr(<span class="kw-2">&amp;</span>ep2, s2.public()), ECHO_ALPN)
+<a href=#561 id=561 data-nosnippet>561</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#562 id=562 data-nosnippet>562</a>
+<a href=#563 id=563 data-nosnippet>563</a>        <span class="comment">// Wait for paths to settle
+<a href=#564 id=564 data-nosnippet>564</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
+<a href=#565 id=565 data-nosnippet>565</a>
+<a href=#566 id=566 data-nosnippet>566</a>        <span class="macro">assert!</span>(
+<a href=#567 id=567 data-nosnippet>567</a>            is_custom_selected(<span class="kw-2">&amp;</span>conn),
+<a href=#568 id=568 data-nosnippet>568</a>            <span class="string">"Custom transport should be selected with RTT advantage"
+<a href=#569 id=569 data-nosnippet>569</a>        </span>);
+<a href=#570 id=570 data-nosnippet>570</a>
+<a href=#571 id=571 data-nosnippet>571</a>        verify_echo(<span class="kw-2">&amp;</span>conn, <span class="string">b"custom wins"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#572 id=572 data-nosnippet>572</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
+<a href=#573 id=573 data-nosnippet>573</a>        router.shutdown().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#574 id=574 data-nosnippet>574</a>        <span class="prelude-val">Ok</span>(())
+<a href=#575 id=575 data-nosnippet>575</a>    }
+<a href=#576 id=576 data-nosnippet>576</a>
+<a href=#577 id=577 data-nosnippet>577</a>    <span class="doccomment">/// Test that IP is selected over custom transport when custom has an RTT disadvantage.
+<a href=#578 id=578 data-nosnippet>578</a>    </span><span class="attr">#[tokio::test]
+<a href=#579 id=579 data-nosnippet>579</a>    #[traced_test]
+<a href=#580 id=580 data-nosnippet>580</a>    </span><span class="kw">async fn </span>test_ip_wins_over_custom() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#581 id=581 data-nosnippet>581</a>        <span class="kw">let </span>network = TestNetwork::new();
+<a href=#582 id=582 data-nosnippet>582</a>        <span class="kw">let </span>s1 = SecretKey::generate();
+<a href=#583 id=583 data-nosnippet>583</a>        <span class="kw">let </span>s2 = SecretKey::generate();
+<a href=#584 id=584 data-nosnippet>584</a>
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">let </span>t1 = network.create_transport(s1.public())<span class="question-mark">?</span>;
+<a href=#586 id=586 data-nosnippet>586</a>        <span class="kw">let </span>t2 = network.create_transport(s2.public())<span class="question-mark">?</span>;
+<a href=#587 id=587 data-nosnippet>587</a>
+<a href=#588 id=588 data-nosnippet>588</a>        <span class="comment">// Strong RTT disadvantage for custom transport
+<a href=#589 id=589 data-nosnippet>589</a>        </span><span class="kw">let </span>custom_bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_secs(<span class="number">10</span>));
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">let </span>config = EndpointConfig::default()
+<a href=#591 id=591 data-nosnippet>591</a>            .with_ip()
+<a href=#592 id=592 data-nosnippet>592</a>            .with_custom_bias(custom_bias);
 <a href=#593 id=593 data-nosnippet>593</a>
-<a href=#594 id=594 data-nosnippet>594</a>        <span class="comment">// Custom transport is primary by default, relay is backup
-<a href=#595 id=595 data-nosnippet>595</a>        </span><span class="kw">let </span>config = EndpointConfig::default().with_relay(relay_map.clone());
-<a href=#596 id=596 data-nosnippet>596</a>
-<a href=#597 id=597 data-nosnippet>597</a>        <span class="kw">let </span>ep1 = endpoint_builder(s1, t1, config.clone()).bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#598 id=598 data-nosnippet>598</a>        <span class="kw">let </span>ep2 = endpoint_builder(s2.clone(), t2, config).bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#599 id=599 data-nosnippet>599</a>
-<a href=#600 id=600 data-nosnippet>600</a>        <span class="comment">// Wait for relay connection to be established
-<a href=#601 id=601 data-nosnippet>601</a>        </span>ep1.online().<span class="kw">await</span>;
-<a href=#602 id=602 data-nosnippet>602</a>        ep2.online().<span class="kw">await</span>;
-<a href=#603 id=603 data-nosnippet>603</a>
-<a href=#604 id=604 data-nosnippet>604</a>        <span class="kw">let </span>router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
-<a href=#605 id=605 data-nosnippet>605</a>
-<a href=#606 id=606 data-nosnippet>606</a>        <span class="comment">// Get all addresses including relay and custom
-<a href=#607 id=607 data-nosnippet>607</a>        </span><span class="kw">let </span>ep2_addr = ep2.addr();
-<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">let </span>custom_addr = to_custom_addr(s2.public());
+<a href=#594 id=594 data-nosnippet>594</a>        <span class="kw">let </span>ep1 = endpoint_builder(s1, t1, config.clone()).bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#595 id=595 data-nosnippet>595</a>        <span class="kw">let </span>ep2 = endpoint_builder(s2.clone(), t2, config).bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="kw">let </span>router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
+<a href=#597 id=597 data-nosnippet>597</a>
+<a href=#598 id=598 data-nosnippet>598</a>        <span class="kw">let </span>conn = ep1
+<a href=#599 id=599 data-nosnippet>599</a>            .connect(mixed_addr(<span class="kw-2">&amp;</span>ep2, s2.public()), ECHO_ALPN)
+<a href=#600 id=600 data-nosnippet>600</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#601 id=601 data-nosnippet>601</a>
+<a href=#602 id=602 data-nosnippet>602</a>        <span class="comment">// Wait for paths to settle
+<a href=#603 id=603 data-nosnippet>603</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
+<a href=#604 id=604 data-nosnippet>604</a>
+<a href=#605 id=605 data-nosnippet>605</a>        <span class="macro">assert!</span>(
+<a href=#606 id=606 data-nosnippet>606</a>            is_ip_selected_from_ip_and_custom(<span class="kw-2">&amp;</span>conn),
+<a href=#607 id=607 data-nosnippet>607</a>            <span class="string">"IP transport should be selected when custom has RTT disadvantage"
+<a href=#608 id=608 data-nosnippet>608</a>        </span>);
 <a href=#609 id=609 data-nosnippet>609</a>
-<a href=#610 id=610 data-nosnippet>610</a>        <span class="comment">// Debug: print ep2 address to see what's available
-<a href=#611 id=611 data-nosnippet>611</a>        </span><span class="macro">eprintln!</span>(<span class="string">"ep2 address: {:?}"</span>, ep2_addr);
-<a href=#612 id=612 data-nosnippet>612</a>
-<a href=#613 id=613 data-nosnippet>613</a>        <span class="comment">// Create address with both relay and custom
-<a href=#614 id=614 data-nosnippet>614</a>        </span><span class="kw">let </span>all_addrs = EndpointAddr::from_parts(
-<a href=#615 id=615 data-nosnippet>615</a>            s2.public(),
-<a href=#616 id=616 data-nosnippet>616</a>            ep2_addr
-<a href=#617 id=617 data-nosnippet>617</a>                .addrs
-<a href=#618 id=618 data-nosnippet>618</a>                .iter()
-<a href=#619 id=619 data-nosnippet>619</a>                .cloned()
-<a href=#620 id=620 data-nosnippet>620</a>                .chain(std::iter::once(TransportAddr::Custom(custom_addr))),
-<a href=#621 id=621 data-nosnippet>621</a>        );
-<a href=#622 id=622 data-nosnippet>622</a>        <span class="macro">eprintln!</span>(<span class="string">"Connecting with all addresses: {:?}"</span>, all_addrs);
-<a href=#623 id=623 data-nosnippet>623</a>
-<a href=#624 id=624 data-nosnippet>624</a>        <span class="comment">// First, connect with relay-only to verify relay works
-<a href=#625 id=625 data-nosnippet>625</a>        </span><span class="kw">let </span>relay_addrs: Vec&lt;<span class="kw">_</span>&gt; = ep2_addr
-<a href=#626 id=626 data-nosnippet>626</a>            .addrs
-<a href=#627 id=627 data-nosnippet>627</a>            .iter()
-<a href=#628 id=628 data-nosnippet>628</a>            .filter(|a| <span class="macro">matches!</span>(a, TransportAddr::Relay(<span class="kw">_</span>)))
-<a href=#629 id=629 data-nosnippet>629</a>            .cloned()
-<a href=#630 id=630 data-nosnippet>630</a>            .collect();
-<a href=#631 id=631 data-nosnippet>631</a>        <span class="macro">eprintln!</span>(<span class="string">"Relay addresses in ep2_addr: {:?}"</span>, relay_addrs);
-<a href=#632 id=632 data-nosnippet>632</a>
-<a href=#633 id=633 data-nosnippet>633</a>        <span class="comment">// If there are no relay addresses, skip the relay-first test
-<a href=#634 id=634 data-nosnippet>634</a>        </span><span class="kw">if </span>relay_addrs.is_empty() {
-<a href=#635 id=635 data-nosnippet>635</a>            <span class="macro">eprintln!</span>(
-<a href=#636 id=636 data-nosnippet>636</a>                <span class="string">"WARNING: No relay addresses found in ep2_addr, skipping relay-first connection test"
-<a href=#637 id=637 data-nosnippet>637</a>            </span>);
-<a href=#638 id=638 data-nosnippet>638</a>        } <span class="kw">else </span>{
-<a href=#639 id=639 data-nosnippet>639</a>            <span class="comment">// Connect with relay-only address first to verify relay works
-<a href=#640 id=640 data-nosnippet>640</a>            </span><span class="kw">let </span>relay_only_addr = EndpointAddr::from_parts(s2.public(), relay_addrs.into_iter());
-<a href=#641 id=641 data-nosnippet>641</a>            <span class="macro">eprintln!</span>(<span class="string">"Connecting with relay-only address: {:?}"</span>, relay_only_addr);
-<a href=#642 id=642 data-nosnippet>642</a>
-<a href=#643 id=643 data-nosnippet>643</a>            <span class="kw">let </span>conn = ep1.connect(relay_only_addr, ECHO_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#644 id=644 data-nosnippet>644</a>
-<a href=#645 id=645 data-nosnippet>645</a>            <span class="comment">// Wait for relay path to be established
-<a href=#646 id=646 data-nosnippet>646</a>            </span>tokio::time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
+<a href=#610 id=610 data-nosnippet>610</a>        verify_echo(<span class="kw-2">&amp;</span>conn, <span class="string">b"ip wins"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#611 id=611 data-nosnippet>611</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
+<a href=#612 id=612 data-nosnippet>612</a>        router.shutdown().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#613 id=613 data-nosnippet>613</a>        <span class="prelude-val">Ok</span>(())
+<a href=#614 id=614 data-nosnippet>614</a>    }
+<a href=#615 id=615 data-nosnippet>615</a>
+<a href=#616 id=616 data-nosnippet>616</a>    <span class="doccomment">/// Test that custom transport (primary) is selected over relay (backup).
+<a href=#617 id=617 data-nosnippet>617</a>    ///
+<a href=#618 id=618 data-nosnippet>618</a>    /// This test first connects using only the relay address, then reconnects with
+<a href=#619 id=619 data-nosnippet>619</a>    /// both relay and custom addresses to verify the custom transport (primary) wins
+<a href=#620 id=620 data-nosnippet>620</a>    /// over the relay (backup).
+<a href=#621 id=621 data-nosnippet>621</a>    </span><span class="attr">#[tokio::test]
+<a href=#622 id=622 data-nosnippet>622</a>    #[traced_test]
+<a href=#623 id=623 data-nosnippet>623</a>    </span><span class="kw">async fn </span>test_custom_transport_wins_over_relay() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#624 id=624 data-nosnippet>624</a>        <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#625 id=625 data-nosnippet>625</a>        <span class="kw">let </span>network = TestNetwork::new();
+<a href=#626 id=626 data-nosnippet>626</a>        <span class="kw">let </span>s1 = SecretKey::generate();
+<a href=#627 id=627 data-nosnippet>627</a>        <span class="kw">let </span>s2 = SecretKey::generate();
+<a href=#628 id=628 data-nosnippet>628</a>
+<a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span>t1 = network.create_transport(s1.public())<span class="question-mark">?</span>;
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="kw">let </span>t2 = network.create_transport(s2.public())<span class="question-mark">?</span>;
+<a href=#631 id=631 data-nosnippet>631</a>
+<a href=#632 id=632 data-nosnippet>632</a>        <span class="comment">// Custom transport is primary by default, relay is backup
+<a href=#633 id=633 data-nosnippet>633</a>        </span><span class="kw">let </span>config = EndpointConfig::default().with_relay(relay_map.clone());
+<a href=#634 id=634 data-nosnippet>634</a>
+<a href=#635 id=635 data-nosnippet>635</a>        <span class="kw">let </span>ep1 = endpoint_builder(s1, t1, config.clone()).bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#636 id=636 data-nosnippet>636</a>        <span class="kw">let </span>ep2 = endpoint_builder(s2.clone(), t2, config).bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#637 id=637 data-nosnippet>637</a>
+<a href=#638 id=638 data-nosnippet>638</a>        <span class="comment">// Wait for relay connection to be established
+<a href=#639 id=639 data-nosnippet>639</a>        </span>ep1.online().<span class="kw">await</span>;
+<a href=#640 id=640 data-nosnippet>640</a>        ep2.online().<span class="kw">await</span>;
+<a href=#641 id=641 data-nosnippet>641</a>
+<a href=#642 id=642 data-nosnippet>642</a>        <span class="kw">let </span>router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
+<a href=#643 id=643 data-nosnippet>643</a>
+<a href=#644 id=644 data-nosnippet>644</a>        <span class="comment">// Get all addresses including relay and custom
+<a href=#645 id=645 data-nosnippet>645</a>        </span><span class="kw">let </span>ep2_addr = ep2.addr();
+<a href=#646 id=646 data-nosnippet>646</a>        <span class="kw">let </span>custom_addr = to_custom_addr(s2.public());
 <a href=#647 id=647 data-nosnippet>647</a>
-<a href=#648 id=648 data-nosnippet>648</a>            <span class="comment">// Debug: print paths after relay-only connect
-<a href=#649 id=649 data-nosnippet>649</a>            </span><span class="kw">let </span>paths = conn.paths().get();
-<a href=#650 id=650 data-nosnippet>650</a>            <span class="macro">eprintln!</span>(<span class="string">"Paths after relay-only connect:"</span>);
-<a href=#651 id=651 data-nosnippet>651</a>            <span class="kw">for </span>path <span class="kw">in </span>paths.iter() {
-<a href=#652 id=652 data-nosnippet>652</a>                <span class="macro">eprintln!</span>(
-<a href=#653 id=653 data-nosnippet>653</a>                    <span class="string">"  {} selected={} rtt={:?}"</span>,
-<a href=#654 id=654 data-nosnippet>654</a>                    path.remote_addr(),
-<a href=#655 id=655 data-nosnippet>655</a>                    path.is_selected(),
-<a href=#656 id=656 data-nosnippet>656</a>                    path.rtt()
-<a href=#657 id=657 data-nosnippet>657</a>                );
-<a href=#658 id=658 data-nosnippet>658</a>            }
-<a href=#659 id=659 data-nosnippet>659</a>
-<a href=#660 id=660 data-nosnippet>660</a>            <span class="comment">// Verify relay is currently selected
-<a href=#661 id=661 data-nosnippet>661</a>            </span><span class="macro">assert!</span>(
-<a href=#662 id=662 data-nosnippet>662</a>                is_relay_selected(<span class="kw-2">&amp;</span>conn),
-<a href=#663 id=663 data-nosnippet>663</a>                <span class="string">"Relay should be selected after connecting with relay-only address"
-<a href=#664 id=664 data-nosnippet>664</a>            </span>);
-<a href=#665 id=665 data-nosnippet>665</a>
-<a href=#666 id=666 data-nosnippet>666</a>            verify_echo(<span class="kw-2">&amp;</span>conn, <span class="string">b"relay test"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#667 id=667 data-nosnippet>667</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done with relay test"</span>);
-<a href=#668 id=668 data-nosnippet>668</a>            tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
-<a href=#669 id=669 data-nosnippet>669</a>        }
+<a href=#648 id=648 data-nosnippet>648</a>        <span class="comment">// Debug: print ep2 address to see what's available
+<a href=#649 id=649 data-nosnippet>649</a>        </span><span class="macro">eprintln!</span>(<span class="string">"ep2 address: {:?}"</span>, ep2_addr);
+<a href=#650 id=650 data-nosnippet>650</a>
+<a href=#651 id=651 data-nosnippet>651</a>        <span class="comment">// Create address with both relay and custom
+<a href=#652 id=652 data-nosnippet>652</a>        </span><span class="kw">let </span>all_addrs = EndpointAddr::from_parts(
+<a href=#653 id=653 data-nosnippet>653</a>            s2.public(),
+<a href=#654 id=654 data-nosnippet>654</a>            ep2_addr
+<a href=#655 id=655 data-nosnippet>655</a>                .addrs
+<a href=#656 id=656 data-nosnippet>656</a>                .iter()
+<a href=#657 id=657 data-nosnippet>657</a>                .cloned()
+<a href=#658 id=658 data-nosnippet>658</a>                .chain(std::iter::once(TransportAddr::Custom(custom_addr))),
+<a href=#659 id=659 data-nosnippet>659</a>        );
+<a href=#660 id=660 data-nosnippet>660</a>        <span class="macro">eprintln!</span>(<span class="string">"Connecting with all addresses: {:?}"</span>, all_addrs);
+<a href=#661 id=661 data-nosnippet>661</a>
+<a href=#662 id=662 data-nosnippet>662</a>        <span class="comment">// First, connect with relay-only to verify relay works
+<a href=#663 id=663 data-nosnippet>663</a>        </span><span class="kw">let </span>relay_addrs: Vec&lt;<span class="kw">_</span>&gt; = ep2_addr
+<a href=#664 id=664 data-nosnippet>664</a>            .addrs
+<a href=#665 id=665 data-nosnippet>665</a>            .iter()
+<a href=#666 id=666 data-nosnippet>666</a>            .filter(|a| <span class="macro">matches!</span>(a, TransportAddr::Relay(<span class="kw">_</span>)))
+<a href=#667 id=667 data-nosnippet>667</a>            .cloned()
+<a href=#668 id=668 data-nosnippet>668</a>            .collect();
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="macro">eprintln!</span>(<span class="string">"Relay addresses in ep2_addr: {:?}"</span>, relay_addrs);
 <a href=#670 id=670 data-nosnippet>670</a>
-<a href=#671 id=671 data-nosnippet>671</a>        <span class="comment">// Now connect with all addresses (relay + custom)
-<a href=#672 id=672 data-nosnippet>672</a>        </span><span class="kw">let </span>conn = ep1.connect(all_addrs, ECHO_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#673 id=673 data-nosnippet>673</a>
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="comment">// Wait for paths to settle
-<a href=#675 id=675 data-nosnippet>675</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
-<a href=#676 id=676 data-nosnippet>676</a>
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="comment">// Debug: print all paths
-<a href=#678 id=678 data-nosnippet>678</a>        </span><span class="kw">let </span>paths = conn.paths().get();
-<a href=#679 id=679 data-nosnippet>679</a>        <span class="macro">eprintln!</span>(<span class="string">"Paths after connecting with all addresses:"</span>);
-<a href=#680 id=680 data-nosnippet>680</a>        <span class="kw">for </span>path <span class="kw">in </span>paths.iter() {
-<a href=#681 id=681 data-nosnippet>681</a>            <span class="macro">eprintln!</span>(
-<a href=#682 id=682 data-nosnippet>682</a>                <span class="string">"  {} selected={} rtt={:?}"</span>,
-<a href=#683 id=683 data-nosnippet>683</a>                path.remote_addr(),
-<a href=#684 id=684 data-nosnippet>684</a>                path.is_selected(),
-<a href=#685 id=685 data-nosnippet>685</a>                path.rtt()
-<a href=#686 id=686 data-nosnippet>686</a>            );
-<a href=#687 id=687 data-nosnippet>687</a>        }
-<a href=#688 id=688 data-nosnippet>688</a>
-<a href=#689 id=689 data-nosnippet>689</a>        <span class="comment">// Custom (primary) should win over relay (backup)
-<a href=#690 id=690 data-nosnippet>690</a>        </span><span class="macro">assert!</span>(
-<a href=#691 id=691 data-nosnippet>691</a>            is_custom_selected(<span class="kw-2">&amp;</span>conn),
-<a href=#692 id=692 data-nosnippet>692</a>            <span class="string">"Custom transport (primary) should be selected over relay (backup)"
-<a href=#693 id=693 data-nosnippet>693</a>        </span>);
-<a href=#694 id=694 data-nosnippet>694</a>
-<a href=#695 id=695 data-nosnippet>695</a>        verify_echo(<span class="kw-2">&amp;</span>conn, <span class="string">b"custom wins over relay"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#696 id=696 data-nosnippet>696</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
-<a href=#697 id=697 data-nosnippet>697</a>        router.shutdown().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#698 id=698 data-nosnippet>698</a>        <span class="prelude-val">Ok</span>(())
-<a href=#699 id=699 data-nosnippet>699</a>    }
-<a href=#700 id=700 data-nosnippet>700</a>}</code></pre></div></section></main></body></html>
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="comment">// If there are no relay addresses, skip the relay-first test
+<a href=#672 id=672 data-nosnippet>672</a>        </span><span class="kw">if </span>relay_addrs.is_empty() {
+<a href=#673 id=673 data-nosnippet>673</a>            <span class="macro">eprintln!</span>(
+<a href=#674 id=674 data-nosnippet>674</a>                <span class="string">"WARNING: No relay addresses found in ep2_addr, skipping relay-first connection test"
+<a href=#675 id=675 data-nosnippet>675</a>            </span>);
+<a href=#676 id=676 data-nosnippet>676</a>        } <span class="kw">else </span>{
+<a href=#677 id=677 data-nosnippet>677</a>            <span class="comment">// Connect with relay-only address first to verify relay works
+<a href=#678 id=678 data-nosnippet>678</a>            </span><span class="kw">let </span>relay_only_addr = EndpointAddr::from_parts(s2.public(), relay_addrs.into_iter());
+<a href=#679 id=679 data-nosnippet>679</a>            <span class="macro">eprintln!</span>(<span class="string">"Connecting with relay-only address: {:?}"</span>, relay_only_addr);
+<a href=#680 id=680 data-nosnippet>680</a>
+<a href=#681 id=681 data-nosnippet>681</a>            <span class="kw">let </span>conn = ep1.connect(relay_only_addr, ECHO_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#682 id=682 data-nosnippet>682</a>
+<a href=#683 id=683 data-nosnippet>683</a>            <span class="comment">// Wait for relay path to be established
+<a href=#684 id=684 data-nosnippet>684</a>            </span>tokio::time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
+<a href=#685 id=685 data-nosnippet>685</a>
+<a href=#686 id=686 data-nosnippet>686</a>            <span class="comment">// Debug: print paths after relay-only connect
+<a href=#687 id=687 data-nosnippet>687</a>            </span><span class="kw">let </span>paths = conn.paths().get();
+<a href=#688 id=688 data-nosnippet>688</a>            <span class="macro">eprintln!</span>(<span class="string">"Paths after relay-only connect:"</span>);
+<a href=#689 id=689 data-nosnippet>689</a>            <span class="kw">for </span>path <span class="kw">in </span>paths.iter() {
+<a href=#690 id=690 data-nosnippet>690</a>                <span class="macro">eprintln!</span>(
+<a href=#691 id=691 data-nosnippet>691</a>                    <span class="string">"  {} selected={} rtt={:?}"</span>,
+<a href=#692 id=692 data-nosnippet>692</a>                    path.remote_addr(),
+<a href=#693 id=693 data-nosnippet>693</a>                    path.is_selected(),
+<a href=#694 id=694 data-nosnippet>694</a>                    path.rtt()
+<a href=#695 id=695 data-nosnippet>695</a>                );
+<a href=#696 id=696 data-nosnippet>696</a>            }
+<a href=#697 id=697 data-nosnippet>697</a>
+<a href=#698 id=698 data-nosnippet>698</a>            <span class="comment">// Verify relay is currently selected
+<a href=#699 id=699 data-nosnippet>699</a>            </span><span class="macro">assert!</span>(
+<a href=#700 id=700 data-nosnippet>700</a>                is_relay_selected(<span class="kw-2">&amp;</span>conn),
+<a href=#701 id=701 data-nosnippet>701</a>                <span class="string">"Relay should be selected after connecting with relay-only address"
+<a href=#702 id=702 data-nosnippet>702</a>            </span>);
+<a href=#703 id=703 data-nosnippet>703</a>
+<a href=#704 id=704 data-nosnippet>704</a>            verify_echo(<span class="kw-2">&amp;</span>conn, <span class="string">b"relay test"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#705 id=705 data-nosnippet>705</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done with relay test"</span>);
+<a href=#706 id=706 data-nosnippet>706</a>            tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
+<a href=#707 id=707 data-nosnippet>707</a>        }
+<a href=#708 id=708 data-nosnippet>708</a>
+<a href=#709 id=709 data-nosnippet>709</a>        <span class="comment">// Now connect with all addresses (relay + custom)
+<a href=#710 id=710 data-nosnippet>710</a>        </span><span class="kw">let </span>conn = ep1.connect(all_addrs, ECHO_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#711 id=711 data-nosnippet>711</a>
+<a href=#712 id=712 data-nosnippet>712</a>        <span class="comment">// Wait for paths to settle
+<a href=#713 id=713 data-nosnippet>713</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
+<a href=#714 id=714 data-nosnippet>714</a>
+<a href=#715 id=715 data-nosnippet>715</a>        <span class="comment">// Debug: print all paths
+<a href=#716 id=716 data-nosnippet>716</a>        </span><span class="kw">let </span>paths = conn.paths().get();
+<a href=#717 id=717 data-nosnippet>717</a>        <span class="macro">eprintln!</span>(<span class="string">"Paths after connecting with all addresses:"</span>);
+<a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">for </span>path <span class="kw">in </span>paths.iter() {
+<a href=#719 id=719 data-nosnippet>719</a>            <span class="macro">eprintln!</span>(
+<a href=#720 id=720 data-nosnippet>720</a>                <span class="string">"  {} selected={} rtt={:?}"</span>,
+<a href=#721 id=721 data-nosnippet>721</a>                path.remote_addr(),
+<a href=#722 id=722 data-nosnippet>722</a>                path.is_selected(),
+<a href=#723 id=723 data-nosnippet>723</a>                path.rtt()
+<a href=#724 id=724 data-nosnippet>724</a>            );
+<a href=#725 id=725 data-nosnippet>725</a>        }
+<a href=#726 id=726 data-nosnippet>726</a>
+<a href=#727 id=727 data-nosnippet>727</a>        <span class="comment">// Custom (primary) should win over relay (backup)
+<a href=#728 id=728 data-nosnippet>728</a>        </span><span class="macro">assert!</span>(
+<a href=#729 id=729 data-nosnippet>729</a>            is_custom_selected(<span class="kw-2">&amp;</span>conn),
+<a href=#730 id=730 data-nosnippet>730</a>            <span class="string">"Custom transport (primary) should be selected over relay (backup)"
+<a href=#731 id=731 data-nosnippet>731</a>        </span>);
+<a href=#732 id=732 data-nosnippet>732</a>
+<a href=#733 id=733 data-nosnippet>733</a>        verify_echo(<span class="kw-2">&amp;</span>conn, <span class="string">b"custom wins over relay"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#734 id=734 data-nosnippet>734</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
+<a href=#735 id=735 data-nosnippet>735</a>        router.shutdown().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="prelude-val">Ok</span>(())
+<a href=#737 id=737 data-nosnippet>737</a>    }
+<a href=#738 id=738 data-nosnippet>738</a>}</code></pre></div></section></main></body></html>
