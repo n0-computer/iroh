@@ -35,7 +35,7 @@ lru = "0.16.3"
 mainline = "6"
 n0-future = "0.3"
 rcgen = "0.14"
-redb = "3.1.0"
+redb = "4.1.0"
 regex = "1.10.3"
 rustls = { version = "0.23.33", default-features = false }
 serde = { version = "1", features = ["derive"] }

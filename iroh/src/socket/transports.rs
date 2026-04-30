@@ -46,8 +46,8 @@ pub(crate) struct Transports {
     custom: Vec<Box<dyn CustomEndpoint>>,
 
     poll_recv_counter: usize,
-    /// Cache for source addrs, to speed up access
-    source_addrs: [Addr; noq_udp::BATCH_SIZE],
+    /// Cache for per-packet recv info, to speed up access
+    recv_infos: [RecvInfo; noq_udp::BATCH_SIZE],
 }
 
 /// Combined watcher type for all ip transports
@@ -237,7 +237,7 @@ impl Transports {
             relay,
             custom,
             poll_recv_counter: Default::default(),
-            source_addrs: Default::default(),
+            recv_infos: Default::default(),
         })
     }
 
@@ -257,7 +257,7 @@ impl Transports {
         match self.inner_poll_recv(cx, bufs, metas)? {
             Poll::Pending | Poll::Ready(0) => Poll::Pending,
             Poll::Ready(n) => {
-                sock.process_datagrams(&mut bufs[..n], &mut metas[..n], &self.source_addrs[..n]);
+                sock.process_datagrams(&mut bufs[..n], &mut metas[..n], &self.recv_infos[..n]);
                 Poll::Ready(Ok(n))
             }
         }
@@ -274,7 +274,7 @@ impl Transports {
 
         macro_rules! poll_transport {
             ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas, &mut self.source_addrs)? {
+                match $socket.poll_recv(cx, bufs, metas, &mut self.recv_infos)? {
                     Poll::Pending | Poll::Ready(0) => {}
                     Poll::Ready(n) => {
                         return Poll::Ready(Ok(n));
@@ -550,6 +550,58 @@ impl fmt::Debug for Addr {
     }
 }
 
+/// Per-packet recv data filled in by transports during [`poll_recv`][CustomEndpoint::poll_recv].
+///
+/// This carries the bits of [`noq_udp::RecvMeta`] that custom transports
+/// can't express through `RecvMeta` itself: the remote address as a
+/// [`CustomAddr`] and, optionally, the local custom address that received
+/// the packet. For IP transports the kernel populates `RecvMeta` directly;
+/// for relays the local URL is the remote's relay URL — so for them this
+/// struct is filled in only with the remote variant.
+///
+/// Custom transport authors construct values via [`RecvInfo::new`], which
+/// only accepts [`CustomAddr`].
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
+#[derive(Clone, Debug, Default)]
+pub struct RecvInfo {
+    remote: Addr,
+    local: Option<CustomAddr>,
+}
+
+impl RecvInfo {
+    /// Creates a [`RecvInfo`] from an internal [`Addr`], with no local custom
+    /// address. Used by IP and relay recv paths.
+    pub(crate) fn from_addr(remote: Addr) -> Self {
+        Self {
+            remote,
+            local: None,
+        }
+    }
+
+    pub(crate) fn remote(&self) -> &Addr {
+        &self.remote
+    }
+
+    pub(crate) fn local(&self) -> Option<&CustomAddr> {
+        self.local.as_ref()
+    }
+}
+
+#[cfg(feature = "unstable-custom-transports")]
+impl RecvInfo {
+    /// Creates a new [`RecvInfo`] for an incoming packet on a custom transport.
+    ///
+    /// `remote` is the remote custom address. `local` is the local custom
+    /// address that received this packet, if the transport can identify it;
+    /// pass `None` otherwise.
+    pub fn new(remote: CustomAddr, local: Option<CustomAddr>) -> Self {
+        Self {
+            remote: Addr::Custom(remote),
+            local,
+        }
+    }
+}
+
 impl Default for Addr {
     fn default() -> Self {
         Self::Ip(SocketAddr::V6(SocketAddrV6::new(
@@ -600,7 +652,7 @@ impl From<Addr> for TransportAddr {
         match value {
             Addr::Ip(addr) => TransportAddr::Ip(addr),
             Addr::Relay(url, _) => TransportAddr::Relay(url),
-            Addr::Custom(custom_addr) => TransportAddr::Custom(custom_addr),
+            Addr::Custom(addr) => TransportAddr::Custom(addr),
         }
     }
 }
@@ -619,7 +671,7 @@ impl Addr {
         match self {
             Self::Ip(ip) => Some(ip),
             Self::Relay(..) => None,
-            Self::Custom(..) => None,
+            Self::Custom(_) => None,
         }
     }
 
