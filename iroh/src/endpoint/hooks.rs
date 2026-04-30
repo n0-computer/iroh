@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use iroh_base::EndpointAddr;
 
-use crate::endpoint::{connection::ConnectionInfo, quic::VarInt};
+use crate::endpoint::{connection::Connection, quic::VarInt};
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -89,9 +89,19 @@ pub trait EndpointHooks: std::fmt::Debug + Send + Sync {
     /// At this point in time, we know the remote's endpoint id and ALPN. If any hook returns
     /// [`AfterHandshakeOutcome::Reject`], the connection is closed with the provided error code
     /// and reason.
+    ///
+    /// The hook receives the [`Connection`] by reference so that implementations can read any
+    /// information they need synchronously. Do not clone the [`Connection`] out of the hook:
+    /// holding a strong [`Connection`] handle keeps the connection alive and disables
+    /// close-on-drop, which the primary use sites of the connection might rely on. If you need to
+    /// keep a reference for later (for example to wait for the connection to close, or to
+    /// look up the connection in a map), call [`Connection::weak_handle`] and store the
+    /// resulting [`WeakConnectionHandle`] instead.
+    ///
+    /// [`WeakConnectionHandle`]: crate::endpoint::WeakConnectionHandle
     fn after_handshake<'a>(
         &'a self,
-        _conn: &'a ConnectionInfo,
+        _conn: &'a Connection,
     ) -> impl Future<Output = AfterHandshakeOutcome> + Send + 'a {
         async { AfterHandshakeOutcome::accept() }
     }
@@ -103,10 +113,7 @@ pub(crate) trait DynEndpointHooks: std::fmt::Debug + Send + Sync {
         remote_addr: &'a EndpointAddr,
         alpn: &'a [u8],
     ) -> BoxFuture<'a, BeforeConnectOutcome>;
-    fn after_handshake<'a>(
-        &'a self,
-        conn: &'a ConnectionInfo,
-    ) -> BoxFuture<'a, AfterHandshakeOutcome>;
+    fn after_handshake<'a>(&'a self, conn: &'a Connection) -> BoxFuture<'a, AfterHandshakeOutcome>;
 }
 
 impl<T: EndpointHooks> DynEndpointHooks for T {
@@ -118,10 +125,7 @@ impl<T: EndpointHooks> DynEndpointHooks for T {
         Box::pin(EndpointHooks::before_connect(self, remote_addr, alpn))
     }
 
-    fn after_handshake<'a>(
-        &'a self,
-        conn: &'a ConnectionInfo,
-    ) -> BoxFuture<'a, AfterHandshakeOutcome> {
+    fn after_handshake<'a>(&'a self, conn: &'a Connection) -> BoxFuture<'a, AfterHandshakeOutcome> {
         Box::pin(EndpointHooks::after_handshake(self, conn))
     }
 }
@@ -153,7 +157,7 @@ impl EndpointHooksList {
         BeforeConnectOutcome::Accept
     }
 
-    pub(super) async fn after_handshake(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
+    pub(super) async fn after_handshake(&self, conn: &Connection) -> AfterHandshakeOutcome {
         for hook in self.inner.iter() {
             match hook.after_handshake(conn).await {
                 AfterHandshakeOutcome::Accept => continue,

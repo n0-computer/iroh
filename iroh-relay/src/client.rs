@@ -150,6 +150,8 @@ pub struct ClientBuilder {
     proxy_url: Option<Url>,
     /// The secret key of this client.
     secret_key: SecretKey,
+    /// Query parameters appended to the dial URL.
+    query_params: Vec<(String, String)>,
     /// The DNS resolver to use.
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
@@ -170,6 +172,7 @@ impl ClientBuilder {
             tls_config: None,
             proxy_url: None,
             secret_key,
+            query_params: Vec::new(),
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
@@ -223,6 +226,15 @@ impl ClientBuilder {
         self
     }
 
+    /// Appends a query parameter to the relay URL the client connects to.
+    ///
+    /// Multiple calls append. Calling this with the same key twice keeps
+    /// both values.
+    pub fn query_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.query_params.push((key.into(), value.into()));
+        self
+    }
+
     /// Set the capacity of the cache for public keys.
     pub fn key_cache_capacity(mut self, capacity: usize) -> Self {
         self.key_cache = KeyCache::new(capacity);
@@ -256,6 +268,9 @@ impl ClientBuilder {
                     url: dial_url.clone()
                 })
             })?;
+        for (key, value) in &self.query_params {
+            dial_url.query_pairs_mut().append_pair(key, value);
+        }
 
         debug!(%dial_url, "Dialing relay by websocket");
 
@@ -374,6 +389,9 @@ impl ClientBuilder {
                     url: dial_url.clone()
                 })
             })?;
+        for (key, value) in &self.query_params {
+            dial_url.query_pairs_mut().append_pair(key, value);
+        }
 
         debug!(%dial_url, "Dialing relay by websocket");
 
