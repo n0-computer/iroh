@@ -1419,9 +1419,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "flume"
-version = "0.11.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
+checksum = "5e139bc46ca777eb5efaf62df0ab8cc5fd400866427e56c68b22e414e53bd3be"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -2840,17 +2840,18 @@ checksum = "d3d25b0e0b648a86960ac23b7ad4abb9717601dec6f66c165f5b037f3f03065f"
 
 [[package]]
 name = "mainline"
-version = "6.0.1"
+version = "6.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ff27d378ca495eaf3be8616d5d7319c1c18e93fd60e13698fcdc7e19448f1a4"
+checksum = "578beb3b6dcbe6f3f60a89547a13b34d36bda41dc056540bac5f4e4340ebf25c"
 dependencies = [
  "crc",
+ "digest",
  "document-features",
  "dyn-clone",
  "ed25519-dalek",
  "flume",
  "futures-lite",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "lru",
  "serde",
  "serde_bencode",
