@@ -270,7 +270,7 @@ impl Transports {
         bufs: &mut [IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
         macro_rules! poll_transport {
             ($socket:expr) => {

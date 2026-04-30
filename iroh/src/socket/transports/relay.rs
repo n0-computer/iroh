@@ -87,12 +87,17 @@ impl RelayTransport {
         metas: &mut [noq_udp::RecvMeta],
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(
+            bufs.len(),
+            source_addrs.len(),
+            "non matching bufs & source_addrs"
+        );
         let mut num_msgs = 0;
-        for ((buf_out, meta_out), addr) in bufs
-            .iter_mut()
-            .zip(metas.iter_mut())
-            .zip(source_addrs.iter_mut())
-        {
+        for i in 0..bufs.len() {
+            let buf_out = &mut bufs[i];
+            let meta_out = &mut metas[i];
+            let addr = &mut source_addrs[i];
             let dm = match self.poll_recv_queue(cx) {
                 Poll::Ready(Some(recv)) => recv,
                 Poll::Ready(None) => {
