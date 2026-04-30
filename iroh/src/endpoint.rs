@@ -81,9 +81,9 @@ pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
     connection::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-        ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingAddr,
-        IncomingLocalAddr, IncomingZeroRtt, IncomingZeroRttConnection, OutgoingZeroRtt,
-        OutgoingZeroRttConnection, RemoteEndpointIdError, RetryError, ZeroRttStatus,
+        ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingLocalAddr,
+        IncomingZeroRtt, IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
+        RemoteEndpointIdError, RetryError, WeakConnectionHandle, ZeroRttStatus,
     },
     quic::{
         AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
