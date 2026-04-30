@@ -25,7 +25,7 @@ backon = { version = "1.4" }
 blake3 = { version = "1.8.3", default-features = false }
 bytes = "1.11"
 ctutils = { version = "0.4.0", default-features = false }
-data-encoding = "2.2"
+data-encoding = "2.11"
 der = "=0.8.0-rc.10" # only needed for exact version pin (until ed25519-dalek is updated)
 derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_into", "deref", "from_str", "into_iterator"] }
 ed25519-dalek = { version = "=3.0.0-pre.6", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }

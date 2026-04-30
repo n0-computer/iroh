@@ -21,7 +21,7 @@ workspace = true
 [dependencies]
 blake3 = "1.8.2"
 bytes = "1.11"
-data-encoding = "2.6.0"
+data-encoding = "2.11.0"
 derive_more = { version = "2.0.1", features = [
     "debug",
     "display",
