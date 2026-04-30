@@ -568,8 +568,8 @@ impl Socket {
         metas: &mut [noq_udp::RecvMeta],
         recv_infos: &[transports::RecvInfo],
     ) {
-        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        debug_assert_eq!(
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(
             bufs.len(),
             recv_infos.len(),
             "non matching bufs & recv_infos"
