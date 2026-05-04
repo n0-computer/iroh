@@ -63,7 +63,7 @@ hickory-resolver = { version = "0.26.0", features = ["tls-ring", "https-ring"] }
 iroh = { path = "../iroh" }
 n0-tracing-test = "0.3"
 rand = "0.10"
-simple-dns = "0.9"
+simple-dns = "0.11"
 rand_chacha = "0.10"
 reqwest = { version = "0.13", default-features = false, features = [
     "rustls-no-provider", "http2", "json"
