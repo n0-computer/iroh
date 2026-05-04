@@ -336,8 +336,18 @@ pub(crate) struct RateLimited<S> {
     metrics: Arc<Metrics>,
 }
 
+/// A token bucket used for rate-limiting.
+///
+/// The bucket holds up to `max` tokens, refilled at a fixed rate of
+/// `bytes_per_second` over `refill_period` intervals. [`Bucket::consume`] drains
+/// tokens and reports when the next attempt is allowed.
+///
+/// Exposed so that embedders mounting the relay protocol on a custom HTTP
+/// server (where the stream is already framed and the internal
+/// `RateLimited` wrapper cannot be used) can apply the same rate-limit
+/// semantics at the frame layer.
 #[derive(Debug)]
-struct Bucket {
+pub struct Bucket {
     // The current bucket fill
     fill: i64,
     // The maximum bucket fill
@@ -359,7 +369,15 @@ pub struct InvalidBucketConfig {
 }
 
 impl Bucket {
-    fn new(
+    /// Creates a new bucket starting full at `max` tokens, refilled at
+    /// `bytes_per_second` over `refill_period` intervals.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidBucketConfig`] when `max`, `bytes_per_second`, or
+    /// `refill_period` are non-positive, or when the configuration would refill
+    /// less than one token per period.
+    pub fn new(
         max: i64,
         bytes_per_second: i64,
         refill_period: time::Duration,
@@ -400,7 +418,15 @@ impl Bucket {
         self.last_fill += self.refill_period * refill_periods;
     }
 
-    fn consume(&mut self, bytes: usize) -> Result<(), time::Instant> {
+    /// Attempts to consume `bytes` tokens from the bucket.
+    ///
+    /// Returns `Ok(())` if enough tokens were available.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(deadline)` with the [`time::Instant`] at which enough
+    /// tokens will have refilled to allow the request.
+    pub fn consume(&mut self, bytes: usize) -> Result<(), time::Instant> {
         let bytes = i64::try_from(bytes).unwrap_or(i64::MAX);
         self.update_state();
 
