@@ -17,6 +17,10 @@ pub const RELAY_PROBE_PATH: &str = "/ping";
 /// The HTTP header name for relay client authentication
 pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay-client-auth-v1");
 
+/// The URL query parameter name used to pass the authorization token when
+/// HTTP headers are not available (notably, in browsers).
+pub(crate) const AUTH_TOKEN_URL_QUERY_PARAM: &str = "token";
+
 /// The relay protocol version negotiated between client and server.
 ///
 /// Sent as the websocket sub-protocol header `Sec-Websocket-Protocol` from

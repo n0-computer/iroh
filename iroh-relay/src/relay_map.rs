@@ -151,8 +151,8 @@ impl RelayMap {
     /// Any entries added to this relay map *after* calling this will not have the token set.
     ///
     /// See [`RelayConfig::with_auth_token`] for details.
-    pub fn with_auth_token(self, auth_token: impl ToString) -> Self {
-        let auth_token = auth_token.to_string();
+    pub fn with_auth_token(self, auth_token: impl Into<String>) -> Self {
+        let auth_token = auth_token.into();
         for config in self.relays.write().expect("poisoned").values_mut() {
             *config = Arc::new(config.as_ref().clone().with_auth_token(auth_token.clone()));
         }

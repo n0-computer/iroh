@@ -47,9 +47,8 @@ use tracing::{Instrument, debug, error, info, info_span, instrument};
 
 use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
-    client::AUTH_TOKEN_URL_QUERY_PARAM,
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
-    http::RELAY_PROBE_PATH,
+    http::{AUTH_TOKEN_URL_QUERY_PARAM, RELAY_PROBE_PATH},
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
 };
 
@@ -186,35 +185,37 @@ impl ClientRequest {
         &self.request.headers
     }
 
-    /// Returns the authorization token if set in the client's HTTP request.
+    /// Returns the authorization token from the client's HTTP request, if any.
     ///
-    /// If the `Authorization` header is set, returns its value with the `Bearer ` prefix
-    /// removed, or `None` if the header value is not a valid UTF-8 string or doesn't start
-    /// with `Bearer `.
+    /// Walks the `Authorization` headers in order and returns the value of
+    /// the first one whose scheme is `Bearer` (matched case-insensitively).
+    /// Headers with a different scheme are skipped.
     ///
-    /// If the `Authorization` header is not set, returns the `token` parameter of the URL's
-    /// query string.
+    /// If none of the `Authorization` headers carries a `Bearer` scheme,
+    /// returns the value of the `token` URL query parameter, or `None` if
+    /// the URL has no `token` parameter.
     ///
-    /// Returns `None` otherwise.
+    /// If an `Authorization` header value is not valid UTF-8 the function returns
+    /// `None` immediately, without checking later headers or the URL query.
     pub fn auth_token(&self) -> Option<String> {
-        if let Some(value) = self.request.headers.get(AUTHORIZATION) {
-            value
-                .to_str()
-                .ok()
-                .and_then(|s| s.strip_prefix("Bearer "))
-                .map(ToString::to_string)
-        } else {
-            self.query_pairs()
-                .find_map(|(name, value)| (name == AUTH_TOKEN_URL_QUERY_PARAM).then(|| value))
-                .map(|s| s.to_string())
+        for value in self.request.headers.get_all(AUTHORIZATION) {
+            let value = value.to_str().ok()?;
+            if let Some((scheme, token)) = value.split_once(' ')
+                && scheme.eq_ignore_ascii_case("Bearer")
+            {
+                return Some(token.to_string());
+            }
         }
+        self.query_pairs()
+            .find(|(name, _)| name == AUTH_TOKEN_URL_QUERY_PARAM)
+            .map(|(_, value)| value.into_owned())
     }
 }
 
 /// Access check callback used by [`AccessConfig::Restricted`].
 ///
-/// Returns [`Access::Allow`] to admit the endpoint, [`Access::Deny`] to
-/// reject it.
+/// Returns [`Access::Allow`] to admit the endpoint or [`Access::Deny`] to
+/// reject it. The returned future may borrow from the [`ClientRequest`].
 pub type AccessCheck = Box<
     dyn for<'a> Fn(&'a ClientRequest) -> Pin<Box<dyn Future<Output = Access> + Send + 'a>>
         + Send
@@ -1246,12 +1247,12 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that [`ClientBuilder::query_param`] forwards URL query
-    /// parameters on the WebSocket upgrade so the [`AccessConfig::Restricted`]
-    /// hook can read them via [`ClientRequest::query_pairs`].
+    /// Verifies that [`ClientBuilder::auth_token`] forwards a token to the
+    /// relay so the [`AccessConfig::Restricted`] hook can read it via
+    /// [`ClientRequest::auth_token`].
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_client_query_param_forwarded() -> Result<()> {
+    async fn test_relay_client_auth_token_forwarded() -> Result<()> {
         const TOKEN: &str = "secret-token";
 
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);

@@ -44,8 +44,6 @@ mod tls;
 #[cfg(not(wasm_browser))]
 mod util;
 
-pub(crate) const AUTH_TOKEN_URL_QUERY_PARAM: &str = "token";
-
 /// Connection errors.
 ///
 /// `ConnectError` contains `DialError`, errors that can occur while dialing the
@@ -156,6 +154,10 @@ pub struct ClientBuilder {
     proxy_url: Option<Url>,
     /// The secret key of this client.
     secret_key: SecretKey,
+    /// Optional authorization token.
+    ///
+    /// Sent as an `Authorization: Bearer` header on native targets and as
+    /// a `?token=` query parameter under Wasm. See [`ClientBuilder::auth_token`].
     auth_token: Option<String>,
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
@@ -232,19 +234,16 @@ impl ClientBuilder {
 
     /// Sets an authorization token.
     ///
-    /// On native targets, the token will be set as an `Authorization: Bearer TOKEN` header on
-    /// the WebSocket request which establishes the relay connection.
+    /// On native targets, the token is sent as an `Authorization: Bearer TOKEN`
+    /// header on the WebSocket upgrade request that establishes the relay
+    /// connection. The token must be a valid HTTP header field value, if not
+    /// [`Self::connect`] will return [`ConnectError::InvalidAuthToken`].
     ///
-    /// When compiled to WebAssembly, the token will set as a `?token=TOKEN` query parameter in
-    /// the URL for the WebSocket request, because browsers don't support setting headers on
-    /// WebSocket requests.
-    ///
-    /// # Errors
-    ///
-    /// Tokens must be a valid HTTP header field values. When an invalid value is set,
-    /// [`Self::Connect`] returns [`ConnectError::InvalidAuthToken`].
-    pub fn auth_token(mut self, token: impl ToString) -> Self {
-        self.auth_token = Some(token.to_string());
+    /// When compiled to WebAssembly the token is sent as a `?token=TOKEN`
+    /// query parameter on the upgrade URL, since browsers don't allow setting
+    /// headers on WebSocket requests.
+    pub fn auth_token(mut self, token: impl Into<String>) -> Self {
+        self.auth_token = Some(token.into());
         self
     }
 
@@ -396,6 +395,8 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     #[cfg(wasm_browser)]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
+        use crate::http::AUTH_TOKEN_URL_QUERY_PARAM;
+
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
