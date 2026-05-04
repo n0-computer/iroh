@@ -193,10 +193,18 @@ impl IpTransport {
         metas: &mut [noq_udp::RecvMeta],
         recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(
+            bufs.len(),
+            recv_infos.len(),
+            "non matching bufs & recv_infos"
+        );
         match self.socket.poll_recv_noq(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(n)) => {
-                for (recv_info, meta) in recv_infos.iter_mut().zip(metas.iter_mut()).take(n) {
+                for i in 0..n {
+                    let meta = &mut metas[i];
+                    let recv_info = &mut recv_infos[i];
                     if meta.addr.is_ipv4() {
                         // The AsyncUdpSocket is an AF_INET6 socket and needs to show this
                         // as coming from an IPv4-mapped IPv6 addresses, since Noq will

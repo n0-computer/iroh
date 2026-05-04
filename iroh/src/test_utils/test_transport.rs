@@ -266,9 +266,13 @@ impl CustomEndpoint for TestTransport {
         metas: &mut [noq_udp::RecvMeta],
         recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(
+            bufs.len(),
+            recv_infos.len(),
+            "non matching bufs & recv_infos"
+        );
         let n = bufs.len();
-        assert_eq!(n, metas.len(), "non matching bufs & metas");
-        assert_eq!(n, recv_infos.len(), "non matching bufs & source_addrs");
         if n == 0 {
             return Poll::Ready(Ok(0));
         }
@@ -284,9 +288,10 @@ impl CustomEndpoint for TestTransport {
             Poll::Ready(n) => n,
         };
         let mut count = 0;
-        for (((packet, meta), buf), recv_info) in
-            packets.into_iter().zip(metas).zip(bufs).zip(recv_infos)
-        {
+        for (i, packet) in packets.into_iter().enumerate() {
+            let meta = &mut metas[i];
+            let buf = &mut bufs[i];
+            let recv_info = &mut recv_infos[i];
             if buf.len() < packet.data.len() {
                 break;
             }
