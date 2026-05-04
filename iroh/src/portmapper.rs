@@ -7,9 +7,10 @@ use std::net::SocketAddrV4;
 
 #[cfg(all(not(wasm_browser), feature = "portmapper"))]
 pub use ::portmapper::Metrics;
-#[cfg(not(all(not(wasm_browser), feature = "portmapper")))]
-pub use stub::Metrics;
 use tokio::sync::watch;
+
+#[cfg(not(all(not(wasm_browser), feature = "portmapper")))]
+pub use self::stub::Metrics;
 
 /// Configuration for the portmapper service (UPnP, PCP, NAT-PMP).
 ///
@@ -100,7 +101,7 @@ impl Client {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(not(all(not(wasm_browser), feature = "portmapper")))]
 mod stub {
     use iroh_metrics::{Counter, MetricsGroup};
     use serde::{Deserialize, Serialize};

@@ -14,51 +14,53 @@ use hickory_server::proto::{
     },
     serialize::binary::BinDecodable,
 };
-use n0_error::{AnyError, StdResultExt, e, stack_error};
-use pkarr::SignedPacket;
+use iroh_base::PublicKey;
+use iroh_dns::pkarr::SignedPacket;
+use n0_error::{e, stack_error};
 
-#[derive(
-    derive_more::From, derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy,
-)]
-pub struct PublicKeyBytes([u8; 32]);
+/// A lightweight `[u8; 32]` wrapper used as a key for caches and database lookups.
+///
+/// Does not validate that the bytes are a valid public key on construction.
+/// If constructed from invalid bytes, methods like `Display` and `to_z32`
+/// will panic. In practice, bytes always originate from a validated `PublicKey`
+/// or a database that was written from one.
+#[derive(derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy)]
+pub(crate) struct PublicKeyBytes([u8; 32]);
 
 #[stack_error(derive, add_meta, from_sources)]
-pub enum InvalidPublicKeyBytes {
-    #[error(transparent)]
-    Encoding {
-        #[error(std_err)]
-        source: z32::Z32Error,
-    },
+pub(crate) enum InvalidPublicKeyBytes {
+    #[error("invalid z-base-32 encoding")]
+    InvalidEncoding,
     #[error("invalid length, must be 32 bytes")]
     InvalidLength,
 }
 
 impl PublicKeyBytes {
-    pub fn new(bytes: [u8; 32]) -> Self {
+    /// Wraps raw bytes without validating they are a valid public key.
+    ///
+    /// # Safety (logical)
+    ///
+    /// The caller must ensure the bytes represent a valid Ed25519 public key.
+    /// Passing invalid bytes will cause panics in `Display`, `Debug`, and `to_z32`.
+    pub(crate) fn new_unchecked(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    pub fn from_z32(s: &str) -> Result<Self, InvalidPublicKeyBytes> {
-        let bytes = z32::decode(s.as_bytes())?;
-        let bytes = TryInto::<[u8; 32]>::try_into(&bytes[..])
-            .map_err(|_| e!(InvalidPublicKeyBytes::InvalidLength))?;
-        Ok(Self(bytes))
+    pub(crate) fn from_z32(s: &str) -> Result<Self, InvalidPublicKeyBytes> {
+        let pk = PublicKey::from_z32(s).map_err(|_| e!(InvalidPublicKeyBytes::InvalidEncoding))?;
+        Ok(Self(*pk.as_bytes()))
     }
 
-    pub fn to_z32(self) -> String {
-        z32::encode(&self.0)
+    pub(crate) fn to_z32(self) -> String {
+        PublicKey::from_bytes(&self.0).expect("valid key").to_z32()
     }
 
-    pub fn to_bytes(self) -> [u8; 32] {
-        self.0
-    }
-
-    pub fn as_bytes(&self) -> &[u8; 32] {
+    pub(crate) fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 
-    pub fn from_signed_packet(packet: &SignedPacket) -> Self {
-        Self(packet.public_key().to_bytes())
+    pub(crate) fn from_signed_packet(packet: &SignedPacket) -> Self {
+        Self(*packet.public_key().as_bytes())
     }
 }
 
@@ -71,19 +73,6 @@ impl fmt::Display for PublicKeyBytes {
 impl fmt::Debug for PublicKeyBytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "PublicKeyBytes({})", self.to_z32())
-    }
-}
-
-impl From<pkarr::PublicKey> for PublicKeyBytes {
-    fn from(value: pkarr::PublicKey) -> Self {
-        Self(value.to_bytes())
-    }
-}
-
-impl TryFrom<PublicKeyBytes> for pkarr::PublicKey {
-    type Error = AnyError;
-    fn try_from(value: PublicKeyBytes) -> Result<Self, Self::Error> {
-        pkarr::PublicKey::try_from(&value.0).anyerr()
     }
 }
 
@@ -101,21 +90,21 @@ impl AsRef<[u8; 32]> for PublicKeyBytes {
     }
 }
 
-pub fn signed_packet_to_hickory_message(
+pub(crate) fn signed_packet_to_hickory_message(
     signed_packet: &SignedPacket,
 ) -> Result<Message, ProtoError> {
     let encoded = signed_packet.encoded_packet();
-    let message = Message::from_bytes(&encoded)?;
+    let message = Message::from_bytes(encoded)?;
     Ok(message)
 }
 
-pub fn signed_packet_to_hickory_records_without_origin(
+pub(crate) fn signed_packet_to_hickory_records_without_origin(
     signed_packet: &SignedPacket,
     filter: impl Fn(&Record) -> bool,
 ) -> Result<(Label, BTreeMap<RrKey, Arc<RecordSet>>), ProtoError> {
     let common_zone = Label::from_utf8(&signed_packet.public_key().to_z32())?;
     let mut message = signed_packet_to_hickory_message(signed_packet)?;
-    let answers = message.take_answers();
+    let answers = std::mem::take(&mut message.answers);
     let mut output: BTreeMap<RrKey, Arc<RecordSet>> = BTreeMap::new();
     for mut record in answers.into_iter() {
         // disallow SOA and NS records
@@ -123,7 +112,7 @@ pub fn signed_packet_to_hickory_records_without_origin(
             continue;
         }
         // expect the z32 encoded pubkey as root name
-        let name = record.name();
+        let name = &record.name;
         if name.num_labels() < 1 {
             continue;
         }
@@ -137,9 +126,9 @@ pub fn signed_packet_to_hickory_records_without_origin(
 
         let name_without_zone =
             Name::from_labels(name.iter().take(name.num_labels() as usize - 1))?;
-        record.set_name(name_without_zone);
+        record.name = name_without_zone;
 
-        let rrkey = RrKey::new(record.name().into(), record.record_type());
+        let rrkey = RrKey::new(record.name.clone().into(), record.record_type());
         match output.entry(rrkey) {
             btree_map::Entry::Vacant(e) => {
                 let set: RecordSet = record.into();
@@ -156,7 +145,7 @@ pub fn signed_packet_to_hickory_records_without_origin(
     Ok((common_zone, output))
 }
 
-pub fn record_set_append_origin(
+pub(crate) fn record_set_append_origin(
     input: &RecordSet,
     origin: &Name,
     serial: u32,
@@ -166,7 +155,7 @@ pub fn record_set_append_origin(
     // TODO: less clones
     for record in input.records_without_rrsigs() {
         let mut record = record.clone();
-        record.set_name(new_name.clone());
+        record.name = new_name.clone();
         output.insert(record, serial);
     }
     Ok(output)

@@ -47,7 +47,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iroh_base::EndpointId;
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     join_all,
@@ -103,10 +102,12 @@ pub struct Router {
 }
 
 /// Builder for creating a [`Router`] for accepting protocols.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct RouterBuilder {
     endpoint: Endpoint,
     protocols: ProtocolMap,
+    #[debug(skip)]
+    incoming_filter: Option<IncomingFilter>,
 }
 
 #[allow(missing_docs)]
@@ -159,6 +160,59 @@ impl From<quic::ClosedStream> for AcceptError {
         Self::from_err(err)
     }
 }
+
+/// Verdict from a [`IncomingFilter`] for an incoming connection.
+///
+/// The filter can accept the connection, send a retry token to validate
+/// the source address, actively refuse the connection, or silently drop it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IncomingFilterOutcome {
+    /// Accept the connection.
+    Accept,
+    /// Tell the remote to retry with a token (a QUIC `RETRY` packet).
+    ///
+    /// What this does depends on the connection type:
+    ///
+    /// - **Direct (UDP) connections** : this is QUIC source address
+    ///   validation. If the socket address was spoofed, the retry token is
+    ///   sent to the spoofed address, so we never hear from the attacker
+    ///   again. If the address was real, the client repeats the connection
+    ///   attempt with the token, and the next [`Incoming`] for that flow has
+    ///   [`Incoming::remote_addr_validated`] set to `true`. The token is
+    ///   bound to the source address.
+    ///
+    /// - **Relay connections** : there is no source address to validate
+    ///   (the relay already vouches for the packet origin), so the
+    ///   "validation" itself has no security meaning. However, the retry
+    ///   still imposes a real cost on the client: an extra round trip
+    ///   through the relay plus the work of sending a fresh ClientHello
+    ///   with the token. This filters out adversarial clients that
+    ///   don't bother to handle retry tokens, and adds latency before
+    ///   we get to the more expensive part of the handshake. The next
+    ///   [`Incoming`] for that flow will also have
+    ///   [`Incoming::remote_addr_validated`] set to `true`, but again,
+    ///   that just means the client cooperated with the retry.
+    ///
+    /// In short: for direct connections, `Retry` is address validation;
+    /// for relay connections, it is a cost-imposition mechanism.
+    ///
+    /// [`Incoming`]: crate::endpoint::Incoming
+    /// [`Incoming::remote_addr_validated`]: crate::endpoint::Incoming::remote_addr_validated
+    Retry,
+    /// Actively refuse the connection. The remote will receive a
+    /// CONNECTION_REFUSED error immediately.
+    Reject,
+    /// Ignore the connection entirely. The remote gets no response and will
+    /// eventually time out.
+    Ignore,
+}
+
+/// Filter predicate used for early filtering of incoming connections before the handshake completes.
+///
+/// See [`RouterBuilder::incoming_filter`] for more details.
+pub type IncomingFilter =
+    Arc<dyn Fn(&crate::endpoint::Incoming) -> IncomingFilterOutcome + Send + Sync + 'static>;
 
 /// Handler for incoming connections.
 ///
@@ -398,7 +452,26 @@ impl RouterBuilder {
         Self {
             endpoint,
             protocols: ProtocolMap::default(),
+            incoming_filter: None,
         }
+    }
+
+    /// Sets a filter that decides whether to accept an incoming connection before the
+    /// TLS handshake completes.
+    ///
+    /// The filter is called with the raw [`Incoming`] for each connection attempt
+    /// and returns an [`IncomingFilterOutcome`] that determines what happens next.
+    ///
+    /// Implementers have full access to the [`Incoming`] and can use any of its
+    /// methods (including [`Incoming::decrypt`]) to make their decision. Note that
+    /// `decrypt()` is relatively expensive, so filters should reject based on
+    /// cheaper signals (e.g. remote address) first.
+    ///
+    /// [`Incoming`]: crate::endpoint::Incoming
+    /// [`Incoming::decrypt`]: crate::endpoint::Incoming::decrypt
+    pub fn incoming_filter(mut self, filter: IncomingFilter) -> Self {
+        self.incoming_filter = Some(filter);
+        self
     }
 
     /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
@@ -434,6 +507,7 @@ impl RouterBuilder {
             .collect::<Vec<_>>();
 
         let protocols = Arc::new(self.protocols);
+        let incoming_filter = self.incoming_filter;
         self.endpoint.set_alpns(alpns);
 
         let mut join_set = JoinSet::new();
@@ -484,6 +558,31 @@ impl RouterBuilder {
                         let Some(incoming) = incoming else {
                             break; // Endpoint is closed.
                         };
+
+                        if let Some(filter) = &incoming_filter {
+                            match filter(&incoming) {
+                                IncomingFilterOutcome::Accept => {}
+                                IncomingFilterOutcome::Retry => {
+                                    if !incoming.remote_addr_validated() {
+                                        warn!(
+                                            "filter returned Retry for an already validated connection",
+                                        );
+                                    }
+                                    if let Err(err) = incoming.retry() {
+                                        err.into_incoming().refuse();
+                                    }
+                                    continue;
+                                }
+                                IncomingFilterOutcome::Reject => {
+                                    incoming.refuse();
+                                    continue;
+                                }
+                                IncomingFilterOutcome::Ignore => {
+                                    incoming.ignore();
+                                    continue;
+                                }
+                            }
+                        }
 
                         let protocols = protocols.clone();
                         let token = handler_cancel_token.child_token();
@@ -539,6 +638,7 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
         }
     };
     tracing::Span::current().record("alpn", String::from_utf8_lossy(&alpn).to_string());
+
     let Some(handler) = protocols.get(&alpn) else {
         warn!("Ignoring connection: unsupported ALPN protocol");
         return;
@@ -549,6 +649,7 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
                 "remote",
                 tracing::field::display(connection.remote_id().fmt_short()),
             );
+
             if let Err(err) = handler.accept(connection).await {
                 warn!("Handling incoming connection ended with error: {err}");
             }
@@ -559,62 +660,12 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
     }
 }
 
-/// Wraps an existing protocol, limiting its access,
-/// based on the provided function.
-///
-/// Any refused connection will be closed with an error code of `0` and reason `not allowed`.
-#[derive(derive_more::Debug, Clone)]
-pub struct AccessLimit<P: ProtocolHandler + Clone> {
-    proto: P,
-    #[debug("limiter")]
-    limiter: Arc<dyn Fn(EndpointId) -> bool + Send + Sync + 'static>,
-}
-
-impl<P: ProtocolHandler + Clone> AccessLimit<P> {
-    /// Create a new `AccessLimit`.
-    ///
-    /// The function should return `true` for endpoints that are allowed to
-    /// connect, and `false` otherwise.
-    pub fn new<F>(proto: P, limiter: F) -> Self
-    where
-        F: Fn(EndpointId) -> bool + Send + Sync + 'static,
-    {
-        Self {
-            proto,
-            limiter: Arc::new(limiter),
-        }
-    }
-}
-
-impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
-    fn on_accepting(
-        &self,
-        accepting: Accepting,
-    ) -> impl Future<Output = Result<Connection, AcceptError>> + Send {
-        self.proto.on_accepting(accepting)
-    }
-
-    async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
-        let remote = conn.remote_id();
-        let is_allowed = (self.limiter)(remote);
-        if !is_allowed {
-            conn.close(0u32.into(), b"not allowed");
-            return Err(e!(AcceptError::NotAllowed));
-        }
-        self.proto.accept(conn).await?;
-        Ok(())
-    }
-
-    fn shutdown(&self) -> impl Future<Output = ()> + Send {
-        self.proto.shutdown()
-    }
-}
-
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{sync::Mutex, time::Duration};
 
     use n0_error::{Result, StdResultExt};
+    use n0_tracing_test::traced_test;
 
     use super::*;
     use crate::endpoint::{
@@ -657,31 +708,6 @@ mod tests {
 
             Ok(())
         }
-    }
-
-    #[tokio::test]
-    async fn test_limiter_router() -> Result {
-        // tracing_subscriber::fmt::try_init().ok();
-        let e1 = Endpoint::bind(presets::Minimal).await?;
-        // deny all access
-        let proto = AccessLimit::new(Echo, |_endpoint_id| false);
-        let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
-
-        let addr1 = r1.endpoint().addr();
-        dbg!(&addr1);
-        let e2 = Endpoint::bind(presets::Minimal).await?;
-
-        println!("connecting");
-        let conn = e2.connect(addr1, ECHO_ALPN).await?;
-
-        let (_send, mut recv) = conn.open_bi().await.anyerr()?;
-        let response = recv.read_to_end(1000).await.unwrap_err();
-        assert!(format!("{response:#?}").contains("not allowed"));
-
-        r1.shutdown().await.anyerr()?;
-        e2.close().await;
-
-        Ok(())
     }
 
     #[tokio::test]
@@ -728,6 +754,255 @@ mod tests {
         e2.close().await;
 
         Ok(())
+    }
+
+    /// Test that `Accepting::remote_addr()` is consistent with `Incoming::remote_addr()`.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_accepting_remote_addr() -> Result {
+        use crate::endpoint::{IncomingAddr, presets};
+
+        let e1 = Endpoint::builder(presets::Minimal)
+            .alpns(vec![ECHO_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let addr1 = e1.addr();
+
+        let e2 = Endpoint::bind(presets::Minimal).await?;
+
+        // Spawn the client connect so it runs concurrently with accept.
+        let connect_task = tokio::spawn({
+            let addr1 = addr1.clone();
+            let e2 = e2.clone();
+            async move { e2.connect(addr1, ECHO_ALPN).await }
+        });
+
+        let incoming = e1.accept().await.expect("accept");
+        let incoming_addr = incoming.remote_addr();
+        assert!(matches!(incoming_addr, IncomingAddr::Ip(_)));
+
+        let accepting = incoming.accept().anyerr()?;
+        assert_eq!(incoming_addr, accepting.remote_addr());
+
+        // Clean up.
+        drop(accepting);
+        drop(connect_task);
+        e1.close().await;
+        e2.close().await;
+        Ok(())
+    }
+
+    mod incoming_filter {
+        use std::{
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering::Relaxed},
+            },
+            time::Duration,
+        };
+
+        use n0_error::{Result, StdResultExt};
+        use n0_tracing_test::traced_test;
+
+        use crate::{
+            Endpoint, EndpointAddr,
+            endpoint::presets,
+            protocol::{
+                IncomingFilterOutcome, Router,
+                tests::{ECHO_ALPN, Echo},
+            },
+        };
+
+        /// Two direct endpoints with a filtered router on the first.
+        ///
+        /// Binds to IPv4 loopback only so retry-token validation works on
+        /// multi-homed CI hosts (tokens are tied to the source address).
+        async fn direct_pair<F>(filter: F) -> Result<(Router, Endpoint, EndpointAddr)>
+        where
+            F: Fn(&crate::endpoint::Incoming) -> IncomingFilterOutcome + Send + Sync + 'static,
+        {
+            let e1 = Endpoint::builder(presets::Minimal)
+                .clear_ip_transports()
+                .bind_addr((std::net::Ipv4Addr::LOCALHOST, 0))
+                .anyerr()?
+                .bind()
+                .await?;
+            let r1 = Router::builder(e1.clone())
+                .incoming_filter(Arc::new(filter))
+                .accept(ECHO_ALPN, Echo)
+                .spawn();
+            let addr = r1.endpoint().addr();
+            let e2 = Endpoint::builder(presets::Minimal)
+                .clear_ip_transports()
+                .bind_addr((std::net::Ipv4Addr::LOCALHOST, 0))
+                .anyerr()?
+                .bind()
+                .await?;
+            Ok((r1, e2, addr))
+        }
+
+        /// Two relay-only endpoints with a filtered router on the first.
+        async fn relay_pair<F>(
+            filter: F,
+        ) -> Result<(Router, Endpoint, EndpointAddr, impl std::any::Any)>
+        where
+            F: Fn(&crate::endpoint::Incoming) -> IncomingFilterOutcome + Send + Sync + 'static,
+        {
+            let (_relay_map, relay_url, guard) =
+                crate::test_utils::run_relay_server().await.anyerr()?;
+            let relay_mode = crate::RelayMode::Custom(crate::RelayMap::from(relay_url.clone()));
+
+            let e1 = Endpoint::builder(presets::Minimal)
+                .relay_mode(relay_mode.clone())
+                .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+                .bind()
+                .await?;
+            let r1 = Router::builder(e1.clone())
+                .incoming_filter(Arc::new(filter))
+                .accept(ECHO_ALPN, Echo)
+                .spawn();
+            let addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
+            let e2 = Endpoint::builder(presets::Minimal)
+                .relay_mode(relay_mode)
+                .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+                .bind()
+                .await?;
+            Ok((r1, e2, addr, guard))
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn addr_retry() -> Result {
+            let (r1, e2, addr) = direct_pair(|incoming| {
+                if !incoming.remote_addr_validated() {
+                    IncomingFilterOutcome::Retry
+                } else {
+                    IncomingFilterOutcome::Accept
+                }
+            })
+            .await?;
+            // Server sends retry (unvalidated), then accepts once validated.
+            assert!(e2.connect(addr, ECHO_ALPN).await.is_ok());
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn addr_reject() -> Result {
+            let (r1, e2, addr) = direct_pair(|_| IncomingFilterOutcome::Reject).await?;
+            assert!(e2.connect(addr, ECHO_ALPN).await.is_err());
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn addr_ignore() -> Result {
+            let (r1, e2, addr) = direct_pair(|_| IncomingFilterOutcome::Ignore).await?;
+            // No response at all — connect times out.
+            let result =
+                tokio::time::timeout(Duration::from_millis(500), e2.connect(addr, ECHO_ALPN)).await;
+            assert!(result.is_err(), "expected timeout");
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn relay_reject() -> Result {
+            let (r1, e2, addr, _guard) = relay_pair(|_| IncomingFilterOutcome::Reject).await?;
+            assert!(e2.connect(addr, ECHO_ALPN).await.is_err());
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn relay_ignore() -> Result {
+            let (r1, e2, addr, _guard) = relay_pair(|_| IncomingFilterOutcome::Ignore).await?;
+            let result =
+                tokio::time::timeout(Duration::from_millis(500), e2.connect(addr, ECHO_ALPN)).await;
+            assert!(result.is_err(), "expected timeout");
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        /// Verify that returning `Retry` for a direct connection causes the
+        /// remote to retry with a token, after which `validated` is true.
+        #[tokio::test]
+        #[traced_test]
+        async fn addr_retry_then_validated() -> Result {
+            let saw_validated = Arc::<AtomicBool>::default();
+            let saw_unvalidated = Arc::<AtomicBool>::default();
+            let (sv, su) = (saw_validated.clone(), saw_unvalidated.clone());
+
+            let (r1, e2, addr) = direct_pair(move |incoming| {
+                if incoming.remote_addr_validated() {
+                    sv.store(true, Relaxed);
+                    IncomingFilterOutcome::Accept
+                } else {
+                    su.store(true, Relaxed);
+                    IncomingFilterOutcome::Retry
+                }
+            })
+            .await?;
+
+            // The connection should now succeed: first attempt returns Retry,
+            // the client retries with the token, the second attempt is
+            // validated and accepted.
+            let _conn = e2.connect(addr, ECHO_ALPN).await?;
+
+            assert!(saw_unvalidated.load(Relaxed));
+            assert!(saw_validated.load(Relaxed));
+
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
+        /// Verify that returning `Retry` for a relay connection also causes
+        /// the remote to retry with a token. The "validation" has no
+        /// security meaning over a relay, but it does impose a round-trip
+        /// cost on the client.
+        #[tokio::test]
+        #[traced_test]
+        async fn relay_retry_then_validated() -> Result {
+            let saw_validated = Arc::<AtomicBool>::default();
+            let saw_unvalidated = Arc::<AtomicBool>::default();
+            let (sv, su) = (saw_validated.clone(), saw_unvalidated.clone());
+
+            let (r1, e2, addr, _guard) = relay_pair(move |incoming| {
+                if incoming.remote_addr_validated() {
+                    sv.store(true, Relaxed);
+                    IncomingFilterOutcome::Accept
+                } else {
+                    su.store(true, Relaxed);
+                    IncomingFilterOutcome::Retry
+                }
+            })
+            .await?;
+
+            let _conn = e2.connect(addr, ECHO_ALPN).await?;
+
+            assert!(
+                saw_unvalidated.load(Relaxed),
+                "expected unvalidated incoming"
+            );
+            assert!(
+                saw_validated.load(Relaxed),
+                "expected validated incoming after retry"
+            );
+
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
     }
 
     #[tokio::test]

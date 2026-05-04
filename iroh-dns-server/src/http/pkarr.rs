@@ -4,20 +4,22 @@ use axum::{
 };
 use bytes::Bytes;
 use http::{StatusCode, header};
+use iroh_base::PublicKey;
+use iroh_dns::pkarr::SignedPacket;
 use tracing::info;
 
 use super::error::AppError;
 use crate::{state::AppState, store::PacketSource, util::PublicKeyBytes};
 
-pub async fn put(
+pub(super) async fn put(
     State(state): State<AppState>,
     Path(key): Path<String>,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    let key = pkarr::PublicKey::try_from(key.as_str())
+    let public_key = PublicKey::from_z32(&key)
         .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, Some(format!("invalid key: {e}"))))?;
-    let label = &key.to_z32()[..10];
-    let signed_packet = pkarr::SignedPacket::from_relay_payload(&key, &body).map_err(|e| {
+    let label = key.get(..10).unwrap_or(&key);
+    let signed_packet = SignedPacket::from_relay_payload(&public_key, &body).map_err(|e| {
         AppError::new(
             StatusCode::BAD_REQUEST,
             Some(format!("invalid body payload: {e}")),
@@ -32,7 +34,7 @@ pub async fn put(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn get(
+pub(super) async fn get(
     State(state): State<AppState>,
     Path(pubkey): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {

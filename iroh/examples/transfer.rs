@@ -38,8 +38,6 @@ use data_encoding::HEXLOWER;
 use derive_more::{Display, From};
 use indicatif::HumanBytes;
 use ipnet::{Ipv4Net, Ipv6Net};
-#[cfg(feature = "qlog")]
-use iroh::endpoint::QuicTransportConfig;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     Watcher,
@@ -50,8 +48,8 @@ use iroh::{
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{
-        BindOpts, Connection, ConnectionError, PathId, PathWatcher, RecvStream, SendStream, VarInt,
-        WriteError, presets,
+        BindOpts, Connection, ConnectionError, PathId, PathWatcher, QuicTransportConfig,
+        RecvStream, SendStream, VarInt, WriteError, presets,
     },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
@@ -327,6 +325,21 @@ struct EndpointArgs {
     /// Disable all default bind addresses.
     #[clap(long)]
     no_default_bind: bool,
+    /// Receive window size.
+    ///
+    /// This controls the maximum amount of data that may be inflight for any stream in the connection.
+    /// Increasing this value gives higher throughput at high latencies, at the cost of
+    /// more memory usage.
+    ///
+    /// The receive window is usually calculated as the product of desired throughput
+    /// and expected maximum roundtrip latency (RTT), i.e. for a throughput of 100 MBit/s
+    /// and a RTT of 200ms, you would set the receive window to (100 Mbit/s / 8) * 0.2s = 2.5M.
+    ///
+    /// The default is 1.25 MB, which gives a max throughput of 100 MBit/s at 100ms RTT.
+    ///
+    /// Accepts values like "5M", "2000K", etc.
+    #[clap(long, value_parser = parse_byte_size)]
+    receive_window: Option<u32>,
 }
 
 #[derive(Subcommand, Debug, derive_more::Display)]
@@ -382,7 +395,7 @@ async fn main() -> Result<()> {
         Ok(s) => SecretKey::from_str(&s)
             .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
         Err(_) => {
-            let s = SecretKey::generate(&mut rand::rng());
+            let s = SecretKey::generate();
             output.emit(SecretGenerated {
                 secret_key: HEXLOWER.encode(&s.to_bytes()),
             });
@@ -536,37 +549,41 @@ impl EndpointArgs {
             builder = builder
                 .bind_addr_with_opts(addr, BindOpts::default().set_prefix_len(prefix_len))?;
         }
+
+        let mut cfg = QuicTransportConfig::builder();
+
+        // Adjust the receive window, if configured.
+        // By default noq and iroh set the connection-level receive window to VarInt::MAX, and
+        // the stream receive window to 1.25 MB (for a throughput of 100 MBit/s at 100ms latency).
+        // We leave the connection-level receive window at the default and adjust the
+        // stream-level receive window. The distinction between connection-level and stream-level
+        // doesn't matter here because we don't have concurrent data-intensive streams
+        // in the transfer protocol.
+        // We also set the send_window to 2 * stream_receive_window. By default, noq sets this
+        // to 8 * 1.25MB. The transfer protocol doesn't use concurrent data streams, so 2 times
+        // our receive window is enough.
+        if let Some(size) = self.receive_window {
+            cfg = cfg.stream_receive_window(size.into());
+            cfg = cfg.send_window(size as u64 * 2);
+        }
+
         #[cfg(feature = "qlog")]
-        {
-            let cfg = match (std::env::var("QLOGDIR").ok(), log) {
-                (Some(dir), _) => QuicTransportConfig::builder()
-                    .qlog_from_path(dir, "transfer")
-                    .build(),
-                (_, Some(log)) if log.qlog => QuicTransportConfig::builder()
-                    .qlog_from_path(&log.dir, "")
-                    .build(),
-                _ => Default::default(),
-            };
-            builder = builder.transport_config(cfg)
+        match (std::env::var("QLOGDIR").ok(), log) {
+            (Some(dir), _) => cfg = cfg.qlog_from_path(dir, "transfer"),
+            (_, Some(log)) if log.qlog => cfg = cfg.qlog_from_path(&log.dir, ""),
+            _ => {}
         }
         #[cfg(not(feature = "qlog"))]
         let _ = log;
 
+        builder = builder.transport_config(cfg.build());
+
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
         if self.mdns {
-            #[cfg(feature = "address-lookup-mdns")]
-            {
-                use iroh::address_lookup::MdnsAddressLookup;
-
-                endpoint
-                    .address_lookup()?
-                    .add(MdnsAddressLookup::builder().build(endpoint.id())?);
-            }
-            #[cfg(not(feature = "address-lookup-mdns"))]
-            {
-                n0_error::bail_any!("Must have the `mdns` enabled when using the `--mdns` flag");
-            }
+            n0_error::bail_any!(
+                "mDNS address lookup is no longer built into iroh; use the `iroh-mdns-address-lookup` crate instead",
+            );
         }
 
         if self.relay_only {
@@ -697,7 +714,7 @@ async fn fetch(
     // Attempt to connect, over the given ALPN. Returns a connection.
     let start = Instant::now();
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
-    let conn_info = conn.to_info();
+    let conn_info = conn.weak_handle();
     let remote_id = conn.remote_id();
     output.emit(Connected {
         remote_id,

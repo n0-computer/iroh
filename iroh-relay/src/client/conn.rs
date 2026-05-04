@@ -8,7 +8,7 @@ use std::{
 };
 
 use iroh_base::SecretKey;
-use n0_error::{ensure, stack_error};
+use n0_error::{AnyError, anyerr, ensure, stack_error};
 use n0_future::{Sink, Stream};
 use tracing::trace;
 
@@ -17,6 +17,7 @@ use super::KeyCache;
 use crate::client::streams::{MaybeTlsStream, ProxyStream};
 use crate::{
     MAX_PACKET_SIZE,
+    http::ProtocolVersion,
     protos::{
         handshake,
         relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg},
@@ -29,13 +30,14 @@ use crate::{
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum SendError {
-    #[error(transparent)]
-    StreamError {
-        #[cfg(not(wasm_browser))]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        source: ws_stream_wasm::WsErr,
-    },
+    /// Error returned from the underlying WebSocket stream while sending.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
+    #[error("Stream error")]
+    StreamError { source: AnyError },
     #[error("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}")]
     ExceedsMaxPacketSize { size: usize },
     #[error("Attempted to send empty packet")]
@@ -49,13 +51,14 @@ pub enum SendError {
 pub enum RecvError {
     #[error(transparent)]
     Protocol { source: ProtoError },
-    #[error(transparent)]
-    StreamError {
-        #[cfg(not(wasm_browser))]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        source: ws_stream_wasm::WsErr,
-    },
+    /// Error returned from the underlying WebSocket stream while receiving.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
+    #[error("Stream error")]
+    StreamError { source: AnyError },
 }
 
 /// A connection to a relay server.
@@ -73,6 +76,7 @@ pub(crate) struct Conn {
     #[debug("ws_stream_wasm::WsStream")]
     pub(crate) conn: WsBytesFramed,
     pub(crate) key_cache: KeyCache,
+    pub(crate) protocol_version: ProtocolVersion,
 }
 
 impl Conn {
@@ -84,6 +88,7 @@ impl Conn {
         #[cfg(wasm_browser)] io: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: &SecretKey,
+        protocol_version: ProtocolVersion,
     ) -> Result<Self, handshake::Error> {
         let mut conn = WsBytesFramed { io };
 
@@ -92,11 +97,15 @@ impl Conn {
         handshake::clientside(&mut conn, secret_key).await?;
         trace!("server_handshake: done");
 
-        Ok(Self { conn, key_cache })
+        Ok(Self {
+            conn,
+            key_cache,
+            protocol_version,
+        })
     }
 
     #[cfg(all(test, feature = "server"))]
-    pub(crate) fn test(io: tokio::io::DuplexStream) -> Self {
+    pub(crate) fn test(io: tokio::io::DuplexStream, protocol_version: ProtocolVersion) -> Self {
         use crate::protos::relay::MAX_FRAME_SIZE;
         Self {
             conn: WsBytesFramed {
@@ -107,6 +116,7 @@ impl Conn {
                     .take_over(MaybeTlsStream::Test(io)),
             },
             key_cache: KeyCache::test(),
+            protocol_version,
         }
     }
 }
@@ -117,10 +127,11 @@ impl Stream for Conn {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(Pin::new(&mut self.conn).poll_next(cx)) {
             Some(Ok(msg)) => {
-                let message = RelayToClientMsg::from_bytes(msg, &self.key_cache);
+                let message =
+                    RelayToClientMsg::from_bytes(msg, &self.key_cache, self.protocol_version);
                 Poll::Ready(Some(message.map_err(Into::into)))
             }
-            Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
+            Some(Err(e)) => Poll::Ready(Some(Err(anyerr!(e).into()))),
             None => Poll::Ready(None),
         }
     }

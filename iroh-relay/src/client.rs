@@ -11,7 +11,11 @@ use std::{
 
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
-use n0_error::{e, stack_error};
+#[cfg(not(wasm_browser))]
+use iroh_dns::dns::{DnsError, DnsResolver};
+#[cfg(wasm_browser)]
+use n0_error::StdResultExt;
+use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     Sink, Stream,
     split::{SplitSink, SplitStream, split},
@@ -21,11 +25,9 @@ use tracing::{Level, debug, event, trace};
 use url::Url;
 
 pub use self::conn::{RecvError, SendError};
-#[cfg(not(wasm_browser))]
-use crate::dns::{DnsError, DnsResolver};
 use crate::{
     KeyCache,
-    http::RELAY_PATH,
+    http::{ProtocolVersion, RELAY_PATH},
     protos::{
         handshake,
         relay::{ClientToRelayMsg, RelayToClientMsg},
@@ -52,15 +54,19 @@ pub enum ConnectError {
     InvalidWebsocketUrl { url: Url },
     #[error("Invalid relay URL: {url}")]
     InvalidRelayUrl { url: Url },
+    /// Error returned from the underlying WebSocket stream while establishing the connection.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
     #[error(transparent)]
-    Websocket {
-        #[cfg(not(wasm_browser))]
-        #[error(std_err)]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        #[error(std_err)]
-        source: ws_stream_wasm::WsErr,
-    },
+    Websocket { source: AnyError },
+    #[error(
+        "Server replied with invalid iroh-relay version header: {}",
+        server_version.as_deref().unwrap_or("<empty>")
+    )]
+    BadVersionHeader { server_version: Option<String> },
     #[error(transparent)]
     Handshake {
         #[error(std_err)]
@@ -144,6 +150,8 @@ pub struct ClientBuilder {
     proxy_url: Option<Url>,
     /// The secret key of this client.
     secret_key: SecretKey,
+    /// Query parameters appended to the dial URL.
+    query_params: Vec<(String, String)>,
     /// The DNS resolver to use.
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
@@ -164,6 +172,7 @@ impl ClientBuilder {
             tls_config: None,
             proxy_url: None,
             secret_key,
+            query_params: Vec::new(),
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
@@ -217,6 +226,15 @@ impl ClientBuilder {
         self
     }
 
+    /// Appends a query parameter to the relay URL the client connects to.
+    ///
+    /// Multiple calls append. Calling this with the same key twice keeps
+    /// both values.
+    pub fn query_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.query_params.push((key.into(), value.into()));
+        self
+    }
+
     /// Set the capacity of the cache for public keys.
     pub fn key_cache_capacity(mut self, capacity: usize) -> Self {
         self.key_cache = KeyCache::new(capacity);
@@ -227,10 +245,11 @@ impl ClientBuilder {
     #[cfg(not(wasm_browser))]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
         use http::header::SEC_WEBSOCKET_PROTOCOL;
+        use n0_error::StdResultExt;
         use tls::MaybeTlsStreamBuilder;
 
         use crate::{
-            http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION},
+            http::CLIENT_AUTH_HEADER,
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
         };
 
@@ -249,6 +268,9 @@ impl ClientBuilder {
                     url: dial_url.clone()
                 })
             })?;
+        for (key, value) in &self.query_params {
+            dial_url.query_pairs_mut().append_pair(key, value);
+        }
 
         debug!(%dial_url, "Dialing relay by websocket");
 
@@ -277,7 +299,7 @@ impl ClientBuilder {
             })?
             .add_header(
                 SEC_WEBSOCKET_PROTOCOL,
-                http::HeaderValue::from_static(RELAY_PROTOCOL_VERSION),
+                ProtocolVersion::all_as_header_value(),
             )
             .expect("valid header name and value")
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
@@ -293,7 +315,7 @@ impl ClientBuilder {
                     "impossible: CLIENT_AUTH_HEADER isn't a disallowed header value for websockets",
                 );
         }
-        let (conn, response) = builder.connect_on(stream).await?;
+        let (conn, response) = builder.connect_on(stream).await.anyerr()?;
 
         n0_error::ensure!(
             response.status() == hyper::StatusCode::SWITCHING_PROTOCOLS,
@@ -302,7 +324,25 @@ impl ClientBuilder {
             }
         );
 
-        let conn = Conn::new(conn, self.key_cache.clone(), &self.secret_key).await?;
+        let protocol_version_str = response
+            .headers()
+            .get(SEC_WEBSOCKET_PROTOCOL)
+            .and_then(|s| s.to_str().ok());
+        let protocol_version = protocol_version_str
+            .and_then(ProtocolVersion::match_from_str)
+            .ok_or_else(|| {
+                e!(ConnectError::BadVersionHeader {
+                    server_version: protocol_version_str.map(ToOwned::to_owned)
+                })
+            })?;
+
+        let conn = Conn::new(
+            conn,
+            self.key_cache.clone(),
+            &self.secret_key,
+            protocol_version,
+        )
+        .await?;
 
         event!(
             target: "iroh::_events::net::relay::connected",
@@ -334,8 +374,6 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     #[cfg(wasm_browser)]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
-        use crate::http::RELAY_PROTOCOL_VERSION;
-
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -351,13 +389,33 @@ impl ClientBuilder {
                     url: dial_url.clone()
                 })
             })?;
+        for (key, value) in &self.query_params {
+            dial_url.query_pairs_mut().append_pair(key, value);
+        }
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let (_, ws_stream) =
-            ws_stream_wasm::WsMeta::connect(dial_url.as_str(), Some(vec![RELAY_PROTOCOL_VERSION]))
-                .await?;
-        let conn = Conn::new(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
+        let (ws_meta, ws_stream) = ws_stream_wasm::WsMeta::connect(
+            dial_url.as_str(),
+            Some(ProtocolVersion::all().collect()),
+        )
+        .await
+        .anyerr()?;
+
+        let protocol_version =
+            ProtocolVersion::match_from_str(&ws_meta.protocol()).ok_or_else(|| {
+                e!(ConnectError::BadVersionHeader {
+                    server_version: Some(ws_meta.protocol())
+                })
+            })?;
+
+        let conn = Conn::new(
+            ws_stream,
+            self.key_cache.clone(),
+            &self.secret_key,
+            protocol_version,
+        )
+        .await?;
 
         event!(
             target: "iroh::_events::net::relay::connected",

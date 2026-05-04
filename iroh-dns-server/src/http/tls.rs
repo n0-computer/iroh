@@ -21,15 +21,16 @@ use tokio_rustls_acme::{AcmeConfig, axum::AxumAcceptor, caches::DirCache};
 use tokio_stream::StreamExt;
 use tracing::{Instrument, debug, error, info_span};
 
-/// The mode how SSL certificates should be created.
+/// Strategy used to obtain TLS certificates for the HTTPS server.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, strum::Display)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CertMode {
-    /// Certs are loaded from a the `cert_cache` path
+    /// Load pre-existing certificates from the `cert_cache` directory.
     Manual,
-    /// ACME with LetsEncrypt servers
+    /// Obtain certificates from Let's Encrypt via the ACME protocol.
     LetsEncrypt,
-    /// Create self-signed certificates and store them in the `cert_cache` path
+    /// Generate self-signed certificates and cache them in `cert_cache`.
     SelfSigned,
 }
 
@@ -56,7 +57,7 @@ impl CertMode {
 
 /// TLS Certificate Authority acceptor.
 #[derive(Clone)]
-pub enum TlsAcceptor {
+pub(crate) enum TlsAcceptor {
     LetsEncrypt(AxumAcceptor),
     Manual(RustlsAcceptor),
 }

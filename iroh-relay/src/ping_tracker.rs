@@ -2,7 +2,10 @@ use n0_future::time::{self, Duration, Instant};
 use tracing::debug;
 
 /// Maximum time for a ping response in the relay protocol.
-pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
+const PING_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Minimum timeout for an RTT-based health check ping.
+const MIN_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Tracks pings on a single relay connection.
 ///
@@ -10,13 +13,16 @@ pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct PingTracker {
     inner: Option<PingInner>,
-    default_timeout: Duration,
+    max_timeout: Duration,
+    /// Last measured round-trip time to the relay server.
+    last_rtt: Option<Duration>,
 }
 
 #[derive(Debug)]
 struct PingInner {
     data: [u8; 8],
     deadline: Instant,
+    sent_at: Instant,
 }
 
 impl Default for PingTracker {
@@ -26,26 +32,35 @@ impl Default for PingTracker {
 }
 
 impl PingTracker {
-    /// Creates a new ping tracker, setting the ping timeout for pings.
-    pub fn new(default_timeout: Duration) -> Self {
+    /// Creates a new ping tracker with the given maximum ping timeout.
+    pub fn new(max_timeout: Duration) -> Self {
         Self {
             inner: None,
-            default_timeout,
+            max_timeout,
+            last_rtt: None,
         }
     }
 
-    /// Returns the current timeout set for pings.
-    pub fn default_timeout(&self) -> Duration {
-        self.default_timeout
+    /// Returns the maximum ping timeout.
+    pub fn max_timeout(&self) -> Duration {
+        self.max_timeout
     }
 
-    /// Starts a new ping.
+    /// Starts a new ping with an RTT-based timeout.
     pub fn new_ping(&mut self) -> [u8; 8] {
+        let timeout = self.ping_timeout();
+        self.new_ping_with_timeout(timeout)
+    }
+
+    /// Starts a new ping with a custom timeout.
+    pub fn new_ping_with_timeout(&mut self, timeout: Duration) -> [u8; 8] {
         let ping_data = rand::random();
+        let now = Instant::now();
         debug!(data = ?ping_data, "Sending ping to relay server.");
         self.inner = Some(PingInner {
             data: ping_data,
-            deadline: Instant::now() + self.default_timeout,
+            deadline: now + timeout,
+            sent_at: now,
         });
         ping_data
     }
@@ -55,10 +70,24 @@ impl PingTracker {
     /// Only the pong of the most recent ping will do anything.  There is no harm feeding
     /// any pong however.
     pub fn pong_received(&mut self, data: [u8; 8]) {
-        if self.inner.as_ref().map(|inner| inner.data) == Some(data) {
-            debug!(?data, "Pong received from relay server");
+        if let Some(inner) = &self.inner
+            && inner.data == data
+        {
+            let rtt = inner.sent_at.elapsed();
+            debug!(?data, ?rtt, "Pong received from relay server");
+            self.last_rtt = Some(rtt);
             self.inner = None;
         }
+    }
+
+    /// Returns the timeout for the next ping.
+    ///
+    /// Uses 3x the last measured RTT (to account for jitter), falling back to
+    /// the default timeout if no RTT has been measured yet.
+    pub fn ping_timeout(&self) -> Duration {
+        self.last_rtt
+            .map(|rtt| (rtt * 3).clamp(MIN_HEALTH_CHECK_TIMEOUT, self.max_timeout))
+            .unwrap_or(self.max_timeout)
     }
 
     /// Cancel-safe waiting for a ping timeout.
@@ -66,7 +95,7 @@ impl PingTracker {
     /// Unless the most recent sent ping times out, this will never return.
     pub async fn timeout(&mut self) {
         match self.inner {
-            Some(PingInner { deadline, data }) => {
+            Some(PingInner { deadline, data, .. }) => {
                 time::sleep_until(deadline).await;
                 debug!(?data, "Ping timeout.");
                 self.inner = None;

@@ -260,7 +260,7 @@
 //! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
 
 #![recursion_limit = "256"]
-#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![deny(missing_docs, rustdoc::broken_intra_doc_links, unreachable_pub)]
 #![cfg_attr(wasm_browser, allow(unused))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
@@ -285,8 +285,9 @@ pub use iroh_base::{
     Signature, SignatureError, TransportAddr,
 };
 #[cfg(not(wasm_browser))]
-pub use iroh_relay::dns;
-pub use iroh_relay::{RelayConfig, RelayMap, endpoint_info};
+pub use iroh_dns::dns;
+pub use iroh_dns::endpoint_info;
+pub use iroh_relay::{RelayConfig, RelayMap};
 pub use n0_watcher::Watcher;
 pub use net_report::{NetReportConfig, Report as NetReport, TIMEOUT as NET_REPORT_TIMEOUT};
 

@@ -33,34 +33,44 @@ mod tls;
 pub use self::{rate_limiting::RateLimitConfig, tls::CertMode};
 use crate::state::AppState;
 
-/// Config for the HTTP server
+/// Configuration for the HTTP listener.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct HttpConfig {
-    /// Port to bind to
+    /// Port to bind the HTTP listener to.
     pub port: u16,
-    /// Optionally set a custom bind address (will use 0.0.0.0 if unset)
+    /// Address to bind the HTTP listener to (defaults to `0.0.0.0`).
     pub bind_addr: Option<IpAddr>,
 }
 
-/// Config for the HTTPS server
+/// Configuration for the HTTPS listener.
+///
+/// Certificates are obtained according to [`Self::cert_mode`].
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct HttpsConfig {
-    /// Port to bind to
+    /// Port to bind the HTTPS listener to.
     pub port: u16,
-    /// Optionally set a custom bind address (will use 0.0.0.0 if unset)
+    /// Address to bind the HTTPS listener to (defaults to `0.0.0.0`).
     pub bind_addr: Option<IpAddr>,
-    /// The list of domains for which SSL certificates should be created.
+    /// Domains for which TLS certificates are issued or loaded.
     pub domains: Vec<String>,
-    /// The mode of SSL certificate creation
+    /// Strategy used to obtain TLS certificates.
     pub cert_mode: CertMode,
-    /// Letsencrypt contact email address (required if using [`CertMode::LetsEncrypt`])
+    /// Contact email address passed to Let's Encrypt.
+    ///
+    /// Required when [`Self::cert_mode`] is [`CertMode::LetsEncrypt`]; ignored
+    /// otherwise.
     pub letsencrypt_contact: Option<String>,
-    /// Whether to use the letsenrypt production servers (only applies to [`CertMode::LetsEncrypt`])
+    /// Whether to use the Let's Encrypt production endpoint instead of staging.
+    ///
+    /// Only applies when [`Self::cert_mode`] is [`CertMode::LetsEncrypt`]. When
+    /// unset, the ACME staging endpoint is used.
     pub letsencrypt_prod: Option<bool>,
 }
 
 /// The HTTP(S) server part of iroh-dns-server
-pub struct HttpServer {
+pub(crate) struct HttpServer {
     tasks: JoinSet<std::io::Result<()>>,
     http_addr: Option<SocketAddr>,
     https_addr: Option<SocketAddr>,
@@ -68,7 +78,7 @@ pub struct HttpServer {
 
 impl HttpServer {
     /// Spawn the server
-    pub async fn spawn(
+    pub(crate) async fn spawn(
         http_config: Option<HttpConfig>,
         https_config: Option<HttpsConfig>,
         rate_limit_config: RateLimitConfig,
@@ -154,17 +164,17 @@ impl HttpServer {
     }
 
     /// Get the bound address of the HTTP socket.
-    pub fn http_addr(&self) -> Option<SocketAddr> {
+    pub(crate) fn http_addr(&self) -> Option<SocketAddr> {
         self.http_addr
     }
 
     /// Get the bound address of the HTTPS socket.
-    pub fn https_addr(&self) -> Option<SocketAddr> {
+    pub(crate) fn https_addr(&self) -> Option<SocketAddr> {
         self.https_addr
     }
 
     /// Shutdown the server and wait for all tasks to complete.
-    pub async fn shutdown(mut self) -> Result<()> {
+    pub(crate) async fn shutdown(mut self) -> Result<()> {
         // TODO: Graceful cancellation.
         self.tasks.abort_all();
         self.run_until_done().await?;
@@ -174,7 +184,7 @@ impl HttpServer {
     /// Wait for all tasks to complete.
     ///
     /// Runs forever unless tasks fail.
-    pub async fn run_until_done(mut self) -> Result<()> {
+    pub(crate) async fn run_until_done(mut self) -> Result<()> {
         let mut final_res: Result<()> = Ok(());
         while let Some(res) = self.tasks.join_next().await {
             match res {
@@ -295,22 +305,25 @@ async fn metrics_middleware(
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+    };
 
     use hickory_resolver::{
-        config::{NameServerConfig, ResolverConfig, ResolverOpts},
-        name_server::TokioConnectionProvider,
+        config::{NameServerConfig, ResolverConfig},
+        net::runtime::TokioRuntimeProvider,
     };
     use hickory_server::proto::rr::RecordType;
     use iroh::{
         RelayUrl, SecretKey,
         address_lookup::{EndpointInfo, PkarrRelayClient},
-        endpoint_info::EndpointIdExt,
+        dns::DnsResolver,
         tls::{CaRootsConfig, default_provider},
     };
     use n0_error::StdResultExt;
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
 
     use crate::{http::HttpsConfig, server::Server};
 
@@ -333,7 +346,7 @@ mod tests {
 
         const RELAY_URL: &str = "https://relay.example./";
         let (name_z32, signed_packet) = {
-            let secret_key = SecretKey::generate(&mut rng);
+            let secret_key = SecretKey::from_bytes(&rng.random());
             let endpoint_id = secret_key.public();
             let relay_url: RelayUrl = RELAY_URL.parse().expect("valid url");
             let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
@@ -347,7 +360,11 @@ mod tests {
         let tls_config = CaRootsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
-        let pkarr = PkarrRelayClient::new(format!("{http_url}pkarr").parse().anyerr()?, tls_config);
+        let pkarr = PkarrRelayClient::new(
+            format!("{http_url}pkarr").parse().anyerr()?,
+            tls_config,
+            DnsResolver::default(),
+        );
         pkarr.publish(&signed_packet).await?;
 
         // Create a reqwest client that does not verify certificates.
@@ -368,7 +385,7 @@ mod tests {
             .send()
             .await
             .anyerr()?
-            .json::<super::doh::DnsResponse>()
+            .json::<super::doh::response::DnsResponse>()
             .await
             .anyerr()?;
         assert_eq!(res.answer.len(), 1);
@@ -387,7 +404,7 @@ mod tests {
             .send()
             .await
             .anyerr()?
-            .json::<super::doh::DnsResponse>()
+            .json::<super::doh::response::DnsResponse>()
             .await
             .anyerr()?;
         assert_eq!(res.answer.len(), 1);
@@ -396,39 +413,31 @@ mod tests {
 
         // Fetch over HTTPS via hickory-resolver
         let client = {
-            let config = {
-                let mut config = ResolverConfig::new();
-                let mut name_server = NameServerConfig::new(
-                    server.https_addr().expect("https is bound"),
-                    hickory_server::proto::xfer::Protocol::Https,
-                );
-                name_server.tls_dns_name = Some("localhost".to_string());
-                config.add_name_server(name_server);
-                config
-            };
+            let https_addr = server.https_addr().expect("https is bound");
+            let mut name_server =
+                NameServerConfig::https(https_addr.ip(), Arc::from("localhost"), None);
+            for connection in &mut name_server.connections {
+                connection.port = https_addr.port();
+            }
+            let config = ResolverConfig::from_parts(None, vec![], vec![name_server]);
 
-            let opts = {
-                let mut opts = ResolverOpts::default();
-                opts.tls_config = self::tls::insecure_tls_config();
-                opts
-            };
-
-            hickory_resolver::Resolver::builder_with_config(
-                config,
-                TokioConnectionProvider::default(),
-            )
-            .with_options(opts)
-            .build()
+            hickory_resolver::Resolver::builder_with_config(config, TokioRuntimeProvider::default())
+                .with_tls_config(self::tls::insecure_tls_config())
+                .build()
+                .anyerr()?
         };
 
         let res = client
             .txt_lookup(format!("_iroh.{name_z32}."))
             .await
             .anyerr()?;
-        let records = res.as_lookup().records();
+        let records = res.answers();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].record_type(), RecordType::TXT);
-        let txt_data = records[0].data().as_txt().unwrap().txt_data();
+        let txt_data = match &records[0].data {
+            hickory_server::proto::rr::RData::TXT(txt) => &txt.txt_data,
+            other => panic!("expected TXT record, got {other:?}"),
+        };
         assert_eq!(&txt_data[0][..], format!("relay={RELAY_URL}").as_bytes());
 
         server.shutdown().await?;

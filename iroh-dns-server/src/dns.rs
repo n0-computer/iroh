@@ -2,7 +2,6 @@
 
 use std::{
     collections::BTreeMap,
-    io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -11,7 +10,7 @@ use std::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use hickory_server::{
-    authority::{Catalog, MessageResponse, ZoneType},
+    net::{NetError, runtime::TokioTime, xfer::Protocol},
     proto::{
         self,
         op::ResponseCode,
@@ -19,11 +18,10 @@ use hickory_server::{
             LowerName, Name, RData, Record, RecordSet, RecordType, RrKey,
             rdata::{self},
         },
-        serialize::{binary::BinEncoder, txt::RDataParser},
-        xfer::Protocol,
     },
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
-    store::in_memory::InMemoryAuthority,
+    store::in_memory::InMemoryZoneHandler,
+    zone_handler::{AxfrPolicy, Catalog, MessageResponse, ZoneType},
 };
 use n0_error::{Result, StdResultExt, anyerr};
 use serde::{Deserialize, Serialize};
@@ -33,49 +31,51 @@ use tokio::{
 };
 use tracing::{debug, info};
 
-use self::node_authority::NodeAuthority;
+use self::node_zone_handler::NodeZoneHandler;
 use crate::{metrics::Metrics, store::ZoneStore};
 
-mod node_authority;
+mod node_zone_handler;
 
 const DEFAULT_NS_TTL: u32 = 60 * 60 * 12; // 12h
 const DEFAULT_SOA_TTL: u32 = 60 * 60 * 24 * 14; // 14d
 const DEFAULT_A_TTL: u32 = 60 * 60; // 1h
 
-/// DNS server settings
+/// Configuration for the DNS listener.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DnsConfig {
-    /// The port to serve a local UDP DNS server at
+    /// Port to bind the DNS listener to, for both UDP and TCP.
     pub port: u16,
-    /// The IPv4 or IPv6 address to bind the UDP DNS server.
-    /// Uses `0.0.0.0` if unspecified.
+    /// Address to bind the DNS listener to (defaults to `0.0.0.0`).
     pub bind_addr: Option<IpAddr>,
-    /// SOA record data for any authoritative DNS records
+    /// SOA record data served for authoritative zones, in zone-file format.
     pub default_soa: String,
-    /// Default time to live for returned DNS records (TXT & SOA)
+    /// Default time-to-live, in seconds, for returned DNS records.
     pub default_ttl: u32,
-    /// Domain used for serving the `_iroh.<endpointid>.<origin>` DNS TXT entry
+    /// Origins under which the server publishes pkarr-signed zones.
+    ///
+    /// For each origin, the server answers queries for any published
+    /// `<endpointid>.<origin>` name.
     pub origins: Vec<String>,
 
-    /// `A` record to set for all origins
+    /// Optional `A` record to serve at each origin apex.
     pub rr_a: Option<Ipv4Addr>,
-    /// `AAAA` record to set for all origins
+    /// Optional `AAAA` record to serve at each origin apex.
     pub rr_aaaa: Option<Ipv6Addr>,
-    /// `NS` record to set for all origins
+    /// Optional `NS` record to serve at each origin apex.
     pub rr_ns: Option<String>,
 }
 
 /// A DNS server that serves pkarr signed packets.
-pub struct DnsServer {
+pub(crate) struct DnsServer {
     local_addr: SocketAddr,
-    server: hickory_server::ServerFuture<DnsHandler>,
+    server: hickory_server::Server<DnsHandler>,
 }
 
 impl DnsServer {
     /// Spawn the server.
-    pub async fn spawn(config: DnsConfig, dns_handler: DnsHandler) -> Result<Self> {
+    pub(crate) async fn spawn(config: DnsConfig, dns_handler: DnsHandler) -> Result<Self> {
         const TCP_TIMEOUT: Duration = Duration::from_millis(1000);
-        let mut server = hickory_server::ServerFuture::new(dns_handler);
+        let mut server = hickory_server::Server::new(dns_handler);
 
         let bind_addr = SocketAddr::new(
             config.bind_addr.unwrap_or(Ipv4Addr::UNSPECIFIED.into()),
@@ -86,8 +86,13 @@ impl DnsServer {
 
         let socket_addr = socket.local_addr().anyerr()?;
 
+        const TCP_RESPONSE_BUFFER: usize = 64 * 1024;
         server.register_socket(socket);
-        server.register_listener(TcpListener::bind(bind_addr).await.anyerr()?, TCP_TIMEOUT);
+        server.register_listener(
+            TcpListener::bind(bind_addr).await.anyerr()?,
+            TCP_TIMEOUT,
+            TCP_RESPONSE_BUFFER,
+        );
         info!("DNS server listening on {}", bind_addr);
 
         Ok(Self {
@@ -97,12 +102,12 @@ impl DnsServer {
     }
 
     /// Get the local address of the UDP/TCP socket.
-    pub fn local_addr(&self) -> SocketAddr {
+    pub(crate) fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
     /// Shutdown the server an wait for all tasks to complete.
-    pub async fn shutdown(mut self) -> Result<()> {
+    pub(crate) async fn shutdown(mut self) -> Result<()> {
         self.server.shutdown_gracefully().await.anyerr()?;
         Ok(())
     }
@@ -110,7 +115,7 @@ impl DnsServer {
     /// Wait for all tasks to complete.
     ///
     /// Runs forever unless tasks fail.
-    pub async fn run_until_done(mut self) -> Result<()> {
+    pub(crate) async fn run_until_done(mut self) -> Result<()> {
         self.server.block_until_done().await.anyerr()?;
         Ok(())
     }
@@ -118,7 +123,7 @@ impl DnsServer {
 
 /// State for serving DNS
 #[derive(Clone, derive_more::Debug)]
-pub struct DnsHandler {
+pub(crate) struct DnsHandler {
     #[debug("Catalog")]
     catalog: Arc<Catalog>,
     metrics: Arc<Metrics>,
@@ -127,7 +132,11 @@ pub struct DnsHandler {
 impl DnsHandler {
     /// Create a DNS server given some settings, a connection to the DB for DID-by-username lookups
     /// and the server DID to serve under `_did.<origin>`.
-    pub fn new(zone_store: ZoneStore, config: &DnsConfig, metrics: Arc<Metrics>) -> Result<Self> {
+    pub(crate) fn new(
+        zone_store: ZoneStore,
+        config: &DnsConfig,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self> {
         let origins = config
             .origins
             .iter()
@@ -136,7 +145,7 @@ impl DnsHandler {
             .anyerr()?;
 
         let (static_authority, serial) = create_static_authority(&origins, config)?;
-        let authority = Arc::new(NodeAuthority::new(
+        let authority = Arc::new(NodeZoneHandler::new(
             zone_store,
             static_authority,
             origins,
@@ -155,17 +164,18 @@ impl DnsHandler {
     }
 
     /// Handle a DNS request
-    pub async fn answer_request(&self, request: Request) -> Result<Bytes> {
+    pub(crate) async fn answer_request(&self, request: Request) -> Result<Bytes> {
         let (tx, mut rx) = broadcast::channel(1);
         let response_handle = Handle(tx);
-        self.handle_request(&request, response_handle).await;
+        self.handle_request::<_, TokioTime>(&request, response_handle)
+            .await;
         rx.recv().await.anyerr()
     }
 }
 
 #[async_trait::async_trait]
 impl RequestHandler for DnsHandler {
-    async fn handle_request<R: ResponseHandler>(
+    async fn handle_request<R: ResponseHandler, T: hickory_server::net::runtime::Time>(
         &self,
         request: &Request,
         response_handle: R,
@@ -180,11 +190,14 @@ impl RequestHandler for DnsHandler {
             }
             _ => {}
         }
-        debug!(protocol=%request.protocol(), queries=?request.queries(), "incoming DNS request");
+        debug!(protocol=%request.protocol(), queries=?request.queries, "incoming DNS request");
 
-        let res = self.catalog.handle_request(request, response_handle).await;
-        match &res.response_code() {
-            ResponseCode::NoError => match res.answer_count() {
+        let res = self
+            .catalog
+            .handle_request::<_, T>(request, response_handle)
+            .await;
+        match res.response_code {
+            ResponseCode::NoError => match res.counts().answers {
                 0 => self.metrics.dns_lookup_notfound.inc(),
                 _ => self.metrics.dns_lookup_success.inc(),
             },
@@ -197,7 +210,7 @@ impl RequestHandler for DnsHandler {
 
 /// A handle to the channel over which the response to a DNS request will be sent
 #[derive(Debug, Clone)]
-pub struct Handle(pub broadcast::Sender<Bytes>);
+pub(crate) struct Handle(pub broadcast::Sender<Bytes>);
 
 #[async_trait]
 impl ResponseHandler for Handle {
@@ -211,16 +224,13 @@ impl ResponseHandler for Handle {
             impl Iterator<Item = &'a proto::rr::Record> + Send + 'a,
             impl Iterator<Item = &'a proto::rr::Record> + Send + 'a,
         >,
-    ) -> io::Result<ResponseInfo> {
+    ) -> Result<ResponseInfo, NetError> {
         let mut bytes = Vec::with_capacity(512);
         let info = {
-            let mut encoder = BinEncoder::new(&mut bytes);
+            let mut encoder = proto::serialize::binary::BinEncoder::new(&mut bytes);
             response.destructive_emit(&mut encoder)?
         };
-
-        let bytes = Bytes::from(bytes);
-        self.0.send(bytes).unwrap();
-
+        self.0.send(Bytes::from(bytes)).unwrap();
         Ok(info)
     }
 }
@@ -228,16 +238,12 @@ impl ResponseHandler for Handle {
 fn create_static_authority(
     origins: &[Name],
     config: &DnsConfig,
-) -> Result<(InMemoryAuthority, u32)> {
-    let soa = RData::parse(
-        RecordType::SOA,
-        config.default_soa.split_ascii_whitespace(),
-        None,
-    )
-    .anyerr()?
-    .into_soa()
-    .map_err(|_| anyerr!("Couldn't parse SOA: {}", config.default_soa))?;
-    let serial = soa.serial();
+) -> Result<(InMemoryZoneHandler, u32)> {
+    let soa = match RData::try_from_str(RecordType::SOA, &config.default_soa).anyerr()? {
+        RData::SOA(soa) => soa,
+        _ => return Err(anyerr!("Couldn't parse SOA: {}", config.default_soa)),
+    };
+    let serial = soa.serial;
     let mut records = BTreeMap::new();
     for name in origins {
         push_record(
@@ -269,15 +275,16 @@ fn create_static_authority(
         }
     }
 
-    let static_authority = InMemoryAuthority::new(Name::root(), records, ZoneType::Primary, false)
-        .map_err(|e| anyerr!("new authority: {e}"))?;
+    let static_authority =
+        InMemoryZoneHandler::new(Name::root(), records, ZoneType::Primary, AxfrPolicy::Deny)
+            .map_err(|e| anyerr!("new authority: {e}"))?;
 
     Ok((static_authority, serial))
 }
 
 fn push_record(records: &mut BTreeMap<RrKey, RecordSet>, serial: u32, record: Record) {
-    let key = RrKey::new(record.name().clone().into(), record.record_type());
-    let mut record_set = RecordSet::new(record.name().clone(), record.record_type(), serial);
+    let key = RrKey::new(record.name.clone().into(), record.record_type());
+    let mut record_set = RecordSet::new(record.name.clone(), record.record_type(), serial);
     record_set.insert(record, serial);
     records.insert(key, record_set);
 }

@@ -12,10 +12,9 @@ use noq_proto::{
 
 /// Possible frame types during handshaking
 #[repr(u32)]
-#[derive(
-    Copy, Clone, PartialEq, Eq, Debug, num_enum::IntoPrimitive, num_enum::TryFromPrimitive,
-)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, num_enum::IntoPrimitive, strum::FromRepr)]
 // needs to be pub due to being exposed in error types
+#[non_exhaustive]
 pub enum FrameType {
     /// The server frame type for the challenge response
     ServerChallenge = 0,
@@ -45,6 +44,8 @@ pub enum FrameType {
     Ping = 9,
     /// 8 byte payload, the contents of ping being replied to
     Pong = 10,
+    /// REMOVED since relay-protocol-v2, use `Self::Status` instead.
+    ///
     /// Sent from server to client to tell the client if their connection is unhealthy somehow.
     /// Contains only UTF-8 bytes.
     Health = 11,
@@ -53,6 +54,15 @@ pub enum FrameType {
     /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
     /// and how long to try total.
     Restarting = 12,
+
+    /// Sent from server to client to declare the connection health state.
+    ///
+    /// Added in `iroh-relay-v2` protocol. May not be sent to `iroh-relay-v1` clients.
+    ///
+    /// Uses a binary-encoded [`Status`] payload.
+    ///
+    /// [`Status`]: super::relay::Status
+    Status = 13,
 }
 
 #[stack_error(derive, add_meta)]
@@ -96,8 +106,8 @@ impl FrameType {
         let tag = VarInt::decode(buf).map_err(|err| e!(FrameTypeError::UnexpectedEnd, err))?;
         let tag_u32 = u32::try_from(u64::from(tag))
             .map_err(|_| e!(FrameTypeError::UnknownFrameType { tag }))?;
-        let frame_type = FrameType::try_from(tag_u32)
-            .map_err(|_| e!(FrameTypeError::UnknownFrameType { tag }))?;
+        let frame_type = FrameType::from_repr(tag_u32)
+            .ok_or_else(|| e!(FrameTypeError::UnknownFrameType { tag }))?;
         Ok(frame_type)
     }
 }

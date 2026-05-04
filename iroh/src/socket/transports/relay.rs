@@ -11,17 +11,21 @@ use n0_future::{
     ready,
     task::{self, AbortOnDropHandle},
 };
-use n0_watcher::{Watchable, Watcher as _};
+use n0_watcher::Watcher as _;
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, PollSender};
 use tracing::{Instrument, error, info_span, warn};
 
-use super::{Addr, Transmit};
+use super::{RecvInfo, Transmit};
+use crate::endpoint::RelayStatus;
 
 mod actor;
 
-pub(crate) use self::actor::Config as RelayActorConfig;
+pub(crate) use self::actor::{Config as RelayActorConfig, HomeRelayWatch, RelayConnectionState};
 use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
+
+type RelayAddrWatcher =
+    n0_watcher::Map<n0_watcher::Direct<Option<RelayStatus>>, Option<(RelayUrl, EndpointId)>>;
 
 #[derive(Debug)]
 pub(crate) struct RelayTransport {
@@ -33,7 +37,7 @@ pub(crate) struct RelayTransport {
     pending_item: Option<RelayRecvDatagram>,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
-    my_relay: Watchable<Option<RelayUrl>>,
+    my_relay: HomeRelayWatch,
     my_endpoint_id: EndpointId,
 }
 
@@ -81,14 +85,19 @@ impl RelayTransport {
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(
+            bufs.len(),
+            recv_infos.len(),
+            "non matching bufs & recv_infos"
+        );
         let mut num_msgs = 0;
-        for ((buf_out, meta_out), addr) in bufs
-            .iter_mut()
-            .zip(metas.iter_mut())
-            .zip(source_addrs.iter_mut())
-        {
+        for i in 0..bufs.len() {
+            let buf_out = &mut bufs[i];
+            let meta_out = &mut metas[i];
+            let recv_info = &mut recv_infos[i];
             let dm = match self.poll_recv_queue(cx) {
                 Poll::Ready(Some(recv)) => recv,
                 Poll::Ready(None) => {
@@ -149,26 +158,28 @@ impl RelayTransport {
             meta_out.ecn = None;
             meta_out.dst_ip = None;
 
-            *addr = (dm.url, dm.src).into();
+            *recv_info = RecvInfo::from_addr((dm.url, dm.src).into());
             num_msgs += 1;
         }
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
-            debug_assert!(num_msgs <= metas.len());
+            assert!(num_msgs <= metas.len());
             Poll::Ready(Ok(num_msgs))
         } else {
             Poll::Pending
         }
     }
 
-    pub(super) fn local_addr_watch(
-        &self,
-    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>> {
+    pub(super) fn local_addr_watch(&self) -> RelayAddrWatcher {
         let my_endpoint_id = self.my_endpoint_id;
         self.my_relay
             .watch()
-            .map(move |url| url.map(|url| (url, my_endpoint_id)))
+            .map(move |status| status.map(|status| (status.url().clone(), my_endpoint_id)))
+    }
+
+    pub(super) fn my_relay_status(&self) -> n0_watcher::Direct<Option<RelayStatus>> {
+        self.my_relay.watch()
     }
 
     pub(super) fn create_network_change_sender(&self) -> RelayNetworkChangeSender {
@@ -210,6 +221,11 @@ impl RelayNetworkChangeSender {
         self.send_relay_actor(RelayActorMessage::NetworkChange {
             report: report.clone(),
         });
+    }
+
+    /// Triggers an immediate health check on relay connections after a network change.
+    pub(super) fn check_connection_after_network_change(&self) {
+        self.send_relay_actor(RelayActorMessage::CheckConnectionAfterNetworkChange);
     }
 
     pub(super) fn rebind(&self) -> io::Result<()> {

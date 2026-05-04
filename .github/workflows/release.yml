@@ -92,7 +92,7 @@ jobs:
         strategy:
           fail-fast: false
           matrix:
-            name: [ubuntu-latest, ubuntu-arm-latest, macOS-latest, macOS-arm-latest, windows-latest]
+            name: [ubuntu-latest, ubuntu-musl-latest, ubuntu-arm-latest, ubuntu-arm-musl-latest, macOS-latest, macOS-arm-latest, windows-latest]
             rust: [stable]
             experimental: [false]
             include:
@@ -100,12 +100,28 @@ jobs:
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: aarch64
+                libc: gnu
+                cargo_targets: "aarch64-unknown-linux-gnu"
+                runner: [self-hosted, linux, ARM64]
+              - name: ubuntu-arm-musl-latest
+                os: ubuntu-latest
+                release-os: linux
+                release-arch: aarch64
+                libc: musl
                 cargo_targets: "aarch64-unknown-linux-musl"
                 runner: [self-hosted, linux, ARM64]
               - name: ubuntu-latest
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: amd64
+                libc: gnu
+                cargo_targets: "x86_64-unknown-linux-gnu"
+                runner: [self-hosted, linux, X64]
+              - name: ubuntu-musl-latest
+                os: ubuntu-latest
+                release-os: linux
+                release-arch: amd64
+                libc: musl
                 cargo_targets: "x86_64-unknown-linux-musl"
                 runner: [self-hosted, linux, X64]
               - name: macOS-latest
@@ -178,31 +194,16 @@ jobs:
           if: matrix.os != 'windows-latest'
           shell: bash
           run: |
-            if [ "${{ matrix.name }}" = "ubuntu-arm-latest" ]; then
-              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
-              export CC=aarch64-linux-gnu-gcc
+            if [ "${{ contains(matrix.cargo_targets, '-musl') }}" = "true" ]; then
+              # Native build on self-hosted linux runners; use musl-gcc from musl-tools.
+              export CARGO_TARGET_$(echo ${{ matrix.cargo_targets }} | tr 'a-z-' 'A-Z_')_LINKER=musl-gcc
+              export CC=musl-gcc
             fi
             cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
 
         - name: build release
           if: matrix.os == 'windows-latest'
           run: cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
-
-        - name: attach artifacts
-          if: matrix.os != 'windows-latest'
-          uses: actions/upload-artifact@v7
-          with:
-            name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}
-            path: target/${{ matrix.cargo_targets }}/optimized-release/iroh
-            compression-level: 0
-
-        - name: attach artifacts
-          if: matrix.os == 'windows-latest'
-          uses: actions/upload-artifact@v7
-          with:
-            name: iroh-windows-amd64.exe
-            path: target/${{ matrix.cargo_targets }}/optimized-release/iroh.exe
-            compression-level: 0
 
         - name: Cache AWS CLI
           if: matrix.os != 'windows-latest'
@@ -233,7 +234,7 @@ jobs:
             curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o ~/awscli/AWSCLIV2.pkg
 
         - name: Install awscli (linux)
-          if: matrix.os == 'ubuntu-latest' || matrix.name == 'ubuntu-arm-latest'
+          if: matrix.os == 'ubuntu-latest'
           run: sudo ~/awscli/aws/install --update
 
         - name: Install awscli (mac)
@@ -248,13 +249,13 @@ jobs:
               echo "AWS_DEFAULT_REGION=us-west-2" >> $GITHUB_ENV
 
         - name: push release
-          if: matrix.os != 'windows-latest'
+          if: matrix.os != 'windows-latest' && matrix.libc != 'musl'
           run: |
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
 
         - name: push release latest
-          if: matrix.os != 'windows-latest' && (github.event.inputs.mark_latest == 'true' || github.event_name == 'push')
+          if: matrix.os != 'windows-latest' && matrix.libc != 'musl' && (github.event.inputs.mark_latest == 'true' || github.event_name == 'push')
           run: |
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
@@ -302,7 +303,7 @@ jobs:
           uses: actions/upload-artifact@v7
           if : matrix.os != 'windows-latest'
           with:
-            name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle
+            name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}${{ matrix.libc == 'musl' && '-musl' || '' }}-bundle
             path: iroh-*.tar.gz
             compression-level: 0
             retention-days: 1

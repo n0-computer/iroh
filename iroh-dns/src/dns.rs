@@ -1,9 +1,9 @@
-//! Configurable DNS resolver for `iroh-relay` and `iroh`.
+//! Configurable DNS resolver.
 //!
 //! The main export is the [`DnsResolver`] struct. It provides methods to resolve domain names
-//! to IPv4 and IPv6 addresses. Additionally, the resolver features methods to resolve the
-//! [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
-//! See the [`endpoint_info`] module documentation for details on how iroh endpoint records
+//! to IPv4 and IPv6 addresses, and to look up TXT records. Additionally, the resolver features
+//! methods to resolve the [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
+//! See the [`crate::endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
 use std::{
@@ -13,26 +13,28 @@ use std::{
     sync::Arc,
 };
 
+use arc_swap::ArcSwap;
 use hickory_resolver::{
     TokioResolver,
-    config::{ResolverConfig, ResolverOpts},
-    name_server::TokioConnectionProvider,
+    config::{ConnectionConfig, ResolverConfig, ResolverOpts},
+    net::runtime::TokioRuntimeProvider,
+    proto::rr::RData,
 };
 use iroh_base::EndpointId;
-use n0_error::{StackError, e, stack_error};
+use n0_error::{AnyError, StackError, StdResultExt, e, stack_error};
 use n0_future::{
     StreamExt,
     boxed::BoxFuture,
     time::{self, Duration},
 };
-use tokio::sync::RwLock;
+use tokio::sync::Notify;
 use tracing::debug;
 use url::Url;
 
-use crate::{
-    defaults::timeouts::DNS_TIMEOUT,
-    endpoint_info::{self, EndpointInfo, ParseError},
-};
+use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
+
+/// Default DNS query timeout.
+pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The n0 address lookup DNS origin, for production.
 pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link.";
@@ -56,11 +58,14 @@ pub trait Resolver: fmt::Debug + Send + Sync + 'static {
     /// Clears the internal cache.
     fn clear_cache(&self);
 
-    /// Completely resets the DNS resolver.
+    /// Returns a freshly-built resolver to replace `self` after a network change.
     ///
-    /// This is called when the host's network changes majorly. Implementations should rebind all sockets
-    /// and refresh the nameserver configuration if read from the host system.
-    fn reset(&mut self);
+    /// The returned resolver replaces the previous one inside [`DnsResolver`] via an
+    /// atomic swap. Build a new instance with re-bound sockets and re-read nameserver
+    /// configuration rather than mutating in place. Must not perform IO: defer DNS
+    /// queries and socket binds until the new resolver is first used. May be called
+    /// concurrently, in which case all but one allocated replacement is dropped unused.
+    fn reset(&self) -> Box<dyn Resolver>;
 }
 
 /// Boxed iterator alias.
@@ -73,22 +78,20 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 #[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum DnsError {
-    #[error(transparent)]
-    Timeout { source: tokio::time::error::Elapsed },
+    #[error("Request timed out")]
+    Timeout {},
     #[error("No response")]
     NoResponse {},
-    #[error("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}")]
+    #[error("Resolve failed, IPv4: {ipv4}, IPv6: {ipv6}")]
     ResolveBoth {
         ipv4: Box<DnsError>,
         ipv6: Box<DnsError>,
     },
-    #[error("missing host")]
+    #[error("Missing host")]
     MissingHost {},
-    #[error(transparent)]
-    Resolve {
-        source: hickory_resolver::ResolveError,
-    },
-    #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
+    #[error("Failed to resolve")]
+    Resolve { source: AnyError },
+    #[error("Invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
 }
 
@@ -157,15 +160,18 @@ pub enum DnsProtocol {
 }
 
 impl DnsProtocol {
-    fn to_hickory(self) -> hickory_resolver::proto::xfer::Protocol {
-        use hickory_resolver::proto::xfer::Protocol;
+    #[cfg_attr(
+        not(with_crypto_provider),
+        expect(unused_variables, reason = "unused when TLS is disabled in DNS")
+    )]
+    fn to_hickory(self, ip: IpAddr) -> ConnectionConfig {
         match self {
-            DnsProtocol::Udp => Protocol::Udp,
-            DnsProtocol::Tcp => Protocol::Tcp,
+            DnsProtocol::Udp => ConnectionConfig::udp(),
+            DnsProtocol::Tcp => ConnectionConfig::tcp(),
             #[cfg(with_crypto_provider)]
-            DnsProtocol::Tls => Protocol::Tls,
+            DnsProtocol::Tls => ConnectionConfig::tls(Arc::from(ip.to_string())),
             #[cfg(with_crypto_provider)]
-            DnsProtocol::Https => Protocol::Https,
+            DnsProtocol::Https => ConnectionConfig::https(Arc::from(ip.to_string()), None),
         }
     }
 }
@@ -208,7 +214,7 @@ impl Builder {
 
     /// Builds the DNS resolver.
     pub fn build(self) -> DnsResolver {
-        DnsResolver(Arc::new(RwLock::new(HickoryResolver::new(self))))
+        DnsResolver::custom(HickoryResolver::new(self))
     }
 }
 
@@ -219,7 +225,93 @@ impl Builder {
 /// Alternatively, you can create a fully custom DNS resolver by implementing the [`Resolver`]
 /// trait and creating the resolver with [`Self::custom`].
 #[derive(Debug, Clone)]
-pub struct DnsResolver(Arc<RwLock<dyn Resolver>>);
+pub struct DnsResolver {
+    inner: Arc<Inner>,
+}
+
+/// Shared state behind [`DnsResolver`].
+#[derive(Debug)]
+struct Inner {
+    /// Wakes in-flight [`Self::op`] calls when the resolver is swapped.
+    notify_reset: Notify,
+    resolver: ArcSwap<Box<dyn Resolver>>,
+}
+
+impl Inner {
+    fn new(inner: Box<dyn Resolver>) -> Self {
+        Self {
+            notify_reset: Notify::new(),
+            resolver: ArcSwap::from_pointee(inner),
+        }
+    }
+
+    /// Atomically swaps the resolver and wakes in-flight [`Self::op`] calls.
+    ///
+    /// The swap happens before the wake. An op that observes or misses the wake is
+    /// then guaranteed to load the new resolver. Non-blocking.
+    ///
+    /// Under contention only the first concurrent caller's swap lands; the others
+    /// drop their freshly-built resolver. The winner's notification is enough since
+    /// every in-flight op will pick up the new resolver on its next iteration.
+    fn reset(&self) {
+        let current = self.resolver.load();
+        let new = Arc::new(current.reset());
+        let prev = self.resolver.compare_and_swap(&current, new);
+        if Arc::ptr_eq(&current, &prev) {
+            self.notify_reset.notify_waiters();
+        }
+    }
+
+    fn clear_cache(&self) {
+        self.resolver.load().clear_cache();
+    }
+
+    /// Runs `f(resolver)` with a timeout, restarting against the new resolver if
+    /// [`Self::reset`] fires.
+    ///
+    /// Three things race in `biased` order: the lookup completes (returned even if a
+    /// reset happened concurrently, since a successful result is still valid), a reset
+    /// is observed (drop the in-flight future and re-run `f`), or the timeout elapses.
+    ///
+    /// `timeout` is per-attempt. Each retry starts a fresh sleep, so the wall-clock
+    /// total can exceed it if many resets fire. This is intentional: a fresh attempt
+    /// against a just-changed network should not inherit the previous attempt's
+    /// remaining budget.
+    ///
+    /// `f` may be invoked more than once and so must be `Fn`. Captured state must be
+    /// reusable across calls, typically by cloning inside the closure body.
+    ///
+    /// `notified` is enabled before `load_full`. Combined with [`Self::reset`]'s
+    /// swap-then-notify ordering: a wake missed before `enable()` had already been
+    /// preceded by the swap, so the following `load_full` returns the new resolver.
+    async fn op<F, Fut, R, E>(&self, timeout: Duration, f: F) -> Result<R, DnsError>
+    where
+        E: 'static + Send + Into<DnsError>,
+        R: 'static + Send,
+        F: 'static + Send + Fn(Arc<Box<dyn Resolver>>) -> Fut,
+        Fut: 'static + Send + Future<Output = Result<R, E>>,
+    {
+        loop {
+            let notified = self.notify_reset.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
+            let timeout = n0_future::time::sleep(timeout);
+            tokio::pin!(timeout);
+
+            let resolver = self.resolver.load_full();
+            let fut = f(resolver);
+            tokio::pin!(fut);
+
+            tokio::select! {
+                biased;
+                res = fut => return res.map_err(Into::into),
+                _ = notified => continue,
+                _ = timeout => return Err(e!(DnsError::Timeout)),
+            }
+        }
+    }
+}
 
 impl DnsResolver {
     /// Creates a new DNS resolver with sensible cross-platform defaults.
@@ -249,17 +341,23 @@ impl DnsResolver {
     /// implement the [`Resolver`] trait on a struct and implement DNS resolution
     /// however you see fit.
     pub fn custom(resolver: impl Resolver) -> Self {
-        Self(Arc::new(RwLock::new(resolver)))
+        Self {
+            inner: Arc::new(Inner::new(Box::new(resolver))),
+        }
     }
 
     /// Removes all entries from the cache.
-    pub async fn clear_cache(&self) {
-        self.0.read().await.clear_cache()
+    pub fn clear_cache(&self) {
+        self.inner.clear_cache();
     }
 
-    /// Recreates the inner resolver.
-    pub async fn reset(&self) {
-        self.0.write().await.reset()
+    /// Replaces the inner resolver with a freshly-built one.
+    ///
+    /// Call this on a major host network change to pick up the new system DNS
+    /// configuration and rebind sockets. The swap is atomic and non-blocking;
+    /// in-flight lookups retry against the new resolver. See [`Resolver::reset`].
+    pub fn reset(&self) {
+        self.inner.reset();
     }
 
     /// Looks up a TXT record.
@@ -269,8 +367,10 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = TxtRecordData>, DnsError> {
         let host = host.to_string();
-        let fut = self.0.read().await.lookup_txt(host);
-        let res = time::timeout(timeout, fut).await??;
+        let res = self
+            .inner
+            .op(timeout, move |resolver| resolver.lookup_txt(host.clone()))
+            .await?;
         Ok(res)
     }
 
@@ -281,8 +381,10 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let fut = self.0.read().await.lookup_ipv4(host);
-        let addrs = time::timeout(timeout, fut).await??;
+        let addrs = self
+            .inner
+            .op(timeout, move |resolver| resolver.lookup_ipv4(host.clone()))
+            .await?;
         Ok(addrs.into_iter().map(IpAddr::V4))
     }
 
@@ -293,8 +395,10 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let fut = self.0.read().await.lookup_ipv6(host);
-        let addrs = time::timeout(timeout, fut).await??;
+        let addrs = self
+            .inner
+            .op(timeout, move |resolver| resolver.lookup_ipv6(host.clone()))
+            .await?;
         Ok(addrs.into_iter().map(IpAddr::V6))
     }
 
@@ -423,8 +527,7 @@ impl DnsResolver {
         endpoint_id: &EndpointId,
         origin: &str,
     ) -> Result<EndpointInfo, LookupError> {
-        let name = endpoint_info::endpoint_domain(endpoint_id, origin);
-        let name = endpoint_info::ensure_iroh_txt_label(name);
+        let name = format!("_iroh.{}.{}", endpoint_id.to_z32(), origin);
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
         let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
@@ -435,7 +538,11 @@ impl DnsResolver {
         &self,
         name: &str,
     ) -> Result<EndpointInfo, LookupError> {
-        let name = endpoint_info::ensure_iroh_txt_label(name.to_string());
+        let name = if name.starts_with("_iroh.") {
+            name.to_string()
+        } else {
+            format!("_iroh.{name}")
+        };
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
         let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
@@ -479,27 +586,6 @@ impl Default for DnsResolver {
     }
 }
 
-impl reqwest::dns::Resolve for DnsResolver {
-    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        let this = self.clone();
-        let name = name.as_str().to_string();
-        Box::pin(async move {
-            let res = this.lookup_ipv4_ipv6(name, DNS_TIMEOUT).await;
-            match res {
-                Ok(addrs) => {
-                    let addrs: reqwest::dns::Addrs =
-                        Box::new(addrs.map(|addr| SocketAddr::new(addr, 0)));
-                    Ok(addrs)
-                }
-                Err(err) => {
-                    let err: Box<dyn std::error::Error + Send + Sync> = Box::new(err);
-                    Err(err)
-                }
-            }
-        })
-    }
-}
-
 #[derive(Debug)]
 struct HickoryResolver {
     resolver: TokioResolver,
@@ -518,21 +604,22 @@ impl HickoryResolver {
                 Ok((config, options)) => (config, options),
                 Err(error) => {
                     debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
-                    (ResolverConfig::google(), ResolverOpts::default())
+                    (
+                        ResolverConfig::udp_and_tcp(&hickory_resolver::config::GOOGLE),
+                        ResolverOpts::default(),
+                    )
                 }
             }
         } else {
-            (ResolverConfig::new(), ResolverOpts::default())
+            (ResolverConfig::default(), ResolverOpts::default())
         };
 
-        #[cfg(with_crypto_provider)]
-        if let Some(client_config) = builder.tls_client_config.clone() {
-            options.tls_config = client_config;
-        }
-
         for (addr, proto) in builder.nameservers.iter() {
+            let mut transport = proto.to_hickory(addr.ip());
+            transport.port = addr.port();
             let nameserver =
-                hickory_resolver::config::NameServerConfig::new(*addr, proto.to_hickory());
+                hickory_resolver::config::NameServerConfig::new(addr.ip(), false, vec![transport]);
+
             config.add_name_server(nameserver);
         }
 
@@ -541,17 +628,23 @@ impl HickoryResolver {
         options.negative_max_ttl = Some(Duration::ZERO);
 
         let mut hickory_builder =
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
+            TokioResolver::builder_with_config(config, TokioRuntimeProvider::default());
         *hickory_builder.options_mut() = options;
-        hickory_builder.build()
+
+        #[cfg(with_crypto_provider)]
+        if let Some(client_config) = builder.tls_client_config.clone() {
+            hickory_builder = hickory_builder.with_tls_config(client_config);
+        }
+
+        hickory_builder.build().expect("config works")
     }
 
-    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::ResolveError> {
+    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::net::NetError> {
         let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
 
         // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
         // there is no easy way to do this.
-        let mut config = hickory_resolver::config::ResolverConfig::new();
+        let mut config = hickory_resolver::config::ResolverConfig::default();
         if let Some(name) = system_config.domain() {
             config.set_domain(name.clone());
         }
@@ -559,7 +652,7 @@ impl HickoryResolver {
             config.add_search(name.clone());
         }
         for nameserver_cfg in system_config.name_servers() {
-            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.socket_addr.ip()) {
+            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.ip) {
                 config.add_name_server(nameserver_cfg.clone());
             }
         }
@@ -571,8 +664,14 @@ impl Resolver for HickoryResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.ipv4_lookup(host).await?;
-            let iter: BoxIter<Ipv4Addr> = Box::new(lookup.into_iter().map(Ipv4Addr::from));
+            let lookup = resolver.ipv4_lookup(host).await.anyerr()?;
+            let iter: BoxIter<Ipv4Addr> =
+                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
+                    match &record.data {
+                        RData::A(addr) => Some(addr.0),
+                        _ => None,
+                    }
+                }));
             Ok(iter)
         })
     }
@@ -580,8 +679,14 @@ impl Resolver for HickoryResolver {
     fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.ipv6_lookup(host).await?;
-            let iter: BoxIter<Ipv6Addr> = Box::new(lookup.into_iter().map(Ipv6Addr::from));
+            let lookup = resolver.ipv6_lookup(host).await.anyerr()?;
+            let iter: BoxIter<Ipv6Addr> =
+                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
+                    match &record.data {
+                        RData::AAAA(addr) => Some(addr.0),
+                        _ => None,
+                    }
+                }));
             Ok(iter)
         })
     }
@@ -589,12 +694,19 @@ impl Resolver for HickoryResolver {
     fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.txt_lookup(host).await?;
-            let iter: BoxIter<TxtRecordData> = Box::new(
-                lookup
-                    .into_iter()
-                    .map(|txt| TxtRecordData::from_iter(txt.iter().cloned())),
-            );
+            let lookup = resolver.txt_lookup(host).await.anyerr()?;
+            let iter: BoxIter<TxtRecordData> =
+                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
+                    match &record.data {
+                        RData::TXT(txt) => {
+                            // I don't know a way of avoiding this deep copy, even if it's agonizing.
+                            // The representation of `TxtRecrodData` and `hickory_proto::rr::rdata::TXT`
+                            // is identical.
+                            Some(TxtRecordData::from(txt.txt_data.to_vec()))
+                        }
+                        _ => None,
+                    }
+                }));
             Ok(iter)
         })
     }
@@ -603,8 +715,12 @@ impl Resolver for HickoryResolver {
         self.resolver.clear_cache()
     }
 
-    fn reset(&mut self) {
-        self.resolver = Self::build_resolver(&self.builder);
+    fn reset(&self) -> Box<dyn Resolver> {
+        let resolver = Self::build_resolver(&self.builder);
+        Box::new(Self {
+            resolver,
+            builder: self.builder.clone(),
+        })
     }
 }
 
@@ -818,7 +934,7 @@ pub(crate) mod tests {
                 todo!()
             }
 
-            fn reset(&mut self) {
+            fn reset(&self) -> Box<dyn Resolver> {
                 todo!()
             }
         }

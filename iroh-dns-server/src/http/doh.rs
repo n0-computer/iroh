@@ -18,30 +18,30 @@ use http::{
 };
 use n0_error::StdResultExt;
 
+use self::{
+    extract::{DnsMimeType, DnsRequestBody, DnsRequestQuery},
+    response::DnsResponse,
+};
 use super::error::AppResult;
 use crate::state::AppState;
 
 mod extract;
-mod response;
-
-use self::extract::{DnsMimeType, DnsRequestBody, DnsRequestQuery};
-#[cfg(test)]
-pub(crate) use self::response::DnsResponse;
+pub(crate) mod response;
 
 /// GET handler for resolving DoH queries
-pub async fn get(
+pub(super) async fn get(
     State(state): State<AppState>,
     DnsRequestQuery(request, accept_type): DnsRequestQuery,
 ) -> AppResult<Response> {
     let message_bytes = state.dns_handler.answer_request(request).await?;
     let message = proto::op::Message::from_bytes(&message_bytes).anyerr()?;
 
-    let min_ttl = message.answers().iter().map(|rec| rec.ttl()).min();
+    let min_ttl = message.answers.iter().map(|rec| rec.ttl).min();
 
     let mut response = match accept_type {
         DnsMimeType::Message => (StatusCode::OK, message_bytes).into_response(),
         DnsMimeType::Json => {
-            let response = self::response::DnsResponse::from_message(message)?;
+            let response = DnsResponse::from_message(message)?;
             (StatusCode::OK, Json(response)).into_response()
         }
     };
@@ -59,7 +59,7 @@ pub async fn get(
 }
 
 /// POST handler for resolvng DoH queries
-pub async fn post(
+pub(super) async fn post(
     State(state): State<AppState>,
     DnsRequestBody(request): DnsRequestBody,
 ) -> Response {

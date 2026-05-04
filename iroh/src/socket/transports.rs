@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
 use super::{Socket, mapped_addrs::MultipathMappedAddr};
-use crate::{metrics::EndpointMetrics, net_report::Report};
+use crate::{endpoint::RelayStatus, metrics::EndpointMetrics, net_report::Report};
 
 pub(crate) mod custom;
 #[cfg(not(wasm_browser))]
@@ -33,7 +33,9 @@ use custom::{CustomEndpoint, CustomSender, CustomTransport};
 pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
-pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
+pub(crate) use self::relay::{
+    HomeRelayWatch, RelayActorConfig, RelayConnectionState, RelayTransport,
+};
 
 /// Manages the different underlying data transports that the socket can support.
 #[derive(Debug)]
@@ -44,8 +46,8 @@ pub(crate) struct Transports {
     custom: Vec<Box<dyn CustomEndpoint>>,
 
     poll_recv_counter: usize,
-    /// Cache for source addrs, to speed up access
-    source_addrs: [Addr; noq_udp::BATCH_SIZE],
+    /// Cache for per-packet recv info, to speed up access
+    recv_infos: [RecvInfo; noq_udp::BATCH_SIZE],
 }
 
 /// Combined watcher type for all ip transports
@@ -56,7 +58,12 @@ type CustomTransportsWatcher =
 /// Combined watcher type for all relay transports
 type RelayTransportsWatcher = n0_watcher::Join<
     Option<(RelayUrl, EndpointId)>,
-    n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
+    n0_watcher::Map<n0_watcher::Direct<Option<RelayStatus>>, Option<(RelayUrl, EndpointId)>>,
+>;
+
+pub(super) type HomeRelayWatcher = n0_watcher::Map<
+    n0_watcher::Join<Option<RelayStatus>, n0_watcher::Direct<Option<RelayStatus>>>,
+    Vec<RelayStatus>,
 >;
 
 #[cfg(not(wasm_browser))]
@@ -230,7 +237,7 @@ impl Transports {
             relay,
             custom,
             poll_recv_counter: Default::default(),
-            source_addrs: Default::default(),
+            recv_infos: Default::default(),
         })
     }
 
@@ -241,8 +248,8 @@ impl Transports {
         metas: &mut [noq_udp::RecvMeta],
         sock: &Socket,
     ) -> Poll<io::Result<usize>> {
-        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        debug_assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
         if sock.is_closing() {
             return Poll::Pending;
         }
@@ -250,7 +257,7 @@ impl Transports {
         match self.inner_poll_recv(cx, bufs, metas)? {
             Poll::Pending | Poll::Ready(0) => Poll::Pending,
             Poll::Ready(n) => {
-                sock.process_datagrams(&mut bufs[..n], &mut metas[..n], &self.source_addrs[..n]);
+                sock.process_datagrams(&mut bufs[..n], &mut metas[..n], &self.recv_infos[..n]);
                 Poll::Ready(Ok(n))
             }
         }
@@ -263,11 +270,11 @@ impl Transports {
         bufs: &mut [IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
         macro_rules! poll_transport {
             ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas, &mut self.source_addrs)? {
+                match $socket.poll_recv(cx, bufs, metas, &mut self.recv_infos)? {
                     Poll::Pending | Poll::Ready(0) => {}
                     Poll::Ready(n) => {
                         return Poll::Ready(Ok(n));
@@ -310,6 +317,11 @@ impl Transports {
     /// for relay transports, this is the home relay.
     pub(crate) fn local_addrs(&self) -> Vec<Addr> {
         self.local_addrs_watch().get()
+    }
+
+    pub(super) fn home_relay_watch(&self) -> HomeRelayWatcher {
+        n0_watcher::Join::new(self.relay.iter().map(|t| t.my_relay_status()))
+            .map(|v| v.into_iter().flatten().collect())
     }
 
     #[cfg(not(wasm_browser))]
@@ -449,6 +461,15 @@ impl NetworkChangeSender {
         }
     }
 
+    /// Triggers an immediate relay connection health check after a network change.
+    ///
+    /// Uses RTT-based timeout for faster detection of broken connections.
+    pub(crate) fn check_relay_connection(&self) {
+        for relay in &self.relay {
+            relay.check_connection_after_network_change();
+        }
+    }
+
     /// Rebinds underlying connections, if necessary.
     pub(crate) fn rebind(&self) -> std::io::Result<()> {
         let mut res = Ok(());
@@ -529,6 +550,58 @@ impl fmt::Debug for Addr {
     }
 }
 
+/// Per-packet recv data filled in by transports during [`poll_recv`][CustomEndpoint::poll_recv].
+///
+/// This carries the bits of [`noq_udp::RecvMeta`] that custom transports
+/// can't express through `RecvMeta` itself: the remote address as a
+/// [`CustomAddr`] and, optionally, the local custom address that received
+/// the packet. For IP transports the kernel populates `RecvMeta` directly;
+/// for relays the local URL is the remote's relay URL — so for them this
+/// struct is filled in only with the remote variant.
+///
+/// Custom transport authors construct values via [`RecvInfo::new`], which
+/// only accepts [`CustomAddr`].
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
+#[derive(Clone, Debug, Default)]
+pub struct RecvInfo {
+    remote: Addr,
+    local: Option<CustomAddr>,
+}
+
+impl RecvInfo {
+    /// Creates a [`RecvInfo`] from an internal [`Addr`], with no local custom
+    /// address. Used by IP and relay recv paths.
+    pub(crate) fn from_addr(remote: Addr) -> Self {
+        Self {
+            remote,
+            local: None,
+        }
+    }
+
+    pub(crate) fn remote(&self) -> &Addr {
+        &self.remote
+    }
+
+    pub(crate) fn local(&self) -> Option<&CustomAddr> {
+        self.local.as_ref()
+    }
+}
+
+#[cfg(feature = "unstable-custom-transports")]
+impl RecvInfo {
+    /// Creates a new [`RecvInfo`] for an incoming packet on a custom transport.
+    ///
+    /// `remote` is the remote custom address. `local` is the local custom
+    /// address that received this packet, if the transport can identify it;
+    /// pass `None` otherwise.
+    pub fn new(remote: CustomAddr, local: Option<CustomAddr>) -> Self {
+        Self {
+            remote: Addr::Custom(remote),
+            local,
+        }
+    }
+}
+
 impl Default for Addr {
     fn default() -> Self {
         Self::Ip(SocketAddr::V6(SocketAddrV6::new(
@@ -579,7 +652,7 @@ impl From<Addr> for TransportAddr {
         match value {
             Addr::Ip(addr) => TransportAddr::Ip(addr),
             Addr::Relay(url, _) => TransportAddr::Relay(url),
-            Addr::Custom(custom_addr) => TransportAddr::Custom(custom_addr),
+            Addr::Custom(addr) => TransportAddr::Custom(addr),
         }
     }
 }
@@ -598,7 +671,7 @@ impl Addr {
         match self {
             Self::Ip(ip) => Some(ip),
             Self::Relay(..) => None,
-            Self::Custom(..) => None,
+            Self::Custom(_) => None,
         }
     }
 
@@ -730,7 +803,7 @@ impl TransportBias {
 /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
 /// - Relay is a backup transport (only used when no primary transport is available)
 #[derive(Debug, Clone)]
-pub struct TransportBiasMap {
+pub(crate) struct TransportBiasMap {
     map: Arc<FxHashMap<AddrKind, TransportBias>>,
 }
 
@@ -752,7 +825,7 @@ impl Default for TransportBiasMap {
 
 impl TransportBiasMap {
     /// Returns a new map with the given bias added or updated.
-    pub fn with_bias(self, kind: AddrKind, bias: TransportBias) -> Self {
+    pub(crate) fn with_bias(self, kind: AddrKind, bias: TransportBias) -> Self {
         let mut map = (*self.map).clone();
         map.insert(kind, bias);
         Self { map: Arc::new(map) }
@@ -761,7 +834,7 @@ impl TransportBiasMap {
     /// Gets the bias for the given address.
     ///
     /// Returns a primary transport with no RTT bias if no specific bias is configured.
-    pub fn get(&self, addr: &Addr) -> TransportBias {
+    pub(crate) fn get(&self, addr: &Addr) -> TransportBias {
         self.map
             .get(&addr.addr_kind())
             .cloned()
@@ -769,7 +842,7 @@ impl TransportBiasMap {
     }
 
     /// Computes path selection data for a given address and RTT.
-    pub fn path_selection_data(&self, addr: &Addr, rtt: Duration) -> PathSelectionData {
+    pub(crate) fn path_selection_data(&self, addr: &Addr, rtt: Duration) -> PathSelectionData {
         let bias = self.get(addr);
         let tpe = bias.transport_type;
         let biased_rtt = rtt.as_nanos() as i128 + bias.rtt_bias;
@@ -783,15 +856,15 @@ impl TransportBiasMap {
 
 /// Data used during path selection.
 #[derive(Debug)]
-pub struct PathSelectionData {
+pub(crate) struct PathSelectionData {
     /// Type of the transport.
-    pub transport_type: TransportType,
+    pub(crate) transport_type: TransportType,
     /// Measured RTT for path selection.
-    pub rtt: Duration,
+    pub(crate) rtt: Duration,
     /// Biased RTT for path selection.
     ///
     /// This is an i128 so we can subtract an advantage for e.g. IPv6 without underflowing.
-    pub biased_rtt: i128,
+    pub(crate) biased_rtt: i128,
 }
 
 impl PathSelectionData {
@@ -799,7 +872,7 @@ impl PathSelectionData {
     ///
     /// First part is the status, 0 for Available, 1 for Backup.
     /// Second part is the biased RTT.
-    pub fn sort_key(&self) -> (u8, i128) {
+    pub(crate) fn sort_key(&self) -> (u8, i128) {
         (self.transport_type as u8, self.biased_rtt)
     }
 }

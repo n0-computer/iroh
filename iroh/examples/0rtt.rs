@@ -4,7 +4,6 @@ use clap::Parser;
 use data_encoding::HEXLOWER;
 use iroh::{
     EndpointId, SecretKey,
-    address_lookup::AddressLookup,
     endpoint::{RecvStream, SendStream, ZeroRttStatus, presets},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
@@ -33,7 +32,7 @@ pub fn get_or_generate_secret_key() -> Result<SecretKey> {
         SecretKey::from_str(&secret).context("Invalid secret key format")
     } else {
         // Generate a new random key
-        let secret_key = SecretKey::generate(&mut rand::rng());
+        let secret_key = SecretKey::generate();
         println!(
             "Generated new secret key: {}",
             HEXLOWER.encode(&secret_key.to_bytes())
@@ -71,11 +70,11 @@ async fn connect(args: Args) -> Result<()> {
         .await?;
     // ensure we have resolved the remote_id before connecting
     // so we get a more accurate connection timing
-    let mut address_lookup_stream = endpoint
-        .address_lookup()?
-        .resolve(remote_id)
-        .expect("Address Lookup to be enabled");
-    let _ = address_lookup_stream.next().await;
+    let mut address_lookup_stream = endpoint.address_lookup()?.resolve(remote_id);
+    let _item = address_lookup_stream
+        .next()
+        .await
+        .context("failed to lookup remote")?;
 
     let t0 = Instant::now();
     for i in 0..args.rounds {

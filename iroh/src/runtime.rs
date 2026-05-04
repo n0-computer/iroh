@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 #[derive(Debug)]
-pub struct Runtime {
+pub(crate) struct Runtime {
     id: EndpointId,
     #[cfg(not(wasm_browser))]
     tasks: TaskTracker,
@@ -20,7 +20,7 @@ pub struct Runtime {
 impl Runtime {
     /// Create a new [`Runtime`] that manages shutting down tasks properly,
     /// whether gracefully or un-gracefully.
-    pub fn new(id: EndpointId) -> Self {
+    pub(crate) fn new(id: EndpointId) -> Self {
         Self {
             id,
             #[cfg(not(wasm_browser))]
@@ -39,7 +39,7 @@ impl Runtime {
     /// If the tasks were already closed, it assumes the tasks have already been
     /// awaited.
     #[cfg(not(wasm_browser))]
-    pub async fn shutdown(&self) {
+    pub(crate) async fn shutdown(&self) {
         if self.tasks.close() {
             self.tasks.wait().await
         }
@@ -47,7 +47,7 @@ impl Runtime {
 
     /// Shutdown the runtime ASAP, not waiting for any graceful closing of tasks.
     #[cfg(not(wasm_browser))]
-    pub fn abort(&self) {
+    pub(crate) fn abort(&self) {
         // Drop the running futures.
         self.cancel.cancel();
         // Signal that the runtime should be closed.
@@ -57,11 +57,11 @@ impl Runtime {
 
     /// No-op on wasm. There is no task tracker to close or wait on.
     #[cfg(wasm_browser)]
-    pub async fn shutdown(&self) {}
+    pub(crate) async fn shutdown(&self) {}
 
     /// No-op on wasm. There is no task tracker or cancellation to perform.
     #[cfg(wasm_browser)]
-    pub fn abort(&self) {}
+    pub(crate) fn abort(&self) {}
 }
 
 impl noq::Runtime for Runtime {

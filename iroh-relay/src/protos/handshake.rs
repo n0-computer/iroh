@@ -31,7 +31,7 @@ use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
 use iroh_base::{PublicKey, SecretKey};
-use n0_error::{e, ensure, stack_error};
+use n0_error::{AnyError, anyerr, e, ensure, stack_error};
 use n0_future::{SinkExt, TryStreamExt};
 #[cfg(feature = "server")]
 use rand::CryptoRng;
@@ -136,15 +136,14 @@ impl Frame for ServerDeniesAuth {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum Error {
-    #[error(transparent)]
-    Websocket {
-        #[cfg(not(wasm_browser))]
-        #[error(from, std_err)]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        #[error(from, std_err)]
-        source: ws_stream_wasm::WsErr,
-    },
+    /// Error returned from the underlying WebSocket stream during the handshake.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
+    #[error("WebSocket error")]
+    Websocket { source: AnyError },
     #[error("Handshake stream ended prematurely")]
     UnexpectedEnd {},
     #[error(transparent)]
@@ -162,8 +161,7 @@ pub enum Error {
     #[error("Handshake failed while deserializing {frame_type:?} frame")]
     DeserializationError {
         frame_type: FrameType,
-        #[error(std_err)]
-        source: postcard::Error,
+        source: AnyError,
     },
     #[cfg(feature = "server")]
     /// Failed to deserialize client auth header
@@ -512,8 +510,12 @@ async fn write_frame<F: serde::Serialize + Frame>(
         .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
         .into_inner()
         .freeze();
-    io.send(bytes).await?;
-    io.flush().await?;
+    io.send(bytes)
+        .await
+        .map_err(|err| e!(Error::Websocket, anyerr!(err)))?;
+    io.flush()
+        .await
+        .map_err(|err| e!(Error::Websocket, anyerr!(err)))?;
     Ok(())
 }
 
@@ -523,7 +525,8 @@ async fn read_frame(
 ) -> Result<(FrameType, Bytes), Error> {
     let mut payload = io
         .try_next()
-        .await?
+        .await
+        .map_err(|err| e!(Error::Websocket, anyerr!(err)))?
         .ok_or_else(|| e!(Error::UnexpectedEnd))?;
 
     let frame_type = FrameType::from_bytes(&mut payload)?;
@@ -543,7 +546,7 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
     postcard::from_bytes(&frame).map_err(|err| {
         e!(Error::DeserializationError {
             frame_type: F::TAG,
-            source: err
+            source: anyerr!(err)
         })
     })
 }
@@ -552,10 +555,10 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
 mod tests {
     use bytes::BytesMut;
     use iroh_base::{PublicKey, SecretKey};
-    use n0_error::{Result, StackResultExt, StdResultExt};
+    use n0_error::{AnyError, Result, StackResultExt, StdResultExt};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
     use tracing::{Instrument, info_span};
 
@@ -651,13 +654,13 @@ mod tests {
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(tokio_websockets::Error::Io)
-            .sink_map_err(tokio_websockets::Error::Io)
+            .map_err(AnyError::from_std)
+            .sink_map_err(AnyError::from_std)
             .with_shared_secret(client_shared_secret);
         let mut server_io = Framed::new(server, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(tokio_websockets::Error::Io)
-            .sink_map_err(tokio_websockets::Error::Io)
+            .map_err(AnyError::from_std)
+            .sink_map_err(AnyError::from_std)
             .with_shared_secret(server_shared_secret);
 
         let client_auth_header = KeyMaterialClientAuth::new(secret_key, &client_io)
@@ -689,7 +692,7 @@ mod tests {
     async fn test_handshake_via_shared_secrets() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let (client, server) = simulate_handshake(&secret_key, Some(42), Some(42), None).await;
         client?;
         let (public_key, auth) = server?;
@@ -703,7 +706,7 @@ mod tests {
     async fn test_handshake_via_challenge() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let (client, server) = simulate_handshake(&secret_key, None, None, None).await;
         client?;
         let (public_key, auth) = server?;
@@ -717,7 +720,7 @@ mod tests {
     async fn test_handshake_mismatching_shared_secrets() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         // mismatching shared secrets *might* happen with HTTPS proxies that don't also middle-man the shared secret
         let (client, server) = simulate_handshake(&secret_key, Some(10), Some(99), None).await;
         client?;
@@ -731,7 +734,7 @@ mod tests {
     #[traced_test]
     async fn test_handshake_challenge_fallback() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         // clients might not have access to shared secrets
         let (client, server) = simulate_handshake(&secret_key, None, Some(99), None).await;
         client?;
@@ -745,7 +748,7 @@ mod tests {
     #[traced_test]
     async fn test_handshake_with_auth_positive() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let public_key = secret_key.public();
         let (client, server) = simulate_handshake(&secret_key, None, None, Some(public_key)).await;
         client?;
@@ -758,9 +761,9 @@ mod tests {
     #[traced_test]
     async fn test_handshake_with_auth_negative() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let public_key = secret_key.public();
-        let wrong_secret_key = SecretKey::generate(&mut rng);
+        let wrong_secret_key = SecretKey::from_bytes(&rng.random());
         let (client, server) =
             simulate_handshake(&wrong_secret_key, None, None, Some(public_key)).await;
         assert!(client.is_err());
@@ -772,9 +775,9 @@ mod tests {
     #[traced_test]
     async fn test_handshake_via_shared_secret_with_auth_negative() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let public_key = secret_key.public();
-        let wrong_secret_key = SecretKey::generate(&mut rng);
+        let wrong_secret_key = SecretKey::from_bytes(&rng.random());
         let (client, server) =
             simulate_handshake(&wrong_secret_key, Some(42), Some(42), Some(public_key)).await;
         assert!(client.is_err());
@@ -785,7 +788,7 @@ mod tests {
     #[test]
     fn test_client_auth_roundtrip() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let challenge = ServerChallenge::new(&mut rng);
         let client_auth = ClientAuth::new(&secret_key, &challenge);
 
@@ -801,7 +804,7 @@ mod tests {
     #[test]
     fn test_km_client_auth_roundtrip() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let client_auth = KeyMaterialClientAuth::new(
             &secret_key,
             &TestKeyingMaterial {
@@ -823,7 +826,7 @@ mod tests {
     #[test]
     fn test_challenge_verification() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let challenge = ServerChallenge::new(&mut rng);
         let client_auth = ClientAuth::new(&secret_key, &challenge);
         assert!(client_auth.verify(&challenge).is_ok());
@@ -834,7 +837,7 @@ mod tests {
     #[test]
     fn test_key_material_verification() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
         let io = TestKeyingMaterial {
             inner: (),
             shared_secret: Some(42),

@@ -6,26 +6,24 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use iroh_dns::pkarr::{SignedPacket, Timestamp};
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
-use pkarr::{SignedPacket, Timestamp};
-use redb::{
-    Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition,
-    backends::InMemoryBackend,
-};
+use redb::{Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
-pub type SignedPacketsKey = [u8; 32];
+type SignedPacketsKey = [u8; 32];
+
 const SIGNED_PACKETS_TABLE: TableDefinition<&SignedPacketsKey, &[u8]> =
     TableDefinition::new("signed-packets-1");
 const UPDATE_TIME_TABLE: MultimapTableDefinition<[u8; 8], SignedPacketsKey> =
     MultimapTableDefinition::new("update-time-1");
 
 #[derive(Debug)]
-pub struct SignedPacketStore {
+pub(super) struct SignedPacketStore {
     send: mpsc::Sender<Message>,
     cancel: CancellationToken,
     _write_thread: IoThread,
@@ -50,6 +48,7 @@ enum Message {
         key: PublicKeyBytes,
         res: oneshot::Sender<Option<SignedPacket>>,
     },
+    #[cfg(test)]
     Remove {
         key: PublicKeyBytes,
         res: oneshot::Sender<bool>,
@@ -72,16 +71,20 @@ struct Actor {
     metrics: Arc<Metrics>,
 }
 
+/// Configuration for the signed-packet store.
+///
+/// Controls how incoming packets are batched into write transactions and how
+/// long packets are retained before the eviction task removes them.
 #[derive(Debug, Clone, Copy)]
-pub struct Options {
+pub(crate) struct Options {
     /// Maximum number of packets to process in a single write transaction.
-    pub max_batch_size: usize,
+    pub(crate) max_batch_size: usize,
     /// Maximum time to keep a write transaction open.
-    pub max_batch_time: Duration,
+    pub(crate) max_batch_time: Duration,
     /// Time to keep packets in the store before eviction.
-    pub eviction: Duration,
+    pub(crate) eviction: Duration,
     /// Pause between eviction checks.
-    pub eviction_interval: Duration,
+    pub(crate) eviction_interval: Duration,
 }
 
 impl Default for Options {
@@ -167,21 +170,21 @@ impl Actor {
                             // remove the old packet from the update time index
                             tables
                                 .update_time
-                                .remove(&existing.timestamp().to_bytes(), key.as_bytes())
+                                .remove(&existing.timestamp().to_be_bytes(), key.as_bytes())
                                 .anyerr()?;
                             true
                         }
                     }
                     _ => false,
                 };
-                let value = packet.serialize();
+                let value = serialize(&packet);
                 tables
                     .signed_packets
                     .insert(key.as_bytes(), &value[..])
                     .anyerr()?;
                 tables
                     .update_time
-                    .insert(&packet.timestamp().to_bytes(), key.as_bytes())
+                    .insert(&packet.timestamp().to_be_bytes(), key.as_bytes())
                     .anyerr()?;
                 if replaced {
                     self.metrics.store_packets_updated.inc();
@@ -190,14 +193,15 @@ impl Actor {
                 }
                 res.send(true).ok();
             }
+            #[cfg(test)]
             Message::Remove { key, res } => {
                 trace!("remove {}", key);
                 let updated = match tables.signed_packets.remove(key.as_bytes()).anyerr()? {
                     Some(row) => {
-                        let packet = SignedPacket::deserialize(row.value()).anyerr()?;
+                        let packet = deserialize(row.value())?;
                         tables
                             .update_time
-                            .remove(&packet.timestamp().to_bytes(), key.as_bytes())
+                            .remove(&packet.timestamp().to_be_bytes(), key.as_bytes())
                             .anyerr()?;
                         self.metrics.store_packets_removed.inc();
                         true
@@ -215,11 +219,13 @@ impl Actor {
                 match get_packet(&tables.signed_packets, &key)? {
                     Some(packet) => {
                         let expiry_us = self.options.eviction.as_micros() as u64;
-                        let expired = Timestamp::now() - expiry_us;
+                        let expired = Timestamp::from_micros(
+                            Timestamp::now().as_micros().saturating_sub(expiry_us),
+                        );
                         if packet.timestamp() < expired {
                             tables
                                 .update_time
-                                .remove(&time.to_bytes(), key.as_bytes())
+                                .remove(&time.to_be_bytes(), key.as_bytes())
                                 .anyerr()?;
                             let _ = tables.signed_packets.remove(key.as_bytes()).anyerr()?;
                             self.metrics.store_packets_expired.inc();
@@ -230,7 +236,7 @@ impl Actor {
                             );
                             tables
                                 .update_time
-                                .remove(&time.to_bytes(), key.as_bytes())
+                                .remove(&time.to_be_bytes(), key.as_bytes())
                                 .anyerr()?;
                         }
                     }
@@ -238,7 +244,7 @@ impl Actor {
                         debug!("expired packet {key} not found, remove from expiry table");
                         tables
                             .update_time
-                            .remove(&time.to_bytes(), key.as_bytes())
+                            .remove(&time.to_be_bytes(), key.as_bytes())
                             .anyerr()?;
                     }
                 }
@@ -249,18 +255,19 @@ impl Actor {
 }
 
 fn fmt_time(t: Timestamp) -> String {
-    humantime::format_rfc3339_micros(SystemTime::from(t)).to_string()
+    let duration = std::time::Duration::from_micros(t.as_micros());
+    humantime::format_rfc3339_micros(SystemTime::UNIX_EPOCH + duration).to_string()
 }
 
 /// A struct similar to [`redb::Table`] but for all tables that make up the
 /// signed packet store.
-pub(super) struct Tables<'a> {
+struct Tables<'a> {
     pub signed_packets: redb::Table<'a, &'static SignedPacketsKey, &'static [u8]>,
     pub update_time: redb::MultimapTable<'a, [u8; 8], SignedPacketsKey>,
 }
 
 impl<'txn> Tables<'txn> {
-    pub fn new(tx: &'txn redb::WriteTransaction) -> result::Result<Self, redb::TableError> {
+    fn new(tx: &'txn redb::WriteTransaction) -> result::Result<Self, redb::TableError> {
         Ok(Self {
             signed_packets: tx.open_table(SIGNED_PACKETS_TABLE)?,
             update_time: tx.open_multimap_table(UPDATE_TIME_TABLE)?,
@@ -268,14 +275,14 @@ impl<'txn> Tables<'txn> {
     }
 }
 
-pub(super) struct Snapshot {
+struct Snapshot {
     #[allow(dead_code)]
     pub signed_packets: redb::ReadOnlyTable<&'static SignedPacketsKey, &'static [u8]>,
     pub update_time: redb::ReadOnlyMultimapTable<[u8; 8], SignedPacketsKey>,
 }
 
 impl Snapshot {
-    pub fn new(db: &Database) -> Result<Self> {
+    fn new(db: &Database) -> Result<Self> {
         let tx = db.begin_read().anyerr()?;
         Ok(Self {
             signed_packets: tx.open_table(SIGNED_PACKETS_TABLE).anyerr()?,
@@ -285,7 +292,7 @@ impl Snapshot {
 }
 
 impl SignedPacketStore {
-    pub fn persistent(
+    pub(crate) fn persistent(
         path: impl AsRef<Path>,
         options: Options,
         metrics: Arc<Metrics>,
@@ -306,15 +313,16 @@ impl SignedPacketStore {
         Self::open(db, options, metrics)
     }
 
-    pub fn in_memory(options: Options, metrics: Arc<Metrics>) -> Result<Self> {
+    #[cfg(test)]
+    pub(crate) fn in_memory(options: Options, metrics: Arc<Metrics>) -> Result<Self> {
         info!("using in-memory packet database");
         let db = Database::builder()
-            .create_with_backend(InMemoryBackend::new())
+            .create_with_backend(redb::backends::InMemoryBackend::new())
             .anyerr()?;
         Self::open(db, options, metrics)
     }
 
-    pub fn open(db: Database, options: Options, metrics: Arc<Metrics>) -> Result<Self> {
+    pub(crate) fn open(db: Database, options: Options, metrics: Arc<Metrics>) -> Result<Self> {
         // create tables
         let write_tx = db.begin_write().anyerr()?;
         let _ = Tables::new(&write_tx).anyerr()?;
@@ -345,7 +353,7 @@ impl SignedPacketStore {
         })
     }
 
-    pub async fn upsert(&self, packet: SignedPacket) -> Result<bool> {
+    pub(crate) async fn upsert(&self, packet: SignedPacket) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
         self.send
             .send(Message::Upsert { packet, res: tx })
@@ -354,7 +362,7 @@ impl SignedPacketStore {
         rx.await.anyerr()
     }
 
-    pub async fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
+    pub(crate) async fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
         let (tx, rx) = oneshot::channel();
         self.send
             .send(Message::Get { key: *key, res: tx })
@@ -363,7 +371,8 @@ impl SignedPacketStore {
         rx.await.anyerr()
     }
 
-    pub async fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
+    #[cfg(test)]
+    pub(crate) async fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
         self.send
             .send(Message::Remove { key: *key, res: tx })
@@ -371,6 +380,30 @@ impl SignedPacketStore {
             .anyerr()?;
         rx.await.anyerr()
     }
+}
+
+/// Serialize a signed packet for storage: `<8 bytes last_seen><packet bytes>`.
+fn serialize(packet: &SignedPacket) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + packet.as_bytes().len());
+    out.extend_from_slice(&Timestamp::now().to_be_bytes());
+    out.extend_from_slice(packet.as_bytes());
+    out
+}
+
+/// Deserialize a signed packet from storage format.
+///
+/// Handles backwards compatibility with older storage formats that didn't include
+/// the `last_seen` prefix.
+fn deserialize(data: &[u8]) -> Result<SignedPacket> {
+    // Try parsing as <8 bytes last_seen><packet> (pkarr v3 format)
+    if data.len() >= 8
+        && let Ok(packet) = SignedPacket::from_bytes_unchecked(&data[8..])
+    {
+        return Ok(packet);
+    }
+    // Fall back to raw packet bytes (pre-v0.35 format without last_seen prefix)
+    SignedPacket::from_bytes_unchecked(data)
+        .map_err(|err| anyerr!("Failed to decode stored packet: {err:#}"))
 }
 
 fn get_packet(
@@ -383,25 +416,7 @@ fn get_packet(
     else {
         return Ok(None);
     };
-    match SignedPacket::deserialize(row.value()) {
-        Ok(packet) => Ok(Some(packet)),
-        Err(err) => {
-            // Prior to iroh-dns-server v0.35, we stored packets in the default `SignedPacket::as_bytes` serialization from pkarr v2,
-            // which did not include the `last_seen` timestamp added as a prefix in `SignedPacket::serialize` from pkarr v3.
-            // If decoding the packet as a serialized pkarr v3 packet fails, we assume it was stored with iroh-dns-server before v0.35,
-            // and prepend an empty timestamp.
-            let data = row.value();
-            let mut buf = Vec::with_capacity(data.len() + 8);
-            buf.extend(&[0u8; 8]);
-            buf.extend(data);
-            match SignedPacket::deserialize(&buf) {
-                Ok(packet) => Ok(Some(packet)),
-                Err(err2) => Err(anyerr!(
-                    "Failed to decode as pkarr v3: {err:#}. Also failed to decode as pkarr v2: {err2:#}"
-                )),
-            }
-        }
-    }
+    Ok(Some(deserialize(row.value())?))
 }
 
 async fn evict_task(send: mpsc::Sender<Message>, options: Options, cancel: CancellationToken) {
@@ -427,11 +442,16 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
         // if we can't get the snapshot we exit the loop, main actor dead
         let snapshot = rx.await.std_context("failed to get snapshot")?;
 
-        let expired = Timestamp::now() - expiry_us;
+        let expired =
+            Timestamp::from_micros(Timestamp::now().as_micros().saturating_sub(expiry_us));
         trace!("evicting packets older than {}", fmt_time(expired));
         // if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
-        for item in snapshot.update_time.range(..expired.to_bytes()).anyerr()? {
+        for item in snapshot
+            .update_time
+            .range(..expired.to_be_bytes())
+            .anyerr()?
+        {
             let (time, keys) = match item {
                 Ok(v) => v,
                 Err(e) => {
@@ -439,7 +459,7 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
                     continue;
                 }
             };
-            let time = Timestamp::from(time.value());
+            let time = Timestamp::from_be_bytes(time.value());
             trace!("evicting expired packets at {}", fmt_time(time));
             for item in keys {
                 let key = match item {
@@ -453,7 +473,9 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
                         continue;
                     }
                 };
-                let key = PublicKeyBytes::new(key.value());
+                // Safety: bytes were originally written from a validated PublicKey.
+                // If the database is corrupt, to_z32() may panic downstream.
+                let key = PublicKeyBytes::new_unchecked(key.value());
 
                 debug!("evicting expired packet {} {}", fmt_time(time), key);
                 send.send(Message::CheckExpired { time, key })
@@ -507,14 +529,14 @@ impl Drop for IoThread {
 
 /// A wrapper for a tokio mpsc receiver that allows peeking at the next message.
 #[derive(Debug)]
-pub(super) struct PeekableReceiver<T> {
+struct PeekableReceiver<T> {
     msg: Option<T>,
     recv: tokio::sync::mpsc::Receiver<T>,
 }
 
 #[allow(dead_code)]
 impl<T> PeekableReceiver<T> {
-    pub fn new(recv: tokio::sync::mpsc::Receiver<T>) -> Self {
+    fn new(recv: tokio::sync::mpsc::Receiver<T>) -> Self {
         Self { msg: None, recv }
     }
 
@@ -522,7 +544,7 @@ impl<T> PeekableReceiver<T> {
     ///
     /// Will block if there are no messages.
     /// Returns None only if there are no more messages (sender is dropped).
-    pub async fn recv(&mut self) -> Option<T> {
+    async fn recv(&mut self) -> Option<T> {
         if let Some(msg) = self.msg.take() {
             return Some(msg);
         }
@@ -531,12 +553,58 @@ impl<T> PeekableReceiver<T> {
 
     /// Push back a message. This will only work if there is room for it.
     /// Otherwise, it will fail and return the message.
-    pub fn push_back(&mut self, msg: T) -> std::result::Result<(), T> {
+    fn push_back(&mut self, msg: T) -> std::result::Result<(), T> {
         if self.msg.is_none() {
             self.msg = Some(msg);
             Ok(())
         } else {
             Err(msg)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iroh_base::SecretKey;
+
+    use super::*;
+
+    fn test_signed_packet() -> SignedPacket {
+        let secret_key = SecretKey::generate();
+        SignedPacket::from_txt_strings(&secret_key, "_iroh", ["relay=https://example.com"], 30)
+            .expect("valid packet")
+    }
+
+    #[test]
+    fn serialize_deserialize_roundtrip() {
+        let packet = test_signed_packet();
+        let serialized = serialize(&packet);
+        let deserialized = deserialize(&serialized).expect("roundtrip should succeed");
+        assert_eq!(packet.as_bytes(), deserialized.as_bytes());
+    }
+
+    #[test]
+    fn deserialize_old_format_without_last_seen_prefix() {
+        // Pre-v0.35 format: raw SignedPacket bytes without the 8-byte last_seen prefix
+        let packet = test_signed_packet();
+        let old_format = packet.as_bytes().to_vec();
+        let deserialized = deserialize(&old_format).expect("old format should be readable");
+        assert_eq!(packet.as_bytes(), deserialized.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn remove_in_memory() {
+        let store = SignedPacketStore::in_memory(Options::default(), Arc::new(Metrics::default()))
+            .expect("in-memory store");
+        let packet = test_signed_packet();
+        let key = PublicKeyBytes::from_signed_packet(&packet);
+
+        assert!(store.upsert(packet.clone()).await.expect("upsert"));
+        assert!(store.get(&key).await.expect("get").is_some());
+
+        assert!(store.remove(&key).await.expect("remove existing"));
+        assert!(store.get(&key).await.expect("get after remove").is_none());
+
+        assert!(!store.remove(&key).await.expect("remove missing"));
     }
 }

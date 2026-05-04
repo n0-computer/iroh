@@ -9,7 +9,7 @@ use std::{
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_error::StackResultExt;
 use n0_future::{
-    Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
+    FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
     task::JoinSet,
     time::{self, Duration, Instant},
@@ -18,9 +18,7 @@ use n0_watcher::{Watchable, Watcher};
 use noq::{ConnectionError, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
-use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
-use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 
@@ -32,13 +30,10 @@ pub use self::{
 };
 use super::Source;
 use crate::{
-    address_lookup::{
-        AddressLookup, ConcurrentAddressLookup, Error as AddressLookupError,
-        Item as AddressLookupItem,
-    },
+    address_lookup::{AddressLookupFailed, AddressLookupServices, Item as AddressLookupItem},
     endpoint::DirectAddr,
     socket::{
-        Metrics as SocketMetrics,
+        Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
         remote_map::{Private, to_transport_addr},
         transports::{self, OwnedTransmit, PathSelectionData, TransportBiasMap, TransportsSender},
@@ -86,9 +81,7 @@ const RTT_SWITCHING_MIN_IP: Duration = Duration::from_millis(5);
 /// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
 /// actor has lagged processing the events, which is rather critical for us.
 type PathEvents = MergeUnbounded<
-    Pin<
-        Box<dyn Stream<Item = (ConnId, Result<PathEvent, BroadcastStreamRecvError>)> + Send + Sync>,
-    >,
+    Pin<Box<dyn Stream<Item = (ConnId, Result<PathEvent, noq::Lagged>)> + Send + Sync>>,
 >;
 
 /// A stream of events of announced NAT traversal candidate addresses for all connections.
@@ -97,27 +90,9 @@ type PathEvents = MergeUnbounded<
 type AddrEvents = MergeUnbounded<
     Pin<
         Box<
-            dyn Stream<
-                    Item = (
-                        ConnId,
-                        Result<n0_nat_traversal::Event, BroadcastStreamRecvError>,
-                    ),
-                > + Send
-                + Sync,
+            dyn Stream<Item = (ConnId, Result<n0_nat_traversal::Event, noq::Lagged>)> + Send + Sync,
         >,
     >,
->;
-
-/// Either a stream of incoming results from [`ConcurrentAddressLookup::resolve`] or infinitely pending.
-///
-/// Set to [`Either::Left`] with an always-pending stream while address lookup is not running, and to
-/// [`Either::Right`] while Address Lookup is running.
-///
-/// The stream returned from [`ConcurrentAddressLookup::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
-/// wrapper to make it `Sync` so that the [`RemoteStateActor::run`] future stays `Send`.
-type AddressLookupStream = Either<
-    n0_future::stream::Pending<Result<AddressLookupItem, AddressLookupError>>,
-    SyncStream<BoxStream<Result<AddressLookupItem, AddressLookupError>>>,
 >;
 
 /// The state we need to know about a single remote endpoint.
@@ -141,7 +116,7 @@ pub(super) struct RemoteStateActor {
     /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
     custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
     /// Address lookup service, cloned from the socket.
-    address_lookup: ConcurrentAddressLookup,
+    address_lookup: AddressLookupServices,
 
     // Internal state - Noq Connections we are managing.
     //
@@ -185,7 +160,7 @@ pub(super) struct RemoteStateActor {
     // Internal state - address lookup
     //
     /// Stream of Address Lookup results, or always pending if Address Lookup is not running.
-    address_lookup_stream: AddressLookupStream,
+    address_lookup_stream: Option<BoxStream<Result<AddressLookupItem, AddressLookupFailed>>>,
 
     /// Biases for different transport kinds.
     transport_bias: TransportBiasMap,
@@ -199,7 +174,7 @@ impl RemoteStateActor {
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
         metrics: Arc<SocketMetrics>,
-        address_lookup: ConcurrentAddressLookup,
+        address_lookup: AddressLookupServices,
         transport_bias: TransportBiasMap,
     ) -> Self {
         Self {
@@ -219,7 +194,7 @@ impl RemoteStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
-            address_lookup_stream: Either::Left(n0_future::stream::pending()),
+            address_lookup_stream: None,
             transport_bias,
         }
     }
@@ -333,7 +308,7 @@ impl RemoteStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching();
                 }
-                item = self.address_lookup_stream.next() => {
+                Some(item) = maybe_next(self.address_lookup_stream.as_mut()), if self.address_lookup_stream.is_some() => {
                     self.handle_address_lookup_item(item);
                 }
                 _ = check_connections.tick() => {
@@ -457,11 +432,10 @@ impl RemoteStateActor {
             self.connections.remove(&conn_id);
 
             // Hook up paths, NAT addresses and connection closed event streams.
-            self.path_events.push(Box::pin(
-                BroadcastStream::new(conn.path_events()).map(move |evt| (conn_id, evt)),
-            ));
+            self.path_events
+                .push(Box::pin(conn.path_events().map(move |evt| (conn_id, evt))));
             self.addr_events.push(Box::pin(
-                BroadcastStream::new(conn.nat_traversal_updates()).map(move |evt| (conn_id, evt)),
+                conn.nat_traversal_updates().map(move |evt| (conn_id, evt)),
             ));
             self.connections_close.push(OnClosed::new(&conn));
 
@@ -482,7 +456,6 @@ impl RemoteStateActor {
                     handle: handle.clone(),
                     path_watchable: path_watchable.clone(),
                     paths: Default::default(),
-                    paths_by_addr: Default::default(),
                     has_been_direct: false,
                 })
                 .into_mut();
@@ -511,6 +484,7 @@ impl RemoteStateActor {
                     path_id = %PathId::ZERO,
                     ?res,
                 );
+                Self::configure_path(&path, &path_remote);
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
                     .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
@@ -540,7 +514,7 @@ impl RemoteStateActor {
     fn handle_msg_resolve_remote(
         &mut self,
         addrs: BTreeSet<TransportAddr>,
-        tx: oneshot::Sender<Result<(), AddressLookupError>>,
+        tx: oneshot::Sender<Result<(), AddressLookupFailed>>,
     ) {
         let addrs = to_transports_addr(self.endpoint_id, addrs);
         self.paths.insert_multiple(addrs, Source::App);
@@ -593,15 +567,19 @@ impl RemoteStateActor {
     /// Does not start Address Lookup if we have a selected path or if Address Lookup is
     /// currently running.
     fn trigger_address_lookup(&mut self) {
-        if self.selected_path.get().is_some()
-            || matches!(self.address_lookup_stream, Either::Right(_))
-        {
+        if self.selected_path.get().is_some() || self.address_lookup_stream.is_some() {
             return;
         }
-        match self.address_lookup.resolve(self.endpoint_id) {
-            Some(stream) => self.address_lookup_stream = Either::Right(SyncStream::new(stream)),
-            None => self.paths.address_lookup_finished(Ok(())),
-        }
+        let stream = self.address_lookup.resolve(self.endpoint_id);
+        let stream = stream.filter_map(|item| match item {
+            // We don't care about errors from individual services, we just continue.
+            // Individual errors are buffered into the final error by `AddressLookupServices::resolve`,
+            // and if the lookup fails we return them upstream with the final `AddressLookupFailed` error.
+            Ok(Err(_err)) => None,
+            Ok(Ok(item)) => Some(Ok(item)),
+            Err(err) => Some(Err(err)),
+        });
+        self.address_lookup_stream = Some(Box::pin(stream));
     }
 
     /// Handles an address lookup result.
@@ -610,17 +588,17 @@ impl RemoteStateActor {
     /// [`RemotePathState`] with the results.
     fn handle_address_lookup_item(
         &mut self,
-        item: Option<Result<AddressLookupItem, AddressLookupError>>,
+        item: Option<Result<AddressLookupItem, AddressLookupFailed>>,
     ) {
         match item {
             None => {
-                self.address_lookup_stream = Either::Left(n0_future::stream::pending());
                 self.paths.address_lookup_finished(Ok(()));
+                self.address_lookup_stream = None;
             }
             Some(Err(err)) => {
                 warn!("Address Lookup failed: {err:#}");
-                self.address_lookup_stream = Either::Left(n0_future::stream::pending());
                 self.paths.address_lookup_finished(Err(err));
+                self.address_lookup_stream = None;
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
@@ -805,6 +783,18 @@ impl RemoteStateActor {
         }
     }
 
+    /// Configure path-type-specific settings.
+    ///
+    /// Relay paths get a longer idle timeout to accommodate transparent reconnection
+    /// by the relay actor (see [`RELAY_PATH_MAX_IDLE_TIMEOUT`]).
+    fn configure_path(path: &noq::Path, addr: &transports::Addr) {
+        if matches!(addr, transports::Addr::Relay(..))
+            && let Err(e) = path.set_max_idle_timeout(Some(RELAY_PATH_MAX_IDLE_TIMEOUT))
+        {
+            debug!(?e, "failed to set relay path idle timeout");
+        }
+    }
+
     /// Open the path on all connections.
     ///
     /// This goes through all the connections for which we are the client, and makes sure
@@ -813,23 +803,29 @@ impl RemoteStateActor {
     fn open_path(&mut self, open_addr: &transports::Addr) {
         let bias = self.transport_bias.get(open_addr);
         let path_status = bias.transport_type.to_path_status();
+
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
             transports::Addr::Relay(relay_url, eid) => self
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *eid))
                 .private_socket_addr(),
-            transports::Addr::Custom(addr) => {
-                self.custom_mapped_addrs.get(addr).private_socket_addr()
+            transports::Addr::Custom(remote) => {
+                self.custom_mapped_addrs.get(remote).private_socket_addr()
             }
         };
 
-        for (conn_id, conn_state) in self.connections.iter_mut() {
+        for (conn_id, conn_state) in self.connections.iter() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-            if let Some(&path_id) = conn_state.paths_by_addr.get(open_addr)
-                && let Some(path) = conn.path(path_id)
+
+            let mut path_for_addr_exists = false;
+            for path in conn_state
+                .paths
+                .iter()
+                .filter(|(_id, addr)| *addr == open_addr)
+                .filter_map(|(id, _addr)| conn.path(*id))
             {
                 // We still need to ensure that the path status is set correctly,
                 // in case the path was opened by QNT, which opens all IP paths
@@ -843,14 +839,16 @@ impl RemoteStateActor {
                     ?open_addr,
                     ?path_status,
                     %conn_id,
-                    %path_id,
+                    path_id=%path.id(),
                     ?res,
                 );
+                Self::configure_path(&path, open_addr);
+                path_for_addr_exists = true;
+            }
+            if path_for_addr_exists || conn.side().is_server() {
                 continue;
             }
-            if conn.side().is_server() {
-                continue;
-            }
+
             let fut = conn.open_path_ensure(quic_addr, path_status);
             match fut.path_id() {
                 Some(path_id) => {
@@ -872,6 +870,7 @@ impl RemoteStateActor {
                         if let Err(e) = res {
                             warn!(?e, ?open_addr, ?path_status, "Setting path status failed");
                         }
+                        Self::configure_path(&path, open_addr);
                     }
                 }
                 None => {
@@ -891,11 +890,7 @@ impl RemoteStateActor {
     }
 
     #[instrument(skip(self))]
-    fn handle_path_event(
-        &mut self,
-        conn_id: ConnId,
-        event: Result<PathEvent, BroadcastStreamRecvError>,
-    ) {
+    fn handle_path_event(&mut self, conn_id: ConnId, event: Result<PathEvent, noq::Lagged>) {
         let Ok(event) = event else {
             warn!("missed a PathEvent, RemoteStateActor lagging");
             // TODO: Is it possible to recover using the sync APIs to figure out what the
@@ -933,6 +928,7 @@ impl RemoteStateActor {
                         %conn_id,
                         %path_id,
                     );
+                    Self::configure_path(&path, &path_remote);
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
                         .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
@@ -959,20 +955,23 @@ impl RemoteStateActor {
                 );
 
                 // If one connection abandons a path, close it on all connections.
-                for (conn_id, conn_state) in self.connections.iter_mut() {
-                    let Some(path_id) = conn_state.paths_by_addr.get(&path_remote) else {
-                        continue;
-                    };
+                for (conn_id, conn_state) in self.connections.iter() {
                     let Some(conn) = conn_state.handle.upgrade() else {
                         continue;
                     };
-                    if let Some(path) = conn.path(*path_id) {
-                        trace!(?path_remote, %conn_id, %path_id, "closing path");
+                    // Close all paths with the remote address that was abandoned.
+                    for path in conn_state
+                        .paths
+                        .iter()
+                        .filter(|(_id, addr)| **addr == path_remote)
+                        .filter_map(|(id, _addr)| conn.path(*id))
+                    {
+                        trace!(?path_remote, %conn_id, path_id=%path.id(), "closing path");
                         if let Err(err) = path.close() {
                             trace!(
                                 ?path_remote,
                                 %conn_id,
-                                %path_id,
+                                path_id=%path.id(),
                                 "path close failed: {err:#}"
                             );
                         }
@@ -1215,7 +1214,7 @@ pub(crate) enum RemoteStateMessage {
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         BTreeSet<TransportAddr>,
-        oneshot::Sender<Result<(), AddressLookupError>>,
+        oneshot::Sender<Result<(), AddressLookupFailed>>,
     ),
     /// Returns information about the remote.
     ///
@@ -1263,8 +1262,6 @@ struct ConnectionState {
     path_watchable: PathWatchable,
     /// The open paths that exist on this connection.
     paths: FxHashMap<PathId, transports::Addr>,
-    /// Reverse map of [`Self::paths].
-    paths_by_addr: FxHashMap<transports::Addr, PathId>,
     /// Whether this connection has ever had a direct path.
     ///
     /// Used for recording metrics.
@@ -1296,7 +1293,6 @@ impl ConnectionState {
         }
 
         self.paths.insert(path_id, remote.clone());
-        self.paths_by_addr.insert(remote.clone(), path_id);
         if let Some(conn) = self.handle.upgrade() {
             self.path_watchable.insert(&conn, path_id, remote.into());
         }
@@ -1305,9 +1301,6 @@ impl ConnectionState {
     /// Removes a path from this connection.
     fn remove_path(&mut self, path_id: &PathId) -> Option<transports::Addr> {
         let addr = self.paths.remove(path_id);
-        if let Some(ref addr) = addr {
-            self.paths_by_addr.remove(addr);
-        }
         self.path_watchable.set_abandoned(*path_id);
         addr
     }
@@ -1363,6 +1356,14 @@ fn to_transports_addr(
             None
         }
     })
+}
+
+/// Returns the next item if `maybe_stream` is `Some`, or `None` otherwise.
+async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<Option<S::Item>> {
+    match maybe_stream {
+        None => None,
+        Some(s) => Some(s.next().await),
+    }
 }
 
 #[cfg(test)]

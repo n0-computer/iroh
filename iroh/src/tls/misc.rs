@@ -1,6 +1,6 @@
 use ctutils::CtEq;
 use noq_proto::crypto;
-use rand::Rng;
+use rand::RngExt;
 use rustls::crypto::cipher::{
     AeadKey, InboundOpaqueMessage, Iv, NONCE_LEN, OutboundPlainMessage, Tls13AeadAlgorithm,
 };
@@ -9,7 +9,7 @@ use rustls::crypto::cipher::{
 ///
 /// This can be obtained from looking through available ciphers from a
 /// [`rustls::crypto::CryptoProvider`].
-pub struct RustlsTokenKey {
+pub(crate) struct RustlsTokenKey {
     key: [u8; 32],
     aead: &'static dyn Tls13AeadAlgorithm,
 }
@@ -24,7 +24,7 @@ impl RustlsTokenKey {
     ///
     /// Returns `None` when this can't find a suitable TLS cipher suite in the given crypto
     /// provider.
-    pub fn new(
+    pub(crate) fn new(
         rng: &mut impl rand::CryptoRng,
         crypto_provider: &rustls::crypto::CryptoProvider,
     ) -> Option<Self> {
@@ -96,7 +96,7 @@ impl crypto::HandshakeTokenKey for RustlsTokenKey {
 pub(crate) struct Blake3HmacKey([u8; 32]);
 
 impl Blake3HmacKey {
-    pub fn new(rng: &mut impl rand::CryptoRng) -> Self {
+    pub(crate) fn new(rng: &mut impl rand::CryptoRng) -> Self {
         let mut key = [0u8; 32];
         rng.fill_bytes(&mut key);
         Self(key)

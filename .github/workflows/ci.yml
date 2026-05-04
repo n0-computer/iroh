@@ -21,6 +21,13 @@ env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
+  pick-runner:
+    uses: "./.github/workflows/pick-runner.yml"
+    with:
+      min_free_runners: 3
+    secrets:
+      RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
+
   tests:
     name: CI Test Suite
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
@@ -30,7 +37,11 @@ jobs:
     name: Cross Build Only
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_1) }}
+    # runs-on: [self-hosted, linux, X64]
+    env:
+      RUSTFLAGS: "-Dwarnings --cfg skip_patchbay"
     strategy:
       fail-fast: false
       matrix:
@@ -83,8 +94,9 @@ jobs:
     name: Android Build Only
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    # runs-on: ubuntu-latest
-    runs-on: [self-hosted, linux, X64]
+    # runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_2) }}
     strategy:
       fail-fast: false
       matrix:
@@ -109,7 +121,7 @@ jobs:
           java-version: "17"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Setup Android NDK
         uses: arqu/setup-ndk@main
@@ -129,12 +141,16 @@ jobs:
     name: Cross Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_3) }}
+    # runs-on: [self-hosted, linux, X64]
     strategy:
       fail-fast: false
       matrix:
         target:
           - i686-unknown-linux-gnu
+    env:
+      RUSTFLAGS: "-Dwarnings --cfg skip_patchbay"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -169,7 +185,9 @@ jobs:
 
   wasm_test:
     name: Build & test wasm32 for browsers
-    runs-on: ubuntu-latest
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_4) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
@@ -188,10 +206,11 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.17.7
+        uses: cargo-bins/cargo-binstall@v1.18.1
 
       - name: Install wasm-bindgen-test-runner
-        run: cargo binstall wasm-bindgen-cli --locked --no-confirm
+        # Match the version of wasm-bindgen used in Cargo.lock
+        run: cargo binstall wasm-bindgen-cli@0.2.115 --locked --no-confirm
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
@@ -219,7 +238,9 @@ jobs:
         run: cargo test -p iroh --test integration --target=wasm32-unknown-unknown
 
   check_semver:
-    runs-on: ubuntu-latest
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_5) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -228,7 +249,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Setup Environment (PR)
         if: ${{ github.event_name == 'pull_request' }}
@@ -248,6 +271,56 @@ jobs:
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
+  check_external_types:
+    timeout-minutes: 30
+    name: Check external types in public API
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_9) }}
+    # runs-on: [self-hosted, linux, X64]
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+      # The tool drives an internal rustdoc invocation that only emits JSON
+      # for the analyzer, so the workflow-wide `-Dwarnings` would just turn
+      # unrelated rustdoc lints (e.g. `private-intra-doc-links`) into hard
+      # failures here. Clear it for this job.
+      RUSTDOCFLAGS: ""
+      # Pin to the nightly that the pinned `cargo-check-external-types`
+      # release was last tested against. Update both together.
+      CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.4.0"
+      CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY: "nightly-2025-10-18"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY }}
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.18.1
+
+      - name: Install cargo-check-external-types
+        # Match the version of wasm-bindgen used in Cargo.lock
+        run: cargo binstall cargo-check-external-types@${{ env.CARGO_CHECK_EXTERNAL_TYPES_VERSION }} --locked --no-confirm
+
+      - name: Check external types
+        run: |
+          set -e
+          fail=0
+          for crate in iroh-base iroh-dns iroh-relay iroh iroh-dns-server; do
+            echo "::group::$crate"
+            if ! cargo "+${CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY}" check-external-types \
+                --manifest-path "$crate/Cargo.toml" \
+                --config external-types.toml \
+                --all-features; then
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
   check_fmt:
     timeout-minutes: 30
     name: Checking fmt
@@ -260,14 +333,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
       - uses: taiki-e/install-action@cargo-make
       - run: cargo make format-check
 
   check_docs:
     timeout-minutes: 30
     name: Checking docs
-    runs-on: ubuntu-latest
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_6) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -278,14 +355,18 @@ jobs:
         with:
           toolchain: nightly-2025-10-09
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Docs
         run: cargo doc --workspace --all-features --no-deps --document-private-items
 
   clippy_check:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_7) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -295,7 +376,9 @@ jobs:
         with:
           components: clippy
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       # TODO: We have a bunch of platform-dependent code so should
       #    probably run this job on the full platform matrix
@@ -333,7 +416,9 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Minimal Supported Rust Version
-    runs-on: ubuntu-latest
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_8) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -343,7 +428,9 @@ jobs:
         with:
           toolchain: ${{ env.MSRV }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Check MSRV all features
         run: |

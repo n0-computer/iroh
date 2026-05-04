@@ -15,27 +15,36 @@
 //! - HTTPS `/ping`: Used for net_report probes.
 //! - HTTPS `/generate_204`: Used for net_report probes.
 
-use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
+use std::{
+    borrow::Cow, future::Future, net::SocketAddr, num::NonZeroU32, path::PathBuf, pin::Pin,
+    sync::Arc,
+};
 
 use derive_more::Debug;
 use http::{
     HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header::InvalidHeaderValue,
     response::Builder as ResponseBuilder,
 };
+use http_body_util::Full;
 use hyper::body::Incoming;
 use iroh_base::EndpointId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use n0_error::{e, stack_error};
-use n0_future::{StreamExt, future::Boxed};
+use n0_future::{StreamExt, future::Boxed, task::AbortOnDropHandle};
+use rustls::server::WantsServerCert;
 use serde::Serialize;
 use tokio::{
     net::TcpListener,
     task::{JoinError, JoinSet},
 };
-use tokio_util::task::AbortOnDropHandle;
+use tokio_rustls_acme::{
+    acme::{LETS_ENCRYPT_PRODUCTION_DIRECTORY, LETS_ENCRYPT_STAGING_DIRECTORY},
+    caches::DirCache,
+};
 use tracing::{Instrument, debug, error, info, info_span, instrument};
 
+use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::RELAY_PROBE_PATH,
@@ -54,7 +63,7 @@ pub mod testing;
 pub use self::{
     http_server::{Handlers, RelayService},
     metrics::{Metrics, RelayMetrics},
-    resolver::{DEFAULT_CERT_RELOAD_INTERVAL, ReloadingResolver},
+    resolver::{DEFAULT_CERT_RELOAD_INTERVAL, reloading_resolver},
 };
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Iroh-Challenge";
@@ -78,13 +87,9 @@ const TLS_HEADERS: [(&str, &str); 2] = [
     ),
 ];
 
-type BytesBody = http_body_util::Full<hyper::body::Bytes>;
-type HyperError = Box<dyn std::error::Error + Send + Sync>;
-type HyperResult<T> = std::result::Result<T, HyperError>;
-
 /// Creates a new [`BytesBody`] with no content.
 fn body_empty() -> BytesBody {
-    http_body_util::Full::new(hyper::body::Bytes::new())
+    Box::new(http_body_util::Full::new(hyper::body::Bytes::new()))
 }
 
 /// Configuration for the full Relay.
@@ -92,9 +97,9 @@ fn body_empty() -> BytesBody {
 /// Be aware the generic parameters are for when using the Let's Encrypt TLS configuration.
 /// If not used dummy ones need to be provided, e.g. `ServerConfig::<(), ()>::default()`.
 #[derive(Debug, Default)]
-pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+pub struct ServerConfig {
     /// Configuration for the Relay server, disabled if `None`.
-    pub relay: Option<RelayConfig<EC, EA>>,
+    pub relay: Option<RelayConfig>,
     /// Configuration for the QUIC server, disabled if `None`.
     pub quic: Option<QuicConfig>,
     /// Socket to serve metrics on.
@@ -107,7 +112,7 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 /// This includes the HTTP services hosted by the Relay server, the Relay `/relay` HTTP
 /// endpoint is only one of the services served.
 #[derive(Debug)]
-pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+pub struct RelayConfig {
     /// The socket address on which the Relay HTTP server should bind.
     ///
     /// Normally you'd choose port `80`.  The bind address for the HTTPS server is
@@ -120,7 +125,7 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     ///
     /// If *None* all the HTTP services that would be served here are served from
     /// [`RelayConfig::http_bind_addr`].
-    pub tls: Option<TlsConfig<EC, EA>>,
+    pub tls: Option<TlsConfig>,
     /// Rate limits.
     pub limits: Limits,
     /// Key cache capacity.
@@ -129,23 +134,81 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub access: AccessConfig,
 }
 
+/// Details about an incoming relay client connection.
+///
+/// Passed to the [`AccessConfig::Restricted`] callback to decide whether to
+/// admit the endpoint.
+#[derive(Debug, Clone)]
+pub struct ClientRequest {
+    endpoint_id: EndpointId,
+    request: http::request::Parts,
+}
+
+impl ClientRequest {
+    /// Creates a new [`ClientRequest`] from an [`EndpointId`] and HTTP request parts.
+    ///
+    /// The [`EndpointId`] must be proven by the relay handshake. The request parts
+    /// come from the client's WebSocket request.
+    pub fn new(endpoint_id: EndpointId, request: http::request::Parts) -> Self {
+        Self {
+            endpoint_id,
+            request,
+        }
+    }
+
+    /// Returns the [`EndpointId`] of the client.
+    ///
+    /// The relay handshake authenticates this id before the access hook
+    /// is invoked. The client proves possession of the secret key for
+    /// this public key by either signing keying material exported from
+    /// the TLS session or a challenge issued by the server.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint_id
+    }
+
+    /// Returns the URI of the HTTP request with which the client connected.
+    pub fn uri(&self) -> &http::Uri {
+        &self.request.uri
+    }
+
+    /// Returns an iterator over the query parameters set in the URI of the HTTP request.
+    ///
+    /// Each item is a `(name, value)` pair. Both names and values are percent-decoded.
+    /// The query string is parsed in order, and the same name may appear more than once.
+    pub fn query_pairs(&self) -> impl Iterator<Item = (Cow<'_, str>, Cow<'_, str>)> {
+        url::form_urlencoded::parse(self.request.uri.query().unwrap_or("").as_bytes())
+    }
+
+    /// Returns the headers of the HTTP request with which the client connected.
+    pub fn headers(&self) -> &http::HeaderMap {
+        &self.request.headers
+    }
+}
+
+/// Access check callback used by [`AccessConfig::Restricted`].
+///
+/// Returns [`Access::Allow`] to admit the endpoint, [`Access::Deny`] to
+/// reject it.
+pub type AccessCheck = Box<dyn Fn(&ClientRequest) -> Boxed<Access> + Send + Sync + 'static>;
+
 /// Controls which endpoints are allowed to use the relay.
 #[derive(derive_more::Debug)]
+#[non_exhaustive]
 pub enum AccessConfig {
-    /// Everyone
+    /// Allows every endpoint.
     Everyone,
-    /// Only endpoints for which the function returns `Access::Allow`.
+    /// Delegates the decision to a callback invoked for every connection.
     #[debug("restricted")]
-    Restricted(Box<dyn Fn(EndpointId) -> Boxed<Access> + Send + Sync + 'static>),
+    Restricted(AccessCheck),
 }
 
 impl AccessConfig {
-    /// Is this endpoint allowed?
-    pub async fn is_allowed(&self, endpoint: EndpointId) -> bool {
+    /// Returns whether the given client request should be admitted.
+    pub async fn is_allowed(&self, request: &ClientRequest) -> bool {
         match self {
             Self::Everyone => true,
             Self::Restricted(check) => {
-                let res = check(endpoint).await;
+                let res = check(request).await;
                 matches!(res, Access::Allow)
             }
         }
@@ -172,14 +235,17 @@ pub struct QuicConfig {
     ///
     /// If this [`rustls::ServerConfig`] does not support TLS 1.3, the QUIC server will fail
     /// to spawn.
-    pub server_config: rustls::ServerConfig,
+    ///
+    /// Will use the TLS config from [`RelayConfig::tls`] if unset. If neither is set the QUIC
+    /// server will fail to spawn.
+    pub server_config: Option<rustls::ServerConfig>,
 }
 
 /// TLS configuration for Relay server.
 ///
 /// Normally the Relay server accepts connections on both HTTPS and HTTP.
 #[derive(Debug)]
-pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+pub struct TlsConfig {
     /// The socket address on which to serve the HTTPS server.
     ///
     /// Since the captive portal probe has to run over plain text HTTP and TLS is used for
@@ -188,12 +254,8 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     ///
     /// Normally you'd choose port `80`.
     pub https_bind_addr: SocketAddr,
-    /// The socket address on which to server the QUIC server is QUIC is enabled.
-    pub quic_bind_addr: SocketAddr,
     /// Mode for getting a cert.
-    pub cert: CertConfig<EC, EA>,
-    /// The server configuration.
-    pub server_config: rustls::ServerConfig,
+    pub cert: CertConfig,
 }
 
 /// Rate limits.
@@ -218,21 +280,77 @@ pub struct ClientRateLimit {
 }
 
 /// TLS certificate configuration.
-#[derive(derive_more::Debug)]
-pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+#[derive(Debug)]
+pub enum CertConfig {
     /// Use Let's Encrypt.
     LetsEncrypt {
-        /// State for Let's Encrypt certificates.
-        #[debug("AcmeConfig")]
-        state: tokio_rustls_acme::AcmeState<EC, EA>,
-    },
-    /// Use a static TLS key and certificate chain.
-    Manual {
-        /// The TLS certificate chain.
-        certs: Vec<rustls::pki_types::CertificateDer<'static>>,
+        /// Configuration for the ACME client.
+        acme_config: AcmeConfig,
+        /// Builder for the [`rustls::ServerConfig`].
+        ///
+        /// The ACME resolver will be injected when starting the server.
+        server_config_builder: rustls::ConfigBuilder<rustls::ServerConfig, WantsServerCert>,
     },
     /// Use a TLS key and certificate chain that can be reloaded.
-    Reloading,
+    Manual {
+        /// The [`rustls::ServerConfig`] to use.
+        ///
+        /// This needs to have the certificates or a certificate loader, it will be used by the server as-is.
+        server_config: rustls::ServerConfig,
+    },
+}
+
+/// Configuration for the ACME client.
+#[derive(Debug, Clone)]
+pub struct AcmeConfig {
+    pub(crate) directory_url: String,
+    pub(crate) domains: Vec<String>,
+    pub(crate) contact: Vec<String>,
+    pub(crate) cache_path: Option<PathBuf>,
+}
+
+impl AcmeConfig {
+    /// Creates a new [`AcmeConfig`] with a ACME directory URL.
+    pub fn new(directory_url: String) -> Self {
+        Self {
+            directory_url,
+            domains: Vec::new(),
+            contact: Vec::new(),
+            cache_path: None,
+        }
+    }
+
+    /// Creates a new [`AcmeConfig`] with the Let's Encrypt directory URL.
+    pub fn letsencrypt(production: bool) -> Self {
+        let url = if production {
+            LETS_ENCRYPT_PRODUCTION_DIRECTORY
+        } else {
+            LETS_ENCRYPT_STAGING_DIRECTORY
+        };
+        Self::new(url.to_string())
+    }
+
+    /// Provides the list of domains for which certificates should be obtained.
+    pub fn domains(mut self, domains: Vec<String>) -> Self {
+        self.domains = domains;
+        self
+    }
+
+    /// Provides a list of contacts for the account.
+    ///
+    /// Note that email addresses must include a `mailto:` prefix.
+    pub fn contact(mut self, contact: Vec<String>) -> Self {
+        self.contact = contact;
+        self
+    }
+
+    /// Sets the directory where to cache certificates.
+    ///
+    /// If not called certificates will not be cached.
+    pub fn cache_path(mut self, path: PathBuf) -> Self {
+        self.cache_path = Some(path);
+        self
+    }
 }
 
 /// A running Relay + QAD server.
@@ -257,11 +375,6 @@ pub struct Server {
     quic_handle: Option<QuicServerHandle>,
     /// The main task running the server.
     supervisor: AbortOnDropHandle<Result<(), SupervisorError>>,
-    /// The certificate for the server.
-    ///
-    /// If the server has manual certificates configured the certificate chain will be
-    /// available here, this can be used by a client to authenticate the server.
-    certificates: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
     metrics: RelayMetrics,
 }
 
@@ -312,11 +425,7 @@ pub enum SupervisorError {
 
 impl Server {
     /// Starts the server.
-    pub async fn spawn<EC, EA>(config: ServerConfig<EC, EA>) -> Result<Self, SpawnError>
-    where
-        EC: fmt::Debug + 'static,
-        EA: fmt::Debug + 'static,
-    {
+    pub async fn spawn(config: ServerConfig) -> Result<Self, SpawnError> {
         let mut tasks = JoinSet::new();
 
         let metrics = RelayMetrics::default();
@@ -336,26 +445,7 @@ impl Server {
             );
         }
 
-        // Start the Relay server, but first clone the certs out.
-        let certificates = config.relay.as_ref().and_then(|relay| {
-            relay.tls.as_ref().and_then(|tls| match tls.cert {
-                CertConfig::LetsEncrypt { .. } => None,
-                CertConfig::Manual { ref certs, .. } => Some(certs.clone()),
-                CertConfig::Reloading => None,
-            })
-        });
-
-        let quic_server = match config.quic {
-            Some(quic_config) => {
-                debug!("Starting QUIC server {}", quic_config.bind_addr);
-                Some(QuicServer::spawn(quic_config).map_err(|err| e!(SpawnError::QuicSpawn, err))?)
-            }
-            None => None,
-        };
-        let quic_addr = quic_server.as_ref().map(|srv| srv.bind_addr());
-        let quic_handle = quic_server.as_ref().map(|srv| srv.handle());
-
-        let (relay_server, http_addr) = match config.relay {
+        let (relay_server, http_addr, tls_config) = match config.relay {
             Some(relay_config) => {
                 debug!("Starting Relay server");
                 let mut headers = HeaderMap::new();
@@ -387,10 +477,23 @@ impl Server {
                 if let Some(cfg) = relay_config.limits.client_rx {
                     builder = builder.client_rx_ratelimit(cfg);
                 }
-                let http_addr = match relay_config.tls {
+                let (http_addr, tls_config) = match relay_config.tls {
                     Some(tls_config) => {
                         let server_tls_config = match tls_config.cert {
-                            CertConfig::LetsEncrypt { mut state } => {
+                            CertConfig::LetsEncrypt {
+                                acme_config,
+                                server_config_builder,
+                            } => {
+                                let cache = acme_config.cache_path.map(DirCache::new);
+                                let config =
+                                    tokio_rustls_acme::AcmeConfig::new(acme_config.domains)
+                                        .contact(acme_config.contact)
+                                        .directory(acme_config.directory_url)
+                                        .cache_option(cache);
+                                let mut state = config.state();
+                                let resolver = state.resolver().clone();
+                                let server_config =
+                                    server_config_builder.with_cert_resolver(resolver);
                                 let acceptor =
                                     http_server::TlsAcceptor::LetsEncrypt(state.acceptor());
                                 tasks.spawn(
@@ -405,23 +508,23 @@ impl Server {
                                     }
                                     .instrument(info_span!("acme")),
                                 );
-                                Some(http_server::TlsConfig {
-                                    config: Arc::new(tls_config.server_config),
+                                http_server::TlsConfig {
+                                    config: Arc::new(server_config),
                                     acceptor,
-                                })
+                                }
                             }
-                            CertConfig::Manual { .. } | CertConfig::Reloading => {
-                                let server_config = Arc::new(tls_config.server_config);
+                            CertConfig::Manual { server_config } => {
+                                let server_config = Arc::new(server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
                                 let acceptor = http_server::TlsAcceptor::Manual(acceptor);
-                                Some(http_server::TlsConfig {
+                                http_server::TlsConfig {
                                     config: server_config,
                                     acceptor,
-                                })
+                                }
                             }
                         };
-                        builder = builder.tls_config(server_tls_config);
+                        builder = builder.tls_config(Some(server_tls_config.clone()));
 
                         // Some services always need to be served over HTTP without TLS.  Run
                         // these standalone.
@@ -438,7 +541,7 @@ impl Server {
                             }
                             .instrument(info_span!("http-service", addr = %http_addr)),
                         );
-                        Some(http_addr)
+                        (Some(http_addr), Some(server_tls_config))
                     }
                     None => {
                         // If running Relay without TLS add the plain HTTP server directly
@@ -448,18 +551,38 @@ impl Server {
                             "/generate_204",
                             Box::new(serve_no_content_handler),
                         );
-                        None
+                        (None, None)
                     }
                 };
                 let relay_server = builder.spawn().await?;
-                (Some(relay_server), http_addr)
+                (Some(relay_server), http_addr, tls_config)
             }
-            None => (None, None),
+            None => (None, None, None),
         };
         // If http_addr is Some then relay_server is serving HTTPS.  If http_addr is None
         // relay_server is serving HTTP, including the /generate_204 service.
         let relay_addr = relay_server.as_ref().map(|srv| srv.addr());
         let relay_handle = relay_server.as_ref().map(|srv| srv.handle());
+
+        let quic_server = match config.quic {
+            Some(quic_config) => {
+                debug!("Starting QUIC server {}", quic_config.bind_addr);
+                let server_config = quic_config
+                    .server_config
+                    .or(tls_config.map(|config| (*config.config).clone()))
+                    .ok_or_else(|| {
+                        e!(SpawnError::QuicSpawn, e!(QuicSpawnError::TlsNotConfigured))
+                    })?;
+                Some(
+                    QuicServer::spawn(quic_config.bind_addr, server_config, metrics.server.clone())
+                        .map_err(|err| e!(SpawnError::QuicSpawn, err))?,
+                )
+            }
+            None => None,
+        };
+        let quic_addr = quic_server.as_ref().map(|srv| srv.bind_addr());
+        let quic_handle = quic_server.as_ref().map(|srv| srv.handle());
+
         let task = tokio::spawn(relay_supervisor(tasks, relay_server, quic_server));
 
         Ok(Self {
@@ -469,7 +592,6 @@ impl Server {
             relay_handle,
             quic_handle,
             supervisor: AbortOnDropHandle::new(task),
-            certificates,
             metrics,
         })
     }
@@ -489,12 +611,15 @@ impl Server {
         self.supervisor.await?
     }
 
-    /// Returns the handle for the task.
+    /// Waits for the server's supervisor task to finish.
     ///
-    /// This allows waiting for the server's supervisor task to finish.  Can be useful in
-    /// case there is an error in the server before it is shut down.
-    pub fn task_handle(&mut self) -> &mut AbortOnDropHandle<Result<(), SupervisorError>> {
-        &mut self.supervisor
+    /// Returns the exit result of the supervisor task. Unlike [`Self::shutdown`], this does
+    /// *not* request shutdown, it only waits for the server to terminate on its own (for
+    /// example, after an internal error or because the supervisor was aborted from
+    /// elsewhere). The outer [`JoinError`] is only produced if the supervisor task itself
+    /// panics or is aborted.
+    pub async fn join(&mut self) -> Result<Result<(), SupervisorError>, JoinError> {
+        (&mut self.supervisor).await
     }
 
     /// The socket address the HTTPS server is listening on.
@@ -510,11 +635,6 @@ impl Server {
     /// The socket address the QUIC server is listening on.
     pub fn quic_addr(&self) -> Option<SocketAddr> {
         self.quic_addr
-    }
-
-    /// The certificates chain if configured with manual TLS certificates.
-    pub fn certificates(&self) -> Option<Vec<rustls::pki_types::CertificateDer<'static>>> {
-        self.certificates.clone()
     }
 
     /// Get the server's https [`RelayUrl`].
@@ -614,10 +734,11 @@ fn root_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
+    let body: BytesBody = Box::new(Full::from(INDEX));
     response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
-        .body(INDEX.into())
+        .body(body)
         .map_err(|err| Box::new(err) as HyperError)
 }
 
@@ -637,9 +758,10 @@ fn robots_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
+    let body: BytesBody = Box::new(Full::from(ROBOTS_TXT));
     response
         .status(StatusCode::OK)
-        .body(ROBOTS_TXT.into())
+        .body(body)
         .map_err(|err| Box::new(err) as HyperError)
 }
 
@@ -695,10 +817,11 @@ fn healthz_handler(
         git_hash: option_env!("VERGEN_GIT_SHA").unwrap_or("unknown"),
     };
     let body = serde_json::to_string(&health).unwrap_or_else(|_| r#"{"status":"error"}"#.into());
+    let body: BytesBody = Box::new(Full::from(body));
     response
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
-        .body(body.into())
+        .body(body)
         .map_err(|err| Box::new(err) as HyperError)
 }
 
@@ -767,9 +890,10 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
             }
             _ => {
                 // Return 404 not found response.
+                let body: BytesBody = Box::new(Full::from(NOTFOUND));
                 let r = Response::builder()
                     .status(StatusCode::NOT_FOUND)
-                    .body(NOTFOUND.into())
+                    .body(body)
                     .map_err(|err| Box::new(err) as HyperError);
                 Box::pin(async move { r })
             }
@@ -783,10 +907,11 @@ mod tests {
 
     use http::StatusCode;
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
+    use iroh_dns::dns::DnsResolver;
     use n0_error::Result;
     use n0_future::{FutureExt, SinkExt, StreamExt};
     use n0_tracing_test::traced_test;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use tracing::{info, instrument};
 
     use super::{
@@ -795,7 +920,6 @@ mod tests {
     };
     use crate::{
         client::{ClientBuilder, ConnectError},
-        dns::DnsResolver,
         protos::{
             handshake,
             relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
@@ -804,8 +928,8 @@ mod tests {
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
-        Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig::<(), ()> {
+        Server::spawn(ServerConfig {
+            relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),
@@ -860,10 +984,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_no_services() {
-        let mut server = Server::spawn(ServerConfig::<(), ()>::default())
-            .await
-            .unwrap();
-        let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
+        let mut server = Server::spawn(ServerConfig::default()).await.unwrap();
+        let res = tokio::time::timeout(Duration::from_secs(5), server.join())
             .await
             .expect("timeout, server not finished")
             .expect("server task JoinError");
@@ -873,7 +995,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_conflicting_bind() {
-        let mut server = Server::spawn(ServerConfig::<(), ()> {
+        let mut server = Server::spawn(ServerConfig {
             relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
                 tls: None,
@@ -886,7 +1008,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
+        let res = tokio::time::timeout(Duration::from_secs(5), server.join())
             .await
             .expect("timeout, server not finished")
             .expect("server task JoinError");
@@ -947,7 +1069,7 @@ mod tests {
             .unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate(&mut rng);
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
         let a_key = a_secret_key.public();
         let resolver = dns_resolver();
         info!("client a build & connect");
@@ -957,7 +1079,7 @@ mod tests {
             .await?;
 
         // set up client b
-        let b_secret_key = SecretKey::generate(&mut rng);
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
         info!("client b build & connect");
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
@@ -1011,16 +1133,17 @@ mod tests {
             .client_config(default_provider())
             .unwrap();
 
-        let a_secret_key = SecretKey::generate(&mut rng);
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
         let a_key = a_secret_key.public();
 
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig::<(), ()> {
+        let server = Server::spawn(ServerConfig {
+            relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
-                access: AccessConfig::Restricted(Box::new(move |endpoint_id| {
+                access: AccessConfig::Restricted(Box::new(move |request| {
+                    let endpoint_id = request.endpoint_id();
                     async move {
                         info!("checking {}", endpoint_id);
                         // reject endpoint a
@@ -1055,7 +1178,7 @@ mod tests {
         // test that another client has access
 
         // set up client b
-        let b_secret_key = SecretKey::generate(&mut rng);
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
 
         let resolver = dns_resolver();
@@ -1065,7 +1188,7 @@ mod tests {
             .await?;
 
         // set up client c
-        let c_secret_key = SecretKey::generate(&mut rng);
+        let c_secret_key = SecretKey::from_bytes(&rng.random());
         let c_key = c_secret_key.public();
 
         let resolver = dns_resolver();
@@ -1092,6 +1215,84 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that [`ClientBuilder::query_param`] forwards URL query
+    /// parameters on the WebSocket upgrade so the [`AccessConfig::Restricted`]
+    /// hook can read them via [`ClientRequest::query_pairs`].
+    #[tokio::test]
+    #[traced_test]
+    async fn test_relay_client_query_param_forwarded() -> Result<()> {
+        const TOKEN: &str = "secret-token";
+
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
+        let server = Server::spawn(ServerConfig {
+            relay: Some(RelayConfig {
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+                key_cache_capacity: Some(1024),
+                access: AccessConfig::Restricted(Box::new(move |request| {
+                    let token = request
+                        .query_pairs()
+                        .find(|(key, _)| key == "token")
+                        .map(|(_, value)| value.into_owned());
+                    async move {
+                        if token.as_deref() == Some(TOKEN) {
+                            Access::Allow
+                        } else {
+                            Access::Deny
+                        }
+                    }
+                    .boxed()
+                })),
+            }),
+            quic: None,
+            metrics_addr: None,
+        })
+        .await?;
+
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse()?;
+
+        // No query param: denied.
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let result = ClientBuilder::new(relay_url.clone(), secret_key, dns_resolver())
+            .tls_client_config(client_config.clone())
+            .connect()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. })
+                if reason == "not authorized"
+        ));
+
+        // Wrong token: denied.
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let result = ClientBuilder::new(relay_url.clone(), secret_key, dns_resolver())
+            .tls_client_config(client_config.clone())
+            .query_param("token", "wrong-token")
+            .connect()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. })
+                if reason == "not authorized"
+        ));
+
+        // Correct token: connection succeeds.
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let _client = ClientBuilder::new(relay_url, secret_key, dns_resolver())
+            .tls_client_config(client_config)
+            .query_param("token", TOKEN)
+            .connect()
+            .await?;
+
+        Ok(())
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn test_relay_clients_full() -> Result<()> {
@@ -1105,7 +1306,7 @@ mod tests {
             .unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate(&mut rng);
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
         let resolver = dns_resolver();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
             .tls_client_config(client_config.clone())
@@ -1113,7 +1314,7 @@ mod tests {
             .await?;
 
         // set up client b
-        let b_secret_key = SecretKey::generate(&mut rng);
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
         let _client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
             .tls_client_config(client_config)

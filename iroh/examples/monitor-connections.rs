@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use iroh::{
     Endpoint, Watcher,
-    endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks, presets},
+    endpoint::{AfterHandshakeOutcome, Connection, EndpointHooks, WeakConnectionHandle, presets},
 };
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_future::task::AbortOnDropHandle;
@@ -83,13 +83,33 @@ async fn main() -> Result {
 /// It could also maintain a datastructure of all connections, or send the stats to some metrics service.
 #[derive(Clone, Debug)]
 struct Monitor {
-    tx: UnboundedSender<ConnectionInfo>,
+    tx: UnboundedSender<MonitoredConnection>,
     _task: Arc<AbortOnDropHandle<()>>,
 }
 
+/// Static info captured at handshake time, paired with a weak handle to the connection.
+///
+/// We capture `alpn` and `remote_id` at hook time because [`WeakConnectionHandle`] only
+/// exposes [`upgrade`] and [`closed`], so reading these fields after the connection has
+/// been dropped would otherwise be impossible.
+///
+/// [`upgrade`]: WeakConnectionHandle::upgrade
+/// [`closed`]: WeakConnectionHandle::closed
+#[derive(Debug)]
+struct MonitoredConnection {
+    alpn: Vec<u8>,
+    remote_id: iroh::EndpointId,
+    handle: WeakConnectionHandle,
+}
+
 impl EndpointHooks for Monitor {
-    async fn after_handshake(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
-        self.tx.send(conn.clone()).ok();
+    async fn after_handshake(&self, conn: &Connection) -> AfterHandshakeOutcome {
+        let info = MonitoredConnection {
+            alpn: conn.alpn().to_vec(),
+            remote_id: conn.remote_id(),
+            handle: conn.weak_handle(),
+        };
+        self.tx.send(info).ok();
         AfterHandshakeOutcome::Accept
     }
 }
@@ -104,17 +124,17 @@ impl Monitor {
         }
     }
 
-    async fn run(mut rx: UnboundedReceiver<ConnectionInfo>) {
+    async fn run(mut rx: UnboundedReceiver<MonitoredConnection>) {
         let mut tasks = JoinSet::new();
         loop {
             tokio::select! {
-                Some(conn) = rx.recv() => {
-                    let alpn = String::from_utf8_lossy(conn.alpn()).to_string();
-                    let remote = conn.remote_id().fmt_short();
-                    let rtt = conn.paths().peek().iter().map(|p| p.stats().expect("conn is not dropped").rtt).min();
+                Some(MonitoredConnection { alpn, remote_id, handle }) = rx.recv() => {
+                    let alpn = String::from_utf8_lossy(&alpn).to_string();
+                    let remote = remote_id.fmt_short();
+                    let rtt = handle.upgrade().and_then(|c| c.paths().peek().iter().map(|p| p.stats().expect("conn is not dropped").rtt).min());
                     info!(%remote, %alpn, ?rtt, "new connection");
                     tasks.spawn(async move {
-                        match conn.closed().await {
+                        match handle.closed().await {
                             Some((close_reason, stats)) => {
                                 // We have access to the final stats of the connection!
                                 info!(%remote, %alpn, ?close_reason, udp_rx=stats.udp_rx.bytes, udp_tx=stats.udp_tx.bytes, "connection closed");

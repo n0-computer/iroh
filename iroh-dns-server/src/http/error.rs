@@ -6,10 +6,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-pub type AppResult<T> = Result<T, AppError>;
+pub(super) type AppResult<T> = Result<T, AppError>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppError {
+pub(crate) struct AppError {
     #[serde(with = "serde_status_code")]
     status: StatusCode,
     detail: Option<String>,
@@ -25,7 +25,7 @@ impl Default for AppError {
 }
 
 impl AppError {
-    pub fn with_status(status: StatusCode) -> AppError {
+    pub(super) fn with_status(status: StatusCode) -> AppError {
         Self {
             status,
             detail: None,
@@ -33,7 +33,7 @@ impl AppError {
     }
 
     /// Create a new [`AppError`].
-    pub fn new(status_code: StatusCode, message: Option<impl ToString>) -> AppError {
+    pub(super) fn new(status_code: StatusCode, message: Option<impl ToString>) -> AppError {
         Self {
             status: status_code,
             // title: Self::canonical_reason_to_string(&status_code),
@@ -76,17 +76,17 @@ impl From<ExtensionRejection> for AppError {
 /// be the status code as a STRING.
 ///
 /// We could have used http_serde, but it encodes the status code as a NUMBER.
-pub mod serde_status_code {
+mod serde_status_code {
     use http::StatusCode;
     use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Unexpected};
 
     /// Serialize [StatusCode]s.
-    pub fn serialize<S: Serializer>(status: &StatusCode, ser: S) -> Result<S::Ok, S::Error> {
+    pub(super) fn serialize<S: Serializer>(status: &StatusCode, ser: S) -> Result<S::Ok, S::Error> {
         String::serialize(&status.as_u16().to_string(), ser)
     }
 
     /// Deserialize [StatusCode]s.
-    pub fn deserialize<'de, D>(de: D) -> Result<StatusCode, D::Error>
+    pub(super) fn deserialize<'de, D>(de: D) -> Result<StatusCode, D::Error>
     where
         D: Deserializer<'de>,
     {

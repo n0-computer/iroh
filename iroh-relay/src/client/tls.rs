@@ -22,7 +22,7 @@ use super::{
 use crate::defaults::timeouts::*;
 
 #[derive(Debug, Clone)]
-pub struct MaybeTlsStreamBuilder {
+pub(super) struct MaybeTlsStreamBuilder {
     url: Url,
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
@@ -31,7 +31,11 @@ pub struct MaybeTlsStreamBuilder {
 }
 
 impl MaybeTlsStreamBuilder {
-    pub fn new(url: Url, dns_resolver: DnsResolver, tls_config: rustls::ClientConfig) -> Self {
+    pub(super) fn new(
+        url: Url,
+        dns_resolver: DnsResolver,
+        tls_config: rustls::ClientConfig,
+    ) -> Self {
         Self {
             url,
             dns_resolver,
@@ -41,17 +45,17 @@ impl MaybeTlsStreamBuilder {
         }
     }
 
-    pub fn proxy_url(mut self, proxy_url: Option<Url>) -> Self {
+    pub(super) fn proxy_url(mut self, proxy_url: Option<Url>) -> Self {
         self.proxy_url = proxy_url;
         self
     }
 
-    pub fn prefer_ipv6(mut self, prefer: bool) -> Self {
+    pub(super) fn prefer_ipv6(mut self, prefer: bool) -> Self {
         self.prefer_ipv6 = prefer;
         self
     }
 
-    pub async fn connect(self) -> Result<MaybeTlsStream<ProxyStream>, ConnectError> {
+    pub(super) async fn connect(self) -> Result<MaybeTlsStream<ProxyStream>, ConnectError> {
         let mut config = self.tls_config.clone();
         config.resumption = Resumption::default();
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();

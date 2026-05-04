@@ -1,28 +1,17 @@
-use std::sync::Arc;
-
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use iroh::{
     SecretKey,
     address_lookup::pkarr::PkarrRelayClient,
+    dns::DnsResolver,
     endpoint_info::EndpointInfo,
     tls::{CaRootsConfig, default_provider},
 };
-use iroh_dns_server::{ZoneStore, config::Config, metrics::Metrics, server::Server};
-use n0_error::Result;
+use iroh_dns_server::{Server, config::Config};
+use rand::RngExt;
 use rand_chacha::rand_core::SeedableRng;
 use tokio::runtime::Runtime;
 
 const LOCALHOST_PKARR: &str = "http://localhost:8080/pkarr";
-
-async fn start_dns_server(config: Config) -> Result<Server> {
-    let metrics = Arc::new(Metrics::default());
-    let store = ZoneStore::persistent(
-        config.signed_packet_store_path()?,
-        Default::default(),
-        metrics.clone(),
-    )?;
-    Server::spawn(config, store, metrics).await
-}
 
 fn benchmark_dns_server(c: &mut Criterion) {
     let mut group = c.benchmark_group("dns_server_writes");
@@ -34,17 +23,18 @@ fn benchmark_dns_server(c: &mut Criterion) {
                 let rt = Runtime::new().unwrap();
                 rt.block_on(async move {
                     let config = Config::load("./config.dev.toml").await.unwrap();
-                    let server = start_dns_server(config).await.unwrap();
+                    let server = Server::bind(config).await.unwrap();
 
                     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-                    let secret_key = SecretKey::generate(&mut rng);
+                    let secret_key = SecretKey::from_bytes(&rng.random());
                     let endpoint_id = secret_key.public();
 
                     let tls_config = CaRootsConfig::default()
                         .client_config(default_provider())
                         .expect("infallible");
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
-                    let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
+                    let pkarr =
+                        PkarrRelayClient::new(pkarr_relay, tls_config, DnsResolver::default());
                     let relay_url = "http://localhost:8080".parse().unwrap();
                     let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url);
                     let signed_packet = endpoint_info

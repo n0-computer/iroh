@@ -11,7 +11,7 @@
 //!
 //! [module docs]: crate
 
-use std::{net::SocketAddr, pin::Pin, sync::Arc};
+use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
@@ -19,7 +19,7 @@ use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap, tls::CaRootsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
-use n0_error::{e, ensure, stack_error};
+use n0_error::{AnyError, e, ensure, stack_error};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
@@ -28,6 +28,8 @@ use url::Url;
 
 /// Types for defining custom transports
 pub mod transports {
+    #[cfg(feature = "unstable-custom-transports")]
+    pub use super::socket::transports::RecvInfo;
     #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
     pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias};
@@ -51,13 +53,14 @@ pub use crate::tls::TlsConfigError;
 use crate::{
     NetReport,
     address_lookup::{
-        AddrFilter, AddressLookupBuilder, ConcurrentAddressLookup, DynAddressLookupBuilder,
-        Error as AddressLookupError, UserData,
+        AddrFilter, AddressLookupBuilder, AddressLookupFailed, AddressLookupServices,
+        DynAddressLookupBuilder, UserData,
     },
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
+        transports::RelayConnectionState,
     },
     tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
@@ -78,9 +81,9 @@ pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
     connection::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-        ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingAddr,
+        ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingLocalAddr,
         IncomingZeroRtt, IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
-        RemoteEndpointIdError, RetryError, ZeroRttStatus,
+        RemoteEndpointIdError, RetryError, WeakConnectionHandle, ZeroRttStatus,
     },
     quic::{
         AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
@@ -129,6 +132,7 @@ pub struct Builder {
     portmapper_config: PortmapperConfig,
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
+    configured_addrs: BTreeSet<SocketAddr>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -196,6 +200,7 @@ impl Builder {
             portmapper_config: Default::default(),
             net_report_config: Default::default(),
             crypto_provider: None,
+            configured_addrs: Default::default(),
         }
     }
 
@@ -203,9 +208,7 @@ impl Builder {
 
     /// Binds the endpoint.
     pub async fn bind(self) -> Result<Endpoint, BindError> {
-        let secret_key = self
-            .secret_key
-            .unwrap_or_else(|| SecretKey::generate(&mut rand::rng()));
+        let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
 
         let crypto_provider = self
             .crypto_provider
@@ -259,6 +262,7 @@ impl Builder {
             portmapper_config: self.portmapper_config,
             net_report_config: self.net_report_config,
             static_config,
+            configured_addrs: self.configured_addrs,
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
@@ -440,7 +444,8 @@ impl Builder {
                     bail!(InvalidSocketAddr::DuplicateDefaultAddr);
                 }
 
-                let ip_net = Ipv4Net::new(*addr.ip(), opts.prefix_len())?;
+                let ip_net = Ipv4Net::new(*addr.ip(), opts.prefix_len())
+                    .map_err(|_| e!(InvalidSocketAddr::InvalidPrefixLength))?;
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V4 {
                         ip_net,
@@ -460,7 +465,8 @@ impl Builder {
                     bail!(InvalidSocketAddr::DuplicateDefaultAddr);
                 }
 
-                let ip_net = Ipv6Net::new(*addr.ip(), opts.prefix_len())?;
+                let ip_net = Ipv6Net::new(*addr.ip(), opts.prefix_len())
+                    .map_err(|_| e!(InvalidSocketAddr::InvalidPrefixLength))?;
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V6 {
                         ip_net,
@@ -573,7 +579,7 @@ impl Builder {
     ///
     /// This method can be called multiple times and all the Address Lookup's passed in
     /// will be combined using an internal instance of the
-    /// [`crate::address_lookup::ConcurrentAddressLookup`]. To clear all Address Lookup's, use
+    /// [`crate::address_lookup::AddressLookupServices`]. To clear all Address Lookup's, use
     /// [`Self::clear_address_lookup`].
     ///
     /// If no Address Lookup is set, connecting to an endpoint without providing its
@@ -587,11 +593,11 @@ impl Builder {
 
     /// Sets the address filter applied to all address data before publishing.
     ///
-    /// This filter is applied once, at the [`ConcurrentAddressLookup`] level, before
+    /// This filter is applied once, at the [`AddressLookupServices`] level, before
     /// distributing data to any individual address lookup service. This ensures
     /// consistent filtering regardless of how the services configured.
     ///
-    /// [`ConcurrentAddressLookup`]: crate::address_lookup::ConcurrentAddressLookup
+    /// [`AddressLookupServices`]: crate::address_lookup::AddressLookupServices
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
         self.addr_filter = Some(filter);
         self
@@ -616,6 +622,18 @@ impl Builder {
     /// for applications to parse and use.
     pub fn user_data_for_address_lookup(mut self, user_data: UserData) -> Self {
         self.address_lookup_user_data = Some(user_data);
+        self
+    }
+
+    /// Adds an external address on which this endpoint is directly reachable.
+    ///
+    /// This address will be advertised to peers together with any discovered external addresses
+    /// and will be used in NAT traversal and to establish direct connections.
+    ///
+    /// Can be called multiple times. See also [`Endpoint::add_external_addr`] for
+    /// adding addresses at runtime.
+    pub fn external_addr(mut self, addr: SocketAddr) -> Self {
+        self.configured_addrs.insert(addr);
         self
     }
 
@@ -840,7 +858,7 @@ pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
     #[error("No addressing information available")]
-    NoAddress { source: AddressLookupError },
+    NoAddress { source: AddressLookupFailed },
     #[error("Unable to connect to remote")]
     Noq {
         #[error(std_err)]
@@ -931,6 +949,28 @@ impl Endpoint {
             return None;
         }
         self.inner.remove_relay(relay).await
+    }
+
+    /// Adds an external address on which this endpoint is directly reachable.
+    ///
+    /// This address will be advertised to peers together with any discovered external addresses
+    /// and will be used in NAT traversal and to establish direct connections.
+    ///
+    /// See also [`Builder::external_addr`] for setting addresses at build time.
+    pub async fn add_external_addr(&self, addr: SocketAddr) {
+        if self.is_closed() {
+            warn!("Attempting to add external addr for a closed endpoint. Ignoring.");
+            return;
+        }
+        self.inner.add_external_addr(addr).await;
+    }
+
+    /// Removes a configured external address. Returns `true` if it was present.
+    pub async fn remove_external_addr(&self, addr: &SocketAddr) -> bool {
+        if self.is_closed() {
+            return false;
+        }
+        self.inner.remove_external_addr(addr).await
     }
 
     // # Methods for establishing connectivity.
@@ -1218,11 +1258,11 @@ impl Endpoint {
 
     /// A convenience method that waits for the endpoint to be considered "online".
     ///
-    /// This currently means at least one relay server was connected,
-    /// and at least one local IP address is available.
-    /// Even if no relays are configured, this will still wait for a relay connection.
+    /// This currently means at least one relay server has completed its
+    /// connection handshake (i.e. the endpoint is registered and reachable
+    /// via that relay). Merely selecting a relay URL is not sufficient.
     ///
-    /// Once this has been resolved the first time, this will always immediately resolve.
+    /// If no relays are configured, this will pend forever.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
@@ -1262,7 +1302,36 @@ impl Endpoint {
     /// }
     /// ```
     pub async fn online(&self) {
-        self.inner.home_relay().initialized().await;
+        let mut watcher = self.inner.home_relay_status();
+        let mut value = watcher.get();
+        loop {
+            if value.into_iter().any(|status| status.is_connected()) {
+                return;
+            }
+            value = match watcher.updated().await {
+                Ok(value) => value,
+                Err(_disconnected) => {
+                    std::future::pending::<()>().await;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Returns a [`Watcher`] over the connection status of the endpoint's home relays.
+    ///
+    /// The watched value has one entry per home relay whose URL is known,
+    /// and is empty when no relays are configured or before the endpoint has
+    /// selected one the home relay from the list of configured relays.
+    /// The watcher updates whenever any home relay's connection status changes.
+    /// See [`RelayStatus`] for the information available on each entry.
+    ///
+    /// The returned watcher only becomes disconnected once the last clone of
+    /// the [`Endpoint`] is dropped. Closing the endpoint does not disconnect
+    /// the watcher. To stop a task once the endpoint stops, combine with
+    /// [`Self::closed`].
+    pub fn home_relay_status(&self) -> impl Watcher<Value = Vec<RelayStatus>> + use<> {
+        self.inner.home_relay_status()
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -1369,7 +1438,7 @@ impl Endpoint {
     /// Returns a `EndpointError::Closed` error if the endpoint is closed.
     ///
     /// See [`Builder::address_lookup`].
-    pub fn address_lookup(&self) -> Result<&ConcurrentAddressLookup, EndpointError> {
+    pub fn address_lookup(&self) -> Result<&AddressLookupServices, EndpointError> {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
@@ -1638,6 +1707,11 @@ impl Endpoint {
         self.inner.to_transport_addr(addr)
     }
 
+    /// Reverse-resolves a custom mapped address back to its [`iroh_base::CustomAddr`].
+    pub(crate) fn lookup_custom_addr(&self, addr: SocketAddr) -> Option<iroh_base::CustomAddr> {
+        self.inner.lookup_custom_addr(addr)
+    }
+
     #[cfg(all(test, with_crypto_provider))]
     pub(crate) fn inner(&self) -> Result<Arc<EndpointInner>, EndpointError> {
         if self.is_closed() {
@@ -1769,6 +1843,40 @@ fn proxy_url_from_env() -> Option<Url> {
     None
 }
 
+/// Connection status of a single home relay.
+///
+/// Observed via [`Endpoint::home_relay_status`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayStatus {
+    url: RelayUrl,
+    state: RelayConnectionState,
+}
+
+impl RelayStatus {
+    pub(crate) fn new(url: RelayUrl, state: RelayConnectionState) -> Self {
+        Self { url, state }
+    }
+
+    /// Returns the URL of the home relay.
+    pub fn url(&self) -> &RelayUrl {
+        &self.url
+    }
+
+    /// Returns `true` if the endpoint is connected to the relay.
+    pub fn is_connected(&self) -> bool {
+        self.state.is_connected()
+    }
+
+    /// Returns the most recent connection error, if the relay is currently
+    /// disconnected.
+    ///
+    /// Returns `None` when the relay is connected, or when the endpoint has
+    /// not yet observed a failed connection attempt.
+    pub fn last_error(&self) -> Option<&AnyError> {
+        self.state.last_error().map(Arc::as_ref)
+    }
+}
+
 /// Configuration of the relay servers for an [`Endpoint`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayMode {
@@ -1848,20 +1956,21 @@ mod tests {
     use std::{
         collections::BTreeMap,
         io,
-        net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
         str::FromStr,
         sync::Arc,
         time::{Duration, Instant},
     };
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-    use iroh_relay::{endpoint_info::UserData, tls::CaRootsConfig};
+    use iroh_dns::endpoint_info::UserData;
+    use iroh_relay::tls::CaRootsConfig;
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use noq::PathStats;
-    use rand::SeedableRng;
+    use rand::{RngExt, SeedableRng};
     use rand_chacha::ChaCha8Rng;
     use tokio::sync::oneshot;
     use tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
@@ -1902,7 +2011,7 @@ mod tests {
     async fn endpoint_connect_close() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, relay_url, _guard) = run_relay_server().await?;
-        let server_secret_key = SecretKey::generate(&mut rng);
+        let server_secret_key = SecretKey::from_bytes(&rng.random());
         let server_peer_id = server_secret_key.public();
 
         let qlog = QlogFileGroup::from_env("endpoint_connect_close");
@@ -2009,7 +2118,7 @@ mod tests {
         let chunk_size = 100;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
-        let server_secret_key = SecretKey::generate(&mut rng);
+        let server_secret_key = SecretKey::from_bytes(&rng.random());
         let server_endpoint_id = server_secret_key.public();
 
         // Make sure the server is bound before having clients connect to it:
@@ -2077,7 +2186,7 @@ mod tests {
             for i in 0..n_clients {
                 let round_start = Instant::now();
                 info!("[client] round {i}");
-                let client_secret_key = SecretKey::generate(&mut rng);
+                let client_secret_key = SecretKey::from_bytes(&rng.random());
                 let ep = Endpoint::builder(presets::Minimal)
                     .relay_mode(RelayMode::Custom(relay_map.clone()))
                     .alpns(vec![TEST_ALPN.to_vec()])
@@ -2256,7 +2365,7 @@ mod tests {
             qlog: Arc<QlogFileGroup>,
         ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2303,7 +2412,7 @@ mod tests {
             qlog: Arc<QlogFileGroup>,
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2361,7 +2470,7 @@ mod tests {
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
         ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2404,7 +2513,7 @@ mod tests {
             node_addr_tx: oneshot::Sender<EndpointAddr>,
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
-            let secret = SecretKey::generate(&mut rng);
+            let secret = SecretKey::from_bytes(&rng.random());
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
@@ -2785,6 +2894,55 @@ mod tests {
 
         assert!(ep.addr().ip_addrs().count() > 0);
 
+        Ok(())
+    }
+
+    /// Test that configured external addresses are included in the endpoint's
+    /// direct addresses, both when set via builder and at runtime.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[traced_test]
+    async fn test_external_addr() -> Result {
+        let configured_addr = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 12345));
+
+        // Test builder-configured external address
+        let ep = Endpoint::builder(presets::Minimal)
+            .external_addr(configured_addr)
+            .bind()
+            .await?;
+
+        let addr = ep.addr();
+        assert!(
+            addr.ip_addrs().any(|a| *a == configured_addr),
+            "builder-configured external addr {configured_addr} not found in endpoint addr: {addr:?}"
+        );
+
+        // Test runtime add
+        let runtime_addr = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(5, 6, 7, 8), 54321));
+        ep.add_external_addr(runtime_addr).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let addr = ep.addr();
+        assert!(
+            addr.ip_addrs().any(|a| *a == runtime_addr),
+            "runtime-added external addr {runtime_addr} not found in endpoint addr: {addr:?}"
+        );
+
+        // Test runtime remove
+        let removed = ep.remove_external_addr(&runtime_addr).await;
+        assert!(removed);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let addr = ep.addr();
+        assert!(
+            !addr.ip_addrs().any(|a| *a == runtime_addr),
+            "removed external addr {runtime_addr} still found in endpoint addr: {addr:?}"
+        );
+        assert!(
+            addr.ip_addrs().any(|a| *a == configured_addr),
+            "builder-configured external addr should still be present: {addr:?}"
+        );
+
+        ep.close().await;
         Ok(())
     }
 
@@ -3440,7 +3598,7 @@ mod tests {
     async fn same_endpoint_id_relay() -> Result {
         let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::from_bytes(&rng.random());
 
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -3594,7 +3752,7 @@ mod tests {
 
         info!("Connecting");
         let mut rng = ChaCha8Rng::seed_from_u64(41);
-        let ep_id = SecretKey::generate(&mut rng).public();
+        let ep_id = SecretKey::from_bytes(&rng.random()).public();
 
         // should likely be an error that states that the
         // endpoint is closed instead:
@@ -3714,6 +3872,55 @@ mod tests {
         let incoming = accept_task.await.expect("accept task panicked");
         assert!(incoming.is_none());
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_online_add_relay() -> Result {
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(RelayMap::empty()))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        // should not come online without relays.
+        let res = tokio::time::timeout(Duration::from_millis(500), ep.online()).await;
+        assert!(res.is_err());
+
+        // should come online after a relay is added.
+        let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
+        ep.insert_relay(relay_url.clone(), relay_map.get(&relay_url).unwrap())
+            .await;
+        let res = tokio::time::timeout(Duration::from_millis(1000), ep.online()).await;
+        assert!(res.is_ok());
+
+        // online should still return after endpoint close, if the endpoint was last online
+        let ep_clone = ep.clone();
+        let task = tokio::task::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(500), ep_clone.online()).await
+        });
+        ep.close().await;
+        let res = task.await.unwrap();
+        assert!(res.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_online_close() -> Result {
+        let ep = Endpoint::bind(presets::Minimal).await?;
+        // should not come online without relays.
+        let res = tokio::time::timeout(Duration::from_millis(500), ep.online()).await;
+        assert!(res.is_err());
+
+        // online should remain pending after the endpoint is closed.
+        let ep_clone = ep.clone();
+        let task = tokio::task::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(500), ep_clone.online()).await
+        });
+        ep.close().await;
+        let res = task.await.unwrap();
+        assert!(res.is_err());
         Ok(())
     }
 }
