@@ -238,7 +238,7 @@ pub struct RelayConfig {
     /// with this relay server.
     #[serde(default = "quic_config")]
     pub quic: Option<RelayQuicConfig>,
-    /// Optional token sent to the relay as the `token` query parameter.
+    /// Optional authorization token sent to the relay.
     ///
     /// Set via [`RelayConfig::with_auth_token`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -257,11 +257,12 @@ impl RelayConfig {
 
     /// Sets an authorization token for this relay.
     ///
-    /// On native targets, the token will be set as an `Authorization: Bearer TOKEN` header on
-    /// the WebSocket request which establishes the relay connection.
+    /// On native targets, the token is sent as an `Authorization: Bearer TOKEN`
+    /// header on the WebSocket upgrade request.
     ///
-    /// Browsers don't support headers on WebSocket requests. Therefore, when compiled to WebAssembly,
-    /// the token will instead be sent as a `?token=TOKEN` query parameter in the requested URL.
+    /// Browsers don't support headers on WebSocket requests, so under
+    /// WebAssembly the token is sent as a `?token=TOKEN` query parameter on
+    /// the upgrade URL instead.
     pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
         self.auth_token = Some(token.into());
         self

@@ -277,7 +277,7 @@ struct EndpointArgs {
     /// Set one or more relay servers to use.
     #[clap(long)]
     relay_url: Vec<RelayUrl>,
-    /// Token sent to each `--relay-url` as the `token` query parameter.
+    /// Authorization token sent to each `--relay-url`.
     ///
     /// Has no effect unless `--relay-url` is also set.
     #[clap(long)]
