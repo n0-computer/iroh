@@ -144,6 +144,18 @@ impl RelayMap {
         let b = other.relays.read().expect("poisoned");
         a.extend(b.iter().map(|(a, b)| (a.clone(), b.clone())));
     }
+
+    /// Sets an authentication token for all relays configured in this relay map.
+    ///
+    /// This applies [`RelayConfig::with_auth_token`] to all current entries in this relay map.
+    /// Any entries added to this relay map *after* calling this will not have the token set.
+    pub fn with_auth_token(self, auth_token: impl ToString) -> Self {
+        let auth_token = auth_token.to_string();
+        for config in self.relays.write().expect("poisoned").values_mut() {
+            *config = Arc::new(config.as_ref().clone().with_auth_token(auth_token.clone()));
+        }
+        self
+    }
 }
 
 impl FromIterator<RelayConfig> for RelayMap {
@@ -241,11 +253,7 @@ impl RelayConfig {
         }
     }
 
-    /// Sets the token used to authenticate to this relay.
-    ///
-    /// The client appends the token to the relay URL as a `token` query
-    /// parameter. The server can use it to control which clients are
-    /// allowed to connect.
+    /// Sets an authentication token for this relay.
     pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
         self.auth_token = Some(token.into());
         self
