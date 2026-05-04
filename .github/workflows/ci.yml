@@ -311,7 +311,7 @@ jobs:
           fail=0
           for crate in iroh-base iroh-dns iroh-relay iroh iroh-dns-server; do
             echo "::group::$crate"
-            if ! cargo check-external-types \
+            if ! cargo "+${CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY}" check-external-types \
                 --manifest-path "$crate/Cargo.toml" \
                 --config external-types.toml \
                 --all-features; then
