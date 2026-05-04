@@ -352,6 +352,12 @@ impl From<[u8; 32]> for SecretKey {
     }
 }
 
+impl From<&[u8; 32]> for SecretKey {
+    fn from(value: &[u8; 32]) -> Self {
+        Self::from_bytes(value)
+    }
+}
+
 impl TryFrom<&[u8]> for SecretKey {
     type Error = KeyParsingError;
 
