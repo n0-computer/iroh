@@ -312,8 +312,9 @@ impl ActiveRelayActor {
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
+
         if let Some(token) = auth_token {
-            builder = builder.query_param("token", token);
+            builder = builder.auth_token(token);
         }
         builder
     }

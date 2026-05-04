@@ -145,10 +145,12 @@ impl RelayMap {
         a.extend(b.iter().map(|(a, b)| (a.clone(), b.clone())));
     }
 
-    /// Sets an authentication token for all relays configured in this relay map.
+    /// Sets an authorization token for all relays configured in this relay map.
     ///
     /// This applies [`RelayConfig::with_auth_token`] to all current entries in this relay map.
     /// Any entries added to this relay map *after* calling this will not have the token set.
+    ///
+    /// See [`RelayConfig::with_auth_token`] for details.
     pub fn with_auth_token(self, auth_token: impl ToString) -> Self {
         let auth_token = auth_token.to_string();
         for config in self.relays.write().expect("poisoned").values_mut() {
@@ -253,7 +255,13 @@ impl RelayConfig {
         }
     }
 
-    /// Sets an authentication token for this relay.
+    /// Sets an authorization token for this relay.
+    ///
+    /// On native targets, the token will be set as an `Authorization: Bearer TOKEN` header on
+    /// the WebSocket request which establishes the relay connection.
+    ///
+    /// Browsers don't support headers on WebSocket requests. Therefore, when compiled to WebAssembly,
+    /// the token will instead be sent as a `?token=TOKEN` query parameter in the requested URL.
     pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
         self.auth_token = Some(token.into());
         self

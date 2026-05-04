@@ -10,6 +10,8 @@ use std::{
 };
 
 use conn::Conn;
+#[cfg(not(wasm_browser))]
+use http::HeaderValue;
 use iroh_base::{RelayUrl, SecretKey};
 #[cfg(not(wasm_browser))]
 use iroh_dns::dns::{DnsError, DnsResolver};
@@ -42,6 +44,8 @@ mod tls;
 #[cfg(not(wasm_browser))]
 mod util;
 
+pub(crate) const AUTH_TOKEN_URL_QUERY_PARAM: &str = "token";
+
 /// Connection errors.
 ///
 /// `ConnectError` contains `DialError`, errors that can occur while dialing the
@@ -67,6 +71,8 @@ pub enum ConnectError {
         server_version.as_deref().unwrap_or("<empty>")
     )]
     BadVersionHeader { server_version: Option<String> },
+    #[error("Authorization token set to a string that is not a valid HTTP header value")]
+    InvalidAuthToken,
     #[error(transparent)]
     Handshake {
         #[error(std_err)]
@@ -150,9 +156,7 @@ pub struct ClientBuilder {
     proxy_url: Option<Url>,
     /// The secret key of this client.
     secret_key: SecretKey,
-    /// Query parameters appended to the dial URL.
-    query_params: Vec<(String, String)>,
-    /// The DNS resolver to use.
+    auth_token: Option<String>,
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
     /// Cache for public keys of remote endpoints.
@@ -172,10 +176,10 @@ impl ClientBuilder {
             tls_config: None,
             proxy_url: None,
             secret_key,
-            query_params: Vec::new(),
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
+            auth_token: None,
         }
     }
 
@@ -226,12 +230,21 @@ impl ClientBuilder {
         self
     }
 
-    /// Appends a query parameter to the relay URL the client connects to.
+    /// Sets an authorization token.
     ///
-    /// Multiple calls append. Calling this with the same key twice keeps
-    /// both values.
-    pub fn query_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.query_params.push((key.into(), value.into()));
+    /// On native targets, the token will be set as an `Authorization: Bearer TOKEN` header on
+    /// the WebSocket request which establishes the relay connection.
+    ///
+    /// When compiled to WebAssembly, the token will set as a `?token=TOKEN` query parameter in
+    /// the URL for the WebSocket request, because browsers don't support setting headers on
+    /// WebSocket requests.
+    ///
+    /// # Errors
+    ///
+    /// Tokens must be a valid HTTP header field values. When an invalid value is set,
+    /// [`Self::Connect`] returns [`ConnectError::InvalidAuthToken`].
+    pub fn auth_token(mut self, token: impl ToString) -> Self {
+        self.auth_token = Some(token.to_string());
         self
     }
 
@@ -244,7 +257,7 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     #[cfg(not(wasm_browser))]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
-        use http::header::SEC_WEBSOCKET_PROTOCOL;
+        use http::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL};
         use n0_error::StdResultExt;
         use tls::MaybeTlsStreamBuilder;
 
@@ -268,9 +281,6 @@ impl ClientBuilder {
                     url: dial_url.clone()
                 })
             })?;
-        for (key, value) in &self.query_params {
-            dial_url.query_pairs_mut().append_pair(key, value);
-        }
 
         debug!(%dial_url, "Dialing relay by websocket");
 
@@ -290,6 +300,7 @@ impl ClientBuilder {
             .as_ref()
             .local_addr()
             .map_err(|_| e!(ConnectError::NoLocalAddr))?;
+
         let mut builder = tokio_websockets::ClientBuilder::new()
             .uri(dial_url.as_str())
             .map_err(|_| {
@@ -297,16 +308,27 @@ impl ClientBuilder {
                     url: dial_url.clone()
                 })
             })?
-            .add_header(
-                SEC_WEBSOCKET_PROTOCOL,
-                ProtocolVersion::all_as_header_value(),
-            )
-            .expect("valid header name and value")
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
             // We turn off automatic flushing after a threshold (the default would be after 8KB).
             // This means we need to flush manually, which we do by calling `Sink::send_all` or
             // `Sink::send` (which calls `Sink::flush`) in the `ActiveRelayActor`.
             .config(tokio_websockets::Config::default().flush_threshold(usize::MAX));
+
+        if let Some(token) = self.auth_token.as_ref() {
+            let value = HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| e!(ConnectError::InvalidAuthToken))?;
+            builder = builder
+                .add_header(AUTHORIZATION, value)
+                .expect("Authorization is not an invalid header name");
+        }
+
+        builder = builder
+            .add_header(
+                SEC_WEBSOCKET_PROTOCOL,
+                ProtocolVersion::all_as_header_value(),
+            )
+            .expect("valid header name and value");
+
         if let Some(client_auth) = KeyMaterialClientAuth::new(&self.secret_key, &stream) {
             debug!("Using TLS key export for relay client authentication");
             builder = builder
@@ -389,8 +411,11 @@ impl ClientBuilder {
                     url: dial_url.clone()
                 })
             })?;
-        for (key, value) in &self.query_params {
-            dial_url.query_pairs_mut().append_pair(key, value);
+
+        if let Some(token) = self.auth_token.as_ref() {
+            dial_url
+                .query_pairs_mut()
+                .append_pair(AUTH_TOKEN_URL_QUERY_PARAM, token);
         }
 
         debug!(%dial_url, "Dialing relay by websocket");

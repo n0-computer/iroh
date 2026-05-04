@@ -22,7 +22,8 @@ use std::{
 
 use derive_more::Debug;
 use http::{
-    HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header::InvalidHeaderValue,
+    HeaderMap, HeaderValue, Method, Request, Response, StatusCode,
+    header::{AUTHORIZATION, InvalidHeaderValue},
     response::Builder as ResponseBuilder,
 };
 use http_body_util::Full;
@@ -31,7 +32,7 @@ use iroh_base::EndpointId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use n0_error::{e, stack_error};
-use n0_future::{StreamExt, future::Boxed, task::AbortOnDropHandle};
+use n0_future::{StreamExt, task::AbortOnDropHandle};
 use rustls::server::WantsServerCert;
 use serde::Serialize;
 use tokio::{
@@ -46,6 +47,7 @@ use tracing::{Instrument, debug, error, info, info_span, instrument};
 
 use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
+    client::AUTH_TOKEN_URL_QUERY_PARAM,
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::RELAY_PROBE_PATH,
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
@@ -183,13 +185,42 @@ impl ClientRequest {
     pub fn headers(&self) -> &http::HeaderMap {
         &self.request.headers
     }
+
+    /// Returns the authorization token if set in the client's HTTP request.
+    ///
+    /// If the `Authorization` header is set, returns its value with the `Bearer ` prefix
+    /// removed, or `None` if the header value is not a valid UTF-8 string or doesn't start
+    /// with `Bearer `.
+    ///
+    /// If the `Authorization` header is not set, returns the `token` parameter of the URL's
+    /// query string.
+    ///
+    /// Returns `None` otherwise.
+    pub fn auth_token(&self) -> Option<String> {
+        if let Some(value) = self.request.headers.get(AUTHORIZATION) {
+            value
+                .to_str()
+                .ok()
+                .and_then(|s| s.strip_prefix("Bearer "))
+                .map(ToString::to_string)
+        } else {
+            self.query_pairs()
+                .find_map(|(name, value)| (name == AUTH_TOKEN_URL_QUERY_PARAM).then(|| value))
+                .map(|s| s.to_string())
+        }
+    }
 }
 
 /// Access check callback used by [`AccessConfig::Restricted`].
 ///
 /// Returns [`Access::Allow`] to admit the endpoint, [`Access::Deny`] to
 /// reject it.
-pub type AccessCheck = Box<dyn Fn(&ClientRequest) -> Boxed<Access> + Send + Sync + 'static>;
+pub type AccessCheck = Box<
+    dyn for<'a> Fn(&'a ClientRequest) -> Pin<Box<dyn Future<Output = Access> + Send + 'a>>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 /// Controls which endpoints are allowed to use the relay.
 #[derive(derive_more::Debug)]
@@ -1143,8 +1174,8 @@ mod tests {
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
                 access: AccessConfig::Restricted(Box::new(move |request| {
-                    let endpoint_id = request.endpoint_id();
                     async move {
+                        let endpoint_id = request.endpoint_id();
                         info!("checking {}", endpoint_id);
                         // reject endpoint a
                         if endpoint_id == a_key {
@@ -1235,12 +1266,8 @@ mod tests {
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
                 access: AccessConfig::Restricted(Box::new(move |request| {
-                    let token = request
-                        .query_pairs()
-                        .find(|(key, _)| key == "token")
-                        .map(|(_, value)| value.into_owned());
                     async move {
-                        if token.as_deref() == Some(TOKEN) {
+                        if request.auth_token().as_deref() == Some(TOKEN) {
                             Access::Allow
                         } else {
                             Access::Deny
@@ -1273,7 +1300,7 @@ mod tests {
         let secret_key = SecretKey::from_bytes(&rng.random());
         let result = ClientBuilder::new(relay_url.clone(), secret_key, dns_resolver())
             .tls_client_config(client_config.clone())
-            .query_param("token", "wrong-token")
+            .auth_token("wrong-token")
             .connect()
             .await;
         assert!(matches!(
@@ -1286,7 +1313,7 @@ mod tests {
         let secret_key = SecretKey::from_bytes(&rng.random());
         let _client = ClientBuilder::new(relay_url, secret_key, dns_resolver())
             .tls_client_config(client_config)
-            .query_param("token", TOKEN)
+            .auth_token(TOKEN)
             .connect()
             .await?;
 
