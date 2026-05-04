@@ -30,7 +30,7 @@ use futures_util::{FutureExt, future::Shared};
 use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
-use noq::WeakConnectionHandle;
+use noq::WeakConnectionHandle as NoqWeakConnectionHandle;
 use pin_project::pin_project;
 use tracing::{event, warn};
 
@@ -47,7 +47,7 @@ use crate::{
     },
     socket::{
         RemoteStateActorStoppedError,
-        remote_map::{PathInfo, PathWatchable, PathWatcher},
+        remote_map::{PathWatchable, PathWatcher},
         transports,
     },
 };
@@ -90,6 +90,21 @@ impl From<transports::Addr> for IncomingAddr {
             transports::Addr::Custom(addr) => Self::Custom(addr),
         }
     }
+}
+
+/// The local address that received an incoming connection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IncomingLocalAddr {
+    /// The local IP, if the OS surfaced it.
+    Ip(Option<IpAddr>),
+    /// The relay this connection arrived through.
+    Relay {
+        /// The URL of the relay.
+        url: RelayUrl,
+    },
+    /// The local custom address, if the transport reports one.
+    Custom(Option<iroh_base::CustomAddr>),
 }
 
 /// Future produced by [`Endpoint::accept`].
@@ -192,10 +207,19 @@ impl Incoming {
         self.inner.ignore()
     }
 
-    /// Returns the local IP address which was used when the peer established the
-    /// connection.
-    pub fn local_ip(&self) -> Option<IpAddr> {
-        self.inner.local_ip()
+    /// Returns the local address that received this incoming connection.
+    pub fn local_addr(&self) -> IncomingLocalAddr {
+        match self.ep.to_transport_addr(self.inner.remote_address()) {
+            transports::Addr::Ip(_) => IncomingLocalAddr::Ip(self.inner.local_ip()),
+            transports::Addr::Relay(url, _) => IncomingLocalAddr::Relay { url },
+            transports::Addr::Custom(_) => {
+                let local = self
+                    .inner
+                    .local_ip()
+                    .and_then(|ip| self.ep.lookup_custom_addr(SocketAddr::new(ip, 0)));
+                IncomingLocalAddr::Custom(local)
+            }
+        }
     }
 
     /// Returns the remote address of this incoming connection.
@@ -351,7 +375,7 @@ fn conn_from_noq_conn(
         };
 
         if let AfterHandshakeOutcome::Reject { error_code, reason } =
-            inner.hooks.after_handshake(&conn.to_info()).await
+            inner.hooks.after_handshake(&conn).await
         {
             conn.close(error_code, &reason);
             return Err(e!(ConnectingError::LocallyRejected));
@@ -1104,6 +1128,10 @@ impl Connection<HandshakeCompleted> {
     /// iterate over the path stats while the [`Connection`] struct is still in scope.
     ///
     /// [`PathInfoList`]: crate::endpoint::PathInfoList
+    /// [`PathInfo`]: crate::endpoint::PathInfo
+    /// [`PathInfo::is_selected`]: crate::endpoint::PathInfo::is_selected
+    /// [`PathInfo::is_closed`]: crate::endpoint::PathInfo::is_closed
+    /// [`PathInfo::stats`]: crate::endpoint::PathInfo::stats
     /// [`Watcher`]: crate::Watcher
     pub fn paths(&self) -> PathWatcher {
         self.data.paths.watch()
@@ -1114,15 +1142,16 @@ impl Connection<HandshakeCompleted> {
         self.inner.side()
     }
 
-    /// Returns a connection info struct.
+    /// Returns a [`WeakConnectionHandle`] for this connection.
     ///
-    /// A [`ConnectionInfo`] is a weak handle to the connection that does not keep the connection alive,
-    /// but does allow to access some information about the connection and to wait for the connection to be closed.
-    pub fn to_info(&self) -> ConnectionInfo {
-        ConnectionInfo {
+    /// A [`WeakConnectionHandle`] does not keep the connection alive. It can be used to
+    /// wait for the connection to be closed via [`WeakConnectionHandle::closed`] and to
+    /// attempt to upgrade back to a strong [`Connection`] via
+    /// [`WeakConnectionHandle::upgrade`].
+    pub fn weak_handle(&self) -> WeakConnectionHandle {
+        WeakConnectionHandle {
             data: self.data.clone(),
             inner: self.inner.weak_handle(),
-            side: self.side(),
         }
     }
 }
@@ -1204,61 +1233,52 @@ impl Connection<OutgoingZeroRtt> {
     }
 }
 
-/// Information about a connection.
+/// A weak handle to a [`Connection`].
 ///
-/// A [`ConnectionInfo`] is a weak handle to a connection that exposes some information about the connection,
-/// but does not keep the connection alive.
+/// A [`WeakConnectionHandle`] does not keep the connection alive: holding one will not
+/// prevent the connection from being closed when the last [`Connection`] handle is dropped.
+///
+/// Use [`upgrade`] to obtain a strong [`Connection`], and [`closed`] to wait for the
+/// connection to be closed without keeping it alive.
+///
+/// [`upgrade`]: WeakConnectionHandle::upgrade
+/// [`closed`]: WeakConnectionHandle::closed
 #[derive(Debug, Clone)]
-pub struct ConnectionInfo {
-    side: Side,
+pub struct WeakConnectionHandle {
     data: HandshakeCompletedData,
-    inner: WeakConnectionHandle,
+    inner: NoqWeakConnectionHandle,
 }
 
-#[allow(missing_docs)]
-impl ConnectionInfo {
-    pub fn alpn(&self) -> &[u8] {
-        &self.data.info.alpn
-    }
-
-    pub fn remote_id(&self) -> EndpointId {
-        self.data.info.endpoint_id
-    }
-
-    pub fn is_alive(&self) -> bool {
-        self.inner.upgrade().is_some()
-    }
-
-    /// Returns a watcher for the network paths of this connection.
+impl WeakConnectionHandle {
+    /// Attempts to upgrade this weak handle to a strong [`Connection`].
     ///
-    /// See [`Connection::paths`] for details.
-    pub fn paths(&self) -> PathWatcher {
-        self.data.paths.watch()
+    /// Returns `None` if the connection has already been dropped.
+    pub fn upgrade(&self) -> Option<Connection> {
+        self.inner.upgrade().map(|inner| Connection {
+            inner,
+            data: self.data.clone(),
+        })
     }
 
-    /// Returns connection statistics.
+    /// Returns a future that resolves once the connection has been closed.
     ///
-    /// Returns `None` if the connection has been dropped.
-    pub fn stats(&self) -> Option<ConnectionStats> {
-        self.inner.upgrade().map(|conn| conn.stats())
-    }
-
-    /// Returns the side of the connection (client or server).
-    pub fn side(&self) -> Side {
-        self.side
-    }
-
-    /// Waits for the connection to be closed, and returns the close reason and final connection stats.
+    /// If no strong references to the [`Connection`] exist at the time this is called,
+    /// the future resolves to `None`. If at least one strong reference still exists at
+    /// the time of this call, the returned future is guaranteed to receive the close
+    /// event with the close reason and final connection statistics, even if all strong
+    /// references are dropped before the future is awaited.
     ///
-    /// Returns `None` if the connection has been dropped already before this call.
-    pub async fn closed(&self) -> Option<(ConnectionError, ConnectionStats)> {
-        let fut = self.inner.upgrade()?.on_closed();
-        Some(fut.await)
-    }
-
-    /// Returns the currently selected path.
-    pub fn selected_path(&self) -> Option<PathInfo> {
-        self.paths().into_iter().find(|path| path.is_selected())
+    /// The future does not keep the connection alive.
+    pub fn closed(
+        &self,
+    ) -> impl Future<Output = Option<(ConnectionError, ConnectionStats)>> + Send + 'static {
+        let registered = self.inner.upgrade().map(|conn| conn.on_closed());
+        async move {
+            match registered {
+                Some(fut) => Some(fut.await),
+                None => None,
+            }
+        }
     }
 }
 

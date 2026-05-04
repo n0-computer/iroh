@@ -1,0 +1,50 @@
+name: Probe sccache backend
+description: >
+  Verify the sccache backend is reachable; if not, unset RUSTC_WRAPPER so
+  the job runs without sccache rather than failing. Handles transient
+  outages of GHA cache (Blacksmith proxy 502, GitHub cache hiccups, etc.)
+  without requiring a re-run.
+
+runs:
+  using: composite
+  steps:
+    - name: Probe sccache backend
+      # Skip on Windows: our Windows runners are self-hosted hetz with
+      # local-disk sccache (no GHA backend → no 502s to handle), and
+      # `shell: bash` on those runners resolves to the WSL launcher
+      # which fails outright. Probe only matters where SCCACHE_GHA_ENABLED
+      # is in play, i.e. Linux self-hosted (Blacksmith) and ubuntu-latest.
+      if: env.RUSTC_WRAPPER == 'sccache' && runner.os != 'Windows'
+      shell: bash
+      env:
+        # Cap each --start-server attempt at 5s in case sccache hangs on
+        # backend init. Empirically 502s from Blacksmith's GHA proxy
+        # already fail in ~5s; this just bounds pathological hangs.
+        # Two attempts × 5s = ~10s worst case. Portable across
+        # Linux/macOS/Windows bash (no coreutils `timeout` needed).
+        SCCACHE_STARTUP_NOTIFY_TIMEOUT: "5"
+      run: |
+        # If the sccache binary isn't installed (e.g. mozilla-actions/sccache-action
+        # failed to download from GitHub releases), bail out fast.
+        if ! command -v sccache >/dev/null 2>&1; then
+          echo "::warning::sccache binary not found (install likely failed); running this job without sccache"
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=" >> "$GITHUB_ENV"
+          exit 0
+        fi
+        # sccache --start-server triggers a backend probe (.sccache_check
+        # read). On failure (e.g. Blacksmith's GHA cache proxy returning
+        # 502 Bad Gateway), the daemon won't start and every rustc call
+        # fails. One quick retry, then fall through to plain rustc —
+        # slower, but the job will still succeed.
+        for attempt in 1 2; do
+          if sccache --start-server >/dev/null 2>&1; then
+            echo "sccache backend OK (attempt $attempt)"
+            exit 0
+          fi
+          echo "sccache start failed (attempt $attempt/2)"
+        done
+        echo "::warning::sccache backend unreachable; running this job without sccache"
+        # mozilla-actions/sccache-action exports these via $GITHUB_ENV — override.
+        echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+        echo "SCCACHE_GHA_ENABLED=" >> "$GITHUB_ENV"

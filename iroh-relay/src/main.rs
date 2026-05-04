@@ -188,8 +188,9 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
             AccessConfig::Everyone => iroh_relay::server::AccessConfig::Everyone,
             AccessConfig::Allowlist(allow_list) => {
                 let allow_list = Arc::new(allow_list);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |endpoint_id| {
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |request| {
                     let allow_list = allow_list.clone();
+                    let endpoint_id = request.endpoint_id();
                     async move {
                         if allow_list.contains(&endpoint_id) {
                             iroh_relay::server::Access::Allow
@@ -202,8 +203,9 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
             }
             AccessConfig::Denylist(deny_list) => {
                 let deny_list = Arc::new(deny_list);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |endpoint_id| {
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |request| {
                     let deny_list = deny_list.clone();
+                    let endpoint_id = request.endpoint_id();
                     async move {
                         if deny_list.contains(&endpoint_id) {
                             iroh_relay::server::Access::Deny
@@ -224,9 +226,10 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                     config.bearer_token = Some(token);
                 }
                 let config = Arc::new(config);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |endpoint_id| {
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |request| {
                     let client = client.clone();
                     let config = config.clone();
+                    let endpoint_id = request.endpoint_id();
                     async move { http_access_check(&client, &config, endpoint_id).await }.boxed()
                 }))
             }

@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, PollSender};
 use tracing::{Instrument, error, info_span, warn};
 
-use super::{Addr, Transmit};
+use super::{RecvInfo, Transmit};
 use crate::endpoint::RelayStatus;
 
 mod actor;
@@ -85,14 +85,19 @@ impl RelayTransport {
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(
+            bufs.len(),
+            recv_infos.len(),
+            "non matching bufs & recv_infos"
+        );
         let mut num_msgs = 0;
-        for ((buf_out, meta_out), addr) in bufs
-            .iter_mut()
-            .zip(metas.iter_mut())
-            .zip(source_addrs.iter_mut())
-        {
+        for i in 0..bufs.len() {
+            let buf_out = &mut bufs[i];
+            let meta_out = &mut metas[i];
+            let recv_info = &mut recv_infos[i];
             let dm = match self.poll_recv_queue(cx) {
                 Poll::Ready(Some(recv)) => recv,
                 Poll::Ready(None) => {
@@ -153,13 +158,13 @@ impl RelayTransport {
             meta_out.ecn = None;
             meta_out.dst_ip = None;
 
-            *addr = (dm.url, dm.src).into();
+            *recv_info = RecvInfo::from_addr((dm.url, dm.src).into());
             num_msgs += 1;
         }
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
-            debug_assert!(num_msgs <= metas.len());
+            assert!(num_msgs <= metas.len());
             Poll::Ready(Ok(num_msgs))
         } else {
             Poll::Pending
