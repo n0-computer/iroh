@@ -727,7 +727,7 @@ async fn fetch(
     // Attempt to connect, over the given ALPN. Returns a connection.
     let start = Instant::now();
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
-    let conn_info = conn.to_info();
+    let conn_info = conn.weak_handle();
     let remote_id = conn.remote_id();
     output.emit(Connected {
         remote_id,

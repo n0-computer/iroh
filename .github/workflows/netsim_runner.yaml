@@ -113,7 +113,9 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.9
+      uses: mozilla-actions/sccache-action@v0.0.10
+      continue-on-error: true
+    - uses: ./.github/workflows/sccache-probe
 
     - name: Build iroh
       run: |

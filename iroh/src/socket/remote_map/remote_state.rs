@@ -810,8 +810,8 @@ impl RemoteStateActor {
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *eid))
                 .private_socket_addr(),
-            transports::Addr::Custom(addr) => {
-                self.custom_mapped_addrs.get(addr).private_socket_addr()
+            transports::Addr::Custom(remote) => {
+                self.custom_mapped_addrs.get(remote).private_socket_addr()
             }
         };
 
