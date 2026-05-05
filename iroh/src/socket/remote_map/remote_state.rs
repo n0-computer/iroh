@@ -1337,8 +1337,8 @@ impl Future for OnClosed {
     type Output = (ConnId, ConnectionError);
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let (close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
-        Poll::Ready((self.conn_id, close_reason))
+        let closed = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
+        Poll::Ready((self.conn_id, closed.reason))
     }
 }
 

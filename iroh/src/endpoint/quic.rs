@@ -16,6 +16,7 @@ pub use noq::{
     AcceptBi,             // iroh::endpoint::Connection
     AcceptUni,            // iroh::endpoint::Connection
     AckFrequencyConfig,   // iroh::endpoint::quic::QuicTransportConfig
+    Closed,               // iroh::endpoint::WeakConnectionHandle
     ClosedStream,         // iroh::protocol::AcceptError, noq::RecvStream, noq::SendStream
     ConnectionError,      // iroh::endpoint::ConnectError
     ConnectionStats,      // iroh::endpoint::Connection
