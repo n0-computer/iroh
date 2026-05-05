@@ -552,7 +552,7 @@ mod tests {
     fn test_insert_open_path() {
         let mut state = RemotePathState::new(Default::default());
         let addr = ip_addr(1000);
-        let source = Source::Udp;
+        let source = Source::Connection;
 
         assert!(state.is_empty());
 
@@ -573,7 +573,7 @@ mod tests {
 
         // Test: Open goes to Inactive
         let addr_open = ip_addr(1000);
-        state.insert_open_path(addr_open.clone(), Source::Udp);
+        state.insert_open_path(addr_open.clone(), Source::Connection);
         assert!(matches!(state.paths[&addr_open].status, PathStatus::Open));
         assert_eq!(metrics.transport_ip_paths_added.get(), 1);
 
@@ -596,7 +596,7 @@ mod tests {
 
         // Test: Unknown goes to Unusable
         let addr_unknown = ip_addr(2000);
-        state.insert_multiple([addr_unknown.clone()].into_iter(), Source::Relay);
+        state.insert_multiple([addr_unknown.clone()].into_iter(), Source::Connection);
         assert!(matches!(
             state.paths[&addr_unknown].status,
             PathStatus::Unknown
@@ -622,7 +622,7 @@ mod tests {
         assert_eq!(metrics.transport_ip_paths_removed.get(), 1);
 
         // Test: Unusable can go to open
-        state.insert_open_path(addr_unknown.clone(), Source::Udp);
+        state.insert_open_path(addr_unknown.clone(), Source::Connection);
         assert!(matches!(
             state.paths[&addr_unknown].status,
             PathStatus::Open

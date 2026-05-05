@@ -97,6 +97,7 @@ fn body_empty() -> BytesBody {
 /// Be aware the generic parameters are for when using the Let's Encrypt TLS configuration.
 /// If not used dummy ones need to be provided, e.g. `ServerConfig::<(), ()>::default()`.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct ServerConfig {
     /// Configuration for the Relay server, disabled if `None`.
     pub relay: Option<RelayConfig>,
@@ -112,6 +113,7 @@ pub struct ServerConfig {
 /// This includes the HTTP services hosted by the Relay server, the Relay `/relay` HTTP
 /// endpoint is only one of the services served.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct RelayConfig {
     /// The socket address on which the Relay HTTP server should bind.
     ///
@@ -132,6 +134,23 @@ pub struct RelayConfig {
     pub key_cache_capacity: Option<usize>,
     /// Access configuration.
     pub access: AccessConfig,
+}
+
+impl RelayConfig {
+    /// Creates a new [`RelayConfig`] bound to `http_bind_addr` with default settings.
+    ///
+    /// TLS is disabled, default [`Limits`] are used, the key cache capacity is unset, and
+    /// access defaults to [`AccessConfig::Everyone`]. Adjust any of these by assigning to
+    /// the corresponding fields after construction.
+    pub fn new(http_bind_addr: impl Into<SocketAddr>) -> Self {
+        Self {
+            http_bind_addr: http_bind_addr.into(),
+            tls: None,
+            limits: Limits::default(),
+            key_cache_capacity: None,
+            access: AccessConfig::Everyone,
+        }
+    }
 }
 
 /// Details about an incoming relay client connection.
@@ -226,6 +245,7 @@ pub enum Access {
 
 /// Configuration for the QUIC server.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct QuicConfig {
     /// The socket address on which the QUIC server should bind.
     ///
@@ -241,10 +261,23 @@ pub struct QuicConfig {
     pub server_config: Option<rustls::ServerConfig>,
 }
 
+impl QuicConfig {
+    /// Creates a new [`QuicConfig`] bound to `bind_addr`.
+    ///
+    /// The TLS server config is left unset and inherited from [`RelayConfig::tls`].
+    pub fn new(bind_addr: impl Into<SocketAddr>) -> Self {
+        Self {
+            bind_addr: bind_addr.into(),
+            server_config: None,
+        }
+    }
+}
+
 /// TLS configuration for Relay server.
 ///
 /// Normally the Relay server accepts connections on both HTTPS and HTTP.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct TlsConfig {
     /// The socket address on which to serve the HTTPS server.
     ///
@@ -258,9 +291,20 @@ pub struct TlsConfig {
     pub cert: CertConfig,
 }
 
+impl TlsConfig {
+    /// Creates a new [`TlsConfig`] with the given bind address and certificate configuration.
+    pub fn new(https_bind_addr: impl Into<SocketAddr>, cert: CertConfig) -> Self {
+        Self {
+            https_bind_addr: https_bind_addr.into(),
+            cert,
+        }
+    }
+}
+
 /// Rate limits.
 // TODO: accept_conn_limit and accept_conn_burst are not currently implemented.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct Limits {
     /// Rate limit for accepting new connection. Unlimited if not set.
     pub accept_conn_limit: Option<f64>,
@@ -272,6 +316,7 @@ pub struct Limits {
 
 /// Per-client rate limit configuration.
 #[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
 pub struct ClientRateLimit {
     /// Max number of bytes per second to read from the client connection.
     pub bytes_per_second: NonZeroU32,
@@ -279,8 +324,21 @@ pub struct ClientRateLimit {
     pub max_burst_bytes: Option<NonZeroU32>,
 }
 
+impl ClientRateLimit {
+    /// Creates a new [`ClientRateLimit`] with the given byte rate.
+    ///
+    /// `max_burst_bytes` is left unset; assign it after construction to allow bursting.
+    pub fn new(bytes_per_second: NonZeroU32) -> Self {
+        Self {
+            bytes_per_second,
+            max_burst_bytes: None,
+        }
+    }
+}
+
 /// TLS certificate configuration.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CertConfig {
     /// Use Let's Encrypt.
     LetsEncrypt {

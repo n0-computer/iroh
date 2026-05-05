@@ -21,7 +21,7 @@ n0-future = "0.3"
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false }
 rustls = { version = "0.23.33", default-features = false }
-simple-dns = "0.9"
+simple-dns = "0.11"
 strum = { version = "0.28", features = ["derive"] }
 tokio = { version = "1", features = ["sync"] }
 tracing = "0.1"

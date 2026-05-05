@@ -1,0 +1,45 @@
+# List of types from foreign crates allowed to appear in our public APIs.
+#
+# This can be used with `cargo check-external-types` to ensure that no other
+# items than the ones allow-listed here appear in our public APIs. A semver-breaking
+# update to any crate listed here automatically becomes a semver-breaking update
+# to one of our workspace crates.
+#
+# There's a `check_external_types` CI job that fails when any foreign item not listed
+# here appears in the public API of a workspace crate.
+
+allowed_external_types = [
+    # workspace crates
+    "iroh_base::*",
+    "iroh_dns::*",
+    "iroh_relay::*",
+
+    # 1.0 crates that we deem fine to be part of the public API
+    "bytes::*",
+    "http::*",
+    "http_body::*",
+    "hyper::*",
+    "rustls_pki_types::*",
+    "serde::*",
+    "serde_core::*",
+    "tokio::*",
+    "url::*",
+
+    # crates owned by us that will move to 1.0 as well
+    "iroh_metrics::*",
+    "n0_error::*",
+    "n0_watcher::*",
+    "noq::*",
+    "noq_proto::*",
+    "noq_udp::*",
+    "portmapper::metrics::Metrics",
+
+    # non-1.0 crates that we decided to accept in the public API
+    "rustls::*",
+    "tokio_rustls::*",
+    "futures_core::stream::Stream",
+    "futures_sink::Sink",
+    # these are only type aliases
+    "futures_lite::future::Boxed",
+    "futures_lite::stream::Boxed",
+]

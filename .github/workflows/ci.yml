@@ -333,7 +333,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Setup Environment (PR)
         if: ${{ github.event_name == 'pull_request' }}
@@ -353,6 +355,56 @@ jobs:
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
+  check_external_types:
+    timeout-minutes: 30
+    name: Check external types in public API
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_9) }}
+    # runs-on: [self-hosted, linux, X64]
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+      # The tool drives an internal rustdoc invocation that only emits JSON
+      # for the analyzer, so the workflow-wide `-Dwarnings` would just turn
+      # unrelated rustdoc lints (e.g. `private-intra-doc-links`) into hard
+      # failures here. Clear it for this job.
+      RUSTDOCFLAGS: ""
+      # Pin to the nightly that the pinned `cargo-check-external-types`
+      # release was last tested against. Update both together.
+      CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.4.0"
+      CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY: "nightly-2025-10-18"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY }}
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.18.1
+
+      - name: Install cargo-check-external-types
+        # Match the version of wasm-bindgen used in Cargo.lock
+        run: cargo binstall cargo-check-external-types@${{ env.CARGO_CHECK_EXTERNAL_TYPES_VERSION }} --locked --no-confirm
+
+      - name: Check external types
+        run: |
+          set -e
+          fail=0
+          for crate in iroh-base iroh-dns iroh-relay iroh iroh-dns-server; do
+            echo "::group::$crate"
+            if ! cargo "+${CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY}" check-external-types \
+                --manifest-path "$crate/Cargo.toml" \
+                --config external-types.toml \
+                --all-features; then
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
   check_fmt:
     timeout-minutes: 30
     name: Checking fmt
@@ -365,7 +417,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
       - uses: taiki-e/install-action@cargo-make
       - run: cargo make format-check
 
@@ -385,7 +439,9 @@ jobs:
         with:
           toolchain: nightly-2025-10-09
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Docs
         run: cargo doc --workspace --all-features --no-deps --document-private-items
@@ -404,7 +460,9 @@ jobs:
         with:
           components: clippy
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       # TODO: We have a bunch of platform-dependent code so should
       #    probably run this job on the full platform matrix
@@ -454,7 +512,9 @@ jobs:
         with:
           toolchain: ${{ env.MSRV }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Check MSRV all features
         run: |
