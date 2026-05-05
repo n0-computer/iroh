@@ -45,6 +45,7 @@ pub(crate) const AUTH_TOKEN_URL_QUERY_PARAM: &str = "token";
 // Only used by the `all_is_exhaustive` to validate that `Self::ALL` is up to date.
 #[cfg_attr(test, derive(strum::EnumCount))]
 #[strum(parse_err_ty = UnsupportedRelayProtocolVersion, parse_err_fn = strum_err_fn)]
+#[non_exhaustive]
 // Needs to be ordered with newest version last, so that the `Ord` impl orders by latest version as max.
 pub enum ProtocolVersion {
     /// Version 1 (the only version supported until iroh 0.98.0)

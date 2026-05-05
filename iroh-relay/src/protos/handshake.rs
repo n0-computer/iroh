@@ -170,6 +170,7 @@ pub enum Error {
 
 #[cfg(feature = "server")]
 #[stack_error(derive, add_meta)]
+#[non_exhaustive]
 pub(crate) enum VerificationError {
     #[error("Couldn't export TLS keying material on our end")]
     NoKeyingMaterial,
@@ -385,6 +386,7 @@ pub struct SuccessfulAuthentication {
 /// The mechanism that was used for authentication.
 #[cfg(feature = "server")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Mechanism {
     /// Authentication was performed by verifying a signature of a challenge we sent
     SignedChallenge,

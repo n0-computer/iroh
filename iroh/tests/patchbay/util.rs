@@ -500,7 +500,7 @@ mod relay {
         RelayConfig, RelayMap, RelayQuicConfig,
         server::{
             AccessConfig, CertConfig, QuicConfig, RelayConfig as RelayServerConfig, Server,
-            ServerConfig, SpawnError, TlsConfig,
+            ServerConfig, SpawnError, TlsConfig, testing::self_signed_tls_certs_and_config,
         },
     };
 
@@ -512,30 +512,18 @@ mod relay {
     pub async fn run_relay_server() -> Result<(RelayMap, Server), SpawnError> {
         let bind_ip: IpAddr = Ipv6Addr::UNSPECIFIED.into();
 
-        let (_certs, server_config) =
-            iroh_relay::server::testing::self_signed_tls_certs_and_config();
+        let (_certs, server_config) = self_signed_tls_certs_and_config();
 
-        let tls = TlsConfig {
-            cert: CertConfig::Manual {
-                server_config: server_config.clone(),
-            },
-            https_bind_addr: (bind_ip, 443).into(),
-        };
-        let quic = Some(QuicConfig {
-            bind_addr: (bind_ip, 7842).into(),
-            server_config: None,
-        });
-        let config = ServerConfig {
-            relay: Some(RelayServerConfig {
-                http_bind_addr: (bind_ip, 80).into(),
-                tls: Some(tls),
-                limits: Default::default(),
-                key_cache_capacity: Some(1024),
-                access: AccessConfig::Everyone,
-            }),
-            quic,
-            ..Default::default()
-        };
+        let tls = TlsConfig::new((bind_ip, 443), CertConfig::Manual { server_config });
+        let mut relay = RelayServerConfig::new((bind_ip, 80));
+        relay.tls = Some(tls);
+        relay.key_cache_capacity = Some(1024);
+        relay.access = AccessConfig::Everyone;
+
+        let mut config = ServerConfig::default();
+        config.relay = Some(relay);
+        config.quic = Some(QuicConfig::new((bind_ip, 7842)));
+
         let server = Server::spawn(config).await?;
 
         let url: RelayUrl = "https://relay.test".parse().expect("valid relay url");
