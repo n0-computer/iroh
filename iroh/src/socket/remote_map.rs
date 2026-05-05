@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeSet,
     hash::Hash,
-    net::{IpAddr, SocketAddr},
     sync::Arc,
     task::{Context, Poll, Waker, ready},
 };
@@ -328,11 +327,8 @@ impl Tasks {
 #[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = "kebab-case")]
 #[allow(private_interfaces)]
-pub enum Source {
-    /// An endpoint communicated with us first via UDP.
-    Udp,
-    /// An endpoint communicated with us first via relay.
-    Relay,
+#[non_exhaustive]
+pub(crate) enum Source {
     /// Application layer added the address directly.
     App,
     /// The address was discovered by an Address Lookup system
@@ -341,69 +337,6 @@ pub enum Source {
         /// The name of the Address Lookup that discovered the address.
         name: String,
     },
-    /// Application layer with a specific name added the endpoint directly.
-    #[strum(serialize = "{name}")]
-    NamedApp {
-        /// The name of the application that added the endpoint
-        name: String,
-    },
-    /// The address was advertised by a call-me-maybe DISCO message.
-    #[strum(serialize = "CallMeMaybe")]
-    CallMeMaybe {
-        /// private marker
-        _0: Private,
-    },
-    /// We received a ping on the path.
-    #[strum(serialize = "Ping")]
-    Ping {
-        /// private marker
-        _0: Private,
-    },
-    /// We established a connection on this address.
-    #[strum(serialize = "Connection")]
-    Connection {
-        /// private marker
-        _0: Private,
-    },
-}
-
-/// Helper to ensure certain `Source` variants can not be constructed externally.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
-struct Private;
-
-/// An (Ip, Port) pair.
-///
-/// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
-/// addresses include fields that can't be assumed consistent even within a single connection.
-#[derive(Debug, derive_more::Display, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[display("{}", SocketAddr::from(*self))]
-pub struct IpPort {
-    ip: IpAddr,
-    port: u16,
-}
-
-impl From<SocketAddr> for IpPort {
-    fn from(socket_addr: SocketAddr) -> Self {
-        Self {
-            ip: socket_addr.ip(),
-            port: socket_addr.port(),
-        }
-    }
-}
-
-impl From<IpPort> for SocketAddr {
-    fn from(ip_port: IpPort) -> Self {
-        let IpPort { ip, port } = ip_port;
-        (ip, port).into()
-    }
-}
-
-impl IpPort {
-    pub fn ip(&self) -> &IpAddr {
-        &self.ip
-    }
-
-    pub fn port(&self) -> u16 {
-        self.port
-    }
+    /// The address was added as a path within a connection.
+    Connection,
 }
