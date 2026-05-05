@@ -43,7 +43,6 @@ pub use super::socket::{
         TransportAddrInfo, TransportAddrUsage,
     },
 };
-
 #[cfg(wasm_browser)]
 use crate::address_lookup::PkarrResolver;
 #[cfg(not(wasm_browser))]

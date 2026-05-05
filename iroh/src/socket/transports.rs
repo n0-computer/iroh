@@ -738,6 +738,7 @@ impl TransportType {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "unstable-custom-transports")] {
 /// use std::time::Duration;
 ///
 /// use iroh::endpoint::transports::TransportBias;
@@ -747,6 +748,7 @@ impl TransportType {
 ///
 /// // A primary transport with 50ms RTT disadvantage (will be less preferred)
 /// let bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(50));
+/// # }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
