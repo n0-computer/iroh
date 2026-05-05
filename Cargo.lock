@@ -2424,6 +2424,7 @@ dependencies = [
  "n0-error",
  "n0-future",
  "n0-tracing-test",
+ "ndk-context",
  "rand 0.10.1",
  "reqwest 0.13.2",
  "rustls",

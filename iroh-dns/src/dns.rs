@@ -28,7 +28,7 @@ use n0_future::{
     time::{self, Duration},
 };
 use tokio::sync::Notify;
-use tracing::debug;
+use tracing::warn;
 use url::Url;
 
 use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
@@ -224,6 +224,19 @@ impl Builder {
 /// The nameservers can be customized by constructing the resolver with [`Self::builder`].
 /// Alternatively, you can create a fully custom DNS resolver by implementing the [`Resolver`]
 /// trait and creating the resolver with [`Self::custom`].
+///
+/// # Usage on Android
+///
+/// The system-defaults reader uses JNI through [`ndk_context`], which must be
+/// initialized with a `JavaVM` and `Application` context before the resolver
+/// is constructed. Glue crates like ndk-glue and android-activity do this
+/// before `main`. Apps that don't use either can call
+/// `iroh_dns::install_android_jni_context` once at startup. Without an
+/// initialized `ndk_context` the JNI lookup panics in release builds. In
+/// debug builds the panic is caught and the resolver falls back to Google's
+/// public DNS.
+///
+/// [`ndk_context`]: https://docs.rs/ndk-context
 #[derive(Debug, Clone)]
 pub struct DnsResolver {
     inner: Arc<Inner>,
@@ -603,7 +616,7 @@ impl HickoryResolver {
             match Self::system_config() {
                 Ok((config, options)) => (config, options),
                 Err(error) => {
-                    debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
+                    warn!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
                     (
                         ResolverConfig::udp_and_tcp(&hickory_resolver::config::GOOGLE),
                         ResolverOpts::default(),
@@ -640,6 +653,9 @@ impl HickoryResolver {
     }
 
     fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::net::NetError> {
+        #[cfg(target_os = "android")]
+        let (system_config, options) = crate::android::read_system_conf()?;
+        #[cfg(not(target_os = "android"))]
         let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
 
         // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
