@@ -198,7 +198,7 @@ jobs:
               # Native build on self-hosted linux runners; use musl-gcc from musl-tools.
               export CARGO_TARGET_$(echo ${{ matrix.cargo_targets }} | tr 'a-z-' 'A-Z_')_LINKER=musl-gcc
               export CC=musl-gcc
-              export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
+              export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C link-arg=-static"
             fi
             cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
 
