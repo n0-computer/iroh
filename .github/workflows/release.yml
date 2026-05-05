@@ -198,6 +198,7 @@ jobs:
               # Native build on self-hosted linux runners; use musl-gcc from musl-tools.
               export CARGO_TARGET_$(echo ${{ matrix.cargo_targets }} | tr 'a-z-' 'A-Z_')_LINKER=musl-gcc
               export CC=musl-gcc
+              export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
             fi
             cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
 
@@ -214,14 +215,14 @@ jobs:
             key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
 
         - name: Download awscli (linux x86_64)
-          if: matrix.name == 'ubuntu-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
+          if: matrix.os == 'ubuntu-latest' && matrix.release-arch == 'amd64' && steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
             mkdir -p ~/awscli
             curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o ~/awscli/awscliv2.zip
             cd ~/awscli && unzip -oq awscliv2.zip
 
         - name: Download awscli (linux aarch64)
-          if: matrix.name == 'ubuntu-arm-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
+          if: matrix.os == 'ubuntu-latest' && matrix.release-arch == 'aarch64' && steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
             mkdir -p ~/awscli
             curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o ~/awscli/awscliv2.zip
@@ -259,6 +260,12 @@ jobs:
           run: |
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+
+        - name: push docker release
+          if: matrix.os == 'ubuntu-latest' && matrix.libc == 'musl'
+          run: |
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-musl-${GITHUB_SHA::7} --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-musl-${GITHUB_SHA::7} --no-progress
 
         - name: Build archives
           if: matrix.os != 'windows-latest'
