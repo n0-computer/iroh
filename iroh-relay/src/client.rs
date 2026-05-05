@@ -10,8 +10,6 @@ use std::{
 };
 
 use conn::Conn;
-#[cfg(not(wasm_browser))]
-use http::HeaderValue;
 use iroh_base::{RelayUrl, SecretKey};
 #[cfg(not(wasm_browser))]
 use iroh_dns::dns::{DnsError, DnsResolver};
@@ -256,7 +254,7 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     #[cfg(not(wasm_browser))]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
-        use http::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL};
+        use http::header::{AUTHORIZATION, HeaderValue, SEC_WEBSOCKET_PROTOCOL};
         use n0_error::StdResultExt;
         use tls::MaybeTlsStreamBuilder;
 
@@ -307,6 +305,11 @@ impl ClientBuilder {
                     url: dial_url.clone()
                 })
             })?
+            .add_header(
+                SEC_WEBSOCKET_PROTOCOL,
+                ProtocolVersion::all_as_header_value(),
+            )
+            .expect("valid header name and value")
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
             // We turn off automatic flushing after a threshold (the default would be after 8KB).
             // This means we need to flush manually, which we do by calling `Sink::send_all` or
@@ -318,15 +321,8 @@ impl ClientBuilder {
                 .map_err(|_| e!(ConnectError::InvalidAuthToken))?;
             builder = builder
                 .add_header(AUTHORIZATION, value)
-                .expect("Authorization is not an invalid header name");
+                .expect("valid header name");
         }
-
-        builder = builder
-            .add_header(
-                SEC_WEBSOCKET_PROTOCOL,
-                ProtocolVersion::all_as_header_value(),
-            )
-            .expect("valid header name and value");
 
         if let Some(client_auth) = KeyMaterialClientAuth::new(&self.secret_key, &stream) {
             debug!("Using TLS key export for relay client authentication");

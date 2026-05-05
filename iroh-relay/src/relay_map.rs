@@ -260,9 +260,9 @@ impl RelayConfig {
     /// On native targets, the token is sent as an `Authorization: Bearer TOKEN`
     /// header on the WebSocket upgrade request.
     ///
-    /// Browsers don't support headers on WebSocket requests, so under
-    /// WebAssembly the token is sent as a `?token=TOKEN` query parameter on
-    /// the upgrade URL instead.
+    /// When compiled to WebAssembly the token is sent as a `?token=TOKEN`
+    /// query parameter on the upgrade URL, since browsers don't allow setting
+    /// headers on WebSocket requests.
     pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
         self.auth_token = Some(token.into());
         self
