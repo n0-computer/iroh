@@ -27,12 +27,12 @@ use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
 use url::Url;
 
 /// Types for defining custom transports
+#[cfg(feature = "unstable-custom-transports")]
 pub mod transports {
-    #[cfg(feature = "unstable-custom-transports")]
-    pub use super::socket::transports::RecvInfo;
-    #[cfg(feature = "unstable-custom-transports")]
-    pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
-    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias};
+    pub use super::socket::transports::{
+        Addr, RecvInfo, Transmit,
+        custom::{CustomEndpoint, CustomSender, CustomTransport},
+    };
 }
 
 use self::hooks::EndpointHooksList;
@@ -42,7 +42,9 @@ pub use super::socket::{
         PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, Source,
         TransportAddrInfo, TransportAddrUsage,
     },
+    transports::{AddrKind, TransportBias},
 };
+
 #[cfg(wasm_browser)]
 use crate::address_lookup::PkarrResolver;
 #[cfg(not(wasm_browser))]
@@ -787,11 +789,7 @@ impl Builder {
     ///     .bind()
     ///     .await?;
     /// ```
-    pub fn transport_bias(
-        mut self,
-        kind: transports::AddrKind,
-        bias: transports::TransportBias,
-    ) -> Self {
+    pub fn transport_bias(mut self, kind: AddrKind, bias: TransportBias) -> Self {
         self.transport_bias = self.transport_bias.with_bias(kind, bias);
         self
     }
