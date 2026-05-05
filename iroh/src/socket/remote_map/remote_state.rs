@@ -35,7 +35,7 @@ use crate::{
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
-        remote_map::{Private, to_transport_addr},
+        remote_map::to_transport_addr,
         transports::{self, OwnedTransmit, PathSelectionData, TransportBiasMap, TransportsSender},
     },
     util::MaybeFuture,
@@ -487,7 +487,7 @@ impl RemoteStateActor {
                 Self::configure_path(&path, &path_remote);
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
-                    .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
+                    .insert_open_path(path_remote.clone(), Source::Connection);
                 self.select_path();
 
                 if path_remote.is_ip() {
@@ -931,7 +931,7 @@ impl RemoteStateActor {
                     Self::configure_path(&path, &path_remote);
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
-                        .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
+                        .insert_open_path(path_remote.clone(), Source::Connection);
                 }
 
                 self.select_path();
