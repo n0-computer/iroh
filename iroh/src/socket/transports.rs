@@ -691,6 +691,7 @@ impl Addr {
 
 /// The kind of a transport address, used for configuring bias.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub enum AddrKind {
     /// An IPv4 address.
     IpV4,
@@ -739,7 +740,7 @@ impl TransportType {
 /// ```
 /// use std::time::Duration;
 ///
-/// use iroh::endpoint::TransportBias;
+/// use iroh::endpoint::transports::TransportBias;
 ///
 /// // A primary transport with 100ms RTT advantage (will be preferred)
 /// let bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
@@ -748,6 +749,7 @@ impl TransportType {
 /// let bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(50));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub struct TransportBias {
     /// Whether this is a primary or backup transport.
     pub(crate) transport_type: TransportType,
@@ -755,6 +757,7 @@ pub struct TransportBias {
     pub(crate) rtt_bias: i128,
 }
 
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 impl TransportBias {
     /// Creates a primary transport bias with no RTT advantage.
     ///
@@ -791,6 +794,7 @@ impl TransportBias {
     /// The disadvantage is added to the measured RTT during path selection,
     /// so a transport with a 100ms disadvantage will be avoided in favor of
     /// one with the same measured RTT but no disadvantage.
+    #[cfg_attr(not(feature = "unstable-custom-transports"), allow(dead_code))]
     pub fn with_rtt_disadvantage(mut self, disadvantage: Duration) -> Self {
         self.rtt_bias += disadvantage.as_nanos() as i128;
         self
@@ -826,6 +830,7 @@ impl Default for TransportBiasMap {
 
 impl TransportBiasMap {
     /// Returns a new map with the given bias added or updated.
+    #[cfg_attr(not(feature = "unstable-custom-transports"), allow(dead_code))]
     pub(crate) fn with_bias(self, kind: AddrKind, bias: TransportBias) -> Self {
         let mut map = (*self.map).clone();
         map.insert(kind, bias);

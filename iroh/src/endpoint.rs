@@ -30,7 +30,7 @@ use url::Url;
 #[cfg(feature = "unstable-custom-transports")]
 pub mod transports {
     pub use super::socket::transports::{
-        Addr, RecvInfo, Transmit,
+        Addr, AddrKind, RecvInfo, Transmit, TransportBias,
         custom::{CustomEndpoint, CustomSender, CustomTransport},
     };
 }
@@ -42,7 +42,6 @@ pub use super::socket::{
         PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, Source,
         TransportAddrInfo, TransportAddrUsage,
     },
-    transports::{AddrKind, TransportBias},
 };
 
 #[cfg(wasm_browser)]
@@ -789,7 +788,12 @@ impl Builder {
     ///     .bind()
     ///     .await?;
     /// ```
-    pub fn transport_bias(mut self, kind: AddrKind, bias: TransportBias) -> Self {
+    #[cfg(feature = "unstable-custom-transports")]
+    pub fn transport_bias(
+        mut self,
+        kind: transports::AddrKind,
+        bias: transports::TransportBias,
+    ) -> Self {
         self.transport_bias = self.transport_bias.with_bias(kind, bias);
         self
     }
