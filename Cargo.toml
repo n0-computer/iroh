@@ -43,6 +43,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 unused-async = "warn"
 
 [patch.crates-io]
-noq = { git = "https://github.com/n0-computer/noq", branch = "main" }
-noq-udp = { git = "https://github.com/n0-computer/noq", branch = "main" }
-noq-proto = { git = "https://github.com/n0-computer/noq", branch = "main" }
+noq = { git = "https://github.com/n0-computer/noq", branch = "flub/dogfood-merges" }
+noq-udp = { git = "https://github.com/n0-computer/noq", branch = "flub/dogfood-merges" }
+noq-proto = { git = "https://github.com/n0-computer/noq", branch = "flub/dogfood-merges" }
