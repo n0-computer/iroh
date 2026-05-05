@@ -20,16 +20,16 @@
 <a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">const </span>ADDR_PREFIXL: u8 = <span class="number">0xfd</span>;
 <a href=#21 id=21 data-nosnippet>21</a>
 <a href=#22 id=22 data-nosnippet>22</a><span class="doccomment">/// The Global ID used in n0's Unique Local Addresses.
-<a href=#23 id=23 data-nosnippet>23</a></span><span class="kw">const </span>ADDR_GLOBAL_ID: [u8; <span class="number">5</span>] = [<span class="number">21</span>, <span class="number">7</span>, <span class="number">10</span>, <span class="number">81</span>, <span class="number">11</span>];
+<a href=#23 id=23 data-nosnippet>23</a></span><span class="kw">const </span>ADDR_GLOBAL_ID: [u8; <span class="number">5</span>] = [<span class="number">0x15</span>, <span class="number">0x07</span>, <span class="number">0x0a</span>, <span class="number">0x51</span>, <span class="number">0x0b</span>];
 <a href=#24 id=24 data-nosnippet>24</a>
-<a href=#25 id=25 data-nosnippet>25</a><span class="doccomment">/// The Subnet ID for [`RelayMappedAddr].
-<a href=#26 id=26 data-nosnippet>26</a></span><span class="kw">const </span>RELAY_MAPPED_SUBNET: [u8; <span class="number">2</span>] = [<span class="number">0</span>, <span class="number">1</span>];
+<a href=#25 id=25 data-nosnippet>25</a><span class="doccomment">/// The Subnet ID for [`RelayMappedAddr]: fd15:70a:510b:1::/64.
+<a href=#26 id=26 data-nosnippet>26</a></span><span class="kw">const </span>RELAY_MAPPED_SUBNET: [u8; <span class="number">2</span>] = [<span class="number">0x00</span>, <span class="number">0x01</span>];
 <a href=#27 id=27 data-nosnippet>27</a>
-<a href=#28 id=28 data-nosnippet>28</a><span class="doccomment">/// The Subnet ID for [`CustomMappedAddr`].
-<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">const </span>CUSTOM_MAPPED_SUBNET: [u8; <span class="number">2</span>] = [<span class="number">0</span>, <span class="number">3</span>];
+<a href=#28 id=28 data-nosnippet>28</a><span class="doccomment">/// The Subnet ID for [`CustomMappedAddr`]: fd15:70a:510b:3::/64.
+<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">const </span>CUSTOM_MAPPED_SUBNET: [u8; <span class="number">2</span>] = [<span class="number">0x00</span>, <span class="number">0x03</span>];
 <a href=#30 id=30 data-nosnippet>30</a>
-<a href=#31 id=31 data-nosnippet>31</a><span class="doccomment">/// The Subnet ID for [`EndpointIdMappedAddr`].
-<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">const </span>ENDPOINT_ID_SUBNET: [u8; <span class="number">2</span>] = [<span class="number">0</span>; <span class="number">2</span>];
+<a href=#31 id=31 data-nosnippet>31</a><span class="doccomment">/// The Subnet ID for [`EndpointIdMappedAddr`]: fd15:70a:510b::/64.
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">const </span>ENDPOINT_ID_SUBNET: [u8; <span class="number">2</span>] = [<span class="number">0x00</span>, <span class="number">0x00</span>];
 <a href=#33 id=33 data-nosnippet>33</a>
 <a href=#34 id=34 data-nosnippet>34</a><span class="doccomment">/// A default fake addr, using the maximum addr that the internal fake addrs could be using.
 <a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
