@@ -39,8 +39,8 @@ use self::hooks::EndpointHooksList;
 pub use super::socket::{
     BindError, DirectAddr, DirectAddrType,
     remote_map::{
-        PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, Source,
-        TransportAddrInfo, TransportAddrUsage,
+        PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, TransportAddrInfo,
+        TransportAddrUsage,
     },
 };
 #[cfg(wasm_browser)]
@@ -830,7 +830,17 @@ pub enum EndpointError {
 /// Note that due to the light-weight properties of streams a stream will only be accepted
 /// once the initiating peer has sent some data on it.
 ///
+/// # Usage on Android
+///
+/// The endpoint's default [`DnsResolver`] reads the system DNS configuration
+/// through JNI, which needs a JVM context published to [`ndk_context`]. Apps
+/// must initialize that context before constructing the endpoint, or the
+/// resolver build panics. See [`DnsResolver`] for the supported
+/// initialization paths.
+///
 /// [QUIC]: https://quicwg.org
+/// [`DnsResolver`]: crate::dns::DnsResolver
+/// [`ndk_context`]: https://docs.rs/ndk-context
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     inner: Arc<EndpointInner>,

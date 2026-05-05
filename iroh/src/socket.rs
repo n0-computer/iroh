@@ -128,8 +128,19 @@ pub(crate) const RELAY_PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(30)
 
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
-/// Pretty arbitrary and high right now.
-pub(crate) const MAX_MULTIPATH_PATHS: u32 = 12;
+/// We expect 1 relay path, and then leave space for ~3 IP and custom transport paths.
+/// On top of that, when we expect a network change, we might be closing these paths
+/// (except for the relay path) and open new ones, and give us 3 more paths to spare.
+/// And finally we round that up to 8 for good measure.
+pub(crate) const MAX_MULTIPATH_PATHS: u32 = 8;
+
+/// Maximum number of n0 QUIC NAT Traversal addresses that the QUIC stack should allow.
+///
+/// This needs to be big enough to accommodate for machines which have lots of network
+/// interfaces enabled. We've seen MacOS machines with >25 interfaces in the wild
+/// (mostly due to VPN TUN and docket interfaces), so this seems like a reasonable
+/// value.
+pub(crate) const MAX_QNT_ADDRESSES: u8 = 32;
 
 /// Error returned when the endpoint state actor stopped while waiting for a reply.
 #[stack_error(add_meta, derive)]
@@ -2385,6 +2396,13 @@ mod tests {
         Ok(())
     }
 
+    // EADDRINUSE on the GitHub Android emulator persists past
+    // `force_network_change()`, so the rebind fails and connect() never
+    // wakes the connection driver. Passes locally.
+    #[cfg_attr(
+        target_os = "android",
+        ignore = "rebind flakes against the GitHub Android emulator"
+    )]
     #[tokio::test]
     #[traced_test]
     async fn test_regression_network_change_rebind_wakes_connection_driver() -> Result {

@@ -90,29 +90,37 @@ jobs:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
-  android_build:
-    name: Android Build Only
+  android:
+    name: Android Build & Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    timeout-minutes: 30
+    timeout-minutes: 60
     # runs-on: [self-hosted, linux, X64]
     needs: pick-runner
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_2) }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - aarch64-linux-android
-          - armv7-linux-androideabi
+        include:
+          - target: aarch64-linux-android
+          - target: armv7-linux-androideabi
+          - target: x86_64-linux-android
+            api-level: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Enable KVM for nested virtualization
+        if: matrix.target == 'x86_64-linux-android'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           target: ${{ matrix.target }}
-      - name: Install rustup target
-        run: rustup target add ${{ matrix.target }}
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -123,19 +131,95 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
+      # Pinned to a release tag (rather than @main) for supply-chain hygiene.
       - name: Setup Android NDK
-        uses: arqu/setup-ndk@main
+        uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r23
+          ndk-version: r25c
           add-to-path: true
 
+      - name: Install cargo-ndk
+        run: cargo install --version 4.1.2 cargo-ndk
+
+      # Replace cargo-ndk-runner with a wrapper that forwards RUST_LOG
+      # and RUST_BACKTRACE into the emulator shell. The upstream binary
+      # does `adb shell <bin>` without inheriting any host env.
+      - name: Wrap cargo-ndk-runner to forward logging env
+        if: matrix.target == 'x86_64-linux-android'
+        run: |
+          cat > "$(which cargo-ndk-runner)" <<'WRAPPER'
+          #!/bin/sh
+          set -e
+          dev=/data/local/tmp/$(basename "$1")
+          adb push "$1" "$dev" >/dev/null
+          adb shell chmod 755 "$dev"
+          shift
+          adb shell "RUST_LOG=$RUST_LOG RUST_BACKTRACE=$RUST_BACKTRACE $dev $*"
+          WRAPPER
+          chmod +x "$(which cargo-ndk-runner)"
+
       - name: Build
+        if: matrix.target != 'x86_64-linux-android'
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cargo ndk --target ${{ matrix.target }} build
+
+      # Build all the test binaries up front so the emulator boot can
+      # overlap with compilation. cargo-ndk runs `cargo test --no-run`
+      # against each crate; the binaries land in
+      # target/$CARGO_NDK_TARGET/debug/deps/.
+      - name: Build workspace test binaries
+        if: matrix.target == 'x86_64-linux-android'
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CARGO_NDK_TARGET: ${{ matrix.target }}
         run: |
-          cargo install --version 3.5.4 cargo-ndk
-          cargo ndk --target ${{ matrix.target }} build
+          cargo ndk test --no-run -p iroh-base --all-features
+          cargo ndk test --no-run -p iroh-dns --features tls-ring
+          cargo ndk test --no-run -p iroh-relay --features tls-ring,metrics
+          cargo ndk test --no-run -p iroh --features tls-ring,metrics,portmapper,test-utils
+
+      - name: Run workspace tests on Android emulator
+        if: matrix.target == 'x86_64-linux-android'
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          # Forwarded into the emulator by the cargo-ndk-runner wrapper.
+          RUST_LOG: trace
+          RUST_BACKTRACE: "1"
+          CARGO_NDK_TARGET: ${{ matrix.target }}
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: x86_64
+          target: google_apis
+          force-avd-creation: false
+          # `-dns-server` + `-netfast` + `-no-metrics` is the combination reported to give
+          # working public-internet connectivity on the GH-hosted runner; without them wlan0
+          # stays NO-CARRIER and every connect() to a public IP fails with ENETUNREACH.
+          # See https://github.com/ReactiveCircus/android-emulator-runner/issues/348#issuecomment-2578082030
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -dns-server 8.8.8.8 -netfast -no-metrics
+          disable-animations: true
+          script: |
+            adb wait-for-device
+            # Wait for full boot and a working outbound TCP. `sys.boot_completed=1` fires
+            # before the radio/Wi-Fi stack comes up, and `ip route get 8.8.8.8` reports
+            # success while the kernel's per-network fwmark route is still missing. Probe
+            # an actual TCP connect to 8.8.8.8:53 instead - it exercises the same path
+            # the test sockets will use.
+            adb shell 'i=0; while [ -z "$(getprop sys.boot_completed | tr -d "\r")" ]; do i=$((i+1)); if [ $i -gt 300 ]; then exit 1; fi; sleep 2; done'
+            adb shell 'i=0; while ! nc -w 2 8.8.8.8 53 </dev/null >/dev/null 2>&1; do i=$((i+1)); if [ $i -gt 30 ]; then exit 1; fi; sleep 2; done'
+            # Disable IPv6: the emulator has site-local + link-local v6 but no global v6
+            # route, so connect() to a global v6 address hangs instead of returning ENETUNREACH.
+            adb root && adb wait-for-device
+            adb shell sysctl -w net.ipv6.conf.all.disable_ipv6=1 || true
+            adb shell sysctl -w net.ipv6.conf.default.disable_ipv6=1 || true
+            adb shell sysctl -w net.ipv6.conf.lo.disable_ipv6=1 || true
+            adb shell ip addr
+            cargo ndk test -p iroh-base --all-features
+            cargo ndk test -p iroh-dns --features tls-ring
+            cargo ndk test -p iroh-relay --features tls-ring,metrics
+            cargo ndk test -p iroh --features tls-ring,metrics,portmapper,test-utils
 
   cross_test:
     name: Cross Test
