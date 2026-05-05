@@ -3,7 +3,7 @@
 <h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>std::time::Duration;
 
-<span class="kw">use </span>iroh::endpoint::transports::TransportBias;
+<span class="kw">use </span>iroh::endpoint::TransportBias;
 
 <span class="comment">// A primary transport with 100ms RTT advantage (will be preferred)
 </span><span class="kw">let </span>bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(<span class="number">100</span>));
