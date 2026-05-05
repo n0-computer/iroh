@@ -86,7 +86,7 @@ pub use self::{
         RemoteEndpointIdError, RetryError, WeakConnectionHandle, ZeroRttStatus,
     },
     quic::{
-        AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
+        AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, Closed, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
         ControllerMetrics, CryptoError, DecryptedInitial, Dir, ExportKeyingMaterialError,
         FrameStats, FrameType, HandshakeTokenKey, HeaderKey, IdleTimeout, IncomingAlpns, Keys,
