@@ -552,7 +552,7 @@
 <a href=#552 id=552 data-nosnippet>552</a>    </span><span class="kw">fn </span>test_insert_open_path() {
 <a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = RemotePathState::new(Default::default());
 <a href=#554 id=554 data-nosnippet>554</a>        <span class="kw">let </span>addr = ip_addr(<span class="number">1000</span>);
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>source = Source::Udp;
+<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>source = Source::Connection;
 <a href=#556 id=556 data-nosnippet>556</a>
 <a href=#557 id=557 data-nosnippet>557</a>        <span class="macro">assert!</span>(state.is_empty());
 <a href=#558 id=558 data-nosnippet>558</a>
@@ -573,7 +573,7 @@
 <a href=#573 id=573 data-nosnippet>573</a>
 <a href=#574 id=574 data-nosnippet>574</a>        <span class="comment">// Test: Open goes to Inactive
 <a href=#575 id=575 data-nosnippet>575</a>        </span><span class="kw">let </span>addr_open = ip_addr(<span class="number">1000</span>);
-<a href=#576 id=576 data-nosnippet>576</a>        state.insert_open_path(addr_open.clone(), Source::Udp);
+<a href=#576 id=576 data-nosnippet>576</a>        state.insert_open_path(addr_open.clone(), Source::Connection);
 <a href=#577 id=577 data-nosnippet>577</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(state.paths[<span class="kw-2">&amp;</span>addr_open].status, PathStatus::Open));
 <a href=#578 id=578 data-nosnippet>578</a>        <span class="macro">assert_eq!</span>(metrics.transport_ip_paths_added.get(), <span class="number">1</span>);
 <a href=#579 id=579 data-nosnippet>579</a>
@@ -596,7 +596,7 @@
 <a href=#596 id=596 data-nosnippet>596</a>
 <a href=#597 id=597 data-nosnippet>597</a>        <span class="comment">// Test: Unknown goes to Unusable
 <a href=#598 id=598 data-nosnippet>598</a>        </span><span class="kw">let </span>addr_unknown = ip_addr(<span class="number">2000</span>);
-<a href=#599 id=599 data-nosnippet>599</a>        state.insert_multiple([addr_unknown.clone()].into_iter(), Source::Relay);
+<a href=#599 id=599 data-nosnippet>599</a>        state.insert_multiple([addr_unknown.clone()].into_iter(), Source::Connection);
 <a href=#600 id=600 data-nosnippet>600</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
 <a href=#601 id=601 data-nosnippet>601</a>            state.paths[<span class="kw-2">&amp;</span>addr_unknown].status,
 <a href=#602 id=602 data-nosnippet>602</a>            PathStatus::Unknown
@@ -622,7 +622,7 @@
 <a href=#622 id=622 data-nosnippet>622</a>        <span class="macro">assert_eq!</span>(metrics.transport_ip_paths_removed.get(), <span class="number">1</span>);
 <a href=#623 id=623 data-nosnippet>623</a>
 <a href=#624 id=624 data-nosnippet>624</a>        <span class="comment">// Test: Unusable can go to open
-<a href=#625 id=625 data-nosnippet>625</a>        </span>state.insert_open_path(addr_unknown.clone(), Source::Udp);
+<a href=#625 id=625 data-nosnippet>625</a>        </span>state.insert_open_path(addr_unknown.clone(), Source::Connection);
 <a href=#626 id=626 data-nosnippet>626</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
 <a href=#627 id=627 data-nosnippet>627</a>            state.paths[<span class="kw-2">&amp;</span>addr_unknown].status,
 <a href=#628 id=628 data-nosnippet>628</a>            PathStatus::Open
