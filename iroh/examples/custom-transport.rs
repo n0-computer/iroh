@@ -5,7 +5,7 @@ use iroh::{
     Endpoint, SecretKey, TransportAddr,
     endpoint::{
         Builder, Connection, presets,
-        transports::{Addr, PathSelectionContext, PathSelector},
+        transports::{Addr, PathSelection, PathSelectionContext, PathSelector},
     },
     protocol::{AcceptError, ProtocolHandler, Router},
     test_utils::test_transport::{TEST_TRANSPORT_ID, TestNetwork, TestTransport},
@@ -41,19 +41,26 @@ struct Args {
 struct PreferTestTransport;
 
 impl PathSelector for PreferTestTransport {
-    fn select(&self, ctx: &PathSelectionContext<'_>) -> Option<Addr> {
+    fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection {
+        let mut selection = PathSelection::default();
         // First preference: any path on our test custom transport.
         if let Some(addr) = ctx
             .paths()
             .find(|p| matches!(p.addr(), Addr::Custom(c) if c.id() == TEST_TRANSPORT_ID))
-            .map(|p| p.addr().clone())
+            .map(|p| p.addr())
         {
-            return Some(addr);
+            selection.add(addr);
+            return selection;
         }
         // Otherwise: lowest RTT wins.
-        ctx.paths()
+        if let Some(addr) = ctx
+            .paths()
             .min_by_key(|p| p.stats().rtt)
-            .map(|p| p.addr().clone())
+            .map(|p| p.addr())
+        {
+            selection.add(addr);
+        }
+        selection
     }
 }
 

@@ -1016,11 +1016,12 @@ impl RemoteStateActor {
         trace!(paths = ?paths_buf, "dumping all path stats");
 
         let current_path = self.selected_path.get();
-        let state = PathSelectionContext::new(current_path.as_ref(), &paths_buf);
-        let selected_addr = self.path_selector.select(&state);
+        let ctx = PathSelectionContext::new(current_path.as_ref(), &paths_buf);
+        let selection = self.path_selector.select(&ctx);
 
-        // Apply our new path
-        if let Some(addr) = selected_addr {
+        // Apply the selector's primary path.  Multi-path selection is not yet
+        // supported on the lifecycle side; only the primary is honoured.
+        if let Some(addr) = selection.primary().cloned() {
             let rtt = paths_buf
                 .iter()
                 .filter(|(a, _)| **a == addr)

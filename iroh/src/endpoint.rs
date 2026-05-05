@@ -30,7 +30,7 @@ use url::Url;
 pub mod transports {
     #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::path_selector::{
-        PathSelectionContext, PathSelectionData, PathSelector,
+        PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
     };
     #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::transports::RecvInfo;

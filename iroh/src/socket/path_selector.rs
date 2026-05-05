@@ -23,15 +23,62 @@ use crate::endpoint::quic::PathStats;
 /// Implementations of this trait decide which path is the preferred one to use among the
 /// candidate paths known to a remote endpoint.
 ///
-/// The default selector ([`BiasedRttPathSelector`]) sorts by biased RTT and is sticky to
-/// avoid flapping.  Most users do not need to provide their own selector.
+/// The default selector sorts by biased RTT and is sticky to avoid flapping.  Most users
+/// do not need to provide their own selector.
 pub trait PathSelector: Send + Sync + Debug + 'static {
     /// Picks a path among the candidates known for a remote endpoint.
     ///
-    /// Returns `Some(addr)` to make `addr` the new selected path.  Returning `Some` with
-    /// the same address as `state.current()` is a no-op.  Returning `None` keeps the
-    /// current selection unchanged.
-    fn select(&self, state: &PathSelectionContext<'_>) -> Option<Addr>;
+    /// Build the result by starting from [`PathSelection::default`] and calling
+    /// [`PathSelection::add`] for each path the selector wants active.  Today only the
+    /// first added path is used; future iroh releases may support multiple selected
+    /// paths concurrently, at which point further added paths will be respected.
+    ///
+    /// Returning an empty [`PathSelection`] keeps the current selection unchanged.
+    fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection;
+}
+
+/// The set of paths a [`PathSelector`] has chosen.
+///
+/// Today this holds at most one path; future iroh releases will support multi-path
+/// selection.  Build via [`PathSelection::default`] + [`PathSelection::add`] so selector
+/// code that wants to nominate multiple paths can already be written today (additional
+/// paths are dropped with a warning until multi-path support lands).
+#[derive(Debug, Clone, Default)]
+pub struct PathSelection {
+    // Today: at most one path.  Future: a `SmallVec<[Addr; 1]>` (or similar) so the
+    // single-path case remains zero-allocation while multi-path becomes possible.
+    inner: Option<Addr>,
+}
+
+impl PathSelection {
+    /// Adds a path to the selection.
+    ///
+    /// Today the selection holds at most one path: the first call wins, subsequent
+    /// calls log a warning and are ignored.  When multi-path selection ships, all
+    /// added paths will be respected and the warning will go away.
+    pub fn add(&mut self, addr: &Addr) {
+        if self.inner.is_some() {
+            tracing::warn!(
+                ?addr,
+                "PathSelection already contains a path; ignoring additional path \
+                 (multi-path selection is not yet supported)"
+            );
+            return;
+        }
+        self.inner = Some(addr.clone());
+    }
+
+    /// The primary path: the one data should be sent on.
+    ///
+    /// Returns `None` when nothing has been added.
+    pub fn primary(&self) -> Option<&Addr> {
+        self.inner.as_ref()
+    }
+
+    /// All paths in this selection (today: 0 or 1).
+    pub fn iter(&self) -> impl Iterator<Item = &Addr> + '_ {
+        self.inner.iter()
+    }
 }
 
 /// State of the endpoint relevant for path selection.
@@ -225,16 +272,16 @@ impl BiasedRttPathSelector {
 }
 
 impl PathSelector for BiasedRttPathSelector {
-    fn select(&self, state: &PathSelectionContext<'_>) -> Option<Addr> {
+    fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection {
         // Single pass: track the best candidate by sort key, and the best (lowest)
         // sort key seen for the currently-selected address.  When the same address
         // appears multiple times (one path per connection), `min` over `sort_key`
         // naturally picks the lowest-RTT instance — no separate aggregation needed.
-        let current = state.current();
+        let current = ctx.current();
         let mut best: Option<(&Addr, (TransportType, i128))> = None;
         let mut current_key: Option<(TransportType, i128)> = None;
 
-        for psd in state.paths() {
+        for psd in ctx.paths() {
             let addr = psd.addr();
             let key = self.sort_key(addr, psd.stats().rtt);
 
@@ -246,22 +293,25 @@ impl PathSelector for BiasedRttPathSelector {
             }
         }
 
-        let (best_addr, (best_tier, best_biased)) = best?;
+        let mut selection = PathSelection::default();
+        let Some((best_addr, (best_tier, best_biased))) = best else {
+            return selection;
+        };
 
         // If we have no current path or no data for it, switch to the best.
         let Some((current_tier, current_biased)) = current_key else {
-            return Some(best_addr.clone());
+            selection.add(best_addr);
+            return selection;
         };
 
         if current_tier != best_tier {
             // Always switch across tiers (e.g. relay -> primary).
-            Some(best_addr.clone())
+            selection.add(best_addr);
         } else if best_biased + RTT_SWITCHING_MIN.as_nanos() as i128 <= current_biased {
             // For the same tier, only switch when biased RTT is meaningfully better.
-            Some(best_addr.clone())
-        } else {
-            None
+            selection.add(best_addr);
         }
+        selection
     }
 }
 
@@ -299,14 +349,18 @@ mod tests {
         s
     }
 
-    /// Run the default selector against a slice of (addr, rtt_ms) pairs and an optional current.
+    /// Run the default selector against a slice of (addr, rtt_ms) pairs and an optional
+    /// current.  Returns the primary of the resulting [`PathSelection`].
     fn select(paths: &[(Addr, u64)], current: Option<&Addr>) -> Option<Addr> {
         let buf: Vec<(&Addr, PathStats)> = paths
             .iter()
             .map(|(addr, rtt_ms)| (addr, stats(*rtt_ms)))
             .collect();
-        let state = PathSelectionContext::new(current, &buf);
-        BiasedRttPathSelector::default().select(&state)
+        let ctx = PathSelectionContext::new(current, &buf);
+        BiasedRttPathSelector::default()
+            .select(&ctx)
+            .primary()
+            .cloned()
     }
 
     #[test]
