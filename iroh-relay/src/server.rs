@@ -15,7 +15,10 @@
 //! - HTTPS `/ping`: Used for net_report probes.
 //! - HTTPS `/generate_204`: Used for net_report probes.
 
-use std::{future::Future, net::SocketAddr, num::NonZeroU32, path::PathBuf, pin::Pin, sync::Arc};
+use std::{
+    borrow::Cow, future::Future, net::SocketAddr, num::NonZeroU32, path::PathBuf, pin::Pin,
+    sync::Arc,
+};
 
 use derive_more::Debug;
 use http::{
@@ -94,6 +97,7 @@ fn body_empty() -> BytesBody {
 /// Be aware the generic parameters are for when using the Let's Encrypt TLS configuration.
 /// If not used dummy ones need to be provided, e.g. `ServerConfig::<(), ()>::default()`.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct ServerConfig {
     /// Configuration for the Relay server, disabled if `None`.
     pub relay: Option<RelayConfig>,
@@ -109,6 +113,7 @@ pub struct ServerConfig {
 /// This includes the HTTP services hosted by the Relay server, the Relay `/relay` HTTP
 /// endpoint is only one of the services served.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct RelayConfig {
     /// The socket address on which the Relay HTTP server should bind.
     ///
@@ -131,23 +136,98 @@ pub struct RelayConfig {
     pub access: AccessConfig,
 }
 
+impl RelayConfig {
+    /// Creates a new [`RelayConfig`] bound to `http_bind_addr` with default settings.
+    ///
+    /// TLS is disabled, default [`Limits`] are used, the key cache capacity is unset, and
+    /// access defaults to [`AccessConfig::Everyone`]. Adjust any of these by assigning to
+    /// the corresponding fields after construction.
+    pub fn new(http_bind_addr: impl Into<SocketAddr>) -> Self {
+        Self {
+            http_bind_addr: http_bind_addr.into(),
+            tls: None,
+            limits: Limits::default(),
+            key_cache_capacity: None,
+            access: AccessConfig::Everyone,
+        }
+    }
+}
+
+/// Details about an incoming relay client connection.
+///
+/// Passed to the [`AccessConfig::Restricted`] callback to decide whether to
+/// admit the endpoint.
+#[derive(Debug, Clone)]
+pub struct ClientRequest {
+    endpoint_id: EndpointId,
+    request: http::request::Parts,
+}
+
+impl ClientRequest {
+    /// Creates a new [`ClientRequest`] from an [`EndpointId`] and HTTP request parts.
+    ///
+    /// The [`EndpointId`] must be proven by the relay handshake. The request parts
+    /// come from the client's WebSocket request.
+    pub fn new(endpoint_id: EndpointId, request: http::request::Parts) -> Self {
+        Self {
+            endpoint_id,
+            request,
+        }
+    }
+
+    /// Returns the [`EndpointId`] of the client.
+    ///
+    /// The relay handshake authenticates this id before the access hook
+    /// is invoked. The client proves possession of the secret key for
+    /// this public key by either signing keying material exported from
+    /// the TLS session or a challenge issued by the server.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint_id
+    }
+
+    /// Returns the URI of the HTTP request with which the client connected.
+    pub fn uri(&self) -> &http::Uri {
+        &self.request.uri
+    }
+
+    /// Returns an iterator over the query parameters set in the URI of the HTTP request.
+    ///
+    /// Each item is a `(name, value)` pair. Both names and values are percent-decoded.
+    /// The query string is parsed in order, and the same name may appear more than once.
+    pub fn query_pairs(&self) -> impl Iterator<Item = (Cow<'_, str>, Cow<'_, str>)> {
+        url::form_urlencoded::parse(self.request.uri.query().unwrap_or("").as_bytes())
+    }
+
+    /// Returns the headers of the HTTP request with which the client connected.
+    pub fn headers(&self) -> &http::HeaderMap {
+        &self.request.headers
+    }
+}
+
+/// Access check callback used by [`AccessConfig::Restricted`].
+///
+/// Returns [`Access::Allow`] to admit the endpoint, [`Access::Deny`] to
+/// reject it.
+pub type AccessCheck = Box<dyn Fn(&ClientRequest) -> Boxed<Access> + Send + Sync + 'static>;
+
 /// Controls which endpoints are allowed to use the relay.
 #[derive(derive_more::Debug)]
+#[non_exhaustive]
 pub enum AccessConfig {
-    /// Everyone
+    /// Allows every endpoint.
     Everyone,
-    /// Only endpoints for which the function returns `Access::Allow`.
+    /// Delegates the decision to a callback invoked for every connection.
     #[debug("restricted")]
-    Restricted(Box<dyn Fn(EndpointId) -> Boxed<Access> + Send + Sync + 'static>),
+    Restricted(AccessCheck),
 }
 
 impl AccessConfig {
-    /// Is this endpoint allowed?
-    pub async fn is_allowed(&self, endpoint: EndpointId) -> bool {
+    /// Returns whether the given client request should be admitted.
+    pub async fn is_allowed(&self, request: &ClientRequest) -> bool {
         match self {
             Self::Everyone => true,
             Self::Restricted(check) => {
-                let res = check(endpoint).await;
+                let res = check(request).await;
                 matches!(res, Access::Allow)
             }
         }
@@ -165,6 +245,7 @@ pub enum Access {
 
 /// Configuration for the QUIC server.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct QuicConfig {
     /// The socket address on which the QUIC server should bind.
     ///
@@ -180,10 +261,23 @@ pub struct QuicConfig {
     pub server_config: Option<rustls::ServerConfig>,
 }
 
+impl QuicConfig {
+    /// Creates a new [`QuicConfig`] bound to `bind_addr`.
+    ///
+    /// The TLS server config is left unset and inherited from [`RelayConfig::tls`].
+    pub fn new(bind_addr: impl Into<SocketAddr>) -> Self {
+        Self {
+            bind_addr: bind_addr.into(),
+            server_config: None,
+        }
+    }
+}
+
 /// TLS configuration for Relay server.
 ///
 /// Normally the Relay server accepts connections on both HTTPS and HTTP.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct TlsConfig {
     /// The socket address on which to serve the HTTPS server.
     ///
@@ -197,9 +291,20 @@ pub struct TlsConfig {
     pub cert: CertConfig,
 }
 
+impl TlsConfig {
+    /// Creates a new [`TlsConfig`] with the given bind address and certificate configuration.
+    pub fn new(https_bind_addr: impl Into<SocketAddr>, cert: CertConfig) -> Self {
+        Self {
+            https_bind_addr: https_bind_addr.into(),
+            cert,
+        }
+    }
+}
+
 /// Rate limits.
 // TODO: accept_conn_limit and accept_conn_burst are not currently implemented.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct Limits {
     /// Rate limit for accepting new connection. Unlimited if not set.
     pub accept_conn_limit: Option<f64>,
@@ -211,6 +316,7 @@ pub struct Limits {
 
 /// Per-client rate limit configuration.
 #[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
 pub struct ClientRateLimit {
     /// Max number of bytes per second to read from the client connection.
     pub bytes_per_second: NonZeroU32,
@@ -218,8 +324,21 @@ pub struct ClientRateLimit {
     pub max_burst_bytes: Option<NonZeroU32>,
 }
 
+impl ClientRateLimit {
+    /// Creates a new [`ClientRateLimit`] with the given byte rate.
+    ///
+    /// `max_burst_bytes` is left unset; assign it after construction to allow bursting.
+    pub fn new(bytes_per_second: NonZeroU32) -> Self {
+        Self {
+            bytes_per_second,
+            max_burst_bytes: None,
+        }
+    }
+}
+
 /// TLS certificate configuration.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CertConfig {
     /// Use Let's Encrypt.
     LetsEncrypt {
@@ -1081,7 +1200,8 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
-                access: AccessConfig::Restricted(Box::new(move |endpoint_id| {
+                access: AccessConfig::Restricted(Box::new(move |request| {
+                    let endpoint_id = request.endpoint_id();
                     async move {
                         info!("checking {}", endpoint_id);
                         // reject endpoint a
@@ -1149,6 +1269,84 @@ mod tests {
         } else {
             panic!("client_c received unexpected message {res:?}");
         }
+
+        Ok(())
+    }
+
+    /// Verifies that [`ClientBuilder::query_param`] forwards URL query
+    /// parameters on the WebSocket upgrade so the [`AccessConfig::Restricted`]
+    /// hook can read them via [`ClientRequest::query_pairs`].
+    #[tokio::test]
+    #[traced_test]
+    async fn test_relay_client_query_param_forwarded() -> Result<()> {
+        const TOKEN: &str = "secret-token";
+
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let client_config = CaRootsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
+        let server = Server::spawn(ServerConfig {
+            relay: Some(RelayConfig {
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+                key_cache_capacity: Some(1024),
+                access: AccessConfig::Restricted(Box::new(move |request| {
+                    let token = request
+                        .query_pairs()
+                        .find(|(key, _)| key == "token")
+                        .map(|(_, value)| value.into_owned());
+                    async move {
+                        if token.as_deref() == Some(TOKEN) {
+                            Access::Allow
+                        } else {
+                            Access::Deny
+                        }
+                    }
+                    .boxed()
+                })),
+            }),
+            quic: None,
+            metrics_addr: None,
+        })
+        .await?;
+
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse()?;
+
+        // No query param: denied.
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let result = ClientBuilder::new(relay_url.clone(), secret_key, dns_resolver())
+            .tls_client_config(client_config.clone())
+            .connect()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. })
+                if reason == "not authorized"
+        ));
+
+        // Wrong token: denied.
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let result = ClientBuilder::new(relay_url.clone(), secret_key, dns_resolver())
+            .tls_client_config(client_config.clone())
+            .query_param("token", "wrong-token")
+            .connect()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. })
+                if reason == "not authorized"
+        ));
+
+        // Correct token: connection succeeds.
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let _client = ClientBuilder::new(relay_url, secret_key, dns_resolver())
+            .tls_client_config(client_config)
+            .query_param("token", TOKEN)
+            .connect()
+            .await?;
 
         Ok(())
     }

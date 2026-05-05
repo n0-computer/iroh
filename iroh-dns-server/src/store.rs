@@ -85,7 +85,7 @@ impl ZoneStore {
 
     /// Create a new zone store.
     fn new(store: SignedPacketStore, metrics: Arc<Metrics>) -> Self {
-        let zone_cache = ZoneCache::new(DEFAULT_CACHE_CAPACITY);
+        let zone_cache = ZoneCache::new(DEFAULT_CACHE_CAPACITY, metrics.clone());
         Self {
             store: Arc::new(store),
             cache: Arc::new(Mutex::new(zone_cache)),
@@ -103,22 +103,25 @@ impl ZoneStore {
         record_type: RecordType,
     ) -> Result<Option<Arc<RecordSet>>> {
         trace!("store resolve");
-        if let Some(rset) = self.cache.lock().await.resolve(pubkey, name, record_type) {
-            debug!(
-                len = rset.records_without_rrsigs().count(),
-                "resolved from cache"
-            );
-            return Ok(Some(rset));
+
+        // Check cache first (short lock scope)
+        {
+            let mut cache = self.cache.lock().await;
+            if let Some(rset) = cache.resolve(pubkey, name, record_type) {
+                debug!(
+                    len = rset.records_without_rrsigs().count(),
+                    "resolved from cache"
+                );
+                return Ok(Some(rset));
+            }
         }
 
+        // Check persistent store
         if let Some(packet) = self.store.get(pubkey).await? {
             trace!(packet_timestamp = ?packet.timestamp(), "store hit");
-            return match self
-                .cache
-                .lock()
-                .await
-                .insert_and_resolve(&packet, name, record_type)
-            {
+            let mut cache = self.cache.lock().await;
+            let result = cache.insert_and_resolve(&packet, name, record_type);
+            return match result {
                 Ok(Some(rset)) => {
                     debug!(
                         len = rset.records_without_rrsigs().count(),
@@ -212,13 +215,19 @@ struct ZoneCache {
     /// so we don't cache stale entries indefinitely.
     #[debug("dht_cache")]
     dht_cache: TtlCache<PublicKeyBytes, CachedZone>,
+    #[debug("metrics")]
+    metrics: Arc<Metrics>,
 }
 
 impl ZoneCache {
-    fn new(cap: usize) -> Self {
+    fn new(cap: usize, metrics: Arc<Metrics>) -> Self {
         let cache = LruCache::new(NonZeroUsize::new(cap).expect("capacity must be larger than 0"));
         let dht_cache = TtlCache::new(cap);
-        Self { cache, dht_cache }
+        Self {
+            cache,
+            dht_cache,
+            metrics,
+        }
     }
 
     fn resolve(
@@ -260,6 +269,9 @@ impl ZoneCache {
         let zone = CachedZone::from_signed_packet(signed_packet).anyerr()?;
         let res = zone.resolve(name, record_type);
         self.dht_cache.insert(pubkey, zone, DHT_CACHE_TTL);
+        self.metrics
+            .cache_zones_dht
+            .set(self.dht_cache.iter().count() as i64);
         Ok(res)
     }
 
@@ -278,6 +290,7 @@ impl ZoneCache {
                 pubkey,
                 CachedZone::from_signed_packet(signed_packet).anyerr()?,
             );
+            self.metrics.cache_zones.set(self.cache.len() as i64);
             trace!("inserted into cache");
             Ok(())
         }
@@ -286,6 +299,10 @@ impl ZoneCache {
     fn remove(&mut self, pubkey: &PublicKeyBytes) {
         self.cache.pop(pubkey);
         self.dht_cache.remove(pubkey);
+        self.metrics.cache_zones.set(self.cache.len() as i64);
+        self.metrics
+            .cache_zones_dht
+            .set(self.dht_cache.iter().count() as i64);
     }
 }
 

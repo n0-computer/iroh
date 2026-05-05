@@ -167,7 +167,9 @@ mod remote_map {
 
     use iroh::{
         EndpointId, Watcher,
-        endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks, PathInfo},
+        endpoint::{
+            AfterHandshakeOutcome, Connection, EndpointHooks, PathInfo, WeakConnectionHandle,
+        },
     };
     use n0_future::task::AbortOnDropHandle;
     use tokio::{sync::mpsc, task::JoinSet};
@@ -178,7 +180,7 @@ mod remote_map {
     #[derive(Debug, Default)]
     pub struct RemoteInfo {
         aggregate: Aggregate,
-        connections: HashMap<u64, ConnectionInfo>,
+        connections: HashMap<u64, WeakConnectionHandle>,
     }
 
     /// Aggregate information about a remote info.
@@ -238,6 +240,7 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn current_min_rtt(&self) -> Option<Duration> {
             self.connections()
+                .flat_map(|c| c.upgrade())
                 .flat_map(|c| c.paths().get().into_iter())
                 .flat_map(|p| p.stats())
                 .map(|s| s.rtt)
@@ -249,6 +252,7 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn has_ip_path(&self) -> Option<bool> {
             self.connections()
+                .flat_map(|c| c.upgrade())
                 .flat_map(|c| c.paths().get())
                 .filter(|path| path.is_ip())
                 .map(|_| true)
@@ -260,6 +264,7 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn has_relay_path(&self) -> Option<bool> {
             self.connections()
+                .flat_map(|c| c.upgrade())
                 .flat_map(|c| c.paths().get())
                 .filter(|path| path.is_relay())
                 .map(|_| true)
@@ -271,8 +276,8 @@ mod remote_map {
             !self.connections.is_empty()
         }
 
-        /// Returns an iterator over [`ConnectionInfo`] for currently active connections to this remote.
-        pub fn connections(&self) -> impl Iterator<Item = &ConnectionInfo> {
+        /// Returns an iterator over [`WeakConnectionHandle`] for currently active connections to this remote.
+        pub fn connections(&self) -> impl Iterator<Item = &WeakConnectionHandle> {
             self.connections.values()
         }
     }
@@ -289,13 +294,31 @@ mod remote_map {
     /// Hook to collect information about remote endpoints from an endpoint.
     #[derive(Debug)]
     pub struct RemoteMapHook {
-        tx: mpsc::Sender<ConnectionInfo>,
+        tx: mpsc::Sender<TrackedConnection>,
+    }
+
+    /// Pairing of a connection's remote endpoint id, captured at handshake time, with a
+    /// weak handle to the connection. The `remote_id` is captured eagerly because
+    /// [`WeakConnectionHandle`] only exposes [`upgrade`] and [`closed`].
+    ///
+    /// [`upgrade`]: WeakConnectionHandle::upgrade
+    /// [`closed`]: WeakConnectionHandle::closed
+    #[derive(Debug, Clone)]
+    pub struct TrackedConnection {
+        pub remote_id: EndpointId,
+        pub handle: WeakConnectionHandle,
     }
 
     impl EndpointHooks for RemoteMapHook {
-        async fn after_handshake(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
+        async fn after_handshake(&self, conn: &Connection) -> AfterHandshakeOutcome {
             info!(remote=%conn.remote_id().fmt_short(), "after_handshake");
-            self.tx.send(conn.clone()).await.ok();
+            // We track the connection via a weak handle so this map does not keep the
+            // connection alive past the application's last reference to it.
+            let tracked = TrackedConnection {
+                remote_id: conn.remote_id(),
+                handle: conn.weak_handle(),
+            };
+            self.tx.send(tracked).await.ok();
             AfterHandshakeOutcome::Accept
         }
     }
@@ -332,7 +355,7 @@ mod remote_map {
         }
 
         async fn run(
-            mut rx: mpsc::Receiver<ConnectionInfo>,
+            mut rx: mpsc::Receiver<TrackedConnection>,
             map: RemoteMapInner,
             retention_time: Duration,
         ) {
@@ -375,27 +398,28 @@ mod remote_map {
             tasks: &mut JoinSet<()>,
             map: RemoteMapInner,
             conn_id: u64,
-            conn: ConnectionInfo,
+            conn: TrackedConnection,
         ) {
             // Store conn info for full introspection possibility.
             {
                 let mut inner = map.write().expect("poisoned");
                 inner
-                    .entry(conn.remote_id())
+                    .entry(conn.remote_id)
                     .or_default()
                     .connections
-                    .insert(conn_id, conn.clone());
+                    .insert(conn_id, conn.handle.clone());
             }
 
             // Track connection closing to clear up the map.
             tasks.spawn({
-                let conn = conn.clone();
+                let remote_id = conn.remote_id;
+                let handle = conn.handle.clone();
                 let map = map.clone();
                 async move {
-                    conn.closed().await;
+                    handle.closed().await;
                     {
                         let mut inner = map.write().expect("poisoned");
-                        let info = inner.entry(conn.remote_id()).or_default();
+                        let info = inner.entry(remote_id).or_default();
                         info.connections.remove(&conn_id);
                         info.aggregate.last_update = SystemTime::now();
                     }
@@ -404,21 +428,24 @@ mod remote_map {
             });
 
             // Track path changes to update stats aggregate.
-            tasks.spawn({
-                async move {
-                    let mut path_updates = conn.paths().stream();
-                    while let Some(paths) = path_updates.next().await {
-                        {
-                            let mut inner = map.write().expect("poisoned");
-                            let info = inner.entry(conn.remote_id()).or_default();
-                            for path in paths {
-                                info.aggregate.update(&path);
+            if let Some(watcher) = conn.handle.upgrade().map(|c| c.paths()) {
+                let remote_id = conn.remote_id;
+                tasks.spawn({
+                    async move {
+                        let mut path_updates = watcher.stream();
+                        while let Some(paths) = path_updates.next().await {
+                            {
+                                let mut inner = map.write().expect("poisoned");
+                                let info = inner.entry(remote_id).or_default();
+                                for path in paths {
+                                    info.aggregate.update(&path);
+                                }
                             }
                         }
                     }
-                }
-                .instrument(tracing::Span::current())
-            });
+                    .instrument(tracing::Span::current())
+                });
+            }
         }
 
         async fn clear_expired(
