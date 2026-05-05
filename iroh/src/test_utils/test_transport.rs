@@ -329,10 +329,7 @@ mod tests {
     use super::*;
     use crate::{
         Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
-        endpoint::{
-            Builder, Connection, presets,
-            transports::{AddrKind, TransportBias},
-        },
+        endpoint::{AddrKind, Builder, Connection, TransportBias, presets},
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::run_relay_server,
     };

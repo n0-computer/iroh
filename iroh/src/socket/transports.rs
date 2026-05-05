@@ -739,7 +739,7 @@ impl TransportType {
 /// ```
 /// use std::time::Duration;
 ///
-/// use iroh::endpoint::transports::TransportBias;
+/// use iroh::endpoint::TransportBias;
 ///
 /// // A primary transport with 100ms RTT advantage (will be preferred)
 /// let bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
