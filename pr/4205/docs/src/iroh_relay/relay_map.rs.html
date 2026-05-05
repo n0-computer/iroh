@@ -260,9 +260,9 @@
 <a href=#260 id=260 data-nosnippet>260</a>    /// On native targets, the token is sent as an `Authorization: Bearer TOKEN`
 <a href=#261 id=261 data-nosnippet>261</a>    /// header on the WebSocket upgrade request.
 <a href=#262 id=262 data-nosnippet>262</a>    ///
-<a href=#263 id=263 data-nosnippet>263</a>    /// Browsers don't support headers on WebSocket requests, so under
-<a href=#264 id=264 data-nosnippet>264</a>    /// WebAssembly the token is sent as a `?token=TOKEN` query parameter on
-<a href=#265 id=265 data-nosnippet>265</a>    /// the upgrade URL instead.
+<a href=#263 id=263 data-nosnippet>263</a>    /// When compiled to WebAssembly the token is sent as a `?token=TOKEN`
+<a href=#264 id=264 data-nosnippet>264</a>    /// query parameter on the upgrade URL, since browsers don't allow setting
+<a href=#265 id=265 data-nosnippet>265</a>    /// headers on WebSocket requests.
 <a href=#266 id=266 data-nosnippet>266</a>    </span><span class="kw">pub fn </span>with_auth_token(<span class="kw-2">mut </span><span class="self">self</span>, token: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; <span class="self">Self </span>{
 <a href=#267 id=267 data-nosnippet>267</a>        <span class="self">self</span>.auth_token = <span class="prelude-val">Some</span>(token.into());
 <a href=#268 id=268 data-nosnippet>268</a>        <span class="self">self
