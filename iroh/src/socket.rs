@@ -76,8 +76,9 @@ use crate::{
     runtime::Runtime,
     socket::{
         concurrent_read_map::ReadOnlyMap,
+        path_selector::PathSelector,
         remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
-        transports::{HomeRelayWatch, HomeRelayWatcher, TransportBiasMap},
+        transports::{HomeRelayWatch, HomeRelayWatcher},
     },
     tls::{
         self,
@@ -89,6 +90,7 @@ mod metrics;
 
 pub(crate) mod concurrent_read_map;
 pub(crate) mod mapped_addrs;
+pub(crate) mod path_selector;
 pub(crate) mod remote_map;
 pub(crate) mod transports;
 
@@ -174,7 +176,7 @@ pub(crate) struct Options {
 
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
-    pub(crate) transport_bias: TransportBiasMap,
+    pub(crate) path_selector: Arc<dyn PathSelector>,
     pub(crate) portmapper_config: portmapper::PortmapperConfig,
 
     /// Static configuration for the endpoint.
@@ -869,7 +871,7 @@ impl EndpointInner {
             tls_config,
             metrics,
             hooks,
-            transport_bias,
+            path_selector,
             portmapper_config,
             static_config,
             configured_addrs,
@@ -959,7 +961,7 @@ impl EndpointInner {
                 direct_addrs.addrs.watch(),
                 address_lookup.clone(),
                 shutdown_token.child_token(),
-                transport_bias,
+                path_selector,
                 span.clone(),
             )
         };
@@ -2160,7 +2162,7 @@ mod tests {
             address_lookup_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
-            transport_bias: Default::default(),
+            path_selector: Arc::new(crate::socket::path_selector::BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
@@ -2569,7 +2571,7 @@ mod tests {
                 .unwrap(),
             metrics: Default::default(),
             hooks: Default::default(),
-            transport_bias: Default::default(),
+            path_selector: Arc::new(crate::socket::path_selector::BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),

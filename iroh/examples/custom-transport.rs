@@ -5,7 +5,7 @@ use iroh::{
     Endpoint, SecretKey, TransportAddr,
     endpoint::{
         Builder, Connection, presets,
-        transports::{AddrKind, TransportBias},
+        transports::{Addr, PathSelectionContext, PathSelector},
     },
     protocol::{AcceptError, ProtocolHandler, Router},
     test_utils::test_transport::{TEST_TRANSPORT_ID, TestNetwork, TestTransport},
@@ -35,8 +35,27 @@ struct Args {
     delay: u64,
 }
 
-/// Strong RTT advantage for the custom transport (100ms) to ensure it wins path selection.
-const CUSTOM_TRANSPORT_RTT_ADVANTAGE: Duration = Duration::from_millis(100);
+/// A [`PathSelector`] that prefers the test custom transport whenever a candidate path on
+/// it exists, falling back to the lowest-RTT candidate otherwise.
+#[derive(Debug)]
+struct PreferTestTransport;
+
+impl PathSelector for PreferTestTransport {
+    fn select(&self, ctx: &PathSelectionContext<'_>) -> Option<Addr> {
+        // First preference: any path on our test custom transport.
+        if let Some(addr) = ctx
+            .paths()
+            .find(|p| matches!(p.addr(), Addr::Custom(c) if c.id() == TEST_TRANSPORT_ID))
+            .map(|p| p.addr().clone())
+        {
+            return Some(addr);
+        }
+        // Otherwise: lowest RTT wins.
+        ctx.paths()
+            .min_by_key(|p| p.stats().rtt)
+            .map(|p| p.addr().clone())
+    }
+}
 
 impl Args {
     /// Configure an endpoint builder with the custom transport and optional IP/relay transports.
@@ -44,11 +63,8 @@ impl Args {
         let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
             .preset(transport)
-            // Give the custom transport a strong RTT advantage so it always wins path selection
-            .transport_bias(
-                AddrKind::Custom(TEST_TRANSPORT_ID),
-                TransportBias::primary().with_rtt_advantage(CUSTOM_TRANSPORT_RTT_ADVANTAGE),
-            );
+            // Always prefer the custom transport when it has a working path.
+            .path_selector(PreferTestTransport);
         if !self.keep_ip {
             builder = builder.clear_ip_transports();
         }
