@@ -1954,7 +1954,11 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
-    use iroh_relay::tls::CaRootsConfig;
+    use iroh_relay::{
+        RelayConfig,
+        server::{Access, AccessConfig},
+        tls::CaRootsConfig,
+    };
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
@@ -1974,7 +1978,9 @@ mod tests {
             ConnectWithOptsError, Connection, ConnectionError, PathWatcher, presets,
         },
         protocol::{AcceptError, ProtocolHandler, Router},
-        test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
+        test_utils::{
+            QlogFileGroup, run_relay_server, run_relay_server_with, run_relay_server_with_access,
+        },
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -3911,6 +3917,67 @@ mod tests {
         ep.close().await;
         let res = task.await.unwrap();
         assert!(res.is_err());
+        Ok(())
+    }
+
+    /// Verifies that an endpoint configured with [`RelayConfig::with_auth_token`]
+    /// is admitted to a relay that uses [`AccessConfig::Restricted`] only when
+    /// the token matches.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_relay_auth_token() -> Result {
+        const TOKEN: &str = "valid-token";
+
+        let access = AccessConfig::Restricted(Box::new(|request| {
+            Box::pin(async move {
+                if request.auth_token().as_deref() == Some(TOKEN) {
+                    Access::Allow
+                } else {
+                    Access::Deny
+                }
+            })
+        }));
+        let (_relay_map, relay_url, _guard) = run_relay_server_with_access(false, access).await?;
+
+        // Wrong token: the connection attempt fails and last_error reports
+        // the relay-side denial.
+        let bad_map: RelayMap = RelayConfig::new(relay_url.clone(), None)
+            .with_auth_token("wrong-token")
+            .into();
+        let bad_ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(bad_map))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        let mut stream = bad_ep.home_relay_status().stream();
+        let auth_err: String = tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(status) = stream.next().await {
+                if let Some(err) = status.iter().filter_map(|s| s.last_error()).next() {
+                    return format!("{err:#}");
+                }
+            }
+            panic!("home relay stream ended");
+        })
+        .await
+        .std_context("waiting for auth error")?;
+        assert!(
+            auth_err.contains("not authorized"),
+            "expected 'not authorized' in error, got: {auth_err}"
+        );
+
+        // Correct token: the endpoint reaches the connected state.
+        let good_map: RelayMap = RelayConfig::new(relay_url, None)
+            .with_auth_token(TOKEN)
+            .into();
+        let good_ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(good_map))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        tokio::time::timeout(Duration::from_secs(5), good_ep.online())
+            .await
+            .std_context("waiting for endpoint to come online")?;
+
         Ok(())
     }
 }
