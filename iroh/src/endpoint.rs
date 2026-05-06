@@ -29,10 +29,14 @@ use url::Url;
 /// Types for defining custom transports
 pub mod transports {
     #[cfg(feature = "unstable-custom-transports")]
+    pub use super::socket::remote_map::{
+        PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
+    };
+    #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::transports::RecvInfo;
     #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
-    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias};
+    pub use super::socket::transports::{Addr, AddrKind, Transmit};
 }
 
 use self::hooks::EndpointHooksList;
@@ -59,8 +63,9 @@ use crate::{
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
     socket::{
-        self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
-        transports::RelayConnectionState,
+        self, EndpointInner, RemoteStateActorStoppedError, StaticConfig,
+        biased_rtt_path_selector::BiasedRttPathSelector, mapped_addrs::MappedAddr,
+        remote_map::PathSelector, transports::RelayConnectionState,
     },
     tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
@@ -128,7 +133,7 @@ pub struct Builder {
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
-    transport_bias: socket::transports::TransportBiasMap,
+    path_selector: Arc<dyn PathSelector>,
     portmapper_config: PortmapperConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
@@ -195,7 +200,7 @@ impl Builder {
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
-            transport_bias: Default::default(),
+            path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
@@ -256,7 +261,7 @@ impl Builder {
             tls_config,
             metrics,
             hooks: self.hooks,
-            transport_bias: self.transport_bias,
+            path_selector: self.path_selector,
             portmapper_config: self.portmapper_config,
             static_config,
             configured_addrs: self.configured_addrs,
@@ -767,32 +772,22 @@ impl Builder {
         self
     }
 
-    /// Sets the transport bias for a specific address kind.
+    /// Sets a custom [`PathSelector`] for this endpoint.
     ///
-    /// Transport bias controls how different transport types are prioritized during
-    /// path selection. By default:
-    /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
-    /// - Relay is a backup transport (only used when no primary transport is available)
+    /// The path selector decides which path to use among the candidate paths to a
+    /// remote endpoint.  By default iroh uses a built-in selector that sorts paths by
+    /// biased RTT (with IPv6 preferred over IPv4 and relay treated as backup) and is
+    /// sticky to avoid flapping.  Pass a custom [`PathSelector`] here to override that
+    /// policy — for example, to make a custom transport always win over IP.
     ///
-    /// Use this to customize the behavior, for example to add bias for custom transports.
+    /// Takes an `Arc<dyn PathSelector>` so the same selector instance can be shared
+    /// across multiple endpoints if desired.  See `examples/custom-transport.rs` for
+    /// an example implementation.
     ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use std::time::Duration;
-    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias}};
-    ///
-    /// let endpoint = Builder::new(SomePreset)
-    ///     .transport_bias(AddrKind::Custom(42), TransportBias::primary().with_rtt_advantage(Duration::from_millis(10)))
-    ///     .bind()
-    ///     .await?;
-    /// ```
-    pub fn transport_bias(
-        mut self,
-        kind: transports::AddrKind,
-        bias: transports::TransportBias,
-    ) -> Self {
-        self.transport_bias = self.transport_bias.with_bias(kind, bias);
+    /// [`PathSelector`]: socket::remote_map::PathSelector
+    #[cfg(feature = "unstable-custom-transports")]
+    pub fn path_selector(mut self, selector: Arc<dyn PathSelector>) -> Self {
+        self.path_selector = selector;
         self
     }
 }
