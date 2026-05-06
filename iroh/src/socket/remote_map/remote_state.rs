@@ -1364,15 +1364,15 @@ impl PathSelection {
     ///
     /// Today the selection holds at most one path: the first call wins, subsequent
     /// calls log a warning and are ignored.
-    pub fn set(&mut self, remote_addr: &transports::Addr) {
+    pub fn set(&mut self, path: &PathSelectionData<'_>) {
         if self.selection.is_some() {
             tracing::warn!(
-                ?remote_addr,
+                remote_addr = ?path.remote_addr(),
                 "PathSelection already contains a path; ignoring additional path"
             );
             return;
         }
-        self.selection = Some(remote_addr.clone());
+        self.selection = Some(path.remote_addr().clone());
     }
 
     /// The primary path: the one data should be sent on.

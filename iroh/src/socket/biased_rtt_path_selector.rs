@@ -11,7 +11,7 @@ use std::{sync::Arc, time::Duration};
 use rustc_hash::FxHashMap;
 
 use super::{
-    remote_map::{PathSelection, PathSelectionContext, PathSelector},
+    remote_map::{PathSelection, PathSelectionContext, PathSelectionData, PathSelector},
     transports::{Addr, AddrKind},
 };
 
@@ -138,7 +138,7 @@ impl PathSelector for BiasedRttPathSelector {
         // appears multiple times (one path per connection), `min` over `sort_key`
         // naturally picks the lowest-RTT instance — no separate aggregation needed.
         let current = ctx.current();
-        let mut best: Option<(&Addr, (TransportType, i128))> = None;
+        let mut best: Option<(PathSelectionData<'_>, (TransportType, i128))> = None;
         let mut current_key: Option<(TransportType, i128)> = None;
 
         tracing::debug!("dumping path RTTs");
@@ -155,28 +155,28 @@ impl PathSelector for BiasedRttPathSelector {
             if Some(addr) == current && current_key.is_none_or(|c| key < c) {
                 current_key = Some(key);
             }
-            if best.is_none_or(|(_, b)| key < b) {
-                best = Some((addr, key));
+            if best.as_ref().is_none_or(|(_, b)| key < *b) {
+                best = Some((psd, key));
             }
         }
 
         let mut selection = PathSelection::none();
-        let Some((best_addr, (best_tier, best_biased))) = best else {
+        let Some((best_psd, (best_tier, best_biased))) = best else {
             return selection;
         };
 
         // If we have no current path or no data for it, switch to the best.
         let Some((current_tier, current_biased)) = current_key else {
-            selection.set(best_addr);
+            selection.set(&best_psd);
             return selection;
         };
 
         if current_tier != best_tier {
             // Always switch across tiers (e.g. relay -> primary).
-            selection.set(best_addr);
+            selection.set(&best_psd);
         } else if best_biased + RTT_SWITCHING_MIN.as_nanos() as i128 <= current_biased {
             // For the same tier, only switch when biased RTT is meaningfully better.
-            selection.set(best_addr);
+            selection.set(&best_psd);
         }
         selection
     }
