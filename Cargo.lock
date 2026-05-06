@@ -2424,6 +2424,7 @@ dependencies = [
  "n0-error",
  "n0-future",
  "n0-tracing-test",
+ "ndk-context",
  "rand 0.10.1",
  "reqwest 0.13.2",
  "rustls",
@@ -3184,7 +3185,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "0.18.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#9e1f1ad77911fb0c8795d171c26d326c481dce3d"
+source = "git+https://github.com/n0-computer/noq?branch=main#3fc2e28f9e82719a4a425aa33053b34e6842eca9"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3205,7 +3206,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "0.17.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#9e1f1ad77911fb0c8795d171c26d326c481dce3d"
+source = "git+https://github.com/n0-computer/noq?branch=main#3fc2e28f9e82719a4a425aa33053b34e6842eca9"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3235,7 +3236,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "0.10.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#9e1f1ad77911fb0c8795d171c26d326c481dce3d"
+source = "git+https://github.com/n0-computer/noq?branch=main#3fc2e28f9e82719a4a425aa33053b34e6842eca9"
 dependencies = [
  "cfg_aliases",
  "libc",
