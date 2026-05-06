@@ -32,7 +32,7 @@ pub mod transports {
     pub use super::socket::transports::RecvInfo;
     #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
-    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias};
+    pub use super::socket::transports::{Addr, AddrKind, Transmit};
 }
 
 use self::hooks::EndpointHooksList;
@@ -767,30 +767,13 @@ impl Builder {
         self
     }
 
-    /// Sets the transport bias for a specific address kind.
-    ///
-    /// Transport bias controls how different transport types are prioritized during
-    /// path selection. By default:
-    /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
-    /// - Relay is a backup transport (only used when no primary transport is available)
-    ///
-    /// Use this to customize the behavior, for example to add bias for custom transports.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use std::time::Duration;
-    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias}};
-    ///
-    /// let endpoint = Builder::new(SomePreset)
-    ///     .transport_bias(AddrKind::Custom(42), TransportBias::primary().with_rtt_advantage(Duration::from_millis(10)))
-    ///     .bind()
-    ///     .await?;
-    /// ```
-    pub fn transport_bias(
+    /// Sets the transport bias for a specific address kind.  Test-only: used by
+    /// in-crate tests to set up deterministic path-selection scenarios.
+    #[cfg(all(test, feature = "unstable-custom-transports"))]
+    pub(crate) fn transport_bias(
         mut self,
-        kind: transports::AddrKind,
-        bias: transports::TransportBias,
+        kind: socket::transports::AddrKind,
+        bias: socket::transports::TransportBias,
     ) -> Self {
         self.transport_bias = self.transport_bias.with_bias(kind, bias);
         self
