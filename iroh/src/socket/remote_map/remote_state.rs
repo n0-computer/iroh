@@ -1,9 +1,3 @@
-// `PathSelectionContext` / `PathSelectionData` are `pub` so they can be re-exported via
-// `endpoint::transports` behind `unstable-custom-transports`.  Without that feature the
-// `pub` re-export chain stops short of the crate root, which would otherwise trip the
-// crate-level `unreachable_pub` deny.
-#![cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
-
 use std::{
     collections::{BTreeSet, VecDeque},
     net::SocketAddr,
@@ -1272,11 +1266,13 @@ impl ConnectionState {
 /// Constructed by the endpoint and passed to [`PathSelector::select`].  Borrows from
 /// the endpoint's internal data.
 #[derive(Debug)]
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub struct PathSelectionContext<'a> {
     current: Option<&'a transports::Addr>,
     connections: &'a FxHashMap<ConnId, ConnectionState>,
 }
 
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 impl<'a> PathSelectionContext<'a> {
     /// Module-private — only `select_path` in this file builds one, and the parameter
     /// types are also module-private.
@@ -1296,10 +1292,6 @@ impl<'a> PathSelectionContext<'a> {
     }
 
     /// Iterator over candidate paths.
-    ///
-    /// Walks each connection lazily: for every connection whose weak handle still
-    /// upgrades, yields one [`PathSelectionData`] per open path on that connection.
-    /// Connections whose handles have died are skipped.
     ///
     /// The same address may appear more than once when it is a path on multiple
     /// connections to the remote.  Selectors that care should aggregate as appropriate.
@@ -1321,12 +1313,14 @@ impl<'a> PathSelectionContext<'a> {
 }
 
 /// Data the selector sees about one candidate path.
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub struct PathSelectionData<'a> {
     addr: &'a transports::Addr,
     conn: noq::Connection,
     path_id: PathId,
 }
 
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 impl<'a> PathSelectionData<'a> {
     /// The address of the candidate path.
     pub fn addr(&self) -> &'a transports::Addr {
@@ -1353,39 +1347,14 @@ impl std::fmt::Debug for PathSelectionData<'_> {
 /// Implementations of this trait decide which path is the preferred one to use among the
 /// candidate paths known to a remote endpoint.
 ///
-/// The default selector sorts by biased RTT and is sticky to avoid flapping.  Most users
-/// do not need to provide their own selector.
-///
-/// # Aggregation across connections
-///
-/// One iroh remote endpoint can have multiple QUIC connections active at the same time
-/// (e.g. during reconnect or when a protocol opens several connections in parallel).
-/// Each connection carries its own per-path stats — RTT, congestion window, loss
-/// counters, etc.  As a result [`PathSelectionContext::paths`] may yield the **same
-/// address more than once**, with different stats each time.
-///
-/// Selector implementations are responsible for choosing how to aggregate those samples
-/// into a per-address ranking.  The default selector takes the minimum RTT.  A selector
-/// that ranks on a different signal (e.g. `pacing_rate`, `cwnd`, packet loss) may want a
-/// different aggregation — there is no single "right" answer at the framework level.
-///
-/// # Stability against flapping
-///
-/// Selectors are called repeatedly as path stats update.  RTT (and other signals) jitter
-/// in real networks; a selector that picks "lowest RTT wins, no questions asked" will
-/// flap between candidates that happen to be within noise.  Use [`PathSelectionContext::current`]
-/// and a hysteresis threshold (e.g. "only switch if the new biased RTT is at least 5ms
-/// better than the current one") to avoid this.  Note that hysteresis only against
-/// `current` still leaves the choice *among* equally-good non-current candidates greedy
-/// — if that matters for your algorithm, apply a within-noise tie-break (cwnd, MTU, …)
-/// before comparing to `current`.
+/// Most users do not need to provide their own selector.  Writing one that performs well
+/// in real networks is non-trivial.
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub trait PathSelector: Send + Sync + std::fmt::Debug + 'static {
     /// Picks a path among the candidates known for a remote endpoint.
     ///
     /// Build the result by starting from [`PathSelection::default`] and calling
-    /// [`PathSelection::add`] for each path the selector wants active.  Today only the
-    /// first added path is used; future iroh releases may support multiple selected
-    /// paths concurrently, at which point further added paths will be respected.
+    /// [`PathSelection::add`] for the path the selector wants active.
     ///
     /// Returning an empty [`PathSelection`] keeps the current selection unchanged.
     fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection;
@@ -1393,21 +1362,20 @@ pub trait PathSelector: Send + Sync + std::fmt::Debug + 'static {
 
 /// The set of paths a [`PathSelector`] has chosen.
 ///
-/// Today this holds at most one path; future iroh releases will support multi-path
-/// selection.  Build via [`PathSelection::default`] + [`PathSelection::add`] so selector
-/// code that wants to nominate multiple paths can already be written today (additional
-/// paths are dropped with a warning until multi-path support lands).
+/// Today this holds at most one path.  Build via [`PathSelection::default`] +
+/// [`PathSelection::add`].
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub struct PathSelection {
     inner: Option<transports::Addr>,
 }
 
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 impl PathSelection {
     /// Adds a path to the selection.
     ///
     /// Today the selection holds at most one path: the first call wins, subsequent
-    /// calls log a warning and are ignored.  When multi-path selection ships, all
-    /// added paths will be respected and the warning will go away.
+    /// calls log a warning and are ignored.
     pub fn add(&mut self, addr: &transports::Addr) {
         if self.inner.is_some() {
             tracing::warn!(
