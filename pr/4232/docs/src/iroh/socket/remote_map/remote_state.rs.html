@@ -1364,15 +1364,15 @@
 <a href=#1364 id=1364 data-nosnippet>1364</a>    ///
 <a href=#1365 id=1365 data-nosnippet>1365</a>    /// Today the selection holds at most one path: the first call wins, subsequent
 <a href=#1366 id=1366 data-nosnippet>1366</a>    /// calls log a warning and are ignored.
-<a href=#1367 id=1367 data-nosnippet>1367</a>    </span><span class="kw">pub fn </span>set(<span class="kw-2">&amp;mut </span><span class="self">self</span>, remote_addr: <span class="kw-2">&amp;</span>transports::Addr) {
+<a href=#1367 id=1367 data-nosnippet>1367</a>    </span><span class="kw">pub fn </span>set(<span class="kw-2">&amp;mut </span><span class="self">self</span>, path: <span class="kw-2">&amp;</span>PathSelectionData&lt;<span class="lifetime">'_</span>&gt;) {
 <a href=#1368 id=1368 data-nosnippet>1368</a>        <span class="kw">if </span><span class="self">self</span>.selection.is_some() {
 <a href=#1369 id=1369 data-nosnippet>1369</a>            <span class="macro">tracing::warn!</span>(
-<a href=#1370 id=1370 data-nosnippet>1370</a>                <span class="question-mark">?</span>remote_addr,
+<a href=#1370 id=1370 data-nosnippet>1370</a>                remote_addr = <span class="question-mark">?</span>path.remote_addr(),
 <a href=#1371 id=1371 data-nosnippet>1371</a>                <span class="string">"PathSelection already contains a path; ignoring additional path"
 <a href=#1372 id=1372 data-nosnippet>1372</a>            </span>);
 <a href=#1373 id=1373 data-nosnippet>1373</a>            <span class="kw">return</span>;
 <a href=#1374 id=1374 data-nosnippet>1374</a>        }
-<a href=#1375 id=1375 data-nosnippet>1375</a>        <span class="self">self</span>.selection = <span class="prelude-val">Some</span>(remote_addr.clone());
+<a href=#1375 id=1375 data-nosnippet>1375</a>        <span class="self">self</span>.selection = <span class="prelude-val">Some</span>(path.remote_addr().clone());
 <a href=#1376 id=1376 data-nosnippet>1376</a>    }
 <a href=#1377 id=1377 data-nosnippet>1377</a>
 <a href=#1378 id=1378 data-nosnippet>1378</a>    <span class="doccomment">/// The primary path: the one data should be sent on.
