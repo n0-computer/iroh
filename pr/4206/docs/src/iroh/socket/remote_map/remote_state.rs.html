@@ -1337,8 +1337,8 @@
 <a href=#1337 id=1337 data-nosnippet>1337</a>    <span class="kw">type </span>Output = (ConnId, ConnectionError);
 <a href=#1338 id=1338 data-nosnippet>1338</a>
 <a href=#1339 id=1339 data-nosnippet>1339</a>    <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-<a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="kw">let </span>(close_reason, _stats) = <span class="macro">std::task::ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx));
-<a href=#1341 id=1341 data-nosnippet>1341</a>        Poll::Ready((<span class="self">self</span>.conn_id, close_reason))
+<a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="kw">let </span>closed = <span class="macro">std::task::ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx));
+<a href=#1341 id=1341 data-nosnippet>1341</a>        Poll::Ready((<span class="self">self</span>.conn_id, closed.reason))
 <a href=#1342 id=1342 data-nosnippet>1342</a>    }
 <a href=#1343 id=1343 data-nosnippet>1343</a>}
 <a href=#1344 id=1344 data-nosnippet>1344</a>
