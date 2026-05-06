@@ -331,7 +331,7 @@
 <a href=#331 id=331 data-nosnippet>331</a>        Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
 <a href=#332 id=332 data-nosnippet>332</a>        endpoint::{Builder, Connection, presets, transports::AddrKind},
 <a href=#333 id=333 data-nosnippet>333</a>        protocol::{AcceptError, ProtocolHandler, Router},
-<a href=#334 id=334 data-nosnippet>334</a>        socket::path_selector::{BiasedRttPathSelector, TransportBias},
+<a href=#334 id=334 data-nosnippet>334</a>        socket::biased_rtt_path_selector::{BiasedRttPathSelector, TransportBias},
 <a href=#335 id=335 data-nosnippet>335</a>        test_utils::run_relay_server,
 <a href=#336 id=336 data-nosnippet>336</a>    };
 <a href=#337 id=337 data-nosnippet>337</a>
@@ -391,10 +391,10 @@
 <a href=#391 id=391 data-nosnippet>391</a>            .ca_roots_config(<span class="kw">crate</span>::tls::CaRootsConfig::insecure_skip_verify())
 <a href=#392 id=392 data-nosnippet>392</a>            .add_custom_transport(transport);
 <a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(bias) = config.custom_bias {
-<a href=#394 id=394 data-nosnippet>394</a>            builder = builder.path_selector(
+<a href=#394 id=394 data-nosnippet>394</a>            builder = builder.path_selector(Arc::new(
 <a href=#395 id=395 data-nosnippet>395</a>                BiasedRttPathSelector::default()
 <a href=#396 id=396 data-nosnippet>396</a>                    .with_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias),
-<a href=#397 id=397 data-nosnippet>397</a>            );
+<a href=#397 id=397 data-nosnippet>397</a>            ));
 <a href=#398 id=398 data-nosnippet>398</a>        }
 <a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">if </span>!config.keep_ip {
 <a href=#400 id=400 data-nosnippet>400</a>            builder = builder.clear_ip_transports();
