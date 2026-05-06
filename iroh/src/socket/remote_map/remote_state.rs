@@ -991,17 +991,12 @@ impl RemoteStateActor {
     /// Any unused direct paths are closed for all connections.
     #[instrument(skip_all)]
     fn select_path(&mut self) {
-        // The `PathSelectionContext` borrows `self.connections` and lazily walks per-path
-        // stats only when the selector iterates.  Scoped so the borrow drops before we
-        // mutably borrow `self` to apply the selection.
         let current_path = self.selected_path.get();
         let selected_addr = {
             let ctx = PathSelectionContext::new(current_path.as_ref(), &self.connections);
             self.path_selector.select(&ctx).primary().cloned()
         };
 
-        // Apply the selector's primary path.  Multi-path selection is not yet
-        // supported on the lifecycle side; only the primary is honoured.
         if let Some(addr) = selected_addr {
             let prev = self.selected_path.set(Some(addr.clone()));
             if prev.is_ok() {
@@ -1274,8 +1269,6 @@ pub struct PathSelectionContext<'a> {
 
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 impl<'a> PathSelectionContext<'a> {
-    /// Module-private — only `select_path` in this file builds one, and the parameter
-    /// types are also module-private.
     fn new(
         current: Option<&'a transports::Addr>,
         connections: &'a FxHashMap<ConnId, ConnectionState>,
@@ -1304,9 +1297,9 @@ impl<'a> PathSelectionContext<'a> {
                     .paths
                     .iter()
                     .map(move |(path_id, addr)| PathSelectionData {
-                        addr,
-                        conn: conn.clone(),
+                        remote_addr: addr,
                         path_id: *path_id,
+                        conn: conn.clone(),
                     })
             })
     }
@@ -1314,47 +1307,37 @@ impl<'a> PathSelectionContext<'a> {
 
 /// Data the selector sees about one candidate path.
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
+#[derive(derive_more::Debug)]
 pub struct PathSelectionData<'a> {
-    addr: &'a transports::Addr,
-    conn: noq::Connection,
+    remote_addr: &'a transports::Addr,
     path_id: PathId,
+    #[debug(skip)]
+    conn: noq::Connection,
 }
 
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 impl<'a> PathSelectionData<'a> {
     /// The address of the candidate path.
-    pub fn addr(&self) -> &'a transports::Addr {
-        self.addr
+    pub fn remote_addr(&self) -> &'a transports::Addr {
+        self.remote_addr
     }
 
-    /// QUIC path statistics: rtt, cwnd, loss, mtu, etc.
-    ///
-    /// Returns `None` if the path was closed since the iterator started.
+    /// Returns QUIC path statistics if available.
     pub fn stats(&self) -> Option<PathStats> {
         self.conn.path_stats(self.path_id)
     }
 }
 
-impl std::fmt::Debug for PathSelectionData<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PathSelectionData")
-            .field("addr", &self.addr)
-            .field("path_id", &self.path_id)
-            .finish_non_exhaustive()
-    }
-}
-
-/// Implementations of this trait decide which path is the preferred one to use among the
-/// candidate paths known to a remote endpoint.
+/// Trait to configure path selection.
 ///
-/// Most users do not need to provide their own selector.  Writing one that performs well
-/// in real networks is non-trivial.
+/// Most users do not need to provide their own selector.
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub trait PathSelector: Send + Sync + std::fmt::Debug + 'static {
-    /// Picks a path among the candidates known for a remote endpoint.
+    /// Pick the selected path to carry application data among the currently
+    /// open network paths to the remote endpoint.
     ///
-    /// Build the result by starting from [`PathSelection::default`] and calling
-    /// [`PathSelection::add`] for the path the selector wants active.
+    /// Build the result by starting from [`PathSelection::none`] and calling
+    /// [`PathSelection::set`] for the path the selector wants active.
     ///
     /// Returning an empty [`PathSelection`] keeps the current selection unchanged.
     fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection;
@@ -1362,42 +1345,47 @@ pub trait PathSelector: Send + Sync + std::fmt::Debug + 'static {
 
 /// The set of paths a [`PathSelector`] has chosen.
 ///
-/// Today this holds at most one path.  Build via [`PathSelection::default`] +
+/// Today this holds at most one path.  Build via [`PathSelection::none`] +
 /// [`PathSelection::add`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub struct PathSelection {
-    inner: Option<transports::Addr>,
+    selection: Option<transports::Addr>,
 }
 
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 impl PathSelection {
+    /// An empty selection.
+    pub fn none() -> Self {
+        Self { selection: None }
+    }
+
     /// Adds a path to the selection.
     ///
     /// Today the selection holds at most one path: the first call wins, subsequent
     /// calls log a warning and are ignored.
-    pub fn add(&mut self, addr: &transports::Addr) {
-        if self.inner.is_some() {
+    pub fn set(&mut self, remote_addr: &transports::Addr) {
+        if self.selection.is_some() {
             tracing::warn!(
-                ?addr,
+                ?remote_addr,
                 "PathSelection already contains a path; ignoring additional path"
             );
             return;
         }
-        self.inner = Some(addr.clone());
+        self.selection = Some(remote_addr.clone());
     }
 
     /// The primary path: the one data should be sent on.
     ///
     /// Returns `None` when nothing has been added.
     pub fn primary(&self) -> Option<&transports::Addr> {
-        self.inner.as_ref()
+        self.selection.as_ref()
     }
 
     /// All paths in this selection (today: 0 or 1).
     #[allow(dead_code)] // only reached via the public re-export behind the unstable feature
     pub fn iter(&self) -> impl Iterator<Item = &transports::Addr> + '_ {
-        self.inner.iter()
+        self.selection.iter()
     }
 }
 

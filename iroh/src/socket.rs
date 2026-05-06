@@ -2133,6 +2133,7 @@ mod tests {
         endpoint::{QuicTransportConfig, presets},
         socket::{
             EndpointInner, StaticConfig, TransportConfig,
+            biased_rtt_path_selector::BiasedRttPathSelector,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
         },
         tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
@@ -2172,9 +2173,7 @@ mod tests {
             address_lookup_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
-            path_selector: Arc::new(
-                crate::socket::biased_rtt_path_selector::BiasedRttPathSelector::default(),
-            ),
+            path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
@@ -2590,9 +2589,7 @@ mod tests {
                 .unwrap(),
             metrics: Default::default(),
             hooks: Default::default(),
-            path_selector: Arc::new(
-                crate::socket::biased_rtt_path_selector::BiasedRttPathSelector::default(),
-            ),
+            path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),

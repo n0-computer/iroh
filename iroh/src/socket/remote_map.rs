@@ -19,17 +19,12 @@ pub use self::remote_state::{
     PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, TransportAddrInfo,
     TransportAddrUsage,
 };
-// Public re-exports used by `endpoint::transports` behind `unstable-custom-transports`.
-// Without that feature the types are still reachable in-crate (the default selector uses
-// `PathSelectionContext` in its trait signature), but they don't reach the public crate
-// boundary, so silence the resulting `unreachable_pub` deny.
-#[cfg_attr(
-    not(feature = "unstable-custom-transports"),
-    allow(unreachable_pub, unused_imports)
-)]
+#[cfg(feature = "unstable-custom-transports")]
 pub use self::remote_state::{
     PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
 };
+#[cfg(not(feature = "unstable-custom-transports"))]
+pub(crate) use self::remote_state::{PathSelection, PathSelectionContext, PathSelector};
 use super::{
     DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{

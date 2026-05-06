@@ -42,25 +42,31 @@ struct PreferTestTransport;
 
 impl PathSelector for PreferTestTransport {
     fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection {
-        let mut selection = PathSelection::default();
+        tracing::debug!("dumping path RTTs");
+        for p in ctx.paths() {
+            let addr = p.remote_addr();
+            let rtt = p.stats().map(|s| s.rtt);
+            tracing::debug!(?addr, ?rtt);
+        }
+        let mut selection = PathSelection::none();
         // First preference: any path on our test custom transport.
         if let Some(addr) = ctx
             .paths()
-            .find(|p| matches!(p.addr(), Addr::Custom(c) if c.id() == TEST_TRANSPORT_ID))
-            .map(|p| p.addr())
+            .find(|p| matches!(p.remote_addr(), Addr::Custom(c) if c.id() == TEST_TRANSPORT_ID))
+            .map(|p| p.remote_addr())
         {
-            selection.add(addr);
+            selection.set(addr);
             return selection;
         }
         // Otherwise: lowest RTT wins.  Paths whose stats can't be read (closed
         // concurrently with selection) are skipped entirely.
         if let Some(addr) = ctx
             .paths()
-            .filter_map(|p| p.stats().map(|s| (p.addr(), s.rtt)))
+            .filter_map(|p| p.stats().map(|s| (p.remote_addr(), s.rtt)))
             .min_by_key(|(_, rtt)| *rtt)
             .map(|(addr, _)| addr)
         {
-            selection.add(addr);
+            selection.set(addr);
         }
         selection
     }

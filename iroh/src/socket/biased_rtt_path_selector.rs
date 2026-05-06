@@ -15,6 +15,13 @@ use super::{
     transports::{Addr, AddrKind},
 };
 
+/// How much do we prefer IPv6 over IPv4 by default.
+const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
+
+/// Stickiness threshold for biased RTT comparisons.  Switching to a same-tier path only
+/// happens when its biased RTT is at least this much better than the current path's.
+const RTT_SWITCHING_MIN: Duration = Duration::from_millis(5);
+
 /// Whether a transport is a primary path or a backup.
 ///
 /// Primary paths are used preferentially.  Backup paths are only used when no primary
@@ -23,9 +30,9 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum TransportType {
     /// A primary path: used whenever available.
-    Primary = 0,
+    Primary,
     /// A backup path: only used when no primary path is available.
-    Backup = 1,
+    Backup,
 }
 
 /// Bias configuration for a single transport kind.
@@ -67,13 +74,6 @@ impl TransportBias {
         self
     }
 }
-
-/// How much do we prefer IPv6 over IPv4 by default.
-const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
-
-/// Stickiness threshold for biased RTT comparisons.  Switching to a same-tier path only
-/// happens when its biased RTT is at least this much better than the current path's.
-const RTT_SWITCHING_MIN: Duration = Duration::from_millis(5);
 
 /// The default [`PathSelector`] used by iroh.
 ///
@@ -126,7 +126,7 @@ impl BiasedRttPathSelector {
     /// Computes the sort key for a path: lower is better.
     fn sort_key(&self, addr: &Addr, rtt: Duration) -> (TransportType, i128) {
         let bias = self.bias_for(addr);
-        let biased_rtt = rtt.as_nanos() as i128 + bias.rtt_bias;
+        let biased_rtt = (rtt.as_nanos() as i128).saturating_add(bias.rtt_bias);
         (bias.transport_type, biased_rtt)
     }
 }
@@ -141,13 +141,16 @@ impl PathSelector for BiasedRttPathSelector {
         let mut best: Option<(&Addr, (TransportType, i128))> = None;
         let mut current_key: Option<(TransportType, i128)> = None;
 
+        tracing::debug!("dumping path RTTs");
         for psd in ctx.paths() {
-            let addr = psd.addr();
+            let addr = psd.remote_addr();
             // Skip paths whose stats can't be read (e.g. closed concurrently with select).
             let Some(stats) = psd.stats() else {
                 continue;
             };
-            let key = self.sort_key(addr, stats.rtt);
+            let rtt = stats.rtt;
+            tracing::debug!(?addr, ?rtt);
+            let key = self.sort_key(addr, rtt);
 
             if Some(addr) == current && current_key.is_none_or(|c| key < c) {
                 current_key = Some(key);
@@ -157,23 +160,23 @@ impl PathSelector for BiasedRttPathSelector {
             }
         }
 
-        let mut selection = PathSelection::default();
+        let mut selection = PathSelection::none();
         let Some((best_addr, (best_tier, best_biased))) = best else {
             return selection;
         };
 
         // If we have no current path or no data for it, switch to the best.
         let Some((current_tier, current_biased)) = current_key else {
-            selection.add(best_addr);
+            selection.set(best_addr);
             return selection;
         };
 
         if current_tier != best_tier {
             // Always switch across tiers (e.g. relay -> primary).
-            selection.add(best_addr);
+            selection.set(best_addr);
         } else if best_biased + RTT_SWITCHING_MIN.as_nanos() as i128 <= current_biased {
             // For the same tier, only switch when biased RTT is meaningfully better.
-            selection.add(best_addr);
+            selection.set(best_addr);
         }
         selection
     }
