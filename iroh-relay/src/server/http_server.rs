@@ -54,12 +54,14 @@ use crate::{
     },
 };
 
-// type BytesBody = http_body_util::Full<hyper::body::Bytes>;
-pub(super) type BytesBody = Box<
+/// Boxed HTTP response body produced by [`RelayServiceWithNotify`].
+pub type BytesBody = Box<
     dyn 'static + Send + Unpin + hyper::body::Body<Data = hyper::body::Bytes, Error = Infallible>,
 >;
-pub(super) type HyperError = Box<dyn std::error::Error + Send + Sync>;
-pub(super) type HyperResult<T> = std::result::Result<T, HyperError>;
+/// Boxed error type returned from [`RelayServiceWithNotify`]'s [`hyper::service::Service`] impl.
+pub type HyperError = Box<dyn std::error::Error + Send + Sync>;
+/// Result alias for HTTP responses produced by [`RelayServiceWithNotify`].
+pub type HyperResult<T> = std::result::Result<T, HyperError>;
 pub(super) type HyperHandler = Box<
     dyn Fn(Request<Incoming>, ResponseBuilder) -> HyperResult<Response<BytesBody>>
         + Send
