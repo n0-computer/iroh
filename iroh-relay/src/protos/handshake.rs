@@ -336,7 +336,15 @@ pub(crate) async fn clientside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     secret_key: &SecretKey,
 ) -> Result<ServerConfirmsAuth, Error> {
-    let (tag, frame) = read_frame(io, &[ServerChallenge::TAG, ServerConfirmsAuth::TAG]).await?;
+    let (tag, frame) = read_frame(
+        io,
+        &[
+            ServerChallenge::TAG,
+            ServerConfirmsAuth::TAG,
+            ServerDeniesAuth::TAG,
+        ],
+    )
+    .await?;
 
     let (tag, frame) = if tag == ServerChallenge::TAG {
         let challenge: ServerChallenge = deserialize_frame(frame)?;

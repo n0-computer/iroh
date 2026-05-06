@@ -42,6 +42,16 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server), SpawnErr
 ///
 /// The return value is similar to [`run_relay_server`].
 pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
+    run_relay_server_with_access(quic, AccessConfig::Everyone).await
+}
+
+/// Runs a relay server with a custom [`AccessConfig`].
+///
+/// See [`run_relay_server_with`] for details on `quic`.
+pub async fn run_relay_server_with_access(
+    quic: bool,
+    access: AccessConfig,
+) -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
     let (_certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
     let tls = TlsConfig::new(
@@ -52,7 +62,7 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
     let mut relay = RelayServerConfig::new((Ipv4Addr::LOCALHOST, 0));
     relay.tls = Some(tls);
     relay.key_cache_capacity = Some(1024);
-    relay.access = AccessConfig::Everyone;
+    relay.access = access;
 
     let mut config = ServerConfig::default();
     config.relay = Some(relay);
