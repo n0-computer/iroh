@@ -44,31 +44,20 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server), SpawnErr
 pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
     let (_certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
-    let tls = TlsConfig {
-        cert: CertConfig::Manual {
-            server_config: server_config.clone(),
-        },
-        https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-    };
-    let quic = if quic {
-        Some(QuicConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-            server_config: None,
-        })
-    } else {
-        None
-    };
-    let config = ServerConfig {
-        relay: Some(RelayServerConfig {
-            http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-            tls: Some(tls),
-            limits: Default::default(),
-            key_cache_capacity: Some(1024),
-            access: AccessConfig::Everyone,
-        }),
-        quic,
-        ..Default::default()
-    };
+    let tls = TlsConfig::new(
+        (Ipv4Addr::LOCALHOST, 0),
+        CertConfig::Manual { server_config },
+    );
+
+    let mut relay = RelayServerConfig::new((Ipv4Addr::LOCALHOST, 0));
+    relay.tls = Some(tls);
+    relay.key_cache_capacity = Some(1024);
+    relay.access = AccessConfig::Everyone;
+
+    let mut config = ServerConfig::default();
+    config.relay = Some(relay);
+    config.quic = quic.then(|| QuicConfig::new((Ipv4Addr::LOCALHOST, 0)));
+
     let server = Server::spawn(config).await?;
     let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured"))
         .parse()

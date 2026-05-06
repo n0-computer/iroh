@@ -16,9 +16,13 @@ use tracing::{Instrument, debug, trace, warn};
 
 use crate::{
     PingTracker,
+    defaults::timeouts::SERVER_WRITE_TIMEOUT,
     http::ProtocolVersion,
     protos::{
-        relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg, Status},
+        relay::{
+            ClientToRelayMsg, Datagrams, PER_CLIENT_SEND_QUEUE_DEPTH, PING_INTERVAL,
+            RelayToClientMsg, Status,
+        },
         streams::BytesStreamSink,
     },
     server::{
@@ -41,6 +45,7 @@ pub(super) struct Packet {
 ///
 /// Generic over the stream type to support different WebSocket implementations.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Config<S> {
     /// The endpoint ID of the client
     pub endpoint_id: EndpointId,
@@ -52,6 +57,23 @@ pub struct Config<S> {
     pub channel_capacity: usize,
     /// Protocol version negotiated for this client
     pub protocol_version: ProtocolVersion,
+}
+
+impl<S> Config<S> {
+    /// Creates a new config with sensible default values for `write_timeout` and `channel_capacity`.
+    pub fn new(
+        endpoint_id: EndpointId,
+        stream: RelayedStream<S>,
+        protocol_version: ProtocolVersion,
+    ) -> Self {
+        Self {
+            endpoint_id,
+            stream,
+            protocol_version,
+            write_timeout: SERVER_WRITE_TIMEOUT,
+            channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+        }
+    }
 }
 
 /// The [`Server`] side representation of a [`Client`]'s connection.

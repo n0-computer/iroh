@@ -2424,6 +2424,7 @@ dependencies = [
  "n0-error",
  "n0-future",
  "n0-tracing-test",
+ "ndk-context",
  "rand 0.10.1",
  "reqwest 0.13.2",
  "rustls",
@@ -3184,8 +3185,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b969bd157c3bd3bab239a1a8b14f67f2033fa012770367fcbd5b42d71ae3548"
+source = "git+https://github.com/n0-computer/noq?branch=main#9e1f1ad77911fb0c8795d171c26d326c481dce3d"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3206,8 +3206,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdec6f5039d98ee5377b2f532d495a555eb664c53161b1b5780dcaeac678b60e"
+source = "git+https://github.com/n0-computer/noq?branch=main#9e1f1ad77911fb0c8795d171c26d326c481dce3d"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3220,11 +3219,12 @@ dependencies = [
  "lru-slab",
  "n0-qlog",
  "rand 0.10.1",
+ "rand_pcg",
  "ring",
  "rustc-hash",
  "rustls",
  "rustls-pki-types",
- "rustls-platform-verifier 0.6.2",
+ "rustls-platform-verifier 0.7.0",
  "slab",
  "sorted-index-buffer",
  "thiserror 2.0.18",
@@ -3236,8 +3236,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee91b05f4f3353290936ba1f3233518868fb4e2da99cb4c90d1f8cebb064e527"
+source = "git+https://github.com/n0-computer/noq?branch=main#9e1f1ad77911fb0c8795d171c26d326c481dce3d"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -3964,6 +3963,15 @@ name = "rand_core"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c8d0fd677905edcbeedbf2edb6494d676f0e98d54d5cf9bda0b061cb8fb8aba"
+
+[[package]]
+name = "rand_pcg"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
+dependencies = [
+ "rand_core 0.10.0",
+]
 
 [[package]]
 name = "rand_xorshift"

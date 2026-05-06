@@ -18,6 +18,7 @@ use n0_watcher::{Watchable, Watcher};
 use noq::{ConnectionError, PathStats, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
@@ -35,8 +36,8 @@ use crate::{
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
-        path_selector::{PathSelector, PathSelectionContext},
-        remote_map::{Private, to_transport_addr},
+        path_selector::{PathSelectionContext, PathSelector},
+        remote_map::to_transport_addr,
         transports::{self, OwnedTransmit, TransportsSender},
     },
     util::MaybeFuture,
@@ -484,7 +485,7 @@ impl RemoteStateActor {
                 Self::configure_path(&path, &path_remote);
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
-                    .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
+                    .insert_open_path(path_remote.clone(), Source::Connection);
                 self.select_path();
 
                 if path_remote.is_ip() {
@@ -927,7 +928,7 @@ impl RemoteStateActor {
                     Self::configure_path(&path, &path_remote);
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
-                        .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
+                        .insert_open_path(path_remote.clone(), Source::Connection);
                 }
 
                 self.select_path();
@@ -998,35 +999,47 @@ impl RemoteStateActor {
         // Collect (addr, stats) pairs across all connections so we can hand them to the
         // path selector.  Same address may appear multiple times if it is a path on
         // multiple connections; selectors aggregate as they please.
-        let mut paths_buf: Vec<(&transports::Addr, PathStats)> = Vec::new();
-        let mut conn_handles = Vec::new();
-        for conn_state in self.connections.values() {
-            let Some(conn) = conn_state.handle.upgrade() else {
-                continue;
-            };
-            conn_handles.push((conn, &conn_state.paths));
-        }
-        for (conn, paths) in &conn_handles {
-            for (path_id, addr) in paths.iter() {
-                if let Some(stats) = conn.path_stats(*path_id) {
-                    paths_buf.push((addr, stats));
+        //
+        // The common case is one connection per remote with a handful of paths, so
+        // small-vec inline storage avoids a heap allocation per `select_path` call.
+        // Scoped so the buffers (which borrow from `self.connections`) drop before we
+        // mutably borrow `self` to apply the selection.
+        let current_path = self.selected_path.get();
+        let (selected_addr, selected_rtt) = {
+            let mut paths_buf: SmallVec<[(&transports::Addr, PathStats); 8]> = SmallVec::new();
+            let mut conn_handles: SmallVec<[_; 2]> = SmallVec::new();
+            for conn_state in self.connections.values() {
+                let Some(conn) = conn_state.handle.upgrade() else {
+                    continue;
+                };
+                conn_handles.push((conn, &conn_state.paths));
+            }
+            for (conn, paths) in &conn_handles {
+                for (path_id, addr) in paths.iter() {
+                    if let Some(stats) = conn.path_stats(*path_id) {
+                        paths_buf.push((addr, stats));
+                    }
                 }
             }
-        }
-        trace!(paths = ?paths_buf, "dumping all path stats");
+            trace!(paths = ?paths_buf, "dumping all path stats");
 
-        let current_path = self.selected_path.get();
-        let ctx = PathSelectionContext::new(current_path.as_ref(), &paths_buf);
-        let selection = self.path_selector.select(&ctx);
+            let ctx = PathSelectionContext::new(current_path.as_ref(), &paths_buf);
+            let selection = self.path_selector.select(&ctx);
+            let addr = selection.primary().cloned();
+            let rtt = addr.as_ref().and_then(|a| {
+                paths_buf
+                    .iter()
+                    .filter(|(p, _)| *p == a)
+                    .map(|(_, s)| s.rtt)
+                    .min()
+            });
+            (addr, rtt)
+        };
 
         // Apply the selector's primary path.  Multi-path selection is not yet
         // supported on the lifecycle side; only the primary is honoured.
-        if let Some(addr) = selection.primary().cloned() {
-            let rtt = paths_buf
-                .iter()
-                .filter(|(a, _)| **a == addr)
-                .map(|(_, s)| s.rtt)
-                .min();
+        if let Some(addr) = selected_addr {
+            let rtt = selected_rtt;
             let prev = self.selected_path.set(Some(addr.clone()));
             if prev.is_ok() {
                 event!(
