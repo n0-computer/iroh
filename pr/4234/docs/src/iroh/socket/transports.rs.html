@@ -764,7 +764,7 @@
 <a href=#764 id=764 data-nosnippet>764</a>    </span>}
 <a href=#765 id=765 data-nosnippet>765</a>
 <a href=#766 id=766 data-nosnippet>766</a>    <span class="doccomment">/// Adds an RTT disadvantage to this transport, making it less preferred.
-<a href=#767 id=767 data-nosnippet>767</a>    </span><span class="attr">#[cfg(test)]
+<a href=#767 id=767 data-nosnippet>767</a>    </span><span class="attr">#[cfg(all(test, feature = <span class="string">"unstable-custom-transports"</span>))]
 <a href=#768 id=768 data-nosnippet>768</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>with_rtt_disadvantage(<span class="kw-2">mut </span><span class="self">self</span>, disadvantage: Duration) -&gt; <span class="self">Self </span>{
 <a href=#769 id=769 data-nosnippet>769</a>        <span class="self">self</span>.rtt_bias += disadvantage.as_nanos() <span class="kw">as </span>i128;
 <a href=#770 id=770 data-nosnippet>770</a>        <span class="self">self
@@ -800,7 +800,7 @@
 <a href=#800 id=800 data-nosnippet>800</a>
 <a href=#801 id=801 data-nosnippet>801</a><span class="kw">impl </span>TransportBiasMap {
 <a href=#802 id=802 data-nosnippet>802</a>    <span class="doccomment">/// Returns a new map with the given bias added or updated.
-<a href=#803 id=803 data-nosnippet>803</a>    </span><span class="attr">#[cfg(test)]
+<a href=#803 id=803 data-nosnippet>803</a>    </span><span class="attr">#[cfg(all(test, feature = <span class="string">"unstable-custom-transports"</span>))]
 <a href=#804 id=804 data-nosnippet>804</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>with_bias(<span class="self">self</span>, kind: AddrKind, bias: TransportBias) -&gt; <span class="self">Self </span>{
 <a href=#805 id=805 data-nosnippet>805</a>        <span class="kw">let </span><span class="kw-2">mut </span>map = (<span class="kw-2">*</span><span class="self">self</span>.map).clone();
 <a href=#806 id=806 data-nosnippet>806</a>        map.insert(kind, bias);
