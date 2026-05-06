@@ -391,10 +391,10 @@ mod tests {
             .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
             .add_custom_transport(transport);
         if let Some(bias) = config.custom_bias {
-            builder = builder.path_selector(
+            builder = builder.path_selector(Arc::new(
                 BiasedRttPathSelector::default()
                     .with_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias),
-            );
+            ));
         }
         if !config.keep_ip {
             builder = builder.clear_ip_transports();

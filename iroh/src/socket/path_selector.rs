@@ -86,8 +86,7 @@ impl PathSelection {
         if self.inner.is_some() {
             tracing::warn!(
                 ?addr,
-                "PathSelection already contains a path; ignoring additional path \
-                 (multi-path selection is not yet supported)"
+                "PathSelection already contains a path; ignoring additional path"
             );
             return;
         }
@@ -123,20 +122,6 @@ pub(crate) enum TransportType {
 /// Bias configuration for a single transport kind.
 ///
 /// Used by [`BiasedRttPathSelector`] to bias path selection per address kind.
-///
-/// # Examples
-///
-/// ```
-/// use std::time::Duration;
-///
-/// use iroh::endpoint::transports::TransportBias;
-///
-/// // A primary transport with 100ms RTT advantage (will be preferred).
-/// let bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
-///
-/// // A primary transport with 50ms RTT disadvantage (will be less preferred).
-/// let bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(50));
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct TransportBias {
     transport_type: TransportType,

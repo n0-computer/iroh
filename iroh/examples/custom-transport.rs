@@ -73,7 +73,7 @@ impl Args {
             .secret_key(secret_key)
             .preset(transport)
             // Always prefer the custom transport when it has a working path.
-            .path_selector(PreferTestTransport);
+            .path_selector(Arc::new(PreferTestTransport));
         if !self.keep_ip {
             builder = builder.clear_ip_transports();
         }

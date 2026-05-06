@@ -779,12 +779,14 @@ impl Builder {
     /// sticky to avoid flapping.  Pass a custom [`PathSelector`] here to override that
     /// policy — for example, to make a custom transport always win over IP.
     ///
-    /// See `examples/custom-transport.rs` for an example implementation.
+    /// Takes an `Arc<dyn PathSelector>` so the same selector instance can be shared
+    /// across multiple endpoints if desired.  See `examples/custom-transport.rs` for
+    /// an example implementation.
     ///
     /// [`PathSelector`]: socket::path_selector::PathSelector
     #[cfg(feature = "unstable-custom-transports")]
-    pub fn path_selector(mut self, selector: impl socket::path_selector::PathSelector) -> Self {
-        self.path_selector = Arc::new(selector);
+    pub fn path_selector(mut self, selector: Arc<dyn socket::path_selector::PathSelector>) -> Self {
+        self.path_selector = selector;
         self
     }
 }
