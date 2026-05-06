@@ -40,7 +40,7 @@ use crate::{
     endpoint::{
         AfterHandshakeOutcome,
         quic::{
-            AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
+            AcceptBi, AcceptUni, Closed, ConnectionError, ConnectionStats, Controller,
             ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
             SendDatagramError, ServerConfig, Side, VarInt,
         },
@@ -1269,9 +1269,7 @@ impl WeakConnectionHandle {
     /// references are dropped before the future is awaited.
     ///
     /// The future does not keep the connection alive.
-    pub fn closed(
-        &self,
-    ) -> impl Future<Output = Option<(ConnectionError, ConnectionStats)>> + Send + 'static {
+    pub fn closed(&self) -> impl Future<Output = Option<Closed>> + Send + 'static {
         let registered = self.inner.upgrade().map(|conn| conn.on_closed());
         async move {
             match registered {
