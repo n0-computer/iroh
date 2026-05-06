@@ -331,7 +331,7 @@ mod tests {
         Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
         endpoint::{Builder, Connection, presets, transports::AddrKind},
         protocol::{AcceptError, ProtocolHandler, Router},
-        socket::path_selector::{BiasedRttPathSelector, TransportBias},
+        socket::biased_rtt_path_selector::{BiasedRttPathSelector, TransportBias},
         test_utils::run_relay_server,
     };
 

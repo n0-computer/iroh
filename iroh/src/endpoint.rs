@@ -29,9 +29,9 @@ use url::Url;
 /// Types for defining custom transports
 pub mod transports {
     #[cfg(feature = "unstable-custom-transports")]
-    pub use super::socket::path_selector::{PathSelection, PathSelector};
-    #[cfg(feature = "unstable-custom-transports")]
-    pub use super::socket::remote_map::{PathSelectionContext, PathSelectionData};
+    pub use super::socket::remote_map::{
+        PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
+    };
     #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::transports::RecvInfo;
     #[cfg(feature = "unstable-custom-transports")]
@@ -63,8 +63,9 @@ use crate::{
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
     socket::{
-        self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
-        transports::RelayConnectionState,
+        self, EndpointInner, RemoteStateActorStoppedError, StaticConfig,
+        biased_rtt_path_selector::BiasedRttPathSelector, mapped_addrs::MappedAddr,
+        remote_map::PathSelector, transports::RelayConnectionState,
     },
     tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
@@ -132,7 +133,7 @@ pub struct Builder {
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
-    path_selector: Arc<dyn socket::path_selector::PathSelector>,
+    path_selector: Arc<dyn PathSelector>,
     portmapper_config: PortmapperConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
@@ -199,7 +200,7 @@ impl Builder {
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
-            path_selector: Arc::new(socket::path_selector::BiasedRttPathSelector::default()),
+            path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
@@ -783,9 +784,9 @@ impl Builder {
     /// across multiple endpoints if desired.  See `examples/custom-transport.rs` for
     /// an example implementation.
     ///
-    /// [`PathSelector`]: socket::path_selector::PathSelector
+    /// [`PathSelector`]: socket::remote_map::PathSelector
     #[cfg(feature = "unstable-custom-transports")]
-    pub fn path_selector(mut self, selector: Arc<dyn socket::path_selector::PathSelector>) -> Self {
+    pub fn path_selector(mut self, selector: Arc<dyn PathSelector>) -> Self {
         self.path_selector = selector;
         self
     }

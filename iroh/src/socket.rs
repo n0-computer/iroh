@@ -76,8 +76,7 @@ use crate::{
     runtime::Runtime,
     socket::{
         concurrent_read_map::ReadOnlyMap,
-        path_selector::PathSelector,
-        remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
+        remote_map::{MappedAddrs, PathSelector, PathWatchable, RemoteInfo},
         transports::{HomeRelayWatch, HomeRelayWatcher},
     },
     tls::{
@@ -88,9 +87,9 @@ use crate::{
 
 mod metrics;
 
+pub(crate) mod biased_rtt_path_selector;
 pub(crate) mod concurrent_read_map;
 pub(crate) mod mapped_addrs;
-pub(crate) mod path_selector;
 pub(crate) mod remote_map;
 pub(crate) mod transports;
 
@@ -2173,7 +2172,9 @@ mod tests {
             address_lookup_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
-            path_selector: Arc::new(crate::socket::path_selector::BiasedRttPathSelector::default()),
+            path_selector: Arc::new(
+                crate::socket::biased_rtt_path_selector::BiasedRttPathSelector::default(),
+            ),
             portmapper_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
@@ -2589,7 +2590,9 @@ mod tests {
                 .unwrap(),
             metrics: Default::default(),
             hooks: Default::default(),
-            path_selector: Arc::new(crate::socket::path_selector::BiasedRttPathSelector::default()),
+            path_selector: Arc::new(
+                crate::socket::biased_rtt_path_selector::BiasedRttPathSelector::default(),
+            ),
             portmapper_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),

@@ -41,7 +41,6 @@ use crate::{
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
-        path_selector::PathSelector,
         remote_map::to_transport_addr,
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -1279,11 +1278,9 @@ pub struct PathSelectionContext<'a> {
 }
 
 impl<'a> PathSelectionContext<'a> {
-    /// Constructs a [`PathSelectionContext`].  Used by the framework only — the
-    /// parameter types are crate-private, so this method cannot leak via the public
-    /// re-export.
-    #[allow(private_interfaces)]
-    pub(crate) fn new(
+    /// Module-private — only `select_path` in this file builds one, and the parameter
+    /// types are also module-private.
+    fn new(
         current: Option<&'a transports::Addr>,
         connections: &'a FxHashMap<ConnId, ConnectionState>,
     ) -> Self {
@@ -1311,27 +1308,19 @@ impl<'a> PathSelectionContext<'a> {
             .values()
             .filter_map(|state| state.handle.upgrade().map(|conn| (state, conn)))
             .flat_map(|(state, conn)| {
-                state.paths.iter().map(move |(path_id, addr)| {
-                    // One Arc clone per yielded path — cheap.  The clone keeps the
-                    // upgraded connection alive for the lifetime of the yielded
-                    // `PathSelectionData`, so accessors can lazily query stats and
-                    // (in the future) controller metrics, ALPN, etc. without paying
-                    // upfront for paths the selector ends up ignoring.
-                    PathSelectionData {
+                state
+                    .paths
+                    .iter()
+                    .map(move |(path_id, addr)| PathSelectionData {
                         addr,
                         conn: conn.clone(),
                         path_id: *path_id,
-                    }
-                })
+                    })
             })
     }
 }
 
 /// Data the selector sees about one candidate path.
-///
-/// Holds the upgraded [`noq::Connection`] (one Arc clone per yielded path) plus the
-/// path's address and `PathId`.  Accessors fetch live data on demand by dispatching to
-/// the connection — selectors only pay for fields they actually read.
 pub struct PathSelectionData<'a> {
     addr: &'a transports::Addr,
     conn: noq::Connection,
@@ -1358,6 +1347,89 @@ impl std::fmt::Debug for PathSelectionData<'_> {
             .field("addr", &self.addr)
             .field("path_id", &self.path_id)
             .finish_non_exhaustive()
+    }
+}
+
+/// Implementations of this trait decide which path is the preferred one to use among the
+/// candidate paths known to a remote endpoint.
+///
+/// The default selector sorts by biased RTT and is sticky to avoid flapping.  Most users
+/// do not need to provide their own selector.
+///
+/// # Aggregation across connections
+///
+/// One iroh remote endpoint can have multiple QUIC connections active at the same time
+/// (e.g. during reconnect or when a protocol opens several connections in parallel).
+/// Each connection carries its own per-path stats — RTT, congestion window, loss
+/// counters, etc.  As a result [`PathSelectionContext::paths`] may yield the **same
+/// address more than once**, with different stats each time.
+///
+/// Selector implementations are responsible for choosing how to aggregate those samples
+/// into a per-address ranking.  The default selector takes the minimum RTT.  A selector
+/// that ranks on a different signal (e.g. `pacing_rate`, `cwnd`, packet loss) may want a
+/// different aggregation — there is no single "right" answer at the framework level.
+///
+/// # Stability against flapping
+///
+/// Selectors are called repeatedly as path stats update.  RTT (and other signals) jitter
+/// in real networks; a selector that picks "lowest RTT wins, no questions asked" will
+/// flap between candidates that happen to be within noise.  Use [`PathSelectionContext::current`]
+/// and a hysteresis threshold (e.g. "only switch if the new biased RTT is at least 5ms
+/// better than the current one") to avoid this.  Note that hysteresis only against
+/// `current` still leaves the choice *among* equally-good non-current candidates greedy
+/// — if that matters for your algorithm, apply a within-noise tie-break (cwnd, MTU, …)
+/// before comparing to `current`.
+pub trait PathSelector: Send + Sync + std::fmt::Debug + 'static {
+    /// Picks a path among the candidates known for a remote endpoint.
+    ///
+    /// Build the result by starting from [`PathSelection::default`] and calling
+    /// [`PathSelection::add`] for each path the selector wants active.  Today only the
+    /// first added path is used; future iroh releases may support multiple selected
+    /// paths concurrently, at which point further added paths will be respected.
+    ///
+    /// Returning an empty [`PathSelection`] keeps the current selection unchanged.
+    fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection;
+}
+
+/// The set of paths a [`PathSelector`] has chosen.
+///
+/// Today this holds at most one path; future iroh releases will support multi-path
+/// selection.  Build via [`PathSelection::default`] + [`PathSelection::add`] so selector
+/// code that wants to nominate multiple paths can already be written today (additional
+/// paths are dropped with a warning until multi-path support lands).
+#[derive(Debug, Clone, Default)]
+pub struct PathSelection {
+    inner: Option<transports::Addr>,
+}
+
+impl PathSelection {
+    /// Adds a path to the selection.
+    ///
+    /// Today the selection holds at most one path: the first call wins, subsequent
+    /// calls log a warning and are ignored.  When multi-path selection ships, all
+    /// added paths will be respected and the warning will go away.
+    pub fn add(&mut self, addr: &transports::Addr) {
+        if self.inner.is_some() {
+            tracing::warn!(
+                ?addr,
+                "PathSelection already contains a path; ignoring additional path"
+            );
+            return;
+        }
+        self.inner = Some(addr.clone());
+    }
+
+    /// The primary path: the one data should be sent on.
+    ///
+    /// Returns `None` when nothing has been added.
+    pub fn primary(&self) -> Option<&transports::Addr> {
+        self.inner.as_ref()
+    }
+
+    /// All paths in this selection (today: 0 or 1).
+    #[allow(dead_code)] // only reached via the public re-export behind the unstable feature
+    pub fn iter(&self) -> impl Iterator<Item = &transports::Addr> + '_ {
+        self.inner.iter()
     }
 }
 
