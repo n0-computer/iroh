@@ -1346,7 +1346,7 @@ pub trait PathSelector: Send + Sync + std::fmt::Debug + 'static {
 /// The set of paths a [`PathSelector`] has chosen.
 ///
 /// Today this holds at most one path.  Build via [`PathSelection::none`] +
-/// [`PathSelection::add`].
+/// [`PathSelection::set`].
 #[derive(Debug, Clone)]
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub struct PathSelection {
