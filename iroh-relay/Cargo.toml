@@ -121,6 +121,8 @@ tokio = { version = "1", features = [
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json = "1"
 n0-tracing-test = "0.3"
+# Used by the embedding integration tests.
+axum = { version = "0.8", features = ["ws"] }
 
 [build-dependencies]
 cfg_aliases = "0.2.1"
