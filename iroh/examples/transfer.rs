@@ -277,6 +277,11 @@ struct EndpointArgs {
     /// Set one or more relay servers to use.
     #[clap(long)]
     relay_url: Vec<RelayUrl>,
+    /// Authorization token sent to each `--relay-url`.
+    ///
+    /// Has no effect unless `--relay-url` is also set.
+    #[clap(long)]
+    relay_auth_token: Option<String>,
     /// Disable relays completely.
     #[clap(long, conflicts_with = "relay_url")]
     no_relay: bool,
@@ -474,7 +479,12 @@ impl EndpointArgs {
         if self.no_relay {
             // nothing to do
         } else if !self.relay_url.is_empty() {
-            builder = builder.relay_mode(RelayMode::Custom(RelayMap::from_iter(self.relay_url)));
+            let token = self.relay_auth_token.clone();
+            let mut relay_map = RelayMap::from_iter(self.relay_url);
+            if let Some(ref token) = token {
+                relay_map = relay_map.with_auth_token(token);
+            }
+            builder = builder.relay_mode(RelayMode::Custom(relay_map));
         } else {
             builder = builder.relay_mode(self.env.relay_mode());
         };
