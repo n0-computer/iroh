@@ -1268,7 +1268,6 @@ impl ConnectionState {
     }
 }
 
-
 /// State of the endpoint relevant for path selection.
 ///
 /// Constructed by the endpoint and passed to [`PathSelector::select`].  Borrows from
@@ -1288,7 +1287,10 @@ impl<'a> PathSelectionContext<'a> {
         current: Option<&'a transports::Addr>,
         connections: &'a FxHashMap<ConnId, ConnectionState>,
     ) -> Self {
-        Self { current, connections }
+        Self {
+            current,
+            connections,
+        }
     }
 
     /// The path currently considered the preferred path to the remote endpoint, if any.
@@ -1324,7 +1326,6 @@ impl<'a> PathSelectionContext<'a> {
             })
     }
 }
-
 
 /// Data the selector sees about one candidate path.
 ///

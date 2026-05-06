@@ -256,7 +256,9 @@ impl PathSelector for BiasedRttPathSelector {
         for psd in ctx.paths() {
             let addr = psd.addr();
             // Skip paths whose stats can't be read (e.g. closed concurrently with select).
-            let Some(stats) = psd.stats() else { continue; };
+            let Some(stats) = psd.stats() else {
+                continue;
+            };
             let key = self.sort_key(addr, stats.rtt);
 
             if Some(addr) == current && current_key.is_none_or(|c| key < c) {
