@@ -13,6 +13,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Span, debug, error};
 
 pub(crate) use self::remote_state::PathWatchable;
+// Public re-exports used by `endpoint::transports` behind `unstable-custom-transports`.
+// Without that feature the types are still reachable in-crate (path_selector uses
+// `PathSelectionContext` in the trait signature), but they don't reach the public crate
+// boundary, so silence the resulting `unreachable_pub` deny.
+#[cfg_attr(
+    not(feature = "unstable-custom-transports"),
+    allow(unreachable_pub, unused_imports)
+)]
+pub use self::remote_state::{PathSelectionContext, PathSelectionData};
 use self::remote_state::RemoteStateActor;
 pub(super) use self::remote_state::RemoteStateMessage;
 pub use self::remote_state::{

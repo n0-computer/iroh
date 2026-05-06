@@ -1,3 +1,9 @@
+// `PathSelectionContext` / `PathSelectionData` are `pub` so they can be re-exported via
+// `endpoint::transports` behind `unstable-custom-transports`.  Without that feature the
+// `pub` re-export chain stops short of the crate root, which would otherwise trip the
+// crate-level `unreachable_pub` deny.
+#![cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
+
 use std::{
     collections::{BTreeSet, VecDeque},
     net::SocketAddr,
@@ -18,7 +24,6 @@ use n0_watcher::{Watchable, Watcher};
 use noq::{ConnectionError, PathStats, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
@@ -36,7 +41,7 @@ use crate::{
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
-        path_selector::{PathSelectionContext, PathSelector},
+        path_selector::PathSelector,
         remote_map::to_transport_addr,
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -987,59 +992,24 @@ impl RemoteStateActor {
         }
     }
 
-    /// Selects the path with the lowest RTT, prefers direct paths.
+    /// Applies the path selector to select the best path.
     ///
-    /// If there are direct paths, this selects the direct path with the lowest RTT.  If
-    /// there are only relay paths, the relay path with the lowest RTT is chosen.
-    ///
-    /// The selected path is added to any connections which do not yet have it.  Any unused
-    /// direct paths are closed for all connections.
+    /// The selected path is added to any connections which do not yet have it.
+    /// Any unused direct paths are closed for all connections.
     #[instrument(skip_all)]
     fn select_path(&mut self) {
-        // Collect (addr, stats) pairs across all connections so we can hand them to the
-        // path selector.  Same address may appear multiple times if it is a path on
-        // multiple connections; selectors aggregate as they please.
-        //
-        // The common case is one connection per remote with a handful of paths, so
-        // small-vec inline storage avoids a heap allocation per `select_path` call.
-        // Scoped so the buffers (which borrow from `self.connections`) drop before we
+        // The `PathSelectionContext` borrows `self.connections` and lazily walks per-path
+        // stats only when the selector iterates.  Scoped so the borrow drops before we
         // mutably borrow `self` to apply the selection.
         let current_path = self.selected_path.get();
-        let (selected_addr, selected_rtt) = {
-            let mut paths_buf: SmallVec<[(&transports::Addr, PathStats); 8]> = SmallVec::new();
-            let mut conn_handles: SmallVec<[_; 2]> = SmallVec::new();
-            for conn_state in self.connections.values() {
-                let Some(conn) = conn_state.handle.upgrade() else {
-                    continue;
-                };
-                conn_handles.push((conn, &conn_state.paths));
-            }
-            for (conn, paths) in &conn_handles {
-                for (path_id, addr) in paths.iter() {
-                    if let Some(stats) = conn.path_stats(*path_id) {
-                        paths_buf.push((addr, stats));
-                    }
-                }
-            }
-            trace!(paths = ?paths_buf, "dumping all path stats");
-
-            let ctx = PathSelectionContext::new(current_path.as_ref(), &paths_buf);
-            let selection = self.path_selector.select(&ctx);
-            let addr = selection.primary().cloned();
-            let rtt = addr.as_ref().and_then(|a| {
-                paths_buf
-                    .iter()
-                    .filter(|(p, _)| *p == a)
-                    .map(|(_, s)| s.rtt)
-                    .min()
-            });
-            (addr, rtt)
+        let selected_addr = {
+            let ctx = PathSelectionContext::new(current_path.as_ref(), &self.connections);
+            self.path_selector.select(&ctx).primary().cloned()
         };
 
         // Apply the selector's primary path.  Multi-path selection is not yet
         // supported on the lifecycle side; only the primary is honoured.
         if let Some(addr) = selected_addr {
-            let rtt = selected_rtt;
             let prev = self.selected_path.set(Some(addr.clone()));
             if prev.is_ok() {
                 event!(
@@ -1047,7 +1017,6 @@ impl RemoteStateActor {
                     Level::DEBUG,
                     remote = %self.endpoint_id.fmt_short(),
                     path_remote = ?addr,
-                    ?rtt,
                     prev_remote = ?prev,
                 );
             }
@@ -1296,6 +1265,98 @@ impl ConnectionState {
         let addr = self.paths.remove(path_id);
         self.path_watchable.set_abandoned(*path_id);
         addr
+    }
+}
+
+
+/// State of the endpoint relevant for path selection.
+///
+/// Constructed by the endpoint and passed to [`PathSelector::select`].  Borrows from
+/// the endpoint's internal data.
+#[derive(Debug)]
+pub struct PathSelectionContext<'a> {
+    current: Option<&'a transports::Addr>,
+    connections: &'a FxHashMap<ConnId, ConnectionState>,
+}
+
+impl<'a> PathSelectionContext<'a> {
+    /// Constructs a [`PathSelectionContext`].  Used by the framework only — the
+    /// parameter types are crate-private, so this method cannot leak via the public
+    /// re-export.
+    #[allow(private_interfaces)]
+    pub(crate) fn new(
+        current: Option<&'a transports::Addr>,
+        connections: &'a FxHashMap<ConnId, ConnectionState>,
+    ) -> Self {
+        Self { current, connections }
+    }
+
+    /// The path currently considered the preferred path to the remote endpoint, if any.
+    pub fn current(&self) -> Option<&'a transports::Addr> {
+        self.current
+    }
+
+    /// Iterator over candidate paths.
+    ///
+    /// Walks each connection lazily: for every connection whose weak handle still
+    /// upgrades, yields one [`PathSelectionData`] per open path on that connection.
+    /// Connections whose handles have died are skipped.
+    ///
+    /// The same address may appear more than once when it is a path on multiple
+    /// connections to the remote.  Selectors that care should aggregate as appropriate.
+    pub fn paths(&self) -> impl Iterator<Item = PathSelectionData<'a>> + '_ {
+        self.connections
+            .values()
+            .filter_map(|state| state.handle.upgrade().map(|conn| (state, conn)))
+            .flat_map(|(state, conn)| {
+                state.paths.iter().map(move |(path_id, addr)| {
+                    // One Arc clone per yielded path — cheap.  The clone keeps the
+                    // upgraded connection alive for the lifetime of the yielded
+                    // `PathSelectionData`, so accessors can lazily query stats and
+                    // (in the future) controller metrics, ALPN, etc. without paying
+                    // upfront for paths the selector ends up ignoring.
+                    PathSelectionData {
+                        addr,
+                        conn: conn.clone(),
+                        path_id: *path_id,
+                    }
+                })
+            })
+    }
+}
+
+
+/// Data the selector sees about one candidate path.
+///
+/// Holds the upgraded [`noq::Connection`] (one Arc clone per yielded path) plus the
+/// path's address and `PathId`.  Accessors fetch live data on demand by dispatching to
+/// the connection — selectors only pay for fields they actually read.
+pub struct PathSelectionData<'a> {
+    addr: &'a transports::Addr,
+    conn: noq::Connection,
+    path_id: PathId,
+}
+
+impl<'a> PathSelectionData<'a> {
+    /// The address of the candidate path.
+    pub fn addr(&self) -> &'a transports::Addr {
+        self.addr
+    }
+
+    /// QUIC path statistics: rtt, cwnd, loss, mtu, etc.
+    ///
+    /// Returns `None` if the path was closed since the iterator started.
+    pub fn stats(&self) -> Option<PathStats> {
+        self.conn.path_stats(self.path_id)
+    }
+}
+
+impl std::fmt::Debug for PathSelectionData<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PathSelectionData")
+            .field("addr", &self.addr)
+            .field("path_id", &self.path_id)
+            .finish_non_exhaustive()
     }
 }
 

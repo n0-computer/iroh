@@ -29,9 +29,9 @@ use url::Url;
 /// Types for defining custom transports
 pub mod transports {
     #[cfg(feature = "unstable-custom-transports")]
-    pub use super::socket::path_selector::{
-        PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
-    };
+    pub use super::socket::path_selector::{PathSelection, PathSelector};
+    #[cfg(feature = "unstable-custom-transports")]
+    pub use super::socket::remote_map::{PathSelectionContext, PathSelectionData};
     #[cfg(feature = "unstable-custom-transports")]
     pub use super::socket::transports::RecvInfo;
     #[cfg(feature = "unstable-custom-transports")]

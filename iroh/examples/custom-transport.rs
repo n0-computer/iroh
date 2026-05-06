@@ -52,11 +52,13 @@ impl PathSelector for PreferTestTransport {
             selection.add(addr);
             return selection;
         }
-        // Otherwise: lowest RTT wins.
+        // Otherwise: lowest RTT wins.  Paths whose stats can't be read (closed
+        // concurrently with selection) are skipped entirely.
         if let Some(addr) = ctx
             .paths()
-            .min_by_key(|p| p.stats().rtt)
-            .map(|p| p.addr())
+            .filter_map(|p| p.stats().map(|s| (p.addr(), s.rtt)))
+            .min_by_key(|(_, rtt)| *rtt)
+            .map(|(addr, _)| addr)
         {
             selection.add(addr);
         }

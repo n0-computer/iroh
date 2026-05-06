@@ -17,14 +17,40 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use rustc_hash::FxHashMap;
 
-use super::transports::{Addr, AddrKind};
-use crate::endpoint::quic::PathStats;
+use super::{
+    remote_map::PathSelectionContext,
+    transports::{Addr, AddrKind},
+};
 
 /// Implementations of this trait decide which path is the preferred one to use among the
 /// candidate paths known to a remote endpoint.
 ///
 /// The default selector sorts by biased RTT and is sticky to avoid flapping.  Most users
 /// do not need to provide their own selector.
+///
+/// # Aggregation across connections
+///
+/// One iroh remote endpoint can have multiple QUIC connections active at the same time
+/// (e.g. during reconnect or when a protocol opens several connections in parallel).
+/// Each connection carries its own per-path stats — RTT, congestion window, loss
+/// counters, etc.  As a result [`PathSelectionContext::paths`] may yield the **same
+/// address more than once**, with different [`PathStats`] each time.
+///
+/// Selector implementations are responsible for choosing how to aggregate those samples
+/// into a per-address ranking.  The default selector takes the minimum RTT.  A selector
+/// that ranks on a different signal (e.g. `pacing_rate`, `cwnd`, packet loss) may want a
+/// different aggregation — there is no single "right" answer at the framework level.
+///
+/// # Stability against flapping
+///
+/// Selectors are called repeatedly as path stats update.  RTT (and other signals) jitter
+/// in real networks; a selector that picks "lowest RTT wins, no questions asked" will
+/// flap between candidates that happen to be within noise.  Use [`PathSelectionContext::current`]
+/// and a hysteresis threshold (e.g. "only switch if the new biased RTT is at least 5ms
+/// better than the current one") to avoid this.  Note that hysteresis only against
+/// `current` still leaves the choice *among* equally-good non-current candidates greedy
+/// — if that matters for your algorithm, apply a within-noise tie-break (cwnd, MTU, …)
+/// before comparing to `current`.
 pub trait PathSelector: Send + Sync + Debug + 'static {
     /// Picks a path among the candidates known for a remote endpoint.
     ///
@@ -78,60 +104,6 @@ impl PathSelection {
     /// All paths in this selection (today: 0 or 1).
     pub fn iter(&self) -> impl Iterator<Item = &Addr> + '_ {
         self.inner.iter()
-    }
-}
-
-/// State of the endpoint relevant for path selection.
-///
-/// Constructed by the endpoint and passed to [`PathSelector::select`].  Borrows from
-/// the endpoint's internal data.
-#[derive(Debug)]
-pub struct PathSelectionContext<'a> {
-    current: Option<&'a Addr>,
-    paths: &'a [(&'a Addr, PathStats)],
-}
-
-impl<'a> PathSelectionContext<'a> {
-    /// Constructs a [`PathSelectionContext`].  Used by the framework and by tests.
-    pub(crate) fn new(current: Option<&'a Addr>, paths: &'a [(&'a Addr, PathStats)]) -> Self {
-        Self { current, paths }
-    }
-
-    /// The path currently considered the preferred path to the remote endpoint, if any.
-    pub fn current(&self) -> Option<&'a Addr> {
-        self.current
-    }
-
-    /// Iterator over candidate paths.
-    ///
-    /// The same address may appear more than once when it is a path on multiple
-    /// connections to the remote.  Selectors that care should aggregate as appropriate.
-    pub fn paths(&self) -> impl Iterator<Item = PathSelectionData<'a>> + '_ {
-        self.paths
-            .iter()
-            .map(|(addr, stats)| PathSelectionData { addr, stats })
-    }
-}
-
-/// Data the selector sees about one candidate path.
-///
-/// This currently provides the path statistics (RTT, loss, etc.) but may be
-/// extended in the future with other data.
-#[derive(Debug)]
-pub struct PathSelectionData<'a> {
-    addr: &'a Addr,
-    stats: &'a PathStats,
-}
-
-impl<'a> PathSelectionData<'a> {
-    /// The address of the candidate path.
-    pub fn addr(&self) -> &'a Addr {
-        self.addr
-    }
-
-    /// QUIC path statistics: rtt, cwnd, loss, mtu, etc.
-    pub fn stats(&self) -> &'a PathStats {
-        self.stats
     }
 }
 
@@ -283,7 +255,9 @@ impl PathSelector for BiasedRttPathSelector {
 
         for psd in ctx.paths() {
             let addr = psd.addr();
-            let key = self.sort_key(addr, psd.stats().rtt);
+            // Skip paths whose stats can't be read (e.g. closed concurrently with select).
+            let Some(stats) = psd.stats() else { continue; };
+            let key = self.sort_key(addr, stats.rtt);
 
             if Some(addr) == current && current_key.is_none_or(|c| key < c) {
                 current_key = Some(key);
@@ -315,114 +289,9 @@ impl PathSelector for BiasedRttPathSelector {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-
-    use iroh_base::{EndpointId, RelayUrl};
-
-    use super::*;
-
-    fn v4(port: u16) -> Addr {
-        Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
-    }
-
-    fn v6(port: u16) -> Addr {
-        Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
-            Ipv6Addr::LOCALHOST,
-            port,
-            0,
-            0,
-        )))
-    }
-
-    fn relay(port: u16) -> Addr {
-        let url = format!("https://relay{port}.iroh.computer")
-            .parse::<RelayUrl>()
-            .unwrap();
-        Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap())
-    }
-
-    fn stats(rtt_ms: u64) -> PathStats {
-        let mut s = PathStats::default();
-        s.rtt = Duration::from_millis(rtt_ms);
-        s
-    }
-
-    /// Run the default selector against a slice of (addr, rtt_ms) pairs and an optional
-    /// current.  Returns the primary of the resulting [`PathSelection`].
-    fn select(paths: &[(Addr, u64)], current: Option<&Addr>) -> Option<Addr> {
-        let buf: Vec<(&Addr, PathStats)> = paths
-            .iter()
-            .map(|(addr, rtt_ms)| (addr, stats(*rtt_ms)))
-            .collect();
-        let ctx = PathSelectionContext::new(current, &buf);
-        BiasedRttPathSelector::default()
-            .select(&ctx)
-            .primary()
-            .cloned()
-    }
-
-    #[test]
-    fn ipv6_wins_over_ipv4_within_bias() {
-        // Equal RTTs: IPv6 wins (3ms bias).
-        let paths = [(v4(1), 10), (v6(1), 10)];
-        let chosen = select(&paths, None).unwrap();
-        assert!(matches!(chosen, Addr::Ip(SocketAddr::V6(_))));
-
-        // IPv6 2ms slower, still within 3ms bias: IPv6 wins.
-        let paths = [(v4(1), 10), (v6(1), 12)];
-        let chosen = select(&paths, None).unwrap();
-        assert!(matches!(chosen, Addr::Ip(SocketAddr::V6(_))));
-
-        // IPv6 10ms slower, exceeds 3ms bias: IPv4 wins.
-        let paths = [(v4(1), 10), (v6(1), 20)];
-        let chosen = select(&paths, None).unwrap();
-        assert!(matches!(chosen, Addr::Ip(SocketAddr::V4(_))));
-    }
-
-    #[test]
-    fn primary_wins_over_backup_regardless_of_rtt() {
-        // High-RTT primary still wins over low-RTT backup.
-        let paths = [(v4(1), 100), (relay(1), 10)];
-        let chosen = select(&paths, None).unwrap();
-        assert!(chosen.is_ip());
-
-        let paths = [(v4(1), 1000), (relay(1), 1)];
-        let chosen = select(&paths, None).unwrap();
-        assert!(chosen.is_ip());
-    }
-
-    #[test]
-    fn same_tier_only_switches_with_significant_rtt_diff() {
-        let current = v4(1);
-
-        // 2ms better < 5ms threshold: keep current.
-        let paths = [(v4(1), 20), (v4(2), 18)];
-        assert!(select(&paths, Some(&current)).is_none());
-
-        // 4ms better < 5ms threshold: keep current.
-        let paths = [(v4(1), 20), (v4(2), 16)];
-        assert!(select(&paths, Some(&current)).is_none());
-
-        // Exactly 5ms better == threshold: switch.
-        let paths = [(v4(1), 20), (v4(2), 15)];
-        assert_eq!(select(&paths, Some(&current)).unwrap(), v4(2));
-
-        // 6ms better > threshold: switch.
-        let paths = [(v4(1), 20), (v4(2), 14)];
-        assert_eq!(select(&paths, Some(&current)).unwrap(), v4(2));
-    }
-
-    #[test]
-    fn no_current_path_selects_best() {
-        let paths = [(v4(1), 20), (v4(2), 10)];
-        assert_eq!(select(&paths, None).unwrap(), v4(2));
-    }
-
-    #[test]
-    fn empty_paths_returns_none() {
-        assert!(select(&[], None).is_none());
-        assert!(select(&[], Some(&v4(1))).is_none());
-    }
-}
+// Note: unit tests for `BiasedRttPathSelector::select` lived here previously, driving the
+// algorithm with synthetic (addr, rtt) pairs.  The new `PathSelectionContext` walks live
+// `noq::Connection`s lazily, so the algorithm is now exercised by the integration tests in
+// `test_utils::test_transport` (`test_custom_transport_only`,
+// `test_custom_transport_wins_over_ip`, `test_ip_wins_over_custom`,
+// `test_custom_transport_wins_over_relay`) which use real connections end-to-end.
