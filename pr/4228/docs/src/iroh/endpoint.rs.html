@@ -769,7 +769,7 @@
 <a href=#769 id=769 data-nosnippet>769</a>
 <a href=#770 id=770 data-nosnippet>770</a>    <span class="doccomment">/// Sets the transport bias for a specific address kind.  Test-only: used by
 <a href=#771 id=771 data-nosnippet>771</a>    /// in-crate tests to set up deterministic path-selection scenarios.
-<a href=#772 id=772 data-nosnippet>772</a>    </span><span class="attr">#[cfg(test)]
+<a href=#772 id=772 data-nosnippet>772</a>    </span><span class="attr">#[cfg(all(test, feature = <span class="string">"unstable-custom-transports"</span>))]
 <a href=#773 id=773 data-nosnippet>773</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>transport_bias(
 <a href=#774 id=774 data-nosnippet>774</a>        <span class="kw-2">mut </span><span class="self">self</span>,
 <a href=#775 id=775 data-nosnippet>775</a>        kind: socket::transports::AddrKind,
