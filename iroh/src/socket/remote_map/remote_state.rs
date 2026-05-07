@@ -15,7 +15,7 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use noq::{ConnectionError, WeakConnectionHandle};
+use noq::{ConnectionError, PathStatus, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, oneshot};
@@ -471,23 +471,11 @@ impl RemoteStateActor {
                 )
             {
                 trace!(?path_remote, "added new connection");
-                let bias = self.transport_bias.get(&path_remote);
-                let path_status = bias.transport_type.to_path_status();
-                let res = path.set_status(path_status);
-                event!(
-                    target: "iroh::_events::path::set_status",
-                    Level::DEBUG,
-                    remote = %self.endpoint_id.fmt_short(),
-                    ?path_remote,
-                    ?path_status,
-                    %conn_id,
-                    path_id = %PathId::ZERO,
-                    ?res,
-                );
-                Self::configure_path(&path, &path_remote);
+
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
                     .insert_open_path(path_remote.clone(), Source::Connection);
+                self.configure_path(conn_id, &path, &path_remote);
                 self.select_path();
 
                 if path_remote.is_ip() {
@@ -787,11 +775,31 @@ impl RemoteStateActor {
     ///
     /// Relay paths get a longer idle timeout to accommodate transparent reconnection
     /// by the relay actor (see [`RELAY_PATH_MAX_IDLE_TIMEOUT`]).
-    fn configure_path(path: &noq::Path, addr: &transports::Addr) {
+    fn configure_path(&self, conn_id: ConnId, path: &noq::Path, addr: &transports::Addr) {
         if matches!(addr, transports::Addr::Relay(..))
             && let Err(e) = path.set_max_idle_timeout(Some(RELAY_PATH_MAX_IDLE_TIMEOUT))
         {
             debug!(?e, "failed to set relay path idle timeout");
+        }
+
+        let status = if Some(addr) == self.selected_path.get().as_ref() {
+            PathStatus::Available
+        } else {
+            PathStatus::Backup
+        };
+        let res = path.set_status(status);
+        event!(
+            target: "iroh::_events::path::set_status",
+            Level::DEBUG,
+            remote = %self.endpoint_id.fmt_short(),
+            path_remote = ?addr,
+            ?status,
+            %conn_id,
+            path_id=%path.id(),
+            ?res,
+        );
+        if let Err(e) = res {
+            warn!(?e, ?addr, ?status, "set_status failed");
         }
     }
 
@@ -801,8 +809,11 @@ impl RemoteStateActor {
     /// the path exists, or opens it.
     #[instrument(level = "warn", skip(self))]
     fn open_path(&mut self, open_addr: &transports::Addr) {
-        let bias = self.transport_bias.get(open_addr);
-        let path_status = bias.transport_type.to_path_status();
+        let path_status = if Some(open_addr) == self.selected_path.get().as_ref() {
+            PathStatus::Available
+        } else {
+            PathStatus::Backup
+        };
 
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
@@ -819,33 +830,13 @@ impl RemoteStateActor {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-
-            let mut path_for_addr_exists = false;
-            for path in conn_state
-                .paths
-                .iter()
-                .filter(|(_id, addr)| *addr == open_addr)
-                .filter_map(|(id, _addr)| conn.path(*id))
-            {
-                // We still need to ensure that the path status is set correctly,
-                // in case the path was opened by QNT, which opens all IP paths
-                // using PATH_STATUS_BACKUP. We need to switch the selected path
-                // to use PATH_STATUS_AVAILABLE though!
-                let res = path.set_status(path_status);
-                event!(
-                    target: "iroh::_events::path::set_status",
-                    Level::DEBUG,
-                    remote = %self.endpoint_id.fmt_short(),
-                    ?open_addr,
-                    ?path_status,
-                    %conn_id,
-                    path_id=%path.id(),
-                    ?res,
-                );
-                Self::configure_path(&path, open_addr);
-                path_for_addr_exists = true;
+            // Only the client opens paths; the server receives them via
+            // QUIC frames and reacts to PathOpened events.
+            if conn.side().is_server() {
+                continue;
             }
-            if path_for_addr_exists || conn.side().is_server() {
+            // Already open on this connection; nothing to do.
+            if conn_state.paths.values().any(|a| a == open_addr) {
                 continue;
             }
 
@@ -853,25 +844,6 @@ impl RemoteStateActor {
             match fut.path_id() {
                 Some(path_id) => {
                     trace!(%conn_id, %path_id, ?path_status, "opening new path");
-                    // Just like in the PATH_STATUS comment above, we need to make sure that the
-                    // path status is set correctly, even if the path already existed.
-                    if let Some(path) = conn.path(path_id) {
-                        let res = path.set_status(path_status);
-                        event!(
-                            target: "iroh::_events::path::set_status",
-                            Level::DEBUG,
-                            remote = %self.endpoint_id.fmt_short(),
-                            ?open_addr,
-                            ?path_status,
-                            %conn_id,
-                            %path_id,
-                            ?res,
-                        );
-                        if let Err(e) = res {
-                            warn!(?e, ?open_addr, ?path_status, "Setting path status failed");
-                        }
-                        Self::configure_path(&path, open_addr);
-                    }
                 }
                 None => {
                     let ret = now_or_never(fut);
@@ -928,13 +900,12 @@ impl RemoteStateActor {
                         %conn_id,
                         %path_id,
                     );
-                    Self::configure_path(&path, &path_remote);
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
                         .insert_open_path(path_remote.clone(), Source::Connection);
+                    self.configure_path(conn_id, &path, &path_remote);
+                    self.select_path();
                 }
-
-                self.select_path();
             }
             PathEvent::Abandoned { id, .. } => {
                 // Remove abandoned path from the conn state.
@@ -1031,51 +1002,51 @@ impl RemoteStateActor {
         let selected_path = select_best_path(path_rtts, &current_path);
 
         // Apply our new path
-        if let Some((addr, rtt)) = selected_path {
-            let prev = self.selected_path.set(Some(addr.clone()));
-            if prev.is_ok() {
-                event!(
-                    target: "iroh::_events::path::selected",
-                    Level::DEBUG,
-                    remote = %self.endpoint_id.fmt_short(),
-                    path_remote = ?addr,
-                    ?rtt,
-                    prev_remote = ?prev,
-                );
-            }
+        if let Some((addr, rtt)) = selected_path
+            && self.selected_path.get().as_ref() != Some(&addr)
+        {
+            let prev_remote = self.selected_path.set(Some(addr.clone()));
+            event!(
+                target: "iroh::_events::path::selected",
+                Level::DEBUG,
+                remote = %self.endpoint_id.fmt_short(),
+                path_remote = ?addr,
+                ?rtt,
+                ?prev_remote,
+            );
+            self.apply_selected_change(&addr);
             self.open_path(&addr);
-            self.close_redundant_paths(&addr);
         } else {
             trace!(?current_path, "keeping current path");
         }
     }
 
-    /// Closes any direct paths not selected if we are the client.
+    /// Propagates a change of [`Self::selected_path`] to noq.
     ///
-    /// Makes sure not to close the last direct path.  Relay paths are never closed
-    /// currently, because we only have one relay path at this time.
-    ///
-    /// Only the client closes paths, just like only the client opens paths.  This is to
-    /// avoid the client and server selecting different paths and accidentally closing all
-    /// paths.
-    fn close_redundant_paths(&mut self, selected_path: &transports::Addr) {
-        debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path));
-
+    /// Iterates over all connections and applies the selected path as follows:
+    /// - Closes non-selected IP paths (but keeps one IP path open still)
+    /// - Sets all non-selected paths to [`PathStatus::Backup`]
+    /// - Sets the selected path to [`PathStatus::Available`]
+    fn apply_selected_change(&self, selected: &transports::Addr) {
         for (conn_id, conn_state) in self.connections.iter() {
-            for (path_id, path_remote) in conn_state
-                .paths
-                .iter()
-                .filter(|(_, addr)| !addr.is_relay())
-                .filter(|(_, addr)| *addr != selected_path)
-            {
-                if conn_state.paths.values().filter(|a| a.is_ip()).count() <= 1 {
-                    continue; // Do not close the last direct path.
-                }
-                if let Some(path) = conn_state
-                    .handle
-                    .upgrade()
-                    .filter(|conn| conn.side().is_client())
-                    .and_then(|conn| conn.path(*path_id))
+            let Some(conn) = conn_state.handle.upgrade() else {
+                continue;
+            };
+
+            for (path_id, path_remote) in conn_state.paths.iter() {
+                let Some(path) = conn.path(*path_id) else {
+                    continue;
+                };
+
+                // Closes redundant IP paths so that at most one remains per connection.
+                //
+                // Relay and custom paths are kept open. Only the client closes paths,
+                // to avoid the client and server independently closing different paths
+                // and racing to abandon the last one.
+                if conn.side().is_client()
+                    && path_remote.is_ip()
+                    && path_remote != selected
+                    && conn_state.paths.values().filter(|a| a.is_ip()).count() > 1
                 {
                     trace!(?path_remote, %conn_id, %path_id, "closing direct path");
                     match path.close() {
@@ -1092,6 +1063,27 @@ impl RemoteStateActor {
                             // We will handle the event in Self::handle_path_events.
                         }
                     }
+                    continue;
+                }
+
+                // Set path status: The selected path becomes Available, all other paths become Backup.
+                let status = if path_remote == selected {
+                    PathStatus::Available
+                } else {
+                    PathStatus::Backup
+                };
+                if let Err(e) = path.set_status(status) {
+                    warn!(?e, ?path_remote, ?status, "set_status failed");
+                } else {
+                    event!(
+                        target: "iroh::_events::path::set_status",
+                        Level::DEBUG,
+                        remote = %self.endpoint_id.fmt_short(),
+                        path_remote = ?path_remote,
+                        ?status,
+                        %conn_id,
+                        %path_id,
+                    );
                 }
             }
         }
@@ -1337,8 +1329,8 @@ impl Future for OnClosed {
     type Output = (ConnId, ConnectionError);
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let (close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
-        Poll::Ready((self.conn_id, close_reason))
+        let closed = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
+        Poll::Ready((self.conn_id, closed.reason))
     }
 }
 

@@ -30,7 +30,7 @@ use url::Url;
 #[cfg(feature = "unstable-custom-transports")]
 pub mod transports {
     pub use super::socket::transports::{
-        Addr, AddrKind, RecvInfo, Transmit, TransportBias,
+        Addr, AddrKind, RecvInfo, Transmit,
         custom::{CustomEndpoint, CustomSender, CustomTransport},
     };
 }
@@ -86,7 +86,7 @@ pub use self::{
         RemoteEndpointIdError, RetryError, WeakConnectionHandle, ZeroRttStatus,
     },
     quic::{
-        AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
+        AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, Closed, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
         ControllerMetrics, CryptoError, DecryptedInitial, Dir, ExportKeyingMaterialError,
         FrameStats, FrameType, HandshakeTokenKey, HeaderKey, IdleTimeout, IncomingAlpns, Keys,
@@ -96,7 +96,7 @@ pub use self::{
         SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError, StreamId, TimeSource,
         TokenLog, TokenReuseError, TransportError, TransportErrorCode, TransportParameters,
         UdpStats, UnorderedRecvStream, UnsupportedVersion, ValidationTokenConfig, VarInt,
-        VarIntBoundsExceeded, WriteError, Written,
+        VarIntBoundsExceeded, WriteError,
     },
 };
 pub use crate::portmapper::PortmapperConfig;
@@ -767,31 +767,13 @@ impl Builder {
         self
     }
 
-    /// Sets the transport bias for a specific address kind.
-    ///
-    /// Transport bias controls how different transport types are prioritized during
-    /// path selection. By default:
-    /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
-    /// - Relay is a backup transport (only used when no primary transport is available)
-    ///
-    /// Use this to customize the behavior, for example to add bias for custom transports.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use std::time::Duration;
-    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias}};
-    ///
-    /// let endpoint = Builder::new(SomePreset)
-    ///     .transport_bias(AddrKind::Custom(42), TransportBias::primary().with_rtt_advantage(Duration::from_millis(10)))
-    ///     .bind()
-    ///     .await?;
-    /// ```
-    #[cfg(feature = "unstable-custom-transports")]
-    pub fn transport_bias(
+    /// Sets the transport bias for a specific address kind.  Test-only: used by
+    /// in-crate tests to set up deterministic path-selection scenarios.
+    #[cfg(test)]
+    pub(crate) fn transport_bias(
         mut self,
-        kind: transports::AddrKind,
-        bias: transports::TransportBias,
+        kind: socket::transports::AddrKind,
+        bias: socket::transports::TransportBias,
     ) -> Self {
         self.transport_bias = self.transport_bias.with_bias(kind, bias);
         self
@@ -1960,7 +1942,11 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
-    use iroh_relay::tls::CaRootsConfig;
+    use iroh_relay::{
+        RelayConfig,
+        server::{Access, AccessConfig},
+        tls::CaRootsConfig,
+    };
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
@@ -1980,7 +1966,9 @@ mod tests {
             ConnectWithOptsError, Connection, ConnectionError, PathWatcher, presets,
         },
         protocol::{AcceptError, ProtocolHandler, Router},
-        test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
+        test_utils::{
+            QlogFileGroup, run_relay_server, run_relay_server_with, run_relay_server_with_access,
+        },
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -3917,6 +3905,67 @@ mod tests {
         ep.close().await;
         let res = task.await.unwrap();
         assert!(res.is_err());
+        Ok(())
+    }
+
+    /// Verifies that an endpoint configured with [`RelayConfig::with_auth_token`]
+    /// is admitted to a relay that uses [`AccessConfig::Restricted`] only when
+    /// the token matches.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_relay_auth_token() -> Result {
+        const TOKEN: &str = "valid-token";
+
+        let access = AccessConfig::Restricted(Box::new(|request| {
+            Box::pin(async move {
+                if request.auth_token().as_deref() == Some(TOKEN) {
+                    Access::Allow
+                } else {
+                    Access::Deny
+                }
+            })
+        }));
+        let (_relay_map, relay_url, _guard) = run_relay_server_with_access(false, access).await?;
+
+        // Wrong token: the connection attempt fails and last_error reports
+        // the relay-side denial.
+        let bad_map: RelayMap = RelayConfig::new(relay_url.clone(), None)
+            .with_auth_token("wrong-token")
+            .into();
+        let bad_ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(bad_map))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        let mut stream = bad_ep.home_relay_status().stream();
+        let auth_err: String = tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(status) = stream.next().await {
+                if let Some(err) = status.iter().filter_map(|s| s.last_error()).next() {
+                    return format!("{err:#}");
+                }
+            }
+            panic!("home relay stream ended");
+        })
+        .await
+        .std_context("waiting for auth error")?;
+        assert!(
+            auth_err.contains("not authorized"),
+            "expected 'not authorized' in error, got: {auth_err}"
+        );
+
+        // Correct token: the endpoint reaches the connected state.
+        let good_map: RelayMap = RelayConfig::new(relay_url, None)
+            .with_auth_token(TOKEN)
+            .into();
+        let good_ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(good_map))
+            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        tokio::time::timeout(Duration::from_secs(5), good_ep.online())
+            .await
+            .std_context("waiting for endpoint to come online")?;
+
         Ok(())
     }
 }

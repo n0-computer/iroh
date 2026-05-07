@@ -144,6 +144,20 @@ impl RelayMap {
         let b = other.relays.read().expect("poisoned");
         a.extend(b.iter().map(|(a, b)| (a.clone(), b.clone())));
     }
+
+    /// Sets an authorization token for all relays configured in this relay map.
+    ///
+    /// This applies [`RelayConfig::with_auth_token`] to all current entries in this relay map.
+    /// Any entries added to this relay map *after* calling this will not have the token set.
+    ///
+    /// See [`RelayConfig::with_auth_token`] for details.
+    pub fn with_auth_token(self, auth_token: impl Into<String>) -> Self {
+        let auth_token = auth_token.into();
+        for config in self.relays.write().expect("poisoned").values_mut() {
+            *config = Arc::new(config.as_ref().clone().with_auth_token(auth_token.clone()));
+        }
+        self
+    }
 }
 
 impl FromIterator<RelayConfig> for RelayMap {
@@ -224,12 +238,34 @@ pub struct RelayConfig {
     /// with this relay server.
     #[serde(default = "quic_config")]
     pub quic: Option<RelayQuicConfig>,
+    /// Optional authorization token sent to the relay.
+    ///
+    /// Set via [`RelayConfig::with_auth_token`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
 }
 
 impl RelayConfig {
     /// Creates a new relay configuration with the given URL and optional QUIC config.
     pub fn new(url: RelayUrl, quic: Option<RelayQuicConfig>) -> Self {
-        Self { url, quic }
+        Self {
+            url,
+            quic,
+            auth_token: None,
+        }
+    }
+
+    /// Sets an authorization token for this relay.
+    ///
+    /// On native targets, the token is sent as an `Authorization: Bearer TOKEN`
+    /// header on the WebSocket upgrade request.
+    ///
+    /// When compiled to WebAssembly the token is sent as a `?token=TOKEN`
+    /// query parameter on the upgrade URL, since browsers don't allow setting
+    /// headers on WebSocket requests.
+    pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
+        self.auth_token = Some(token.into());
+        self
     }
 }
 
@@ -238,6 +274,7 @@ impl From<RelayUrl> for RelayConfig {
         Self {
             url: value,
             quic: quic_config(),
+            auth_token: None,
         }
     }
 }

@@ -277,6 +277,11 @@ struct EndpointArgs {
     /// Set one or more relay servers to use.
     #[clap(long)]
     relay_url: Vec<RelayUrl>,
+    /// Authorization token sent to each `--relay-url`.
+    ///
+    /// Has no effect unless `--relay-url` is also set.
+    #[clap(long)]
+    relay_auth_token: Option<String>,
     /// Disable relays completely.
     #[clap(long, conflicts_with = "relay_url")]
     no_relay: bool,
@@ -474,7 +479,12 @@ impl EndpointArgs {
         if self.no_relay {
             // nothing to do
         } else if !self.relay_url.is_empty() {
-            builder = builder.relay_mode(RelayMode::Custom(RelayMap::from_iter(self.relay_url)));
+            let token = self.relay_auth_token.clone();
+            let mut relay_map = RelayMap::from_iter(self.relay_url);
+            if let Some(ref token) = token {
+                relay_map = relay_map.with_auth_token(token);
+            }
+            builder = builder.relay_mode(RelayMode::Custom(relay_map));
         } else {
             builder = builder.relay_mode(self.env.relay_mode());
         };
@@ -831,7 +841,7 @@ async fn drain_stream(
     // These are 32 buffers, for reading approximately 32kB at once
     let mut bufs: [Bytes; 32] = std::array::from_fn(|_| Bytes::new());
 
-    while let Some(n) = recv.read_chunks(&mut bufs[..]).await.anyerr()? {
+    while let Some(n) = recv.read_many_chunks(&mut bufs[..]).await.anyerr()? {
         // Update time to first byte if still empty and started_at is set.
         if let (None, Some(started_at)) = (time_to_first_byte, started_at) {
             time_to_first_byte = Some(started_at.elapsed());
@@ -914,10 +924,8 @@ async fn write_chunk_timeout(
     while !bufs.is_empty() {
         tokio::select! {
             _ = &mut timeout => break,
-            res = send.write_chunks(bufs) => {
-                let written = res?;
-                total += written.bytes;
-                bufs = &mut bufs[written.chunks..]
+            written = send.write_many_chunks(&mut bufs) => {
+                total += written?;
             }
         }
     }
