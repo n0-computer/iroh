@@ -456,11 +456,11 @@ impl<'conn> Path<'conn> {
 
 /// A stream of [`PathList`] snapshots for a connection.
 ///
-/// Returned by [`Connection::path_updates`]. Yields the current
+/// Returned by [`Connection::paths_stream`]. Yields the current
 /// snapshot on the first poll and a fresh snapshot whenever the open
 /// paths or the selected path change. Ends when the connection closes.
 ///
-/// [`Connection::path_updates`]: crate::endpoint::Connection::path_updates
+/// [`Connection::paths_stream`]: crate::endpoint::Connection::paths_stream
 #[derive(Debug)]
 pub struct PathListStream<'conn> {
     shared: &'conn Shared,

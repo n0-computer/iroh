@@ -1110,7 +1110,7 @@ impl Connection<HandshakeCompleted> {
     /// reflect later changes, and it does not include paths that have
     /// already closed.
     ///
-    /// To observe changes over time, see [`Connection::path_updates`]
+    /// To observe changes over time, see [`Connection::paths_stream`]
     /// for a stream of [`PathList`] snapshots and
     /// [`Connection::path_events`] for individual [`PathEvent`]s.
     ///
