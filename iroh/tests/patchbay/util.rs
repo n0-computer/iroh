@@ -1,13 +1,13 @@
 use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
 
 use iroh::{
-    Endpoint, EndpointAddr, RelayMap, RelayMode, Watcher,
-    endpoint::{Connection, PathInfo, PathWatcher, presets},
+    Endpoint, EndpointAddr, RelayMap, RelayMode, TransportAddr,
+    endpoint::{Connection, Path, PathEvent, presets},
     tls::CaRootsConfig,
 };
 use iroh_metrics::MetricsGroupSet;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
-use n0_future::{boxed::BoxFuture, task::AbortOnDropHandle};
+use n0_future::{StreamExt, boxed::BoxFuture, task::AbortOnDropHandle};
 use noq::Side;
 use patchbay::{Device, IpSupport, Lab, OutDir, TestGuard};
 use tokio::sync::{Barrier, oneshot};
@@ -24,7 +24,7 @@ const TEST_ALPN: &[u8] = b"test";
 ///
 /// The relay binds on `[::]` and is reachable via `https://relay.test`
 /// (resolved through lab-wide DNS entries for both IPv4 and IPv6).
-pub async fn lab_with_relay(
+pub(crate) async fn lab_with_relay(
     outdir: PathBuf,
 ) -> Result<(Lab, RelayMap, AbortOnDropHandle<()>, TestGuard)> {
     let mut builder = Lab::builder().outdir(OutDir::Exact(outdir));
@@ -102,7 +102,7 @@ where
 ///     .right(dev_b, async |dev, ep, conn| { ... })
 ///     .run().await?;
 /// ```
-pub struct Pair {
+pub(crate) struct Pair {
     relay_map: RelayMap,
     server_dev: Option<Device>,
     client_dev: Option<Device>,
@@ -112,7 +112,7 @@ pub struct Pair {
 
 impl Pair {
     /// Creates a new pair builder with a shared [`RelayMap`].
-    pub fn new(relay_map: RelayMap) -> Self {
+    pub(crate) fn new(relay_map: RelayMap) -> Self {
         Self {
             relay_map,
             server_dev: None,
@@ -125,7 +125,7 @@ impl Pair {
     /// Places a device and closure on the given [`Side`].
     ///
     /// Use with [`.right()`](Self::right) for matrix tests that swap sides.
-    pub fn left<F, Fut>(mut self, side: Side, device: Device, run_fn: F) -> Self
+    pub(crate) fn left<F, Fut>(mut self, side: Side, device: Device, run_fn: F) -> Self
     where
         F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
         Fut: Future<Output = Result> + Send + 'static,
@@ -140,7 +140,7 @@ impl Pair {
     }
 
     /// Places a device and closure on whichever [`Side`] was not set by [`.left()`](Self::left).
-    pub fn right<F, Fut>(self, device: Device, run_fn: F) -> Self
+    pub(crate) fn right<F, Fut>(self, device: Device, run_fn: F) -> Self
     where
         F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
         Fut: Future<Output = Result> + Send + 'static,
@@ -155,7 +155,7 @@ impl Pair {
     }
 
     /// Sets the server device and run function.
-    pub fn server<F, Fut>(mut self, device: Device, run_fn: F) -> Self
+    pub(crate) fn server<F, Fut>(mut self, device: Device, run_fn: F) -> Self
     where
         F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
         Fut: Future<Output = Result> + Send + 'static,
@@ -166,7 +166,7 @@ impl Pair {
     }
 
     /// Sets the client device and run function.
-    pub fn client<F, Fut>(mut self, device: Device, run_fn: F) -> Self
+    pub(crate) fn client<F, Fut>(mut self, device: Device, run_fn: F) -> Self
     where
         F: FnOnce(Device, Endpoint, Connection) -> Fut + Send + 'static,
         Fut: Future<Output = Result> + Send + 'static,
@@ -191,7 +191,7 @@ impl Pair {
     /// - emit a `test::_events::pass` or `test::_events::fail` event for each device
     ///
     /// Returns an error if any step or run function failed.
-    pub async fn run(mut self) -> Result {
+    pub(crate) async fn run(mut self) -> Result {
         let server_device = self.server_dev.take().context("Missing server device")?;
         let server_run = self
             .server_fn
@@ -336,71 +336,60 @@ fn log_result_on_device<E: std::fmt::Display + Send + 'static>(dev: &Device, res
     });
 }
 
-/// Extension methods on [`PathWatcher`] for common waiting patterns in tests.
-#[allow(unused)]
-pub trait PathWatcherExt {
-    /// Waits until the selected path fulfills a condition.
-    ///
-    /// Calls `f` with the currently-selected path, and again after each path update,
-    /// until `f` returns true or `timeout` elapses.
-    ///
-    /// Returns an error if the timeout elapses before `f` returned true.
+/// Extension trait on [`Connection`] providing timeout-bounded wait helpers
+/// on top of [`Connection::paths`] and [`PathList::stream`].
+pub(crate) trait PathConnectionExt {
+    /// Waits until the selected path satisfies `f`. Returns the matching
+    /// path's [`TransportAddr`].
     async fn wait_selected(
-        &mut self,
+        &self,
         timeout: Duration,
-        f: impl Fn(&PathInfo) -> bool,
-    ) -> Result<PathInfo>;
+        f: impl FnMut(&Path<'_>) -> bool,
+    ) -> Result<TransportAddr>;
 
-    /// Returns the currently selected path.
-    ///
-    /// Panics if no path is marked as selected.
-    fn selected(&mut self) -> PathInfo;
-
-    /// Wait until the selected path is a direct (IP) path.
-    async fn wait_ip(&mut self, timeout: Duration) -> Result<PathInfo> {
-        self.wait_selected(timeout, PathInfo::is_ip)
+    /// Waits until the selected path is a direct (IP) path.
+    async fn wait_ip(&self, timeout: Duration) -> Result<TransportAddr> {
+        self.wait_selected(timeout, |p| p.is_ip())
             .await
             .context("wait_ip")
     }
-
-    /// Wait until the selected path is a relay path.
-    async fn wait_relay(&mut self, timeout: Duration) -> Result<PathInfo> {
-        self.wait_selected(timeout, PathInfo::is_relay)
-            .await
-            .context("wait_relay")
-    }
 }
 
-impl PathWatcherExt for PathWatcher {
-    fn selected(&mut self) -> PathInfo {
-        let p = self.get();
-        p.iter()
-            .find(|p| p.is_selected())
-            .cloned()
-            .expect("no selected path")
-    }
-
+impl PathConnectionExt for Connection {
     async fn wait_selected(
-        &mut self,
+        &self,
         timeout: Duration,
-        f: impl Fn(&PathInfo) -> bool,
-    ) -> Result<PathInfo> {
+        mut f: impl FnMut(&Path<'_>) -> bool,
+    ) -> Result<TransportAddr> {
+        let mut stream = self.paths_stream();
         tokio::time::timeout(timeout, async {
-            loop {
-                let selected = self.selected();
+            while let Some(paths) = stream.next().await {
+                let selected = paths
+                    .iter()
+                    .find(|p| p.is_selected())
+                    .expect("no selected path");
                 if f(&selected) {
-                    return n0_error::Ok(selected);
+                    return Ok(selected.remote_addr().clone());
                 }
-                self.updated().await?;
             }
+            Err(anyerr!("path stream ended"))
         })
         .await
         .with_std_context(|_| format!("wait_selected timed out after {timeout:?}"))?
     }
 }
 
+/// Returns `true` if the currently selected path is a relay path.
+pub(crate) fn is_relayed(conn: &iroh::endpoint::Connection) -> bool {
+    conn.paths()
+        .iter()
+        .find(|p| p.is_selected())
+        .expect("no selected path")
+        .is_relay()
+}
+
 /// Opens a bidi stream, sends 8 bytes of data, and waits to receive the same data back.
-pub async fn ping_open(conn: &Connection, timeout: Duration) -> Result {
+pub(crate) async fn ping_open(conn: &Connection, timeout: Duration) -> Result {
     tokio::time::timeout(timeout, async {
         let data: [u8; 8] = rand::random();
         debug!("open_bi");
@@ -420,7 +409,7 @@ pub async fn ping_open(conn: &Connection, timeout: Duration) -> Result {
 }
 
 /// Accepts a bidi stream, reads 8 bytes of data, and sends the same data back.
-pub async fn ping_accept(conn: &Connection, timeout: Duration) -> Result {
+pub(crate) async fn ping_accept(conn: &Connection, timeout: Duration) -> Result {
     tokio::time::timeout(timeout, async {
         debug!("accept_bi");
         let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
@@ -438,24 +427,15 @@ pub async fn ping_accept(conn: &Connection, timeout: Duration) -> Result {
 }
 
 fn watch_selected_path(conn: &Connection) {
-    let mut watcher = conn.paths();
+    let mut events = conn.path_events();
+    if let Some(path) = conn.paths().iter().find(|p| p.is_selected()) {
+        debug!("selected path: [{}] {}", path.id(), path.remote_addr());
+    }
     tokio::spawn(
         async move {
-            let mut prev = None;
-            loop {
-                let paths = watcher.get();
-                let selected = paths.iter().find(|p| p.is_selected()).unwrap();
-                if Some(selected) != prev.as_ref() {
-                    debug!(
-                        "selected path: [{}] {:?} rtt {:?}",
-                        selected.id(),
-                        selected.remote_addr(),
-                        selected.rtt().unwrap()
-                    );
-                    prev = Some(selected.clone());
-                }
-                if watcher.updated().await.is_err() {
-                    break;
+            while let Some(event) = events.next().await {
+                if let PathEvent::Selected { id, remote_addr } = event {
+                    debug!("selected path: [{id}] {remote_addr}");
                 }
             }
         }
@@ -509,7 +489,7 @@ mod relay {
     /// The returned [`RelayMap`] uses `https://relay.test` as the relay URL.
     /// Callers are responsible for ensuring that a DNS entry for `relay.test`
     /// exists and points to the relay's IP addresses.
-    pub async fn run_relay_server() -> Result<(RelayMap, Server), SpawnError> {
+    pub(crate) async fn run_relay_server() -> Result<(RelayMap, Server), SpawnError> {
         let bind_ip: IpAddr = Ipv6Addr::UNSPECIFIED.into();
 
         let (_certs, server_config) = self_signed_tls_certs_and_config();

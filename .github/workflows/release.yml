@@ -40,7 +40,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.89"
+  MSRV: "1.91"
   SCCACHE_CACHE_SIZE: "10G"
   BIN_NAMES: "iroh-relay,iroh-dns-server"
   RELEASE_VERSION: ${{ github.event.inputs.release_version }}

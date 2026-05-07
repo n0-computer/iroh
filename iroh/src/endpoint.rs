@@ -27,20 +27,20 @@ use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
 use url::Url;
 
 /// Types for defining custom transports
+#[cfg(feature = "unstable-custom-transports")]
 pub mod transports {
-    #[cfg(feature = "unstable-custom-transports")]
-    pub use super::socket::transports::RecvInfo;
-    #[cfg(feature = "unstable-custom-transports")]
-    pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
-    pub use super::socket::transports::{Addr, AddrKind, Transmit};
+    pub use super::socket::transports::{
+        Addr, AddrKind, RecvInfo, Transmit,
+        custom::{CustomEndpoint, CustomSender, CustomTransport},
+    };
 }
 
 use self::hooks::EndpointHooksList;
 pub use super::socket::{
     BindError, DirectAddr, DirectAddrType,
     remote_map::{
-        PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, TransportAddrInfo,
-        TransportAddrUsage,
+        Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream, RemoteInfo,
+        TransportAddrInfo, TransportAddrUsage,
     },
 };
 #[cfg(wasm_browser)]
@@ -96,7 +96,7 @@ pub use self::{
         SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError, StreamId, TimeSource,
         TokenLog, TokenReuseError, TransportError, TransportErrorCode, TransportParameters,
         UdpStats, UnorderedRecvStream, UnsupportedVersion, ValidationTokenConfig, VarInt,
-        VarIntBoundsExceeded, WriteError, Written,
+        VarIntBoundsExceeded, WriteError,
     },
 };
 pub use crate::portmapper::PortmapperConfig;
@@ -1493,7 +1493,7 @@ impl Endpoint {
     /// For example, the following snippet launches an HTTP server that serves the metrics in the
     /// OpenMetrics text format:
     /// ```no_run
-    /// # use std::{sync::{Arc, RwLock}, time::Duration};
+    /// # use std::sync::{Arc, RwLock};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::{Endpoint, presets};
     /// # use n0_error::{StackResultExt, StdResultExt};
@@ -1501,21 +1501,17 @@ impl Endpoint {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
     /// let registry = Arc::new(RwLock::new(Registry::default()));
-    /// // Spawn a task to serve the metrics on an OpenMetrics HTTP endpoint.
-    /// let metrics_task = tokio::task::spawn({
-    ///     let registry = registry.clone();
-    ///     async move {
-    ///         let addr = "0.0.0.0:9100".parse().unwrap();
-    ///         iroh_metrics::service::start_metrics_server(addr, registry).await
-    ///     }
-    /// });
+    /// // Spawn an OpenMetrics HTTP server backed by the registry.
+    /// let addr = "0.0.0.0:9100".parse().unwrap();
+    /// let metrics_server = iroh_metrics::service::MetricsServer::spawn(addr, registry.clone())
+    ///     .await
+    ///     .std_context("spawn metrics server")?;
     ///
     /// // Spawn an endpoint and add the metrics to the registry.
     /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// registry.write().unwrap().register_all(endpoint.metrics());
     ///
-    /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
-    /// tokio::time::sleep(Duration::from_millis(500));
+    /// // Fetch the metrics via HTTP.
     /// let res = reqwest::get("http://localhost:9100/metrics")
     ///     .await
     ///     .std_context("get")?
@@ -1525,7 +1521,7 @@ impl Endpoint {
     ///
     /// assert!(res.contains(r#"TYPE socket_recv_datagrams counter"#));
     /// assert!(res.contains(r#"socket_recv_datagrams_total 0"#));
-    /// # metrics_task.abort();
+    /// # metrics_server.shutdown().await;
     /// # Ok(())
     /// # }
     /// ```
@@ -1963,7 +1959,7 @@ mod tests {
         address_lookup::memory::MemoryLookup,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectError, ConnectOptions,
-            ConnectWithOptsError, Connection, ConnectionError, PathWatcher, presets,
+            ConnectWithOptsError, Connection, ConnectionError, PathEvent, PathEventStream, presets,
         },
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{
@@ -2365,7 +2361,7 @@ mod tests {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.anyerr()?;
             send.write_all(b"hello").await.anyerr()?;
-            let mut paths = conn.paths().stream();
+            let mut paths = conn.paths_stream();
             info!("Waiting for direct connection");
             while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
@@ -2470,7 +2466,7 @@ mod tests {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.anyerr()?;
             send.write_all(b"hello").await.anyerr()?;
-            let mut paths = conn.paths().stream();
+            let mut paths = conn.paths_stream();
             info!("Waiting for connection");
             'outer: while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
@@ -2484,6 +2480,7 @@ mod tests {
                 }
             }
             info!("Have relay connection");
+
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
             let res = conn.closed().await;
@@ -2570,11 +2567,12 @@ mod tests {
 
             // We should be connected via IP, because it is faster than the relay server.
             // TODO: Maybe not panic if this is not true?
-            let path_info = conn.paths().get();
+
+            let path_info = conn.paths();
             assert_eq!(path_info.len(), 1);
             assert!(path_info.iter().next().unwrap().is_ip());
 
-            let mut paths = conn.paths().stream();
+            let mut paths = conn.paths_stream();
             time::timeout(Duration::from_secs(5), async move {
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");
@@ -2621,7 +2619,7 @@ mod tests {
             // Wait for a relay connection to be added.  Client does all the asserting here,
             // we just want to wait so we get to see all the mechanics of the connection
             // being added on this side too.
-            let mut paths = conn.paths().stream();
+            let mut paths = conn.paths_stream();
             time::timeout(Duration::from_secs(5), async move {
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");
@@ -3487,17 +3485,19 @@ mod tests {
         ));
         let transfer_size = 1_000_000;
 
-        fn collect_stats(mut watcher: PathWatcher) -> BTreeMap<TransportAddr, PathStats> {
-            watcher
-                .get()
-                .iter()
-                .map(|info| {
-                    (
-                        info.remote_addr().clone(),
-                        info.stats().expect("conn is not yet dropped"),
-                    )
-                })
-                .collect()
+        async fn collect_stats(mut events: PathEventStream) -> BTreeMap<TransportAddr, PathStats> {
+            let mut stats = BTreeMap::new();
+            while let Some(event) = events.next().await {
+                if let PathEvent::Closed {
+                    remote_addr,
+                    last_stats,
+                    id: _,
+                } = event
+                {
+                    stats.insert(remote_addr, *last_stats);
+                }
+            }
+            stats
         }
 
         let client = Endpoint::builder(presets::Minimal)
@@ -3517,25 +3517,25 @@ mod tests {
         let server_task = tokio::spawn(async move {
             let incoming = server.accept().await.anyerr()?;
             let conn = incoming.await.anyerr()?;
-            let watcher = conn.paths();
+            let stats_task = tokio::spawn(collect_stats(conn.path_events()));
             let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
             let msg = recv.read_to_end(transfer_size).await.anyerr()?;
             send.write_all(&msg).await.anyerr()?;
             send.finish().anyerr()?;
             conn.closed().await;
-            let stats = collect_stats(watcher);
+            let stats = stats_task.await.expect("stats task panicked");
             Ok::<_, Error>(stats)
         });
 
         let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let watcher = conn.paths();
+        let client_stats_task = tokio::spawn(collect_stats(conn.path_events()));
         let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
         send.write_all(&vec![42u8; transfer_size]).await.anyerr()?;
         send.finish().anyerr()?;
         recv.read_to_end(transfer_size).await.anyerr()?;
         conn.close(0u32.into(), b"thanks, bye!");
         client.close().await;
-        let client_stats = collect_stats(watcher);
+        let client_stats = client_stats_task.await.expect("stats task panicked");
         let server_stats = server_task.await.anyerr()??;
 
         info!("client stats: {client_stats:#?}");

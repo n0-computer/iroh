@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use iroh::{
-    Endpoint, Watcher,
+    Endpoint,
     endpoint::{
         AfterHandshakeOutcome, Closed, Connection, EndpointHooks, WeakConnectionHandle, presets,
     },
@@ -133,7 +133,7 @@ impl Monitor {
                 Some(MonitoredConnection { alpn, remote_id, handle }) = rx.recv() => {
                     let alpn = String::from_utf8_lossy(&alpn).to_string();
                     let remote = remote_id.fmt_short();
-                    let rtt = handle.upgrade().and_then(|c| c.paths().peek().iter().map(|p| p.stats().expect("conn is not dropped").rtt).min());
+                    let rtt = handle.upgrade().and_then(|c| c.paths().iter().map(|p| p.rtt()).min());
                     info!(%remote, %alpn, ?rtt, "new connection");
                     tasks.spawn(async move {
                         match handle.closed().await {

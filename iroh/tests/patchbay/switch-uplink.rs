@@ -13,14 +13,14 @@
 
 use std::time::Duration;
 
-use iroh::{TransportAddr, Watcher, endpoint::Side};
+use iroh::{TransportAddr, endpoint::Side};
 use n0_error::{Result, StackResultExt};
 use n0_tracing_test::traced_test;
 use patchbay::{IpSupport, RouterPreset};
 use testdir::testdir;
 use tracing::info;
 
-use crate::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
+use crate::util::{Pair, PathConnectionExt, lab_with_relay, ping_accept, ping_open};
 
 /// Builds the lab topology and runs a single uplink switch test.
 ///
@@ -70,8 +70,7 @@ async fn run_switch_uplink(switching_side: Side, from: IpSupport, to: IpSupport)
 
     Pair::new(relay_map)
         .left(switching_side, switcher, async move |dev, _ep, conn| {
-            let mut paths = conn.paths();
-            paths.wait_ip(timeout).await.context("initial holepunch")?;
+            conn.wait_ip(timeout).await.context("initial holepunch")?;
             ping_accept(&conn, timeout)
                 .await
                 .context("ping_accept before switch")?;
@@ -83,18 +82,16 @@ async fn run_switch_uplink(switching_side: Side, from: IpSupport, to: IpSupport)
             Ok(())
         })
         .right(observer, async move |_dev, _ep, conn| {
-            let mut paths = conn.paths();
-            paths.wait_ip(timeout).await.context("initial holepunch")?;
-            let previous: Vec<TransportAddr> = paths
-                .get()
+            conn.wait_ip(timeout).await.context("initial holepunch")?;
+            let previous: Vec<TransportAddr> = conn
+                .paths()
                 .iter()
                 .map(|p| p.remote_addr().clone())
                 .collect();
             ping_open(&conn, timeout)
                 .await
                 .context("ping_open before switch")?;
-            paths
-                .wait_selected(timeout, |p| path_switched(to, &previous, p.remote_addr()))
+            conn.wait_selected(timeout, |p| path_switched(to, &previous, p.remote_addr()))
                 .await
                 .context("path did not switch")?;
             ping_open(&conn, timeout)
