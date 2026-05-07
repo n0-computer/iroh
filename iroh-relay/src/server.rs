@@ -1091,7 +1091,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_conflicting_bind() {
-        let mut server = Server::spawn(ServerConfig {
+        let res = Server::spawn(ServerConfig {
             relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
                 tls: None,
@@ -1102,12 +1102,7 @@ mod tests {
             quic: None,
             metrics_addr: Some((Ipv4Addr::LOCALHOST, 1234).into()),
         })
-        .await
-        .unwrap();
-        let res = tokio::time::timeout(Duration::from_secs(5), server.join())
-            .await
-            .expect("timeout, server not finished")
-            .expect("server task JoinError");
+        .await;
         assert!(res.is_err()); // AddrInUse
     }
 
