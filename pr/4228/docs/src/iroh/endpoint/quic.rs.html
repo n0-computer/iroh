@@ -16,32 +16,32 @@
 <a href=#16 id=16 data-nosnippet>16</a>    AcceptBi,             <span class="comment">// iroh::endpoint::Connection
 <a href=#17 id=17 data-nosnippet>17</a>    </span>AcceptUni,            <span class="comment">// iroh::endpoint::Connection
 <a href=#18 id=18 data-nosnippet>18</a>    </span>AckFrequencyConfig,   <span class="comment">// iroh::endpoint::quic::QuicTransportConfig
-<a href=#19 id=19 data-nosnippet>19</a>    </span>ClosedStream,         <span class="comment">// iroh::protocol::AcceptError, noq::RecvStream, noq::SendStream
-<a href=#20 id=20 data-nosnippet>20</a>    </span>ConnectionError,      <span class="comment">// iroh::endpoint::ConnectError
-<a href=#21 id=21 data-nosnippet>21</a>    </span>ConnectionStats,      <span class="comment">// iroh::endpoint::Connection
-<a href=#22 id=22 data-nosnippet>22</a>    </span>Dir,                  <span class="comment">// noq::StreamId
-<a href=#23 id=23 data-nosnippet>23</a>    </span>IdleTimeout,          <span class="comment">// iroh::endpoint::quic::QuicTransportConfig
-<a href=#24 id=24 data-nosnippet>24</a>    </span>MtuDiscoveryConfig,   <span class="comment">// iroh::endpoint::quic::QuicTransportConfig
-<a href=#25 id=25 data-nosnippet>25</a>    </span>OpenBi,               <span class="comment">// iroh::endpoint::Connection
-<a href=#26 id=26 data-nosnippet>26</a>    </span>OpenUni,              <span class="comment">// iroh::endpoint::Connection
-<a href=#27 id=27 data-nosnippet>27</a>    </span>PathStats,            <span class="comment">// iroh::socket::remote_map::remote_state::PathInfo
-<a href=#28 id=28 data-nosnippet>28</a>    </span>ReadDatagram,         <span class="comment">// iroh::endpoint::Connection
-<a href=#29 id=29 data-nosnippet>29</a>    </span>ReadError,            <span class="comment">// noq::RecvStream
-<a href=#30 id=30 data-nosnippet>30</a>    </span>ReadExactError,       <span class="comment">// noq::RecvStream
-<a href=#31 id=31 data-nosnippet>31</a>    </span>ReadToEndError,       <span class="comment">// noq::RecvStream
-<a href=#32 id=32 data-nosnippet>32</a>    </span>RecvStream,           <span class="comment">// noq::AcceptBi, noq::AcceptUni, noq::OpenBi, noq::OpenUni
-<a href=#33 id=33 data-nosnippet>33</a>    </span>ResetError,           <span class="comment">// noq::RecvStream
-<a href=#34 id=34 data-nosnippet>34</a>    </span>SendDatagram,         <span class="comment">// iroh::endpoint::Connection
-<a href=#35 id=35 data-nosnippet>35</a>    </span>SendDatagramError,    <span class="comment">// iroh::endpoint::Connection
-<a href=#36 id=36 data-nosnippet>36</a>    </span>SendStream,           <span class="comment">// noq::AcceptBi, noq::OpenUni
-<a href=#37 id=37 data-nosnippet>37</a>    </span>Side,                 <span class="comment">// iroh::endpoint::Connection, noq::StreamId,
-<a href=#38 id=38 data-nosnippet>38</a>    </span>StoppedError,         <span class="comment">// noq::SendStream
-<a href=#39 id=39 data-nosnippet>39</a>    </span>StreamId,             <span class="comment">// noq::RecvStream
-<a href=#40 id=40 data-nosnippet>40</a>    </span>UnorderedRecvStream,  <span class="comment">// noq::RecvStream
-<a href=#41 id=41 data-nosnippet>41</a>    </span>VarInt,               <span class="comment">// various
-<a href=#42 id=42 data-nosnippet>42</a>    </span>VarIntBoundsExceeded, <span class="comment">// noq::VarInt, noq::IdleTimeout
-<a href=#43 id=43 data-nosnippet>43</a>    </span>WriteError,           <span class="comment">// noq::SendStream
-<a href=#44 id=44 data-nosnippet>44</a>    </span>Written,              <span class="comment">// noq::SendStream
+<a href=#19 id=19 data-nosnippet>19</a>    </span>Closed,               <span class="comment">// iroh::endpoint::WeakConnectionHandle
+<a href=#20 id=20 data-nosnippet>20</a>    </span>ClosedStream,         <span class="comment">// iroh::protocol::AcceptError, noq::RecvStream, noq::SendStream
+<a href=#21 id=21 data-nosnippet>21</a>    </span>ConnectionError,      <span class="comment">// iroh::endpoint::ConnectError
+<a href=#22 id=22 data-nosnippet>22</a>    </span>ConnectionStats,      <span class="comment">// iroh::endpoint::Connection
+<a href=#23 id=23 data-nosnippet>23</a>    </span>Dir,                  <span class="comment">// noq::StreamId
+<a href=#24 id=24 data-nosnippet>24</a>    </span>IdleTimeout,          <span class="comment">// iroh::endpoint::quic::QuicTransportConfig
+<a href=#25 id=25 data-nosnippet>25</a>    </span>MtuDiscoveryConfig,   <span class="comment">// iroh::endpoint::quic::QuicTransportConfig
+<a href=#26 id=26 data-nosnippet>26</a>    </span>OpenBi,               <span class="comment">// iroh::endpoint::Connection
+<a href=#27 id=27 data-nosnippet>27</a>    </span>OpenUni,              <span class="comment">// iroh::endpoint::Connection
+<a href=#28 id=28 data-nosnippet>28</a>    </span>PathStats,            <span class="comment">// iroh::socket::remote_map::remote_state::PathInfo
+<a href=#29 id=29 data-nosnippet>29</a>    </span>ReadDatagram,         <span class="comment">// iroh::endpoint::Connection
+<a href=#30 id=30 data-nosnippet>30</a>    </span>ReadError,            <span class="comment">// noq::RecvStream
+<a href=#31 id=31 data-nosnippet>31</a>    </span>ReadExactError,       <span class="comment">// noq::RecvStream
+<a href=#32 id=32 data-nosnippet>32</a>    </span>ReadToEndError,       <span class="comment">// noq::RecvStream
+<a href=#33 id=33 data-nosnippet>33</a>    </span>RecvStream,           <span class="comment">// noq::AcceptBi, noq::AcceptUni, noq::OpenBi, noq::OpenUni
+<a href=#34 id=34 data-nosnippet>34</a>    </span>ResetError,           <span class="comment">// noq::RecvStream
+<a href=#35 id=35 data-nosnippet>35</a>    </span>SendDatagram,         <span class="comment">// iroh::endpoint::Connection
+<a href=#36 id=36 data-nosnippet>36</a>    </span>SendDatagramError,    <span class="comment">// iroh::endpoint::Connection
+<a href=#37 id=37 data-nosnippet>37</a>    </span>SendStream,           <span class="comment">// noq::AcceptBi, noq::OpenUni
+<a href=#38 id=38 data-nosnippet>38</a>    </span>Side,                 <span class="comment">// iroh::endpoint::Connection, noq::StreamId,
+<a href=#39 id=39 data-nosnippet>39</a>    </span>StoppedError,         <span class="comment">// noq::SendStream
+<a href=#40 id=40 data-nosnippet>40</a>    </span>StreamId,             <span class="comment">// noq::RecvStream
+<a href=#41 id=41 data-nosnippet>41</a>    </span>UnorderedRecvStream,  <span class="comment">// noq::RecvStream
+<a href=#42 id=42 data-nosnippet>42</a>    </span>VarInt,               <span class="comment">// various
+<a href=#43 id=43 data-nosnippet>43</a>    </span>VarIntBoundsExceeded, <span class="comment">// noq::VarInt, noq::IdleTimeout
+<a href=#44 id=44 data-nosnippet>44</a>    </span>WriteError,           <span class="comment">// noq::SendStream
 <a href=#45 id=45 data-nosnippet>45</a></span>};
 <a href=#46 id=46 data-nosnippet>46</a><span class="attr">#[cfg(feature = <span class="string">"qlog"</span>)]
 <a href=#47 id=47 data-nosnippet>47</a></span><span class="kw">pub use </span>noq::{QlogConfig, QlogFactory, QlogFileFactory};
