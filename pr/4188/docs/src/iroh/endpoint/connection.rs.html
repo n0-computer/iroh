@@ -1129,7 +1129,7 @@
 <a href=#1129 id=1129 data-nosnippet>1129</a>    /// spawned task, move a [`Connection`] clone into the task and
 <a href=#1130 id=1130 data-nosnippet>1130</a>    /// call this method inside.
 <a href=#1131 id=1131 data-nosnippet>1131</a>    </span><span class="kw">pub fn </span>paths_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathListStream&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#1132 id=1132 data-nosnippet>1132</a>        <span class="self">self</span>.data.paths.updates(<span class="kw-2">&amp;</span><span class="self">self</span>.inner)
+<a href=#1132 id=1132 data-nosnippet>1132</a>        <span class="self">self</span>.data.paths.stream(<span class="kw-2">&amp;</span><span class="self">self</span>.inner)
 <a href=#1133 id=1133 data-nosnippet>1133</a>    }
 <a href=#1134 id=1134 data-nosnippet>1134</a>
 <a href=#1135 id=1135 data-nosnippet>1135</a>    <span class="doccomment">/// Returns a stream of [`PathEvent`]s for this connection.
