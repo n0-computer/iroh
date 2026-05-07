@@ -74,8 +74,10 @@ pub enum ConnectError {
     #[error(transparent)]
     Dial { source: DialError },
     #[error("Unexpected status during upgrade: {code}")]
+    #[cfg(not(wasm_browser))]
     UnexpectedUpgradeStatus { code: hyper::StatusCode },
     #[error("Failed to upgrade response")]
+    #[cfg(not(wasm_browser))]
     Upgrade {
         #[error(std_err)]
         source: hyper::Error,
@@ -121,10 +123,12 @@ pub enum DialError {
     #[error("Invalid URL: {url}")]
     InvalidUrl { url: Url },
     #[error("Failed proxy connection: {status}")]
+    #[cfg(not(wasm_browser))]
     ProxyConnectInvalidStatus { status: hyper::StatusCode },
     #[error("Invalid Proxy URL {proxy_url}")]
     ProxyInvalidUrl { proxy_url: Url },
     #[error("failed to establish proxy connection")]
+    #[cfg(not(wasm_browser))]
     ProxyConnect {
         #[error(std_err)]
         source: hyper::Error,
