@@ -41,8 +41,3 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
-
-[patch.crates-io]
-portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "update-deps" }
-netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "update-deps" }
-patchbay = { git = "https://github.com/n0-computer/patchbay", branch = "feat-update-deps" }

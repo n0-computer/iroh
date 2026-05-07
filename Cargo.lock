@@ -3086,8 +3086,9 @@ dependencies = [
 
 [[package]]
 name = "netwatch"
-version = "0.16.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=update-deps#89cacfbcc63d9d03d93cb8ddd1943845c7704d88"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5bfbba77b994ce69f1d40fc66fd8abbd23df62ce4aea61fbb34d638106a2549"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3530,8 +3531,9 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "patchbay"
-version = "0.5.1"
-source = "git+https://github.com/n0-computer/patchbay?branch=feat-update-deps#1f5315ef0104252f9ffa4d872837e6765b77a1cd"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d376bb9a5ce9816d86726877840df3a5113329390d4c9241c178707b14b5485"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3689,8 +3691,9 @@ dependencies = [
 
 [[package]]
 name = "portmapper"
-version = "0.16.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=update-deps#89cacfbcc63d9d03d93cb8ddd1943845c7704d88"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aec2a8809e3f7dba624776bb223da9fed49c413c60b3bef21aadcb67a5e35944"
 dependencies = [
  "base64",
  "bytes",
