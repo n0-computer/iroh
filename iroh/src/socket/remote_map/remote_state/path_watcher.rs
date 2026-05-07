@@ -287,7 +287,7 @@ impl PathStateReceiver {
     /// Yields the current snapshot on the first poll, then a fresh
     /// snapshot on every state change. Ends when the state is marked
     /// closed.
-    pub(crate) fn updates<'a>(&'a self, conn: &'a noq::Connection) -> PathListStream<'a> {
+    pub(crate) fn stream<'a>(&'a self, conn: &'a noq::Connection) -> PathListStream<'a> {
         PathListStream {
             shared: &self.shared,
             conn,

@@ -1129,7 +1129,7 @@ impl Connection<HandshakeCompleted> {
     /// spawned task, move a [`Connection`] clone into the task and
     /// call this method inside.
     pub fn paths_stream(&self) -> PathListStream<'_> {
-        self.data.paths.updates(&self.inner)
+        self.data.paths.stream(&self.inner)
     }
 
     /// Returns a stream of [`PathEvent`]s for this connection.
