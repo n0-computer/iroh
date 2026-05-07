@@ -410,7 +410,7 @@ impl ExactSizeIterator for PathListIter<'_> {}
 pub struct Path<'a> {
     data: &'a PathData,
     is_selected: bool,
-    /// Reference to a `noq::Connection` that makes [`Self::upgraded`] safe.
+    /// Reference to a `noq::Connection` for safe upgrading via [`PathData::upgrade`]
     conn: &'a noq::Connection,
 }
 
