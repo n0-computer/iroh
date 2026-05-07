@@ -37,7 +37,7 @@ iroh-base = { version = "0.98.0", path = "../iroh-base", default-features = fals
 iroh-dns = { version = "0.98.0", path = "../iroh-dns" }
 iroh-metrics = { version = "=1.0.0-rc.0", default-features = false }
 lru = "0.18.0"
-n0-error = "1.0.0-rc.0"
+n0-error = "=1.0.0-rc.0"
 n0-future = "0.3"
 num_enum = "0.7"
 pin-project = "1"
