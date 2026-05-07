@@ -96,7 +96,7 @@ pub use self::{
         SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError, StreamId, TimeSource,
         TokenLog, TokenReuseError, TransportError, TransportErrorCode, TransportParameters,
         UdpStats, UnorderedRecvStream, UnsupportedVersion, ValidationTokenConfig, VarInt,
-        VarIntBoundsExceeded, WriteError, Written,
+        VarIntBoundsExceeded, WriteError,
     },
 };
 pub use crate::portmapper::PortmapperConfig;
