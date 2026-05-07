@@ -13,7 +13,6 @@ use bytes::Bytes;
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
-use noq_proto::PathStatus;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use rustc_hash::FxHashMap;
 use tokio_util::sync::CancellationToken;
@@ -719,35 +718,11 @@ pub(crate) enum TransportType {
     Backup,
 }
 
-impl TransportType {
-    /// Converts to the corresponding QUIC path status.
-    pub(super) fn to_path_status(self) -> PathStatus {
-        match self {
-            Self::Primary => PathStatus::Available,
-            Self::Backup => PathStatus::Backup,
-        }
-    }
-}
-
 /// Bias configuration for a transport type.
 ///
 /// This controls how a transport is prioritized during path selection.
-///
-/// # Examples
-///
-/// ```
-/// use std::time::Duration;
-///
-/// use iroh::endpoint::transports::TransportBias;
-///
-/// // A primary transport with 100ms RTT advantage (will be preferred)
-/// let bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
-///
-/// // A primary transport with 50ms RTT disadvantage (will be less preferred)
-/// let bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(50));
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TransportBias {
+pub(crate) struct TransportBias {
     /// Whether this is a primary or backup transport.
     pub(crate) transport_type: TransportType,
     /// RTT bias in nanoseconds. Negative values make this transport more preferred.
@@ -756,9 +731,7 @@ pub struct TransportBias {
 
 impl TransportBias {
     /// Creates a primary transport bias with no RTT advantage.
-    ///
-    /// Primary transports compete with each other based on biased RTT measurements.
-    pub fn primary() -> Self {
+    pub(crate) fn primary() -> Self {
         Self {
             transport_type: TransportType::Primary,
             rtt_bias: 0,
@@ -766,8 +739,6 @@ impl TransportBias {
     }
 
     /// Creates a backup transport bias with no RTT advantage.
-    ///
-    /// Backup transports are only used when no primary transport is available.
     pub(crate) fn backup() -> Self {
         Self {
             transport_type: TransportType::Backup,
@@ -776,21 +747,14 @@ impl TransportBias {
     }
 
     /// Adds an RTT advantage to this transport, making it more preferred.
-    ///
-    /// The advantage is subtracted from the measured RTT during path selection,
-    /// so a transport with a 100ms advantage will be preferred over one with
-    /// the same measured RTT but no advantage.
-    pub fn with_rtt_advantage(mut self, advantage: Duration) -> Self {
+    pub(crate) fn with_rtt_advantage(mut self, advantage: Duration) -> Self {
         self.rtt_bias -= advantage.as_nanos() as i128;
         self
     }
 
     /// Adds an RTT disadvantage to this transport, making it less preferred.
-    ///
-    /// The disadvantage is added to the measured RTT during path selection,
-    /// so a transport with a 100ms disadvantage will be avoided in favor of
-    /// one with the same measured RTT but no disadvantage.
-    pub fn with_rtt_disadvantage(mut self, disadvantage: Duration) -> Self {
+    #[cfg(all(test, feature = "unstable-custom-transports"))]
+    pub(crate) fn with_rtt_disadvantage(mut self, disadvantage: Duration) -> Self {
         self.rtt_bias += disadvantage.as_nanos() as i128;
         self
     }
@@ -825,6 +789,7 @@ impl Default for TransportBiasMap {
 
 impl TransportBiasMap {
     /// Returns a new map with the given bias added or updated.
+    #[cfg(all(test, feature = "unstable-custom-transports"))]
     pub(crate) fn with_bias(self, kind: AddrKind, bias: TransportBias) -> Self {
         let mut map = (*self.map).clone();
         map.insert(kind, bias);

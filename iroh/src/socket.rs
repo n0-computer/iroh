@@ -795,6 +795,7 @@ impl DirectAddrUpdateState {
             return;
         }
 
+        self.sock.metrics.net_report.portmap_attempts.inc();
         self.port_mapper.procure_mapping();
 
         debug!("requesting net_report report");
@@ -887,7 +888,7 @@ impl EndpointInner {
         } = opts;
 
         let address_lookup = address_lookup::AddressLookupServices::default();
-        let port_mapper = portmapper::create_client(&metrics, &portmapper_config);
+        let port_mapper = portmapper::create_client(&portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs
             .iter()
@@ -1579,6 +1580,9 @@ impl Actor {
                     trace!("tick: portmap changed");
                     self.sock.metrics.socket.actor_tick_portmap_changed.inc();
                     let new_external_address = *portmap_watcher.borrow();
+                    if new_external_address.is_some() {
+                        self.sock.metrics.net_report.portmap_external_address_updated.inc();
+                    }
                     debug!("external address updated: {new_external_address:?}");
                     self.re_stun(UpdateReason::PortmapUpdated);
                 },

@@ -3,10 +3,7 @@ use std::{sync::Arc, time::Duration};
 use clap::Parser;
 use iroh::{
     Endpoint, SecretKey, TransportAddr,
-    endpoint::{
-        Builder, Connection, presets,
-        transports::{AddrKind, TransportBias},
-    },
+    endpoint::{Builder, Connection, presets},
     protocol::{AcceptError, ProtocolHandler, Router},
     test_utils::test_transport::{TEST_TRANSPORT_ID, TestNetwork, TestTransport},
 };
@@ -35,20 +32,12 @@ struct Args {
     delay: u64,
 }
 
-/// Strong RTT advantage for the custom transport (100ms) to ensure it wins path selection.
-const CUSTOM_TRANSPORT_RTT_ADVANTAGE: Duration = Duration::from_millis(100);
-
 impl Args {
     /// Configure an endpoint builder with the custom transport and optional IP/relay transports.
     fn configure(&self, secret_key: SecretKey, transport: Arc<TestTransport>) -> Builder {
         let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
-            .preset(transport)
-            // Give the custom transport a strong RTT advantage so it always wins path selection
-            .transport_bias(
-                AddrKind::Custom(TEST_TRANSPORT_ID),
-                TransportBias::primary().with_rtt_advantage(CUSTOM_TRANSPORT_RTT_ADVANTAGE),
-            );
+            .preset(transport);
         if !self.keep_ip {
             builder = builder.clear_ip_transports();
         }

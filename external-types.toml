@@ -32,7 +32,6 @@ allowed_external_types = [
     "noq::*",
     "noq_proto::*",
     "noq_udp::*",
-    "portmapper::metrics::Metrics",
 
     # non-1.0 crates that we decided to accept in the public API
     "rustls::*",

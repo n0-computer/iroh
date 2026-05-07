@@ -150,7 +150,7 @@ cfg_aliases = { version = "0.2.1" }
 [features]
 default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring"]
 portmapper = ["dep:portmapper"]
-metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper?/metrics"]
+metrics = ["iroh-metrics/metrics", "iroh-relay/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["iroh-relay/platform-verifier"]
