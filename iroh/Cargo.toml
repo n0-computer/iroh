@@ -66,7 +66,7 @@ webpki_types = { package = "rustls-pki-types", version = "1.12" }
 webpki-roots = "1.0.3"
 
 # metrics
-iroh-metrics = { version = "0.38", default-features = false }
+iroh-metrics = { version = "=1.0.0-rc.0", default-features = false }
 
 futures-util = "0.3"
 

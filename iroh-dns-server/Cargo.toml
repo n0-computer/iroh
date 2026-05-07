@@ -29,7 +29,7 @@ http = "1.0.0"
 humantime = "2.2.0"
 humantime-serde = "1.1.1"
 iroh-base = { version = "0.98", path = "../iroh-base", features = ["key"] }
-iroh-metrics = { version = "0.38", features = ["service"] }
+iroh-metrics = { version = "=1.0.0-rc.0", features = ["service"] }
 iroh-dns = { version = "0.98", path = "../iroh-dns" }
 lru = "0.18.0"
 mainline = "6"

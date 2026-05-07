@@ -9,7 +9,7 @@ publish = false
 bytes = "1.11"
 hdrhistogram = { version = "7.2", default-features = false }
 iroh = { path = "..", default-features = false }
-iroh-metrics = { version = "0.38", optional = true }
+iroh-metrics = { version = "1.0.0-rc.0", optional = true }
 n0-future = "0.3"
 n0-error = "=1.0.0-rc.0"
 noq = "=1.0.0-rc.0"

@@ -938,9 +938,9 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5449af32ecd0738fb1be3f9faa3c10da8509044fed757aaa2bc1c16f9a74e0c5"
+checksum = "5c24d2b2b7c12a2fffb7c5c8fd0dcda7ca14b4600fa2d3701b6079aefb6fa180"
 dependencies = [
  "link-section",
  "linktime-proc-macro",
@@ -2348,7 +2348,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
- "strum 0.28.0",
+ "strum",
  "testdir",
  "time",
  "tokio",
@@ -2426,7 +2426,7 @@ dependencies = [
  "reqwest",
  "rustls",
  "simple-dns",
- "strum 0.28.0",
+ "strum",
  "tokio",
  "tracing",
  "url",
@@ -2472,7 +2472,7 @@ dependencies = [
  "serde_json",
  "simple-dns",
  "struct_iterable",
- "strum 0.28.0",
+ "strum",
  "tempfile",
  "tokio",
  "tokio-rustls",
@@ -2491,8 +2491,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.38.3"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=main#a707629bc14400de6f4f843bf8383dffa8d0262c"
+version = "1.0.0-rc.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d102597d0ee523f17fdb672c532395e634dbe945429284c811430d63bacc0d8a"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2501,20 +2502,21 @@ dependencies = [
  "itoa",
  "n0-error",
  "portable-atomic",
- "postcard",
  "reqwest",
  "rustls",
  "rustls-platform-verifier",
  "ryu",
  "serde",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
 [[package]]
 name = "iroh-metrics-derive"
-version = "0.4.1"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=main#a707629bc14400de6f4f843bf8383dffa8d0262c"
+version = "1.0.0-rc.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91c8e0c97f1dc787107f388433c349397c565572fe6406d600ff7bb7b7fe3b30"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2569,7 +2571,7 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "simdutf8",
- "strum 0.28.0",
+ "strum",
  "time",
  "tokio",
  "tokio-rustls",
@@ -2949,15 +2951,15 @@ dependencies = [
 
 [[package]]
 name = "n0-qlog"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "227d9ae7ef1e74f3e9f3e3503b06b58ff507ce754efdc29e4a44af74ad300cc3"
+checksum = "04fd2af7d4c68cd5c31fa69e64644e0a778bd1656bb8dfb86f9852f7d02a112e"
 dependencies = [
  "serde",
  "serde_json",
  "serde_with",
  "smallvec",
- "strum 0.27.2",
+ "strum",
 ]
 
 [[package]]
@@ -3033,18 +3035,6 @@ dependencies = [
 
 [[package]]
 name = "netlink-packet-route"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ce3636fa715e988114552619582b530481fd5ef176a1e5c1bf024077c2c9445"
-dependencies = [
- "bitflags",
- "libc",
- "log",
- "netlink-packet-core",
-]
-
-[[package]]
-name = "netlink-packet-route"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df9854ea6ad14e3f4698a7f03b65bce0833dd2d81d594a0e4a984170537146b6"
@@ -3097,7 +3087,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.16.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=update-deps#2cc737c740c2b3a0822a446cf276791512cd8fef"
+source = "git+https://github.com/n0-computer/net-tools?branch=update-deps#89cacfbcc63d9d03d93cb8ddd1943845c7704d88"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3134,6 +3124,18 @@ name = "nix"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d6d0705320c1e6ba1d912b5e37cf18071b6c2e9b7fa8215a1e8a7651966f5d3"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -3529,8 +3531,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "patchbay"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4d5531099ff1eae13ffc7f9f7af8a9c7f87e8570b2919c121100f516be559e6"
+source = "git+https://github.com/n0-computer/patchbay?branch=feat-update-deps#1f5315ef0104252f9ffa4d872837e6765b77a1cd"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3540,11 +3541,11 @@ dependencies = [
  "ipnet",
  "iroh-metrics",
  "libc",
- "nix",
+ "nix 0.31.2",
  "rtnetlink",
  "serde",
  "serde_json",
- "strum 0.28.0",
+ "strum",
  "tokio",
  "tokio-util",
  "toml",
@@ -3689,7 +3690,7 @@ dependencies = [
 [[package]]
 name = "portmapper"
 version = "0.16.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=update-deps#2cc737c740c2b3a0822a446cf276791512cd8fef"
+source = "git+https://github.com/n0-computer/net-tools?branch=update-deps#89cacfbcc63d9d03d93cb8ddd1943845c7704d88"
 dependencies = [
  "base64",
  "bytes",
@@ -4136,18 +4137,18 @@ dependencies = [
 
 [[package]]
 name = "rtnetlink"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b960d5d873a75b5be9761b1e73b146f52dddcd27bac75263f40fba686d4d7b5"
+checksum = "dc19f84f710fa2f337617f9bc0400260a94224bde7bae28fd8879f3771ca5784"
 dependencies = [
  "futures-channel",
  "futures-util",
  "log",
  "netlink-packet-core",
- "netlink-packet-route 0.28.0",
+ "netlink-packet-route 0.30.0",
  "netlink-proto",
  "netlink-sys",
- "nix",
+ "nix 0.30.1",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -4766,32 +4767,11 @@ checksum = "e9426b2a0c03e6cc2ea8dbc0168dbbf943f88755e409fb91bcb8f6a268305f4a"
 
 [[package]]
 name = "strum"
-version = "0.27.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
-dependencies = [
- "strum_macros 0.27.2",
-]
-
-[[package]]
-name = "strum"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
 dependencies = [
- "strum_macros 0.28.0",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.27.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "syn",
+ "strum_macros",
 ]
 
 [[package]]
