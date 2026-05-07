@@ -76,7 +76,7 @@
 <a href=#76 id=76 data-nosnippet>76</a>    runtime::Runtime,
 <a href=#77 id=77 data-nosnippet>77</a>    socket::{
 <a href=#78 id=78 data-nosnippet>78</a>        concurrent_read_map::ReadOnlyMap,
-<a href=#79 id=79 data-nosnippet>79</a>        remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
+<a href=#79 id=79 data-nosnippet>79</a>        remote_map::{MappedAddrs, PathStateReceiver, RemoteInfo},
 <a href=#80 id=80 data-nosnippet>80</a>        transports::{HomeRelayWatch, HomeRelayWatcher, TransportBiasMap},
 <a href=#81 id=81 data-nosnippet>81</a>    },
 <a href=#82 id=82 data-nosnippet>82</a>    tls::{
@@ -1344,14 +1344,14 @@
 <a href=#1344 id=1344 data-nosnippet>1344</a>    /// The actor is responsible for holepunching and opening additional paths to this
 <a href=#1345 id=1345 data-nosnippet>1345</a>    /// connection.
 <a href=#1346 id=1346 data-nosnippet>1346</a>    ///
-<a href=#1347 id=1347 data-nosnippet>1347</a>    /// Returns a future that resolves to [`PathWatchable`].
+<a href=#1347 id=1347 data-nosnippet>1347</a>    /// Returns a future that resolves to a [`PathStateReceiver`] for the new connection.
 <a href=#1348 id=1348 data-nosnippet>1348</a>    ///
-<a href=#1349 id=1349 data-nosnippet>1349</a>    /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&amp;self`.
+<a href=#1349 id=1349 data-nosnippet>1349</a>    /// The returned future is `'static`, so it can be stored without being lifetime-bound to `&amp;self`.
 <a href=#1350 id=1350 data-nosnippet>1350</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>register_connection(
 <a href=#1351 id=1351 data-nosnippet>1351</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#1352 id=1352 data-nosnippet>1352</a>        remote: EndpointId,
 <a href=#1353 id=1353 data-nosnippet>1353</a>        conn: WeakConnectionHandle,
-<a href=#1354 id=1354 data-nosnippet>1354</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;PathWatchable, RemoteStateActorStoppedError&gt;&gt; + Send + <span class="lifetime">'static
+<a href=#1354 id=1354 data-nosnippet>1354</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;PathStateReceiver, RemoteStateActorStoppedError&gt;&gt; + Send + <span class="lifetime">'static
 <a href=#1355 id=1355 data-nosnippet>1355</a>    </span>{
 <a href=#1356 id=1356 data-nosnippet>1356</a>        <span class="kw">let </span>(tx, rx) = oneshot::channel();
 <a href=#1357 id=1357 data-nosnippet>1357</a>        <span class="kw">let </span>sender = <span class="self">self</span>.actor_sender.clone();
@@ -1379,7 +1379,7 @@
 <a href=#1379 id=1379 data-nosnippet>1379</a>    </span>AddConnection(
 <a href=#1380 id=1380 data-nosnippet>1380</a>        EndpointId,
 <a href=#1381 id=1381 data-nosnippet>1381</a>        WeakConnectionHandle,
-<a href=#1382 id=1382 data-nosnippet>1382</a>        oneshot::Sender&lt;PathWatchable&gt;,
+<a href=#1382 id=1382 data-nosnippet>1382</a>        oneshot::Sender&lt;PathStateReceiver&gt;,
 <a href=#1383 id=1383 data-nosnippet>1383</a>    ),
 <a href=#1384 id=1384 data-nosnippet>1384</a>    <span class="doccomment">/// Re-evaluate direct addresses, e.g. after configured external addresses changed.
 <a href=#1385 id=1385 data-nosnippet>1385</a>    </span>DirectAddrRefresh,
@@ -2211,9 +2211,9 @@
 <a href=#2211 id=2211 data-nosnippet>2211</a>        <span class="kw">let </span>stats = conn.stats();
 <a href=#2212 id=2212 data-nosnippet>2212</a>        <span class="macro">info!</span>(<span class="string">"stats: {:#?}"</span>, stats);
 <a href=#2213 id=2213 data-nosnippet>2213</a>        <span class="kw">if </span><span class="macro">matches!</span>(loss, ExpectedLoss::AlmostNone) {
-<a href=#2214 id=2214 data-nosnippet>2214</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().get().iter() {
+<a href=#2214 id=2214 data-nosnippet>2214</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().iter() {
 <a href=#2215 id=2215 data-nosnippet>2215</a>                <span class="macro">assert!</span>(
-<a href=#2216 id=2216 data-nosnippet>2216</a>                    info.stats().unwrap().lost_packets &lt; <span class="number">10</span>,
+<a href=#2216 id=2216 data-nosnippet>2216</a>                    info.stats().lost_packets &lt; <span class="number">10</span>,
 <a href=#2217 id=2217 data-nosnippet>2217</a>                    <span class="string">"[receiver] path {:?} should not loose many packets"</span>,
 <a href=#2218 id=2218 data-nosnippet>2218</a>                    info.remote_addr()
 <a href=#2219 id=2219 data-nosnippet>2219</a>                );
@@ -2265,9 +2265,9 @@
 <a href=#2265 id=2265 data-nosnippet>2265</a>        <span class="kw">let </span>stats = conn.stats();
 <a href=#2266 id=2266 data-nosnippet>2266</a>        <span class="macro">info!</span>(<span class="string">"stats: {:#?}"</span>, stats);
 <a href=#2267 id=2267 data-nosnippet>2267</a>        <span class="kw">if </span><span class="macro">matches!</span>(loss, ExpectedLoss::AlmostNone) {
-<a href=#2268 id=2268 data-nosnippet>2268</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().get().iter() {
+<a href=#2268 id=2268 data-nosnippet>2268</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().iter() {
 <a href=#2269 id=2269 data-nosnippet>2269</a>                <span class="macro">assert!</span>(
-<a href=#2270 id=2270 data-nosnippet>2270</a>                    info.stats().unwrap().lost_packets &lt; <span class="number">10</span>,
+<a href=#2270 id=2270 data-nosnippet>2270</a>                    info.stats().lost_packets &lt; <span class="number">10</span>,
 <a href=#2271 id=2271 data-nosnippet>2271</a>                    <span class="string">"[sender] path {:?} should not loose many packets"</span>,
 <a href=#2272 id=2272 data-nosnippet>2272</a>                    info.remote_addr()
 <a href=#2273 id=2273 data-nosnippet>2273</a>                );

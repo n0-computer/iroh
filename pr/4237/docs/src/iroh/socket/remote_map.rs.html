@@ -12,12 +12,12 @@
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>tokio_util::sync::CancellationToken;
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>tracing::{Span, debug, error};
 <a href=#14 id=14 data-nosnippet>14</a>
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::remote_state::PathWatchable;
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::remote_state::PathStateReceiver;
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span><span class="self">self</span>::remote_state::RemoteStateActor;
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span><span class="self">self</span>::remote_state::RemoteStateMessage;
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">pub use </span><span class="self">self</span>::remote_state::{
-<a href=#19 id=19 data-nosnippet>19</a>    PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, TransportAddrInfo,
-<a href=#20 id=20 data-nosnippet>20</a>    TransportAddrUsage,
+<a href=#19 id=19 data-nosnippet>19</a>    Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream, RemoteInfo,
+<a href=#20 id=20 data-nosnippet>20</a>    TransportAddrInfo, TransportAddrUsage,
 <a href=#21 id=21 data-nosnippet>21</a>};
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use super</span>::{
 <a href=#23 id=23 data-nosnippet>23</a>    DirectAddr, Metrics <span class="kw">as </span>SocketMetrics,
@@ -241,7 +241,7 @@
 <a href=#241 id=241 data-nosnippet>241</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#242 id=242 data-nosnippet>242</a>        remote: EndpointId,
 <a href=#243 id=243 data-nosnippet>243</a>        conn: noq::WeakConnectionHandle,
-<a href=#244 id=244 data-nosnippet>244</a>        tx: oneshot::Sender&lt;PathWatchable&gt;,
+<a href=#244 id=244 data-nosnippet>244</a>        tx: oneshot::Sender&lt;PathStateReceiver&gt;,
 <a href=#245 id=245 data-nosnippet>245</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RemoteStateActorStoppedError&gt; {
 <a href=#246 id=246 data-nosnippet>246</a>        <span class="kw">let </span>actor = <span class="self">self</span>.remote_state_actor(remote);
 <a href=#247 id=247 data-nosnippet>247</a>        actor
