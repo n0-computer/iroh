@@ -22,7 +22,8 @@ use std::{
 
 use derive_more::Debug;
 use http::{
-    HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header::InvalidHeaderValue,
+    HeaderMap, HeaderValue, Method, Request, Response, StatusCode,
+    header::{AUTHORIZATION, InvalidHeaderValue},
     response::Builder as ResponseBuilder,
 };
 use http_body_util::Full;
@@ -31,7 +32,7 @@ use iroh_base::EndpointId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use n0_error::{e, stack_error};
-use n0_future::{StreamExt, future::Boxed, task::AbortOnDropHandle};
+use n0_future::{StreamExt, task::AbortOnDropHandle};
 use rustls::server::WantsServerCert;
 use serde::Serialize;
 use tokio::{
@@ -47,7 +48,7 @@ use tracing::{Instrument, debug, error, info, info_span, instrument};
 use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
-    http::RELAY_PROBE_PATH,
+    http::{AUTH_TOKEN_URL_QUERY_PARAM, RELAY_PROBE_PATH},
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
 };
 
@@ -202,13 +203,44 @@ impl ClientRequest {
     pub fn headers(&self) -> &http::HeaderMap {
         &self.request.headers
     }
+
+    /// Returns the authorization token from the client's HTTP request, if any.
+    ///
+    /// Walks the `Authorization` headers in order and returns the value of
+    /// the first one whose scheme is `Bearer` (matched case-insensitively).
+    /// Headers with a different scheme are skipped.
+    ///
+    /// If none of the `Authorization` headers carries a `Bearer` scheme,
+    /// returns the value of the `token` URL query parameter, or `None` if
+    /// the URL has no `token` parameter.
+    ///
+    /// If an `Authorization` header value is not valid UTF-8 the function returns
+    /// `None` immediately, without checking later headers or the URL query.
+    pub fn auth_token(&self) -> Option<String> {
+        for value in self.request.headers.get_all(AUTHORIZATION) {
+            let value = value.to_str().ok()?;
+            if let Some((scheme, token)) = value.split_once(' ')
+                && scheme.eq_ignore_ascii_case("Bearer")
+            {
+                return Some(token.to_string());
+            }
+        }
+        self.query_pairs()
+            .find(|(name, _)| name == AUTH_TOKEN_URL_QUERY_PARAM)
+            .map(|(_, value)| value.into_owned())
+    }
 }
 
 /// Access check callback used by [`AccessConfig::Restricted`].
 ///
-/// Returns [`Access::Allow`] to admit the endpoint, [`Access::Deny`] to
-/// reject it.
-pub type AccessCheck = Box<dyn Fn(&ClientRequest) -> Boxed<Access> + Send + Sync + 'static>;
+/// Returns [`Access::Allow`] to admit the endpoint or [`Access::Deny`] to
+/// reject it. The returned future may borrow from the [`ClientRequest`].
+pub type AccessCheck = Box<
+    dyn for<'a> Fn(&'a ClientRequest) -> Pin<Box<dyn Future<Output = Access> + Send + 'a>>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 /// Controls which endpoints are allowed to use the relay.
 #[derive(derive_more::Debug)]
@@ -1201,8 +1233,8 @@ mod tests {
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
                 access: AccessConfig::Restricted(Box::new(move |request| {
-                    let endpoint_id = request.endpoint_id();
                     async move {
+                        let endpoint_id = request.endpoint_id();
                         info!("checking {}", endpoint_id);
                         // reject endpoint a
                         if endpoint_id == a_key {
@@ -1273,12 +1305,12 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that [`ClientBuilder::query_param`] forwards URL query
-    /// parameters on the WebSocket upgrade so the [`AccessConfig::Restricted`]
-    /// hook can read them via [`ClientRequest::query_pairs`].
+    /// Verifies that [`ClientBuilder::auth_token`] forwards a token to the
+    /// relay so the [`AccessConfig::Restricted`] hook can read it via
+    /// [`ClientRequest::auth_token`].
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_client_query_param_forwarded() -> Result<()> {
+    async fn test_relay_client_auth_token_forwarded() -> Result<()> {
         const TOKEN: &str = "secret-token";
 
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
@@ -1293,12 +1325,8 @@ mod tests {
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
                 access: AccessConfig::Restricted(Box::new(move |request| {
-                    let token = request
-                        .query_pairs()
-                        .find(|(key, _)| key == "token")
-                        .map(|(_, value)| value.into_owned());
                     async move {
-                        if token.as_deref() == Some(TOKEN) {
+                        if request.auth_token().as_deref() == Some(TOKEN) {
                             Access::Allow
                         } else {
                             Access::Deny
@@ -1331,7 +1359,7 @@ mod tests {
         let secret_key = SecretKey::from_bytes(&rng.random());
         let result = ClientBuilder::new(relay_url.clone(), secret_key, dns_resolver())
             .tls_client_config(client_config.clone())
-            .query_param("token", "wrong-token")
+            .auth_token("wrong-token")
             .connect()
             .await;
         assert!(matches!(
@@ -1344,7 +1372,7 @@ mod tests {
         let secret_key = SecretKey::from_bytes(&rng.random());
         let _client = ClientBuilder::new(relay_url, secret_key, dns_resolver())
             .tls_client_config(client_config)
-            .query_param("token", TOKEN)
+            .auth_token(TOKEN)
             .connect()
             .await?;
 

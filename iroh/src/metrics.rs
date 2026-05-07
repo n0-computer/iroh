@@ -6,10 +6,7 @@ use iroh_metrics::MetricsGroupSet;
 pub use iroh_relay::server::Metrics as RelayMetrics;
 use serde::{Deserialize, Serialize};
 
-pub use crate::{
-    net_report::Metrics as NetReportMetrics, portmapper::Metrics as PortmapMetrics,
-    socket::Metrics as SocketMetrics,
-};
+pub use crate::{net_report::Metrics as NetReportMetrics, socket::Metrics as SocketMetrics};
 
 /// Metrics collected by an [`crate::endpoint::Endpoint`].
 ///
@@ -22,8 +19,6 @@ pub struct EndpointMetrics {
     pub socket: Arc<SocketMetrics>,
     /// Metrics collected by net reports.
     pub net_report: Arc<NetReportMetrics>,
-    /// Metrics collected by the portmapper service.
-    pub portmapper: Arc<PortmapMetrics>,
 }
 
 #[cfg(test)]
