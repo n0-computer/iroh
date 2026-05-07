@@ -1110,7 +1110,7 @@
 <a href=#1110 id=1110 data-nosnippet>1110</a>    /// reflect later changes, and it does not include paths that have
 <a href=#1111 id=1111 data-nosnippet>1111</a>    /// already closed.
 <a href=#1112 id=1112 data-nosnippet>1112</a>    ///
-<a href=#1113 id=1113 data-nosnippet>1113</a>    /// To observe changes over time, see [`Connection::path_updates`]
+<a href=#1113 id=1113 data-nosnippet>1113</a>    /// To observe changes over time, see [`Connection::paths_stream`]
 <a href=#1114 id=1114 data-nosnippet>1114</a>    /// for a stream of [`PathList`] snapshots and
 <a href=#1115 id=1115 data-nosnippet>1115</a>    /// [`Connection::path_events`] for individual [`PathEvent`]s.
 <a href=#1116 id=1116 data-nosnippet>1116</a>    ///
@@ -1128,7 +1128,7 @@
 <a href=#1128 id=1128 data-nosnippet>1128</a>    /// The stream borrows this [`Connection`]. To consume it from a
 <a href=#1129 id=1129 data-nosnippet>1129</a>    /// spawned task, move a [`Connection`] clone into the task and
 <a href=#1130 id=1130 data-nosnippet>1130</a>    /// call this method inside.
-<a href=#1131 id=1131 data-nosnippet>1131</a>    </span><span class="kw">pub fn </span>path_updates(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathListStream&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#1131 id=1131 data-nosnippet>1131</a>    </span><span class="kw">pub fn </span>paths_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathListStream&lt;<span class="lifetime">'_</span>&gt; {
 <a href=#1132 id=1132 data-nosnippet>1132</a>        <span class="self">self</span>.data.paths.updates(<span class="kw-2">&amp;</span><span class="self">self</span>.inner)
 <a href=#1133 id=1133 data-nosnippet>1133</a>    }
 <a href=#1134 id=1134 data-nosnippet>1134</a>
@@ -1554,8 +1554,8 @@
 <a href=#1554 id=1554 data-nosnippet>1554</a>        );
 <a href=#1555 id=1555 data-nosnippet>1555</a>        <span class="macro">info!</span>(<span class="string">"connected"</span>);
 <a href=#1556 id=1556 data-nosnippet>1556</a>
-<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_client = conn_client.path_updates();
-<a href=#1558 id=1558 data-nosnippet>1558</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_server = conn_server.path_updates();
+<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_client = conn_client.paths_stream();
+<a href=#1558 id=1558 data-nosnippet>1558</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_server = conn_server.paths_stream();
 <a href=#1559 id=1559 data-nosnippet>1559</a>
 <a href=#1560 id=1560 data-nosnippet>1560</a>        <span class="doccomment">/// Advances the path stream until at least one IP and one relay paths are available.
 <a href=#1561 id=1561 data-nosnippet>1561</a>        ///
