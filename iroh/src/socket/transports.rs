@@ -13,7 +13,6 @@ use bytes::Bytes;
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
-use noq_proto::PathStatus;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use rustc_hash::FxHashMap;
 use tokio_util::sync::CancellationToken;
@@ -717,16 +716,6 @@ pub(crate) enum TransportType {
     /// It will only compete with other backup transports such as the relay
     /// transport based on biased RTT measurements.
     Backup,
-}
-
-impl TransportType {
-    /// Converts to the corresponding QUIC path status.
-    pub(super) fn to_path_status(self) -> PathStatus {
-        match self {
-            Self::Primary => PathStatus::Available,
-            Self::Backup => PathStatus::Backup,
-        }
-    }
 }
 
 /// Bias configuration for a transport type.
