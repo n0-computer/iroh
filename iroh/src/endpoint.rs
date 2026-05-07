@@ -769,7 +769,7 @@ impl Builder {
 
     /// Sets the transport bias for a specific address kind.  Test-only: used by
     /// in-crate tests to set up deterministic path-selection scenarios.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "unstable-custom-transports"))]
     pub(crate) fn transport_bias(
         mut self,
         kind: socket::transports::AddrKind,
