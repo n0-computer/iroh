@@ -53,7 +53,7 @@ mod util;
 /// Init the user namespace before any threads are spawned.
 ///
 /// This gives us all permissions we need for the patchbay tests.
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn userns_ctor() {
     patchbay::init_userns().expect("failed to init userns");
 }
