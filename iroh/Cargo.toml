@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.98.1"
+version = "1.0.0-rc.0"
 edition = "2024"
 readme = "README.md"
 description = "p2p quic connections dialed by public key"
@@ -31,9 +31,9 @@ derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_
 ed25519-dalek = { version = "=3.0.0-pre.7", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
 ipnet = "2"
-iroh-base = { version = "0.98.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
-iroh-dns = { version = "0.98.0", path = "../iroh-dns" }
-iroh-relay = { version = "0.98.0", path = "../iroh-relay", default-features = false }
+iroh-base = { version = "1.0.0-rc.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-dns = { version = "1.0.0-rc.0", path = "../iroh-dns" }
+iroh-relay = { version = "1.0.0-rc.0", path = "../iroh-relay", default-features = false }
 n0-future = "0.3"
 n0-error = "=1.0.0-rc.0"
 n0-watcher = "=1.0.0-rc.0"
@@ -121,7 +121,7 @@ tokio = { version = "1", features = [
     "test-util",
 ] }
 serde_json = "1"
-iroh-relay = { version = "0.98.0", path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
+iroh-relay = { version = "1.0.0-rc.0", path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
 n0-tracing-test = "0.3"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = [
@@ -129,7 +129,7 @@ tracing-subscriber = { version = "0.3", features = [
 ] }
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
-iroh-base = { version = "0.98.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-base = { version = "1.0.0-rc.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 console = { version = "0.16" }
 
 # wasm-in-browser test/dev dependencies

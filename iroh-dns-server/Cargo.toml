@@ -1,6 +1,6 @@
 [package]
 name = "iroh-dns-server"
-version = "0.98.1"
+version = "1.0.0-rc.0"
 edition = "2024"
 description = "A pkarr relay and DNS server"
 license = "MIT OR Apache-2.0"
@@ -28,9 +28,9 @@ hickory-server = { version = "0.26.0", features = ["https-ring"] }
 http = "1.0.0"
 humantime = "2.2.0"
 humantime-serde = "1.1.1"
-iroh-base = { version = "0.98.0", path = "../iroh-base", features = ["key"] }
+iroh-base = { version = "1.0.0-rc.0", path = "../iroh-base", features = ["key"] }
 iroh-metrics = { version = "=1.0.0-rc.0", features = ["service"] }
-iroh-dns = { version = "0.98.0", path = "../iroh-dns" }
+iroh-dns = { version = "1.0.0-rc.0", path = "../iroh-dns" }
 lru = "0.18.0"
 mainline = "6"
 n0-future = "0.3"
@@ -60,7 +60,7 @@ url = "2.5.3"
 criterion = "0.8.0"
 data-encoding = "2.3.3"
 hickory-resolver = { version = "0.26.0", features = ["tls-ring", "https-ring"] }
-iroh = { version = "0.98.1", path = "../iroh" }
+iroh = { version = "1.0.0-rc.0", path = "../iroh" }
 n0-tracing-test = "0.3"
 rand = "0.10"
 simple-dns = "0.11"

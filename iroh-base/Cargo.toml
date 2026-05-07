@@ -1,6 +1,6 @@
 [package]
 name = "iroh-base"
-version = "0.98.0"
+version = "1.0.0-rc.0"
 edition = "2024"
 readme = "README.md"
 description = "base type and utilities for Iroh"

@@ -2296,7 +2296,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.98.1"
+version = "1.0.0-rc.0"
 dependencies = [
  "axum",
  "backon",
@@ -2365,7 +2365,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.98.0"
+version = "1.0.0-rc.0"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -2391,7 +2391,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bench"
-version = "0.98.0"
+version = "1.0.0-rc.0"
 dependencies = [
  "bytes",
  "clap",
@@ -2411,7 +2411,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns"
-version = "0.98.0"
+version = "1.0.0-rc.0"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -2434,7 +2434,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.98.1"
+version = "1.0.0-rc.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2526,7 +2526,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.98.0"
+version = "1.0.0-rc.0"
 dependencies = [
  "ahash",
  "axum",

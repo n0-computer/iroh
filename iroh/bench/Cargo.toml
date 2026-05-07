@@ -1,6 +1,6 @@
 [package]
 name = "iroh-bench"
-version = "0.98.0"
+version = "1.0.0-rc.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
@@ -8,7 +8,7 @@ publish = false
 [dependencies]
 bytes = "1.11"
 hdrhistogram = { version = "7.2", default-features = false }
-iroh = { version = "0.98.1", path = "..", default-features = false }
+iroh = { version = "1.0.0-rc.0", path = "..", default-features = false }
 iroh-metrics = { version = "=1.0.0-rc.0", optional = true }
 n0-future = "0.3"
 n0-error = "=1.0.0-rc.0"
