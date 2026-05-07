@@ -940,7 +940,7 @@ fn spawn_path_watcher(
     output: Output,
 ) -> JoinHandle<()> {
     let print = move |conn: &Connection| {
-        let path = match conn.paths().selected() {
+        let path = match conn.paths().iter().find(|p| p.is_selected()) {
             Some(p) => SelectedPath::Selected {
                 id: p.id(),
                 addr: p.remote_addr().clone(),

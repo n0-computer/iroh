@@ -1128,7 +1128,7 @@ impl Connection<HandshakeCompleted> {
     /// The stream borrows this [`Connection`]. To consume it from a
     /// spawned task, move a [`Connection`] clone into the task and
     /// call this method inside.
-    pub fn path_updates(&self) -> PathListStream<'_> {
+    pub fn paths_stream(&self) -> PathListStream<'_> {
         self.data.paths.updates(&self.inner)
     }
 
@@ -1554,8 +1554,8 @@ mod tests {
         );
         info!("connected");
 
-        let mut paths_client = conn_client.path_updates();
-        let mut paths_server = conn_server.path_updates();
+        let mut paths_client = conn_client.paths_stream();
+        let mut paths_server = conn_server.paths_stream();
 
         /// Advances the path stream until at least one IP and one relay paths are available.
         ///

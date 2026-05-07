@@ -276,7 +276,8 @@ async fn run_hard_nat_to_holepunchable(replug_side: Side) -> Result {
             tokio::time::sleep(Duration::from_secs(3)).await;
             assert!(
                 conn.paths()
-                    .selected()
+                    .iter()
+                    .find(|p| p.is_selected())
                     .expect("no selected path")
                     .is_relay(),
                 "should still be relayed behind symmetric NAT"

@@ -2365,7 +2365,7 @@ mod tests {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.anyerr()?;
             send.write_all(b"hello").await.anyerr()?;
-            let mut paths = conn.path_updates();
+            let mut paths = conn.paths_stream();
             info!("Waiting for direct connection");
             while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
@@ -2470,7 +2470,7 @@ mod tests {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.anyerr()?;
             send.write_all(b"hello").await.anyerr()?;
-            let mut paths = conn.path_updates();
+            let mut paths = conn.paths_stream();
             info!("Waiting for connection");
             'outer: while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
@@ -2576,7 +2576,7 @@ mod tests {
             assert_eq!(path_info.len(), 1);
             assert!(path_info.iter().next().unwrap().is_ip());
 
-            let mut paths = conn.path_updates();
+            let mut paths = conn.paths_stream();
             time::timeout(Duration::from_secs(5), async move {
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");
@@ -2623,7 +2623,7 @@ mod tests {
             // Wait for a relay connection to be added.  Client does all the asserting here,
             // we just want to wait so we get to see all the mechanics of the connection
             // being added on this side too.
-            let mut paths = conn.path_updates();
+            let mut paths = conn.paths_stream();
             time::timeout(Duration::from_secs(5), async move {
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");

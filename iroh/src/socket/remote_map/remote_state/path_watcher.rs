@@ -39,6 +39,7 @@ use tokio_stream::{
     Stream,
     wrappers::{BroadcastStream, errors::BroadcastStreamRecvError},
 };
+use tracing::warn;
 
 use crate::endpoint::PathStats;
 
@@ -65,7 +66,7 @@ pub enum PathEvent {
         /// Path statistics captured at close time.
         last_stats: Box<PathStats>,
     },
-    /// The selected transmission path changed to a different open path.
+    /// This path was selected for transmission of application data.
     Selected {
         /// Path identifier of the newly selected path.
         id: PathId,
@@ -114,14 +115,14 @@ struct Shared {
 ///
 /// [`RemoteStateActor`]: super::RemoteStateActor
 #[derive(Debug)]
-pub(crate) struct PathStateSender {
+pub(super) struct PathStateSender {
     shared: Arc<Shared>,
     events: broadcast::Sender<PathEvent>,
 }
 
 impl PathStateSender {
     /// Creates a sender/receiver pair sharing empty state.
-    pub(crate) fn new() -> (Self, PathStateReceiver) {
+    pub(super) fn new() -> (Self, PathStateReceiver) {
         let (events, _) = broadcast::channel(BROADCAST_CAPACITY);
         let shared = Arc::new(Shared {
             state: Default::default(),
@@ -136,7 +137,7 @@ impl PathStateSender {
     }
 
     /// Records a newly-opened path and emits [`PathEvent::Opened`].
-    pub(crate) fn record_opened(&self, handle: WeakPathHandle, remote_addr: TransportAddr) {
+    pub(super) fn record_opened(&self, handle: WeakPathHandle, remote_addr: TransportAddr) {
         let id = handle.id();
         {
             let mut state = self.shared.state.lock().expect("poisoned");
@@ -154,7 +155,7 @@ impl PathStateSender {
     }
 
     /// Records that a path was abandoned by `noq`.
-    pub(crate) fn record_abandoned(&self, id: PathId, conn: &noq::Connection) {
+    pub(super) fn record_abandoned(&self, id: PathId, conn: &noq::Connection) {
         let removed = {
             let mut state = self.shared.state.lock().expect("poisoned");
             if state.selected == Some(id) {
@@ -180,7 +181,7 @@ impl PathStateSender {
     }
 
     /// Updates the selected transmission path.
-    pub(crate) fn record_selected(&self, remote_addr: TransportAddr) {
+    pub(super) fn record_selected(&self, remote_addr: TransportAddr) {
         let changed = {
             let mut state = self.shared.state.lock().expect("poisoned");
             let selected_path_id = state
@@ -207,29 +208,28 @@ impl PathStateSender {
     /// path with its statistics taken from `closed.path_stats`, marks
     /// the state closed, and drops the sender. No-op if already closed.
     ///
-    /// # Panics
-    ///
-    /// Panics if `closed.path_stats` is missing an entry for a path
-    /// still tracked by `self`. `noq` retains stats for every path
-    /// with a live [`WeakPathHandle`], and `self` holds one per entry,
-    /// so the entry must be present.
-    ///
     /// [`WeakPathHandle`]: noq::WeakPathHandle
-    pub(crate) fn close(self, closed: noq::Closed) {
+    pub(super) fn close(self, closed: noq::Closed) {
         let mut state = self.shared.state.lock().expect("poisoned");
         if !state.closed {
             for entry in state.list.iter() {
-                let stats = closed
+                if let Some(stats) = closed
                     .path_stats
                     .iter()
                     .find(|(id, _stats)| *id == entry.handle.id())
                     .map(|(_id, stats)| stats)
-                    .expect("noq::Closed contains stats for every path with a live handle");
-                let _ = self.events.send(PathEvent::Closed {
-                    id: entry.handle.id(),
-                    remote_addr: entry.remote_addr.clone(),
-                    last_stats: Box::new(*stats),
-                });
+                {
+                    let _ = self.events.send(PathEvent::Closed {
+                        id: entry.handle.id(),
+                        remote_addr: entry.remote_addr.clone(),
+                        last_stats: Box::new(*stats),
+                    });
+                } else {
+                    warn!(
+                        "Connection close event is missing path stats for path {}",
+                        entry.handle.id()
+                    );
+                }
             }
             state.closed = true;
             self.shared.notify.notify_waiters();
@@ -332,13 +332,6 @@ impl<'conn> PathList<'conn> {
         }
     }
 
-    /// Returns the path that was selected when this snapshot was taken.
-    ///
-    /// Returns `None` if no path was selected at that moment.
-    pub fn selected(&self) -> Option<Path<'_>> {
-        self.get(self.snapshot.selected?)
-    }
-
     /// Returns the path with the given [`PathId`].
     ///
     /// Returns `None` if no open path with that id is present in
@@ -368,8 +361,8 @@ impl<'a> PathListIter<'a> {
     fn item(&self, data: &'a PathData) -> Path<'a> {
         Path {
             data,
-            conn: self.conn,
             is_selected: self.selected == Some(data.handle.id()),
+            _conn: self.conn,
         }
     }
 }
@@ -397,19 +390,30 @@ impl ExactSizeIterator for PathListIter<'_> {}
 /// A single path within a [`PathList`] snapshot.
 ///
 /// Borrows from the enclosing [`PathList`] and from the [`Connection`]
-/// that produced it, so a [`Path`] cannot cross a task boundary.
-/// Clone [`remote_addr`](Self::remote_addr) or read
-/// [`stats`](Self::stats) into an owned value first.
+/// that produced it, so a [`Path`] cannot cross a task boundary. If you need
+/// to send path data to other tasks, you can clone [`Self::remote_addr`] or
+/// [`Self::stats`] into an owned value first.
 ///
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(Clone, Debug)]
 pub struct Path<'a> {
     data: &'a PathData,
-    conn: &'a noq::Connection,
     is_selected: bool,
+    /// Unused reference to a `noq::Connection` that makes [`Self::upgraded`] safe.
+    _conn: &'a noq::Connection,
 }
 
 impl<'conn> Path<'conn> {
+    /// Returns a strong [`noq::Path`].
+    ///
+    /// We know the `upgrade` can never fail because we are holding a `&noq::Connection` on `self`.
+    fn upgraded(&self) -> noq::Path {
+        self.data
+            .handle
+            .upgrade()
+            .expect("&Connection is held on self so upgrade cannot fail")
+    }
+
     /// Returns the path's [`PathId`].
     pub fn id(&self) -> PathId {
         self.data.handle.id()
@@ -420,8 +424,7 @@ impl<'conn> Path<'conn> {
         &self.data.remote_addr
     }
 
-    /// Returns `true` if this was the selected transmission path when
-    /// the enclosing [`PathList`] snapshot was taken.
+    /// Returns `true` if this path is currently selected for application data transmission.
     pub fn is_selected(&self) -> bool {
         self.is_selected
     }
@@ -442,9 +445,7 @@ impl<'conn> Path<'conn> {
     /// the final statistics retained by `noq` for a path that closed
     /// after this snapshot was taken.
     pub fn stats(&self) -> PathStats {
-        self.conn
-            .path_stats(self.data.handle.id())
-            .expect("Holding a WeakPathHandle makes noq::Connection::path_stats infallible")
+        self.upgraded().stats()
     }
 
     /// Returns the path's round-trip time estimate.

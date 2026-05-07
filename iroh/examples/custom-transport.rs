@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
                 path.rtt()
             );
         }
-        let selected_path = paths.selected();
+        let selected_path = paths.iter().find(|p| p.is_selected());
         let is_test_transport = selected_path.as_ref().is_some_and(|p| {
             matches!(p.remote_addr(), TransportAddr::Custom(addr) if addr.id() == TEST_TRANSPORT_ID)
         });

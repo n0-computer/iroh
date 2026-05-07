@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 
 use self::path_state::RemotePathState;
-pub(crate) use self::path_watcher::{PathStateReceiver, PathStateSender};
+pub(crate) use self::path_watcher::PathStateReceiver;
 pub use self::{
     path_watcher::{Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream},
     remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage},
@@ -35,7 +35,7 @@ use crate::{
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
-        remote_map::to_transport_addr,
+        remote_map::{remote_state::path_watcher::PathStateSender, to_transport_addr},
         transports::{self, OwnedTransmit, PathSelectionData, TransportBiasMap, TransportsSender},
     },
     util::MaybeFuture,
