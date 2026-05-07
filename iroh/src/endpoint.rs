@@ -1493,7 +1493,7 @@ impl Endpoint {
     /// For example, the following snippet launches an HTTP server that serves the metrics in the
     /// OpenMetrics text format:
     /// ```no_run
-    /// # use std::{sync::{Arc, RwLock}, time::Duration};
+    /// # use std::sync::{Arc, RwLock};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::{Endpoint, presets};
     /// # use n0_error::{StackResultExt, StdResultExt};
@@ -1501,21 +1501,17 @@ impl Endpoint {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
     /// let registry = Arc::new(RwLock::new(Registry::default()));
-    /// // Spawn a task to serve the metrics on an OpenMetrics HTTP endpoint.
-    /// let metrics_task = tokio::task::spawn({
-    ///     let registry = registry.clone();
-    ///     async move {
-    ///         let addr = "0.0.0.0:9100".parse().unwrap();
-    ///         iroh_metrics::service::start_metrics_server(addr, registry).await
-    ///     }
-    /// });
+    /// // Spawn an OpenMetrics HTTP server backed by the registry.
+    /// let addr = "0.0.0.0:9100".parse().unwrap();
+    /// let metrics_server = iroh_metrics::service::MetricsServer::spawn(addr, registry.clone())
+    ///     .await
+    ///     .std_context("spawn metrics server")?;
     ///
     /// // Spawn an endpoint and add the metrics to the registry.
     /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// registry.write().unwrap().register_all(endpoint.metrics());
     ///
-    /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
-    /// tokio::time::sleep(Duration::from_millis(500));
+    /// // Fetch the metrics via HTTP.
     /// let res = reqwest::get("http://localhost:9100/metrics")
     ///     .await
     ///     .std_context("get")?
@@ -1525,7 +1521,7 @@ impl Endpoint {
     ///
     /// assert!(res.contains(r#"TYPE socket_recv_datagrams counter"#));
     /// assert!(res.contains(r#"socket_recv_datagrams_total 0"#));
-    /// # metrics_task.abort();
+    /// # metrics_server.shutdown().await;
     /// # Ok(())
     /// # }
     /// ```
