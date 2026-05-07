@@ -189,7 +189,7 @@
 <a href=#189 id=189 data-nosnippet>189</a>            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
 <a href=#190 id=190 data-nosnippet>190</a>        ];
 <a href=#191 id=191 data-nosnippet>191</a>
-<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span>.anyerr()<span class="question-mark">? </span>{
+<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_many_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span>.anyerr()<span class="question-mark">? </span>{
 <a href=#193 id=193 data-nosnippet>193</a>            <span class="kw">if </span>first_byte {
 <a href=#194 id=194 data-nosnippet>194</a>                ttfb = download_start.elapsed();
 <a href=#195 id=195 data-nosnippet>195</a>                first_byte = <span class="bool-val">false</span>;
