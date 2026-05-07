@@ -145,14 +145,14 @@ use crate::{Endpoint, endpoint::EndpointError};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
-#[cfg(feature = "address-lookup-mdns")]
+#[cfg(all(not(wasm_browser), feature = "address-lookup-mdns"))]
 pub mod mdns;
 pub mod memory;
 pub mod pkarr;
 
 #[cfg(not(wasm_browser))]
 pub use dns::*;
-#[cfg(feature = "address-lookup-mdns")]
+#[cfg(all(not(wasm_browser), feature = "address-lookup-mdns"))]
 pub use mdns::*;
 pub use memory::*;
 #[cfg(feature = "address-lookup-pkarr-dht")]

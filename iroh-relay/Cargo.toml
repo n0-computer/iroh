@@ -31,8 +31,6 @@ derive_more = { version = "2.0.1", features = [
 ] }
 http = "1"
 http-body-util = "0.1.0"
-hyper = { version = "1", features = ["server", "client", "http1"] }
-hyper-util = "0.1.1"
 iroh-base = { version = "0.98.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-dns = { version = "0.98.0", path = "../iroh-dns" }
 iroh-metrics = { version = "0.38", default-features = false }
@@ -87,6 +85,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+hyper = { version = "1", features = ["server", "client", "http1"] }
+hyper-util = "0.1.1"
 hickory-resolver = { version = "=0.26.0-beta.4", features = ["tokio", "system-config"] }
 tokio = { version = "1", features = [
     "io-util",

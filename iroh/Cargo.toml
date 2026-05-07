@@ -70,8 +70,7 @@ webpki-roots = "1.0.3"
 # metrics
 iroh-metrics = { version = "0.38", default-features = false }
 
-# mdns
-swarm-discovery = { version = "=0.6.0-alpha.2", optional = true }
+# mdns (gated to non-wasm below)
 futures-util = "0.3"
 
 # test_utils
@@ -83,6 +82,7 @@ axum = { version = "0.8", optional = true }
 hickory-resolver = { version = "=0.26.0-beta.4", default-features = false }
 portmapper = { version = "0.16", optional = true, default-features = false }
 noq = { version = "0.18.0", default-features = false, features = ["runtime-tokio", "rustls"] }
+swarm-discovery = { version = "=0.6.0-alpha.2", optional = true }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
