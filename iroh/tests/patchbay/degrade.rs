@@ -9,7 +9,7 @@ use patchbay::{LinkCondition, LinkDirection, LinkLimits, Nat};
 use testdir::testdir;
 use tracing::info;
 
-use super::util::{Pair, PathWatcherExt, lab_with_relay, ping_accept, ping_open};
+use super::util::{Pair, PathConnectionExt, lab_with_relay, ping_accept, ping_open};
 
 /// Increasingly degraded link conditions applied to one side of the connection.
 ///
@@ -123,12 +123,8 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<()> {
                 Ok(())
             })
             .client(client, async move |_dev, _ep, conn| {
-                let mut paths = conn.paths();
                 info!("waiting for connection to become direct");
-                paths
-                    .wait_ip(timeout)
-                    .await
-                    .context("holepunch to direct")?;
+                conn.wait_ip(timeout).await.context("holepunch to direct")?;
                 info!("direct path established, sending ping");
                 ping_open(&conn, timeout).await.context("ping_open")?;
                 info!("ping complete");

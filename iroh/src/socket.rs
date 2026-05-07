@@ -76,7 +76,7 @@ use crate::{
     runtime::Runtime,
     socket::{
         concurrent_read_map::ReadOnlyMap,
-        remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
+        remote_map::{MappedAddrs, PathStateReceiver, RemoteInfo},
         transports::{HomeRelayWatch, HomeRelayWatcher, TransportBiasMap},
     },
     tls::{
@@ -1344,14 +1344,14 @@ impl EndpointInner {
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
     ///
-    /// Returns a future that resolves to [`PathWatchable`].
+    /// Returns a future that resolves to a [`PathStateReceiver`] for the new connection.
     ///
-    /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
+    /// The returned future is `'static`, so it can be stored without being lifetime-bound to `&self`.
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
         conn: WeakConnectionHandle,
-    ) -> impl Future<Output = Result<PathWatchable, RemoteStateActorStoppedError>> + Send + 'static
+    ) -> impl Future<Output = Result<PathStateReceiver, RemoteStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
         let sender = self.actor_sender.clone();
@@ -1379,7 +1379,7 @@ enum ActorMessage {
     AddConnection(
         EndpointId,
         WeakConnectionHandle,
-        oneshot::Sender<PathWatchable>,
+        oneshot::Sender<PathStateReceiver>,
     ),
     /// Re-evaluate direct addresses, e.g. after configured external addresses changed.
     DirectAddrRefresh,
@@ -2211,9 +2211,9 @@ mod tests {
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            for info in conn.paths().get().iter() {
+            for info in conn.paths().iter() {
                 assert!(
-                    info.stats().unwrap().lost_packets < 10,
+                    info.stats().lost_packets < 10,
                     "[receiver] path {:?} should not loose many packets",
                     info.remote_addr()
                 );
@@ -2265,9 +2265,9 @@ mod tests {
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            for info in conn.paths().get().iter() {
+            for info in conn.paths().iter() {
                 assert!(
-                    info.stats().unwrap().lost_packets < 10,
+                    info.stats().lost_packets < 10,
                     "[sender] path {:?} should not loose many packets",
                     info.remote_addr()
                 );
