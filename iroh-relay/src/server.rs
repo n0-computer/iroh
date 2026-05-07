@@ -466,6 +466,7 @@ pub struct Server {
     /// The main task running the server.
     supervisor: AbortOnDropHandle<Result<(), SupervisorError>>,
     metrics: RelayMetrics,
+    metrics_server: Option<iroh_metrics::service::MetricsServer>,
 }
 
 /// Server spawn errors
@@ -488,6 +489,11 @@ pub enum SpawnError {
         source: std::io::Error,
         addr: SocketAddr,
     },
+    #[error("Error starting metrics server")]
+    Metrics {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
 }
 
 /// Server task errors
@@ -495,11 +501,6 @@ pub enum SpawnError {
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum SupervisorError {
-    #[error("Error starting metrics server")]
-    Metrics {
-        #[error(std_err)]
-        source: std::io::Error,
-    },
     #[error("Acme event stream finished")]
     AcmeEventStreamFinished {},
     #[error(transparent)]
@@ -520,20 +521,21 @@ impl Server {
 
         let metrics = RelayMetrics::default();
 
+        #[cfg(not(feature = "metrics"))]
+        let metrics_server = None;
+
         #[cfg(feature = "metrics")]
-        if let Some(addr) = config.metrics_addr {
+        let metrics_server = if let Some(addr) = config.metrics_addr {
             debug!("Starting metrics server");
             let mut registry = iroh_metrics::Registry::default();
             registry.register_all(&metrics);
-            tasks.spawn(
-                async move {
-                    iroh_metrics::service::start_metrics_server(addr, Arc::new(registry))
-                        .await
-                        .map_err(|err| e!(SupervisorError::Metrics, err))
-                }
-                .instrument(info_span!("metrics-server")),
-            );
-        }
+            let server = iroh_metrics::service::MetricsServer::spawn(addr, Arc::new(registry))
+                .await
+                .map_err(|err| e!(SpawnError::Metrics, err))?;
+            Some(server)
+        } else {
+            None
+        };
 
         let (relay_server, http_addr, tls_config) = match config.relay {
             Some(relay_config) => {
@@ -683,6 +685,7 @@ impl Server {
             quic_handle,
             supervisor: AbortOnDropHandle::new(task),
             metrics,
+            metrics_server,
         })
     }
 
@@ -697,6 +700,9 @@ impl Server {
         }
         if let Some(handle) = self.quic_handle {
             handle.shutdown();
+        }
+        if let Some(server) = self.metrics_server {
+            server.shutdown().await;
         }
         self.supervisor.await?
     }
@@ -1085,7 +1091,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_conflicting_bind() {
-        let mut server = Server::spawn(ServerConfig {
+        let res = Server::spawn(ServerConfig {
             relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
                 tls: None,
@@ -1096,12 +1102,7 @@ mod tests {
             quic: None,
             metrics_addr: Some((Ipv4Addr::LOCALHOST, 1234).into()),
         })
-        .await
-        .unwrap();
-        let res = tokio::time::timeout(Duration::from_secs(5), server.join())
-            .await
-            .expect("timeout, server not finished")
-            .expect("server task JoinError");
+        .await;
         assert!(res.is_err()); // AddrInUse
     }
 
