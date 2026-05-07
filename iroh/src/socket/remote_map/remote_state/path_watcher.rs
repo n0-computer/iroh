@@ -94,6 +94,19 @@ struct PathData {
     remote_addr: TransportAddr,
 }
 
+impl PathData {
+    /// Returns a strong [`noq::Path`].
+    ///
+    /// # Panics
+    ///
+    /// This may panic if the passed `noq::Connection` is not the one to which this path belongs.
+    fn upgrade(&self, _conn: &noq::Connection) -> noq::Path {
+        self.handle
+            .upgrade()
+            .expect("Wrong Connection reference passed to PathData::upgrade")
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 struct State {
     list: SmallVec<[PathData; 4]>,
@@ -168,9 +181,7 @@ impl PathStateSender {
                 .map(|pos| state.list.remove(pos))
         };
         if let Some(data) = removed {
-            let stats = conn
-                .path_stats(data.handle.id())
-                .expect("Holding a WeakPathHandle makes Connection::path_stats infallible");
+            let stats = data.upgrade(conn).stats();
             self.shared.notify.notify_waiters();
             let _ = self.events.send(PathEvent::Closed {
                 id,
@@ -212,22 +223,22 @@ impl PathStateSender {
     pub(super) fn close(self, closed: noq::Closed) {
         let mut state = self.shared.state.lock().expect("poisoned");
         if !state.closed {
-            for entry in state.list.iter() {
+            for path in state.list.iter() {
                 if let Some(stats) = closed
                     .path_stats
                     .iter()
-                    .find(|(id, _stats)| *id == entry.handle.id())
+                    .find(|(id, _stats)| *id == path.handle.id())
                     .map(|(_id, stats)| stats)
                 {
                     let _ = self.events.send(PathEvent::Closed {
-                        id: entry.handle.id(),
-                        remote_addr: entry.remote_addr.clone(),
+                        id: path.handle.id(),
+                        remote_addr: path.remote_addr.clone(),
                         last_stats: Box::new(*stats),
                     });
                 } else {
                     warn!(
                         "Connection close event is missing path stats for path {}",
-                        entry.handle.id()
+                        path.handle.id()
                     );
                 }
             }
@@ -362,7 +373,7 @@ impl<'a> PathListIter<'a> {
         Path {
             data,
             is_selected: self.selected == Some(data.handle.id()),
-            _conn: self.conn,
+            conn: self.conn,
         }
     }
 }
@@ -399,21 +410,11 @@ impl ExactSizeIterator for PathListIter<'_> {}
 pub struct Path<'a> {
     data: &'a PathData,
     is_selected: bool,
-    /// Unused reference to a `noq::Connection` that makes [`Self::upgraded`] safe.
-    _conn: &'a noq::Connection,
+    /// Reference to a `noq::Connection` that makes [`Self::upgraded`] safe.
+    conn: &'a noq::Connection,
 }
 
 impl<'conn> Path<'conn> {
-    /// Returns a strong [`noq::Path`].
-    ///
-    /// We know the `upgrade` can never fail because we are holding a `&noq::Connection` on `self`.
-    fn upgraded(&self) -> noq::Path {
-        self.data
-            .handle
-            .upgrade()
-            .expect("&Connection is held on self so upgrade cannot fail")
-    }
-
     /// Returns the path's [`PathId`].
     pub fn id(&self) -> PathId {
         self.data.handle.id()
@@ -445,7 +446,7 @@ impl<'conn> Path<'conn> {
     /// the final statistics retained by `noq` for a path that closed
     /// after this snapshot was taken.
     pub fn stats(&self) -> PathStats {
-        self.upgraded().stats()
+        self.data.upgrade(self.conn).stats()
     }
 
     /// Returns the path's round-trip time estimate.
