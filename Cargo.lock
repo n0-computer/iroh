@@ -3169,8 +3169,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "1.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22739e0831e40f5ab7d6ac5317ed80bfe5fb3f44be57d23fa2eea8bff83fb303"
+source = "git+https://github.com/n0-computer/noq?branch=main#6a114f5a7f423ca9f48408afd068c3ecc952b546"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3191,8 +3190,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cee32450cf726b223ac4154003c93cb52fbde159ab1240990e88945bf3ae35e"
+source = "git+https://github.com/n0-computer/noq?branch=main#6a114f5a7f423ca9f48408afd068c3ecc952b546"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3222,8 +3220,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78633d1fe1bde91d12bcabb230ac9edb890857414c6d44f3212e0d309525b5ff"
+source = "git+https://github.com/n0-computer/noq?branch=main#6a114f5a7f423ca9f48408afd068c3ecc952b546"
 dependencies = [
  "cfg_aliases",
  "libc",
