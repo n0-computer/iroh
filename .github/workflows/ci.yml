@@ -142,6 +142,18 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install --version 4.1.2 cargo-ndk
 
+      # cargo-apk is used by the NativeActivity smoke test under
+      # iroh-dns/tests/android_apk/. Only x86_64-linux-android runs the
+      # emulator, but installing it on every Android matrix entry is
+      # cheap with cargo-binstall.
+      - name: Install cargo-binstall
+        if: matrix.target == 'x86_64-linux-android'
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-apk
+        if: matrix.target == 'x86_64-linux-android'
+        run: cargo binstall --no-confirm cargo-apk
+
       # Replace cargo-ndk-runner with a wrapper that forwards RUST_LOG
       # and RUST_BACKTRACE into the emulator shell. The upstream binary
       # does `adb shell <bin>` without inheriting any host env.
@@ -220,6 +232,16 @@ jobs:
             cargo ndk test -p iroh-dns --features tls-ring
             cargo ndk test -p iroh-relay --features tls-ring,metrics
             cargo ndk test -p iroh --features tls-ring,metrics,portmapper,test-utils
+            # APK smoke test: a real NativeActivity exercises the JNI path
+            # against the emulator's ConnectivityService. cargo-apk does not
+            # propagate the in-app exit code, so poll logcat for `RESULT=ok`.
+            # `android-emulator-runner` runs each line in its own `sh -c`,
+            # so multi-line constructs have to stay on one line.
+            adb logcat -c
+            (cd iroh-dns/tests/android_apk && cargo apk run --no-logcat --target $CARGO_NDK_TARGET)
+            for _ in $(seq 1 60); do adb logcat -d -v raw | grep -qF 'RESULT=ok' && break || sleep 1; done
+            adb logcat -d -v raw | grep -qF 'RESULT=ok' || { echo "iroh-dns-android-test: timed out waiting for RESULT=ok" >&2; adb logcat -d | grep -E 'iroh_dns_smoke|net.iroh.dns.test|FATAL|AndroidRuntime' | tail -100; exit 1; }
+            echo "iroh-dns-android-test: ok"
 
   cross_test:
     name: Cross Test
