@@ -93,3 +93,10 @@ vergen-gitcl = "9.1"
 
 [package.metadata.docs.rs]
 all-features = true
+
+[package.metadata.cargo_check_external_types]
+allowed_external_types = [
+    "iroh_metrics::*",
+    "n0_error::*",
+    "serde_core::*",
+]
