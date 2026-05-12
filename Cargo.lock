@@ -3169,7 +3169,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#6a114f5a7f423ca9f48408afd068c3ecc952b546"
+source = "git+https://github.com/n0-computer/noq?branch=matheus23%2Fpath-event-non-exhaustive#e489060841b2f5dc972b2620c141f35d4fe75459"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3190,7 +3190,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#6a114f5a7f423ca9f48408afd068c3ecc952b546"
+source = "git+https://github.com/n0-computer/noq?branch=matheus23%2Fpath-event-non-exhaustive#e489060841b2f5dc972b2620c141f35d4fe75459"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3220,7 +3220,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/n0-computer/noq?branch=main#6a114f5a7f423ca9f48408afd068c3ecc952b546"
+source = "git+https://github.com/n0-computer/noq?branch=matheus23%2Fpath-event-non-exhaustive#e489060841b2f5dc972b2620c141f35d4fe75459"
 dependencies = [
  "cfg_aliases",
  "libc",

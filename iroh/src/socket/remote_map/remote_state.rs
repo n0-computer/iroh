@@ -959,6 +959,12 @@ impl RemoteStateActor {
             NoqPathEvent::RemoteStatus { .. } | NoqPathEvent::ObservedAddr { .. } => {
                 // Nothing to do for these events.
             }
+            _ => {
+                // PathEvent is #[non_exhaustive].
+                // It's possible this version of iroh is linked against a newer version of
+                // noq-proto with more events we don't know how to handle yet.
+                // So we ignore them.
+            }
         }
     }
 
