@@ -198,7 +198,12 @@ jobs:
               # Native build on self-hosted linux runners; use musl-gcc from musl-tools.
               export CARGO_TARGET_$(echo ${{ matrix.cargo_targets }} | tr 'a-z-' 'A-Z_')_LINKER=musl-gcc
               export CC=musl-gcc
-              export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C link-arg=-static"
+              # `relocation-model=static` is required so rustc selects the
+              # non-PIE musl crt1.o (not rcrt1.o) to match the ET_EXEC binary
+              # produced by `musl-gcc -static`. Without it the PIE startup
+              # code (rcrt1.o) ends up linked into a non-PIE binary and the
+              # process segfaults in `_start_c` before reaching `main`.
+              export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C relocation-model=static -C link-arg=-static"
             fi
             cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
 
