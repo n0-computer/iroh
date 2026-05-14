@@ -421,79 +421,77 @@ impl RemoteStateActor {
     /// Error returns are fatal and kill the actor.
     fn handle_msg_add_connection(
         &mut self,
-        handle: WeakConnectionHandle,
+        conn: noq::Connection,
         tx: oneshot::Sender<PathStateReceiver>,
     ) {
         let (path_state_sender, path_state_receiver) = PathStateSender::new();
-        if let Some(conn) = handle.upgrade() {
-            self.metrics.num_conns_opened.inc();
-            // Remove any conflicting stable_ids from the local state.
-            let conn_id = ConnId(conn.stable_id());
-            self.connections.remove(&conn_id);
+        self.metrics.num_conns_opened.inc();
+        // Remove any conflicting stable_ids from the local state.
+        let conn_id = ConnId(conn.stable_id());
+        self.connections.remove(&conn_id);
 
-            // Hook up paths, NAT addresses and connection closed event streams.
-            self.path_events
-                .push(Box::pin(conn.path_events().map(move |evt| (conn_id, evt))));
-            self.addr_events.push(Box::pin(
-                conn.nat_traversal_updates().map(move |evt| (conn_id, evt)),
-            ));
-            self.connections_close.push(OnClosed::new(&conn));
+        // Hook up paths, NAT addresses and connection closed event streams.
+        self.path_events
+            .push(Box::pin(conn.path_events().map(move |evt| (conn_id, evt))));
+        self.addr_events.push(Box::pin(
+            conn.nat_traversal_updates().map(move |evt| (conn_id, evt)),
+        ));
+        self.connections_close.push(OnClosed::new(&conn));
 
-            // Add local addrs to the connection
-            let local_addrs = self
-                .local_direct_addrs
-                .get()
-                .iter()
-                .map(|d| d.addr)
-                .collect::<BTreeSet<_>>();
-            Self::update_qnt_candidates(&conn, &local_addrs);
+        // Add local addrs to the connection
+        let local_addrs = self
+            .local_direct_addrs
+            .get()
+            .iter()
+            .map(|d| d.addr)
+            .collect::<BTreeSet<_>>();
+        Self::update_qnt_candidates(&conn, &local_addrs);
 
-            // Store the connection
-            let conn_state = self
-                .connections
-                .entry(conn_id)
-                .insert_entry(ConnectionState {
-                    handle: handle.clone(),
-                    path_state: path_state_sender,
-                    paths: Default::default(),
-                    has_been_direct: false,
-                })
-                .into_mut();
+        // Store the connection
+        let conn_state = self
+            .connections
+            .entry(conn_id)
+            .insert_entry(ConnectionState {
+                handle: conn.weak_handle(),
+                path_state: path_state_sender,
+                paths: Default::default(),
+                has_been_direct: false,
+            })
+            .into_mut();
 
-            // Store PathId(0), set path_status and select best path, check if holepunching
-            // is needed.
-            if let Some(path) = conn.path(PathId::ZERO)
-                && let Ok(socketaddr) = path.remote_address()
-                && let Some(path_remote) = to_transport_addr(
-                    socketaddr,
-                    &self.relay_mapped_addrs,
-                    &self.custom_mapped_addrs,
-                )
-            {
-                trace!(?path_remote, "added new connection");
+        // Store PathId(0), set path_status and select best path, check if holepunching
+        // is needed.
+        if let Some(path) = conn.path(PathId::ZERO)
+            && let Ok(socketaddr) = path.remote_address()
+            && let Some(path_remote) = to_transport_addr(
+                socketaddr,
+                &self.relay_mapped_addrs,
+                &self.custom_mapped_addrs,
+            )
+        {
+            trace!(?path_remote, "added new connection");
 
-                conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
-                self.paths
-                    .insert_open_path(path_remote.clone(), Source::Connection);
-                self.configure_path(conn_id, &path, &path_remote);
-                self.select_path();
+            conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
+            self.paths
+                .insert_open_path(path_remote.clone(), Source::Connection);
+            self.configure_path(conn_id, &path, &path_remote);
+            self.select_path();
 
-                if path_remote.is_ip() {
-                    // We may have raced this with a relay address.  Try and add any
-                    // relay addresses we have back.
-                    let relays = self
-                        .paths
-                        .addrs()
-                        .filter(|a| a.is_relay())
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    for remote in relays {
-                        self.open_path(&remote);
-                    }
+            if path_remote.is_ip() {
+                // We may have raced this with a relay address.  Try and add any
+                // relay addresses we have back.
+                let relays = self
+                    .paths
+                    .addrs()
+                    .filter(|a| a.is_relay())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for remote in relays {
+                    self.open_path(&remote);
                 }
             }
-            self.trigger_holepunching();
         }
+        self.trigger_holepunching();
         tx.send(path_state_receiver).ok();
     }
 
@@ -1200,7 +1198,7 @@ pub(crate) enum RemoteStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, oneshot::Sender<PathStateReceiver>),
+    AddConnection(noq::Connection, oneshot::Sender<PathStateReceiver>),
     /// Asks if there is any possible path that could be used.
     ///
     /// This adds the provided transport addresses to the list of potential paths for this
