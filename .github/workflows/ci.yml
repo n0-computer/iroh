@@ -290,7 +290,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.18.1
+        uses: cargo-bins/cargo-binstall@v1.19.1
 
       - name: Install wasm-bindgen-test-runner
         # Match the version of wasm-bindgen used in Cargo.lock
@@ -380,10 +380,10 @@ jobs:
         with:
           toolchain: ${{ env.CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.18.1
+        uses: cargo-bins/cargo-binstall@v1.19.1
 
       - name: Install cargo-check-external-types
         # Match the version of wasm-bindgen used in Cargo.lock
