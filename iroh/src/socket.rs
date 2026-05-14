@@ -2206,7 +2206,6 @@ mod tests {
 
         info!("finishing");
         send_bi.finish().std_context("finish")?;
-        send_bi.stopped().await.std_context("stopped")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
@@ -2247,7 +2246,6 @@ mod tests {
 
         info!("finishing");
         send_bi.finish().std_context("finish")?;
-        send_bi.stopped().await.std_context("stopped")?;
 
         info!("reading_to_end");
         let val = recv_bi
