@@ -182,3 +182,29 @@ required-features = ["server"]
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "iroh_docsrs"]
+
+[package.metadata.cargo_check_external_types]
+allowed_external_types = [
+    # workspace crates
+    "iroh_base::*",
+    "iroh_dns::*",
+    # crates owned by us that will move to 1.0 as well
+    "iroh_metrics::*",
+    "n0_error::*",
+    "noq::*",
+    "noq_proto::*",
+    # 1.0 crates that we deem fine to be part of the public API
+    "bytes::*",
+    "http::*",
+    "http_body::*",
+    "hyper::*",
+    "rustls_pki_types::*",
+    "serde_core::*",
+    "tokio::*",
+    "url::*",
+    # non-1.0 crates that we decided to accept in the public API
+    "rustls::*",
+    "tokio_rustls::*",
+    "futures_core::stream::Stream",
+    "futures_sink::Sink",
+]
