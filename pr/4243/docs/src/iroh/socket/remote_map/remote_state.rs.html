@@ -879,7 +879,7 @@
 <a href=#879 id=879 data-nosnippet>879</a>        };
 <a href=#880 id=880 data-nosnippet>880</a>        <span class="macro">trace!</span>(<span class="string">"path event"</span>);
 <a href=#881 id=881 data-nosnippet>881</a>        <span class="kw">match </span>event {
-<a href=#882 id=882 data-nosnippet>882</a>            NoqPathEvent::Opened { id: path_id } =&gt; {
+<a href=#882 id=882 data-nosnippet>882</a>            NoqPathEvent::Established { id: path_id } =&gt; {
 <a href=#883 id=883 data-nosnippet>883</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(path) = conn.path(path_id) <span class="kw">else </span>{
 <a href=#884 id=884 data-nosnippet>884</a>                    <span class="macro">trace!</span>(<span class="string">"path open event for unknown path"</span>);
 <a href=#885 id=885 data-nosnippet>885</a>                    <span class="kw">return</span>;
