@@ -970,27 +970,24 @@ impl RemoteStateActor {
     fn select_path(&mut self) {
         // Find the lowest RTT across all connections for each open path.  The long way, so
         // we get to log *all* RTTs.
-        let mut all_path_rtts: FxHashMap<transports::Addr, Vec<Duration>> = FxHashMap::default();
+        let mut all_path_rtts: FxHashMap<&transports::Addr, Vec<Duration>> = FxHashMap::default();
         for conn_state in self.connections.values() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
             for (path_id, addr) in conn_state.paths.iter() {
                 if let Some(stats) = conn.path_stats(*path_id) {
-                    all_path_rtts
-                        .entry(addr.clone())
-                        .or_default()
-                        .push(stats.rtt);
+                    all_path_rtts.entry(addr).or_default().push(stats.rtt);
                 }
             }
         }
         trace!(?all_path_rtts, "dumping all path RTTs");
-        let path_rtts: FxHashMap<transports::Addr, PathSelectionData> = all_path_rtts
+        let path_rtts: FxHashMap<&transports::Addr, PathSelectionData> = all_path_rtts
             .into_iter()
             .filter_map(|(addr, rtts)| rtts.into_iter().min().map(|rtt| (addr, rtt)))
             .map(|(addr, rtt)| {
                 (
-                    addr.clone(),
+                    addr,
                     self.state.transport_bias.path_selection_data(&addr, rtt),
                 )
             })
@@ -1061,9 +1058,7 @@ impl RemoteStateActor {
                         Err(noq_proto::ClosePathError::ClosedPath) => {
                             // We already closed this.
                         }
-                        Ok(_fut) => {
-                            // We will handle the event in Self::handle_path_events.
-                        }
+                        Ok(()) => {}
                     }
                     continue;
                 }
@@ -1176,29 +1171,29 @@ impl State {
 
 /// Returns `Some` if a new path should be selected, `None` if the `current_path` should
 /// continued to be used.
-fn select_best_path(
-    all_paths: FxHashMap<transports::Addr, PathSelectionData>,
-    current_path: Option<&transports::Addr>,
+fn select_best_path<'a>(
+    all_paths: FxHashMap<&'a transports::Addr, PathSelectionData>,
+    current_path: Option<&'a transports::Addr>,
 ) -> Option<(transports::Addr, Duration)> {
     // Determine the best new path according to sort_key.
     // If there is no path, return None.
     let (best_addr, best_data) = all_paths.iter().min_by_key(|(_, psd)| psd.sort_key())?;
     // If there is no current path, always switch to the best path.
     let Some(addr) = current_path else {
-        return Some((best_addr.clone(), best_data.rtt));
+        return Some(((*best_addr).clone(), best_data.rtt));
     };
     // Get current data. If we don't have data for the current path, switch to the best path.
     let Some(current_data) = all_paths.get(addr) else {
-        return Some((best_addr.clone(), best_data.rtt));
+        return Some(((*best_addr).clone(), best_data.rtt));
     };
     if current_data.transport_type != best_data.transport_type {
         // Always switch if the status is different (better).
-        Some((best_addr.clone(), best_data.rtt))
+        Some(((*best_addr).clone(), best_data.rtt))
     } else if best_data.biased_rtt + RTT_SWITCHING_MIN_IP.as_nanos() as i128
         <= current_data.biased_rtt
     {
         // For the same status, only switch if the biased RTT is significantly better.
-        Some((best_addr.clone(), best_data.rtt))
+        Some(((*best_addr).clone(), best_data.rtt))
     } else {
         None
     }
@@ -1462,10 +1457,12 @@ mod tests {
 
     #[test]
     fn test_ipv6_wins_over_ipv4_within_bias() {
+        let v4 = v4(1);
+        let v6 = v6(1);
         // IPv6 should win over IPv4 when RTTs are the same
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 10));
-        paths.insert(v6(1), psd_v6(TransportType::Primary, 10));
+        paths.insert(&v4, psd(TransportType::Primary, 10));
+        paths.insert(&v6, psd_v6(TransportType::Primary, 10));
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1474,8 +1471,8 @@ mod tests {
 
         // IPv6 should still win when it's slightly slower (within bias range)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 10));
-        paths.insert(v6(1), psd_v6(TransportType::Primary, 12)); // 2ms slower, but 3ms bias
+        paths.insert(&v4, psd(TransportType::Primary, 10));
+        paths.insert(&v6, psd_v6(TransportType::Primary, 12)); // 2ms slower, but 3ms bias
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1484,8 +1481,8 @@ mod tests {
 
         // IPv4 should win when IPv6 is significantly slower
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 10));
-        paths.insert(v6(1), psd_v6(TransportType::Primary, 20)); // 10ms slower, exceeds 3ms bias
+        paths.insert(&v4, psd(TransportType::Primary, 10));
+        paths.insert(&v6, psd_v6(TransportType::Primary, 20)); // 10ms slower, exceeds 3ms bias
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1495,10 +1492,12 @@ mod tests {
 
     #[test]
     fn test_available_wins_over_backup_regardless_of_rtt() {
+        let v4 = v4(1);
+        let relay = relay(1);
         // Available path should win even with much higher RTT
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 100)); // High RTT but Available
-        paths.insert(relay(1), psd(TransportType::Backup, 10)); // Low RTT but Backup
+        paths.insert(&v4, psd(TransportType::Primary, 100)); // High RTT but Available
+        paths.insert(&relay, psd(TransportType::Backup, 10)); // Low RTT but Backup
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1507,8 +1506,8 @@ mod tests {
 
         // Even more extreme: 1000ms Available vs 1ms Backup
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 1000));
-        paths.insert(relay(1), psd(TransportType::Backup, 1));
+        paths.insert(&v4, psd(TransportType::Primary, 1000));
+        paths.insert(&relay, psd(TransportType::Backup, 1));
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1518,28 +1517,30 @@ mod tests {
 
     #[test]
     fn test_same_category_only_switches_with_significant_rtt_diff() {
+        let v4_1 = v4(1);
+        let v4_2 = v4(2);
         let current = v4(1);
 
         // Should NOT switch: new path is only slightly better (2ms < 5ms threshold)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 20));
-        paths.insert(v4(2), psd(TransportType::Primary, 18));
+        paths.insert(&v4_1, psd(TransportType::Primary, 20));
+        paths.insert(&v4_2, psd(TransportType::Primary, 18));
 
         let result = select_best_path(paths, Some(&current));
         assert!(result.is_none()); // Should keep current
 
         // Should NOT switch: new path is just under threshold (4ms < 5ms)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 20));
-        paths.insert(v4(2), psd(TransportType::Primary, 16));
+        paths.insert(&v4_1, psd(TransportType::Primary, 20));
+        paths.insert(&v4_2, psd(TransportType::Primary, 16));
 
         let result = select_best_path(paths, Some(&current));
         assert!(result.is_none()); // Should keep current
 
         // SHOULD switch: new path is exactly at threshold (5ms, condition is <=)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 20));
-        paths.insert(v4(2), psd(TransportType::Primary, 15));
+        paths.insert(&v4_1, psd(TransportType::Primary, 20));
+        paths.insert(&v4_2, psd(TransportType::Primary, 15));
 
         let result = select_best_path(paths, Some(&current));
         assert!(result.is_some());
@@ -1548,8 +1549,8 @@ mod tests {
 
         // SHOULD switch: new path is significantly better (6ms > 5ms threshold)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 20));
-        paths.insert(v4(2), psd(TransportType::Primary, 14));
+        paths.insert(&v4_1, psd(TransportType::Primary, 20));
+        paths.insert(&v4_2, psd(TransportType::Primary, 14));
 
         let result = select_best_path(paths, Some(&current));
         assert!(result.is_some());
@@ -1559,9 +1560,11 @@ mod tests {
 
     #[test]
     fn test_no_current_path_selects_best() {
+        let v4_1 = v4(1);
+        let v4_2 = v4(2);
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 20));
-        paths.insert(v4(2), psd(TransportType::Primary, 10));
+        paths.insert(&v4_1, psd(TransportType::Primary, 20));
+        paths.insert(&v4_2, psd(TransportType::Primary, 10));
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1571,11 +1574,11 @@ mod tests {
 
     #[test]
     fn test_empty_paths_returns_none() {
-        let paths: FxHashMap<transports::Addr, PathSelectionData> = FxHashMap::default();
+        let paths: FxHashMap<&transports::Addr, PathSelectionData> = FxHashMap::default();
         let result = select_best_path(paths, None);
         assert!(result.is_none());
 
-        let paths: FxHashMap<transports::Addr, PathSelectionData> = FxHashMap::default();
+        let paths: FxHashMap<&transports::Addr, PathSelectionData> = FxHashMap::default();
         let result = select_best_path(paths, Some(&v4(1)));
         assert!(result.is_none());
     }
