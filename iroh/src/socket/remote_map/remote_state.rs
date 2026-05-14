@@ -879,7 +879,7 @@ impl RemoteStateActor {
         };
         trace!("path event");
         match event {
-            NoqPathEvent::Opened { id: path_id } => {
+            NoqPathEvent::Established { id: path_id } => {
                 let Some(path) = conn.path(path_id) else {
                     trace!("path open event for unknown path");
                     return;
