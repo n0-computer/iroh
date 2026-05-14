@@ -99,7 +99,18 @@ type AddrEvents = MergeUnbounded<
 ///
 /// This actor manages all connections to the remote endpoint.  It will trigger holepunching
 /// and select the best path etc.
+///
 pub(super) struct RemoteStateActor {
+    /// All connections we have to this remote endpoint.
+    connections: FxHashMap<ConnId, ConnectionState>,
+    /// State of the actor and hooks into the rest of the remote endpoint.
+    ///
+    /// This is on a separate struct so that we can have parallel mutable borrows to `connections` and `state.
+    state: State,
+}
+
+/// State of the [`RemoteStateActor`] and hooks into the rest of the remote endpoint.
+struct State {
     /// The endpoint ID of the remote endpoint.
     endpoint_id: EndpointId,
 
@@ -120,8 +131,6 @@ pub(super) struct RemoteStateActor {
 
     // Internal state - Noq Connections we are managing.
     //
-    /// All connections we have to this remote endpoint.
-    connections: FxHashMap<ConnId, ConnectionState>,
     /// Notifications when connections are closed.
     connections_close: FuturesUnordered<OnClosed>,
     /// Events emitted by Noq about path changes, for all paths, all connections.
@@ -178,24 +187,26 @@ impl RemoteStateActor {
         transport_bias: TransportBiasMap,
     ) -> Self {
         Self {
-            endpoint_id,
-            metrics: metrics.clone(),
-            local_direct_addrs,
-            relay_mapped_addrs,
-            custom_mapped_addrs,
-            address_lookup,
             connections: FxHashMap::default(),
-            connections_close: Default::default(),
-            path_events: Default::default(),
-            addr_events: Default::default(),
-            paths: RemotePathState::new(metrics),
-            last_holepunch: None,
-            selected_path: Default::default(),
-            scheduled_holepunch: None,
-            scheduled_open_path: None,
-            pending_open_paths: VecDeque::new(),
-            address_lookup_stream: None,
-            transport_bias,
+            state: State {
+                endpoint_id,
+                metrics: metrics.clone(),
+                local_direct_addrs,
+                relay_mapped_addrs,
+                custom_mapped_addrs,
+                address_lookup,
+                connections_close: Default::default(),
+                path_events: Default::default(),
+                addr_events: Default::default(),
+                paths: RemotePathState::new(metrics),
+                last_holepunch: None,
+                selected_path: Default::default(),
+                scheduled_holepunch: None,
+                scheduled_open_path: None,
+                pending_open_paths: VecDeque::new(),
+                address_lookup_stream: None,
+                transport_bias,
+            },
         }
     }
 
@@ -207,7 +218,7 @@ impl RemoteStateActor {
         parent_span: Span,
     ) -> mpsc::Sender<RemoteStateMessage> {
         let (tx, rx) = mpsc::channel(16);
-        let endpoint_id = self.endpoint_id;
+        let endpoint_id = self.state.endpoint_id;
 
         // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
         // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
@@ -247,12 +258,12 @@ impl RemoteStateActor {
         n0_future::pin!(check_connections);
 
         loop {
-            let scheduled_path_open = match self.scheduled_open_path {
+            let scheduled_path_open = match self.state.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
                 None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_path_open);
-            let scheduled_hp = match self.scheduled_holepunch {
+            let scheduled_hp = match self.state.scheduled_holepunch {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
                 None => MaybeFuture::None,
             };
@@ -276,17 +287,17 @@ impl RemoteStateActor {
                         None => break,
                     }
                 }
-                Some((id, evt)) = self.path_events.next() => {
+                Some((id, evt)) = self.state.path_events.next() => {
                     self.handle_path_event(id, evt);
                 }
-                Some((id, evt)) = self.addr_events.next() => {
+                Some((id, evt)) = self.state.addr_events.next() => {
                     trace!(?id, ?evt, "remote addrs updated, triggering holepunching");
                     self.trigger_holepunching();
                 }
-                Some((conn_id, closed)) = self.connections_close.next(), if !self.connections_close.is_empty() => {
+                Some((conn_id, closed)) = self.state.connections_close.next(), if !self.state.connections_close.is_empty() => {
                     self.handle_connection_close(conn_id, closed);
                 }
-                res = self.local_direct_addrs.updated() => {
+                res = self.state.local_direct_addrs.updated() => {
                     if let Err(n0_watcher::Disconnected) = res {
                         trace!("direct address watcher disconnected, shutting down");
                         break;
@@ -297,19 +308,19 @@ impl RemoteStateActor {
                 }
                 _ = &mut scheduled_path_open => {
                     trace!("triggering scheduled path_open");
-                    self.scheduled_open_path = None;
-                    let mut addrs = std::mem::take(&mut self.pending_open_paths);
+                    self.state.scheduled_open_path = None;
+                    let mut addrs = std::mem::take(&mut self.state.pending_open_paths);
                     while let Some(addr) = addrs.pop_front() {
                         self.open_path(&addr);
                     }
                 }
                 _ = &mut scheduled_hp => {
                     trace!("triggering scheduled holepunching");
-                    self.scheduled_holepunch = None;
+                    self.state.scheduled_holepunch = None;
                     self.trigger_holepunching();
                 }
-                Some(item) = maybe_next(self.address_lookup_stream.as_mut()), if self.address_lookup_stream.is_some() => {
-                    self.handle_address_lookup_item(item);
+                Some(item) = maybe_next(self.state.address_lookup_stream.as_mut()), if self.state.address_lookup_stream.is_some() => {
+                    self.state.handle_address_lookup_item(item);
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -333,7 +344,7 @@ impl RemoteStateActor {
         inbox.recv_many(&mut leftover_msgs, inbox.len()).await;
 
         trace!("actor terminating");
-        (self.endpoint_id, leftover_msgs)
+        (self.state.endpoint_id, leftover_msgs)
     }
 
     /// Handles an actor message.
@@ -344,18 +355,18 @@ impl RemoteStateActor {
         // trace!("handling message");
         match msg {
             RemoteStateMessage::SendDatagram(sender, transmit) => {
-                self.handle_msg_send_datagram(sender, transmit).await;
+                self.state.handle_msg_send_datagram(sender, transmit).await;
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx);
             }
             RemoteStateMessage::ResolveRemote(addrs, tx) => {
-                self.handle_msg_resolve_remote(addrs, tx);
+                self.state.handle_msg_resolve_remote(addrs, tx);
             }
             RemoteStateMessage::RemoteInfo(tx) => {
-                let addrs = self.paths.to_remote_addrs();
+                let addrs = self.state.paths.to_remote_addrs();
                 let info = RemoteInfo {
-                    endpoint_id: self.endpoint_id,
+                    endpoint_id: self.state.endpoint_id,
                     addrs,
                 };
                 tx.send(info).ok();
@@ -365,7 +376,9 @@ impl RemoteStateActor {
             }
         }
     }
+}
 
+impl State {
     /// Handles [`RemoteStateMessage::SendDatagram`].
     async fn handle_msg_send_datagram(
         &mut self,
@@ -415,7 +428,9 @@ impl RemoteStateActor {
             // holepunching when AddConnection is received.
         }
     }
+}
 
+impl RemoteStateActor {
     /// Handles [`RemoteStateMessage::AddConnection`].
     ///
     /// Error returns are fatal and kill the actor.
@@ -425,27 +440,29 @@ impl RemoteStateActor {
         tx: oneshot::Sender<PathStateReceiver>,
     ) {
         let (path_state_sender, path_state_receiver) = PathStateSender::new();
-        self.metrics.num_conns_opened.inc();
+        self.state.metrics.num_conns_opened.inc();
         // Remove any conflicting stable_ids from the local state.
         let conn_id = ConnId(conn.stable_id());
         self.connections.remove(&conn_id);
 
         // Hook up paths, NAT addresses and connection closed event streams.
-        self.path_events
+        self.state
+            .path_events
             .push(Box::pin(conn.path_events().map(move |evt| (conn_id, evt))));
-        self.addr_events.push(Box::pin(
+        self.state.addr_events.push(Box::pin(
             conn.nat_traversal_updates().map(move |evt| (conn_id, evt)),
         ));
-        self.connections_close.push(OnClosed::new(&conn));
+        self.state.connections_close.push(OnClosed::new(&conn));
 
         // Add local addrs to the connection
         let local_addrs = self
+            .state
             .local_direct_addrs
             .get()
             .iter()
             .map(|d| d.addr)
             .collect::<BTreeSet<_>>();
-        Self::update_qnt_candidates(&conn, &local_addrs);
+        State::update_qnt_candidates(&conn, &local_addrs);
 
         // Store the connection
         let conn_state = self
@@ -465,22 +482,24 @@ impl RemoteStateActor {
             && let Ok(socketaddr) = path.remote_address()
             && let Some(path_remote) = to_transport_addr(
                 socketaddr,
-                &self.relay_mapped_addrs,
-                &self.custom_mapped_addrs,
+                &self.state.relay_mapped_addrs,
+                &self.state.custom_mapped_addrs,
             )
         {
             trace!(?path_remote, "added new connection");
 
-            conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
-            self.paths
+            conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.state.metrics);
+            self.state
+                .paths
                 .insert_open_path(path_remote.clone(), Source::Connection);
-            self.configure_path(conn_id, &path, &path_remote);
+            self.state.configure_path(conn_id, &path, &path_remote);
             self.select_path();
 
             if path_remote.is_ip() {
                 // We may have raced this with a relay address.  Try and add any
                 // relay addresses we have back.
                 let relays = self
+                    .state
                     .paths
                     .addrs()
                     .filter(|a| a.is_relay())
@@ -494,7 +513,9 @@ impl RemoteStateActor {
         self.trigger_holepunching();
         tx.send(path_state_receiver).ok();
     }
+}
 
+impl State {
     /// Handles [`RemoteStateMessage::ResolveRemote`].
     fn handle_msg_resolve_remote(
         &mut self,
@@ -507,7 +528,9 @@ impl RemoteStateActor {
         // Start Address Lookup if we have no selected path.
         self.trigger_address_lookup();
     }
+}
 
+impl RemoteStateActor {
     /// Handles [`RemoteStateMessage::NetworkChange`].
     fn handle_msg_network_change(&mut self, is_major: bool) {
         // Ping all the paths so loss-detection starts ASAP.
@@ -534,20 +557,22 @@ impl RemoteStateActor {
             target: "iroh::_events::conn::closed",
             Level::DEBUG,
             %conn_id,
-            remote_id = %self.endpoint_id.fmt_short(),
+            remote_id = %self.state.endpoint_id.fmt_short(),
             reason=?closed.reason,
         );
 
         if let Some(conn_state) = self.connections.remove(&conn_id) {
-            self.metrics.num_conns_closed.inc();
+            self.state.metrics.num_conns_closed.inc();
             conn_state.path_state.close(closed);
         }
         if self.connections.is_empty() {
             trace!("last connection closed - clearing selected_path");
-            self.selected_path = None;
+            self.state.selected_path = None;
         }
     }
+}
 
+impl State {
     /// Triggers Address Lookup for the remote endpoint, if needed.
     ///
     /// Does not start Address Lookup if we have a selected path or if Address Lookup is
@@ -603,13 +628,16 @@ impl RemoteStateActor {
             }
         }
     }
+}
 
+impl RemoteStateActor {
     /// Updates the local [`DirectAddr`]s to all connections.
     ///
     /// Each connection needs to have the local direct addresses to use as QNT address
     /// candidates.
     fn update_local_direct_address(&mut self) {
         let local_addrs = self
+            .state
             .local_direct_addrs
             .get()
             .iter()
@@ -617,11 +645,13 @@ impl RemoteStateActor {
             .collect::<BTreeSet<_>>();
 
         for conn in self.connections.values().filter_map(|s| s.handle.upgrade()) {
-            Self::update_qnt_candidates(&conn, &local_addrs);
+            State::update_qnt_candidates(&conn, &local_addrs);
         }
         // todo: trace
     }
+}
 
+impl State {
     /// Updates QNT's candidate addresses to be the current set of direct addresses.
     ///
     /// `direct_addrs` must be a set of addresses extracted from the endpoint's current
@@ -646,7 +676,9 @@ impl RemoteStateActor {
         }
         trace!(?direct_addrs, "updated local QNT addresses");
     }
+}
 
+impl RemoteStateActor {
     /// Triggers holepunching to the remote endpoint.
     ///
     /// This will manage the entire process of holepunching with the remote endpoint.
@@ -683,12 +715,14 @@ impl RemoteStateActor {
             }
         };
         let local_candidates: BTreeSet<SocketAddr> = self
+            .state
             .local_direct_addrs
             .get()
             .iter()
             .map(|daddr| daddr.addr)
             .collect();
         let new_candidates = self
+            .state
             .last_holepunch
             .as_ref()
             .map(|last_hp| {
@@ -704,19 +738,21 @@ impl RemoteStateActor {
                     || !local_candidates.is_subset(&last_hp.local_candidates)
             })
             .unwrap_or(true);
-        if !new_candidates && let Some(ref last_hp) = self.last_holepunch {
+        if !new_candidates && let Some(ref last_hp) = self.state.last_holepunch {
             let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
             let now = Instant::now();
             if next_hp > now {
                 trace!(scheduled_in = ?(next_hp - now), "not holepunching: no new addresses");
-                self.scheduled_holepunch = Some(next_hp);
+                self.state.scheduled_holepunch = Some(next_hp);
                 return;
             }
         }
 
-        self.do_holepunching(conn);
+        self.state.do_holepunching(conn);
     }
+}
 
+impl State {
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
     fn do_holepunching(&mut self, conn: noq::Connection) {
@@ -800,14 +836,16 @@ impl RemoteStateActor {
             warn!(?e, ?addr, ?status, "set_status failed");
         }
     }
+}
 
+impl RemoteStateActor {
     /// Open the path on all connections.
     ///
     /// This goes through all the connections for which we are the client, and makes sure
     /// the path exists, or opens it.
     #[instrument(level = "warn", skip(self))]
     fn open_path(&mut self, open_addr: &transports::Addr) {
-        let path_status = if Some(open_addr) == self.selected_path.as_ref() {
+        let path_status = if Some(open_addr) == self.state.selected_path.as_ref() {
             PathStatus::Available
         } else {
             PathStatus::Backup
@@ -816,12 +854,15 @@ impl RemoteStateActor {
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
             transports::Addr::Relay(relay_url, eid) => self
+                .state
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *eid))
                 .private_socket_addr(),
-            transports::Addr::Custom(remote) => {
-                self.custom_mapped_addrs.get(remote).private_socket_addr()
-            }
+            transports::Addr::Custom(remote) => self
+                .state
+                .custom_mapped_addrs
+                .get(remote)
+                .private_socket_addr(),
         };
 
         for (conn_id, conn_state) in self.connections.iter() {
@@ -847,9 +888,9 @@ impl RemoteStateActor {
                     let ret = now_or_never(fut);
                     match ret {
                         Some(Err(PathError::RemoteCidsExhausted)) => {
-                            self.scheduled_open_path =
+                            self.state.scheduled_open_path =
                                 Some(Instant::now() + Duration::from_millis(333));
-                            self.pending_open_paths.push_back(open_addr.clone());
+                            self.state.pending_open_paths.push_back(open_addr.clone());
                             trace!(?open_addr, "scheduling open_path");
                         }
                         _ => warn!(?ret, "Opening path failed"),
@@ -886,22 +927,23 @@ impl RemoteStateActor {
                 if let Ok(socketaddr) = path.remote_address()
                     && let Some(path_remote) = to_transport_addr(
                         socketaddr,
-                        &self.relay_mapped_addrs,
-                        &self.custom_mapped_addrs,
+                        &self.state.relay_mapped_addrs,
+                        &self.state.custom_mapped_addrs,
                     )
                 {
                     event!(
                         target: "iroh::_events::path::open",
                         Level::DEBUG,
-                        remote = %self.endpoint_id.fmt_short(),
+                        remote = %self.state.endpoint_id.fmt_short(),
                         ?path_remote,
                         %conn_id,
                         %path_id,
                     );
-                    conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
-                    self.paths
+                    conn_state.add_open_path(path_remote.clone(), path_id, &self.state.metrics);
+                    self.state
+                        .paths
                         .insert_open_path(path_remote.clone(), Source::Connection);
-                    self.configure_path(conn_id, &path, &path_remote);
+                    self.state.configure_path(conn_id, &path, &path_remote);
                     self.select_path();
                 }
             }
@@ -912,12 +954,12 @@ impl RemoteStateActor {
                     return;
                 };
                 // Also remove the path from the remote-global path tracking.
-                self.paths.abandoned_path(&path_remote);
+                self.state.paths.abandoned_path(&path_remote);
 
                 event!(
                     target: "iroh::_events::path::abandoned",
                     Level::DEBUG,
-                    remote = %self.endpoint_id.fmt_short(),
+                    remote = %self.state.endpoint_id.fmt_short(),
                     ?path_remote,
                     %conn_id,
                     path_id = ?id,
@@ -992,23 +1034,23 @@ impl RemoteStateActor {
             .map(|(addr, rtt)| {
                 (
                     addr.clone(),
-                    self.transport_bias.path_selection_data(&addr, rtt),
+                    self.state.transport_bias.path_selection_data(&addr, rtt),
                 )
             })
             .collect();
 
-        let current_path = self.selected_path.as_ref();
+        let current_path = self.state.selected_path.as_ref();
         let selected_path = select_best_path(path_rtts, current_path);
 
         // Apply our new path
         if let Some((addr, rtt)) = selected_path
-            && self.selected_path.as_ref() != Some(&addr)
+            && self.state.selected_path.as_ref() != Some(&addr)
         {
-            let prev_remote = self.selected_path.replace(addr.clone());
+            let prev_remote = self.state.selected_path.replace(addr.clone());
             event!(
                 target: "iroh::_events::path::selected",
                 Level::DEBUG,
-                remote = %self.endpoint_id.fmt_short(),
+                remote = %self.state.endpoint_id.fmt_short(),
                 path_remote = ?addr,
                 ?rtt,
                 ?prev_remote,
@@ -1082,7 +1124,7 @@ impl RemoteStateActor {
                     event!(
                         target: "iroh::_events::path::set_status",
                         Level::DEBUG,
-                        remote = %self.endpoint_id.fmt_short(),
+                        remote = %self.state.endpoint_id.fmt_short(),
                         path_remote = ?path_remote,
                         ?status,
                         %conn_id,
