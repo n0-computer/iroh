@@ -100,6 +100,16 @@ type AddrEvents = MergeUnbounded<
 /// This actor manages all connections to the remote endpoint.  It will trigger holepunching
 /// and select the best path etc.
 pub(super) struct RemoteStateActor {
+    /// All connections we have to this remote endpoint.
+    connections: FxHashMap<ConnId, ConnectionState>,
+    /// State of the actor and hooks into the rest of the remote endpoint.
+    ///
+    /// This is on a separate struct so that we can have parallel mutable borrows to `connections` and `state.
+    state: State,
+}
+
+/// State of the [`RemoteStateActor`] and hooks into the rest of the remote endpoint.
+struct State {
     /// The endpoint ID of the remote endpoint.
     endpoint_id: EndpointId,
 
@@ -120,8 +130,6 @@ pub(super) struct RemoteStateActor {
 
     // Internal state - Noq Connections we are managing.
     //
-    /// All connections we have to this remote endpoint.
-    connections: FxHashMap<ConnId, ConnectionState>,
     /// Notifications when connections are closed.
     connections_close: FuturesUnordered<OnClosed>,
     /// Events emitted by Noq about path changes, for all paths, all connections.
@@ -178,24 +186,26 @@ impl RemoteStateActor {
         transport_bias: TransportBiasMap,
     ) -> Self {
         Self {
-            endpoint_id,
-            metrics: metrics.clone(),
-            local_direct_addrs,
-            relay_mapped_addrs,
-            custom_mapped_addrs,
-            address_lookup,
             connections: FxHashMap::default(),
-            connections_close: Default::default(),
-            path_events: Default::default(),
-            addr_events: Default::default(),
-            paths: RemotePathState::new(metrics),
-            last_holepunch: None,
-            selected_path: Default::default(),
-            scheduled_holepunch: None,
-            scheduled_open_path: None,
-            pending_open_paths: VecDeque::new(),
-            address_lookup_stream: None,
-            transport_bias,
+            state: State {
+                endpoint_id,
+                metrics: metrics.clone(),
+                local_direct_addrs,
+                relay_mapped_addrs,
+                custom_mapped_addrs,
+                address_lookup,
+                connections_close: Default::default(),
+                path_events: Default::default(),
+                addr_events: Default::default(),
+                paths: RemotePathState::new(metrics),
+                last_holepunch: None,
+                selected_path: Default::default(),
+                scheduled_holepunch: None,
+                scheduled_open_path: None,
+                pending_open_paths: VecDeque::new(),
+                address_lookup_stream: None,
+                transport_bias,
+            },
         }
     }
 
@@ -207,7 +217,7 @@ impl RemoteStateActor {
         parent_span: Span,
     ) -> mpsc::Sender<RemoteStateMessage> {
         let (tx, rx) = mpsc::channel(16);
-        let endpoint_id = self.endpoint_id;
+        let endpoint_id = self.state.endpoint_id;
 
         // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
         // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
@@ -247,12 +257,12 @@ impl RemoteStateActor {
         n0_future::pin!(check_connections);
 
         loop {
-            let scheduled_path_open = match self.scheduled_open_path {
+            let scheduled_path_open = match self.state.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
                 None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_path_open);
-            let scheduled_hp = match self.scheduled_holepunch {
+            let scheduled_hp = match self.state.scheduled_holepunch {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
                 None => MaybeFuture::None,
             };
@@ -276,17 +286,17 @@ impl RemoteStateActor {
                         None => break,
                     }
                 }
-                Some((id, evt)) = self.path_events.next() => {
+                Some((id, evt)) = self.state.path_events.next() => {
                     self.handle_path_event(id, evt);
                 }
-                Some((id, evt)) = self.addr_events.next() => {
+                Some((id, evt)) = self.state.addr_events.next() => {
                     trace!(?id, ?evt, "remote addrs updated, triggering holepunching");
                     self.trigger_holepunching();
                 }
-                Some((conn_id, closed)) = self.connections_close.next(), if !self.connections_close.is_empty() => {
+                Some((conn_id, closed)) = self.state.connections_close.next(), if !self.state.connections_close.is_empty() => {
                     self.handle_connection_close(conn_id, closed);
                 }
-                res = self.local_direct_addrs.updated() => {
+                res = self.state.local_direct_addrs.updated() => {
                     if let Err(n0_watcher::Disconnected) = res {
                         trace!("direct address watcher disconnected, shutting down");
                         break;
@@ -297,19 +307,19 @@ impl RemoteStateActor {
                 }
                 _ = &mut scheduled_path_open => {
                     trace!("triggering scheduled path_open");
-                    self.scheduled_open_path = None;
-                    let mut addrs = std::mem::take(&mut self.pending_open_paths);
+                    self.state.scheduled_open_path = None;
+                    let mut addrs = std::mem::take(&mut self.state.pending_open_paths);
                     while let Some(addr) = addrs.pop_front() {
-                        self.open_path(&addr);
+                        self.open_path_on_all_conns(&addr);
                     }
                 }
                 _ = &mut scheduled_hp => {
                     trace!("triggering scheduled holepunching");
-                    self.scheduled_holepunch = None;
+                    self.state.scheduled_holepunch = None;
                     self.trigger_holepunching();
                 }
-                Some(item) = maybe_next(self.address_lookup_stream.as_mut()), if self.address_lookup_stream.is_some() => {
-                    self.handle_address_lookup_item(item);
+                Some(item) = maybe_next(self.state.address_lookup_stream.as_mut()), if self.state.address_lookup_stream.is_some() => {
+                    self.state.handle_address_lookup_item(item);
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -333,7 +343,7 @@ impl RemoteStateActor {
         inbox.recv_many(&mut leftover_msgs, inbox.len()).await;
 
         trace!("actor terminating");
-        (self.endpoint_id, leftover_msgs)
+        (self.state.endpoint_id, leftover_msgs)
     }
 
     /// Handles an actor message.
@@ -344,18 +354,18 @@ impl RemoteStateActor {
         // trace!("handling message");
         match msg {
             RemoteStateMessage::SendDatagram(sender, transmit) => {
-                self.handle_msg_send_datagram(sender, transmit).await;
+                self.state.handle_msg_send_datagram(sender, transmit).await;
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx);
             }
             RemoteStateMessage::ResolveRemote(addrs, tx) => {
-                self.handle_msg_resolve_remote(addrs, tx);
+                self.state.handle_msg_resolve_remote(addrs, tx);
             }
             RemoteStateMessage::RemoteInfo(tx) => {
-                let addrs = self.paths.to_remote_addrs();
+                let addrs = self.state.paths.to_remote_addrs();
                 let info = RemoteInfo {
-                    endpoint_id: self.endpoint_id,
+                    endpoint_id: self.state.endpoint_id,
                     addrs,
                 };
                 tx.send(info).ok();
@@ -366,6 +376,441 @@ impl RemoteStateActor {
         }
     }
 
+    /// Handles [`RemoteStateMessage::AddConnection`].
+    ///
+    /// Error returns are fatal and kill the actor.
+    fn handle_msg_add_connection(
+        &mut self,
+        conn: noq::Connection,
+        tx: oneshot::Sender<PathStateReceiver>,
+    ) {
+        let (path_state_sender, path_state_receiver) = PathStateSender::new();
+        self.state.metrics.num_conns_opened.inc();
+        // Remove any conflicting stable_ids from the local state.
+        let conn_id = ConnId(conn.stable_id());
+        self.connections.remove(&conn_id);
+
+        // Hook up paths, NAT addresses and connection closed event streams.
+        self.state
+            .path_events
+            .push(Box::pin(conn.path_events().map(move |evt| (conn_id, evt))));
+        self.state.addr_events.push(Box::pin(
+            conn.nat_traversal_updates().map(move |evt| (conn_id, evt)),
+        ));
+        self.state.connections_close.push(OnClosed::new(&conn));
+
+        // Add local addrs to the connection
+        let local_addrs = self.state.local_candidates();
+        update_qnt_candidates(&conn, &local_addrs);
+
+        // Store the connection
+        let conn_state = self
+            .connections
+            .entry(conn_id)
+            .insert_entry(ConnectionState {
+                handle: conn.weak_handle(),
+                path_state: path_state_sender,
+                paths: Default::default(),
+                has_been_direct: false,
+            })
+            .into_mut();
+
+        // Store PathId(0), set path_status and select best path, check if holepunching
+        // is needed.
+        if let Some(path) = conn.path(PathId::ZERO) {
+            let path_remote = self
+                .state
+                .register_and_configure_path(conn_id, conn_state, &path);
+
+            if let Some(path_remote) = path_remote
+                && !path_remote.is_relay()
+                && conn.side().is_client()
+            {
+                // We may have raced this with a relay address.  Try and add any
+                // relay addresses we have back.
+                let relays = self
+                    .state
+                    .paths
+                    .addrs()
+                    .filter(|a| a.is_relay())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for open_addr in relays {
+                    self.state
+                        .open_path_on_conn(conn_id, conn_state, &conn, &open_addr);
+                }
+            }
+        }
+        self.trigger_holepunching();
+        self.select_path();
+        tx.send(path_state_receiver).ok();
+    }
+
+    /// Handles [`RemoteStateMessage::NetworkChange`].
+    fn handle_msg_network_change(&mut self, is_major: bool) {
+        // Ping all the paths so loss-detection starts ASAP.
+        for conn in self.connections.values() {
+            if let Some(noq_conn) = conn.handle.upgrade() {
+                for (path_id, addr) in &conn.paths {
+                    if let Some(path) = noq_conn.path(*path_id) {
+                        // Ping the current path
+                        if let Err(err) = path.ping() {
+                            warn!(%err, %path_id, ?addr, "failed to ping path");
+                        }
+                    }
+                }
+            }
+        }
+
+        if is_major {
+            self.trigger_holepunching();
+        }
+    }
+
+    fn handle_connection_close(&mut self, conn_id: ConnId, closed: Closed) {
+        event!(
+            target: "iroh::_events::conn::closed",
+            Level::DEBUG,
+            %conn_id,
+            remote_id = %self.state.endpoint_id.fmt_short(),
+            reason=?closed.reason,
+        );
+
+        if let Some(conn_state) = self.connections.remove(&conn_id) {
+            self.state.metrics.num_conns_closed.inc();
+            conn_state.path_state.close(closed);
+        }
+        if self.connections.is_empty() {
+            trace!("last connection closed - clearing selected_path");
+            self.state.selected_path = None;
+        }
+    }
+
+    /// Updates the local [`DirectAddr`]s to all connections.
+    ///
+    /// Each connection needs to have the local direct addresses to use as QNT address
+    /// candidates.
+    fn update_local_direct_address(&mut self) {
+        let local_addrs = self.state.local_candidates();
+        for conn in self.connections.values().filter_map(|s| s.handle.upgrade()) {
+            update_qnt_candidates(&conn, &local_addrs);
+        }
+        // todo: trace
+    }
+
+    /// Triggers holepunching to the remote endpoint.
+    ///
+    /// This will manage the entire process of holepunching with the remote endpoint.
+    ///
+    /// - Holepunching happens on the Connection with the lowest [`ConnId`] which is a
+    ///   client.
+    ///   - Both endpoints may initiate holepunching if both have a client connection.
+    ///   - Any opened paths are opened on all other connections without holepunching.
+    /// - If there are no changes in local or remote candidate addresses since the
+    ///   last attempt **and** there was a recent attempt, a trigger_holepunching call
+    ///   will be scheduled instead.
+    fn trigger_holepunching(&mut self) {
+        if self.connections.is_empty() {
+            trace!("not holepunching: no connections");
+            return;
+        }
+
+        let Some(conn) = self
+            .connections
+            .iter()
+            .filter_map(|(id, state)| state.handle.upgrade().map(|conn| (*id, conn)))
+            .filter(|(_, conn)| conn.side().is_client())
+            .min_by_key(|(id, _)| *id)
+            .map(|(_, conn)| conn)
+        else {
+            trace!("not holepunching: no client connection");
+            return;
+        };
+        let remote_candidates = match conn.get_remote_nat_traversal_addresses() {
+            Ok(addrs) => BTreeSet::from_iter(addrs),
+            Err(err) => {
+                warn!("failed to get nat candidate addresses: {err:#}");
+                return;
+            }
+        };
+        let local_candidates = self.state.local_candidates();
+        let new_candidates = self
+            .state
+            .last_holepunch
+            .as_ref()
+            .map(|last_hp| {
+                // Addrs are allowed to disappear, but if there are new ones we need to
+                // holepunch again.
+                trace!(
+                    ?last_hp,
+                    ?local_candidates,
+                    ?remote_candidates,
+                    "candidates to holepunch?"
+                );
+                !remote_candidates.is_subset(&last_hp.remote_candidates)
+                    || !local_candidates.is_subset(&last_hp.local_candidates)
+            })
+            .unwrap_or(true);
+        if !new_candidates && let Some(ref last_hp) = self.state.last_holepunch {
+            let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
+            let now = Instant::now();
+            if next_hp > now {
+                trace!(scheduled_in = ?(next_hp - now), "not holepunching: no new addresses");
+                self.state.scheduled_holepunch = Some(next_hp);
+                return;
+            }
+        }
+
+        self.state.do_holepunching(conn);
+    }
+
+    #[instrument(skip(self))]
+    fn handle_path_event(&mut self, conn_id: ConnId, event: Result<NoqPathEvent, noq::Lagged>) {
+        let Ok(event) = event else {
+            warn!("missed a PathEvent, RemoteStateActor lagging");
+            // TODO: Is it possible to recover using the sync APIs to figure out what the
+            //    state of the connection and it's paths are?
+            return;
+        };
+        let Some(conn_state) = self.connections.get_mut(&conn_id) else {
+            trace!("event for removed connection");
+            return;
+        };
+        let Some(conn) = conn_state.handle.upgrade() else {
+            trace!("event for closed connection");
+            return;
+        };
+        trace!("path event");
+        match event {
+            NoqPathEvent::Established { id: path_id } => {
+                let Some(path) = conn.path(path_id) else {
+                    trace!("path open event for unknown path");
+                    return;
+                };
+
+                self.state
+                    .register_and_configure_path(conn_id, conn_state, &path);
+                self.select_path();
+            }
+            NoqPathEvent::Abandoned { id, reason } => {
+                // Remove abandoned path from the conn state.
+                let Some(path_remote) = conn_state.remove_path(&id, &conn) else {
+                    debug!(%id, "path not in path_id_map");
+                    return;
+                };
+                // Also remove the path from the remote-global path tracking.
+                self.state.paths.abandoned_path(&path_remote);
+
+                event!(
+                    target: "iroh::_events::path::abandoned",
+                    Level::DEBUG,
+                    remote = %self.state.endpoint_id.fmt_short(),
+                    ?path_remote,
+                    %conn_id,
+                    path_id = ?id,
+                    ?reason
+                );
+
+                // If one connection abandons a path, close it on all connections.
+                for (conn_id, conn_state) in self.connections.iter() {
+                    let Some(conn) = conn_state.handle.upgrade() else {
+                        continue;
+                    };
+                    // Close all paths with the remote address that was abandoned.
+                    for path in conn_state
+                        .paths
+                        .iter()
+                        .filter(|(_id, addr)| **addr == path_remote)
+                        .filter_map(|(id, _addr)| conn.path(*id))
+                    {
+                        trace!(?path_remote, %conn_id, path_id=%path.id(), "closing path");
+                        if let Err(err) = path.close() {
+                            trace!(
+                                ?path_remote,
+                                %conn_id,
+                                path_id=%path.id(),
+                                "path close failed: {err:#}"
+                            );
+                        }
+                    }
+                }
+
+                // If the remote closed our selected path, select a new one.
+                self.select_path();
+            }
+            NoqPathEvent::Discarded { id, path_stats } => {
+                trace!(%id, ?path_stats, "path discarded");
+            }
+            NoqPathEvent::RemoteStatus { .. } | NoqPathEvent::ObservedAddr { .. } => {
+                // Nothing to do for these events.
+            }
+        }
+    }
+
+    /// Selects the path with the lowest RTT, prefers direct paths.
+    ///
+    /// If there are direct paths, this selects the direct path with the lowest RTT.  If
+    /// there are only relay paths, the relay path with the lowest RTT is chosen.
+    ///
+    /// The selected path is added to any connections which do not yet have it.  Any unused
+    /// direct paths are closed for all connections.
+    #[instrument(skip_all)]
+    fn select_path(&mut self) {
+        // Find the lowest RTT across all connections for each open path.  The long way, so
+        // we get to log *all* RTTs.
+        let mut all_path_rtts: FxHashMap<&transports::Addr, Vec<Duration>> = FxHashMap::default();
+        for conn_state in self.connections.values() {
+            let Some(conn) = conn_state.handle.upgrade() else {
+                continue;
+            };
+            for (path_id, addr) in conn_state.paths.iter() {
+                if let Some(stats) = conn.path_stats(*path_id) {
+                    all_path_rtts.entry(addr).or_default().push(stats.rtt);
+                }
+            }
+        }
+        trace!(?all_path_rtts, "dumping all path RTTs");
+        let path_rtts: FxHashMap<&transports::Addr, PathSelectionData> = all_path_rtts
+            .into_iter()
+            .filter_map(|(addr, rtts)| rtts.into_iter().min().map(|rtt| (addr, rtt)))
+            .map(|(addr, rtt)| {
+                (
+                    addr,
+                    self.state.transport_bias.path_selection_data(addr, rtt),
+                )
+            })
+            .collect();
+
+        let current_path = self.state.selected_path.as_ref();
+        let selected_path = select_best_path(path_rtts, current_path);
+
+        // Apply our new path
+        if let Some((addr, rtt)) = selected_path
+            && self.state.selected_path.as_ref() != Some(&addr)
+        {
+            let prev_remote = self.state.selected_path.replace(addr.clone());
+            event!(
+                target: "iroh::_events::path::selected",
+                Level::DEBUG,
+                remote = %self.state.endpoint_id.fmt_short(),
+                path_remote = ?addr,
+                ?rtt,
+                ?prev_remote,
+            );
+            self.apply_selected_change(&addr);
+        } else {
+            trace!(?current_path, "keeping current path");
+        }
+    }
+
+    /// Propagates a change of [`State::selected_path`] to noq.
+    ///
+    /// Iterates over all connections and applies the selected path as follows:
+    /// - Closes non-selected IP paths (but keeps one IP path open still)
+    /// - Sets all non-selected paths to [`PathStatus::Backup`]
+    /// - Opens the selected path if it does not exist on the connection
+    /// - Sets the selected path to [`PathStatus::Available`]
+    fn apply_selected_change(&mut self, selected: &transports::Addr) {
+        for (conn_id, conn_state) in self.connections.iter() {
+            let Some(conn) = conn_state.handle.upgrade() else {
+                continue;
+            };
+
+            // Open path if it doesn't exist yet.
+            self.state
+                .open_path_on_conn(*conn_id, conn_state, &conn, selected);
+
+            for (path_id, path_remote) in conn_state.paths.iter() {
+                let Some(path) = conn.path(*path_id) else {
+                    continue;
+                };
+
+                // Closes redundant IP paths so that at most one remains per connection.
+                //
+                // Relay and custom paths are kept open. Only the client closes paths,
+                // to avoid the client and server independently closing different paths
+                // and racing to abandon the last one.
+                if conn.side().is_client()
+                    && path_remote.is_ip()
+                    && path_remote != selected
+                    && conn_state.paths.values().filter(|a| a.is_ip()).count() > 1
+                {
+                    trace!(?path_remote, %conn_id, %path_id, "closing direct path");
+                    match path.close() {
+                        Err(noq_proto::ClosePathError::MultipathNotNegotiated) => {
+                            error!("multipath not negotiated");
+                        }
+                        Err(noq_proto::ClosePathError::LastOpenPath) => {
+                            error!("could not close last open path");
+                        }
+                        Err(noq_proto::ClosePathError::ClosedPath) => {
+                            // We already closed this.
+                        }
+                        Ok(()) => {}
+                    }
+                    continue;
+                }
+
+                // Set path status: The selected path becomes Available, all other paths become Backup.
+                self.state.set_path_status(*conn_id, &path, path_remote);
+            }
+
+            // Record the new selected path in the path watcher.
+            conn_state
+                .path_state
+                .record_selected(selected.clone().into());
+        }
+    }
+
+    fn open_path_on_all_conns(&mut self, open_addr: &transports::Addr) {
+        for (conn_id, conn_state) in self.connections.iter() {
+            let Some(conn) = conn_state.handle.upgrade() else {
+                continue;
+            };
+            self.state
+                .open_path_on_conn(*conn_id, conn_state, &conn, open_addr);
+        }
+    }
+
+    /// Handles regularly checking if any paths need hole punching currently
+    ///
+    /// Currently we need to have 1 IP path, with a good enough latency.
+    fn check_connections(&mut self) {
+        let mut is_goodenough = true;
+        for conn_state in self.connections.values() {
+            let mut is_conn_goodenough = false;
+            if let Some(conn) = conn_state.handle.upgrade() {
+                let min_ip_rtt = conn_state
+                    .paths
+                    .iter()
+                    .filter_map(|(path_id, addr)| {
+                        if addr.is_ip() {
+                            conn.path_stats(*path_id).map(|stats| stats.rtt)
+                        } else {
+                            None
+                        }
+                    })
+                    .min();
+
+                if let Some(min_ip_rtt) = min_ip_rtt {
+                    let is_latency_goodenough = min_ip_rtt <= GOOD_ENOUGH_LATENCY;
+                    is_conn_goodenough = is_latency_goodenough;
+                } else {
+                    // No IP transport found
+                    is_conn_goodenough = false;
+                }
+            }
+            is_goodenough &= is_conn_goodenough;
+        }
+
+        if !is_goodenough {
+            debug!("connections are not good enough, triggering holepunching");
+            self.trigger_holepunching();
+        }
+    }
+}
+
+impl State {
     /// Handles [`RemoteStateMessage::SendDatagram`].
     async fn handle_msg_send_datagram(
         &mut self,
@@ -416,85 +861,6 @@ impl RemoteStateActor {
         }
     }
 
-    /// Handles [`RemoteStateMessage::AddConnection`].
-    ///
-    /// Error returns are fatal and kill the actor.
-    fn handle_msg_add_connection(
-        &mut self,
-        conn: noq::Connection,
-        tx: oneshot::Sender<PathStateReceiver>,
-    ) {
-        let (path_state_sender, path_state_receiver) = PathStateSender::new();
-        self.metrics.num_conns_opened.inc();
-        // Remove any conflicting stable_ids from the local state.
-        let conn_id = ConnId(conn.stable_id());
-        self.connections.remove(&conn_id);
-
-        // Hook up paths, NAT addresses and connection closed event streams.
-        self.path_events
-            .push(Box::pin(conn.path_events().map(move |evt| (conn_id, evt))));
-        self.addr_events.push(Box::pin(
-            conn.nat_traversal_updates().map(move |evt| (conn_id, evt)),
-        ));
-        self.connections_close.push(OnClosed::new(&conn));
-
-        // Add local addrs to the connection
-        let local_addrs = self
-            .local_direct_addrs
-            .get()
-            .iter()
-            .map(|d| d.addr)
-            .collect::<BTreeSet<_>>();
-        Self::update_qnt_candidates(&conn, &local_addrs);
-
-        // Store the connection
-        let conn_state = self
-            .connections
-            .entry(conn_id)
-            .insert_entry(ConnectionState {
-                handle: conn.weak_handle(),
-                path_state: path_state_sender,
-                paths: Default::default(),
-                has_been_direct: false,
-            })
-            .into_mut();
-
-        // Store PathId(0), set path_status and select best path, check if holepunching
-        // is needed.
-        if let Some(path) = conn.path(PathId::ZERO)
-            && let Ok(socketaddr) = path.remote_address()
-            && let Some(path_remote) = to_transport_addr(
-                socketaddr,
-                &self.relay_mapped_addrs,
-                &self.custom_mapped_addrs,
-            )
-        {
-            trace!(?path_remote, "added new connection");
-
-            conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
-            self.paths
-                .insert_open_path(path_remote.clone(), Source::Connection);
-            self.configure_path(conn_id, &path, &path_remote);
-            self.select_path();
-
-            if path_remote.is_ip() {
-                // We may have raced this with a relay address.  Try and add any
-                // relay addresses we have back.
-                let relays = self
-                    .paths
-                    .addrs()
-                    .filter(|a| a.is_relay())
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for remote in relays {
-                    self.open_path(&remote);
-                }
-            }
-        }
-        self.trigger_holepunching();
-        tx.send(path_state_receiver).ok();
-    }
-
     /// Handles [`RemoteStateMessage::ResolveRemote`].
     fn handle_msg_resolve_remote(
         &mut self,
@@ -506,46 +872,6 @@ impl RemoteStateActor {
         self.paths.resolve_remote(tx);
         // Start Address Lookup if we have no selected path.
         self.trigger_address_lookup();
-    }
-
-    /// Handles [`RemoteStateMessage::NetworkChange`].
-    fn handle_msg_network_change(&mut self, is_major: bool) {
-        // Ping all the paths so loss-detection starts ASAP.
-        for conn in self.connections.values() {
-            if let Some(noq_conn) = conn.handle.upgrade() {
-                for (path_id, addr) in &conn.paths {
-                    if let Some(path) = noq_conn.path(*path_id) {
-                        // Ping the current path
-                        if let Err(err) = path.ping() {
-                            warn!(%err, %path_id, ?addr, "failed to ping path");
-                        }
-                    }
-                }
-            }
-        }
-
-        if is_major {
-            self.trigger_holepunching();
-        }
-    }
-
-    fn handle_connection_close(&mut self, conn_id: ConnId, closed: Closed) {
-        event!(
-            target: "iroh::_events::conn::closed",
-            Level::DEBUG,
-            %conn_id,
-            remote_id = %self.endpoint_id.fmt_short(),
-            reason=?closed.reason,
-        );
-
-        if let Some(conn_state) = self.connections.remove(&conn_id) {
-            self.metrics.num_conns_closed.inc();
-            conn_state.path_state.close(closed);
-        }
-        if self.connections.is_empty() {
-            trace!("last connection closed - clearing selected_path");
-            self.selected_path = None;
-        }
     }
 
     /// Triggers Address Lookup for the remote endpoint, if needed.
@@ -604,130 +930,11 @@ impl RemoteStateActor {
         }
     }
 
-    /// Updates the local [`DirectAddr`]s to all connections.
-    ///
-    /// Each connection needs to have the local direct addresses to use as QNT address
-    /// candidates.
-    fn update_local_direct_address(&mut self) {
-        let local_addrs = self
-            .local_direct_addrs
-            .get()
-            .iter()
-            .map(|d| d.addr)
-            .collect::<BTreeSet<_>>();
-
-        for conn in self.connections.values().filter_map(|s| s.handle.upgrade()) {
-            Self::update_qnt_candidates(&conn, &local_addrs);
-        }
-        // todo: trace
-    }
-
-    /// Updates QNT's candidate addresses to be the current set of direct addresses.
-    ///
-    /// `direct_addrs` must be a set of addresses extracted from the endpoint's current
-    /// [`DirectAddr`]s.
-    fn update_qnt_candidates(conn: &noq::Connection, direct_addrs: &BTreeSet<SocketAddr>) {
-        let noq_candidates = match conn.get_local_nat_traversal_addresses() {
-            Ok(addrs) => BTreeSet::from_iter(addrs),
-            Err(err) => {
-                warn!("failed to get local nat candidates: {err:#}");
-                return;
-            }
-        };
-        for addr in direct_addrs.difference(&noq_candidates) {
-            if let Err(err) = conn.add_nat_traversal_address(*addr) {
-                warn!("failed adding local addr: {err:#}",);
-            }
-        }
-        for addr in noq_candidates.difference(direct_addrs) {
-            if let Err(err) = conn.remove_nat_traversal_address(*addr) {
-                warn!("failed removing local addr: {err:#}");
-            }
-        }
-        trace!(?direct_addrs, "updated local QNT addresses");
-    }
-
-    /// Triggers holepunching to the remote endpoint.
-    ///
-    /// This will manage the entire process of holepunching with the remote endpoint.
-    ///
-    /// - Holepunching happens on the Connection with the lowest [`ConnId`] which is a
-    ///   client.
-    ///   - Both endpoints may initiate holepunching if both have a client connection.
-    ///   - Any opened paths are opened on all other connections without holepunching.
-    /// - If there are no changes in local or remote candidate addresses since the
-    ///   last attempt **and** there was a recent attempt, a trigger_holepunching call
-    ///   will be scheduled instead.
-    fn trigger_holepunching(&mut self) {
-        if self.connections.is_empty() {
-            trace!("not holepunching: no connections");
-            return;
-        }
-
-        let Some(conn) = self
-            .connections
-            .iter()
-            .filter_map(|(id, state)| state.handle.upgrade().map(|conn| (*id, conn)))
-            .filter(|(_, conn)| conn.side().is_client())
-            .min_by_key(|(id, _)| *id)
-            .map(|(_, conn)| conn)
-        else {
-            trace!("not holepunching: no client connection");
-            return;
-        };
-        let remote_candidates = match conn.get_remote_nat_traversal_addresses() {
-            Ok(addrs) => BTreeSet::from_iter(addrs),
-            Err(err) => {
-                warn!("failed to get nat candidate addresses: {err:#}");
-                return;
-            }
-        };
-        let local_candidates: BTreeSet<SocketAddr> = self
-            .local_direct_addrs
-            .get()
-            .iter()
-            .map(|daddr| daddr.addr)
-            .collect();
-        let new_candidates = self
-            .last_holepunch
-            .as_ref()
-            .map(|last_hp| {
-                // Addrs are allowed to disappear, but if there are new ones we need to
-                // holepunch again.
-                trace!(
-                    ?last_hp,
-                    ?local_candidates,
-                    ?remote_candidates,
-                    "candidates to holepunch?"
-                );
-                !remote_candidates.is_subset(&last_hp.remote_candidates)
-                    || !local_candidates.is_subset(&last_hp.local_candidates)
-            })
-            .unwrap_or(true);
-        if !new_candidates && let Some(ref last_hp) = self.last_holepunch {
-            let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
-            let now = Instant::now();
-            if next_hp > now {
-                trace!(scheduled_in = ?(next_hp - now), "not holepunching: no new addresses");
-                self.scheduled_holepunch = Some(next_hp);
-                return;
-            }
-        }
-
-        self.do_holepunching(conn);
-    }
-
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
     fn do_holepunching(&mut self, conn: noq::Connection) {
         self.metrics.holepunch_attempts.inc();
-        let local_candidates = self
-            .local_direct_addrs
-            .get()
-            .iter()
-            .map(|daddr| daddr.addr)
-            .collect::<BTreeSet<_>>();
-
+        let local_candidates = self.local_candidates();
         match conn.initiate_nat_traversal_round() {
             Ok(remote_candidates) => {
                 let remote_candidates = remote_candidates
@@ -769,51 +976,122 @@ impl RemoteStateActor {
         }
     }
 
-    /// Configure path-type-specific settings.
+    /// Register a path with our state and configure path-specific settings.
     ///
+    /// This inserts the path in the [`ConnectionState`] and [`Self::paths`].
+    ///
+    /// It configures the path with the correct path status (see [`Self::set_path_status`]),
+    /// and applies path-type-specific settings:
     /// Relay paths get a longer idle timeout to accommodate transparent reconnection
     /// by the relay actor (see [`RELAY_PATH_MAX_IDLE_TIMEOUT`]).
-    fn configure_path(&self, conn_id: ConnId, path: &noq::Path, addr: &transports::Addr) {
-        if matches!(addr, transports::Addr::Relay(..))
+    fn register_and_configure_path(
+        &mut self,
+        conn_id: ConnId,
+        conn_state: &mut ConnectionState,
+        path: &noq::Path,
+    ) -> Option<transports::Addr> {
+        let path_remote = self.transport_addr_for_path(path)?;
+        event!(
+            target: "iroh::_events::path::open",
+            Level::DEBUG,
+            remote = %self.endpoint_id.fmt_short(),
+            ?path_remote,
+            %conn_id,
+            path_id=%path.id(),
+        );
+        conn_state.add_open_path(path_remote.clone(), path.id(), &self.metrics);
+        if matches!(path_remote, transports::Addr::Relay(..))
             && let Err(e) = path.set_max_idle_timeout(Some(RELAY_PATH_MAX_IDLE_TIMEOUT))
         {
             debug!(?e, "failed to set relay path idle timeout");
         }
 
-        let status = if Some(addr) == self.selected_path.as_ref() {
-            PathStatus::Available
-        } else {
-            PathStatus::Backup
-        };
-        let res = path.set_status(status);
-        event!(
-            target: "iroh::_events::path::set_status",
-            Level::DEBUG,
-            remote = %self.endpoint_id.fmt_short(),
-            path_remote = ?addr,
-            ?status,
-            %conn_id,
-            path_id=%path.id(),
-            ?res,
-        );
-        if let Err(e) = res {
-            warn!(?e, ?addr, ?status, "set_status failed");
+        self.set_path_status(conn_id, path, &path_remote);
+        self.paths
+            .insert_open_path(path_remote.clone(), Source::Connection);
+        Some(path_remote)
+    }
+
+    fn set_path_status(
+        &mut self,
+        conn_id: ConnId,
+        path: &noq::Path,
+        path_remote: &transports::Addr,
+    ) {
+        let status = self.path_status_for_addr(path_remote);
+        match path.set_status(status) {
+            Err(error) => warn!(?error, ?path_remote, ?status, "set_status failed"),
+            Ok(prev_status) if prev_status != status => {
+                event!(
+                    target: "iroh::_events::path::set_status",
+                    Level::DEBUG,
+                    remote = %self.endpoint_id.fmt_short(),
+                    path_remote = ?path_remote,
+                    ?status,
+                    %conn_id,
+                    path_id=%path.id(),
+                    ?prev_status,
+                );
+            }
+            Ok(_) => {}
         }
     }
 
-    /// Open the path on all connections.
+    fn open_path_on_conn(
+        &mut self,
+        conn_id: ConnId,
+        conn_state: &ConnectionState,
+        conn: &noq::Connection,
+        open_addr: &transports::Addr,
+    ) {
+        // Only the client opens paths; the server receives them via
+        // QUIC frames and reacts to PathOpened events.
+        if conn.side().is_server() {
+            return;
+        }
+        // Already open on this connection; nothing to do.
+        if conn_state.paths.values().any(|a| a == open_addr) {
+            return;
+        }
+
+        let quic_addr = self.quic_mapped_addr(open_addr);
+        let path_status = self.path_status_for_addr(open_addr);
+
+        let fut = conn.open_path_ensure(quic_addr, path_status);
+        match fut.path_id() {
+            Some(path_id) => {
+                trace!(%conn_id, %path_id, ?path_status, "opening new path");
+            }
+            None => {
+                let ret = now_or_never(fut);
+                match ret {
+                    Some(Err(PathError::RemoteCidsExhausted)) => {
+                        self.scheduled_open_path =
+                            Some(Instant::now() + Duration::from_millis(333));
+                        self.pending_open_paths.push_back(open_addr.clone());
+                        trace!(?open_addr, "scheduling open_path");
+                    }
+                    _ => warn!(?ret, "Opening path failed"),
+                }
+            }
+        }
+    }
+
+    /// Returns the [`PathStatus`] for `addr`.
     ///
-    /// This goes through all the connections for which we are the client, and makes sure
-    /// the path exists, or opens it.
-    #[instrument(level = "warn", skip(self))]
-    fn open_path(&mut self, open_addr: &transports::Addr) {
-        let path_status = if Some(open_addr) == self.selected_path.as_ref() {
+    /// Returns [`PathStatus::Available`] if `addr` is the currently-selected path,
+    /// or [`PathStatus::Backup`] otherwise.
+    fn path_status_for_addr(&self, addr: &transports::Addr) -> PathStatus {
+        if Some(addr) == self.selected_path.as_ref() {
             PathStatus::Available
         } else {
             PathStatus::Backup
-        };
+        }
+    }
 
-        let quic_addr = match &open_addr {
+    /// Returns the QUIC-mapped address for a [`transports::Addr`].
+    fn quic_mapped_addr(&self, open_addr: &transports::Addr) -> SocketAddr {
+        match open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
             transports::Addr::Relay(relay_url, eid) => self
                 .relay_mapped_addrs
@@ -822,343 +1100,82 @@ impl RemoteStateActor {
             transports::Addr::Custom(remote) => {
                 self.custom_mapped_addrs.get(remote).private_socket_addr()
             }
-        };
-
-        for (conn_id, conn_state) in self.connections.iter() {
-            let Some(conn) = conn_state.handle.upgrade() else {
-                continue;
-            };
-            // Only the client opens paths; the server receives them via
-            // QUIC frames and reacts to PathOpened events.
-            if conn.side().is_server() {
-                continue;
-            }
-            // Already open on this connection; nothing to do.
-            if conn_state.paths.values().any(|a| a == open_addr) {
-                continue;
-            }
-
-            let fut = conn.open_path_ensure(quic_addr, path_status);
-            match fut.path_id() {
-                Some(path_id) => {
-                    trace!(%conn_id, %path_id, ?path_status, "opening new path");
-                }
-                None => {
-                    let ret = now_or_never(fut);
-                    match ret {
-                        Some(Err(PathError::RemoteCidsExhausted)) => {
-                            self.scheduled_open_path =
-                                Some(Instant::now() + Duration::from_millis(333));
-                            self.pending_open_paths.push_back(open_addr.clone());
-                            trace!(?open_addr, "scheduling open_path");
-                        }
-                        _ => warn!(?ret, "Opening path failed"),
-                    }
-                }
-            }
         }
     }
 
-    #[instrument(skip(self))]
-    fn handle_path_event(&mut self, conn_id: ConnId, event: Result<NoqPathEvent, noq::Lagged>) {
-        let Ok(event) = event else {
-            warn!("missed a PathEvent, RemoteStateActor lagging");
-            // TODO: Is it possible to recover using the sync APIs to figure out what the
-            //    state of the connection and it's paths are?
-            return;
-        };
-        let Some(conn_state) = self.connections.get_mut(&conn_id) else {
-            trace!("event for removed connection");
-            return;
-        };
-        let Some(conn) = conn_state.handle.upgrade() else {
-            trace!("event for closed connection");
-            return;
-        };
-        trace!("path event");
-        match event {
-            NoqPathEvent::Established { id: path_id } => {
-                let Some(path) = conn.path(path_id) else {
-                    trace!("path open event for unknown path");
-                    return;
-                };
-
-                if let Ok(socketaddr) = path.remote_address()
-                    && let Some(path_remote) = to_transport_addr(
-                        socketaddr,
-                        &self.relay_mapped_addrs,
-                        &self.custom_mapped_addrs,
-                    )
-                {
-                    event!(
-                        target: "iroh::_events::path::open",
-                        Level::DEBUG,
-                        remote = %self.endpoint_id.fmt_short(),
-                        ?path_remote,
-                        %conn_id,
-                        %path_id,
-                    );
-                    conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
-                    self.paths
-                        .insert_open_path(path_remote.clone(), Source::Connection);
-                    self.configure_path(conn_id, &path, &path_remote);
-                    self.select_path();
-                }
-            }
-            NoqPathEvent::Abandoned { id, reason } => {
-                // Remove abandoned path from the conn state.
-                let Some(path_remote) = conn_state.remove_path(&id, &conn) else {
-                    debug!(%id, "path not in path_id_map");
-                    return;
-                };
-                // Also remove the path from the remote-global path tracking.
-                self.paths.abandoned_path(&path_remote);
-
-                event!(
-                    target: "iroh::_events::path::abandoned",
-                    Level::DEBUG,
-                    remote = %self.endpoint_id.fmt_short(),
-                    ?path_remote,
-                    %conn_id,
-                    path_id = ?id,
-                    ?reason
-                );
-
-                // If one connection abandons a path, close it on all connections.
-                for (conn_id, conn_state) in self.connections.iter() {
-                    let Some(conn) = conn_state.handle.upgrade() else {
-                        continue;
-                    };
-                    // Close all paths with the remote address that was abandoned.
-                    for path in conn_state
-                        .paths
-                        .iter()
-                        .filter(|(_id, addr)| **addr == path_remote)
-                        .filter_map(|(id, _addr)| conn.path(*id))
-                    {
-                        trace!(?path_remote, %conn_id, path_id=%path.id(), "closing path");
-                        if let Err(err) = path.close() {
-                            trace!(
-                                ?path_remote,
-                                %conn_id,
-                                path_id=%path.id(),
-                                "path close failed: {err:#}"
-                            );
-                        }
-                    }
-                }
-
-                // If the remote closed our selected path, select a new one.
-                self.select_path();
-            }
-            NoqPathEvent::Discarded { id, path_stats } => {
-                trace!(%id, ?path_stats, "path discarded");
-            }
-            NoqPathEvent::RemoteStatus { .. } | NoqPathEvent::ObservedAddr { .. } => {
-                // Nothing to do for these events.
-            }
-        }
+    /// Returns the [`transports::Addr] for a path.
+    fn transport_addr_for_path(&self, path: &noq::Path) -> Option<transports::Addr> {
+        let socketaddr = path.remote_address().ok()?;
+        to_transport_addr(
+            socketaddr,
+            &self.relay_mapped_addrs,
+            &self.custom_mapped_addrs,
+        )
     }
 
-    /// Selects the path with the lowest RTT, prefers direct paths.
-    ///
-    /// If there are direct paths, this selects the direct path with the lowest RTT.  If
-    /// there are only relay paths, the relay path with the lowest RTT is chosen.
-    ///
-    /// The selected path is added to any connections which do not yet have it.  Any unused
-    /// direct paths are closed for all connections.
-    #[instrument(skip_all)]
-    fn select_path(&mut self) {
-        // Find the lowest RTT across all connections for each open path.  The long way, so
-        // we get to log *all* RTTs.
-        let mut all_path_rtts: FxHashMap<transports::Addr, Vec<Duration>> = FxHashMap::default();
-        for conn_state in self.connections.values() {
-            let Some(conn) = conn_state.handle.upgrade() else {
-                continue;
-            };
-            for (path_id, addr) in conn_state.paths.iter() {
-                if let Some(stats) = conn.path_stats(*path_id) {
-                    all_path_rtts
-                        .entry(addr.clone())
-                        .or_default()
-                        .push(stats.rtt);
-                }
-            }
-        }
-        trace!(?all_path_rtts, "dumping all path RTTs");
-        let path_rtts: FxHashMap<transports::Addr, PathSelectionData> = all_path_rtts
-            .into_iter()
-            .filter_map(|(addr, rtts)| rtts.into_iter().min().map(|rtt| (addr, rtt)))
-            .map(|(addr, rtt)| {
-                (
-                    addr.clone(),
-                    self.transport_bias.path_selection_data(&addr, rtt),
-                )
-            })
-            .collect();
-
-        let current_path = self.selected_path.as_ref();
-        let selected_path = select_best_path(path_rtts, current_path);
-
-        // Apply our new path
-        if let Some((addr, rtt)) = selected_path
-            && self.selected_path.as_ref() != Some(&addr)
-        {
-            let prev_remote = self.selected_path.replace(addr.clone());
-            event!(
-                target: "iroh::_events::path::selected",
-                Level::DEBUG,
-                remote = %self.endpoint_id.fmt_short(),
-                path_remote = ?addr,
-                ?rtt,
-                ?prev_remote,
-            );
-            self.apply_selected_change(&addr);
-            self.open_path(&addr);
-        } else {
-            trace!(?current_path, "keeping current path");
-        }
-    }
-
-    /// Propagates a change of [`Self::selected_path`] to noq.
-    ///
-    /// Iterates over all connections and applies the selected path as follows:
-    /// - Closes non-selected IP paths (but keeps one IP path open still)
-    /// - Sets all non-selected paths to [`PathStatus::Backup`]
-    /// - Sets the selected path to [`PathStatus::Available`]
-    fn apply_selected_change(&self, selected: &transports::Addr) {
-        for (conn_id, conn_state) in self.connections.iter() {
-            let Some(conn) = conn_state.handle.upgrade() else {
-                continue;
-            };
-
-            // Record the new selected path in the path watcher.
-            conn_state
-                .path_state
-                .record_selected(selected.clone().into());
-
-            for (path_id, path_remote) in conn_state.paths.iter() {
-                let Some(path) = conn.path(*path_id) else {
-                    continue;
-                };
-
-                // Closes redundant IP paths so that at most one remains per connection.
-                //
-                // Relay and custom paths are kept open. Only the client closes paths,
-                // to avoid the client and server independently closing different paths
-                // and racing to abandon the last one.
-                if conn.side().is_client()
-                    && path_remote.is_ip()
-                    && path_remote != selected
-                    && conn_state.paths.values().filter(|a| a.is_ip()).count() > 1
-                {
-                    trace!(?path_remote, %conn_id, %path_id, "closing direct path");
-                    match path.close() {
-                        Err(noq_proto::ClosePathError::MultipathNotNegotiated) => {
-                            error!("multipath not negotiated");
-                        }
-                        Err(noq_proto::ClosePathError::LastOpenPath) => {
-                            error!("could not close last open path");
-                        }
-                        Err(noq_proto::ClosePathError::ClosedPath) => {
-                            // We already closed this.
-                        }
-                        Ok(_fut) => {
-                            // We will handle the event in Self::handle_path_events.
-                        }
-                    }
-                    continue;
-                }
-
-                // Set path status: The selected path becomes Available, all other paths become Backup.
-                let status = if path_remote == selected {
-                    PathStatus::Available
-                } else {
-                    PathStatus::Backup
-                };
-                if let Err(e) = path.set_status(status) {
-                    warn!(?e, ?path_remote, ?status, "set_status failed");
-                } else {
-                    event!(
-                        target: "iroh::_events::path::set_status",
-                        Level::DEBUG,
-                        remote = %self.endpoint_id.fmt_short(),
-                        path_remote = ?path_remote,
-                        ?status,
-                        %conn_id,
-                        %path_id,
-                    );
-                }
-            }
-        }
-    }
-
-    /// Handles regularly checking if any paths need hole punching currently
-    ///
-    /// Currently we need to have 1 IP path, with a good enough latency.
-    fn check_connections(&mut self) {
-        let mut is_goodenough = true;
-        for conn_state in self.connections.values() {
-            let mut is_conn_goodenough = false;
-            if let Some(conn) = conn_state.handle.upgrade() {
-                let min_ip_rtt = conn_state
-                    .paths
-                    .iter()
-                    .filter_map(|(path_id, addr)| {
-                        if addr.is_ip() {
-                            conn.path_stats(*path_id).map(|stats| stats.rtt)
-                        } else {
-                            None
-                        }
-                    })
-                    .min();
-
-                if let Some(min_ip_rtt) = min_ip_rtt {
-                    let is_latency_goodenough = min_ip_rtt <= GOOD_ENOUGH_LATENCY;
-                    is_conn_goodenough = is_latency_goodenough;
-                } else {
-                    // No IP transport found
-                    is_conn_goodenough = false;
-                }
-            }
-            is_goodenough &= is_conn_goodenough;
-        }
-
-        if !is_goodenough {
-            debug!("connections are not good enough, triggering holepunching");
-            self.trigger_holepunching();
-        }
+    /// Returns the current set of local direct addresses.
+    fn local_candidates(&mut self) -> BTreeSet<SocketAddr> {
+        self.local_direct_addrs
+            .get()
+            .iter()
+            .map(|d| d.addr)
+            .collect()
     }
 }
 
 /// Returns `Some` if a new path should be selected, `None` if the `current_path` should
 /// continued to be used.
-fn select_best_path(
-    all_paths: FxHashMap<transports::Addr, PathSelectionData>,
-    current_path: Option<&transports::Addr>,
+fn select_best_path<'a>(
+    all_paths: FxHashMap<&'a transports::Addr, PathSelectionData>,
+    current_path: Option<&'a transports::Addr>,
 ) -> Option<(transports::Addr, Duration)> {
     // Determine the best new path according to sort_key.
     // If there is no path, return None.
     let (best_addr, best_data) = all_paths.iter().min_by_key(|(_, psd)| psd.sort_key())?;
     // If there is no current path, always switch to the best path.
     let Some(addr) = current_path else {
-        return Some((best_addr.clone(), best_data.rtt));
+        return Some(((*best_addr).clone(), best_data.rtt));
     };
     // Get current data. If we don't have data for the current path, switch to the best path.
     let Some(current_data) = all_paths.get(addr) else {
-        return Some((best_addr.clone(), best_data.rtt));
+        return Some(((*best_addr).clone(), best_data.rtt));
     };
     if current_data.transport_type != best_data.transport_type {
         // Always switch if the status is different (better).
-        Some((best_addr.clone(), best_data.rtt))
+        Some(((*best_addr).clone(), best_data.rtt))
     } else if best_data.biased_rtt + RTT_SWITCHING_MIN_IP.as_nanos() as i128
         <= current_data.biased_rtt
     {
         // For the same status, only switch if the biased RTT is significantly better.
-        Some((best_addr.clone(), best_data.rtt))
+        Some(((*best_addr).clone(), best_data.rtt))
     } else {
         None
     }
+}
+
+/// Updates QNT's candidate addresses to be the current set of direct addresses.
+///
+/// `direct_addrs` must be a set of addresses extracted from the endpoint's current
+/// [`DirectAddr`]s.
+fn update_qnt_candidates(conn: &noq::Connection, direct_addrs: &BTreeSet<SocketAddr>) {
+    let noq_candidates = match conn.get_local_nat_traversal_addresses() {
+        Ok(addrs) => BTreeSet::from_iter(addrs),
+        Err(err) => {
+            warn!("failed to get local nat candidates: {err:#}");
+            return;
+        }
+    };
+    for addr in direct_addrs.difference(&noq_candidates) {
+        if let Err(err) = conn.add_nat_traversal_address(*addr) {
+            warn!("failed adding local addr: {err:#}",);
+        }
+    }
+    for addr in noq_candidates.difference(direct_addrs) {
+        if let Err(err) = conn.remove_nat_traversal_address(*addr) {
+            warn!("failed removing local addr: {err:#}");
+        }
+    }
+    trace!(?direct_addrs, "updated local QNT addresses");
 }
 
 fn send_datagram<'a>(
@@ -1419,10 +1436,12 @@ mod tests {
 
     #[test]
     fn test_ipv6_wins_over_ipv4_within_bias() {
+        let v4 = v4(1);
+        let v6 = v6(1);
         // IPv6 should win over IPv4 when RTTs are the same
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 10));
-        paths.insert(v6(1), psd_v6(TransportType::Primary, 10));
+        paths.insert(&v4, psd(TransportType::Primary, 10));
+        paths.insert(&v6, psd_v6(TransportType::Primary, 10));
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1431,8 +1450,8 @@ mod tests {
 
         // IPv6 should still win when it's slightly slower (within bias range)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 10));
-        paths.insert(v6(1), psd_v6(TransportType::Primary, 12)); // 2ms slower, but 3ms bias
+        paths.insert(&v4, psd(TransportType::Primary, 10));
+        paths.insert(&v6, psd_v6(TransportType::Primary, 12)); // 2ms slower, but 3ms bias
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1441,8 +1460,8 @@ mod tests {
 
         // IPv4 should win when IPv6 is significantly slower
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 10));
-        paths.insert(v6(1), psd_v6(TransportType::Primary, 20)); // 10ms slower, exceeds 3ms bias
+        paths.insert(&v4, psd(TransportType::Primary, 10));
+        paths.insert(&v6, psd_v6(TransportType::Primary, 20)); // 10ms slower, exceeds 3ms bias
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1452,10 +1471,12 @@ mod tests {
 
     #[test]
     fn test_available_wins_over_backup_regardless_of_rtt() {
+        let v4 = v4(1);
+        let relay = relay(1);
         // Available path should win even with much higher RTT
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 100)); // High RTT but Available
-        paths.insert(relay(1), psd(TransportType::Backup, 10)); // Low RTT but Backup
+        paths.insert(&v4, psd(TransportType::Primary, 100)); // High RTT but Available
+        paths.insert(&relay, psd(TransportType::Backup, 10)); // Low RTT but Backup
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1464,8 +1485,8 @@ mod tests {
 
         // Even more extreme: 1000ms Available vs 1ms Backup
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 1000));
-        paths.insert(relay(1), psd(TransportType::Backup, 1));
+        paths.insert(&v4, psd(TransportType::Primary, 1000));
+        paths.insert(&relay, psd(TransportType::Backup, 1));
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1475,28 +1496,30 @@ mod tests {
 
     #[test]
     fn test_same_category_only_switches_with_significant_rtt_diff() {
+        let v4_1 = v4(1);
+        let v4_2 = v4(2);
         let current = v4(1);
 
         // Should NOT switch: new path is only slightly better (2ms < 5ms threshold)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 20));
-        paths.insert(v4(2), psd(TransportType::Primary, 18));
+        paths.insert(&v4_1, psd(TransportType::Primary, 20));
+        paths.insert(&v4_2, psd(TransportType::Primary, 18));
 
         let result = select_best_path(paths, Some(&current));
         assert!(result.is_none()); // Should keep current
 
         // Should NOT switch: new path is just under threshold (4ms < 5ms)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 20));
-        paths.insert(v4(2), psd(TransportType::Primary, 16));
+        paths.insert(&v4_1, psd(TransportType::Primary, 20));
+        paths.insert(&v4_2, psd(TransportType::Primary, 16));
 
         let result = select_best_path(paths, Some(&current));
         assert!(result.is_none()); // Should keep current
 
         // SHOULD switch: new path is exactly at threshold (5ms, condition is <=)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 20));
-        paths.insert(v4(2), psd(TransportType::Primary, 15));
+        paths.insert(&v4_1, psd(TransportType::Primary, 20));
+        paths.insert(&v4_2, psd(TransportType::Primary, 15));
 
         let result = select_best_path(paths, Some(&current));
         assert!(result.is_some());
@@ -1505,8 +1528,8 @@ mod tests {
 
         // SHOULD switch: new path is significantly better (6ms > 5ms threshold)
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 20));
-        paths.insert(v4(2), psd(TransportType::Primary, 14));
+        paths.insert(&v4_1, psd(TransportType::Primary, 20));
+        paths.insert(&v4_2, psd(TransportType::Primary, 14));
 
         let result = select_best_path(paths, Some(&current));
         assert!(result.is_some());
@@ -1516,9 +1539,11 @@ mod tests {
 
     #[test]
     fn test_no_current_path_selects_best() {
+        let v4_1 = v4(1);
+        let v4_2 = v4(2);
         let mut paths = FxHashMap::default();
-        paths.insert(v4(1), psd(TransportType::Primary, 20));
-        paths.insert(v4(2), psd(TransportType::Primary, 10));
+        paths.insert(&v4_1, psd(TransportType::Primary, 20));
+        paths.insert(&v4_2, psd(TransportType::Primary, 10));
 
         let result = select_best_path(paths, None);
         assert!(result.is_some());
@@ -1528,11 +1553,11 @@ mod tests {
 
     #[test]
     fn test_empty_paths_returns_none() {
-        let paths: FxHashMap<transports::Addr, PathSelectionData> = FxHashMap::default();
+        let paths: FxHashMap<&transports::Addr, PathSelectionData> = FxHashMap::default();
         let result = select_best_path(paths, None);
         assert!(result.is_none());
 
-        let paths: FxHashMap<transports::Addr, PathSelectionData> = FxHashMap::default();
+        let paths: FxHashMap<&transports::Addr, PathSelectionData> = FxHashMap::default();
         let result = select_best_path(paths, Some(&v4(1)));
         assert!(result.is_none());
     }
