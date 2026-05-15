@@ -47,7 +47,7 @@ impl Preset for Empty {
 /// At the moment the only mandatory option to set on the endpoint builder is
 /// [`Builder::crypto_provider`]. This preset makes a choice for that based on
 /// the current set of enabled features in iroh, which is why it's only available
-/// with the "ring" or "aws-lc-rs" feature flag.
+/// with the `tls-ring` or `tls-aws-lc-rs` feature flag.
 ///
 /// It uses either [ring] or [aws-lc-rs], depending on which feature is enabled
 /// on iroh (preferring ring if both are enabled).
