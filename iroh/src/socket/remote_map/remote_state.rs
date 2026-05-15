@@ -931,6 +931,9 @@ impl RemoteStateActor {
                     let Some(conn) = conn_state.handle.upgrade() else {
                         continue;
                     };
+                    if conn.side().is_server() {
+                        continue;
+                    }
                     // Close all paths with the remote address that was abandoned.
                     for path in conn_state
                         .paths
