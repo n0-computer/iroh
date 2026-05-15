@@ -43,7 +43,7 @@ use netwatch::{
     ip::LocalAddresses,
 };
 use noq::{
-    NetworkChangeHint, WeakConnectionHandle,
+    NetworkChangeHint,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use rand::RngExt;
@@ -1350,7 +1350,7 @@ impl EndpointInner {
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
-        conn: WeakConnectionHandle,
+        conn: noq::Connection,
     ) -> impl Future<Output = Result<PathStateReceiver, RemoteStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
@@ -1378,7 +1378,7 @@ enum ActorMessage {
     #[debug("AddConnection(..)")]
     AddConnection(
         EndpointId,
-        WeakConnectionHandle,
+        noq::Connection,
         oneshot::Sender<PathStateReceiver>,
     ),
     /// Re-evaluate direct addresses, e.g. after configured external addresses changed.
