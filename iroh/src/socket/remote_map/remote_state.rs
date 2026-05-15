@@ -1194,9 +1194,11 @@ pub(crate) enum RemoteStateMessage {
     SendDatagram(Box<TransportsSender>, OwnedTransmit),
     /// Adds an active connection to this remote endpoint.
     ///
-    /// The connection will now be managed by this actor.  Holepunching will happen when
-    /// needed, any new paths discovered via holepunching will be added.  And closed paths
-    /// will be removed etc.
+    /// The actor will downgrade the connection to a [`noq::WeakConnectionHandle`] as soon
+    /// as it processes the message. It will keep hold of the weak handle until it closes,
+    /// but only update to a strong [`noq::Connection`] for brief moments.
+    ///
+    /// The actor will actively manage paths on the connection and start holepunching as needed.
     #[debug("AddConnection(..)")]
     AddConnection(noq::Connection, oneshot::Sender<PathStateReceiver>),
     /// Asks if there is any possible path that could be used.
