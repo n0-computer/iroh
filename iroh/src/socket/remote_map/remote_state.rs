@@ -99,7 +99,6 @@ type AddrEvents = MergeUnbounded<
 ///
 /// This actor manages all connections to the remote endpoint.  It will trigger holepunching
 /// and select the best path etc.
-///
 pub(super) struct RemoteStateActor {
     /// All connections we have to this remote endpoint.
     connections: FxHashMap<ConnId, ConnectionState>,
@@ -677,7 +676,7 @@ impl RemoteStateActor {
             .map(|(addr, rtt)| {
                 (
                     addr,
-                    self.state.transport_bias.path_selection_data(&addr, rtt),
+                    self.state.transport_bias.path_selection_data(addr, rtt),
                 )
             })
             .collect();
@@ -704,7 +703,7 @@ impl RemoteStateActor {
         }
     }
 
-    /// Propagates a change of [`Self::selected_path`] to noq.
+    /// Propagates a change of [`State::selected_path`] to noq.
     ///
     /// Iterates over all connections and applies the selected path as follows:
     /// - Closes non-selected IP paths (but keeps one IP path open still)
@@ -981,7 +980,7 @@ impl State {
     ///
     /// This inserts the path in the [`ConnectionState`] and [`Self::paths`].
     ///
-    /// It configures the path with the correct path status (see [`self::set_path_status`]),
+    /// It configures the path with the correct path status (see [`Self::set_path_status`]),
     /// and applies path-type-specific settings:
     /// Relay paths get a longer idle timeout to accommodate transparent reconnection
     /// by the relay actor (see [`RELAY_PATH_MAX_IDLE_TIMEOUT`]).
@@ -991,7 +990,7 @@ impl State {
         conn_state: &mut ConnectionState,
         path: &noq::Path,
     ) -> Option<transports::Addr> {
-        let path_remote = self.transport_addr_for_path(&path)?;
+        let path_remote = self.transport_addr_for_path(path)?;
         event!(
             target: "iroh::_events::path::open",
             Level::DEBUG,
@@ -1055,8 +1054,8 @@ impl State {
             return;
         }
 
-        let quic_addr = self.quic_mapped_addr(&open_addr);
-        let path_status = self.path_status_for_addr(&open_addr);
+        let quic_addr = self.quic_mapped_addr(open_addr);
+        let path_status = self.path_status_for_addr(open_addr);
 
         let fut = conn.open_path_ensure(quic_addr, path_status);
         match fut.path_id() {
