@@ -927,7 +927,10 @@ impl RemoteStateActor {
                 );
 
                 // If one connection abandons a path, close it on all connections.
-                for (conn_id, conn_state) in self.connections.iter() {
+                for (other_conn_id, conn_state) in self.connections.iter() {
+                    if *other_conn_id == conn_id {
+                        continue;
+                    }
                     let Some(conn) = conn_state.handle.upgrade() else {
                         continue;
                     };
@@ -938,11 +941,11 @@ impl RemoteStateActor {
                         .filter(|(_id, addr)| **addr == path_remote)
                         .filter_map(|(id, _addr)| conn.path(*id))
                     {
-                        trace!(?path_remote, %conn_id, path_id=%path.id(), "closing path");
+                        trace!(?path_remote, conn_id=%other_conn_id, path_id=%path.id(), "closing path");
                         if let Err(err) = path.close() {
                             trace!(
                                 ?path_remote,
-                                %conn_id,
+                                conn_id=%other_conn_id,
                                 path_id=%path.id(),
                                 "path close failed: {err:#}"
                             );
