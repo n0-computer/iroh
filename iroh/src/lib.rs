@@ -289,7 +289,7 @@ pub use iroh_dns::dns;
 pub use iroh_dns::endpoint_info;
 pub use iroh_relay::{RelayConfig, RelayMap};
 pub use n0_watcher::Watcher;
-pub use net_report::{Report as NetReport, TIMEOUT as NET_REPORT_TIMEOUT};
+pub use net_report::{NetReportConfig, Report as NetReport, TIMEOUT as NET_REPORT_TIMEOUT};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

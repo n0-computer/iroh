@@ -83,6 +83,56 @@ pub(crate) use self::{
     options::Options, probes::Probe, report::RelayLatencies, reportgen::QuicConfig,
 };
 
+/// Configuration for the net report component.
+///
+/// Controls which probes and checks are performed when generating network reports.
+/// All options default to `true`.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct NetReportConfig {
+    /// Run HTTPS latency probes against relay servers.
+    ///
+    /// HTTPS latency probes perform an empty HTTPS GET request to each configured
+    /// relay server and measure latency.
+    ///
+    /// They are performed in addition to the QUIC address discovery (QAD) probes.
+    /// They are the only way to detect relay latencies and thus the preferred relay
+    /// in networks that do not allow QUIC traffic.
+    ///
+    /// Disabling them is harmless on networks that do allow QUIC traffic, but will
+    /// completely prevent finding the home relay on networks that do block QUIC.
+    pub https_probes: bool,
+
+    /// Check for captive portals when generating the first report.
+    ///
+    /// This is done by accessing a well-known URL that is available on each relay
+    /// server, `/generate_204`. If a GET request to this URL returns anything else
+    /// but a 204 No Content response, we assume we are behind a captive portal.
+    ///
+    /// When we have detected that we are behind a captive portal, we try to contact
+    /// the relay servers more frequently in case the captive portal status changes.
+    pub captive_portal_check: bool,
+}
+
+impl NetReportConfig {
+    /// Creates a minimal configuration that disables all optional probes and checks.
+    pub fn minimal() -> Self {
+        Self {
+            https_probes: false,
+            captive_portal_check: false,
+        }
+    }
+}
+
+impl Default for NetReportConfig {
+    fn default() -> Self {
+        Self {
+            https_probes: true,
+            captive_portal_check: true,
+        }
+    }
+}
+
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const ENOUGH_ENDPOINTS: usize = 3;
 
@@ -98,6 +148,8 @@ pub(crate) struct Client {
     qad_conns: QadConns,
     #[cfg(not(wasm_browser))]
     tls_config: rustls::ClientConfig,
+    /// Whether to check for captive portals.
+    captive_portal_check: bool,
     /// A collection of previously generated reports.
     ///
     /// Sometimes it is useful to look at past reports to decide what to do.
@@ -237,6 +289,7 @@ impl Client {
             qad_conns: QadConns::default(),
             #[cfg(not(wasm_browser))]
             tls_config: opts.tls_config,
+            captive_portal_check: opts.user_config.captive_portal_check,
         }
     }
 
@@ -292,6 +345,7 @@ impl Client {
             self.reports.last.clone(),
             self.relay_map.clone(),
             self.probes.clone(),
+            self.captive_portal_check,
             if_state.clone(),
             shutdown_token.child_token(),
             #[cfg(not(wasm_browser))]
