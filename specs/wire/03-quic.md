@@ -1,6 +1,6 @@
 # QUIC
 
-**Version:** 1.0
+**Version:** 1.1
 
 Iroh uses QUIC v1 ([RFC 9000](https://www.rfc-editor.org/rfc/rfc9000)) as its transport protocol, with the multipath extension and specific parameter choices.
 
@@ -16,7 +16,7 @@ Implementations MUST support multipath with the following parameters:
 
 | Parameter | Value |
 |-----------|-------|
-| Maximum concurrent paths | 12 |
+| Maximum concurrent paths | 8 |
 
 Multipath is used for:
 - Simultaneous relay and direct paths during hole punching
@@ -54,9 +54,9 @@ Relay paths use a longer idle timeout because they serve as the fallback transpo
 
 | Parameter | Value |
 |-----------|-------|
-| Maximum NAT traversal addresses | 12 |
+| Maximum NAT traversal addresses | 32 |
 
-Endpoints MAY advertise up to 12 addresses for NAT traversal candidate exchange.
+Endpoints MAY advertise up to 32 addresses for NAT traversal candidate exchange. This accommodates hosts with many network interfaces (e.g., machines with VPN tunnels and container interfaces).
 
 ### Observed Address Reports
 
@@ -70,10 +70,15 @@ The mapping is internal to the iroh implementation. The QUIC layer operates on s
 
 ### Mapped Address Types
 
-| Transport | Mapped Address Range |
-|-----------|---------------------|
-| IP (direct) | Actual IPv4/IPv6 address (no mapping) |
-| Relay | `fd00::{relay_hash}::{endpoint_id_hash}` |
-| Custom | `fd00::{custom_id}::{address_hash}` |
+Synthetic IPv6 addresses use the n0 ULA prefix `fd15:070a:510b::/48` (Prefix/L `0xfd` + 5-byte n0 Global ID `15:07:0a:51:0b`), with a 16-bit subnet ID identifying the address kind, followed by a monotonically-incrementing 64-bit counter assigned at allocation time.
 
-For initial QUIC packets before a specific transport is selected, a mixed mapped address is used to represent the remote endpoint generically.
+| Transport | Mapped Address Range | Layout (after `fd15:070a:510b:`) |
+|-----------|---------------------|----------------------------------|
+| IP (direct) | Actual IPv4/IPv6 address (no mapping) | — |
+| Endpoint (mixed) | `fd15:070a:510b:0000::/64` | `0000:` + 64-bit counter |
+| Relay | `fd15:070a:510b:0001::/64` | `0001:` + 64-bit counter |
+| Custom | `fd15:070a:510b:0003::/64` | `0003:` + 64-bit counter |
+
+All mapped addresses use a fixed dummy port (`12345`); the port carries no meaning in iroh's path identification.
+
+For initial QUIC packets before a specific transport is selected, a "mixed" endpoint mapped address (subnet `0`) is used to represent the remote endpoint generically.

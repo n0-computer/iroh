@@ -1,6 +1,6 @@
 # NAT Traversal
 
-**Version:** 1.0
+**Version:** 1.1
 
 Iroh uses two mechanisms for NAT traversal: a modified form of QUIC Address Discovery (QAD) for learning public addresses, and n0 NAT Traversal (n0-QNT) — a protocol inspired by draft-seemann-quic-nat-traversal but simplified into n0's own protocol — for coordinated hole punching. Both are implemented in [noq](https://github.com/n0-computer/noq), iroh's QUIC library.
 

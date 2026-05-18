@@ -1,6 +1,6 @@
 # Transports
 
-**Version:** 1.0
+**Version:** 1.1
 
 Iroh supports multiple transport types simultaneously, allowing a single QUIC connection to span different network technologies. This is enabled by QUIC multipath, which manages concurrent paths across transports.
 
@@ -28,7 +28,7 @@ Iroh uses the QUIC Multipath extension ([draft-ietf-quic-multipath](https://data
 - **Relay-to-direct migration**: When hole punching succeeds, the connection migrates from the relay path to the direct path without interruption.
 - **Path probing**: New candidate paths can be probed in the background while existing paths carry traffic.
 
-Iroh supports up to 12 concurrent multipath paths per connection.
+Iroh supports up to 8 concurrent multipath paths per connection. This typically covers one relay path plus several IP and custom transport paths, with headroom to open replacement paths after a network change before the old ones are torn down.
 
 ## Path Selection
 

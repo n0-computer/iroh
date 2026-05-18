@@ -1,6 +1,6 @@
 # Relay Protocol
 
-**Version:** 1.1
+**Version:** 1.2
 
 The relay protocol is iroh's custom packet forwarding protocol. It runs over WebSocket and allows endpoints to exchange encrypted QUIC packets through a relay server.
 
@@ -20,11 +20,40 @@ Frames not valid for the negotiated protocol version MUST be treated as an error
 The relay connection is established as follows:
 
 1. The client opens an HTTPS connection to the relay server using standard TLS with X.509 certificates (the relay's own identity, not iroh Raw Public Keys).
-2. The connection is upgraded to a WebSocket.
-3. The handshake protocol authenticates the client (see [Handshake](#handshake) below).
-4. Once authenticated, the connection enters the relay protocol phase for packet exchange.
+2. The client sends a WebSocket upgrade request to the path `/relay`. The request MAY include:
+   - The `Sec-WebSocket-Protocol` header listing supported relay protocol versions (see [Protocol Versioning](#protocol-versioning)).
+   - The `x-iroh-relay-client-auth-v1` header carrying fast-path authentication material (see [Fast Path](#fast-path-tls-keying-material-export)).
+   - An `Authorization: Bearer <token>` header carrying an authorization token (see [Authorization Token](#authorization-token)).
+   - A `?token=<value>` URL query parameter as an alternative to the `Authorization` header for environments that cannot set custom headers (notably browsers).
+3. The connection is upgraded to a WebSocket.
+4. The handshake protocol authenticates the client (see [Handshake](#handshake) below).
+5. Once authenticated, the connection enters the relay protocol phase for packet exchange.
 
 All relay protocol frames are carried as binary WebSocket messages. Each WebSocket message contains exactly one relay protocol frame.
+
+### Authorization Token
+
+A relay MAY require clients to present an authorization token in addition to proving possession of their Endpoint ID. The token is an opaque, server-defined string. Clients send the token using one of two transport mechanisms:
+
+- **`Authorization` HTTP header** (preferred on native targets):
+
+  ```
+  Authorization: Bearer <token>
+  ```
+
+  Servers MUST match the `Bearer` scheme case-insensitively. If multiple `Authorization` headers are present, the server MUST use the first one whose scheme is `Bearer` and skip any others.
+
+- **`token` URL query parameter** (used by clients that cannot set custom HTTP headers, such as browsers):
+
+  ```
+  /relay?token=<value>
+  ```
+
+  The token value is percent-decoded by the server.
+
+Servers MUST prefer the `Authorization: Bearer` header over the `token` query parameter when both are present.
+
+The token is consumed by the server's access control policy before the relay protocol handshake begins (see [Access Control](#access-control)). Tokens are not echoed in any frame on the wire.
 
 ## Frame Format
 
@@ -37,7 +66,7 @@ Every frame begins with a frame type tag encoded as a QUIC VarInt ([RFC 9000 Sec
 +---------------+-------------------+
 ```
 
-For all currently defined frame types (0-12), the VarInt encoding is a single byte.
+For all currently defined frame types (0-13), the VarInt encoding is a single byte.
 
 ## Frame Types
 
@@ -276,6 +305,20 @@ The `status` byte is a discriminant for the status type:
 | 2+ | Unknown | Reserved for future use; implementations SHOULD handle gracefully |
 
 The server sends `SameEndpointIdConnected` when a duplicate Endpoint ID connects, notifying the existing connection. The server sends `Healthy` when a previously problematic connection recovers.
+
+## Access Control
+
+After the handshake authenticates a client's Endpoint ID, the relay server MAY apply an access policy before admitting the client to the relay protocol phase. The policy receives:
+
+- The authenticated `EndpointId`.
+- The full HTTP request that initiated the WebSocket upgrade, including:
+  - The request URI (and any query parameters).
+  - All HTTP request headers.
+  - The authorization token, if any (extracted from the `Authorization: Bearer` header or the `token` URL query parameter, as described in [Authorization Token](#authorization-token)).
+
+If the policy admits the client, the relay sends `ServerConfirmsAuth` (frame type 2) and the connection enters the relay protocol phase. If the policy denies the client, the relay MUST send `ServerDeniesAuth` (frame type 3) with a human-readable reason and close the connection.
+
+A relay with no access policy admits every successfully-authenticated client.
 
 ## Connection Establishment Timeout
 
