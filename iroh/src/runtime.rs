@@ -35,20 +35,19 @@ impl Runtime {
     /// Shutdown the runtime gracefully.
     ///
     /// Closes the task tracker and waits for all spawned tasks to finish naturally.
-    ///
-    /// If the tasks were already closed, it assumes the tasks have already been
-    /// awaited.
     #[cfg(not(wasm_browser))]
     pub(crate) async fn shutdown(&self) {
-        if self.tasks.close() {
-            self.tasks.wait().await
-        }
+        self.abort();
+        // Waits for all tasks to stop (and thus drop all of their futures).
+        // If the task tracker had already been closed and taks have all been cleaned up,
+        // this returns immediately.
+        self.tasks.wait().await;
     }
 
     /// Shutdown the runtime ASAP, not waiting for any graceful closing of tasks.
     #[cfg(not(wasm_browser))]
     pub(crate) fn abort(&self) {
-        // Drop the running futures.
+        // Signal all spawned tasks to stop immediately.
         self.cancel.cancel();
         // Signal that the runtime should be closed.
         self.tasks.close();
