@@ -1125,7 +1125,7 @@ impl EndpointInner {
         if self.sock.is_closed() || self.sock.is_closing() {
             return;
         }
-        trace!(me = ?self.public_key, "socket closing...");
+        trace!("socket closing...");
 
         // Cancel at_close_start token, which cancels running netreports.
         self.sock.shutdown.at_close_start.cancel();
@@ -1200,12 +1200,12 @@ impl EndpointInner {
     ///
     /// This should only be called in the `iroh::Endpoint` `Drop` impl when the
     /// `iroh::Endpoint` is dropped without first calling `Endpoint::close`.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, parent = self.sock.span.clone())]
     pub(crate) fn abort(&self) {
         if self.sock.is_closed() || self.sock.is_closing() {
             return;
         }
-        trace!(me = ?self.public_key, "aborting socket...");
+        trace!("socket aborting...");
 
         // Cancel at_close_start token, which cancels running netreports.
         self.sock.shutdown.at_close_start.cancel();
