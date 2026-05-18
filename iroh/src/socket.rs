@@ -26,7 +26,7 @@ use std::{
     },
 };
 
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use mapped_addrs::MultipathMappedAddr;
 use n0_error::{AnyError, anyerr, bail, e, stack_error};
@@ -336,9 +336,6 @@ pub(crate) struct Socket {
     /// A missing entry means no actor is running for that remote. Spawning new
     /// `RemoteStateActor`s must go through the socket actor channel.
     remote_actors: ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
-
-    /// EndpointId of this endpoint.
-    public_key: PublicKey,
 
     // - Shutdown Management
     shutdown: ShutdownState,
@@ -980,7 +977,6 @@ impl EndpointInner {
         let home_relay_watch = transports.home_relay_watch();
 
         let sock = Arc::new(Socket {
-            public_key: secret_key.public(),
             remote_actors: remote_map.senders(),
             shutdown: shutdown_state,
             ipv6_reported,
