@@ -41,7 +41,7 @@ use tokio_stream::{
 };
 use tracing::warn;
 
-use crate::endpoint::PathStats;
+use crate::{endpoint::PathStats, socket::remote_map::remote_state::TransportFourTuple};
 
 /// Per-connection broadcast channel capacity for path events.
 const BROADCAST_CAPACITY: usize = 8;
@@ -92,6 +92,7 @@ pub enum PathEvent {
 struct PathData {
     handle: WeakPathHandle,
     remote_addr: TransportAddr,
+    local_addr: Option<TransportAddr>,
 }
 
 impl PathData {
@@ -150,13 +151,16 @@ impl PathStateSender {
     }
 
     /// Records a newly-opened path and emits [`PathEvent::Opened`].
-    pub(super) fn record_opened(&self, handle: WeakPathHandle, remote_addr: TransportAddr) {
+    pub(super) fn record_opened(&self, handle: WeakPathHandle, network_path: TransportFourTuple) {
         let id = handle.id();
+        let remote_addr: TransportAddr = network_path.remote.into();
+        let local_addr = network_path.local.map(|local| local.into());
         {
             let mut state = self.shared.state.lock().expect("poisoned");
             let entry = PathData {
                 handle,
                 remote_addr: remote_addr.clone(),
+                local_addr,
             };
             match state.list.iter().position(|e| e.handle.id() == id) {
                 Some(idx) => state.list[idx] = entry,
@@ -192,13 +196,16 @@ impl PathStateSender {
     }
 
     /// Updates the selected transmission path.
-    pub(super) fn record_selected(&self, remote_addr: TransportAddr) {
+    pub(super) fn record_selected(&self, network_path: &TransportFourTuple) {
+        // We need to convert from `transports::Addr` to `TransportAddr` here.
+        let remote_addr = network_path.remote.clone().into();
+        let local_addr = network_path.local.clone().map(|addr| addr.into());
         let changed = {
             let mut state = self.shared.state.lock().expect("poisoned");
             let selected_path_id = state
                 .list
                 .iter()
-                .find(|p| p.remote_addr == remote_addr)
+                .find(|p| p.remote_addr == remote_addr && p.local_addr == local_addr)
                 .map(|p| p.handle.id());
             if selected_path_id != state.selected {
                 state.selected = selected_path_id;
