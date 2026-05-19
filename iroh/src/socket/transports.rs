@@ -491,6 +491,7 @@ impl NetworkChangeSender {
 
 /// An outgoing packet
 #[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub struct Transmit<'a> {
     pub(crate) ecn: Option<noq_udp::EcnCodepoint>,
     /// Packet contents
@@ -687,6 +688,7 @@ impl Addr {
 
 /// The kind of a transport address, used for configuring bias.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub enum AddrKind {
     /// An IPv4 address.
     IpV4,

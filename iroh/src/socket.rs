@@ -43,7 +43,7 @@ use netwatch::{
     ip::LocalAddresses,
 };
 use noq::{
-    NetworkChangeHint, WeakConnectionHandle,
+    NetworkChangeHint,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use rand::RngExt;
@@ -76,7 +76,7 @@ use crate::{
     runtime::Runtime,
     socket::{
         concurrent_read_map::ReadOnlyMap,
-        remote_map::{MappedAddrs, PathSelector, PathWatchable, RemoteInfo},
+        remote_map::{MappedAddrs, PathSelector, PathStateReceiver, RemoteInfo},
         transports::{HomeRelayWatch, HomeRelayWatcher},
     },
     tls::{
@@ -796,6 +796,7 @@ impl DirectAddrUpdateState {
             return;
         }
 
+        self.sock.metrics.net_report.portmap_attempts.inc();
         self.port_mapper.procure_mapping();
 
         debug!("requesting net_report report");
@@ -888,7 +889,7 @@ impl EndpointInner {
         } = opts;
 
         let address_lookup = address_lookup::AddressLookupServices::default();
-        let port_mapper = portmapper::create_client(&metrics, &portmapper_config);
+        let port_mapper = portmapper::create_client(&portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs
             .iter()
@@ -1344,14 +1345,14 @@ impl EndpointInner {
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
     ///
-    /// Returns a future that resolves to [`PathWatchable`].
+    /// Returns a future that resolves to a [`PathStateReceiver`] for the new connection.
     ///
-    /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
+    /// The returned future is `'static`, so it can be stored without being lifetime-bound to `&self`.
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
-        conn: WeakConnectionHandle,
-    ) -> impl Future<Output = Result<PathWatchable, RemoteStateActorStoppedError>> + Send + 'static
+        conn: noq::Connection,
+    ) -> impl Future<Output = Result<PathStateReceiver, RemoteStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
         let sender = self.actor_sender.clone();
@@ -1378,8 +1379,8 @@ enum ActorMessage {
     #[debug("AddConnection(..)")]
     AddConnection(
         EndpointId,
-        WeakConnectionHandle,
-        oneshot::Sender<PathWatchable>,
+        noq::Connection,
+        oneshot::Sender<PathStateReceiver>,
     ),
     /// Re-evaluate direct addresses, e.g. after configured external addresses changed.
     DirectAddrRefresh,
@@ -1580,6 +1581,9 @@ impl Actor {
                     trace!("tick: portmap changed");
                     self.sock.metrics.socket.actor_tick_portmap_changed.inc();
                     let new_external_address = *portmap_watcher.borrow();
+                    if new_external_address.is_some() {
+                        self.sock.metrics.net_report.portmap_external_address_updated.inc();
+                    }
                     debug!("external address updated: {new_external_address:?}");
                     self.re_stun(UpdateReason::PortmapUpdated);
                 },
@@ -2204,14 +2208,13 @@ mod tests {
 
         info!("finishing");
         send_bi.finish().std_context("finish")?;
-        send_bi.stopped().await.std_context("stopped")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            for info in conn.paths().get().iter() {
+            for info in conn.paths().iter() {
                 assert!(
-                    info.stats().unwrap().lost_packets < 10,
+                    info.stats().lost_packets < 10,
                     "[receiver] path {:?} should not loose many packets",
                     info.remote_addr()
                 );
@@ -2245,7 +2248,6 @@ mod tests {
 
         info!("finishing");
         send_bi.finish().std_context("finish")?;
-        send_bi.stopped().await.std_context("stopped")?;
 
         info!("reading_to_end");
         let val = recv_bi
@@ -2263,9 +2265,9 @@ mod tests {
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            for info in conn.paths().get().iter() {
+            for info in conn.paths().iter() {
                 assert!(
-                    info.stats().unwrap().lost_packets < 10,
+                    info.stats().lost_packets < 10,
                     "[sender] path {:?} should not loose many packets",
                     info.remote_addr()
                 );

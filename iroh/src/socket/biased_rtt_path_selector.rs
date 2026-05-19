@@ -181,3 +181,131 @@ impl PathSelector for BiasedRttPathSelector {
         selection
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+
+    use iroh_base::{EndpointId, RelayUrl};
+
+    use super::*;
+    use crate::socket::remote_map::{PathSelectionContext, PathSelectionData, PathSelectionStats};
+
+    fn v4(port: u16) -> Addr {
+        Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
+    }
+
+    fn v6(port: u16) -> Addr {
+        Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::LOCALHOST,
+            port,
+            0,
+            0,
+        )))
+    }
+
+    fn relay(port: u16) -> Addr {
+        let url = format!("https://relay{port}.iroh.computer")
+            .parse::<RelayUrl>()
+            .unwrap();
+        Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap())
+    }
+
+    fn psd(addr: &Addr, rtt_ms: u64) -> PathSelectionData<'_> {
+        PathSelectionData::for_test(
+            addr,
+            Some(PathSelectionStats {
+                rtt: Duration::from_millis(rtt_ms),
+            }),
+        )
+    }
+
+    /// Runs [`BiasedRttPathSelector::default`] against the given paths and current
+    /// selection, returning the selector's primary pick (cloned, for easier asserts).
+    fn select_with_default(
+        current: Option<&Addr>,
+        paths: Vec<PathSelectionData<'_>>,
+    ) -> Option<Addr> {
+        let ctx = PathSelectionContext::for_test(current, paths);
+        BiasedRttPathSelector::default()
+            .select(&ctx)
+            .primary()
+            .cloned()
+    }
+
+    #[test]
+    fn ipv6_wins_over_ipv4_within_bias() {
+        let v4 = v4(1);
+        let v6 = v6(1);
+
+        // Equal RTTs: IPv6 wins because of the bias advantage.
+        let chosen = select_with_default(None, vec![psd(&v4, 10), psd(&v6, 10)]);
+        assert_eq!(chosen.as_ref(), Some(&v6));
+
+        // IPv6 still wins when 2ms slower (within the 3ms bias).
+        let chosen = select_with_default(None, vec![psd(&v4, 10), psd(&v6, 12)]);
+        assert_eq!(chosen.as_ref(), Some(&v6));
+
+        // IPv4 wins when IPv6 is 10ms slower (exceeds 3ms bias).
+        let chosen = select_with_default(None, vec![psd(&v4, 10), psd(&v6, 20)]);
+        assert_eq!(chosen.as_ref(), Some(&v4));
+    }
+
+    #[test]
+    fn primary_wins_over_backup_regardless_of_rtt() {
+        let v4 = v4(1);
+        let relay = relay(1);
+
+        // Primary tier beats backup tier even when the backup has a much lower RTT.
+        let chosen = select_with_default(None, vec![psd(&v4, 100), psd(&relay, 10)]);
+        assert!(matches!(chosen, Some(Addr::Ip(_))));
+
+        // Even more extreme: 1000ms primary still wins over 1ms backup.
+        let chosen = select_with_default(None, vec![psd(&v4, 1000), psd(&relay, 1)]);
+        assert!(matches!(chosen, Some(Addr::Ip(_))));
+    }
+
+    #[test]
+    fn same_tier_only_switches_with_significant_rtt_diff() {
+        let v4_1 = v4(1);
+        let v4_2 = v4(2);
+
+        // 2ms diff < 5ms threshold → keep current (no switch, primary() == None).
+        let chosen =
+            select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 18)]);
+        assert_eq!(chosen, None);
+
+        // 4ms diff < 5ms → keep current.
+        let chosen =
+            select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 16)]);
+        assert_eq!(chosen, None);
+
+        // 5ms diff hits the threshold (the condition is `<=`) → switch.
+        let chosen =
+            select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 15)]);
+        assert_eq!(chosen.as_ref(), Some(&v4_2));
+
+        // 6ms diff > 5ms → switch.
+        let chosen =
+            select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 14)]);
+        assert_eq!(chosen.as_ref(), Some(&v4_2));
+    }
+
+    #[test]
+    fn no_current_path_selects_best() {
+        let v4_1 = v4(1);
+        let v4_2 = v4(2);
+        let chosen = select_with_default(None, vec![psd(&v4_1, 20), psd(&v4_2, 10)]);
+        assert_eq!(chosen.as_ref(), Some(&v4_2));
+    }
+
+    #[test]
+    fn empty_paths_returns_none() {
+        // No current, no candidates: nothing to pick.
+        assert_eq!(select_with_default(None, vec![]), None);
+
+        // Current is set but there are no candidates: keep current (primary() == None).
+        let v4 = v4(1);
+        assert_eq!(select_with_default(Some(&v4), vec![]), None);
+    }
+}

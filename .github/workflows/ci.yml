@@ -16,7 +16,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.89"
+  MSRV: "1.91"
   SCCACHE_CACHE_SIZE: "10G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
@@ -294,7 +294,7 @@ jobs:
 
       - name: Install wasm-bindgen-test-runner
         # Match the version of wasm-bindgen used in Cargo.lock
-        run: cargo binstall wasm-bindgen-cli@0.2.115 --locked --no-confirm
+        run: cargo binstall wasm-bindgen-cli@0.2.121 --locked --no-confirm
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
@@ -373,37 +373,25 @@ jobs:
       # Pin to the nightly that the pinned `cargo-check-external-types`
       # release was last tested against. Update both together.
       CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.4.0"
-      CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY: "nightly-2025-10-18"
+      TOOLCHAIN: "nightly-2025-10-18"
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ env.CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY }}
+          toolchain: ${{ env.TOOLCHAIN }}
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.18.1
 
+      - uses: taiki-e/install-action@cargo-make
+
       - name: Install cargo-check-external-types
-        # Match the version of wasm-bindgen used in Cargo.lock
         run: cargo binstall cargo-check-external-types@${{ env.CARGO_CHECK_EXTERNAL_TYPES_VERSION }} --locked --no-confirm
 
       - name: Check external types
-        run: |
-          set -e
-          fail=0
-          for crate in iroh-base iroh-dns iroh-relay iroh iroh-dns-server; do
-            echo "::group::$crate"
-            if ! cargo "+${CARGO_CHECK_EXTERNAL_TYPES_NIGHTLY}" check-external-types \
-                --manifest-path "$crate/Cargo.toml" \
-                --config external-types.toml \
-                --all-features; then
-              fail=1
-            fi
-            echo "::endgroup::"
-          done
-          exit $fail
+        run: cargo make check-external-types
 
   check_fmt:
     timeout-minutes: 30

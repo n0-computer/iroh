@@ -189,7 +189,7 @@ async fn drain_stream(
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.anyerr()? {
+        while let Some(n) = stream.read_many_chunks(&mut bufs[..]).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;

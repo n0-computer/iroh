@@ -19,8 +19,8 @@ use patchbay::{Nat, NatConfig, NatFiltering, NatMapping};
 use testdir::testdir;
 use tracing::info;
 
-use super::util::{Pair, PathWatcherExt, lab_with_relay};
-use crate::util::{ping_accept, ping_open};
+use super::util::{Pair, PathConnectionExt, lab_with_relay};
+use crate::util::{is_relayed, ping_accept, ping_open};
 
 enum NatKind {
     /// No NAT. The device has a publicly routable address.
@@ -103,24 +103,16 @@ async fn run_nat_holepunch(nat_server: NatKind, nat_client: NatKind) -> Result {
     let timeout = Duration::from_secs(15);
     Pair::new(relay_map)
         .server(server, async move |_dev, _ep, conn| {
-            let mut paths = conn.paths();
-            assert!(paths.selected().is_relay(), "connection started relayed");
-            paths
-                .wait_ip(timeout)
-                .await
-                .context("holepunch to direct")?;
+            assert!(is_relayed(&conn), "connection started relayed");
+            conn.wait_ip(timeout).await.context("holepunch to direct")?;
             info!("connection became direct");
             ping_accept(&conn, timeout).await?;
             conn.closed().await;
             Ok(())
         })
         .client(client, async move |_dev, _ep, conn| {
-            let mut paths = conn.paths();
-            assert!(paths.selected().is_relay(), "connection started relayed");
-            paths
-                .wait_ip(timeout)
-                .await
-                .context("holepunch to direct")?;
+            assert!(is_relayed(&conn), "connection started relayed");
+            conn.wait_ip(timeout).await.context("holepunch to direct")?;
             info!("connection became direct");
             ping_open(&conn, timeout).await?;
             conn.close(0u32.into(), b"bye");

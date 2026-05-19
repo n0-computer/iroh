@@ -42,7 +42,6 @@ pub use noq::{
     VarInt,               // various
     VarIntBoundsExceeded, // noq::VarInt, noq::IdleTimeout
     WriteError,           // noq::SendStream
-    Written,              // noq::SendStream
 };
 #[cfg(feature = "qlog")]
 pub use noq::{QlogConfig, QlogFactory, QlogFileFactory};

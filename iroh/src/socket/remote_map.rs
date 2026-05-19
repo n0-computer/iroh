@@ -12,19 +12,21 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Span, debug, error};
 
-pub(crate) use self::remote_state::PathWatchable;
+pub(crate) use self::remote_state::PathStateReceiver;
 use self::remote_state::RemoteStateActor;
 pub(super) use self::remote_state::RemoteStateMessage;
 pub use self::remote_state::{
-    PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, TransportAddrInfo,
-    TransportAddrUsage,
+    Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream, RemoteInfo,
+    TransportAddrInfo, TransportAddrUsage,
 };
 #[cfg(feature = "unstable-custom-transports")]
 pub use self::remote_state::{
-    PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
+    PathSelection, PathSelectionContext, PathSelectionData, PathSelectionStats, PathSelector,
 };
 #[cfg(not(feature = "unstable-custom-transports"))]
-pub(crate) use self::remote_state::{PathSelection, PathSelectionContext, PathSelector};
+pub(crate) use self::remote_state::{
+    PathSelection, PathSelectionContext, PathSelectionData, PathSelectionStats, PathSelector,
+};
 use super::{
     DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{
@@ -245,8 +247,8 @@ impl RemoteMap {
     pub(super) async fn add_connection(
         &mut self,
         remote: EndpointId,
-        conn: noq::WeakConnectionHandle,
-        tx: oneshot::Sender<PathWatchable>,
+        conn: noq::Connection,
+        tx: oneshot::Sender<PathStateReceiver>,
     ) -> Result<(), RemoteStateActorStoppedError> {
         let actor = self.remote_state_actor(remote);
         actor

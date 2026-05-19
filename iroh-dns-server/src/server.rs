@@ -3,8 +3,7 @@
 use std::path::Path;
 use std::{net::SocketAddr, sync::Arc};
 
-use iroh_metrics::service::start_metrics_server;
-use n0_error::{Result, StdResultExt};
+use n0_error::Result;
 use tracing::info;
 #[cfg(test)]
 use url::Url;
@@ -28,7 +27,7 @@ use crate::{
 pub struct Server {
     http_server: HttpServer,
     dns_server: DnsServer,
-    metrics_task: tokio::task::JoinHandle<Result<()>>,
+    metrics_server: Option<iroh_metrics::service::MetricsServer>,
     metrics: Arc<Metrics>,
 }
 
@@ -72,20 +71,16 @@ impl Server {
             metrics: metrics.clone(),
         };
 
-        let metrics_task = tokio::task::spawn({
-            let metrics_addr = config.metrics_addr();
-            let metrics = metrics.clone();
-            async move {
-                if let Some(addr) = metrics_addr {
-                    let mut registry = iroh_metrics::Registry::default();
-                    registry.register(metrics);
-                    start_metrics_server(addr, Arc::new(registry))
-                        .await
-                        .anyerr()?;
-                }
-                Ok(())
-            }
-        });
+        let metrics_server = if let Some(addr) = config.metrics_addr() {
+            let mut registry = iroh_metrics::Registry::default();
+            registry.register(metrics.clone());
+            let server =
+                iroh_metrics::service::MetricsServer::spawn(addr, Arc::new(registry)).await?;
+            Some(server)
+        } else {
+            None
+        };
+
         let http_server = HttpServer::spawn(
             config.http,
             config.https,
@@ -95,17 +90,20 @@ impl Server {
         )
         .await?;
         let dns_server = DnsServer::spawn(config.dns, state.dns_handler.clone()).await?;
+
         Ok(Self {
             http_server,
             dns_server,
-            metrics_task,
+            metrics_server,
             metrics,
         })
     }
 
     /// Cancels the server tasks and waits for them to complete.
-    pub async fn shutdown(self) -> Result<()> {
-        self.metrics_task.abort();
+    pub async fn shutdown(mut self) -> Result<()> {
+        if let Some(server) = self.metrics_server.take() {
+            server.shutdown().await;
+        }
         let (res1, res2) = tokio::join!(self.dns_server.shutdown(), self.http_server.shutdown(),);
         res1?;
         res2?;
@@ -115,12 +113,15 @@ impl Server {
     /// Waits for the server tasks to complete.
     ///
     /// Returns when a listener task finishes, either with success or an error.
-    pub async fn join(self) -> Result<()> {
+    pub async fn join(mut self) -> Result<()> {
         tokio::select! {
             res = self.dns_server.run_until_done() => res?,
             res = self.http_server.run_until_done() => res?,
         }
-        self.metrics_task.abort();
+        if let Some(server) = self.metrics_server.take() {
+            server.shutdown().await;
+        }
+
         Ok(())
     }
 
