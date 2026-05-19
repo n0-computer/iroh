@@ -340,3 +340,103 @@ pub(crate) enum Source {
     /// The address was added as a path within a connection.
     Connection,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{future::poll_fn, net::SocketAddr, time::Duration};
+
+    use iroh_base::{SecretKey, TransportAddr};
+    use n0_future::future::now_or_never;
+    use n0_tracing_test::traced_test;
+    use n0_watcher::Watchable;
+    use tokio::sync::oneshot;
+    use tracing::Span;
+
+    use super::*;
+
+    fn make_remote_map() -> (RemoteMap, CancellationToken, impl Sized) {
+        let metrics = Arc::new(SocketMetrics::default());
+        let watchable: Watchable<BTreeSet<DirectAddr>> = Watchable::new(BTreeSet::new());
+        let local_direct_addrs = watchable.watch();
+        let shutdown_token = CancellationToken::new();
+        let remote_map = RemoteMap::new(
+            metrics,
+            local_direct_addrs,
+            address_lookup::AddressLookupServices::default(),
+            shutdown_token.clone(),
+            TransportBiasMap::default(),
+            Span::none(),
+        );
+        let guards = (watchable, shutdown_token.clone().drop_guard());
+        (remote_map, shutdown_token, guards)
+    }
+
+    /// Regression test: No new RemoteStateActors may be started before
+    /// the task for its previous incarnation was processed.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[traced_test]
+    async fn poll_cleanup_preserves_restarted_sender() {
+        let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
+        let eid = SecretKey::from_bytes(&[0u8; 32]).public();
+
+        // Non-empty addrs so each `resolve_remote` resolves its tx
+        // immediately and does not park in `paths.pending_resolve_requests`;
+        // the actor would never idle out otherwise.
+        let addr_with_ip = |port: u16| {
+            EndpointAddr::from_parts(
+                eid,
+                [TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], port)))],
+            )
+        };
+
+        // 1. Spawn A1 and let it process a real `ResolveRemote`.
+        let (tx1, rx1) = oneshot::channel();
+        remote_map
+            .resolve_remote(addr_with_ip(1234), tx1)
+            .await
+            .ok();
+
+        // 2. Advance past idle timeout. The runtime drives A1 to completion
+        //    inside the sleep: it drains the message, becomes idle, exits.
+        tokio::time::sleep(Duration::from_secs(65)).await;
+        assert!(
+            matches!(rx1.await, Ok(Ok(()))),
+            "First resolve completes Ok"
+        );
+
+        // 3. Call `resolve_remote` again. The actor A1 has terminated but its task
+        //    has not yet been cleaned up. A1's sender is still in the sender map
+        //    but is closed.
+        //    Before our fixes, `resolve_remote` would spawn a new actor. When
+        //    `poll_cleanup` was then called, the sender to this new actor would be
+        //    removed again. We fixed this by first processing the tasks for the
+        //    terminated actor.
+
+        //    We resume time so that we don't immediately idle-out again.
+        tokio::time::resume();
+        let (tx2, rx2) = oneshot::channel();
+        remote_map
+            .resolve_remote(addr_with_ip(5678), tx2)
+            .await
+            .ok();
+
+        // 4. Drive `poll_cleanup`, like the socket actor does.
+        //    Before our fixes, this would remove the sender to the just-started A2 from the sender map.
+        now_or_never(poll_fn(|cx| remote_map.poll_cleanup(cx)));
+
+        // 5. A third `resolve_remote`, this time with no addrs.
+        //    With our fix, this reaches the actor spawned above (A2); without
+        //    the fix this would start a new actor because A2 was falsely removed from
+        //    the senders map.
+        let (tx3, rx3) = oneshot::channel();
+        remote_map
+            .resolve_remote(EndpointAddr::new(eid), tx3)
+            .await
+            .ok();
+
+        let outcome2 = rx2.await.expect("the resolve tx must be sent");
+        let outcome3 = rx3.await.expect("the resolve tx must be sent");
+        assert!(outcome2.is_ok(), "expected Ok, but got {outcome2:?}");
+        assert!(outcome3.is_ok(), "expected Ok, but got {outcome3:?}");
+    }
+}
