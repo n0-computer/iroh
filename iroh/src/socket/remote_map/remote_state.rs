@@ -1307,7 +1307,6 @@ impl<'a> PathSelectionContext<'a> {
 
     /// Constructs a context with synthetic path data for testing.
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn for_test(
         current: Option<&'a transports::Addr>,
         paths: Vec<PathSelectionData<'a>>,
@@ -1364,8 +1363,10 @@ enum StatsSource {
         path_id: PathId,
         conn: noq::Connection,
     },
+    /// Boxed so `PathStats` (100+ bytes, 14 fields) doesn't inflate the enum's
+    /// size in production where only the `Live` variant is ever constructed.
     #[cfg(test)]
-    Test(Option<PathStats>),
+    Test(Option<Box<PathStats>>),
 }
 
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
@@ -1382,11 +1383,10 @@ impl<'a> PathSelectionData<'a> {
     /// `PathStats` is `#[non_exhaustive]` so callers build it via
     /// `let mut s = PathStats::default(); s.rtt = ...;`.
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn for_test(remote_addr: &'a transports::Addr, stats: Option<PathStats>) -> Self {
         Self {
             remote_addr,
-            source: StatsSource::Test(stats),
+            source: StatsSource::Test(stats.map(Box::new)),
         }
     }
 
@@ -1400,7 +1400,7 @@ impl<'a> PathSelectionData<'a> {
         match &self.source {
             StatsSource::Live { path_id, conn } => conn.path_stats(*path_id),
             #[cfg(test)]
-            StatsSource::Test(stats) => *stats,
+            StatsSource::Test(stats) => stats.as_deref().copied(),
         }
     }
 }
