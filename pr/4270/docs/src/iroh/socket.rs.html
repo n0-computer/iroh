@@ -1147,9 +1147,9 @@
 <a href=#1147 id=1147 data-nosnippet>1147</a>        // connection close codes, and close the endpoint properly.
 <a href=#1148 id=1148 data-nosnippet>1148</a>        // If this call is skipped, then connections that protocols close just shortly before the
 <a href=#1149 id=1149 data-nosnippet>1149</a>        // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
-<a href=#1150 id=1150 data-nosnippet>1150</a>        </span><span class="macro">trace!</span>(<span class="string">"wait_idle start"</span>);
-<a href=#1151 id=1151 data-nosnippet>1151</a>        <span class="self">self</span>.noq_endpoint().wait_idle().<span class="kw">await</span>;
-<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="macro">trace!</span>(<span class="string">"wait_idle done"</span>);
+<a href=#1150 id=1150 data-nosnippet>1150</a>        </span><span class="macro">trace!</span>(<span class="string">"wait_all_draining start"</span>);
+<a href=#1151 id=1151 data-nosnippet>1151</a>        <span class="self">self</span>.noq_endpoint().wait_all_draining().<span class="kw">await</span>;
+<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="macro">trace!</span>(<span class="string">"wait_all_draining done"</span>);
 <a href=#1153 id=1153 data-nosnippet>1153</a>
 <a href=#1154 id=1154 data-nosnippet>1154</a>        <span class="comment">// Start cancellation of all actors.
 <a href=#1155 id=1155 data-nosnippet>1155</a>        </span><span class="self">self</span>.sock.shutdown.at_endpoint_closed.cancel();
