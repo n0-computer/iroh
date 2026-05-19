@@ -1000,6 +1000,35 @@ mod tests {
         Ok(())
     }
 
+    /// Regression test: Pending address lookup must keep the `RemoteStateActor` alive.
+    ///
+    /// Previously, this test failed with an `InternalConsistencyError` because the
+    /// `RemoteStateActor` was marked idle and shut down while there were pending
+    /// `ResolveRemote` requests still queued.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[traced_test]
+    async fn pending_resolve_survives_actor_idle_timeout() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let ep = Endpoint::builder(presets::Minimal)
+            .secret_key(SecretKey::from_bytes(&rng.random()))
+            .bind()
+            .await?;
+        ep.address_lookup()
+            .expect("endpoint is still open")
+            .add(HangingAddressLookup);
+
+        let offline_id = SecretKey::from_bytes(&rng.random()).public();
+        let connect_task = tokio::spawn(async move { ep.connect(offline_id, TEST_ALPN).await });
+
+        // `iroh::socket::remote_map::remote_state::ACTOR_MAX_IDLE_TIMEOUT`
+        // is 60s. Sleep for longer so that we are sure that the idle timeout expired.
+        let res = time::timeout(Duration::from_secs(65), connect_task).await;
+        // We expect the timeout to elapse, because the address lookup does not resolve.
+        // Before the fix, this would produce an `InternalConsistencyError` after the actor's idle timeout expired.
+        assert!(res.is_err(), "expected Elapsed, got {res:?}");
+        Ok(())
+    }
+
     /// Concurrent `connect` calls to the same peer must both wait for the in-flight address lookup.
     ///
     /// Reproduces the race where the second `ResolveRemote` for the same

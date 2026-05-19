@@ -104,7 +104,7 @@ pub(super) struct RemoteStateActor {
     connections: FxHashMap<ConnId, ConnectionState>,
     /// State of the actor and hooks into the rest of the remote endpoint.
     ///
-    /// This is on a separate struct so that we can have parallel mutable borrows to `connections` and `state.
+    /// This is on a separate struct so that we can have parallel mutable borrows to `connections` and `state`.
     state: State,
 }
 
@@ -267,7 +267,7 @@ impl RemoteStateActor {
                 None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_hp);
-            if !inbox.is_empty() || !self.connections.is_empty() {
+            if !self.is_idle(&inbox) {
                 idle_timeout
                     .as_mut()
                     .reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
@@ -325,7 +325,7 @@ impl RemoteStateActor {
                     self.check_connections();
                 }
                 _ = &mut idle_timeout => {
-                    if self.connections.is_empty() && inbox.is_empty() {
+                    if self.is_idle(&inbox) {
                         trace!("idle timeout expired and still idle: terminate actor");
                         break;
                     } else {
@@ -344,6 +344,13 @@ impl RemoteStateActor {
 
         trace!("actor terminating");
         (self.state.endpoint_id, leftover_msgs)
+    }
+
+    /// Returns `true` if the actor is fully idle.
+    fn is_idle(&self, inbox: &mpsc::Receiver<RemoteStateMessage>) -> bool {
+        self.connections.is_empty()
+            && inbox.is_empty()
+            && self.state.paths.resolve_requests_is_empty()
     }
 
     /// Handles an actor message.
