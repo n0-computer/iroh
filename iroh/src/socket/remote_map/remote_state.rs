@@ -15,7 +15,7 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::Watcher;
-use noq::{Closed, PathStatus, WeakConnectionHandle};
+use noq::{Closed, FourTuple, PathStatus, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent as NoqPathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, oneshot};
@@ -155,7 +155,7 @@ struct State {
     /// holepunching regularly.
     ///
     /// We only select a path once the path is functional in Noq.
-    selected_path: Option<transports::Addr>,
+    selected_path: Option<TransportFourTuple>,
     /// Time at which we should schedule the next holepunch attempt.
     scheduled_holepunch: Option<Instant>,
     /// When to next attempt opening paths in [`Self::pending_open_paths`].
@@ -163,7 +163,7 @@ struct State {
     /// Paths which we still need to open.
     ///
     /// They failed to open because we did not have enough CIDs issued by the remote.
-    pending_open_paths: VecDeque<transports::Addr>,
+    pending_open_paths: VecDeque<TransportFourTuple>,
 
     // Internal state - address lookup
     //
@@ -440,7 +440,7 @@ impl RemoteStateActor {
                     .paths
                     .addrs()
                     .filter(|a| a.is_relay())
-                    .cloned()
+                    .map(|remote| TransportFourTuple::from_remote(remote.clone()))
                     .collect::<Vec<_>>();
                 for open_addr in relays {
                     self.state
@@ -601,18 +601,24 @@ impl RemoteStateActor {
             }
             NoqPathEvent::Abandoned { id, reason } => {
                 // Remove abandoned path from the conn state.
-                let Some(path_remote) = conn_state.remove_path(&id, &conn) else {
+                let Some(network_path) = conn_state.remove_path(&id, &conn) else {
                     debug!(%id, "path not in path_id_map");
                     return;
                 };
                 // Also remove the path from the remote-global path tracking.
-                self.state.paths.abandoned_path(&path_remote);
+                if !conn_state
+                    .paths
+                    .values()
+                    .any(|tuple| tuple.remote() == network_path.remote())
+                {
+                    self.state.paths.abandoned_path(&network_path.remote);
+                }
 
                 event!(
                     target: "iroh::_events::path::abandoned",
                     Level::DEBUG,
                     remote = %self.state.endpoint_id.fmt_short(),
-                    ?path_remote,
+                    %network_path,
                     %conn_id,
                     path_id = ?id,
                     ?reason
@@ -627,15 +633,15 @@ impl RemoteStateActor {
                     for path in conn_state
                         .paths
                         .iter()
-                        .filter(|(_id, addr)| **addr == path_remote)
+                        .filter(|(_id, addr)| **addr == network_path)
                         .filter_map(|(id, _addr)| conn.path(*id))
                     {
-                        trace!(?path_remote, %conn_id, path_id=%path.id(), "closing path");
+                        trace!(%conn_id, path_id=%path.id(), %network_path, "closing path");
                         if let Err(err) = path.close() {
                             trace!(
-                                ?path_remote,
                                 %conn_id,
                                 path_id=%path.id(),
+                                %network_path,
                                 "path close failed: {err:#}"
                             );
                         }
@@ -665,7 +671,7 @@ impl RemoteStateActor {
     fn select_path(&mut self) {
         // Find the lowest RTT across all connections for each open path.  The long way, so
         // we get to log *all* RTTs.
-        let mut all_path_rtts: FxHashMap<&transports::Addr, Vec<Duration>> = FxHashMap::default();
+        let mut all_path_rtts: FxHashMap<&TransportFourTuple, Vec<Duration>> = FxHashMap::default();
         for conn_state in self.connections.values() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
@@ -677,13 +683,15 @@ impl RemoteStateActor {
             }
         }
         trace!(?all_path_rtts, "dumping all path RTTs");
-        let path_rtts: FxHashMap<&transports::Addr, PathSelectionData> = all_path_rtts
+        let path_rtts: FxHashMap<&TransportFourTuple, PathSelectionData> = all_path_rtts
             .into_iter()
             .filter_map(|(addr, rtts)| rtts.into_iter().min().map(|rtt| (addr, rtt)))
             .map(|(addr, rtt)| {
                 (
                     addr,
-                    self.state.transport_bias.path_selection_data(addr, rtt),
+                    self.state
+                        .transport_bias
+                        .path_selection_data(&addr.remote, rtt),
                 )
             })
             .collect();
@@ -717,7 +725,7 @@ impl RemoteStateActor {
     /// - Sets all non-selected paths to [`PathStatus::Backup`]
     /// - Opens the selected path if it does not exist on the connection
     /// - Sets the selected path to [`PathStatus::Available`]
-    fn apply_selected_change(&mut self, selected: &transports::Addr) {
+    fn apply_selected_change(&mut self, selected: &TransportFourTuple) {
         for (conn_id, conn_state) in self.connections.iter() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
@@ -763,13 +771,11 @@ impl RemoteStateActor {
             }
 
             // Record the new selected path in the path watcher.
-            conn_state
-                .path_state
-                .record_selected(selected.clone().into());
+            conn_state.path_state.record_selected(selected);
         }
     }
 
-    fn open_path_on_all_conns(&mut self, open_addr: &transports::Addr) {
+    fn open_path_on_all_conns(&mut self, open_addr: &TransportFourTuple) {
         for (conn_id, conn_state) in self.connections.iter() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
@@ -856,8 +862,12 @@ impl State {
                         .any(|a| a.addr == *sockaddr)
                 {
                     trace!(%sockaddr, "not sending datagram to our own address");
-                } else if let Err(err) =
-                    send_datagram(&mut sender, addr.clone(), transmit.clone()).await
+                } else if let Err(err) = send_datagram(
+                    &mut sender,
+                    TransportFourTuple::new(addr.clone(), None),
+                    transmit.clone(),
+                )
+                .await
                 {
                     debug!(?addr, "failed to send datagram: {err:#}");
                 }
@@ -996,44 +1006,44 @@ impl State {
         conn_id: ConnId,
         conn_state: &mut ConnectionState,
         path: &noq::Path,
-    ) -> Option<transports::Addr> {
-        let path_remote = self.transport_addr_for_path(path)?;
+    ) -> Option<TransportFourTuple> {
+        let network_path = self.transport_addr_for_path(path)?;
         event!(
             target: "iroh::_events::path::open",
             Level::DEBUG,
             remote = %self.endpoint_id.fmt_short(),
-            ?path_remote,
+            ?network_path,
             %conn_id,
             path_id=%path.id(),
         );
-        conn_state.add_open_path(path_remote.clone(), path.id(), &self.metrics);
-        if matches!(path_remote, transports::Addr::Relay(..))
+        conn_state.add_open_path(network_path.clone(), path.id(), &self.metrics);
+        if matches!(network_path.remote(), transports::Addr::Relay(..))
             && let Err(e) = path.set_max_idle_timeout(Some(RELAY_PATH_MAX_IDLE_TIMEOUT))
         {
             debug!(?e, "failed to set relay path idle timeout");
         }
 
-        self.set_path_status(conn_id, path, &path_remote);
+        self.set_path_status(conn_id, path, &network_path);
         self.paths
-            .insert_open_path(path_remote.clone(), Source::Connection);
-        Some(path_remote)
+            .insert_open_path(network_path.remote().clone(), Source::Connection);
+        Some(network_path)
     }
 
     fn set_path_status(
         &mut self,
         conn_id: ConnId,
         path: &noq::Path,
-        path_remote: &transports::Addr,
+        network_path: &TransportFourTuple,
     ) {
-        let status = self.path_status_for_addr(path_remote);
+        let status = self.path_status_for_addr(network_path);
         match path.set_status(status) {
-            Err(error) => warn!(?error, ?path_remote, ?status, "set_status failed"),
+            Err(error) => warn!(?error, ?network_path, ?status, "set_status failed"),
             Ok(prev_status) if prev_status != status => {
                 event!(
                     target: "iroh::_events::path::set_status",
                     Level::DEBUG,
                     remote = %self.endpoint_id.fmt_short(),
-                    path_remote = ?path_remote,
+                    path_remote = ?network_path,
                     ?status,
                     %conn_id,
                     path_id=%path.id(),
@@ -1049,7 +1059,7 @@ impl State {
         conn_id: ConnId,
         conn_state: &ConnectionState,
         conn: &noq::Connection,
-        open_addr: &transports::Addr,
+        open_addr: &TransportFourTuple,
     ) {
         // Only the client opens paths; the server receives them via
         // QUIC frames and reacts to PathOpened events.
@@ -1061,7 +1071,7 @@ impl State {
             return;
         }
 
-        let quic_addr = self.quic_mapped_addr(open_addr);
+        let quic_addr = self.quic_mapped_four_tuple(open_addr);
         let path_status = self.path_status_for_addr(open_addr);
 
         let fut = conn.open_path_ensure(quic_addr, path_status);
@@ -1088,7 +1098,7 @@ impl State {
     ///
     /// Returns [`PathStatus::Available`] if `addr` is the currently-selected path,
     /// or [`PathStatus::Backup`] otherwise.
-    fn path_status_for_addr(&self, addr: &transports::Addr) -> PathStatus {
+    fn path_status_for_addr(&self, addr: &TransportFourTuple) -> PathStatus {
         if Some(addr) == self.selected_path.as_ref() {
             PathStatus::Available
         } else {
@@ -1096,9 +1106,18 @@ impl State {
         }
     }
 
+    /// Returns the QUIC-mapped [`FourTuple`] for a [`TransportFourTuple`].
+    fn quic_mapped_four_tuple(&self, network_path: &TransportFourTuple) -> FourTuple {
+        let remote = self.quic_mapped_addr(network_path.remote());
+        let local = network_path
+            .local()
+            .map(|addr| self.quic_mapped_addr(addr).ip());
+        FourTuple::new(remote, local)
+    }
+
     /// Returns the QUIC-mapped address for a [`transports::Addr`].
-    fn quic_mapped_addr(&self, open_addr: &transports::Addr) -> SocketAddr {
-        match open_addr {
+    fn quic_mapped_addr(&self, addr: &transports::Addr) -> SocketAddr {
+        match addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
             transports::Addr::Relay(relay_url, eid) => self
                 .relay_mapped_addrs
@@ -1111,13 +1130,24 @@ impl State {
     }
 
     /// Returns the [`transports::Addr] for a path.
-    fn transport_addr_for_path(&self, path: &noq::Path) -> Option<transports::Addr> {
-        let socketaddr = path.remote_address().ok()?;
-        to_transport_addr(
-            socketaddr,
+    fn transport_addr_for_path(&self, path: &noq::Path) -> Option<TransportFourTuple> {
+        let noq_network_path = path.network_path().ok()?;
+        let remote = to_transport_addr(
+            noq_network_path.remote(),
             &self.relay_mapped_addrs,
             &self.custom_mapped_addrs,
-        )
+        )?;
+
+        // When mapping the local IP, we set the port to 0. The port is never used.
+        // TODO: Express this cleaner?
+        let local = noq_network_path.local_ip().and_then(|ip| {
+            to_transport_addr(
+                SocketAddr::new(ip, 0),
+                &self.relay_mapped_addrs,
+                &self.custom_mapped_addrs,
+            )
+        });
+        Some(TransportFourTuple::new(remote, local))
     }
 
     /// Returns the current set of local direct addresses.
@@ -1130,12 +1160,68 @@ impl State {
     }
 }
 
+/// Identifies a network path by the combination of remote and local addresses.
+///
+/// Mirrors [`noq::FourTuple`] but uses [`transports::Addr`] for the remote and local addresses.
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+pub(super) struct TransportFourTuple {
+    /// The remote side of this tuple.
+    pub(super) remote: transports::Addr,
+    /// The local side of this tuple.
+    ///
+    /// Note that when this is [`transports::Addr::Ip`], the port carries no significance
+    /// and is always set to 0.
+    pub(super) local: Option<transports::Addr>,
+}
+
+impl std::fmt::Display for TransportFourTuple {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(local_ip) = self.local.as_ref() {
+            write!(f, "{:?}->", local_ip)?;
+        }
+        write!(f, "{:?}", self.remote)
+    }
+}
+
+impl TransportFourTuple {
+    /// Creates a new [`TransportFourTuple`].
+    pub(super) fn new(remote: transports::Addr, local: Option<transports::Addr>) -> Self {
+        Self { remote, local }
+    }
+
+    /// Creates a new [`TransportFourTuple`] without a known local address.
+    #[allow(dead_code)]
+    pub(super) fn from_remote(remote: transports::Addr) -> Self {
+        Self::new(remote, None)
+    }
+
+    /// Returns the remote address of the network path.
+    pub(super) fn remote(&self) -> &transports::Addr {
+        &self.remote
+    }
+
+    /// Returns the local address of the network path.
+    pub(super) fn local(&self) -> Option<&transports::Addr> {
+        self.local.as_ref()
+    }
+
+    /// Returns whether the remote of this tuple is an IP address.
+    pub(super) fn is_ip(&self) -> bool {
+        self.remote.is_ip()
+    }
+
+    /// Returns whether the remote of this tuple is a relay address.
+    pub(super) fn is_relay(&self) -> bool {
+        self.remote.is_relay()
+    }
+}
+
 /// Returns `Some` if a new path should be selected, `None` if the `current_path` should
 /// continued to be used.
 fn select_best_path<'a>(
-    all_paths: FxHashMap<&'a transports::Addr, PathSelectionData>,
-    current_path: Option<&'a transports::Addr>,
-) -> Option<(transports::Addr, Duration)> {
+    all_paths: FxHashMap<&'a TransportFourTuple, PathSelectionData>,
+    current_path: Option<&'a TransportFourTuple>,
+) -> Option<(TransportFourTuple, Duration)> {
     // Determine the best new path according to sort_key.
     // If there is no path, return None.
     let (best_addr, best_data) = all_paths.iter().min_by_key(|(_, psd)| psd.sort_key())?;
@@ -1187,7 +1273,7 @@ fn update_qnt_candidates(conn: &noq::Connection, direct_addrs: &BTreeSet<SocketA
 
 fn send_datagram<'a>(
     sender: &'a mut TransportsSender,
-    dst: transports::Addr,
+    network_path: TransportFourTuple,
     owned_transmit: OwnedTransmit,
 ) -> impl Future<Output = n0_error::Result<()>> + 'a {
     std::future::poll_fn(move |cx| {
@@ -1197,9 +1283,14 @@ fn send_datagram<'a>(
             segment_size: owned_transmit.segment_size,
         };
 
+        // TODO: Add support for source address here.
         Pin::new(&mut *sender)
-            .poll_send(cx, &dst, None, &transmit)
-            .map(|res| res.with_context(|_| format!("failed to send datagram to {dst:?}")))
+            .poll_send(cx, &network_path.remote, None, &transmit)
+            .map(|res| {
+                res.with_context(|_| {
+                    format!("failed to send datagram to {:?}", network_path.remote)
+                })
+            })
     })
 }
 
@@ -1287,7 +1378,7 @@ struct ConnectionState {
     /// [`Connection`]: crate::endpoint::Connection
     path_state: PathStateSender,
     /// The open paths that exist on this connection.
-    paths: FxHashMap<PathId, transports::Addr>,
+    paths: FxHashMap<PathId, TransportFourTuple>,
     /// Whether this connection has ever had a direct path.
     ///
     /// Used for recording metrics.
@@ -1298,26 +1389,26 @@ impl ConnectionState {
     /// Tracks an open path for the connection.
     fn add_open_path(
         &mut self,
-        remote: transports::Addr,
+        network_path: TransportFourTuple,
         path_id: PathId,
         metrics: &Arc<SocketMetrics>,
     ) {
-        match remote {
+        match &network_path.remote {
             transports::Addr::Ip(_) => metrics.paths_direct.inc(),
             transports::Addr::Relay(_, _) => metrics.paths_relay.inc(),
             transports::Addr::Custom(_) => metrics.paths_custom.inc(),
         };
-        if !self.has_been_direct && remote.is_ip() {
+        if !self.has_been_direct && network_path.is_ip() {
             self.has_been_direct = true;
             metrics.num_conns_direct.inc();
         }
 
-        self.paths.insert(path_id, remote.clone());
+        self.paths.insert(path_id, network_path.clone());
         if let Some(conn) = self.handle.upgrade()
             && let Some(path) = conn.path(path_id)
         {
             let handle = path.weak_handle();
-            self.path_state.record_opened(handle, remote.into());
+            self.path_state.record_opened(handle, network_path.into());
         }
     }
 
@@ -1326,7 +1417,7 @@ impl ConnectionState {
         &mut self,
         path_id: &PathId,
         conn: &noq::Connection,
-    ) -> Option<transports::Addr> {
+    ) -> Option<TransportFourTuple> {
         let addr = self.paths.remove(path_id)?;
         self.path_state.record_abandoned(*path_id, conn);
         Some(addr)
@@ -1400,24 +1491,28 @@ mod tests {
     use super::*;
     use crate::socket::transports::TransportType;
 
-    fn v4(port: u16) -> transports::Addr {
-        transports::Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
+    fn v4(port: u16) -> TransportFourTuple {
+        let remote =
+            transports::Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)));
+        TransportFourTuple::from_remote(remote)
     }
 
-    fn v6(port: u16) -> transports::Addr {
-        transports::Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
+    fn v6(port: u16) -> TransportFourTuple {
+        let remote = transports::Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
             Ipv6Addr::LOCALHOST,
             port,
             0,
             0,
-        )))
+        )));
+        TransportFourTuple::from_remote(remote)
     }
 
-    fn relay(port: u16) -> transports::Addr {
+    fn relay(port: u16) -> TransportFourTuple {
         let url = format!("https://relay{port}.iroh.computer")
             .parse::<RelayUrl>()
             .unwrap();
-        transports::Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap())
+        let remote = transports::Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap());
+        TransportFourTuple::from_remote(remote)
     }
 
     fn psd(transport_type: TransportType, rtt_ms: u64) -> PathSelectionData {
@@ -1453,7 +1548,10 @@ mod tests {
         let result = select_best_path(paths, None);
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
-        assert!(matches!(addr, transports::Addr::Ip(SocketAddr::V6(_))));
+        assert!(matches!(
+            addr.remote,
+            transports::Addr::Ip(SocketAddr::V6(_))
+        ));
 
         // IPv6 should still win when it's slightly slower (within bias range)
         let mut paths = FxHashMap::default();
@@ -1463,7 +1561,10 @@ mod tests {
         let result = select_best_path(paths, None);
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
-        assert!(matches!(addr, transports::Addr::Ip(SocketAddr::V6(_))));
+        assert!(matches!(
+            addr.remote,
+            transports::Addr::Ip(SocketAddr::V6(_))
+        ));
 
         // IPv4 should win when IPv6 is significantly slower
         let mut paths = FxHashMap::default();
@@ -1473,7 +1574,10 @@ mod tests {
         let result = select_best_path(paths, None);
         assert!(result.is_some());
         let (addr, _) = result.unwrap();
-        assert!(matches!(addr, transports::Addr::Ip(SocketAddr::V4(_))));
+        assert!(matches!(
+            addr.remote,
+            transports::Addr::Ip(SocketAddr::V4(_))
+        ));
     }
 
     #[test]
@@ -1560,11 +1664,11 @@ mod tests {
 
     #[test]
     fn test_empty_paths_returns_none() {
-        let paths: FxHashMap<&transports::Addr, PathSelectionData> = FxHashMap::default();
+        let paths: FxHashMap<&TransportFourTuple, PathSelectionData> = FxHashMap::default();
         let result = select_best_path(paths, None);
         assert!(result.is_none());
 
-        let paths: FxHashMap<&transports::Addr, PathSelectionData> = FxHashMap::default();
+        let paths: FxHashMap<&TransportFourTuple, PathSelectionData> = FxHashMap::default();
         let result = select_best_path(paths, Some(&v4(1)));
         assert!(result.is_none());
     }
