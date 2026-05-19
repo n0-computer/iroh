@@ -21,17 +21,12 @@ pub use self::remote_state::{
 };
 #[cfg(feature = "unstable-custom-transports")]
 pub use self::remote_state::{
-    PathSelection, PathSelectionContext, PathSelectionData, PathSelectionStats, PathSelector,
+    PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
 };
 #[cfg(not(feature = "unstable-custom-transports"))]
 pub(crate) use self::remote_state::{
     PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
 };
-// PathSelectionStats is only referenced by name in tests; outside tests the type is
-// reachable as the return value of PathSelectionData::stats() without needing the name
-// in scope.
-#[cfg(all(test, not(feature = "unstable-custom-transports")))]
-pub(crate) use self::remote_state::PathSelectionStats;
 use super::{
     DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{

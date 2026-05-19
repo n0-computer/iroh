@@ -187,9 +187,10 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
     use iroh_base::{EndpointId, RelayUrl};
+    use noq::PathStats;
 
     use super::*;
-    use crate::socket::remote_map::{PathSelectionContext, PathSelectionData, PathSelectionStats};
+    use crate::socket::remote_map::{PathSelectionContext, PathSelectionData};
 
     fn v4(port: u16) -> Addr {
         Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
@@ -212,12 +213,10 @@ mod tests {
     }
 
     fn psd(addr: &Addr, rtt_ms: u64) -> PathSelectionData<'_> {
-        PathSelectionData::for_test(
-            addr,
-            Some(PathSelectionStats {
-                rtt: Duration::from_millis(rtt_ms),
-            }),
-        )
+        // PathStats is #[non_exhaustive], so build via Default + field assignment.
+        let mut stats = PathStats::default();
+        stats.rtt = Duration::from_millis(rtt_ms);
+        PathSelectionData::for_test(addr, Some(stats))
     }
 
     /// Runs [`BiasedRttPathSelector::default`] against the given paths and current
@@ -229,7 +228,7 @@ mod tests {
         let ctx = PathSelectionContext::for_test(current, paths);
         BiasedRttPathSelector::default()
             .select(&ctx)
-            .primary()
+            .selected()
             .cloned()
     }
 
@@ -271,23 +270,19 @@ mod tests {
         let v4_2 = v4(2);
 
         // 2ms diff < 5ms threshold → keep current (no switch, primary() == None).
-        let chosen =
-            select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 18)]);
+        let chosen = select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 18)]);
         assert_eq!(chosen, None);
 
         // 4ms diff < 5ms → keep current.
-        let chosen =
-            select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 16)]);
+        let chosen = select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 16)]);
         assert_eq!(chosen, None);
 
         // 5ms diff hits the threshold (the condition is `<=`) → switch.
-        let chosen =
-            select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 15)]);
+        let chosen = select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 15)]);
         assert_eq!(chosen.as_ref(), Some(&v4_2));
 
         // 6ms diff > 5ms → switch.
-        let chosen =
-            select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 14)]);
+        let chosen = select_with_default(Some(&v4_1), vec![psd(&v4_1, 20), psd(&v4_2, 14)]);
         assert_eq!(chosen.as_ref(), Some(&v4_2));
     }
 

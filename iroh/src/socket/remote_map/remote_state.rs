@@ -15,7 +15,7 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::Watcher;
-use noq::{Closed, PathStatus, WeakConnectionHandle};
+use noq::{Closed, PathStats, PathStatus, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent as NoqPathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, oneshot};
@@ -660,7 +660,7 @@ impl RemoteStateActor {
         let current_path = self.state.selected_path.as_ref();
         let selected_addr = {
             let ctx = PathSelectionContext::new(current_path, &self.connections);
-            self.state.path_selector.select(&ctx).primary().cloned()
+            self.state.path_selector.select(&ctx).selected().cloned()
         };
 
         if let Some(addr) = selected_addr
@@ -1345,22 +1345,10 @@ impl<'a> PathSelectionContext<'a> {
     }
 }
 
-/// Path statistics exposed to a [`PathSelector`].
-///
-/// A narrow, iroh-owned snapshot of the subset of [`noq::PathStats`] selectors care
-/// about.  Constructable in tests (unlike [`noq::PathStats`], which is `#[non_exhaustive]`
-/// upstream).
-#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
-#[derive(Debug, Clone, Copy)]
-pub struct PathSelectionStats {
-    /// Smoothed round-trip time estimate for this path.
-    pub rtt: Duration,
-}
-
 /// Data the selector sees about one candidate path.
 ///
 /// In production this borrows from a live connection and looks up stats from noq on
-/// demand.  In `#[cfg(test)]` builds it can also wrap synthesized data so selectors
+/// demand.  In `#[cfg(test)]` builds it can also wrap synthesized stats so selectors
 /// can be unit-tested without standing up real connections.
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 #[derive(derive_more::Debug, Clone)]
@@ -1372,9 +1360,12 @@ pub struct PathSelectionData<'a> {
 
 #[derive(Clone)]
 enum StatsSource {
-    Live { path_id: PathId, conn: noq::Connection },
+    Live {
+        path_id: PathId,
+        conn: noq::Connection,
+    },
     #[cfg(test)]
-    Test(Option<PathSelectionStats>),
+    Test(Option<PathStats>),
 }
 
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
@@ -1387,12 +1378,12 @@ impl<'a> PathSelectionData<'a> {
     }
 
     /// Constructs a [`PathSelectionData`] with synthetic stats for testing.
+    ///
+    /// `PathStats` is `#[non_exhaustive]` so callers build it via
+    /// `let mut s = PathStats::default(); s.rtt = ...;`.
     #[cfg(test)]
     #[allow(dead_code)]
-    pub(crate) fn for_test(
-        remote_addr: &'a transports::Addr,
-        stats: Option<PathSelectionStats>,
-    ) -> Self {
+    pub(crate) fn for_test(remote_addr: &'a transports::Addr, stats: Option<PathStats>) -> Self {
         Self {
             remote_addr,
             source: StatsSource::Test(stats),
@@ -1405,11 +1396,9 @@ impl<'a> PathSelectionData<'a> {
     }
 
     /// Returns path statistics if available.
-    pub fn stats(&self) -> Option<PathSelectionStats> {
+    pub fn stats(&self) -> Option<PathStats> {
         match &self.source {
-            StatsSource::Live { path_id, conn } => conn
-                .path_stats(*path_id)
-                .map(|s| PathSelectionStats { rtt: s.rtt }),
+            StatsSource::Live { path_id, conn } => conn.path_stats(*path_id),
             #[cfg(test)]
             StatsSource::Test(stats) => *stats,
         }
@@ -1463,17 +1452,13 @@ impl PathSelection {
         self.selection = Some(path.remote_addr().clone());
     }
 
-    /// The primary path: the one data should be sent on.
+    /// The selected path: the one data should be sent on. This is not public so
+    /// we can later allow for selecting multiple paths without changing the
+    /// public API of `PathSelection`.
     ///
-    /// Returns `None` when nothing has been added.
-    pub fn primary(&self) -> Option<&transports::Addr> {
+    /// Returns `None` when nothing has been selected.
+    pub(crate) fn selected(&self) -> Option<&transports::Addr> {
         self.selection.as_ref()
-    }
-
-    /// All paths in this selection (today: 0 or 1).
-    #[allow(dead_code)] // only reached via the public re-export behind the unstable feature
-    pub fn iter(&self) -> impl Iterator<Item = &transports::Addr> + '_ {
-        self.selection.iter()
     }
 }
 
@@ -1536,4 +1521,3 @@ async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<O
         Some(s) => Some(s.next().await),
     }
 }
-
