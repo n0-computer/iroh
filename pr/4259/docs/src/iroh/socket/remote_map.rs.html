@@ -240,7 +240,7 @@
 <a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>add_connection(
 <a href=#241 id=241 data-nosnippet>241</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#242 id=242 data-nosnippet>242</a>        remote: EndpointId,
-<a href=#243 id=243 data-nosnippet>243</a>        conn: noq::WeakConnectionHandle,
+<a href=#243 id=243 data-nosnippet>243</a>        conn: noq::Connection,
 <a href=#244 id=244 data-nosnippet>244</a>        tx: oneshot::Sender&lt;PathStateReceiver&gt;,
 <a href=#245 id=245 data-nosnippet>245</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RemoteStateActorStoppedError&gt; {
 <a href=#246 id=246 data-nosnippet>246</a>        <span class="kw">let </span>actor = <span class="self">self</span>.remote_state_actor(remote);
