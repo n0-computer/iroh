@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["MaybeTlsStream","RecvError","SendError"],"struct":["InvalidBucketConfig","RelayedStream"]};
+window.SIDEBAR_ITEMS = {"enum":["MaybeTlsStream","RecvError","SendError"],"struct":["Bucket","InvalidBucketConfig","RelayedStream"]};
