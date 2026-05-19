@@ -1307,86 +1307,86 @@
 <a href=#1307 id=1307 data-nosnippet>1307</a>
 <a href=#1308 id=1308 data-nosnippet>1308</a>    <span class="doccomment">/// Constructs a context with synthetic path data for testing.
 <a href=#1309 id=1309 data-nosnippet>1309</a>    </span><span class="attr">#[cfg(test)]
-<a href=#1310 id=1310 data-nosnippet>1310</a>    #[allow(dead_code)]
-<a href=#1311 id=1311 data-nosnippet>1311</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>for_test(
-<a href=#1312 id=1312 data-nosnippet>1312</a>        current: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>transports::Addr&gt;,
-<a href=#1313 id=1313 data-nosnippet>1313</a>        paths: Vec&lt;PathSelectionData&lt;<span class="lifetime">'a</span>&gt;&gt;,
-<a href=#1314 id=1314 data-nosnippet>1314</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#1315 id=1315 data-nosnippet>1315</a>        <span class="self">Self </span>{
-<a href=#1316 id=1316 data-nosnippet>1316</a>            current,
-<a href=#1317 id=1317 data-nosnippet>1317</a>            source: PathsSource::Test(paths),
-<a href=#1318 id=1318 data-nosnippet>1318</a>        }
-<a href=#1319 id=1319 data-nosnippet>1319</a>    }
-<a href=#1320 id=1320 data-nosnippet>1320</a>
-<a href=#1321 id=1321 data-nosnippet>1321</a>    <span class="doccomment">/// The path currently considered the preferred path to the remote endpoint, if any.
-<a href=#1322 id=1322 data-nosnippet>1322</a>    </span><span class="kw">pub fn </span>current(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>transports::Addr&gt; {
-<a href=#1323 id=1323 data-nosnippet>1323</a>        <span class="self">self</span>.current
-<a href=#1324 id=1324 data-nosnippet>1324</a>    }
-<a href=#1325 id=1325 data-nosnippet>1325</a>
-<a href=#1326 id=1326 data-nosnippet>1326</a>    <span class="doccomment">/// Iterator over candidate paths.
-<a href=#1327 id=1327 data-nosnippet>1327</a>    ///
-<a href=#1328 id=1328 data-nosnippet>1328</a>    /// The same address may appear more than once when it is a path on multiple
-<a href=#1329 id=1329 data-nosnippet>1329</a>    /// connections to the remote.  Selectors that care should aggregate as appropriate.
-<a href=#1330 id=1330 data-nosnippet>1330</a>    </span><span class="kw">pub fn </span>paths(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Box&lt;<span class="kw">dyn </span>Iterator&lt;Item = PathSelectionData&lt;<span class="lifetime">'a</span>&gt;&gt; + <span class="lifetime">'_</span>&gt; {
-<a href=#1331 id=1331 data-nosnippet>1331</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.source {
-<a href=#1332 id=1332 data-nosnippet>1332</a>            PathsSource::Live(connections) =&gt; Box::new(
-<a href=#1333 id=1333 data-nosnippet>1333</a>                connections
-<a href=#1334 id=1334 data-nosnippet>1334</a>                    .values()
-<a href=#1335 id=1335 data-nosnippet>1335</a>                    .filter_map(|state| state.handle.upgrade().map(|conn| (state, conn)))
-<a href=#1336 id=1336 data-nosnippet>1336</a>                    .flat_map(|(state, conn)| {
-<a href=#1337 id=1337 data-nosnippet>1337</a>                        state.paths.iter().map(<span class="kw">move </span>|(path_id, addr)| {
-<a href=#1338 id=1338 data-nosnippet>1338</a>                            PathSelectionData::live(addr, <span class="kw-2">*</span>path_id, conn.clone())
-<a href=#1339 id=1339 data-nosnippet>1339</a>                        })
-<a href=#1340 id=1340 data-nosnippet>1340</a>                    }),
-<a href=#1341 id=1341 data-nosnippet>1341</a>            ),
-<a href=#1342 id=1342 data-nosnippet>1342</a>            <span class="attr">#[cfg(test)]
-<a href=#1343 id=1343 data-nosnippet>1343</a>            </span>PathsSource::Test(paths) =&gt; Box::new(paths.iter().cloned()),
-<a href=#1344 id=1344 data-nosnippet>1344</a>        }
-<a href=#1345 id=1345 data-nosnippet>1345</a>    }
-<a href=#1346 id=1346 data-nosnippet>1346</a>}
-<a href=#1347 id=1347 data-nosnippet>1347</a>
-<a href=#1348 id=1348 data-nosnippet>1348</a><span class="doccomment">/// Data the selector sees about one candidate path.
-<a href=#1349 id=1349 data-nosnippet>1349</a>///
-<a href=#1350 id=1350 data-nosnippet>1350</a>/// In production this borrows from a live connection and looks up stats from noq on
-<a href=#1351 id=1351 data-nosnippet>1351</a>/// demand.  In `#[cfg(test)]` builds it can also wrap synthesized stats so selectors
-<a href=#1352 id=1352 data-nosnippet>1352</a>/// can be unit-tested without standing up real connections.
-<a href=#1353 id=1353 data-nosnippet>1353</a></span><span class="attr">#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
-<a href=#1354 id=1354 data-nosnippet>1354</a>#[derive(derive_more::Debug, Clone)]
-<a href=#1355 id=1355 data-nosnippet>1355</a></span><span class="kw">pub struct </span>PathSelectionData&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#1356 id=1356 data-nosnippet>1356</a>    remote_addr: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>transports::Addr,
-<a href=#1357 id=1357 data-nosnippet>1357</a>    <span class="attr">#[debug(skip)]
-<a href=#1358 id=1358 data-nosnippet>1358</a>    </span>source: StatsSource,
-<a href=#1359 id=1359 data-nosnippet>1359</a>}
-<a href=#1360 id=1360 data-nosnippet>1360</a>
-<a href=#1361 id=1361 data-nosnippet>1361</a><span class="attr">#[derive(Clone)]
-<a href=#1362 id=1362 data-nosnippet>1362</a></span><span class="kw">enum </span>StatsSource {
-<a href=#1363 id=1363 data-nosnippet>1363</a>    Live {
-<a href=#1364 id=1364 data-nosnippet>1364</a>        path_id: PathId,
-<a href=#1365 id=1365 data-nosnippet>1365</a>        conn: noq::Connection,
-<a href=#1366 id=1366 data-nosnippet>1366</a>    },
-<a href=#1367 id=1367 data-nosnippet>1367</a>    <span class="attr">#[cfg(test)]
-<a href=#1368 id=1368 data-nosnippet>1368</a>    </span>Test(<span class="prelude-ty">Option</span>&lt;PathStats&gt;),
-<a href=#1369 id=1369 data-nosnippet>1369</a>}
-<a href=#1370 id=1370 data-nosnippet>1370</a>
-<a href=#1371 id=1371 data-nosnippet>1371</a><span class="attr">#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
-<a href=#1372 id=1372 data-nosnippet>1372</a></span><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; PathSelectionData&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#1373 id=1373 data-nosnippet>1373</a>    <span class="kw">fn </span>live(remote_addr: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>transports::Addr, path_id: PathId, conn: noq::Connection) -&gt; <span class="self">Self </span>{
-<a href=#1374 id=1374 data-nosnippet>1374</a>        <span class="self">Self </span>{
-<a href=#1375 id=1375 data-nosnippet>1375</a>            remote_addr,
-<a href=#1376 id=1376 data-nosnippet>1376</a>            source: StatsSource::Live { path_id, conn },
-<a href=#1377 id=1377 data-nosnippet>1377</a>        }
-<a href=#1378 id=1378 data-nosnippet>1378</a>    }
-<a href=#1379 id=1379 data-nosnippet>1379</a>
-<a href=#1380 id=1380 data-nosnippet>1380</a>    <span class="doccomment">/// Constructs a [`PathSelectionData`] with synthetic stats for testing.
-<a href=#1381 id=1381 data-nosnippet>1381</a>    ///
-<a href=#1382 id=1382 data-nosnippet>1382</a>    /// `PathStats` is `#[non_exhaustive]` so callers build it via
-<a href=#1383 id=1383 data-nosnippet>1383</a>    /// `let mut s = PathStats::default(); s.rtt = ...;`.
-<a href=#1384 id=1384 data-nosnippet>1384</a>    </span><span class="attr">#[cfg(test)]
-<a href=#1385 id=1385 data-nosnippet>1385</a>    #[allow(dead_code)]
+<a href=#1310 id=1310 data-nosnippet>1310</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>for_test(
+<a href=#1311 id=1311 data-nosnippet>1311</a>        current: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>transports::Addr&gt;,
+<a href=#1312 id=1312 data-nosnippet>1312</a>        paths: Vec&lt;PathSelectionData&lt;<span class="lifetime">'a</span>&gt;&gt;,
+<a href=#1313 id=1313 data-nosnippet>1313</a>    ) -&gt; <span class="self">Self </span>{
+<a href=#1314 id=1314 data-nosnippet>1314</a>        <span class="self">Self </span>{
+<a href=#1315 id=1315 data-nosnippet>1315</a>            current,
+<a href=#1316 id=1316 data-nosnippet>1316</a>            source: PathsSource::Test(paths),
+<a href=#1317 id=1317 data-nosnippet>1317</a>        }
+<a href=#1318 id=1318 data-nosnippet>1318</a>    }
+<a href=#1319 id=1319 data-nosnippet>1319</a>
+<a href=#1320 id=1320 data-nosnippet>1320</a>    <span class="doccomment">/// The path currently considered the preferred path to the remote endpoint, if any.
+<a href=#1321 id=1321 data-nosnippet>1321</a>    </span><span class="kw">pub fn </span>current(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>transports::Addr&gt; {
+<a href=#1322 id=1322 data-nosnippet>1322</a>        <span class="self">self</span>.current
+<a href=#1323 id=1323 data-nosnippet>1323</a>    }
+<a href=#1324 id=1324 data-nosnippet>1324</a>
+<a href=#1325 id=1325 data-nosnippet>1325</a>    <span class="doccomment">/// Iterator over candidate paths.
+<a href=#1326 id=1326 data-nosnippet>1326</a>    ///
+<a href=#1327 id=1327 data-nosnippet>1327</a>    /// The same address may appear more than once when it is a path on multiple
+<a href=#1328 id=1328 data-nosnippet>1328</a>    /// connections to the remote.  Selectors that care should aggregate as appropriate.
+<a href=#1329 id=1329 data-nosnippet>1329</a>    </span><span class="kw">pub fn </span>paths(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Box&lt;<span class="kw">dyn </span>Iterator&lt;Item = PathSelectionData&lt;<span class="lifetime">'a</span>&gt;&gt; + <span class="lifetime">'_</span>&gt; {
+<a href=#1330 id=1330 data-nosnippet>1330</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.source {
+<a href=#1331 id=1331 data-nosnippet>1331</a>            PathsSource::Live(connections) =&gt; Box::new(
+<a href=#1332 id=1332 data-nosnippet>1332</a>                connections
+<a href=#1333 id=1333 data-nosnippet>1333</a>                    .values()
+<a href=#1334 id=1334 data-nosnippet>1334</a>                    .filter_map(|state| state.handle.upgrade().map(|conn| (state, conn)))
+<a href=#1335 id=1335 data-nosnippet>1335</a>                    .flat_map(|(state, conn)| {
+<a href=#1336 id=1336 data-nosnippet>1336</a>                        state.paths.iter().map(<span class="kw">move </span>|(path_id, addr)| {
+<a href=#1337 id=1337 data-nosnippet>1337</a>                            PathSelectionData::live(addr, <span class="kw-2">*</span>path_id, conn.clone())
+<a href=#1338 id=1338 data-nosnippet>1338</a>                        })
+<a href=#1339 id=1339 data-nosnippet>1339</a>                    }),
+<a href=#1340 id=1340 data-nosnippet>1340</a>            ),
+<a href=#1341 id=1341 data-nosnippet>1341</a>            <span class="attr">#[cfg(test)]
+<a href=#1342 id=1342 data-nosnippet>1342</a>            </span>PathsSource::Test(paths) =&gt; Box::new(paths.iter().cloned()),
+<a href=#1343 id=1343 data-nosnippet>1343</a>        }
+<a href=#1344 id=1344 data-nosnippet>1344</a>    }
+<a href=#1345 id=1345 data-nosnippet>1345</a>}
+<a href=#1346 id=1346 data-nosnippet>1346</a>
+<a href=#1347 id=1347 data-nosnippet>1347</a><span class="doccomment">/// Data the selector sees about one candidate path.
+<a href=#1348 id=1348 data-nosnippet>1348</a>///
+<a href=#1349 id=1349 data-nosnippet>1349</a>/// In production this borrows from a live connection and looks up stats from noq on
+<a href=#1350 id=1350 data-nosnippet>1350</a>/// demand.  In `#[cfg(test)]` builds it can also wrap synthesized stats so selectors
+<a href=#1351 id=1351 data-nosnippet>1351</a>/// can be unit-tested without standing up real connections.
+<a href=#1352 id=1352 data-nosnippet>1352</a></span><span class="attr">#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
+<a href=#1353 id=1353 data-nosnippet>1353</a>#[derive(derive_more::Debug, Clone)]
+<a href=#1354 id=1354 data-nosnippet>1354</a></span><span class="kw">pub struct </span>PathSelectionData&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#1355 id=1355 data-nosnippet>1355</a>    remote_addr: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>transports::Addr,
+<a href=#1356 id=1356 data-nosnippet>1356</a>    <span class="attr">#[debug(skip)]
+<a href=#1357 id=1357 data-nosnippet>1357</a>    </span>source: StatsSource,
+<a href=#1358 id=1358 data-nosnippet>1358</a>}
+<a href=#1359 id=1359 data-nosnippet>1359</a>
+<a href=#1360 id=1360 data-nosnippet>1360</a><span class="attr">#[derive(Clone)]
+<a href=#1361 id=1361 data-nosnippet>1361</a></span><span class="kw">enum </span>StatsSource {
+<a href=#1362 id=1362 data-nosnippet>1362</a>    Live {
+<a href=#1363 id=1363 data-nosnippet>1363</a>        path_id: PathId,
+<a href=#1364 id=1364 data-nosnippet>1364</a>        conn: noq::Connection,
+<a href=#1365 id=1365 data-nosnippet>1365</a>    },
+<a href=#1366 id=1366 data-nosnippet>1366</a>    <span class="doccomment">/// Boxed so `PathStats` (100+ bytes, 14 fields) doesn't inflate the enum's
+<a href=#1367 id=1367 data-nosnippet>1367</a>    /// size in production where only the `Live` variant is ever constructed.
+<a href=#1368 id=1368 data-nosnippet>1368</a>    </span><span class="attr">#[cfg(test)]
+<a href=#1369 id=1369 data-nosnippet>1369</a>    </span>Test(<span class="prelude-ty">Option</span>&lt;Box&lt;PathStats&gt;&gt;),
+<a href=#1370 id=1370 data-nosnippet>1370</a>}
+<a href=#1371 id=1371 data-nosnippet>1371</a>
+<a href=#1372 id=1372 data-nosnippet>1372</a><span class="attr">#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
+<a href=#1373 id=1373 data-nosnippet>1373</a></span><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; PathSelectionData&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#1374 id=1374 data-nosnippet>1374</a>    <span class="kw">fn </span>live(remote_addr: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>transports::Addr, path_id: PathId, conn: noq::Connection) -&gt; <span class="self">Self </span>{
+<a href=#1375 id=1375 data-nosnippet>1375</a>        <span class="self">Self </span>{
+<a href=#1376 id=1376 data-nosnippet>1376</a>            remote_addr,
+<a href=#1377 id=1377 data-nosnippet>1377</a>            source: StatsSource::Live { path_id, conn },
+<a href=#1378 id=1378 data-nosnippet>1378</a>        }
+<a href=#1379 id=1379 data-nosnippet>1379</a>    }
+<a href=#1380 id=1380 data-nosnippet>1380</a>
+<a href=#1381 id=1381 data-nosnippet>1381</a>    <span class="doccomment">/// Constructs a [`PathSelectionData`] with synthetic stats for testing.
+<a href=#1382 id=1382 data-nosnippet>1382</a>    ///
+<a href=#1383 id=1383 data-nosnippet>1383</a>    /// `PathStats` is `#[non_exhaustive]` so callers build it via
+<a href=#1384 id=1384 data-nosnippet>1384</a>    /// `let mut s = PathStats::default(); s.rtt = ...;`.
+<a href=#1385 id=1385 data-nosnippet>1385</a>    </span><span class="attr">#[cfg(test)]
 <a href=#1386 id=1386 data-nosnippet>1386</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>for_test(remote_addr: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>transports::Addr, stats: <span class="prelude-ty">Option</span>&lt;PathStats&gt;) -&gt; <span class="self">Self </span>{
 <a href=#1387 id=1387 data-nosnippet>1387</a>        <span class="self">Self </span>{
 <a href=#1388 id=1388 data-nosnippet>1388</a>            remote_addr,
-<a href=#1389 id=1389 data-nosnippet>1389</a>            source: StatsSource::Test(stats),
+<a href=#1389 id=1389 data-nosnippet>1389</a>            source: StatsSource::Test(stats.map(Box::new)),
 <a href=#1390 id=1390 data-nosnippet>1390</a>        }
 <a href=#1391 id=1391 data-nosnippet>1391</a>    }
 <a href=#1392 id=1392 data-nosnippet>1392</a>
@@ -1400,7 +1400,7 @@
 <a href=#1400 id=1400 data-nosnippet>1400</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.source {
 <a href=#1401 id=1401 data-nosnippet>1401</a>            StatsSource::Live { path_id, conn } =&gt; conn.path_stats(<span class="kw-2">*</span>path_id),
 <a href=#1402 id=1402 data-nosnippet>1402</a>            <span class="attr">#[cfg(test)]
-<a href=#1403 id=1403 data-nosnippet>1403</a>            </span>StatsSource::Test(stats) =&gt; <span class="kw-2">*</span>stats,
+<a href=#1403 id=1403 data-nosnippet>1403</a>            </span>StatsSource::Test(stats) =&gt; stats.as_deref().copied(),
 <a href=#1404 id=1404 data-nosnippet>1404</a>        }
 <a href=#1405 id=1405 data-nosnippet>1405</a>    }
 <a href=#1406 id=1406 data-nosnippet>1406</a>}
