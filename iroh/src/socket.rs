@@ -1147,9 +1147,9 @@ impl EndpointInner {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
-        trace!("wait_idle start");
-        self.noq_endpoint().wait_idle().await;
-        trace!("wait_idle done");
+        trace!("wait_all_draining start");
+        self.noq_endpoint().wait_all_draining().await;
+        trace!("wait_all_draining done");
 
         // Start cancellation of all actors.
         self.sock.shutdown.at_endpoint_closed.cancel();
