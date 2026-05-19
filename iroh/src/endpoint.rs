@@ -37,7 +37,7 @@ pub mod transports {
 
 use self::hooks::EndpointHooksList;
 pub use super::socket::{
-    BindError, DirectAddr, DirectAddrType,
+    BindError, CidGeneratorFactory, DirectAddr, DirectAddrType,
     remote_map::{
         Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream, RemoteInfo,
         TransportAddrInfo, TransportAddrUsage,
@@ -87,16 +87,17 @@ pub use self::{
     },
     quic::{
         AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, Closed, ClosedStream,
-        ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
-        ControllerMetrics, CryptoError, DecryptedInitial, Dir, ExportKeyingMaterialError,
-        FrameStats, FrameType, HandshakeTokenKey, HeaderKey, IdleTimeout, IncomingAlpns, Keys,
-        MtuDiscoveryConfig, OpenBi, OpenUni, PacketKey, PathId, PathStats, QuicConnectError,
-        QuicTransportConfig, QuicTransportConfigBuilder, ReadDatagram, ReadError, ReadExactError,
-        ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagram, SendDatagramError,
-        SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError, StreamId, TimeSource,
-        TokenLog, TokenReuseError, TransportError, TransportErrorCode, TransportParameters,
-        UdpStats, UnorderedRecvStream, UnsupportedVersion, ValidationTokenConfig, VarInt,
-        VarIntBoundsExceeded, WriteError,
+        ConnectionClose, ConnectionError, ConnectionId, ConnectionIdGenerator, ConnectionStats,
+        Controller, ControllerFactory, ControllerMetrics, CryptoError, DecryptedInitial, Dir,
+        ExportKeyingMaterialError, FrameStats, FrameType, HandshakeTokenKey, HeaderKey,
+        IdleTimeout, IncomingAlpns, InvalidCid, Keys, MtuDiscoveryConfig, OpenBi, OpenUni,
+        PacketKey, PathId, PathStats, QuicConnectError, QuicTransportConfig,
+        QuicTransportConfigBuilder, RandomConnectionIdGenerator, ReadDatagram, ReadError,
+        ReadExactError, ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagram,
+        SendDatagramError, SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError,
+        StreamId, TimeSource, TokenLog, TokenReuseError, TransportError, TransportErrorCode,
+        TransportParameters, UdpStats, UnorderedRecvStream, UnsupportedVersion,
+        ValidationTokenConfig, VarInt, VarIntBoundsExceeded, WriteError,
     },
 };
 pub use crate::portmapper::PortmapperConfig;
@@ -110,7 +111,7 @@ use crate::socket::transports::TransportConfig;
 /// new [`EndpointId`].
 ///
 /// To create the [`Endpoint`] call [`Builder::bind`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct Builder {
     secret_key: Option<SecretKey>,
     alpn_protocols: Vec<Vec<u8>>,
@@ -132,6 +133,8 @@ pub struct Builder {
     portmapper_config: PortmapperConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
+    #[debug(skip)]
+    cid_generator_factory: Option<socket::CidGeneratorFactory>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -199,6 +202,7 @@ impl Builder {
             portmapper_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
+            cid_generator_factory: None,
         }
     }
 
@@ -260,6 +264,7 @@ impl Builder {
             portmapper_config: self.portmapper_config,
             static_config,
             configured_addrs: self.configured_addrs,
+            cid_generator_factory: self.cid_generator_factory,
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
@@ -757,6 +762,20 @@ impl Builder {
     /// Defaults to [`PortmapperConfig::Enabled`].
     pub fn portmapper_config(mut self, config: PortmapperConfig) -> Self {
         self.portmapper_config = config;
+        self
+    }
+
+    /// Installs a custom [`ConnectionIdGenerator`] factory for the underlying QUIC endpoint.
+    ///
+    /// The factory is invoked once when the endpoint is bound to produce the CID generator
+    /// used for all local connection IDs. This is the hook used to embed routing information
+    /// in CIDs for stateless QUIC load balancers (see draft-ietf-quic-load-balancers).
+    ///
+    /// If unset, noq's default ([`noq_proto::HashedConnectionIdGenerator`]) is used.
+    ///
+    /// [`ConnectionIdGenerator`]: crate::endpoint::quic::ConnectionIdGenerator
+    pub fn cid_generator(mut self, factory: socket::CidGeneratorFactory) -> Self {
+        self.cid_generator_factory = Some(factory);
         self
     }
 

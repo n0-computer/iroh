@@ -52,7 +52,11 @@ pub use noq_proto::{
     Chunk,                            // noq::RecvStream
     ConnectError as QuicConnectError, // iroh::endpoint::ConnectWithOptsError
     ConnectionClose,                  // noq::ConnectionError
+    ConnectionId,                     // noq_proto::ConnectionIdGenerator
+    ConnectionIdGenerator,            // iroh::endpoint::Builder::cid_generator
     DecryptedInitial,                 // iroh::endpoint::connection::Incoming
+    InvalidCid,                       // noq_proto::ConnectionIdGenerator
+    RandomConnectionIdGenerator,      // built-in ConnectionIdGenerator
     FrameStats,                       // noq::ConnectionStats
     FrameType,                        // noq_proto::TransportError
     IncomingAlpns,                    // iroh::endpoint::DecryptedInitial

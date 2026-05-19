@@ -46,6 +46,13 @@ use noq::{
     NetworkChangeHint, WeakConnectionHandle,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
+use noq_proto::ConnectionIdGenerator;
+
+/// Factory function producing a [`ConnectionIdGenerator`] for an iroh endpoint.
+///
+/// See [`crate::endpoint::Builder::cid_generator`].
+pub type CidGeneratorFactory =
+    Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static>;
 use rand::RngExt;
 use rustc_hash::FxHashSet;
 use tokio::sync::{
@@ -193,6 +200,10 @@ pub(crate) struct Options {
 
     /// Explicitly configured external addresses to advertise.
     pub(crate) configured_addrs: BTreeSet<SocketAddr>,
+
+    /// Optional factory for the connection-ID generator used by the QUIC endpoint.
+    #[debug(skip)]
+    pub(crate) cid_generator_factory: Option<CidGeneratorFactory>,
 }
 
 /// Inner state for an iroh [`crate::Endpoint`].
@@ -885,6 +896,7 @@ impl EndpointInner {
             portmapper_config,
             static_config,
             configured_addrs,
+            cid_generator_factory,
         } = opts;
 
         let address_lookup = address_lookup::AddressLookupServices::default();
@@ -1011,6 +1023,9 @@ impl EndpointInner {
         // through to noq. We set the first byte of the packet to zero, which makes noq ignore
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
+        if let Some(factory) = cid_generator_factory {
+            endpoint_config.cid_generator(factory);
+        }
 
         let local_addrs_watch = transports.local_addrs_watch();
         let transports_network_change = transports.create_network_change_sender();
