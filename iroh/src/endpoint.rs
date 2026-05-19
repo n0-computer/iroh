@@ -729,7 +729,8 @@ impl Builder {
     ///
     /// The two most common crypto providers in use today are `ring` as well as `aws-lc-rs`.
     ///
-    /// If either the `ring` or `aws-lc-rs` feature is set in iroh, this function doesn't need to be called.
+    /// If either the `tls-ring` or `tls-aws-lc-rs` feature is set in iroh, this function doesn't
+    /// need to be called.
     ///
     /// If none of these features are set, then calling this function in the builder is mandatory.
     pub fn crypto_provider(mut self, crypto_provider: Arc<rustls::crypto::CryptoProvider>) -> Self {

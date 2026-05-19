@@ -361,9 +361,7 @@ fn conn_from_noq_conn(
     );
 
     // Register this connection with the socket.
-    let fut = ep
-        .inner
-        .register_connection(info.endpoint_id, conn.weak_handle());
+    let fut = ep.inner.register_connection(info.endpoint_id, conn.clone());
 
     // Check hooks
     let inner = ep.inner.clone();

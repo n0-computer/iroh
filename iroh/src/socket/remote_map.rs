@@ -240,7 +240,7 @@ impl RemoteMap {
     pub(super) async fn add_connection(
         &mut self,
         remote: EndpointId,
-        conn: noq::WeakConnectionHandle,
+        conn: noq::Connection,
         tx: oneshot::Sender<PathStateReceiver>,
     ) -> Result<(), RemoteStateActorStoppedError> {
         let actor = self.remote_state_actor(remote);
