@@ -167,8 +167,8 @@
 <a href=#167 id=167 data-nosnippet>167</a>    }
 <a href=#168 id=168 data-nosnippet>168</a>
 <a href=#169 id=169 data-nosnippet>169</a>    <span class="doccomment">/// Returns `true` if there are any queued resolve requests from [`Self::resolve_remote`].
-<a href=#170 id=170 data-nosnippet>170</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>has_pending_resolve_requests(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#171 id=171 data-nosnippet>171</a>        !<span class="self">self</span>.pending_resolve_requests.is_empty()
+<a href=#170 id=170 data-nosnippet>170</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>resolve_requests_is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="self">self</span>.pending_resolve_requests.is_empty()
 <a href=#172 id=172 data-nosnippet>172</a>    }
 <a href=#173 id=173 data-nosnippet>173</a>
 <a href=#174 id=174 data-nosnippet>174</a>    <span class="doccomment">/// Notifies that a Address Lookup run has finished.
