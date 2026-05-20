@@ -175,7 +175,7 @@ impl ClientRequest {
     /// The [`EndpointId`] must be proven by the relay handshake. The request parts
     /// come from the client's WebSocket request.
     pub fn from_http_request(endpoint_id: EndpointId, request: &http::request::Parts) -> Self {
-        let auth_token = auth_token_from_request(&request);
+        let auth_token = auth_token_from_request(request);
         Self::new(endpoint_id, auth_token)
     }
 
