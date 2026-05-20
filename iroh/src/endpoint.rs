@@ -3919,7 +3919,7 @@ mod tests {
 
         let access = AccessConfig::Restricted(Box::new(|request| {
             Box::pin(async move {
-                if request.auth_token().as_deref() == Some(TOKEN) {
+                if request.auth_token() == Some(TOKEN) {
                     Access::Allow
                 } else {
                     Access::Deny
