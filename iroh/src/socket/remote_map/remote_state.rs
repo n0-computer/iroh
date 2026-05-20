@@ -11,7 +11,6 @@ use n0_error::StackResultExt;
 use n0_future::{
     FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
-    task::JoinSet,
     time::{self, Duration, Instant},
 };
 use n0_watcher::Watcher;
@@ -20,7 +19,7 @@ use noq_proto::{PathError, PathEvent as NoqPathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
+use tracing::{Level, debug, error, event, instrument, trace, warn};
 
 use self::path_state::RemotePathState;
 pub(crate) use self::path_watcher::PathStateReceiver;
@@ -209,45 +208,26 @@ impl RemoteStateActor {
         }
     }
 
-    pub(super) fn start(
-        self,
-        initial_msgs: Vec<RemoteStateMessage>,
-        tasks: &mut JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
-        shutdown_token: CancellationToken,
-        parent_span: Span,
-    ) -> mpsc::Sender<RemoteStateMessage> {
-        let (tx, rx) = mpsc::channel(16);
-        let endpoint_id = self.state.endpoint_id;
-
-        // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
-        // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
-        // we don't explicitly set a span we get the spans from whatever call happens to
-        // first create the actor, which is often very confusing as it then keeps those
-        // spans for all logging of the actor.
-        tasks.spawn(
-            self.run(initial_msgs, rx, shutdown_token)
-                .instrument(info_span!(
-                    parent: parent_span,
-                    "RemoteStateActor",
-                    remote = %endpoint_id.fmt_short(),
-                )),
-        );
-        tx
-    }
-
     /// Runs the main loop of the actor.
+    ///
+    /// `initial` carries messages handed over from a previous incarnation of
+    /// the actor; they are handled before anything from `inbox`. Resolves to
+    /// the actor's endpoint ID and its inbox, so the registry can recover any
+    /// messages left unhandled, as required by the [`ActorFactory`] contract.
     ///
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
     /// discipline is needed to not turn pending for a long time.
-    async fn run(
+    ///
+    /// [`ActorFactory`]: super::actor_registry::ActorFactory
+    pub(super) async fn run(
         mut self,
-        initial_msgs: Vec<RemoteStateMessage>,
+        initial: Vec<RemoteStateMessage>,
         mut inbox: mpsc::Receiver<RemoteStateMessage>,
         shutdown_token: CancellationToken,
-    ) -> (EndpointId, Vec<RemoteStateMessage>) {
+    ) -> (EndpointId, mpsc::Receiver<RemoteStateMessage>) {
         trace!("actor started");
-        for msg in initial_msgs {
+        for msg in initial {
             self.handle_message(msg).await;
         }
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
@@ -337,13 +317,8 @@ impl RemoteStateActor {
         }
 
         inbox.close();
-        // There might be a race between checking `inbox.is_empty()` and `inbox.close()`,
-        // so we pull out all messages that are left over.
-        let mut leftover_msgs = Vec::with_capacity(inbox.len());
-        inbox.recv_many(&mut leftover_msgs, inbox.len()).await;
-
         trace!("actor terminating");
-        (self.state.endpoint_id, leftover_msgs)
+        (self.state.endpoint_id, inbox)
     }
 
     /// Returns `true` if the actor is fully idle.
