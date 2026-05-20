@@ -537,7 +537,7 @@ struct Inner {
     write_timeout: Duration,
     rate_limit: Option<ClientRateLimit>,
     key_cache: KeyCache,
-    access: AccessConfig,
+    access: Arc<AccessConfig>,
     metrics: Arc<Metrics>,
 }
 
@@ -872,7 +872,7 @@ impl Inner {
 
         trace!(?authentication.mechanism, "accept: verified authentication");
 
-        let request = ClientRequest::new(authentication.client_key, request_parts);
+        let request = ClientRequest::from_http_request(authentication.client_key, &request_parts);
         let is_authorized = self.access.is_allowed(&request).await;
         let client_key = authentication.authorize_if(is_authorized, &mut io).await?;
 
@@ -890,7 +890,7 @@ impl Inner {
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             protocol_version,
-            auth_token: request.auth_token(),
+            access_config: self.access.clone(),
         };
         trace!("accept: create client");
         let endpoint_id = client_conn_builder.endpoint_id;
@@ -933,7 +933,7 @@ impl RelayService {
             write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit,
             key_cache,
-            access,
+            access: Arc::new(access),
             metrics,
         }))
     }

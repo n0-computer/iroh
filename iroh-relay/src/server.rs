@@ -15,10 +15,7 @@
 //! - HTTPS `/ping`: Used for net_report probes.
 //! - HTTPS `/generate_204`: Used for net_report probes.
 
-use std::{
-    borrow::Cow, future::Future, net::SocketAddr, num::NonZeroU32, path::PathBuf, pin::Pin,
-    sync::Arc,
-};
+use std::{future::Future, net::SocketAddr, num::NonZeroU32, path::PathBuf, pin::Pin, sync::Arc};
 
 use derive_more::Debug;
 use http::{
@@ -161,19 +158,25 @@ impl RelayConfig {
 #[derive(Debug, Clone)]
 pub struct ClientRequest {
     endpoint_id: EndpointId,
-    request: http::request::Parts,
+    auth_token: Option<String>,
 }
 
 impl ClientRequest {
+    /// Creates a new [`ClientRequest`] from an [`EndpointId`] and authorization token.
+    pub fn new(endpoint_id: EndpointId, auth_token: Option<String>) -> Self {
+        Self {
+            endpoint_id,
+            auth_token,
+        }
+    }
+
     /// Creates a new [`ClientRequest`] from an [`EndpointId`] and HTTP request parts.
     ///
     /// The [`EndpointId`] must be proven by the relay handshake. The request parts
     /// come from the client's WebSocket request.
-    pub fn new(endpoint_id: EndpointId, request: http::request::Parts) -> Self {
-        Self {
-            endpoint_id,
-            request,
-        }
+    pub fn from_http_request(endpoint_id: EndpointId, request: &http::request::Parts) -> Self {
+        let auth_token = auth_token_from_request(&request);
+        Self::new(endpoint_id, auth_token)
     }
 
     /// Returns the [`EndpointId`] of the client.
@@ -186,49 +189,36 @@ impl ClientRequest {
         self.endpoint_id
     }
 
-    /// Returns the URI of the HTTP request with which the client connected.
-    pub fn uri(&self) -> &http::Uri {
-        &self.request.uri
+    /// Returns the authorization token provided by the client, if any.
+    pub fn auth_token(&self) -> Option<&str> {
+        self.auth_token.as_deref()
     }
+}
 
-    /// Returns an iterator over the query parameters set in the URI of the HTTP request.
-    ///
-    /// Each item is a `(name, value)` pair. Both names and values are percent-decoded.
-    /// The query string is parsed in order, and the same name may appear more than once.
-    pub fn query_pairs(&self) -> impl Iterator<Item = (Cow<'_, str>, Cow<'_, str>)> {
-        url::form_urlencoded::parse(self.request.uri.query().unwrap_or("").as_bytes())
-    }
-
-    /// Returns the headers of the HTTP request with which the client connected.
-    pub fn headers(&self) -> &http::HeaderMap {
-        &self.request.headers
-    }
-
-    /// Returns the authorization token from the client's HTTP request, if any.
-    ///
-    /// Walks the `Authorization` headers in order and returns the value of
-    /// the first one whose scheme is `Bearer` (matched case-insensitively).
-    /// Headers with a different scheme are skipped.
-    ///
-    /// If none of the `Authorization` headers carries a `Bearer` scheme,
-    /// returns the value of the `token` URL query parameter, or `None` if
-    /// the URL has no `token` parameter.
-    ///
-    /// If an `Authorization` header value is not valid UTF-8 the function returns
-    /// `None` immediately, without checking later headers or the URL query.
-    pub fn auth_token(&self) -> Option<String> {
-        for value in self.request.headers.get_all(AUTHORIZATION) {
-            let value = value.to_str().ok()?;
-            if let Some((scheme, token)) = value.split_once(' ')
-                && scheme.eq_ignore_ascii_case("Bearer")
-            {
-                return Some(token.to_string());
-            }
+/// Returns the authorization token from the client's HTTP request, if any.
+///
+/// Walks the `Authorization` headers in order and returns the value of
+/// the first one whose scheme is `Bearer` (matched case-insensitively).
+/// Headers with a different scheme are skipped.
+///
+/// If none of the `Authorization` headers carries a `Bearer` scheme,
+/// returns the value of the `token` URL query parameter, or `None` if
+/// the URL has no `token` parameter.
+///
+/// If an `Authorization` header value is not valid UTF-8 the function returns
+/// `None` immediately, without checking later headers or the URL query.
+fn auth_token_from_request(request: &http::request::Parts) -> Option<String> {
+    for value in request.headers.get_all(AUTHORIZATION) {
+        let value = value.to_str().ok()?;
+        if let Some((scheme, token)) = value.split_once(' ')
+            && scheme.eq_ignore_ascii_case("Bearer")
+        {
+            return Some(token.to_string());
         }
-        self.query_pairs()
-            .find(|(name, _)| name == AUTH_TOKEN_URL_QUERY_PARAM)
-            .map(|(_, value)| value.into_owned())
     }
+    url::form_urlencoded::parse(request.uri.query().unwrap_or("").as_bytes())
+        .find(|(name, _)| name == AUTH_TOKEN_URL_QUERY_PARAM)
+        .map(|(_, value)| value.into_owned())
 }
 
 /// Access check callback used by [`AccessConfig::Restricted`].
