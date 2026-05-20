@@ -114,6 +114,7 @@ pub(super) struct Server {
     addr: SocketAddr,
     http_server_task: AbortOnDropHandle<()>,
     cancel_server_loop: CancellationToken,
+    service: RelayService,
 }
 
 impl Server {
@@ -144,6 +145,11 @@ impl Server {
     /// Returns the local address of this server.
     pub(super) fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Returns the [`RelayService`] driving this server.
+    pub(super) fn service(&self) -> &RelayService {
+        &self.service
     }
 }
 
@@ -464,8 +470,10 @@ impl ServerBuilder {
         info!("[{http_str}] relay: serving on {addr}");
 
         let cancel = cancel_token.clone();
+        let loop_service = service.clone();
         let task = tokio::task::spawn(
             async move {
+                let service = loop_service;
                 // create a join set to track all our connection tasks
                 let mut set = tokio::task::JoinSet::new();
                 loop {
@@ -510,6 +518,7 @@ impl ServerBuilder {
             addr,
             http_server_task: AbortOnDropHandle::new(task),
             cancel_server_loop: cancel_token,
+            service,
         })
     }
 }
@@ -881,6 +890,7 @@ impl Inner {
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             protocol_version,
+            auth_token: request.auth_token(),
         };
         trace!("accept: create client");
         let endpoint_id = client_conn_builder.endpoint_id;
@@ -931,6 +941,16 @@ impl RelayService {
     /// Shuts down the relay service, disconnecting all clients.
     pub async fn shutdown(&self) {
         self.0.clients.shutdown().await;
+    }
+
+    /// Returns a reference to the registry of currently connected clients.
+    ///
+    /// The returned [`Clients`] handle can be used at runtime to disconnect
+    /// connected clients via [`Clients::retain`]. This is the entry point for
+    /// revoking access for endpoints that were admitted by the access hook
+    /// but should no longer be allowed.
+    pub fn clients(&self) -> &Clients {
+        &self.0.clients
     }
 
     /// Handle the incoming connection.

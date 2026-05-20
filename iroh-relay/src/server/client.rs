@@ -57,6 +57,8 @@ pub struct Config<S> {
     pub channel_capacity: usize,
     /// Protocol version negotiated for this client
     pub protocol_version: ProtocolVersion,
+    /// The authorization token that the client registered with
+    pub auth_token: Option<String>,
 }
 
 impl<S> Config<S> {
@@ -72,6 +74,7 @@ impl<S> Config<S> {
             protocol_version,
             write_timeout: SERVER_WRITE_TIMEOUT,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+            auth_token: None,
         }
     }
 }
@@ -96,6 +99,8 @@ pub struct Client {
     message_queue: mpsc::Sender<RelayToClientMsg>,
     /// Relay protocol version negotiated for this client.
     protocol_version: ProtocolVersion,
+    /// The auth token that the client passed when registering.
+    auth_token: Option<String>,
 }
 
 impl Client {
@@ -117,6 +122,7 @@ impl Client {
             write_timeout,
             channel_capacity,
             protocol_version,
+            auth_token,
         } = config;
 
         let (packet_send_queue_s, packet_send_queue_r) = mpsc::channel(channel_capacity);
@@ -152,7 +158,23 @@ impl Client {
             packet_queue: packet_send_queue_s,
             message_queue: message_send_queue_s,
             protocol_version,
+            auth_token,
         }
+    }
+
+    /// Returns the [`EndpointId`] of this client.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint_id
+    }
+
+    /// Returns the authorization token this client registered with, if set.
+    pub fn auth_token(&self) -> Option<&str> {
+        self.auth_token.as_deref()
+    }
+
+    /// Returns the protocol version negotiated for this connection.
+    pub fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
     }
 
     pub(super) fn connection_id(&self) -> u64 {
@@ -684,6 +706,7 @@ mod tests {
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 protocol_version,
+                auth_token: None,
             },
             Conn::test(client, protocol_version),
         )
