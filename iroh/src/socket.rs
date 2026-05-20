@@ -1602,7 +1602,7 @@ impl Actor {
                     self.sock.metrics.socket.actor_link_change.inc();
                     self.handle_network_change(is_major);
                 }
-                _remote_id = self.remote_map.cleanup()=> {},
+                _remote_id = self.remote_map.cleanup() => {},
                 _ = &mut notify_quic_network_change => {
                     let has_network = self.has_usable_network();
                     let Some(pending) = self.call_notify_quic_network_change.as_mut() else {
