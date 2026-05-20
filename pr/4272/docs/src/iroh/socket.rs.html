@@ -1602,7 +1602,7 @@
 <a href=#1602 id=1602 data-nosnippet>1602</a>                    <span class="self">self</span>.sock.metrics.socket.actor_link_change.inc();
 <a href=#1603 id=1603 data-nosnippet>1603</a>                    <span class="self">self</span>.handle_network_change(is_major);
 <a href=#1604 id=1604 data-nosnippet>1604</a>                }
-<a href=#1605 id=1605 data-nosnippet>1605</a>                _remote_id = <span class="self">self</span>.remote_map.cleanup()=&gt; {},
+<a href=#1605 id=1605 data-nosnippet>1605</a>                _remote_id = <span class="self">self</span>.remote_map.cleanup() =&gt; {},
 <a href=#1606 id=1606 data-nosnippet>1606</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>notify_quic_network_change =&gt; {
 <a href=#1607 id=1607 data-nosnippet>1607</a>                    <span class="kw">let </span>has_network = <span class="self">self</span>.has_usable_network();
 <a href=#1608 id=1608 data-nosnippet>1608</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>(pending) = <span class="self">self</span>.call_notify_quic_network_change.as_mut() <span class="kw">else </span>{
