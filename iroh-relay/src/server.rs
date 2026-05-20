@@ -1326,7 +1326,7 @@ mod tests {
                 key_cache_capacity: Some(1024),
                 access: AccessConfig::Restricted(Box::new(move |request| {
                     async move {
-                        if request.auth_token().as_deref() == Some(TOKEN) {
+                        if request.auth_token() == Some(TOKEN) {
                             Access::Allow
                         } else {
                             Access::Deny
