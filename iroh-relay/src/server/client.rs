@@ -219,11 +219,12 @@ impl Client {
     pub(super) fn request_reauth(&self) {
         // V1 clients don't support Status messages, disconnect them, they can reconnect.
         if self.protocol_version == ProtocolVersion::V1 {
-            trace!(dst=%self.endpoint_id.fmt_short(), "Reauth requested, disconnecting because client uses V1 protocol");
+            trace!(dst=%self.endpoint_id.fmt_short(), "Reauth requested but client uses V1 protocol, disconnecting");
             self.start_shutdown();
-        } else if let Err(_) = self
+        } else if self
             .message_queue
             .try_send(RelayToClientMsg::Status(Status::AuthorizationExpired))
+            .is_err()
         {
             trace!(dst=%self.endpoint_id.fmt_short(), "Reauth requested but failed to send AuthorizationExpired, disconnecting");
             self.start_shutdown();
