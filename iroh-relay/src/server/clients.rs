@@ -72,6 +72,20 @@ impl Clients {
         n0_future::join_all(clients.map(|(_, state)| state.shutdown_all())).await;
     }
 
+    /// Disconnects all clients for which `f` returns `false`.
+    pub fn retain(&self, f: impl Fn(&Client) -> bool) {
+        for state in self.0.clients.iter() {
+            for client in state.inactive.iter() {
+                if !f(client) {
+                    client.start_shutdown();
+                }
+            }
+            if !f(&state.active) {
+                state.active.start_shutdown();
+            }
+        }
+    }
+
     /// Builds the client handler and starts the read & write loops for the connection.
     pub fn register<S>(&self, client_config: Config<S>, metrics: Arc<Metrics>)
     where
@@ -278,6 +292,7 @@ mod tests {
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 protocol_version: Default::default(),
+                auth_token: None,
             },
             Conn::test(client, protocol_version),
         )

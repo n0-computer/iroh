@@ -461,6 +461,8 @@ pub struct Server {
     quic_addr: Option<SocketAddr>,
     /// Handle to the relay server.
     relay_handle: Option<http_server::ServerHandle>,
+    /// Handle to the relay service for runtime control.
+    relay_service: Option<http_server::RelayService>,
     /// Handle to the quic server.
     quic_handle: Option<QuicServerHandle>,
     /// The main task running the server.
@@ -655,6 +657,7 @@ impl Server {
         // relay_server is serving HTTP, including the /generate_204 service.
         let relay_addr = relay_server.as_ref().map(|srv| srv.addr());
         let relay_handle = relay_server.as_ref().map(|srv| srv.handle());
+        let relay_service = relay_server.as_ref().map(|srv| srv.service().clone());
 
         let quic_server = match config.quic {
             Some(quic_config) => {
@@ -682,6 +685,7 @@ impl Server {
             https_addr: http_addr.and(relay_addr),
             quic_addr,
             relay_handle,
+            relay_service,
             quic_handle,
             supervisor: AbortOnDropHandle::new(task),
             metrics,
@@ -760,6 +764,21 @@ impl Server {
     /// Returns the metrics collected in the relay server.
     pub fn metrics(&self) -> &RelayMetrics {
         &self.metrics
+    }
+
+    /// Returns a handle to the embedded [`RelayService`] for runtime control.
+    ///
+    /// The service handle allows inspecting and mutating the live relay state
+    /// after [`Server::spawn`] returns. In particular, [`RelayService::clients`]
+    /// reaches the [`Clients`] registry which exposes
+    /// [`Clients::retain`] for forcibly disconnecting clients.
+    ///
+    /// Returns `None` if the relay was not enabled in [`ServerConfig`].
+    ///
+    /// [`Clients`]: clients::Clients
+    /// [`Clients::retain`]: clients::Clients::retain
+    pub fn relay_service(&self) -> Option<&RelayService> {
+        self.relay_service.as_ref()
     }
 }
 
