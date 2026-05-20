@@ -879,7 +879,7 @@ impl RemoteStateActor {
         };
         trace!("path event");
         match event {
-            NoqPathEvent::Established { id: path_id } => {
+            NoqPathEvent::Established { id: path_id, .. } => {
                 let Some(path) = conn.path(path_id) else {
                     trace!("path open event for unknown path");
                     return;
@@ -907,7 +907,7 @@ impl RemoteStateActor {
                     self.select_path();
                 }
             }
-            NoqPathEvent::Abandoned { id, reason } => {
+            NoqPathEvent::Abandoned { id, reason, .. } => {
                 // Remove abandoned path from the conn state.
                 let Some(path_remote) = conn_state.remove_path(&id, &conn) else {
                     debug!(%id, "path not in path_id_map");
@@ -953,7 +953,7 @@ impl RemoteStateActor {
                 // If the remote closed our selected path, select a new one.
                 self.select_path();
             }
-            NoqPathEvent::Discarded { id, path_stats } => {
+            NoqPathEvent::Discarded { id, path_stats, .. } => {
                 trace!(%id, ?path_stats, "path discarded");
             }
             NoqPathEvent::RemoteStatus { .. } | NoqPathEvent::ObservedAddr { .. } => {
