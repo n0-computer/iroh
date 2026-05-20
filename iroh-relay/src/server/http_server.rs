@@ -945,10 +945,8 @@ impl RelayService {
 
     /// Returns a reference to the registry of currently connected clients.
     ///
-    /// The returned [`Clients`] handle can be used at runtime to disconnect
-    /// connected clients via [`Clients::retain`]. This is the entry point for
-    /// revoking access for endpoints that were admitted by the access hook
-    /// but should no longer be allowed.
+    /// The returned [`Clients`] handle can be used at runtime to request
+    /// all clients to re-authorize via [`Clients::request_reauth`].
     pub fn clients(&self) -> &Clients {
         &self.0.clients
     }
