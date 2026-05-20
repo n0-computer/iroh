@@ -187,7 +187,7 @@ async fn handle_relay_websocket(
     let authentication = handshake::serverside(&mut adapter, client_auth_header).await?;
     trace!(?authentication.mechanism, "verified authentication");
 
-    let request = ClientRequest::new(authentication.client_key, request_parts);
+    let request = ClientRequest::from_http_request(authentication.client_key, &request_parts);
     let is_authorized = state.access.is_allowed(&request).await;
     let client_key = authentication
         .authorize_if(is_authorized, &mut adapter)
@@ -195,7 +195,12 @@ async fn handle_relay_websocket(
     trace!("verified authorization");
 
     let stream = RelayedStream::new(adapter, state.key_cache.clone());
-    let config = Config::new(client_key, stream, ProtocolVersion::V2);
+    let config = Config::new(
+        client_key,
+        stream,
+        ProtocolVersion::V2,
+        state.access.clone(),
+    );
     state.clients.register(config, state.metrics.clone());
     Ok(())
 }

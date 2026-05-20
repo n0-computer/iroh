@@ -128,6 +128,9 @@ pub enum Status {
         "Another endpoint connected with the same endpoint id. No more messages will be received."
     )]
     SameEndpointIdConnected,
+    /// Authorization has expired, re-auth is needed.
+    #[display("The authorization for this endpoint has expired. Re-auth is needed.")]
+    AuthorizationExpired,
     /// Placeholder for backwards-compatibility for future new health status variants.
     #[display("Unsupported health message ({_0})")]
     Unknown(u8),
@@ -139,6 +142,7 @@ impl Status {
         match self {
             Status::Healthy => dst.put_u8(0),
             Status::SameEndpointIdConnected => dst.put_u8(1),
+            Status::AuthorizationExpired => dst.put_u8(2),
             Status::Unknown(discriminant) => dst.put_u8(*discriminant),
         }
         dst
@@ -155,6 +159,7 @@ impl Status {
         match discriminant {
             0 => Ok(Self::Healthy),
             1 => Ok(Self::SameEndpointIdConnected),
+            2 => Ok(Self::AuthorizationExpired),
             n => Ok(Self::Unknown(n)),
         }
     }
@@ -176,6 +181,11 @@ pub enum ClientToRelayMsg {
         dst_endpoint_id: EndpointId,
         /// The datagrams and related metadata to relay.
         datagrams: Datagrams,
+    },
+    /// Update the authorization token.
+    Authorize {
+        /// The updated authorization token.
+        auth_token: String,
     },
 }
 
@@ -480,6 +490,7 @@ impl ClientToRelayMsg {
             }
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
+            Self::Authorize { .. } => FrameType::Authorization,
         }
     }
 
@@ -506,6 +517,9 @@ impl ClientToRelayMsg {
             Self::Pong(data) => {
                 dst.put(&data[..]);
             }
+            Self::Authorize { auth_token } => {
+                dst.put(auth_token.as_bytes());
+            }
         }
         dst
     }
@@ -517,6 +531,7 @@ impl ClientToRelayMsg {
                 32 // endpoint id
                 + datagrams.encoded_len()
             }
+            Self::Authorize { auth_token } => auth_token.len(),
         };
         self.typ().encoded_len() + payload_len
     }
@@ -557,6 +572,10 @@ impl ClientToRelayMsg {
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Pong(data)
+            }
+            FrameType::Authorization => {
+                let auth_token = std::str::from_utf8(&content)?.to_owned();
+                Self::Authorize { auth_token }
             }
             _ => {
                 return Err(e!(Error::InvalidFrameType { frame_type }));

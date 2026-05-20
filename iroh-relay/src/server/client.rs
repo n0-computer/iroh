@@ -1,15 +1,15 @@
 //! The server-side representation of an ongoing client relaying connection.
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, pin::Pin, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
-use n0_future::{SinkExt, StreamExt};
+use n0_future::{MaybeFuture, SinkExt, StreamExt};
 use rand::RngExt;
 use time::{Date, OffsetDateTime};
 use tokio::{
     sync::mpsc::{self, error::TrySendError},
-    time::MissedTickBehavior,
+    time::{MissedTickBehavior, Sleep},
 };
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{Instrument, debug, trace, warn};
@@ -26,11 +26,14 @@ use crate::{
         streams::BytesStreamSink,
     },
     server::{
+        AccessConfig, ClientRequest,
         clients::Clients,
         metrics::Metrics,
         streams::{RecvError as RelayRecvError, RelayedStream, SendError as RelaySendError},
     },
 };
+
+const AUTHORIZATION_EXPIRED_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]
@@ -57,8 +60,8 @@ pub struct Config<S> {
     pub channel_capacity: usize,
     /// Protocol version negotiated for this client
     pub protocol_version: ProtocolVersion,
-    /// The authorization token that the client registered with
-    pub auth_token: Option<String>,
+    /// The access config against which clients are checked in case a re-auth is requested.
+    pub access_config: Arc<AccessConfig>,
 }
 
 impl<S> Config<S> {
@@ -67,6 +70,7 @@ impl<S> Config<S> {
         endpoint_id: EndpointId,
         stream: RelayedStream<S>,
         protocol_version: ProtocolVersion,
+        access_config: Arc<AccessConfig>,
     ) -> Self {
         Self {
             endpoint_id,
@@ -74,7 +78,7 @@ impl<S> Config<S> {
             protocol_version,
             write_timeout: SERVER_WRITE_TIMEOUT,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
-            auth_token: None,
+            access_config,
         }
     }
 }
@@ -99,8 +103,6 @@ pub struct Client {
     message_queue: mpsc::Sender<RelayToClientMsg>,
     /// Relay protocol version negotiated for this client.
     protocol_version: ProtocolVersion,
-    /// The auth token that the client passed when registering.
-    auth_token: Option<String>,
 }
 
 impl Client {
@@ -122,7 +124,7 @@ impl Client {
             write_timeout,
             channel_capacity,
             protocol_version,
-            auth_token,
+            access_config,
         } = config;
 
         let (packet_send_queue_s, packet_send_queue_r) = mpsc::channel(channel_capacity);
@@ -140,6 +142,8 @@ impl Client {
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
             metrics,
+            access_config,
+            auth_expired: Box::pin(MaybeFuture::None),
         };
 
         // start io loop
@@ -158,23 +162,7 @@ impl Client {
             packet_queue: packet_send_queue_s,
             message_queue: message_send_queue_s,
             protocol_version,
-            auth_token,
         }
-    }
-
-    /// Returns the [`EndpointId`] of this client.
-    pub fn endpoint_id(&self) -> EndpointId {
-        self.endpoint_id
-    }
-
-    /// Returns the authorization token this client registered with, if set.
-    pub fn auth_token(&self) -> Option<&str> {
-        self.auth_token.as_deref()
-    }
-
-    /// Returns the protocol version negotiated for this connection.
-    pub fn protocol_version(&self) -> ProtocolVersion {
-        self.protocol_version
     }
 
     pub(super) fn connection_id(&self) -> u64 {
@@ -227,6 +215,20 @@ impl Client {
         };
         self.message_queue.try_send(message)
     }
+
+    pub(super) fn request_reauth(&self) {
+        // V1 clients don't support Status messages, disconnect them, they can reconnect.
+        if self.protocol_version == ProtocolVersion::V1 {
+            trace!(dst=%self.endpoint_id.fmt_short(), "Reauth requested, disconnecting because client uses V1 protocol");
+            self.start_shutdown();
+        } else if let Err(_) = self
+            .message_queue
+            .try_send(RelayToClientMsg::Status(Status::AuthorizationExpired))
+        {
+            trace!(dst=%self.endpoint_id.fmt_short(), "Reauth requested but failed to send AuthorizationExpired, disconnecting");
+            self.start_shutdown();
+        }
+    }
 }
 
 /// Error when handling an incoming frame from a client.
@@ -242,6 +244,8 @@ pub enum HandleFrameError {
     Recv { source: RelayRecvError },
     #[error(transparent)]
     Send { source: WriteFrameError },
+    #[error("Authorization rejected")]
+    AuthorizationRejected,
 }
 
 /// Error when writing a frame to a client.
@@ -283,6 +287,8 @@ pub enum RunError {
     WriteFrame { source: WriteFrameError },
     #[error("Tick flush")]
     TickFlush {},
+    #[error("Authorization expired")]
+    AuthorizationExpired,
 }
 
 /// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`
@@ -322,6 +328,8 @@ struct Actor<S> {
     client_counter: ClientCounter,
     ping_tracker: PingTracker,
     metrics: Arc<Metrics>,
+    access_config: Arc<AccessConfig>,
+    auth_expired: Pin<Box<MaybeFuture<Sleep>>>,
 }
 
 impl<S> Actor<S>
@@ -388,7 +396,13 @@ where
                 }
                 // Last priority, sending other message
                 message = self.message_send_queue.recv() => {
-                    let message = message .ok_or_else(|| e!(RunError::HandleDropped))?;
+                    let message = message.ok_or_else(|| e!(RunError::HandleDropped))?;
+
+                    // Arm the re-auth timer when sending out an authorization request
+                    if matches!(message, RelayToClientMsg::Status(Status::AuthorizationExpired)) {
+                        self.auth_expired.as_mut().set_future(tokio::time::sleep(AUTHORIZATION_EXPIRED_TIMEOUT));
+                    }
+
                     trace!("send {message:?}");
                     self.write_frame(message)
                         .await
@@ -406,6 +420,15 @@ where
                     self.write_frame(RelayToClientMsg::Ping(data))
                         .await
                         .map_err(|err| e!(RunError::WriteFrame, err))?;
+                }
+                _ = &mut self.auth_expired => {
+                    // Give the client a chance to pass the authorization without a token, otherwise abort.
+                    let is_allowed = self.access_config.is_allowed(&ClientRequest::new(self.endpoint_id, None)).await;
+                    if is_allowed {
+                        self.auth_expired.as_mut().set_none();
+                    } else {
+                        return Err(e!(RunError::AuthorizationExpired))
+                    }
                 }
             }
 
@@ -489,6 +512,15 @@ where
             }
             ClientToRelayMsg::Pong(data) => {
                 self.ping_tracker.pong_received(data);
+            }
+            ClientToRelayMsg::Authorize { auth_token } => {
+                let req = ClientRequest::new(self.endpoint_id, Some(auth_token));
+                let is_allowed = self.access_config.is_allowed(&req).await;
+                if is_allowed {
+                    self.auth_expired.as_mut().set_none();
+                } else {
+                    return Err(e!(HandleFrameError::AuthorizationRejected));
+                }
             }
         }
         Ok(())
@@ -622,6 +654,8 @@ mod tests {
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
             metrics,
+            access_config: Arc::new(AccessConfig::Everyone),
+            auth_expired: Box::pin(MaybeFuture::None),
         };
 
         let done = CancellationToken::new();
@@ -706,7 +740,7 @@ mod tests {
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 protocol_version,
-                auth_token: None,
+                access_config: Arc::new(AccessConfig::Everyone),
             },
             Conn::test(client, protocol_version),
         )

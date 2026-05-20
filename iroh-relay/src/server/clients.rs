@@ -72,20 +72,6 @@ impl Clients {
         n0_future::join_all(clients.map(|(_, state)| state.shutdown_all())).await;
     }
 
-    /// Disconnects all clients for which `f` returns `false`.
-    pub fn retain(&self, f: impl Fn(&Client) -> bool) {
-        for state in self.0.clients.iter() {
-            for client in state.inactive.iter() {
-                if !f(client) {
-                    client.start_shutdown();
-                }
-            }
-            if !f(&state.active) {
-                state.active.start_shutdown();
-            }
-        }
-    }
-
     /// Builds the client handler and starts the read & write loops for the connection.
     pub fn register<S>(&self, client_config: Config<S>, metrics: Arc<Metrics>)
     where
@@ -194,6 +180,15 @@ impl Clients {
         }
     }
 
+    /// Sends a message to all clients, requiring them to re-authorize.
+    pub fn request_reauth(&self) {
+        for state in self.0.clients.iter() {
+            for client in state.inactive.iter().chain([&state.active]) {
+                client.request_reauth();
+            }
+        }
+    }
+
     /// Attempt to send a packet to client with [`EndpointId`] `dst`.
     pub(super) fn send_packet(
         &self,
@@ -292,7 +287,7 @@ mod tests {
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 protocol_version: Default::default(),
-                auth_token: None,
+                access_config: Arc::new(crate::server::AccessConfig::Everyone),
             },
             Conn::test(client, protocol_version),
         )

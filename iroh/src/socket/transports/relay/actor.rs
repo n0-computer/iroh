@@ -139,6 +139,7 @@ struct ActiveRelayActor {
     url: RelayUrl,
     /// Builder which can repeatedly build a relay client.
     relay_client_builder: relay::client::ClientBuilder,
+    auth_token: Option<String>,
     /// Whether or not this is the home relay server.
     ///
     /// The home relay server needs to maintain it's connection to the relay server, even if
@@ -271,6 +272,7 @@ impl ActiveRelayActor {
             metrics,
             my_relay,
         } = opts;
+        let auth_token = connection_opts.auth_token.clone();
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
             prio_inbox,
@@ -279,6 +281,7 @@ impl ActiveRelayActor {
             relay_datagrams_send,
             url,
             relay_client_builder,
+            auth_token,
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
@@ -523,6 +526,7 @@ impl ActiveRelayActor {
             endpoints_present: BTreeSet::new(),
             last_packet_src: None,
             pong_pending: None,
+            auth_pending: false,
             established: false,
             #[cfg(test)]
             test_pong: None,
@@ -539,6 +543,14 @@ impl ActiveRelayActor {
         let res = loop {
             if let Some(data) = state.pong_pending.take() {
                 let fut = client_sink.send(ClientToRelayMsg::Pong(data));
+                self.run_sending(fut, &mut state, &mut client_stream)
+                    .await?;
+            }
+            if state.auth_pending
+                && let Some(auth_token) = self.auth_token.clone()
+            {
+                state.auth_pending = false;
+                let fut = client_sink.send(ClientToRelayMsg::Authorize { auth_token });
                 self.run_sending(fut, &mut state, &mut client_stream)
                     .await?;
             }
@@ -708,6 +720,10 @@ impl ActiveRelayActor {
             }
             RelayToClientMsg::Status(status) => match status {
                 Status::Healthy => info!("Relay server reports: {status}"),
+                Status::AuthorizationExpired => {
+                    debug!("Relay server requests re-authorization");
+                    state.auth_pending = true;
+                }
                 _ => warn!("Relay server reports problem: {status}"),
             },
             RelayToClientMsg::Restarting { .. } => {
@@ -812,6 +828,8 @@ struct ConnectedRelayState {
     last_packet_src: Option<EndpointId>,
     /// A pong we need to send ASAP.
     pong_pending: Option<[u8; 8]>,
+    /// Set to `true` if the relay requested us to send our authorization token.
+    auth_pending: bool,
     /// Whether the connection is to be considered established.
     ///
     /// This is set to `true` once a pong was received from the server.
