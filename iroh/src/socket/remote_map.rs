@@ -11,7 +11,7 @@ use n0_future::task::JoinSet;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, debug, error, trace};
+use tracing::{Span, error, trace};
 
 pub(crate) use self::remote_state::PathStateReceiver;
 use self::remote_state::RemoteStateActor;
@@ -186,30 +186,25 @@ impl RemoteMap {
     /// This function should be called in a loop to clean up expired tasks.
     /// Only one task is allowed to poll this function concurrently.
     pub(super) async fn cleanup(&mut self) -> EndpointId {
-        poll_fn(|cx| self.poll_cleanup(cx)).await
+        loop {
+            let (remote_id, leftover_messages) = poll_fn(|cx| self.poll_join_next(cx)).await;
+            if self.remove_or_restart_actor(remote_id, leftover_messages) {
+                return remote_id;
+            }
+        }
     }
 
-    /// See [`Self::cleanup`].
-    fn poll_cleanup(&mut self, cx: &mut Context<'_>) -> Poll<EndpointId> {
+    /// Polls for the next joined actor task.
+    ///
+    /// Returns [`Poll::Pending`] if no tasks are running, and is woken when the task set changes.
+    fn poll_join_next(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<(EndpointId, Vec<RemoteStateMessage>)> {
         while let Some(result) = ready!(self.tasks.tasks.poll_join_next(cx)) {
             match result {
                 Ok((remote_id, leftover_msgs)) => {
-                    if leftover_msgs.is_empty() {
-                        // the actor shut down cleanly
-                        self.senders.remove(&remote_id);
-                        trace!(%remote_id, "cleaned up RemoteStateActor");
-                    } else {
-                        // The remote actor got messages while it was closing, so we're restarting
-                        debug!(%remote_id, "restarting terminated RemoteStateActor: messages received during shutdown");
-                        let sender = self.tasks.start_remote_state_actor(
-                            remote_id,
-                            leftover_msgs,
-                            &self.mapped_addrs,
-                        );
-                        // We don't have to be careful about guards - only one thread is modifying this hashmap at a time.
-                        self.senders.insert(remote_id, sender);
-                    }
-                    return Poll::Ready(remote_id);
+                    return Poll::Ready((remote_id, leftover_msgs));
                 }
                 Err(err) => {
                     if let Ok(panic) = err.try_into_panic() {
@@ -225,6 +220,29 @@ impl RemoteMap {
         // properly wait for a task to finish.
         self.tasks.poll_cleanup_waker.replace(cx.waker().clone());
         Poll::Pending
+    }
+
+    /// Removes an actor sender if `leftover_msgs` is empty, or restarts the actor otherwise.
+    fn remove_or_restart_actor(
+        &mut self,
+        remote_id: iroh_base::PublicKey,
+        leftover_msgs: Vec<RemoteStateMessage>,
+    ) -> bool {
+        if leftover_msgs.is_empty() {
+            // the actor shut down cleanly
+            self.senders.remove(&remote_id);
+            trace!(%remote_id, "cleaned up RemoteStateActor");
+            true
+        } else {
+            // The remote actor got messages while it was closing, so we're restarting
+            trace!(%remote_id, "restarting terminated RemoteStateActor: messages received during shutdown");
+            let sender =
+                self.tasks
+                    .start_remote_state_actor(remote_id, leftover_msgs, &self.mapped_addrs);
+            // We don't have to be careful about guards - only one thread is modifying this hashmap at a time.
+            self.senders.insert(remote_id, sender);
+            false
+        }
     }
 
     pub(super) fn on_network_change(&mut self, is_major: bool) {
@@ -261,10 +279,10 @@ impl RemoteMap {
     ///
     /// When sending fails, the actor must be terminating, in which case we wait for its task to
     /// join and then restart the sender.
-    async fn send_to_actor(&mut self, remote: EndpointId, message: RemoteStateMessage) {
-        let sender = self.senders.get_or_insert_with(remote, || {
+    async fn send_to_actor(&mut self, remote_id: EndpointId, message: RemoteStateMessage) {
+        let sender = self.senders.get_or_insert_with(remote_id, || {
             self.tasks
-                .start_remote_state_actor(remote, vec![], &self.mapped_addrs)
+                .start_remote_state_actor(remote_id, vec![], &self.mapped_addrs)
         });
 
         if let Err(mpsc::error::SendError(message)) = sender.send(message).await {
@@ -273,15 +291,17 @@ impl RemoteMap {
             // properly enqueued into a new actor, and that a later cleanup does not reap a newly
             // created sender again.  We can be sure that the task has not been cleaned up yet
             // because we take a `&mut self` reference.
-            while self.cleanup().await != remote {}
-
-            let sender = self.senders.get_or_insert_with(remote, || {
-                self.tasks
-                    .start_remote_state_actor(remote, vec![], &self.mapped_addrs)
-            });
-            sender
-                .try_send(message)
-                .expect("sender just created so it must have capacity")
+            loop {
+                let (id, leftover_messages) = poll_fn(|cx| self.poll_join_next(cx)).await;
+                if id != remote_id {
+                    self.remove_or_restart_actor(id, leftover_messages);
+                } else {
+                    let mut messages = leftover_messages;
+                    messages.push(message);
+                    self.remove_or_restart_actor(id, messages);
+                    break;
+                }
+            }
         }
     }
 
