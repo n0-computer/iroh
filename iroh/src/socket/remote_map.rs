@@ -51,7 +51,7 @@ mod remote_state;
 #[derive(Debug)]
 pub(crate) struct RemoteMap {
     /// Maps for converting between mapped and IP/relay addrs.
-    pub(crate) mapped_addrs: MappedAddrs,
+    pub(super) mapped_addrs: MappedAddrs,
 
     /// The senders for the inbox of each `RemoteStateActor` that runs.
     ///
@@ -172,15 +172,24 @@ impl RemoteMap {
         }
     }
 
-    /// Potentially removes terminated [`RemoteStateActor`]s from the remote map.
+    /// Cleans up terminated `RemoteStateActor` tasks.
     ///
-    /// Resolves to the endpoint ID that of the remote state actor that got cleaned up
-    /// or restarted.
+    /// This polls for terminated actor tasks, and removes the corresponding actor sender
+    /// from our sender map, or restarts the actor if it has pending messages.
+    ///
+    /// Resolves to the actor's remote endpoint ID whenever a `RemoteStateActor` task joined,
+    /// independent of whether the task was restarted or not.
     ///
     /// Returns pending if there was no actor to be cleaned up right now, and registers
     /// for moments where this could become the case.
     ///
+    /// This function should be called in a loop to clean up expired tasks.
     /// Only one task is allowed to poll this function concurrently.
+    pub(super) async fn cleanup(&mut self) -> EndpointId {
+        poll_fn(|cx| self.poll_cleanup(cx)).await
+    }
+
+    /// See [`Self::cleanup`].
     fn poll_cleanup(&mut self, cx: &mut Context<'_>) -> Poll<EndpointId> {
         while let Some(result) = ready!(self.tasks.tasks.poll_join_next(cx)) {
             match result {
@@ -218,13 +227,6 @@ impl RemoteMap {
         Poll::Pending
     }
 
-    /// Cleanup terminated `RemoteStateActor` tasks.
-    ///
-    /// The future never completes and is cancellation-safe (can be restarted at any point).
-    pub(super) async fn cleanup(&mut self) -> EndpointId {
-        poll_fn(|cx| self.poll_cleanup(cx)).await
-    }
-
     pub(super) fn on_network_change(&mut self, is_major: bool) {
         let read = self.senders.read_only();
         let guard = read.guard();
@@ -241,7 +243,7 @@ impl RemoteMap {
         tx: oneshot::Sender<Result<(), AddressLookupFailed>>,
     ) {
         let EndpointAddr { id, addrs } = addr;
-        self.send_to_remote_state_actor(id, RemoteStateMessage::ResolveRemote(addrs, tx))
+        self.send_to_actor(id, RemoteStateMessage::ResolveRemote(addrs, tx))
             .await
     }
 
@@ -251,15 +253,15 @@ impl RemoteMap {
         conn: noq::Connection,
         tx: oneshot::Sender<PathStateReceiver>,
     ) {
-        self.send_to_remote_state_actor(remote, RemoteStateMessage::AddConnection(conn, tx))
+        self.send_to_actor(remote, RemoteStateMessage::AddConnection(conn, tx))
             .await
     }
 
-    async fn send_to_remote_state_actor(
-        &mut self,
-        remote: EndpointId,
-        message: RemoteStateMessage,
-    ) {
+    /// Sends a message to a `RemoteStateActor`, starting it if not running already.
+    ///
+    /// When sending fails, the actor must be terminating, in which case we wait for its task to
+    /// join and then restart the sender.
+    async fn send_to_actor(&mut self, remote: EndpointId, message: RemoteStateMessage) {
         let sender = self.senders.get_or_insert_with(remote, || {
             self.tasks
                 .start_remote_state_actor(remote, vec![], &self.mapped_addrs)
@@ -267,8 +269,10 @@ impl RemoteMap {
 
         if let Err(mpsc::error::SendError(message)) = sender.send(message).await {
             // The send failed, which means the RemoteStateActor is terminating. We call the cleanup
-            // function so that its task is processed. This ensures that the leftover messages are properly
-            // enqueued into a new actor, and that a later cleanup does not reap a newly created sender again.
+            // function so that its task is processed. This ensures that the leftover messages are
+            // properly enqueued into a new actor, and that a later cleanup does not reap a newly
+            // created sender again.  We can be sure that the task has not been cleaned up yet
+            // because we take a `&mut self` reference.
             while self.cleanup().await != remote {}
 
             let sender = self.senders.get_or_insert_with(remote, || {
@@ -349,7 +353,7 @@ pub(crate) enum Source {
 
 #[cfg(test)]
 mod tests {
-    use std::{future::poll_fn, net::SocketAddr, time::Duration};
+    use std::{net::SocketAddr, time::Duration};
 
     use iroh_base::{SecretKey, TransportAddr};
     use n0_future::future::now_or_never;
@@ -378,7 +382,7 @@ mod tests {
     }
 
     /// Regression test: No new RemoteStateActors may be started before
-    /// the task for its previous incarnation was processed.
+    /// the task of its previous incarnation was processed.
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     #[traced_test]
     async fn poll_cleanup_preserves_restarted_sender() {
@@ -398,31 +402,30 @@ mod tests {
         // 1. Spawn A1 and let it process a real `ResolveRemote`.
         let (tx1, rx1) = oneshot::channel();
         remote_map.resolve_remote(addr_with_ip(1234), tx1).await;
-
-        // 2. Advance past idle timeout. The runtime drives A1 to completion
-        //    inside the sleep: it drains the message, becomes idle, exits.
-        tokio::time::sleep(Duration::from_secs(65)).await;
         assert!(
             matches!(rx1.await, Ok(Ok(()))),
             "First resolve completes Ok"
         );
 
+        // 2. Advance past idle timeout.
+        tokio::time::sleep(Duration::from_secs(65)).await;
+
         // 3. Call `resolve_remote` again. The actor A1 has terminated but its task
         //    has not yet been cleaned up. A1's sender is still in the sender map
-        //    but is closed.
-        //    Before our fixes, `resolve_remote` would spawn a new actor. When
-        //    `poll_cleanup` was then called, the sender to this new actor would be
-        //    removed again. We fixed this by first processing the tasks for the
-        //    terminated actor.
-
-        //    We resume time so that we don't immediately idle-out again.
+        //    but is closed. This will spawn a new actor A2.
+        //    Before our fixes, `resolve_remote` would spawn a new actor, and when
+        //    `cleanup` was then called, the sender to this new actor would be
+        //    removed again. We fixed this by first processing the joined task for the
+        //    terminated actor, so that it is removed from our task list *before*
+        //    starting a new actor.
+        //    We also resume time here so that we don't immediately idle-out again.
         tokio::time::resume();
         let (tx2, rx2) = oneshot::channel();
         remote_map.resolve_remote(addr_with_ip(5678), tx2).await;
 
-        // 4. Drive `poll_cleanup`, like the socket actor does.
+        // 4. Drive `cleanup`, like the socket actor does.
         //    Before our fixes, this would remove the sender to the just-started A2 from the sender map.
-        now_or_never(poll_fn(|cx| remote_map.poll_cleanup(cx)));
+        now_or_never(remote_map.cleanup());
 
         // 5. A third `resolve_remote`, this time with no addrs.
         //    With our fix, this reaches the actor spawned above (A2); without
