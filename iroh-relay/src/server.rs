@@ -757,16 +757,6 @@ impl Server {
     }
 
     /// Returns a handle to the embedded [`RelayService`] for runtime control.
-    ///
-    /// The service handle allows inspecting and mutating the live relay state
-    /// after [`Server::spawn`] returns. In particular, [`RelayService::clients`]
-    /// reaches the [`Clients`] registry which exposes
-    /// [`Clients::retain`] for forcibly disconnecting clients.
-    ///
-    /// Returns `None` if the relay was not enabled in [`ServerConfig`].
-    ///
-    /// [`Clients`]: clients::Clients
-    /// [`Clients::retain`]: clients::Clients::retain
     pub fn relay_service(&self) -> Option<&RelayService> {
         self.relay_service.as_ref()
     }

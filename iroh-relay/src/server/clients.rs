@@ -180,7 +180,13 @@ impl Clients {
         }
     }
 
-    /// Sends a message to all clients, requiring them to re-authorize.
+    /// Sends a message to all clients, requesting them to re-authorize.
+    ///
+    /// Clients are expected to reply with a [`ClientToRelayMsg::Authorize`].
+    /// If they don't reply within 5s, or if the token they provided does not
+    /// pass [`Config::access_config`], the client is disconnected.
+    ///
+    /// Clients using [`ProtocolVersion::V1`] are disconnected unconditionally.
     pub fn request_reauth(&self) {
         for state in self.0.clients.iter() {
             for client in state.inactive.iter().chain([&state.active]) {

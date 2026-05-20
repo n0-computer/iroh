@@ -22,6 +22,10 @@ use crate::{KeyCache, http::ProtocolVersion};
 /// including its on-wire framing overhead)
 pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 
+/// The maximum size, in bytes, of an auth token carried in a
+/// [`ClientToRelayMsg::Authorize`] frame.
+pub const MAX_AUTH_TOKEN_SIZE: usize = 256;
+
 /// The maximum frame size.
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
@@ -48,6 +52,8 @@ pub enum Error {
     UnexpectedFrame { got: FrameType, expected: FrameType },
     #[error("Frame is too large, has {frame_len} bytes")]
     FrameTooLarge { frame_len: usize },
+    #[error("Auth token is too large, has {size} bytes (max {MAX_AUTH_TOKEN_SIZE})")]
+    AuthTokenTooLarge { size: usize },
     #[error(transparent)]
     FrameTypeError { source: FrameTypeError },
     #[error("Invalid public key")]
@@ -185,6 +191,8 @@ pub enum ClientToRelayMsg {
     /// Update the authorization token.
     Authorize {
         /// The updated authorization token.
+        ///
+        /// Must not exceed [`MAX_AUTH_TOKEN_SIZE`] bytes when UTF-8 encoded.
         auth_token: String,
     },
 }
@@ -574,6 +582,12 @@ impl ClientToRelayMsg {
                 Self::Pong(data)
             }
             FrameType::Authorization => {
+                ensure!(
+                    content.len() <= MAX_AUTH_TOKEN_SIZE,
+                    Error::AuthTokenTooLarge {
+                        size: content.len()
+                    }
+                );
                 let auth_token = std::str::from_utf8(&content)?.to_owned();
                 Self::Authorize { auth_token }
             }
@@ -878,6 +892,31 @@ mod proptests {
         assert!(matches!(
             result,
             Err(Error::FrameNotAllowedInVersion { .. })
+        ));
+    }
+
+    #[test]
+    fn authorize_token_size_limit() {
+        // A token at the size limit round-trips.
+        let token = "a".repeat(MAX_AUTH_TOKEN_SIZE);
+        let encoded = ClientToRelayMsg::Authorize {
+            auth_token: token.clone(),
+        }
+        .to_bytes()
+        .freeze();
+        let decoded = ClientToRelayMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
+        assert_eq!(decoded, ClientToRelayMsg::Authorize { auth_token: token });
+
+        // One byte over the limit is rejected.
+        let encoded = ClientToRelayMsg::Authorize {
+            auth_token: "a".repeat(MAX_AUTH_TOKEN_SIZE + 1),
+        }
+        .to_bytes()
+        .freeze();
+        let result = ClientToRelayMsg::from_bytes(encoded, &KeyCache::test());
+        assert!(matches!(
+            result,
+            Err(Error::AuthTokenTooLarge { size, .. }) if size == MAX_AUTH_TOKEN_SIZE + 1
         ));
     }
 
