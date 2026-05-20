@@ -3919,7 +3919,7 @@
 <a href=#3919 id=3919 data-nosnippet>3919</a>
 <a href=#3920 id=3920 data-nosnippet>3920</a>        <span class="kw">let </span>access = AccessConfig::Restricted(Box::new(|request| {
 <a href=#3921 id=3921 data-nosnippet>3921</a>            Box::pin(<span class="kw">async move </span>{
-<a href=#3922 id=3922 data-nosnippet>3922</a>                <span class="kw">if </span>request.auth_token().as_deref() == <span class="prelude-val">Some</span>(TOKEN) {
+<a href=#3922 id=3922 data-nosnippet>3922</a>                <span class="kw">if </span>request.auth_token() == <span class="prelude-val">Some</span>(TOKEN) {
 <a href=#3923 id=3923 data-nosnippet>3923</a>                    Access::Allow
 <a href=#3924 id=3924 data-nosnippet>3924</a>                } <span class="kw">else </span>{
 <a href=#3925 id=3925 data-nosnippet>3925</a>                    Access::Deny

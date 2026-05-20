@@ -1326,7 +1326,7 @@
 <a href=#1326 id=1326 data-nosnippet>1326</a>                key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
 <a href=#1327 id=1327 data-nosnippet>1327</a>                access: AccessConfig::Restricted(Box::new(<span class="kw">move </span>|request| {
 <a href=#1328 id=1328 data-nosnippet>1328</a>                    <span class="kw">async move </span>{
-<a href=#1329 id=1329 data-nosnippet>1329</a>                        <span class="kw">if </span>request.auth_token().as_deref() == <span class="prelude-val">Some</span>(TOKEN) {
+<a href=#1329 id=1329 data-nosnippet>1329</a>                        <span class="kw">if </span>request.auth_token() == <span class="prelude-val">Some</span>(TOKEN) {
 <a href=#1330 id=1330 data-nosnippet>1330</a>                            Access::Allow
 <a href=#1331 id=1331 data-nosnippet>1331</a>                        } <span class="kw">else </span>{
 <a href=#1332 id=1332 data-nosnippet>1332</a>                            Access::Deny
