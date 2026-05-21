@@ -1935,11 +1935,7 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
-    use iroh_relay::{
-        RelayConfig,
-        server::{Access, AccessConfig},
-        tls::CaRootsConfig,
-    };
+    use iroh_relay::{RelayConfig, server::Access, tls::CaRootsConfig};
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
@@ -3905,22 +3901,28 @@ mod tests {
     }
 
     /// Verifies that an endpoint configured with [`RelayConfig::with_auth_token`]
-    /// is admitted to a relay that uses [`AccessConfig::Restricted`] only when
+    /// is admitted to a relay whose access control checks the token only when
     /// the token matches.
     #[tokio::test]
     #[traced_test]
     async fn test_endpoint_relay_auth_token() -> Result {
         const TOKEN: &str = "valid-token";
 
-        let access = AccessConfig::Restricted(Box::new(|request| {
-            Box::pin(async move {
-                if request.auth_token() == Some(TOKEN) {
+        /// Admits a connection only if it carries the expected auth token.
+        #[derive(Debug)]
+        struct TokenAccess(&'static str);
+
+        impl iroh_relay::server::AccessControl for TokenAccess {
+            async fn on_connect(&self, request: &iroh_relay::server::ClientRequest) -> Access {
+                if request.auth_token() == Some(self.0) {
                     Access::Allow
                 } else {
                     Access::Deny
                 }
-            })
-        }));
+            }
+        }
+
+        let access = Arc::new(TokenAccess(TOKEN));
         let (_relay_map, relay_url, _guard) = run_relay_server_with_access(false, access).await?;
 
         // Wrong token: the connection attempt fails and last_error reports

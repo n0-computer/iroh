@@ -18,12 +18,11 @@ use iroh_relay::{
         DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
     },
     server::{
-        self as relay, AcmeConfig, ClientRateLimit, DEFAULT_CERT_RELOAD_INTERVAL, QuicConfig,
-        reloading_resolver,
+        self as relay, Access, AccessControl, AcmeConfig, ClientRateLimit, ClientRequest,
+        DEFAULT_CERT_RELOAD_INTERVAL, QuicConfig, reloading_resolver,
     },
 };
 use n0_error::{Result, StdResultExt, bail_any};
-use n0_future::FutureExt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use tracing_subscriber::{EnvFilter, prelude::*};
@@ -182,40 +181,12 @@ struct HttpAccessConfig {
     bearer_token: Option<String>,
 }
 
-impl From<AccessConfig> for iroh_relay::server::AccessConfig {
+impl From<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
     fn from(cfg: AccessConfig) -> Self {
         match cfg {
-            AccessConfig::Everyone => iroh_relay::server::AccessConfig::Everyone,
-            AccessConfig::Allowlist(allow_list) => {
-                let allow_list = Arc::new(allow_list);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |request| {
-                    let allow_list = allow_list.clone();
-                    let endpoint_id = request.endpoint_id();
-                    async move {
-                        if allow_list.contains(&endpoint_id) {
-                            iroh_relay::server::Access::Allow
-                        } else {
-                            iroh_relay::server::Access::Deny
-                        }
-                    }
-                    .boxed()
-                }))
-            }
-            AccessConfig::Denylist(deny_list) => {
-                let deny_list = Arc::new(deny_list);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |request| {
-                    let deny_list = deny_list.clone();
-                    let endpoint_id = request.endpoint_id();
-                    async move {
-                        if deny_list.contains(&endpoint_id) {
-                            iroh_relay::server::Access::Deny
-                        } else {
-                            iroh_relay::server::Access::Allow
-                        }
-                    }
-                    .boxed()
-                }))
-            }
+            AccessConfig::Everyone => Arc::new(iroh_relay::server::AllowAll),
+            AccessConfig::Allowlist(allow_list) => Arc::new(AllowlistAccess(allow_list)),
+            AccessConfig::Denylist(deny_list) => Arc::new(DenylistAccess(deny_list)),
             AccessConfig::Http(mut config) => {
                 let client = reqwest::Client::builder()
                     .use_rustls_tls()
@@ -225,35 +196,67 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                 if let Ok(token) = std::env::var(ENV_HTTP_BEARER_TOKEN) {
                     config.bearer_token = Some(token);
                 }
-                let config = Arc::new(config);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |request| {
-                    let client = client.clone();
-                    let config = config.clone();
-                    let endpoint_id = request.endpoint_id();
-                    async move { http_access_check(&client, &config, endpoint_id).await }.boxed()
-                }))
+                Arc::new(HttpAccess { client, config })
             }
         }
     }
 }
 
-#[tracing::instrument("http-access-check", skip_all, fields(endpoint_id=%endpoint_id.fmt_short()))]
-async fn http_access_check(
-    client: &reqwest::Client,
-    config: &HttpAccessConfig,
-    endpoint_id: EndpointId,
-) -> iroh_relay::server::Access {
-    use iroh_relay::server::Access;
-    debug!(url=%config.url, "Check relay access via HTTP POST");
+/// An [`AccessControl`] admitting only an allowlist of endpoints.
+///
+/// [`AccessControl`]: iroh_relay::server::AccessControl
+#[derive(Debug)]
+struct AllowlistAccess(Vec<EndpointId>);
 
-    match http_access_check_inner(client, config, endpoint_id).await {
-        Ok(()) => {
-            debug!("HTTP access check OK: Allow access");
+impl AccessControl for AllowlistAccess {
+    async fn on_connect(&self, request: &ClientRequest) -> Access {
+        if self.0.contains(&request.endpoint_id()) {
+            Access::Allow
+        } else {
+            Access::Deny
+        }
+    }
+}
+
+/// An [`AccessControl`] admitting everyone except a denylist of endpoints.
+///
+/// [`AccessControl`]: iroh_relay::server::AccessControl
+#[derive(Debug)]
+struct DenylistAccess(Vec<EndpointId>);
+
+impl AccessControl for DenylistAccess {
+    async fn on_connect(&self, request: &ClientRequest) -> Access {
+        if self.0.contains(&request.endpoint_id()) {
+            Access::Deny
+        } else {
             Access::Allow
         }
-        Err(err) => {
-            debug!("HTTP access check failed: Deny access (reason: {err:#})");
-            Access::Deny
+    }
+}
+
+/// An [`AccessControl`] that delegates the decision to an HTTP endpoint.
+///
+/// [`AccessControl`]: iroh_relay::server::AccessControl
+#[derive(Debug)]
+struct HttpAccess {
+    client: reqwest::Client,
+    config: HttpAccessConfig,
+}
+
+impl AccessControl for HttpAccess {
+    #[tracing::instrument("http-access-check", skip_all, fields(endpoint_id=%request.endpoint_id().fmt_short()))]
+    async fn on_connect(&self, request: &ClientRequest) -> Access {
+        debug!(url=%self.config.url, "Check relay access via HTTP POST");
+
+        match http_access_check_inner(&self.client, &self.config, request.endpoint_id()).await {
+            Ok(()) => {
+                debug!("HTTP access check OK: Allow access");
+                Access::Allow
+            }
+            Err(err) => {
+                debug!("HTTP access check failed: Deny access (reason: {err:#})");
+                Access::Deny
+            }
         }
     }
 }

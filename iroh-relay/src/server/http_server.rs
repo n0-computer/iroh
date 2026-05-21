@@ -32,20 +32,17 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
 
 use super::{
-    AccessConfig, ClientRequest, SpawnError, clients::Clients, streams::InvalidBucketConfig,
+    Access, AllowAll, ClientRequest, DynAccessControl, SpawnError, clients::Clients,
+    streams::InvalidBucketConfig,
 };
 use crate::{
     KeyCache,
-    defaults::{DEFAULT_KEY_CACHE_CAPACITY, timeouts::SERVER_WRITE_TIMEOUT},
+    defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::{
         CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION,
         WEBSOCKET_UPGRADE_PROTOCOL,
     },
-    protos::{
-        handshake,
-        relay::{MAX_FRAME_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH},
-        streams::WsBytesFramed,
-    },
+    protos::{handshake, relay::MAX_FRAME_SIZE, streams::WsBytesFramed},
     server::{
         ClientRateLimit,
         client::Config,
@@ -353,8 +350,8 @@ pub(super) struct ServerBuilder {
     client_rx_ratelimit: Option<ClientRateLimit>,
     /// The capacity of the key cache.
     key_cache_capacity: usize,
-    /// Access config for endpoints.
-    access: AccessConfig,
+    /// Access control for endpoints.
+    access: Arc<dyn DynAccessControl>,
     metrics: Option<Arc<Metrics>>,
     establish_timeout: Duration,
 }
@@ -369,7 +366,7 @@ impl ServerBuilder {
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
-            access: AccessConfig::Everyone,
+            access: Arc::new(AllowAll),
             metrics: None,
             establish_timeout: ESTABLISH_TIMEOUT,
         }
@@ -381,8 +378,8 @@ impl ServerBuilder {
         self
     }
 
-    /// Set the access configuration.
-    pub(super) fn access(mut self, access: AccessConfig) -> Self {
+    /// Set the access control.
+    pub(super) fn access(mut self, access: Arc<dyn DynAccessControl>) -> Self {
         self.access = access;
         self
     }
@@ -534,10 +531,9 @@ struct Inner {
     handlers: Handlers,
     headers: HeaderMap,
     clients: Clients,
-    write_timeout: Duration,
     rate_limit: Option<ClientRateLimit>,
     key_cache: KeyCache,
-    access: Arc<AccessConfig>,
+    access: Arc<dyn DynAccessControl>,
     metrics: Arc<Metrics>,
 }
 
@@ -695,7 +691,7 @@ impl RelayServiceWithNotify {
 /// # use iroh_relay::{
 /// #     KeyCache,
 /// #     server::{
-/// #         AccessConfig, Metrics,
+/// #         AllowAll, Metrics,
 /// #         http_server::{Handlers, RelayService, RelayServiceWithNotify},
 /// #         streams::MaybeTlsStream
 /// #     },
@@ -706,7 +702,7 @@ impl RelayServiceWithNotify {
 ///     HeaderMap::new(),
 ///     None,
 ///     KeyCache::new(1024),
-///     AccessConfig::Everyone,
+///     Arc::new(AllowAll),
 ///     Arc::new(Metrics::default()),
 /// );
 /// let service = RelayServiceWithNotify::new(service, Arc::new(Notify::new()));
@@ -872,9 +868,22 @@ impl Inner {
 
         trace!(?authentication.mechanism, "accept: verified authentication");
 
-        let request = ClientRequest::from_http_request(authentication.client_key, &request_parts);
-        let is_authorized = self.access.is_allowed(&request).await;
-        let client_key = authentication.authorize_if(is_authorized, &mut io).await?;
+        let request = ClientRequest::from_http_request(
+            authentication.client_key,
+            protocol_version,
+            &request_parts,
+        );
+        let is_allowed = matches!(self.access.on_connect(&request).await, Access::Allow);
+        if let Err(err) = authentication.authorize_if(is_allowed, &mut io).await {
+            // The connection was admitted by `on_connect` but failed before it
+            // was registered: report it as disconnected so the access control
+            // implementation does not keep a stale entry.
+            if is_allowed {
+                self.access
+                    .on_disconnect(request.endpoint_id(), request.connection_id())
+            }
+            return Err(err.into());
+        }
 
         trace!("accept: verified authorization");
 
@@ -884,17 +893,8 @@ impl Inner {
         };
 
         trace!("accept: build client conn");
-        let client_conn_builder = Config {
-            endpoint_id: client_key,
-            stream: io,
-            write_timeout: self.write_timeout,
-            channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
-            protocol_version,
-            access_config: self.access.clone(),
-        };
-        trace!("accept: create client");
-        let endpoint_id = client_conn_builder.endpoint_id;
-        trace!(endpoint_id = %endpoint_id.fmt_short(), "create client");
+        let client_conn_builder = Config::new(&request, io, self.access.clone());
+        trace!(endpoint_id = %request.endpoint_id().fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
         // connection
@@ -923,17 +923,16 @@ impl RelayService {
         headers: HeaderMap,
         rate_limit: Option<ClientRateLimit>,
         key_cache: KeyCache,
-        access: AccessConfig,
+        access: Arc<dyn DynAccessControl>,
         metrics: Arc<Metrics>,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
             headers,
             clients: Clients::default(),
-            write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit,
             key_cache,
-            access: Arc::new(access),
+            access,
             metrics,
         }))
     }
@@ -945,8 +944,8 @@ impl RelayService {
 
     /// Returns a reference to the registry of currently connected clients.
     ///
-    /// The returned [`Clients`] handle can be used at runtime to request
-    /// all clients to re-authorize via [`Clients::request_reauth`].
+    /// The returned [`Clients`] handle can be used at runtime to disconnect a
+    /// connected endpoint via [`Clients::remove`].
     pub fn clients(&self) -> &Clients {
         &self.0.clients
     }
@@ -965,7 +964,7 @@ impl RelayService {
     /// # use tokio::net::TcpStream;
     /// # use http::HeaderMap;
     /// # use iroh_relay::server::http_server::{Handlers, RelayService, TlsConfig};
-    /// # use iroh_relay::{KeyCache, server::{AccessConfig, Metrics}};
+    /// # use iroh_relay::{KeyCache, server::{AllowAll, Metrics}};
     /// # use webpki_types::{CertificateDer, PrivateKeyDer};
     /// # async fn example(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     /// // Create a relay service
@@ -978,7 +977,7 @@ impl RelayService {
     ///     headers,
     ///     None, // No rate limiting
     ///     key_cache,
-    ///     AccessConfig::Everyone,
+    ///     Arc::new(AllowAll),
     ///     metrics,
     /// );
     ///
@@ -1486,7 +1485,7 @@ mod tests {
             Default::default(),
             None,
             KeyCache::test(),
-            AccessConfig::Everyone,
+            Arc::new(crate::server::AllowAll),
             metrics.clone(),
         );
 
@@ -1598,7 +1597,7 @@ mod tests {
             Default::default(),
             None,
             KeyCache::test(),
-            AccessConfig::Everyone,
+            Arc::new(crate::server::AllowAll),
             Default::default(),
         );
 

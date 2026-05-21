@@ -139,7 +139,6 @@ struct ActiveRelayActor {
     url: RelayUrl,
     /// Builder which can repeatedly build a relay client.
     relay_client_builder: relay::client::ClientBuilder,
-    auth_token: Option<String>,
     /// Whether or not this is the home relay server.
     ///
     /// The home relay server needs to maintain it's connection to the relay server, even if
@@ -272,7 +271,6 @@ impl ActiveRelayActor {
             metrics,
             my_relay,
         } = opts;
-        let auth_token = connection_opts.auth_token.clone();
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
             prio_inbox,
@@ -281,7 +279,6 @@ impl ActiveRelayActor {
             relay_datagrams_send,
             url,
             relay_client_builder,
-            auth_token,
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
@@ -526,7 +523,6 @@ impl ActiveRelayActor {
             endpoints_present: BTreeSet::new(),
             last_packet_src: None,
             pong_pending: None,
-            auth_pending: false,
             established: false,
             #[cfg(test)]
             test_pong: None,
@@ -543,14 +539,6 @@ impl ActiveRelayActor {
         let res = loop {
             if let Some(data) = state.pong_pending.take() {
                 let fut = client_sink.send(ClientToRelayMsg::Pong(data));
-                self.run_sending(fut, &mut state, &mut client_stream)
-                    .await?;
-            }
-            if state.auth_pending
-                && let Some(auth_token) = self.auth_token.clone()
-            {
-                state.auth_pending = false;
-                let fut = client_sink.send(ClientToRelayMsg::Authorize { auth_token });
                 self.run_sending(fut, &mut state, &mut client_stream)
                     .await?;
             }
@@ -720,12 +708,6 @@ impl ActiveRelayActor {
             }
             RelayToClientMsg::Status(status) => match status {
                 Status::Healthy => info!("Relay server reports: {status}"),
-                Status::AuthorizationExpired => {
-                    debug!("Relay server requests re-authorization");
-                    if self.auth_token.is_some() {
-                        state.auth_pending = true;
-                    }
-                }
                 _ => warn!("Relay server reports problem: {status}"),
             },
             RelayToClientMsg::Restarting { .. } => {
@@ -830,8 +812,6 @@ struct ConnectedRelayState {
     last_packet_src: Option<EndpointId>,
     /// A pong we need to send ASAP.
     pong_pending: Option<[u8; 8]>,
-    /// Set to `true` if the relay requested us to send our authorization token.
-    auth_pending: bool,
     /// Whether the connection is to be considered established.
     ///
     /// This is set to `true` once a pong was received from the server.
@@ -1417,11 +1397,9 @@ mod tests {
     use iroh_relay::{
         PingTracker,
         protos::relay::Datagrams,
-        server::{Access, AccessConfig},
         tls::{CaRootsConfig, default_provider},
     };
     use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
-    use n0_future::FutureExt;
     use n0_tracing_test::traced_test;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -1444,7 +1422,6 @@ mod tests {
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
         relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
         relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
-        auth_token: Option<String>,
         span: tracing::Span,
     ) -> AbortOnDropHandle<()> {
         let opts = ActiveRelayActorOptions {
@@ -1461,7 +1438,7 @@ mod tests {
                 tls_config: CaRootsConfig::insecure_skip_verify()
                     .client_config(default_provider())
                     .expect("infallible"),
-                auth_token,
+                auth_token: None,
             },
             stop_token,
             metrics: Default::default(),
@@ -1491,7 +1468,6 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             recv_datagram_tx,
-            None,
             info_span!("echo-endpoint"),
         );
         let echo_task = tokio::spawn({
@@ -1588,7 +1564,6 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_tx.clone(),
-            None,
             info_span!("actor-under-test"),
         );
 
@@ -1672,101 +1647,6 @@ mod tests {
         Ok(())
     }
 
-    /// Pings the relay server through the actor and waits for the pong.
-    async fn ping_server(inbox_tx: &mpsc::Sender<ActiveRelayMessage>) -> Result {
-        let (tx, rx) = oneshot::channel();
-        inbox_tx
-            .send(ActiveRelayMessage::PingServer(tx))
-            .await
-            .std_context("send ping server message")?;
-        tokio::time::timeout(Duration::from_secs(5), rx)
-            .await
-            .std_context("ping server timeout")?
-            .std_context("ping server channel closed")?;
-        Ok(())
-    }
-
-    /// The [`ActiveRelayActor`] answers a server re-authorization request by
-    /// re-sending its auth token in-band, keeping the connection alive.
-    #[tokio::test]
-    #[traced_test]
-    async fn test_active_relay_reauth() -> Result {
-        // A relay server whose access hook records the endpoint id and token of
-        // every authorization check it performs, and admits everyone.
-        let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<(EndpointId, Option<String>)>();
-        let access = AccessConfig::Restricted(Box::new(move |request| {
-            let auth_tx = auth_tx.clone();
-            let endpoint_id = request.endpoint_id();
-            let auth_token = request.auth_token().map(String::from);
-            async move {
-                auth_tx.send((endpoint_id, auth_token)).ok();
-                Access::Allow
-            }
-            .boxed()
-        }));
-        let (_relay_map, relay_url, server) =
-            test_utils::run_relay_server_with_access(false, access).await?;
-
-        // Start the actor under test, connecting with an auth token.
-        const TOKEN: &str = "secret-token";
-        let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let endpoint_id = secret_key.public();
-        let (datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(16);
-        let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
-        let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
-        let (inbox_tx, inbox_rx) = mpsc::channel(16);
-        let cancel_token = CancellationToken::new();
-        let _task = start_active_relay_actor(
-            secret_key,
-            cancel_token.clone(),
-            relay_url,
-            prio_inbox_rx,
-            inbox_rx,
-            send_datagram_rx,
-            datagram_recv_tx,
-            Some(TOKEN.to_string()),
-            info_span!("actor-under-test"),
-        );
-
-        // The connection handshake runs the access hook once, carrying the
-        // token from the HTTP request.
-        let (id, token) = tokio::time::timeout(Duration::from_secs(5), auth_rx.recv())
-            .await
-            .std_context("timeout waiting for handshake authorization")?
-            .context("access hook channel closed")?;
-        assert_eq!(id, endpoint_id);
-        assert_eq!(token.as_deref(), Some(TOKEN));
-
-        // Ping the server so we know the actor is fully connected and the
-        // server-side client is registered before we request a re-auth.
-        ping_server(&inbox_tx).await?;
-
-        // Ask the server to request re-authorization from every connected client.
-        server
-            .relay_service()
-            .expect("relay configured")
-            .clients()
-            .request_reauth();
-
-        // The actor must answer the `AuthorizationExpired` status with an
-        // in-band `Authorize` frame, which runs the access hook a second time
-        // with the same token. The 2s bound is well below the server's 5s
-        // re-auth deadline, so seeing the check this quickly also proves the
-        // token was re-sent in-band rather than via a reconnect.
-        let (id, token) = tokio::time::timeout(Duration::from_secs(2), auth_rx.recv())
-            .await
-            .std_context("timeout waiting for in-band re-authorization")?
-            .context("access hook channel closed")?;
-        assert_eq!(id, endpoint_id);
-        assert_eq!(token.as_deref(), Some(TOKEN));
-
-        // The connection survived the re-auth: the actor is still reachable.
-        ping_server(&inbox_tx).await?;
-
-        cancel_token.cancel();
-        Ok(())
-    }
-
     #[tokio::test]
     #[traced_test]
     async fn test_active_relay_inactive() -> Result {
@@ -1786,7 +1666,6 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_tx,
-            None,
             info_span!("actor-under-test"),
         );
 

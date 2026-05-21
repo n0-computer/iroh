@@ -36,8 +36,8 @@ use iroh_relay::{
     http::{CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, RELAY_PROBE_PATH},
     protos::{handshake, streams::StreamError},
     server::{
-        AccessConfig, ClientRequest, Metrics, client::Config, clients::Clients,
-        streams::RelayedStream,
+        Access, AllowAll, ClientRequest, DynAccessControl, Metrics, client::Config,
+        clients::Clients, streams::RelayedStream,
     },
     tls::{CaRootsConfig, default_provider},
 };
@@ -51,7 +51,7 @@ use tracing::{trace, warn};
 #[derive(Clone, Debug)]
 struct RelayState {
     key_cache: KeyCache,
-    access: Arc<AccessConfig>,
+    access: Arc<dyn DynAccessControl>,
     metrics: Arc<Metrics>,
     clients: Clients,
 }
@@ -60,7 +60,7 @@ impl RelayState {
     fn new() -> Self {
         Self {
             key_cache: KeyCache::new(1024),
-            access: Arc::new(AccessConfig::Everyone),
+            access: Arc::new(AllowAll),
             metrics: Arc::new(Metrics::default()),
             clients: Clients::default(),
         }
@@ -187,20 +187,19 @@ async fn handle_relay_websocket(
     let authentication = handshake::serverside(&mut adapter, client_auth_header).await?;
     trace!(?authentication.mechanism, "verified authentication");
 
-    let request = ClientRequest::from_http_request(authentication.client_key, &request_parts);
-    let is_authorized = state.access.is_allowed(&request).await;
-    let client_key = authentication
+    let request = ClientRequest::from_http_request(
+        authentication.client_key,
+        ProtocolVersion::V2,
+        &request_parts,
+    );
+    let is_authorized = matches!(state.access.on_connect(&request).await, Access::Allow);
+    authentication
         .authorize_if(is_authorized, &mut adapter)
         .await?;
     trace!("verified authorization");
 
     let stream = RelayedStream::new(adapter, state.key_cache.clone());
-    let config = Config::new(
-        client_key,
-        stream,
-        ProtocolVersion::V2,
-        state.access.clone(),
-    );
+    let config = Config::new(&request, stream, state.access.clone());
     state.clients.register(config, state.metrics.clone());
     Ok(())
 }

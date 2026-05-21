@@ -1,13 +1,7 @@
 //! The "Server" side of the client. Uses the `ClientConnManager`.
 // Based on tailscale/derp/derp_server.go
 
-use std::{
-    collections::HashSet,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::{collections::HashSet, sync::Arc};
 
 use dashmap::DashMap;
 use iroh_base::EndpointId;
@@ -15,7 +9,10 @@ use n0_future::IterExt;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
-use super::client::{Client, Config, ForwardPacketError};
+use super::{
+    ConnectionId,
+    client::{Client, Config, ForwardPacketError},
+};
 use crate::{
     protos::{
         relay::{Datagrams, Status},
@@ -38,8 +35,6 @@ struct Inner {
     clients: DashMap<EndpointId, ClientState>,
     /// Map of which client has sent where
     sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
-    /// Connection ID Counter
-    next_connection_id: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -78,10 +73,9 @@ impl Clients {
         S: BytesStreamSink + Send + 'static,
     {
         let endpoint_id = client_config.endpoint_id;
-        let connection_id = self.get_connection_id();
         trace!(remote_endpoint = %endpoint_id.fmt_short(), "registering client");
 
-        let client = Client::new(client_config, connection_id, self, metrics.clone());
+        let client = Client::new(client_config, self, metrics.clone());
         match self.0.clients.entry(endpoint_id) {
             dashmap::Entry::Occupied(mut entry) => {
                 let state = entry.get_mut();
@@ -105,10 +99,6 @@ impl Clients {
         }
     }
 
-    fn get_connection_id(&self) -> u64 {
-        self.0.next_connection_id.fetch_add(1, Ordering::Relaxed)
-    }
-
     /// Removes the client from the map of clients, & sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
@@ -116,13 +106,13 @@ impl Clients {
     /// Must be passed a matching connection_id.
     pub(super) fn unregister(
         &self,
-        connection_id: u64,
+        connection_id: ConnectionId,
         endpoint_id: EndpointId,
         metrics: &Metrics,
     ) {
         trace!(
             endpoint_id = %endpoint_id.fmt_short(),
-            connection_id, "unregistering client"
+            %connection_id, "unregistering client"
         );
 
         let mut notify_peers = None;
@@ -180,19 +170,31 @@ impl Clients {
         }
     }
 
-    /// Sends a message to all clients, requesting them to re-authorize.
+    /// Disconnects connections registered for `endpoint_id`.
     ///
-    /// Clients are expected to reply with their authorization token.
-    /// If they don't reply within 5s, or if the token they provided does not
-    /// pass [`Config::access_config`], the client is disconnected.
+    /// With `Some(connection_id)`, disconnects only that connection (active or
+    /// an inactive duplicate). With `None`, disconnects every connection for the
+    /// endpoint. Returns `true` if a matching connection was found, or `false`
+    /// otherwise.
     ///
-    /// Clients using protocol version V1 are disconnected unconditionally.
-    pub fn request_reauth(&self) {
-        for state in self.0.clients.iter() {
-            for client in state.inactive.iter().chain([&state.active]) {
-                client.request_reauth();
+    /// Shutdown happens asynchronously: each per-connection actor exits its run
+    /// loop and unregisters itself after this call returns.
+    pub fn disconnect(&self, endpoint_id: EndpointId, connection_id: Option<ConnectionId>) -> bool {
+        let Some(state) = self.0.clients.get(&endpoint_id) else {
+            return false;
+        };
+        let mut clients = state.inactive.iter().chain([&state.active]);
+        if let Some(id) = connection_id {
+            let Some(client) = clients.find(|c| c.connection_id() == id) else {
+                return false;
+            };
+            client.start_shutdown();
+        } else {
+            for client in clients {
+                client.start_shutdown();
             }
         }
+        true
     }
 
     /// Attempt to send a packet to client with [`EndpointId`] `dst`.
@@ -233,7 +235,7 @@ impl Clients {
     }
 
     #[cfg(test)]
-    fn active_connection_id(&self, endpoint_id: EndpointId) -> Option<u64> {
+    fn active_connection_id(&self, endpoint_id: EndpointId) -> Option<ConnectionId> {
         self.0
             .clients
             .get(&endpoint_id)
@@ -254,6 +256,7 @@ mod tests {
     use super::*;
     use crate::{
         client::conn::Conn,
+        http::ProtocolVersion,
         protos::{common::FrameType, relay::RelayToClientMsg, streams::WsBytesFramed},
         server::streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
     };
@@ -284,19 +287,18 @@ mod tests {
     fn test_client_builder(
         key: EndpointId,
     ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
+        use crate::server::{AllowAll, ClientRequest};
         let (server, client) = tokio::io::duplex(1024);
-        let protocol_version = Default::default();
-        (
-            Config {
-                endpoint_id: key,
-                stream: ServerRelayedStream::test(server),
-                write_timeout: Duration::from_secs(1),
-                channel_capacity: 10,
-                protocol_version: Default::default(),
-                access_config: Arc::new(crate::server::AccessConfig::Everyone),
-            },
-            Conn::test(client, protocol_version),
-        )
+        let protocol_version = ProtocolVersion::default();
+        let request = ClientRequest::new(key, protocol_version, None);
+        let mut config = Config::new(
+            &request,
+            ServerRelayedStream::test(server),
+            Arc::new(AllowAll),
+        );
+        config.write_timeout = Duration::from_secs(1);
+        config.channel_capacity = 10;
+        (config, Conn::test(client, protocol_version))
     }
 
     #[tokio::test]

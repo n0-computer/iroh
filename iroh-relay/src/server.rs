@@ -15,7 +15,17 @@
 //! - HTTPS `/ping`: Used for net_report probes.
 //! - HTTPS `/generate_204`: Used for net_report probes.
 
-use std::{future::Future, net::SocketAddr, num::NonZeroU32, path::PathBuf, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    net::SocketAddr,
+    num::NonZeroU32,
+    path::PathBuf,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use derive_more::Debug;
 use http::{
@@ -45,7 +55,7 @@ use tracing::{Instrument, debug, error, info, info_span, instrument};
 use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
-    http::{AUTH_TOKEN_URL_QUERY_PARAM, RELAY_PROBE_PATH},
+    http::{AUTH_TOKEN_URL_QUERY_PARAM, ProtocolVersion, RELAY_PROBE_PATH},
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
 };
 
@@ -130,42 +140,70 @@ pub struct RelayConfig {
     pub limits: Limits,
     /// Key cache capacity.
     pub key_cache_capacity: Option<usize>,
-    /// Access configuration.
-    pub access: AccessConfig,
+    /// Access control for incoming connections.
+    pub access: Arc<dyn DynAccessControl>,
 }
 
 impl RelayConfig {
     /// Creates a new [`RelayConfig`] bound to `http_bind_addr` with default settings.
     ///
     /// TLS is disabled, default [`Limits`] are used, the key cache capacity is unset, and
-    /// access defaults to [`AccessConfig::Everyone`]. Adjust any of these by assigning to
-    /// the corresponding fields after construction.
+    /// access defaults to [`AllowAll`]. Adjust any of these by assigning to the
+    /// corresponding fields after construction.
     pub fn new(http_bind_addr: impl Into<SocketAddr>) -> Self {
         Self {
             http_bind_addr: http_bind_addr.into(),
             tls: None,
             limits: Limits::default(),
             key_cache_capacity: None,
-            access: AccessConfig::Everyone,
+            access: Arc::new(AllowAll),
         }
+    }
+}
+
+/// A process-unique identifier for a single relay client connection.
+///
+/// A new id is assigned to every incoming connection when its [`ClientRequest`]
+/// is created, before the access check runs. The same id is passed to
+/// [`AccessControl::on_connect`] and [`AccessControl::on_disconnect`], so an
+/// implementation can match the two callbacks even when one endpoint holds
+/// several concurrent connections.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, derive_more::Display)]
+#[display("{_0}")]
+pub struct ConnectionId(u64);
+
+impl ConnectionId {
+    /// Returns a fresh, process-unique connection id.
+    fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
     }
 }
 
 /// Details about an incoming relay client connection.
 ///
-/// Passed to the [`AccessConfig::Restricted`] callback to decide whether to
-/// admit the endpoint.
+/// Passed to [`AccessControl::on_connect`] to decide whether to admit the connection.
 #[derive(Debug, Clone)]
 pub struct ClientRequest {
+    connection_id: ConnectionId,
     endpoint_id: EndpointId,
     auth_token: Option<String>,
+    protocol_version: ProtocolVersion,
 }
 
 impl ClientRequest {
     /// Creates a new [`ClientRequest`] from an [`EndpointId`] and authorization token.
-    pub fn new(endpoint_id: EndpointId, auth_token: Option<String>) -> Self {
+    ///
+    /// A fresh [`ConnectionId`] is assigned.
+    pub fn new(
+        endpoint_id: EndpointId,
+        protocol_version: ProtocolVersion,
+        auth_token: Option<String>,
+    ) -> Self {
         Self {
+            connection_id: ConnectionId::next(),
             endpoint_id,
+            protocol_version,
             auth_token,
         }
     }
@@ -173,10 +211,24 @@ impl ClientRequest {
     /// Creates a new [`ClientRequest`] from an [`EndpointId`] and HTTP request parts.
     ///
     /// The [`EndpointId`] must be proven by the relay handshake. The request parts
-    /// come from the client's WebSocket request.
-    pub fn from_http_request(endpoint_id: EndpointId, request: &http::request::Parts) -> Self {
+    /// come from the client's WebSocket request. A fresh [`ConnectionId`] is assigned.
+    pub fn from_http_request(
+        endpoint_id: EndpointId,
+        protocol_version: ProtocolVersion,
+        request: &http::request::Parts,
+    ) -> Self {
         let auth_token = auth_token_from_request(request);
-        Self::new(endpoint_id, auth_token)
+        Self::new(endpoint_id, protocol_version, auth_token)
+    }
+
+    /// Returns the [`ConnectionId`] assigned to this connection.
+    pub fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
+
+    /// Returns the [`ProtocolVersion`] negotiated for this connection.
+    pub fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
     }
 
     /// Returns the [`EndpointId`] of the client.
@@ -221,38 +273,80 @@ fn auth_token_from_request(request: &http::request::Parts) -> Option<String> {
         .map(|(_, value)| value.into_owned())
 }
 
-/// Access check callback used by [`AccessConfig::Restricted`].
+/// Controls which endpoints may use the relay and observes their lifecycle.
 ///
-/// Returns [`Access::Allow`] to admit the endpoint or [`Access::Deny`] to
-/// reject it. The returned future may borrow from the [`ClientRequest`].
-pub type AccessCheck = Box<
-    dyn for<'a> Fn(&'a ClientRequest) -> Pin<Box<dyn Future<Output = Access> + Send + 'a>>
-        + Send
-        + Sync
-        + 'static,
->;
+/// Implement this trait to gate access to a relay server and to keep an
+/// external index of connected connections up to date. It is the relay
+/// equivalent of a connection handler: [`Self::on_connect`] is invoked for
+/// every incoming connection and decides whether to admit it, and
+/// [`Self::on_disconnect`] is invoked once that connection has ended.
+///
+/// Both callbacks carry the connection's [`ConnectionId`], so an implementation
+/// can index connections precisely even when one endpoint holds several. As a
+/// consequence the two callbacks need no ordering guarantees: a late
+/// `on_disconnect` for an old connection can never be confused with the
+/// `on_connect` of a newer one.
+///
+/// This trait has ergonomic `impl Future` methods; [`DynAccessControl`] is the
+/// dyn-compatible counterpart used for storage, for example in
+/// [`RelayConfig::access`].
+pub trait AccessControl: std::fmt::Debug + Send + Sync + 'static {
+    /// Decides whether a connecting client is admitted.
+    ///
+    /// Called once per incoming connection, before the connection is
+    /// registered. Returns [`Access::Allow`] to admit it or [`Access::Deny`]
+    /// to reject it.
+    ///
+    /// Can be implemented as `async fn on_connect(&self, request: &ClientRequest) -> Access`.
+    fn on_connect(&self, request: &ClientRequest) -> impl Future<Output = Access> + Send;
 
-/// Controls which endpoints are allowed to use the relay.
-#[derive(derive_more::Debug)]
-#[non_exhaustive]
-pub enum AccessConfig {
-    /// Allows every endpoint.
-    Everyone,
-    /// Delegates the decision to a callback invoked for every connection.
-    #[debug("restricted")]
-    Restricted(AccessCheck),
+    /// Notifies that a connection has ended.
+    ///
+    /// Called once for every connection that [`Self::on_connect`] admitted,
+    /// identified by the same [`ConnectionId`].
+    fn on_disconnect(&self, endpoint_id: EndpointId, connection_id: ConnectionId) {
+        let _ = (endpoint_id, connection_id);
+    }
 }
 
-impl AccessConfig {
-    /// Returns whether the given client request should be admitted.
-    pub async fn is_allowed(&self, request: &ClientRequest) -> bool {
-        match self {
-            Self::Everyone => true,
-            Self::Restricted(check) => {
-                let res = check(request).await;
-                matches!(res, Access::Allow)
-            }
-        }
+/// A dyn-compatible version of [`AccessControl`] that returns boxed futures.
+///
+/// Any type that implements [`AccessControl`] automatically implements
+/// `DynAccessControl`. Wrap it in an `Arc` to store it as an
+/// `Arc<dyn DynAccessControl>`, for example in [`RelayConfig::access`].
+pub trait DynAccessControl: std::fmt::Debug + Send + Sync + 'static {
+    /// See [`AccessControl::on_connect`].
+    fn on_connect<'a>(
+        &'a self,
+        request: &'a ClientRequest,
+    ) -> Pin<Box<dyn Future<Output = Access> + Send + 'a>>;
+
+    /// See [`AccessControl::on_disconnect`].
+    fn on_disconnect(&self, endpoint_id: EndpointId, connection_id: ConnectionId);
+}
+
+impl<T: AccessControl> DynAccessControl for T {
+    fn on_connect<'a>(
+        &'a self,
+        request: &'a ClientRequest,
+    ) -> Pin<Box<dyn Future<Output = Access> + Send + 'a>> {
+        Box::pin(<Self as AccessControl>::on_connect(self, request))
+    }
+
+    fn on_disconnect(&self, endpoint_id: EndpointId, connection_id: ConnectionId) {
+        <Self as AccessControl>::on_disconnect(self, endpoint_id, connection_id)
+    }
+}
+
+/// An [`AccessControl`] that admits every endpoint.
+///
+/// This is the default used by [`RelayConfig::new`].
+#[derive(Debug, Clone, Copy)]
+pub struct AllowAll;
+
+impl AccessControl for AllowAll {
+    async fn on_connect(&self, _request: &ClientRequest) -> Access {
+        Access::Allow
     }
 }
 
@@ -1004,14 +1098,14 @@ mod tests {
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use iroh_dns::dns::DnsResolver;
     use n0_error::Result;
-    use n0_future::{FutureExt, SinkExt, StreamExt};
+    use n0_future::{SinkExt, StreamExt};
     use n0_tracing_test::traced_test;
     use rand::{RngExt, SeedableRng};
     use tracing::{info, instrument};
 
     use super::{
-        Access, AccessConfig, NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER, RelayConfig,
-        Server, ServerConfig, SpawnError,
+        Access, AccessControl, ClientRequest, NO_CONTENT_CHALLENGE_HEADER,
+        NO_CONTENT_RESPONSE_HEADER, RelayConfig, Server, ServerConfig, SpawnError,
     };
     use crate::{
         client::{ClientBuilder, ConnectError},
@@ -1022,15 +1116,21 @@ mod tests {
         tls::{CaRootsConfig, default_provider},
     };
 
+    /// An [`AccessControl`] backed by a closure, for tests.
+    #[derive(derive_more::Debug)]
+    struct TestAccess(#[debug("access fn")] Box<dyn Fn(&ClientRequest) -> Access + Send + Sync>);
+
+    impl AccessControl for TestAccess {
+        async fn on_connect(&self, request: &ClientRequest) -> Access {
+            (self.0)(request)
+        }
+    }
+
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
+        let mut relay = RelayConfig::new((Ipv4Addr::LOCALHOST, 0));
+        relay.key_cache_capacity = Some(1024);
         Server::spawn(ServerConfig {
-            relay: Some(RelayConfig {
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-                key_cache_capacity: Some(1024),
-                access: AccessConfig::Everyone,
-            }),
+            relay: Some(relay),
             quic: None,
             metrics_addr: None,
         })
@@ -1090,14 +1190,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_conflicting_bind() {
+        let mut relay = RelayConfig::new((Ipv4Addr::LOCALHOST, 1234));
+        relay.key_cache_capacity = Some(1024);
         let res = Server::spawn(ServerConfig {
-            relay: Some(RelayConfig {
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
-                tls: None,
-                limits: Default::default(),
-                key_cache_capacity: Some(1024),
-                access: AccessConfig::Everyone,
-            }),
+            relay: Some(relay),
             quic: None,
             metrics_addr: Some((Ipv4Addr::LOCALHOST, 1234).into()),
         })
@@ -1226,26 +1322,20 @@ mod tests {
         let a_secret_key = SecretKey::from_bytes(&rng.random());
         let a_key = a_secret_key.public();
 
+        let mut relay = RelayConfig::new((Ipv4Addr::LOCALHOST, 0));
+        relay.key_cache_capacity = Some(1024);
+        relay.access = Arc::new(TestAccess(Box::new(move |request| {
+            let endpoint_id = request.endpoint_id();
+            info!("checking {}", endpoint_id);
+            // reject endpoint a
+            if endpoint_id == a_key {
+                Access::Deny
+            } else {
+                Access::Allow
+            }
+        })));
         let server = Server::spawn(ServerConfig {
-            relay: Some(RelayConfig {
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-                key_cache_capacity: Some(1024),
-                access: AccessConfig::Restricted(Box::new(move |request| {
-                    async move {
-                        let endpoint_id = request.endpoint_id();
-                        info!("checking {}", endpoint_id);
-                        // reject endpoint a
-                        if endpoint_id == a_key {
-                            Access::Deny
-                        } else {
-                            Access::Allow
-                        }
-                    }
-                    .boxed()
-                })),
-            }),
+            relay: Some(relay),
             quic: None,
             metrics_addr: None,
         })
@@ -1306,7 +1396,7 @@ mod tests {
     }
 
     /// Verifies that [`ClientBuilder::auth_token`] forwards a token to the
-    /// relay so the [`AccessConfig::Restricted`] hook can read it via
+    /// relay so the [`AccessControl::on_connect`] hook can read it via
     /// [`ClientRequest::auth_token`].
     #[tokio::test]
     #[traced_test]
@@ -1318,23 +1408,17 @@ mod tests {
             .client_config(default_provider())
             .unwrap();
 
+        let mut relay = RelayConfig::new((Ipv4Addr::LOCALHOST, 0));
+        relay.key_cache_capacity = Some(1024);
+        relay.access = Arc::new(TestAccess(Box::new(move |request| {
+            if request.auth_token() == Some(TOKEN) {
+                Access::Allow
+            } else {
+                Access::Deny
+            }
+        })));
         let server = Server::spawn(ServerConfig {
-            relay: Some(RelayConfig {
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                tls: None,
-                limits: Default::default(),
-                key_cache_capacity: Some(1024),
-                access: AccessConfig::Restricted(Box::new(move |request| {
-                    async move {
-                        if request.auth_token() == Some(TOKEN) {
-                            Access::Allow
-                        } else {
-                            Access::Deny
-                        }
-                    }
-                    .boxed()
-                })),
-            }),
+            relay: Some(relay),
             quic: None,
             metrics_addr: None,
         })

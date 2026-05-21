@@ -22,10 +22,6 @@ use crate::{KeyCache, http::ProtocolVersion};
 /// including its on-wire framing overhead)
 pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 
-/// The maximum size, in bytes, of an auth token carried in a
-/// [`ClientToRelayMsg::Authorize`] frame.
-pub const MAX_AUTH_TOKEN_SIZE: usize = 256;
-
 /// The maximum frame size.
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
@@ -52,8 +48,6 @@ pub enum Error {
     UnexpectedFrame { got: FrameType, expected: FrameType },
     #[error("Frame is too large, has {frame_len} bytes")]
     FrameTooLarge { frame_len: usize },
-    #[error("Auth token is too large, has {size} bytes (max {MAX_AUTH_TOKEN_SIZE})")]
-    AuthTokenTooLarge { size: usize },
     #[error(transparent)]
     FrameTypeError { source: FrameTypeError },
     #[error("Invalid public key")]
@@ -134,9 +128,6 @@ pub enum Status {
         "Another endpoint connected with the same endpoint id. No more messages will be received."
     )]
     SameEndpointIdConnected,
-    /// Authorization has expired, re-auth is needed.
-    #[display("The authorization for this endpoint has expired. Re-auth is needed.")]
-    AuthorizationExpired,
     /// Placeholder for backwards-compatibility for future new health status variants.
     #[display("Unsupported health message ({_0})")]
     Unknown(u8),
@@ -148,7 +139,6 @@ impl Status {
         match self {
             Status::Healthy => dst.put_u8(0),
             Status::SameEndpointIdConnected => dst.put_u8(1),
-            Status::AuthorizationExpired => dst.put_u8(2),
             Status::Unknown(discriminant) => dst.put_u8(*discriminant),
         }
         dst
@@ -165,7 +155,6 @@ impl Status {
         match discriminant {
             0 => Ok(Self::Healthy),
             1 => Ok(Self::SameEndpointIdConnected),
-            2 => Ok(Self::AuthorizationExpired),
             n => Ok(Self::Unknown(n)),
         }
     }
@@ -187,13 +176,6 @@ pub enum ClientToRelayMsg {
         dst_endpoint_id: EndpointId,
         /// The datagrams and related metadata to relay.
         datagrams: Datagrams,
-    },
-    /// Update the authorization token.
-    Authorize {
-        /// The updated authorization token.
-        ///
-        /// Must not exceed [`MAX_AUTH_TOKEN_SIZE`] bytes when UTF-8 encoded.
-        auth_token: String,
     },
 }
 
@@ -498,7 +480,6 @@ impl ClientToRelayMsg {
             }
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
-            Self::Authorize { .. } => FrameType::Authorization,
         }
     }
 
@@ -525,9 +506,6 @@ impl ClientToRelayMsg {
             Self::Pong(data) => {
                 dst.put(&data[..]);
             }
-            Self::Authorize { auth_token } => {
-                dst.put(auth_token.as_bytes());
-            }
         }
         dst
     }
@@ -539,7 +517,6 @@ impl ClientToRelayMsg {
                 32 // endpoint id
                 + datagrams.encoded_len()
             }
-            Self::Authorize { auth_token } => auth_token.len(),
         };
         self.typ().encoded_len() + payload_len
     }
@@ -580,16 +557,6 @@ impl ClientToRelayMsg {
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Pong(data)
-            }
-            FrameType::Authorization => {
-                ensure!(
-                    content.len() <= MAX_AUTH_TOKEN_SIZE,
-                    Error::AuthTokenTooLarge {
-                        size: content.len()
-                    }
-                );
-                let auth_token = std::str::from_utf8(&content)?.to_owned();
-                Self::Authorize { auth_token }
             }
             _ => {
                 return Err(e!(Error::InvalidFrameType { frame_type }));
@@ -892,31 +859,6 @@ mod proptests {
         assert!(matches!(
             result,
             Err(Error::FrameNotAllowedInVersion { .. })
-        ));
-    }
-
-    #[test]
-    fn authorize_token_size_limit() {
-        // A token at the size limit round-trips.
-        let token = "a".repeat(MAX_AUTH_TOKEN_SIZE);
-        let encoded = ClientToRelayMsg::Authorize {
-            auth_token: token.clone(),
-        }
-        .to_bytes()
-        .freeze();
-        let decoded = ClientToRelayMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
-        assert_eq!(decoded, ClientToRelayMsg::Authorize { auth_token: token });
-
-        // One byte over the limit is rejected.
-        let encoded = ClientToRelayMsg::Authorize {
-            auth_token: "a".repeat(MAX_AUTH_TOKEN_SIZE + 1),
-        }
-        .to_bytes()
-        .freeze();
-        let result = ClientToRelayMsg::from_bytes(encoded, &KeyCache::test());
-        assert!(matches!(
-            result,
-            Err(Error::AuthTokenTooLarge { size, .. }) if size == MAX_AUTH_TOKEN_SIZE + 1
         ));
     }
 

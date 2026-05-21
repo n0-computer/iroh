@@ -1,15 +1,15 @@
 //! The server-side representation of an ongoing client relaying connection.
 
-use std::{collections::HashSet, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
-use n0_future::{MaybeFuture, SinkExt, StreamExt};
+use n0_future::{SinkExt, StreamExt};
 use rand::RngExt;
 use time::{Date, OffsetDateTime};
 use tokio::{
     sync::mpsc::{self, error::TrySendError},
-    time::{MissedTickBehavior, Sleep},
+    time::MissedTickBehavior,
 };
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{Instrument, debug, trace, warn};
@@ -26,14 +26,12 @@ use crate::{
         streams::BytesStreamSink,
     },
     server::{
-        AccessConfig, ClientRequest,
+        ClientRequest, ConnectionId, DynAccessControl,
         clients::Clients,
         metrics::Metrics,
         streams::{RecvError as RelayRecvError, RelayedStream, SendError as RelaySendError},
     },
 };
-
-const AUTHORIZATION_EXPIRED_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]
@@ -52,6 +50,8 @@ pub(super) struct Packet {
 pub struct Config<S> {
     /// The endpoint ID of the client
     pub endpoint_id: EndpointId,
+    /// The connection ID of the client, assigned when its [`ClientRequest`] was created.
+    pub connection_id: ConnectionId,
     /// The relayed stream connection
     pub stream: RelayedStream<S>,
     /// Write timeout for the client connection
@@ -60,25 +60,27 @@ pub struct Config<S> {
     pub channel_capacity: usize,
     /// Protocol version negotiated for this client
     pub protocol_version: ProtocolVersion,
-    /// The access config against which clients are checked in case a re-auth is requested.
-    pub access_config: Arc<AccessConfig>,
+    /// Access control, notified via `on_disconnect` when this connection ends.
+    pub access: Arc<dyn DynAccessControl>,
 }
 
 impl<S> Config<S> {
     /// Creates a new config with sensible default values for `write_timeout` and `channel_capacity`.
+    ///
+    /// The endpoint and connection ids are taken from `request`.
     pub fn new(
-        endpoint_id: EndpointId,
+        request: &ClientRequest,
         stream: RelayedStream<S>,
-        protocol_version: ProtocolVersion,
-        access_config: Arc<AccessConfig>,
+        access: Arc<dyn DynAccessControl>,
     ) -> Self {
         Self {
-            endpoint_id,
+            endpoint_id: request.endpoint_id(),
+            connection_id: request.connection_id(),
             stream,
-            protocol_version,
+            protocol_version: request.protocol_version(),
             write_timeout: SERVER_WRITE_TIMEOUT,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
-            access_config,
+            access,
         }
     }
 }
@@ -92,7 +94,7 @@ pub struct Client {
     /// Identity of the connected peer.
     endpoint_id: EndpointId,
     /// Connection identifier.
-    connection_id: u64,
+    connection_id: ConnectionId,
     /// Used to close the connection loop.
     done: CancellationToken,
     /// Actor handle.
@@ -109,22 +111,18 @@ impl Client {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
-    pub(super) fn new<S>(
-        config: Config<S>,
-        connection_id: u64,
-        clients: &Clients,
-        metrics: Arc<Metrics>,
-    ) -> Client
+    pub(super) fn new<S>(config: Config<S>, clients: &Clients, metrics: Arc<Metrics>) -> Client
     where
         S: BytesStreamSink + Send + 'static,
     {
         let Config {
             endpoint_id,
+            connection_id,
             stream,
             write_timeout,
             channel_capacity,
             protocol_version,
-            access_config,
+            access,
         } = config;
 
         let (packet_send_queue_s, packet_send_queue_r) = mpsc::channel(channel_capacity);
@@ -142,8 +140,7 @@ impl Client {
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
             metrics,
-            access_config,
-            auth_expired: Box::pin(MaybeFuture::None),
+            access,
         };
 
         // start io loop
@@ -151,7 +148,7 @@ impl Client {
         let handle = tokio::task::spawn(actor.run(io_done).instrument(tracing::info_span!(
             "client-connection-actor",
             remote_endpoint = %endpoint_id.fmt_short(),
-            connection_id = connection_id
+            connection_id = %connection_id
         )));
 
         Client {
@@ -165,7 +162,7 @@ impl Client {
         }
     }
 
-    pub(super) fn connection_id(&self) -> u64 {
+    pub(super) fn connection_id(&self) -> ConnectionId {
         self.connection_id
     }
 
@@ -215,21 +212,6 @@ impl Client {
         };
         self.message_queue.try_send(message)
     }
-
-    pub(super) fn request_reauth(&self) {
-        // V1 clients don't support Status messages, disconnect them, they can reconnect.
-        if self.protocol_version == ProtocolVersion::V1 {
-            trace!(dst=%self.endpoint_id.fmt_short(), "Reauth requested but client uses V1 protocol, disconnecting");
-            self.start_shutdown();
-        } else if self
-            .message_queue
-            .try_send(RelayToClientMsg::Status(Status::AuthorizationExpired))
-            .is_err()
-        {
-            trace!(dst=%self.endpoint_id.fmt_short(), "Reauth requested but failed to send AuthorizationExpired, disconnecting");
-            self.start_shutdown();
-        }
-    }
 }
 
 /// Error when handling an incoming frame from a client.
@@ -245,8 +227,6 @@ pub enum HandleFrameError {
     Recv { source: RelayRecvError },
     #[error(transparent)]
     Send { source: WriteFrameError },
-    #[error("Authorization rejected")]
-    AuthorizationRejected,
 }
 
 /// Error when writing a frame to a client.
@@ -288,8 +268,6 @@ pub enum RunError {
     WriteFrame { source: WriteFrameError },
     #[error("Tick flush")]
     TickFlush {},
-    #[error("Authorization expired")]
-    AuthorizationExpired,
 }
 
 /// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`
@@ -322,15 +300,15 @@ struct Actor<S> {
     /// [`EndpointId`] of this client
     endpoint_id: EndpointId,
     /// Connection identifier.
-    connection_id: u64,
+    connection_id: ConnectionId,
     /// Reference to the other connected clients.
     clients: Clients,
     /// Statistics about the connected clients
     client_counter: ClientCounter,
     ping_tracker: PingTracker,
     metrics: Arc<Metrics>,
-    access_config: Arc<AccessConfig>,
-    auth_expired: Pin<Box<MaybeFuture<Sleep>>>,
+    /// Access control, notified via `on_disconnect` when this connection ends.
+    access: Arc<dyn DynAccessControl>,
 }
 
 impl<S> Actor<S>
@@ -354,6 +332,10 @@ where
             }
         }
 
+        // Notify access control before unregistering: `unregister` may drop this
+        // actor's own `Client`, which aborts the task at the next await point.
+        self.access
+            .on_disconnect(self.endpoint_id, self.connection_id);
         self.clients
             .unregister(self.connection_id, self.endpoint_id, &self.metrics);
         self.metrics.disconnects.inc();
@@ -398,12 +380,6 @@ where
                 // Last priority, sending other message
                 message = self.message_send_queue.recv() => {
                     let message = message.ok_or_else(|| e!(RunError::HandleDropped))?;
-
-                    // Arm the re-auth timer when sending out an authorization request
-                    if matches!(message, RelayToClientMsg::Status(Status::AuthorizationExpired)) {
-                        self.auth_expired.as_mut().set_future(tokio::time::sleep(AUTHORIZATION_EXPIRED_TIMEOUT));
-                    }
-
                     trace!("send {message:?}");
                     self.write_frame(message)
                         .await
@@ -421,15 +397,6 @@ where
                     self.write_frame(RelayToClientMsg::Ping(data))
                         .await
                         .map_err(|err| e!(RunError::WriteFrame, err))?;
-                }
-                _ = &mut self.auth_expired => {
-                    // Give the client a chance to pass the authorization without a token, otherwise abort.
-                    let is_allowed = self.access_config.is_allowed(&ClientRequest::new(self.endpoint_id, None)).await;
-                    if is_allowed {
-                        self.auth_expired.as_mut().set_none();
-                    } else {
-                        return Err(e!(RunError::AuthorizationExpired))
-                    }
                 }
             }
 
@@ -513,15 +480,6 @@ where
             }
             ClientToRelayMsg::Pong(data) => {
                 self.ping_tracker.pong_received(data);
-            }
-            ClientToRelayMsg::Authorize { auth_token } => {
-                let req = ClientRequest::new(self.endpoint_id, Some(auth_token));
-                let is_allowed = self.access_config.is_allowed(&req).await;
-                if is_allowed {
-                    self.auth_expired.as_mut().set_none();
-                } else {
-                    return Err(e!(HandleFrameError::AuthorizationRejected));
-                }
             }
         }
         Ok(())
@@ -649,14 +607,13 @@ mod tests {
             timeout: Duration::from_secs(1),
             packet_send_queue: send_queue_r,
             message_send_queue: message_r,
-            connection_id: 0,
+            connection_id: ConnectionId::next(),
             endpoint_id,
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
             metrics,
-            access_config: Arc::new(AccessConfig::Everyone),
-            auth_expired: Box::pin(MaybeFuture::None),
+            access: Arc::new(crate::server::AllowAll),
         };
 
         let done = CancellationToken::new();
@@ -733,18 +690,17 @@ mod tests {
         key: EndpointId,
         protocol_version: ProtocolVersion,
     ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
+        use crate::server::AllowAll;
         let (server, client) = tokio::io::duplex(1024);
-        (
-            Config {
-                endpoint_id: key,
-                stream: ServerRelayedStream::test(server),
-                write_timeout: Duration::from_secs(1),
-                channel_capacity: 10,
-                protocol_version,
-                access_config: Arc::new(AccessConfig::Everyone),
-            },
-            Conn::test(client, protocol_version),
-        )
+        let request = ClientRequest::new(key, protocol_version, None);
+        let mut config = Config::new(
+            &request,
+            ServerRelayedStream::test(server),
+            Arc::new(AllowAll),
+        );
+        config.write_timeout = Duration::from_secs(1);
+        config.channel_capacity = 10;
+        (config, Conn::test(client, protocol_version))
     }
 
     #[tokio::test]

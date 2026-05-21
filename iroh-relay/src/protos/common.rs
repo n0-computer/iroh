@@ -63,9 +63,6 @@ pub enum FrameType {
     ///
     /// [`Status`]: super::relay::Status
     Status = 13,
-
-    /// Sent from client to server to set the client's authorization token.
-    Authorization = 14,
 }
 
 #[stack_error(derive, add_meta)]
