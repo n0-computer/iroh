@@ -249,7 +249,7 @@ impl Transports {
     ) -> Poll<io::Result<usize>> {
         assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
-        if sock.is_closing() {
+        if sock.is_closed() {
             return Poll::Pending;
         }
 
