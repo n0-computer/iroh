@@ -167,6 +167,32 @@ unstable-custom-transports = []
 all-features = true
 rustdoc-args = ["--cfg", "iroh_docsrs"]
 
+[package.metadata.cargo_check_external_types]
+allowed_external_types = [
+    # workspace crates
+    "iroh_base::*",
+    "iroh_dns::*",
+    "iroh_relay::*",
+    # crates owned by us that will move to 1.0 as well
+    "iroh_metrics::*",
+    "n0_error::*",
+    "n0_watcher::*",
+    "noq::*",
+    "noq_proto::*",
+    "noq_udp::*",
+    # 1.0 crates that we deem fine to be part of the public API
+    "bytes::*",
+    "http::*",
+    "serde_core::*",
+    "tokio::*",
+    "url::*",
+    # non-1.0 crates that we decided to accept in the public API
+    "rustls::*",
+    "futures_core::stream::Stream",
+    # only type alias
+    "futures_lite::stream::Boxed",
+]
+
 [[test]]
 name = "integration"
 path = "tests/integration.rs"

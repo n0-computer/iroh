@@ -1,5 +1,14 @@
 # Use cargo-make to run tasks here: https://crates.io/crates/cargo-make
 
+[env]
+# Make per-member iterations inherit this Makefile so workspace tasks can be
+# defined here without needing a per-crate Makefile.toml.
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+# Workspace members to exclude when setting `workspace = true` for a task.
+# Must live at global env (not task-level) so it's read before workspace iteration
+# is generated. Only the `check-external-types` task uses this.
+CARGO_MAKE_WORKSPACE_SKIP_MEMBERS = ["iroh/bench"]
+
 [tasks.format]
 workspace = false
 command = "cargo"
@@ -31,3 +40,12 @@ args = [
 workspace = false
 command = "cargo"
 args = ["nextest", "run", "-p", "iroh", "--features", "qlog", "--test", "patchbay", "--profile", "patchbay", "${@}"]
+
+[tasks.check-external-types]
+description = "Run cargo check-external-types on workspace crates"
+workspace = true
+# cargo check-external-types needs a specific nightly toolchain,
+# see https://github.com/awslabs/cargo-check-external-types#how-to-use
+toolchain = "${TOOLCHAIN:nightly-2025-10-18}"
+command = "cargo"
+args = ["check-external-types", "--all-features"]

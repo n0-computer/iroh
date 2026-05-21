@@ -45,3 +45,13 @@ tls-aws-lc-rs = ["rustls/aws-lc-rs", "hickory-resolver/https-aws-lc-rs"]
 [dev-dependencies]
 n0-tracing-test = "0.3"
 tokio = { version = "1", features = ["macros", "rt"] }
+
+[package.metadata.cargo_check_external_types]
+allowed_external_types = [
+    "iroh_base::*",
+    "n0_error::*",
+    "rustls::*",
+    "url::*",
+    # only type alias
+    "futures_lite::future::Boxed",
+]
