@@ -29,7 +29,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use iroh_base::TransportAddr;
+use iroh_base::{CustomAddr, TransportAddr};
 use n0_future::{StreamExt, time::Duration};
 use noq::WeakPathHandle;
 use noq_proto::PathId;
@@ -41,9 +41,11 @@ use tokio_stream::{
 };
 use tracing::warn;
 
-use crate::endpoint::PathStats;
-
 use super::TransportFourTuple;
+use crate::{
+    endpoint::{LocalTransportAddr, PathStats},
+    socket::mapped_addrs::{AddrMap, CustomMappedAddr},
+};
 
 /// Per-connection broadcast channel capacity for path events.
 const BROADCAST_CAPACITY: usize = 8;
@@ -53,27 +55,36 @@ const BROADCAST_CAPACITY: usize = 8;
 #[non_exhaustive]
 pub enum PathEvent {
     /// A new network path was opened.
+    #[non_exhaustive]
     Opened {
         /// Path identifier.
         id: PathId,
         /// Remote transport address.
         remote_addr: TransportAddr,
+        /// Local address of the path, if known.
+        local_addr: LocalTransportAddr,
     },
     /// A network path was closed.
+    #[non_exhaustive]
     Closed {
         /// Path identifier.
         id: PathId,
         /// Remote transport address.
         remote_addr: TransportAddr,
+        /// Local address of the path, if known.
+        local_addr: LocalTransportAddr,
         /// Path statistics captured at close time.
         last_stats: Box<PathStats>,
     },
     /// This path was selected for transmission of application data.
+    #[non_exhaustive]
     Selected {
         /// Path identifier of the newly selected path.
         id: PathId,
         /// Remote transport address of the newly selected path.
         remote_addr: TransportAddr,
+        /// The local address of the newly selected path, if known.
+        local_addr: LocalTransportAddr,
     },
     /// Events were dropped before the subscriber received them.
     ///
@@ -83,6 +94,7 @@ pub enum PathEvent {
     /// [`Connection::paths`].
     ///
     /// [`Connection::paths`]: crate::endpoint::Connection::paths
+    #[non_exhaustive]
     Lagged {
         /// Number of events dropped since the last delivered event.
         missed: u64,
@@ -94,7 +106,7 @@ pub enum PathEvent {
 struct PathData {
     handle: WeakPathHandle,
     remote_addr: TransportAddr,
-    local_addr: Option<TransportAddr>,
+    local_addr: LocalTransportAddr,
 }
 
 impl PathData {
@@ -121,6 +133,7 @@ struct State {
 struct Shared {
     state: Mutex<State>,
     notify: Notify,
+    custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
 }
 
 /// The writer-side handle for a connection's path state.
@@ -138,11 +151,17 @@ pub(super) struct PathStateSender {
 
 impl PathStateSender {
     /// Creates a sender/receiver pair sharing empty state.
-    pub(super) fn new() -> (Self, PathStateReceiver) {
+    ///
+    /// Gets passed a clone of the custom address map, so that we can convert local addresses
+    /// to the public [`LocalTransportAddr`] exposed to users.
+    pub(super) fn new(
+        custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> (Self, PathStateReceiver) {
         let (events, _) = broadcast::channel(BROADCAST_CAPACITY);
         let shared = Arc::new(Shared {
             state: Default::default(),
             notify: Notify::new(),
+            custom_mapped_addrs,
         });
         let receiver = PathStateReceiver {
             shared: shared.clone(),
@@ -155,14 +174,14 @@ impl PathStateSender {
     /// Records a newly-opened path and emits [`PathEvent::Opened`].
     pub(super) fn record_opened(&self, handle: WeakPathHandle, network_path: TransportFourTuple) {
         let id = handle.id();
-        let remote_addr: TransportAddr = network_path.remote.into();
-        let local_addr = network_path.local.map(|local| local.into());
+        let remote_addr: TransportAddr = network_path.remote().clone().into();
+        let local_addr = network_path.local(&self.shared.custom_mapped_addrs);
         {
             let mut state = self.shared.state.lock().expect("poisoned");
             let entry = PathData {
                 handle,
                 remote_addr: remote_addr.clone(),
-                local_addr,
+                local_addr: local_addr.clone(),
             };
             match state.list.iter().position(|e| e.handle.id() == id) {
                 Some(idx) => state.list[idx] = entry,
@@ -170,7 +189,11 @@ impl PathStateSender {
             }
         }
         self.shared.notify.notify_waiters();
-        let _ = self.events.send(PathEvent::Opened { id, remote_addr });
+        let _ = self.events.send(PathEvent::Opened {
+            id,
+            remote_addr,
+            local_addr,
+        });
     }
 
     /// Records that a path was abandoned by `noq`.
@@ -191,7 +214,8 @@ impl PathStateSender {
             self.shared.notify.notify_waiters();
             let _ = self.events.send(PathEvent::Closed {
                 id,
-                remote_addr: data.remote_addr,
+                remote_addr: data.remote_addr.clone(),
+                local_addr: data.local_addr.clone(),
                 last_stats: Box::new(stats),
             });
         }
@@ -199,10 +223,9 @@ impl PathStateSender {
 
     /// Updates the selected transmission path.
     pub(super) fn record_selected(&self, network_path: &TransportFourTuple) {
-        // We need to convert from `transports::Addr` to `TransportAddr` here.
-        let remote_addr = network_path.remote.clone().into();
-        let local_addr = network_path.local.clone().map(|addr| addr.into());
-        let changed = {
+        let remote_addr: TransportAddr = network_path.remote().clone().into();
+        let local_addr = network_path.local(&self.shared.custom_mapped_addrs);
+        let event = {
             let mut state = self.shared.state.lock().expect("poisoned");
             let selected_path_id = state
                 .list
@@ -211,13 +234,17 @@ impl PathStateSender {
                 .map(|p| p.handle.id());
             if selected_path_id != state.selected {
                 state.selected = selected_path_id;
-                selected_path_id.map(|path_id| (path_id, remote_addr))
+                selected_path_id.map(|path_id| PathEvent::Selected {
+                    id: path_id,
+                    remote_addr: TransportAddr::from(network_path.remote.clone()),
+                    local_addr: network_path.local(&self.shared.custom_mapped_addrs),
+                })
             } else {
                 None
             }
         };
-        if let Some((id, remote_addr)) = changed {
-            let _ = self.events.send(PathEvent::Selected { id, remote_addr });
+        if let Some(event) = event {
+            let _ = self.events.send(event);
             self.shared.notify.notify_waiters();
         }
     }
@@ -242,6 +269,7 @@ impl PathStateSender {
                     let _ = self.events.send(PathEvent::Closed {
                         id: path.handle.id(),
                         remote_addr: path.remote_addr.clone(),
+                        local_addr: path.local_addr.clone(),
                         last_stats: Box::new(*stats),
                     });
                 } else {
@@ -438,8 +466,8 @@ impl<'conn> Path<'conn> {
     ///
     /// Note that for IP paths, the port of the socket address carries
     /// no meaning and will always be set to 0.
-    pub fn local_addr(&self) -> Option<&TransportAddr> {
-        self.data.local_addr.as_ref()
+    pub fn local_addr(&self) -> &LocalTransportAddr {
+        &self.data.local_addr
     }
 
     /// Returns `true` if this path is currently selected for application data transmission.

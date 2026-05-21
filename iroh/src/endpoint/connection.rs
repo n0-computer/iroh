@@ -92,10 +92,10 @@ impl From<transports::Addr> for IncomingAddr {
     }
 }
 
-/// The local address that received an incoming connection.
+/// The local address of a network path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum IncomingLocalAddr {
+pub enum LocalTransportAddr {
     /// The local IP, if the OS surfaced it.
     Ip(Option<IpAddr>),
     /// The relay this connection arrived through.
@@ -208,16 +208,16 @@ impl Incoming {
     }
 
     /// Returns the local address that received this incoming connection.
-    pub fn local_addr(&self) -> IncomingLocalAddr {
+    pub fn local_addr(&self) -> LocalTransportAddr {
         match self.ep.to_transport_addr(self.inner.remote_address()) {
-            transports::Addr::Ip(_) => IncomingLocalAddr::Ip(self.inner.local_ip()),
-            transports::Addr::Relay(url, _) => IncomingLocalAddr::Relay { url },
+            transports::Addr::Ip(_) => LocalTransportAddr::Ip(self.inner.local_ip()),
+            transports::Addr::Relay(url, _) => LocalTransportAddr::Relay { url },
             transports::Addr::Custom(_) => {
                 let local = self
                     .inner
                     .local_ip()
                     .and_then(|ip| self.ep.lookup_custom_addr(SocketAddr::new(ip, 0)));
-                IncomingLocalAddr::Custom(local)
+                LocalTransportAddr::Custom(local)
             }
         }
     }

@@ -961,6 +961,7 @@ fn spawn_path_watcher(
                     id,
                     remote_addr,
                     last_stats,
+                    ..
                 } => {
                     paths.push(PathData {
                         id,
