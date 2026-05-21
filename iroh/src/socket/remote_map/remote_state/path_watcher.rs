@@ -41,7 +41,9 @@ use tokio_stream::{
 };
 use tracing::warn;
 
-use crate::{endpoint::PathStats, socket::remote_map::remote_state::TransportFourTuple};
+use crate::endpoint::PathStats;
+
+use super::TransportFourTuple;
 
 /// Per-connection broadcast channel capacity for path events.
 const BROADCAST_CAPACITY: usize = 8;
@@ -430,6 +432,14 @@ impl<'conn> Path<'conn> {
     /// Returns the path's remote transport address.
     pub fn remote_addr(&self) -> &TransportAddr {
         &self.data.remote_addr
+    }
+
+    /// Returns the path's local address, if known.
+    ///
+    /// Note that for IP paths, the port of the socket address carries
+    /// no meaning and will always be set to 0.
+    pub fn local_addr(&self) -> Option<&TransportAddr> {
+        self.data.local_addr.as_ref()
     }
 
     /// Returns `true` if this path is currently selected for application data transmission.
