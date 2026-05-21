@@ -893,7 +893,7 @@
 <a href=#893 id=893 data-nosnippet>893</a>        };
 <a href=#894 id=894 data-nosnippet>894</a>
 <a href=#895 id=895 data-nosnippet>895</a>        <span class="macro">trace!</span>(<span class="string">"accept: build client conn"</span>);
-<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let </span>client_conn_builder = Config::new(<span class="kw-2">&amp;</span>request, io, <span class="self">self</span>.access.clone());
+<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let </span>client_conn_builder = Config::new(<span class="kw-2">&amp;</span>request, io);
 <a href=#897 id=897 data-nosnippet>897</a>        <span class="macro">trace!</span>(endpoint_id = %request.endpoint_id().fmt_short(), <span class="string">"create client"</span>);
 <a href=#898 id=898 data-nosnippet>898</a>
 <a href=#899 id=899 data-nosnippet>899</a>        <span class="comment">// build and register client, starting up read &amp; write loops for the client
@@ -929,7 +929,7 @@
 <a href=#929 id=929 data-nosnippet>929</a>        <span class="self">Self</span>(Arc::new(Inner {
 <a href=#930 id=930 data-nosnippet>930</a>            handlers,
 <a href=#931 id=931 data-nosnippet>931</a>            headers,
-<a href=#932 id=932 data-nosnippet>932</a>            clients: Clients::default(),
+<a href=#932 id=932 data-nosnippet>932</a>            clients: Clients::with_access_control(access.clone()),
 <a href=#933 id=933 data-nosnippet>933</a>            rate_limit,
 <a href=#934 id=934 data-nosnippet>934</a>            key_cache,
 <a href=#935 id=935 data-nosnippet>935</a>            access,
