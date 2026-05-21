@@ -39,7 +39,7 @@ impl Runtime {
     pub(crate) async fn shutdown(&self) {
         self.abort();
         // Waits for all tasks to stop (and thus drop all of their futures).
-        // If the task tracker had already been closed and taks have all been cleaned up,
+        // If the task tracker had already been closed and tasks have all been cleaned up,
         // this returns immediately.
         self.tasks.wait().await;
     }
