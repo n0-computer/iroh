@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeSet, VecDeque},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
     task::Poll,
@@ -31,10 +31,12 @@ pub use self::{
 use super::Source;
 use crate::{
     address_lookup::{AddressLookupFailed, AddressLookupServices, Item as AddressLookupItem},
-    endpoint::DirectAddr,
+    endpoint::{DirectAddr, LocalTransportAddr},
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
-        mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
+        mapped_addrs::{
+            AddrMap, CustomMappedAddr, MappedAddr, MultipathMappedAddr, RelayMappedAddr,
+        },
         remote_map::{remote_state::path_watcher::PathStateSender, to_transport_addr},
         transports::{self, OwnedTransmit, PathSelectionData, TransportBiasMap, TransportsSender},
     },
@@ -391,7 +393,8 @@ impl RemoteStateActor {
         conn: noq::Connection,
         tx: oneshot::Sender<PathStateReceiver>,
     ) {
-        let (path_state_sender, path_state_receiver) = PathStateSender::new();
+        let (path_state_sender, path_state_receiver) =
+            PathStateSender::new(self.state.custom_mapped_addrs.clone());
         self.state.metrics.num_conns_opened.inc();
         // Remove any conflicting stable_ids from the local state.
         let conn_id = ConnId(conn.stable_id());
@@ -440,7 +443,7 @@ impl RemoteStateActor {
                     .paths
                     .addrs()
                     .filter(|a| a.is_relay())
-                    .map(|remote| TransportFourTuple::from_remote(remote.clone()))
+                    .map(|remote| TransportFourTuple::new(remote.clone(), None))
                     .collect::<Vec<_>>();
                 for open_addr in relays {
                     self.state
@@ -846,7 +849,8 @@ impl State {
         if let Some(addr) = self.selected_path.as_ref() {
             trace!(?addr, "sending datagram to selected path");
 
-            if let Err(err) = send_datagram(&mut sender, addr.clone(), transmit).await {
+            // TODO: We should pass the local addr here, I think.
+            if let Err(err) = send_datagram(&mut sender, addr.remote.clone(), transmit).await {
                 debug!(?addr, "failed to send datagram on selected_path: {err:#}");
             }
         } else {
@@ -869,12 +873,8 @@ impl State {
                         .any(|a| a.addr == *sockaddr)
                 {
                     trace!(%sockaddr, "not sending datagram to our own address");
-                } else if let Err(err) = send_datagram(
-                    &mut sender,
-                    TransportFourTuple::new(addr.clone(), None),
-                    transmit.clone(),
-                )
-                .await
+                } else if let Err(err) =
+                    send_datagram(&mut sender, addr.clone(), transmit.clone()).await
                 {
                     debug!(?addr, "failed to send datagram: {err:#}");
                 }
@@ -1115,16 +1115,7 @@ impl State {
 
     /// Returns the QUIC-mapped [`FourTuple`] for a [`TransportFourTuple`].
     fn quic_mapped_four_tuple(&self, network_path: &TransportFourTuple) -> FourTuple {
-        let remote = self.quic_mapped_addr(network_path.remote());
-        let local = network_path
-            .local()
-            .map(|addr| self.quic_mapped_addr(addr).ip());
-        FourTuple::new(remote, local)
-    }
-
-    /// Returns the QUIC-mapped address for a [`transports::Addr`].
-    fn quic_mapped_addr(&self, addr: &transports::Addr) -> SocketAddr {
-        match addr {
+        let remote = match &network_path.remote {
             transports::Addr::Ip(socket_addr) => *socket_addr,
             transports::Addr::Relay(relay_url, eid) => self
                 .relay_mapped_addrs
@@ -1133,7 +1124,8 @@ impl State {
             transports::Addr::Custom(remote) => {
                 self.custom_mapped_addrs.get(remote).private_socket_addr()
             }
-        }
+        };
+        FourTuple::new(remote, network_path.noq_local_ip)
     }
 
     /// Returns the [`transports::Addr] for a path.
@@ -1145,16 +1137,7 @@ impl State {
             &self.custom_mapped_addrs,
         )?;
 
-        // When mapping the local IP, we set the port to 0. The port is never used.
-        // TODO: Express this cleaner?
-        let local = noq_network_path.local_ip().and_then(|ip| {
-            to_transport_addr(
-                SocketAddr::new(ip, 0),
-                &self.relay_mapped_addrs,
-                &self.custom_mapped_addrs,
-            )
-        });
-        Some(TransportFourTuple::new(remote, local))
+        Some(TransportFourTuple::new(remote, noq_network_path.local_ip()))
     }
 
     /// Returns the current set of local direct addresses.
@@ -1169,37 +1152,36 @@ impl State {
 
 /// Identifies a network path by the combination of remote and local addresses.
 ///
-/// Mirrors [`noq::FourTuple`] but uses [`transports::Addr`] for the remote and local addresses.
+/// Mirrors [`noq::FourTuple`] but uses [`transports::Addr`] for the remote address.
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub(super) struct TransportFourTuple {
     /// The remote side of this tuple.
-    pub(super) remote: transports::Addr,
+    remote: transports::Addr,
     /// The local side of this tuple.
     ///
-    /// Note that when this is [`transports::Addr::Ip`], the port carries no significance
-    /// and is always set to 0.
-    pub(super) local: Option<transports::Addr>,
+    /// This is the IP address, unmodified as returned from [`noq::Path::local_ip`].
+    /// We pass it back to noq as-is when opening paths on other connections.
+    ///
+    /// Its meaning is a bit particular:
+    /// * For IP transports this is the interface IP, if known.
+    /// * For custom transports this is a mapped custom transport address.
+    /// * For relay transports this is never set.
+    noq_local_ip: Option<IpAddr>,
 }
 
 impl std::fmt::Display for TransportFourTuple {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(local_ip) = self.local.as_ref() {
-            write!(f, "{:?}->", local_ip)?;
-        }
-        write!(f, "{:?}", self.remote)
+        write!(f, "{:?}->{:?}", self.noq_local_ip, self.remote)
     }
 }
 
 impl TransportFourTuple {
     /// Creates a new [`TransportFourTuple`].
-    pub(super) fn new(remote: transports::Addr, local: Option<transports::Addr>) -> Self {
-        Self { remote, local }
-    }
-
-    /// Creates a new [`TransportFourTuple`] without a known local address.
-    #[allow(dead_code)]
-    pub(super) fn from_remote(remote: transports::Addr) -> Self {
-        Self::new(remote, None)
+    pub(super) fn new(remote: transports::Addr, noq_local_ip: Option<IpAddr>) -> Self {
+        Self {
+            remote,
+            noq_local_ip,
+        }
     }
 
     /// Returns the remote address of the network path.
@@ -1207,9 +1189,34 @@ impl TransportFourTuple {
         &self.remote
     }
 
-    /// Returns the local address of the network path.
-    pub(super) fn local(&self) -> Option<&transports::Addr> {
-        self.local.as_ref()
+    /// Returns the [`LocalTransportAddr`] for this network path.
+    // * For IP transports, it is the address of the local socket.
+    // * For relay transports, we never set the local_ip in the recv meta.
+    //   We take the relay URL of the remote address here instead.
+    // * For custom transports, the custom transport implementation can set a [`CustomAddr`]
+    //   which we convert back into here from the mapped address.
+    pub(super) fn local(
+        &self,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> LocalTransportAddr {
+        // TODO: Express this cleaner?
+        match &self.remote {
+            transports::Addr::Relay(relay_url, _public_key) => LocalTransportAddr::Relay {
+                url: relay_url.clone(),
+            },
+            transports::Addr::Ip(_) => LocalTransportAddr::Ip(self.noq_local_ip),
+            transports::Addr::Custom(_) => {
+                let addr = self.noq_local_ip.and_then(|ip| {
+                    match MultipathMappedAddr::from(SocketAddr::new(ip, 0)) {
+                        MultipathMappedAddr::Custom(custom_mapped_addr) => {
+                            custom_mapped_addrs.lookup(&custom_mapped_addr)
+                        }
+                        _ => None,
+                    }
+                });
+                LocalTransportAddr::Custom(addr)
+            }
+        }
     }
 
     /// Returns whether the remote of this tuple is an IP address.
@@ -1280,7 +1287,7 @@ fn update_qnt_candidates(conn: &noq::Connection, direct_addrs: &BTreeSet<SocketA
 
 fn send_datagram<'a>(
     sender: &'a mut TransportsSender,
-    network_path: TransportFourTuple,
+    addr: transports::Addr,
     owned_transmit: OwnedTransmit,
 ) -> impl Future<Output = n0_error::Result<()>> + 'a {
     std::future::poll_fn(move |cx| {
@@ -1290,14 +1297,10 @@ fn send_datagram<'a>(
             segment_size: owned_transmit.segment_size,
         };
 
-        // TODO: Add support for source address here.
+        // TODO: Add support for source address here?
         Pin::new(&mut *sender)
-            .poll_send(cx, &network_path.remote, None, &transmit)
-            .map(|res| {
-                res.with_context(|_| {
-                    format!("failed to send datagram to {:?}", network_path.remote)
-                })
-            })
+            .poll_send(cx, &addr, None, &transmit)
+            .map(|res| res.with_context(|_| format!("failed to send datagram to {:?}", addr)))
     })
 }
 
@@ -1415,7 +1418,7 @@ impl ConnectionState {
             && let Some(path) = conn.path(path_id)
         {
             let handle = path.weak_handle();
-            self.path_state.record_opened(handle, network_path.into());
+            self.path_state.record_opened(handle, network_path);
         }
     }
 
@@ -1501,7 +1504,7 @@ mod tests {
     fn v4(port: u16) -> TransportFourTuple {
         let remote =
             transports::Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)));
-        TransportFourTuple::from_remote(remote)
+        TransportFourTuple::new(remote, None)
     }
 
     fn v6(port: u16) -> TransportFourTuple {
@@ -1511,7 +1514,7 @@ mod tests {
             0,
             0,
         )));
-        TransportFourTuple::from_remote(remote)
+        TransportFourTuple::new(remote, None)
     }
 
     fn relay(port: u16) -> TransportFourTuple {
@@ -1519,7 +1522,7 @@ mod tests {
             .parse::<RelayUrl>()
             .unwrap();
         let remote = transports::Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap());
-        TransportFourTuple::from_remote(remote)
+        TransportFourTuple::new(remote, None)
     }
 
     fn psd(transport_type: TransportType, rtt_ms: u64) -> PathSelectionData {

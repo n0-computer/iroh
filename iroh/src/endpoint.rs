@@ -81,8 +81,8 @@ pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
     connection::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-        ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingLocalAddr,
-        IncomingZeroRtt, IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
+        ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingZeroRtt,
+        IncomingZeroRttConnection, LocalTransportAddr, OutgoingZeroRtt, OutgoingZeroRttConnection,
         RemoteEndpointIdError, RetryError, WeakConnectionHandle, ZeroRttStatus,
     },
     quic::{
@@ -3491,7 +3491,7 @@ mod tests {
                 if let PathEvent::Closed {
                     remote_addr,
                     last_stats,
-                    id: _,
+                    ..
                 } = event
                 {
                     stats.insert(remote_addr, *last_stats);
