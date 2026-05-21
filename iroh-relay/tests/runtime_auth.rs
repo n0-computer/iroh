@@ -1,10 +1,10 @@
 //! Runtime revocation of relay access via the [`AccessControl`] trait.
 //!
-//! Exercises a [`RestrictedServer`] that fronts a relay [`Server`] with a
-//! runtime-mutable token allow-list. The [`AccessControl`] implementation
-//! indexes connections by auth token (built from `on_connect`/`on_disconnect`),
-//! so revoking a token yields the connections to evict through
-//! [`Clients::disconnect`].
+//! These tests drive a [`RestrictedServer`]: a relay [`Server`] fronted by a
+//! runtime-mutable token allow-list. Its [`AccessControl`] implementation
+//! records the auth token of every admitted connection through
+//! `on_connect`/`on_disconnect`, so revoking a token yields the connections to
+//! evict through [`Clients::disconnect`].
 //!
 //! [`AccessControl`]: iroh_relay::server::AccessControl
 //! [`Clients::disconnect`]: iroh_relay::server::clients::Clients::disconnect
@@ -12,7 +12,7 @@
 #![cfg(feature = "server")]
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     net::Ipv4Addr,
     sync::{Arc, Mutex},
     time::Duration,
@@ -39,52 +39,56 @@ use rand::RngExt;
 /// Shared state behind [`TokenAccess`].
 #[derive(Debug, Default)]
 struct AccessState {
+    next_token_id: u64,
     /// Auth tokens currently permitted to connect.
-    allowed: HashSet<String>,
-    /// Index of connected connections, grouped by the auth token they used.
+    tokens: HashMap<String, u64>,
+    /// Auth token recorded for each connected connection.
     ///
     /// Built from `on_connect`/`on_disconnect`.
-    connections: HashMap<(EndpointId, ConnectionId), String>,
+    connections: HashMap<(EndpointId, ConnectionId), u64>,
 }
 
 /// An [`AccessControl`] with a runtime-mutable token allow-list.
 ///
-/// Admits a connection if its auth token is currently allowed, and indexes the
-/// connection under that token so a revoked token maps back to the connections
-/// that used it. `on_disconnect` prunes the index.
-#[derive(Debug)]
+/// Admits a connection if its auth token is currently allowed, and records the
+/// token each admitted connection used, so a revoked token maps back to the
+/// connections that must be evicted. `on_disconnect` prunes the index.
+#[derive(Debug, Default)]
 struct TokenAccess(Mutex<AccessState>);
 
 impl TokenAccess {
     fn new(allowed: impl IntoIterator<Item = &'static str>) -> Arc<Self> {
-        Arc::new(Self(Mutex::new(AccessState {
-            allowed: allowed.into_iter().map(String::from).collect(),
-            connections: HashMap::new(),
-        })))
+        let this = TokenAccess::default();
+        for token in allowed {
+            this.allow(token);
+        }
+        Arc::new(this)
     }
 
     /// Adds `token` to the allow-list.
     fn allow(&self, token: &str) {
-        self.0
-            .lock()
-            .expect("poisoned")
-            .allowed
-            .insert(token.into());
+        let mut state = self.0.lock().expect("poisoned");
+        if !state.tokens.contains_key(token) {
+            let id = state.next_token_id;
+            state.next_token_id += 1;
+            state.tokens.insert(token.to_string(), id);
+        }
     }
 
     /// Removes `token` from the allow-list and returns its indexed connections.
     fn revoke(&self, revoked_token: &str) -> Vec<(EndpointId, ConnectionId)> {
         let mut state = self.0.lock().expect("poisoned");
-        state.allowed.remove(revoked_token);
         let mut removed = vec![];
-        state.connections.retain(|id, token| {
-            if token == revoked_token {
-                removed.push(*id);
-                false
-            } else {
-                true
-            }
-        });
+        if let Some(revoked_id) = state.tokens.remove(revoked_token) {
+            state.connections.retain(|conn_id, token_id| {
+                if *token_id == revoked_id {
+                    removed.push(*conn_id);
+                    false
+                } else {
+                    true
+                }
+            });
+        }
         removed
     }
 }
@@ -93,9 +97,9 @@ impl AccessControl for TokenAccess {
     async fn on_connect(&self, request: &ClientRequest) -> Access {
         let mut state = self.0.lock().expect("poisoned");
         match request.auth_token() {
-            Some(token) if state.allowed.contains(token) => {
-                let id = (request.endpoint_id(), request.connection_id());
-                state.connections.insert(id, token.to_string());
+            Some(token) if let Some(token_id) = state.tokens.get(token).copied() => {
+                let conn_id = (request.endpoint_id(), request.connection_id());
+                state.connections.insert(conn_id, token_id);
                 Access::Allow
             }
             _ => Access::Deny,
@@ -161,55 +165,138 @@ impl RestrictedServer {
     }
 }
 
+/// A token that is not on the allow-list is rejected during the handshake.
 #[tokio::test]
 #[traced_test]
-async fn relay_runtime_revokes_disallowed_tokens() -> Result<()> {
+async fn unknown_token_is_denied() -> Result<()> {
+    let server = RestrictedServer::spawn(["token-a"]).await?;
+    assert_denied(connect(&server.relay_url(), "token-b").await);
+    Ok(())
+}
+
+/// A token added to the allow-list at runtime admits new connections.
+#[tokio::test]
+#[traced_test]
+async fn token_added_at_runtime_is_admitted() -> Result<()> {
     let server = RestrictedServer::spawn(["token-b"]).await?;
-    let relay_url = server.relay_url();
+    let url = server.relay_url();
 
-    // token-a is not allowed yet.
-    assert_denied(connect(&relay_url, "token-a").await);
+    // token-a is not on the initial allow-list.
+    assert_denied(connect(&url, "token-a").await);
 
-    // Allow token-a at runtime; three clients then connect, two on token-a.
+    // Adding it at runtime lets a new connection through.
     server.add_token("token-a");
-    let mut client_a = connect(&relay_url, "token-a").await?;
-    let mut client_b = connect(&relay_url, "token-b").await?;
-    let mut client_c = connect(&relay_url, "token-a").await?;
-    ping_round_trip(&mut client_a, [1u8; 8]).await?;
-    ping_round_trip(&mut client_b, [2u8; 8]).await?;
-    ping_round_trip(&mut client_c, [3u8; 8]).await?;
+    let mut client = connect(&url, "token-a").await?;
+    ping_round_trip(&mut client, [1u8; 8]).await?;
+
+    Ok(())
+}
+
+/// Revoking a token disconnects its connection and leaves others untouched.
+#[tokio::test]
+#[traced_test]
+async fn revoked_token_disconnects_its_connection() -> Result<()> {
+    let server = RestrictedServer::spawn(["token-a", "token-b"]).await?;
+    let url = server.relay_url();
+
+    let mut revoked = connect(&url, "token-a").await?;
+    let mut kept = connect(&url, "token-b").await?;
+    ping_round_trip(&mut revoked, [1u8; 8]).await?;
+    ping_round_trip(&mut kept, [2u8; 8]).await?;
+
+    // Revoking token-a evicts its connection; the token-b connection survives.
+    server.remove_token("token-a");
+    assert_disconnected(&mut revoked).await;
+    ping_round_trip(&mut kept, [3u8; 8]).await?;
+
+    Ok(())
+}
+
+/// Revoking a token disconnects every connection of a shared endpoint.
+#[tokio::test]
+#[traced_test]
+async fn revoked_token_disconnects_every_endpoint_connection() -> Result<()> {
+    let server = RestrictedServer::spawn(["token-a", "token-b"]).await?;
+    let url = server.relay_url();
+
+    // One endpoint opens two connections, both authenticating with token-a.
+    let shared = SecretKey::from_bytes(&rand::rng().random());
+    let mut conn1 = connect_as(&url, &shared, "token-a").await?;
+    ping_round_trip(&mut conn1, [1u8; 8]).await?;
+    let mut conn2 = connect_as(&url, &shared, "token-a").await?;
+    ping_round_trip(&mut conn2, [2u8; 8]).await?;
+
+    // A second endpoint connects with token-b.
+    let mut other = connect_as(&url, &shared, "token-b").await?;
+    ping_round_trip(&mut other, [3u8; 8]).await?;
     assert_eq!(server.connection_count(), 3);
 
-    // Revoke token-a: both connections that used it are disconnected.
+    // Revoking token-a disconnects both connections of the shared endpoint,
+    // told apart by their distinct connection ids.
     server.remove_token("token-a");
-    assert_disconnected(&mut client_a).await;
-    assert_disconnected(&mut client_c).await;
+    assert_disconnected(&mut conn1).await;
+    assert_disconnected(&mut conn2).await;
 
-    // The token-b client keeps working, and `on_disconnect` prunes the index
-    // down to that single remaining connection.
-    ping_round_trip(&mut client_b, [4u8; 8]).await?;
-    wait_for(Duration::from_secs(5), || server.connection_count() == 1).await;
-
-    // New connections honor the updated allow-list.
-    assert_denied(connect(&relay_url, "token-a").await);
-    let mut client_d = connect(&relay_url, "token-b").await?;
-    ping_round_trip(&mut client_d, [5u8; 8]).await?;
-    wait_for(Duration::from_secs(5), || server.connection_count() == 2).await;
-
-    // Dropping a client also prunes the index, via `on_disconnect`.
-    drop(client_d);
+    // The token-b endpoint keeps working, and the index is pruned to it alone.
+    ping_round_trip(&mut other, [4u8; 8]).await?;
     wait_for(Duration::from_secs(5), || server.connection_count() == 1).await;
 
     Ok(())
 }
 
-/// Connects a fresh relay client authenticating with `token`.
+/// Once revoked, a token can no longer be used to connect.
+#[tokio::test]
+#[traced_test]
+async fn revoked_token_cannot_reconnect() -> Result<()> {
+    let server = RestrictedServer::spawn(["token-a"]).await?;
+    let url = server.relay_url();
+
+    // The token works before it is revoked.
+    let mut client = connect(&url, "token-a").await?;
+    ping_round_trip(&mut client, [1u8; 8]).await?;
+
+    // After revocation it no longer admits connections.
+    server.remove_token("token-a");
+    assert_denied(connect(&url, "token-a").await);
+
+    Ok(())
+}
+
+/// A connection that closes on its own is pruned from the access index.
+#[tokio::test]
+#[traced_test]
+async fn disconnected_connections_are_pruned() -> Result<()> {
+    let server = RestrictedServer::spawn(["token-a"]).await?;
+    let url = server.relay_url();
+
+    let mut client = connect(&url, "token-a").await?;
+    ping_round_trip(&mut client, [1u8; 8]).await?;
+    assert_eq!(server.connection_count(), 1);
+
+    // Dropping the client closes the connection; `on_disconnect` then prunes
+    // the index, so a long-lived server does not accumulate stale entries.
+    drop(client);
+    wait_for(Duration::from_secs(5), || server.connection_count() == 0).await;
+
+    Ok(())
+}
+
+/// Connects a relay client for a fresh random endpoint, authenticating with `token`.
 async fn connect(relay_url: &RelayUrl, token: &str) -> Result<Client, ConnectError> {
+    let secret = SecretKey::from_bytes(&rand::rng().random());
+    connect_as(relay_url, &secret, token).await
+}
+
+/// Connects a relay client for `secret`'s endpoint, authenticating with `token`.
+async fn connect_as(
+    relay_url: &RelayUrl,
+    secret: &SecretKey,
+    token: &str,
+) -> Result<Client, ConnectError> {
     let tls = CaRootsConfig::default()
         .client_config(default_provider())
         .expect("valid client config");
-    let secret = SecretKey::from_bytes(&rand::rng().random());
-    ClientBuilder::new(relay_url.clone(), secret, DnsResolver::new())
+    ClientBuilder::new(relay_url.clone(), secret.clone(), DnsResolver::new())
         .tls_client_config(tls)
         .auth_token(token)
         .connect()
