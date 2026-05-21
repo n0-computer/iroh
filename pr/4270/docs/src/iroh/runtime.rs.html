@@ -39,7 +39,7 @@
 <a href=#39 id=39 data-nosnippet>39</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
 <a href=#40 id=40 data-nosnippet>40</a>        <span class="self">self</span>.abort();
 <a href=#41 id=41 data-nosnippet>41</a>        <span class="comment">// Waits for all tasks to stop (and thus drop all of their futures).
-<a href=#42 id=42 data-nosnippet>42</a>        // If the task tracker had already been closed and taks have all been cleaned up,
+<a href=#42 id=42 data-nosnippet>42</a>        // If the task tracker had already been closed and tasks have all been cleaned up,
 <a href=#43 id=43 data-nosnippet>43</a>        // this returns immediately.
 <a href=#44 id=44 data-nosnippet>44</a>        </span><span class="self">self</span>.tasks.wait().<span class="kw">await</span>;
 <a href=#45 id=45 data-nosnippet>45</a>    }
