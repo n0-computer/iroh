@@ -275,21 +275,10 @@ fn auth_token_from_request(request: &http::request::Parts) -> Option<String> {
 
 /// Controls which endpoints may use the relay and observes their lifecycle.
 ///
-/// Implement this trait to gate access to a relay server and to keep an
-/// external index of connected connections up to date. It is the relay
-/// equivalent of a connection handler: [`Self::on_connect`] is invoked for
-/// every incoming connection and decides whether to admit it, and
-/// [`Self::on_disconnect`] is invoked once that connection has ended.
+/// Implement this trait to gate access to a relay server.
 ///
 /// Both callbacks carry the connection's [`ConnectionId`], so an implementation
-/// can index connections precisely even when one endpoint holds several. As a
-/// consequence the two callbacks need no ordering guarantees: a late
-/// `on_disconnect` for an old connection can never be confused with the
-/// `on_connect` of a newer one.
-///
-/// This trait has ergonomic `impl Future` methods; [`DynAccessControl`] is the
-/// dyn-compatible counterpart used for storage, for example in
-/// [`RelayConfig::access`].
+/// can index connections precisely even when one endpoint holds several.
 pub trait AccessControl: std::fmt::Debug + Send + Sync + 'static {
     /// Decides whether a connecting client is admitted.
     ///

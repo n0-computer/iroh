@@ -203,8 +203,6 @@ impl From<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
 }
 
 /// An [`AccessControl`] admitting only an allowlist of endpoints.
-///
-/// [`AccessControl`]: iroh_relay::server::AccessControl
 #[derive(Debug)]
 struct AllowlistAccess(Vec<EndpointId>);
 
@@ -219,8 +217,6 @@ impl AccessControl for AllowlistAccess {
 }
 
 /// An [`AccessControl`] admitting everyone except a denylist of endpoints.
-///
-/// [`AccessControl`]: iroh_relay::server::AccessControl
 #[derive(Debug)]
 struct DenylistAccess(Vec<EndpointId>);
 
@@ -235,8 +231,6 @@ impl AccessControl for DenylistAccess {
 }
 
 /// An [`AccessControl`] that delegates the decision to an HTTP endpoint.
-///
-/// [`AccessControl`]: iroh_relay::server::AccessControl
 #[derive(Debug)]
 struct HttpAccess {
     client: reqwest::Client,
