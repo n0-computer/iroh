@@ -81,8 +81,8 @@
 <a href=#81 id=81 data-nosnippet>81</a><span class="kw">pub use </span><span class="self">self</span>::{
 <a href=#82 id=82 data-nosnippet>82</a>    connection::{
 <a href=#83 id=83 data-nosnippet>83</a>        Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-<a href=#84 id=84 data-nosnippet>84</a>        ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingLocalAddr,
-<a href=#85 id=85 data-nosnippet>85</a>        IncomingZeroRtt, IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
+<a href=#84 id=84 data-nosnippet>84</a>        ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingZeroRtt,
+<a href=#85 id=85 data-nosnippet>85</a>        IncomingZeroRttConnection, LocalTransportAddr, OutgoingZeroRtt, OutgoingZeroRttConnection,
 <a href=#86 id=86 data-nosnippet>86</a>        RemoteEndpointIdError, RetryError, WeakConnectionHandle, ZeroRttStatus,
 <a href=#87 id=87 data-nosnippet>87</a>    },
 <a href=#88 id=88 data-nosnippet>88</a>    quic::{
@@ -3492,7 +3492,7 @@
 <a href=#3492 id=3492 data-nosnippet>3492</a>                <span class="kw">if let </span>PathEvent::Closed {
 <a href=#3493 id=3493 data-nosnippet>3493</a>                    remote_addr,
 <a href=#3494 id=3494 data-nosnippet>3494</a>                    last_stats,
-<a href=#3495 id=3495 data-nosnippet>3495</a>                    id: <span class="kw">_</span>,
+<a href=#3495 id=3495 data-nosnippet>3495</a>                    ..
 <a href=#3496 id=3496 data-nosnippet>3496</a>                } = event
 <a href=#3497 id=3497 data-nosnippet>3497</a>                {
 <a href=#3498 id=3498 data-nosnippet>3498</a>                    stats.insert(remote_addr, <span class="kw-2">*</span>last_stats);

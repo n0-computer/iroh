@@ -92,10 +92,10 @@
 <a href=#92 id=92 data-nosnippet>92</a>    }
 <a href=#93 id=93 data-nosnippet>93</a>}
 <a href=#94 id=94 data-nosnippet>94</a>
-<a href=#95 id=95 data-nosnippet>95</a><span class="doccomment">/// The local address that received an incoming connection.
+<a href=#95 id=95 data-nosnippet>95</a><span class="doccomment">/// The local address of a network path.
 <a href=#96 id=96 data-nosnippet>96</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 <a href=#97 id=97 data-nosnippet>97</a>#[non_exhaustive]
-<a href=#98 id=98 data-nosnippet>98</a></span><span class="kw">pub enum </span>IncomingLocalAddr {
+<a href=#98 id=98 data-nosnippet>98</a></span><span class="kw">pub enum </span>LocalTransportAddr {
 <a href=#99 id=99 data-nosnippet>99</a>    <span class="doccomment">/// The local IP, if the OS surfaced it.
 <a href=#100 id=100 data-nosnippet>100</a>    </span>Ip(<span class="prelude-ty">Option</span>&lt;IpAddr&gt;),
 <a href=#101 id=101 data-nosnippet>101</a>    <span class="doccomment">/// The relay this connection arrived through.
@@ -208,16 +208,16 @@
 <a href=#208 id=208 data-nosnippet>208</a>    }
 <a href=#209 id=209 data-nosnippet>209</a>
 <a href=#210 id=210 data-nosnippet>210</a>    <span class="doccomment">/// Returns the local address that received this incoming connection.
-<a href=#211 id=211 data-nosnippet>211</a>    </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; IncomingLocalAddr {
+<a href=#211 id=211 data-nosnippet>211</a>    </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; LocalTransportAddr {
 <a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">match </span><span class="self">self</span>.ep.to_transport_addr(<span class="self">self</span>.inner.remote_address()) {
-<a href=#213 id=213 data-nosnippet>213</a>            transports::Addr::Ip(<span class="kw">_</span>) =&gt; IncomingLocalAddr::Ip(<span class="self">self</span>.inner.local_ip()),
-<a href=#214 id=214 data-nosnippet>214</a>            transports::Addr::Relay(url, <span class="kw">_</span>) =&gt; IncomingLocalAddr::Relay { url },
+<a href=#213 id=213 data-nosnippet>213</a>            transports::Addr::Ip(<span class="kw">_</span>) =&gt; LocalTransportAddr::Ip(<span class="self">self</span>.inner.local_ip()),
+<a href=#214 id=214 data-nosnippet>214</a>            transports::Addr::Relay(url, <span class="kw">_</span>) =&gt; LocalTransportAddr::Relay { url },
 <a href=#215 id=215 data-nosnippet>215</a>            transports::Addr::Custom(<span class="kw">_</span>) =&gt; {
 <a href=#216 id=216 data-nosnippet>216</a>                <span class="kw">let </span>local = <span class="self">self
 <a href=#217 id=217 data-nosnippet>217</a>                    </span>.inner
 <a href=#218 id=218 data-nosnippet>218</a>                    .local_ip()
 <a href=#219 id=219 data-nosnippet>219</a>                    .and_then(|ip| <span class="self">self</span>.ep.lookup_custom_addr(SocketAddr::new(ip, <span class="number">0</span>)));
-<a href=#220 id=220 data-nosnippet>220</a>                IncomingLocalAddr::Custom(local)
+<a href=#220 id=220 data-nosnippet>220</a>                LocalTransportAddr::Custom(local)
 <a href=#221 id=221 data-nosnippet>221</a>            }
 <a href=#222 id=222 data-nosnippet>222</a>        }
 <a href=#223 id=223 data-nosnippet>223</a>    }
