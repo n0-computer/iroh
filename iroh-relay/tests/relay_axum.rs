@@ -199,7 +199,7 @@ async fn handle_relay_websocket(
     trace!("verified authorization");
 
     let stream = RelayedStream::new(adapter, state.key_cache.clone());
-    let config = Config::new(&request, stream, state.access.clone());
+    let config = Config::new(&request, stream);
     state.clients.register(config, state.metrics.clone());
     Ok(())
 }

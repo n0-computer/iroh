@@ -893,7 +893,7 @@ impl Inner {
         };
 
         trace!("accept: build client conn");
-        let client_conn_builder = Config::new(&request, io, self.access.clone());
+        let client_conn_builder = Config::new(&request, io);
         trace!(endpoint_id = %request.endpoint_id().fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
@@ -929,7 +929,7 @@ impl RelayService {
         Self(Arc::new(Inner {
             handlers,
             headers,
-            clients: Clients::default(),
+            clients: Clients::with_access_control(access.clone()),
             rate_limit,
             key_cache,
             access,

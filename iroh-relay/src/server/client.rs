@@ -26,7 +26,7 @@ use crate::{
         streams::BytesStreamSink,
     },
     server::{
-        ClientRequest, ConnectionId, DynAccessControl,
+        ClientRequest, ConnectionId,
         clients::Clients,
         metrics::Metrics,
         streams::{RecvError as RelayRecvError, RelayedStream, SendError as RelaySendError},
@@ -60,19 +60,13 @@ pub struct Config<S> {
     pub channel_capacity: usize,
     /// Protocol version negotiated for this client
     pub protocol_version: ProtocolVersion,
-    /// Access control, notified via `on_disconnect` when this connection ends.
-    pub access: Arc<dyn DynAccessControl>,
 }
 
 impl<S> Config<S> {
     /// Creates a new config with sensible default values for `write_timeout` and `channel_capacity`.
     ///
     /// The endpoint and connection ids are taken from `request`.
-    pub fn new(
-        request: &ClientRequest,
-        stream: RelayedStream<S>,
-        access: Arc<dyn DynAccessControl>,
-    ) -> Self {
+    pub fn new(request: &ClientRequest, stream: RelayedStream<S>) -> Self {
         Self {
             endpoint_id: request.endpoint_id(),
             connection_id: request.connection_id(),
@@ -80,7 +74,6 @@ impl<S> Config<S> {
             protocol_version: request.protocol_version(),
             write_timeout: SERVER_WRITE_TIMEOUT,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
-            access,
         }
     }
 }
@@ -122,7 +115,6 @@ impl Client {
             write_timeout,
             channel_capacity,
             protocol_version,
-            access,
         } = config;
 
         let (packet_send_queue_s, packet_send_queue_r) = mpsc::channel(channel_capacity);
@@ -140,7 +132,6 @@ impl Client {
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
             metrics,
-            access,
         };
 
         // start io loop
@@ -307,8 +298,6 @@ struct Actor<S> {
     client_counter: ClientCounter,
     ping_tracker: PingTracker,
     metrics: Arc<Metrics>,
-    /// Access control, notified via `on_disconnect` when this connection ends.
-    access: Arc<dyn DynAccessControl>,
 }
 
 impl<S> Actor<S>
@@ -332,10 +321,6 @@ where
             }
         }
 
-        // Notify access control before unregistering: `unregister` may drop this
-        // actor's own `Client`, which aborts the task at the next await point.
-        self.access
-            .on_disconnect(self.endpoint_id, self.connection_id);
         self.clients
             .unregister(self.connection_id, self.endpoint_id, &self.metrics);
         self.metrics.disconnects.inc();
@@ -613,7 +598,6 @@ mod tests {
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
             metrics,
-            access: Arc::new(crate::server::AllowAll),
         };
 
         let done = CancellationToken::new();
@@ -690,14 +674,9 @@ mod tests {
         key: EndpointId,
         protocol_version: ProtocolVersion,
     ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
-        use crate::server::AllowAll;
         let (server, client) = tokio::io::duplex(1024);
         let request = ClientRequest::new(key, protocol_version, None);
-        let mut config = Config::new(
-            &request,
-            ServerRelayedStream::test(server),
-            Arc::new(AllowAll),
-        );
+        let mut config = Config::new(&request, ServerRelayedStream::test(server));
         config.write_timeout = Duration::from_secs(1);
         config.channel_capacity = 10;
         (config, Conn::test(client, protocol_version))

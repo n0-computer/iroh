@@ -18,11 +18,11 @@ use crate::{
         relay::{Datagrams, Status},
         streams::BytesStreamSink,
     },
-    server::{client::SendError, metrics::Metrics},
+    server::{DynAccessControl, client::SendError, metrics::Metrics},
 };
 
 /// Manages the connections to all currently connected clients.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, Default)]
 /// Registry of connected relay clients.
 ///
 /// This type manages the collection of active client connections and
@@ -35,6 +35,8 @@ struct Inner {
     clients: DashMap<EndpointId, ClientState>,
     /// Map of which client has sent where
     sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
+    /// Access control which we inform about closed connections.
+    access: Option<Arc<dyn DynAccessControl>>,
 }
 
 #[derive(Debug)]
@@ -55,6 +57,17 @@ impl ClientState {
 }
 
 impl Clients {
+    /// Creates a new [`Clients`] map, informing access control about closed connections.
+    ///
+    /// The `access_control` is informed about closed connections. Note that [`Self::register`] does
+    /// not validate access, it is assumed that the caller already validated access before calling `register`.
+    pub fn with_access_control(access: Arc<dyn DynAccessControl>) -> Self {
+        Self(Arc::new(Inner {
+            access: Some(access),
+            clients: Default::default(),
+            sent_to: Default::default(),
+        }))
+    }
     /// Shuts down all connected clients.
     ///
     /// This method gracefully disconnects all active client connections managed by
@@ -114,6 +127,10 @@ impl Clients {
             endpoint_id = %endpoint_id.fmt_short(),
             %connection_id, "unregistering client"
         );
+
+        if let Some(access) = self.0.access.as_ref() {
+            access.on_disconnect(endpoint_id, connection_id);
+        }
 
         let mut notify_peers = None;
 
@@ -258,7 +275,10 @@ mod tests {
         client::conn::Conn,
         http::ProtocolVersion,
         protos::{common::FrameType, relay::RelayToClientMsg, streams::WsBytesFramed},
-        server::streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
+        server::{
+            ClientRequest,
+            streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
+        },
     };
 
     async fn recv_frame<
@@ -287,15 +307,10 @@ mod tests {
     fn test_client_builder(
         key: EndpointId,
     ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
-        use crate::server::{AllowAll, ClientRequest};
         let (server, client) = tokio::io::duplex(1024);
         let protocol_version = ProtocolVersion::default();
         let request = ClientRequest::new(key, protocol_version, None);
-        let mut config = Config::new(
-            &request,
-            ServerRelayedStream::test(server),
-            Arc::new(AllowAll),
-        );
+        let mut config = Config::new(&request, ServerRelayedStream::test(server));
         config.write_timeout = Duration::from_secs(1);
         config.channel_capacity = 10;
         (config, Conn::test(client, protocol_version))
