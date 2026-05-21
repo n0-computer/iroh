@@ -17,7 +17,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
-    future::poll_fn,
     io,
     net::{IpAddr, SocketAddr},
     sync::{
@@ -1603,9 +1602,7 @@ impl Actor {
                     self.sock.metrics.socket.actor_link_change.inc();
                     self.handle_network_change(is_major);
                 }
-                remote_id = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
-                    trace!(%remote_id, "cleaned up RemoteStateActor");
-                }
+                _remote_id = self.remote_map.cleanup() => {},
                 _ = &mut notify_quic_network_change => {
                     let has_network = self.has_usable_network();
                     let Some(pending) = self.call_notify_quic_network_change.as_mut() else {
@@ -1775,16 +1772,10 @@ impl Actor {
                 self.handle_relay_map_change();
             }
             ActorMessage::ResolveRemote(addr, tx) => {
-                // Swallowing the error is fine here; if a send on the channel to the
-                // remote state actor ever fails (which it shouldn't), `tx` will be
-                // dropped and thus the failure will be propagated to the caller.
-                self.remote_map.resolve_remote(addr, tx).await.ok();
+                self.remote_map.resolve_remote(addr, tx).await;
             }
             ActorMessage::AddConnection(remote, conn, tx) => {
-                // Swallowing the error is fine here; if a send on the channel to the
-                // remote state actor ever fails (which it shouldn't), `tx` will be
-                // dropped and thus the failure will be propagated to the caller.
-                self.remote_map.add_connection(remote, conn, tx).await.ok();
+                self.remote_map.add_connection(remote, conn, tx).await;
             }
             ActorMessage::DirectAddrRefresh => {
                 #[cfg(not(wasm_browser))]
