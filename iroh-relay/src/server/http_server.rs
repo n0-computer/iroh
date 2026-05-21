@@ -945,7 +945,7 @@ impl RelayService {
     /// Returns a reference to the registry of currently connected clients.
     ///
     /// The returned [`Clients`] handle can be used at runtime to disconnect a
-    /// connected endpoint via [`Clients::remove`].
+    /// connected endpoint via [`Clients::disconnect`].
     pub fn clients(&self) -> &Clients {
         &self.0.clients
     }
