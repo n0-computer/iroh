@@ -3914,7 +3914,7 @@
 <a href=#3914 id=3914 data-nosnippet>3914</a>
 <a href=#3915 id=3915 data-nosnippet>3915</a>        <span class="kw">impl </span>iroh_relay::server::AccessControl <span class="kw">for </span>TokenAccess {
 <a href=#3916 id=3916 data-nosnippet>3916</a>            <span class="kw">async fn </span>on_connect(<span class="kw-2">&amp;</span><span class="self">self</span>, request: <span class="kw-2">&amp;</span>iroh_relay::server::ClientRequest) -&gt; Access {
-<a href=#3917 id=3917 data-nosnippet>3917</a>                <span class="kw">if </span>request.auth_token() == <span class="prelude-val">Some</span>(<span class="self">self</span>.<span class="number">0</span>) {
+<a href=#3917 id=3917 data-nosnippet>3917</a>                <span class="kw">if </span>request.auth_token().as_deref() == <span class="prelude-val">Some</span>(<span class="self">self</span>.<span class="number">0</span>) {
 <a href=#3918 id=3918 data-nosnippet>3918</a>                    Access::Allow
 <a href=#3919 id=3919 data-nosnippet>3919</a>                } <span class="kw">else </span>{
 <a href=#3920 id=3920 data-nosnippet>3920</a>                    Access::Deny { reason: <span class="prelude-val">None </span>}
