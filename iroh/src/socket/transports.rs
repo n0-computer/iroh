@@ -741,7 +741,7 @@ impl LocalTransportAddr {
 
     /// Converts a local address from noq into a [`LocalTransportAddr`], via the custom mapped addrs.
     ///
-    /// See [`Self::from_noq_local_ip_with_endpoint_ref`] for details.
+    /// See [`Self::from_noq_local_ip`] for details.
     pub(super) fn from_noq_local_ip_with_custom_addr_map(
         noq_local_ip: Option<IpAddr>,
         remote_addr: &Addr,
