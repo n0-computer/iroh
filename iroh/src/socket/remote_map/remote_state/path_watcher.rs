@@ -466,9 +466,6 @@ impl<'conn> Path<'conn> {
     }
 
     /// Returns the path's local address, if known.
-    ///
-    /// Note that for IP paths, the port of the socket address carries
-    /// no meaning and will always be set to 0.
     pub fn local_addr(&self) -> &LocalTransportAddr {
         &self.data.local_addr
     }
