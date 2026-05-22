@@ -20,6 +20,14 @@ pub use self::remote_state::{
     Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream, RemoteInfo,
     TransportAddrInfo, TransportAddrUsage,
 };
+#[cfg(feature = "unstable-custom-transports")]
+pub use self::remote_state::{
+    PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
+};
+#[cfg(not(feature = "unstable-custom-transports"))]
+pub(crate) use self::remote_state::{
+    PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
+};
 use super::{
     DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{
@@ -29,10 +37,7 @@ use super::{
 };
 use crate::{
     address_lookup::{self, AddressLookupFailed},
-    socket::{
-        concurrent_read_map::{ConcurrentReadMap, ReadOnlyMap},
-        transports::TransportBiasMap,
-    },
+    socket::concurrent_read_map::{ConcurrentReadMap, ReadOnlyMap},
 };
 
 mod remote_state;
@@ -140,8 +145,8 @@ struct Tasks {
     tasks: JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
     /// The waker that notifies `poll_cleanup` when the join set is populated with another task.
     poll_cleanup_waker: Option<Waker>,
-    /// Biases for different transport kinds.
-    transport_bias: TransportBiasMap,
+    /// The path selector used by all [`RemoteStateActor`]s spawned by this map.
+    path_selector: Arc<dyn PathSelector>,
     /// The tracing span for this endpoint, to be used as parent span for `RemoteStateActor` tasks.
     span: Span,
 }
@@ -153,7 +158,7 @@ impl RemoteMap {
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         address_lookup: address_lookup::AddressLookupServices,
         shutdown_token: CancellationToken,
-        transport_bias: TransportBiasMap,
+        path_selector: Arc<dyn PathSelector>,
         span: Span,
     ) -> Self {
         Self {
@@ -166,7 +171,7 @@ impl RemoteMap {
                 shutdown_token,
                 tasks: Default::default(),
                 poll_cleanup_waker: None,
-                transport_bias,
+                path_selector,
                 span,
             },
         }
@@ -329,7 +334,7 @@ impl Tasks {
             mapped_addrs.custom_addrs.clone(),
             self.metrics.clone(),
             self.address_lookup.clone(),
-            self.transport_bias.clone(),
+            self.path_selector.clone(),
         )
         .start(
             initial_msgs,
@@ -383,6 +388,7 @@ mod tests {
     use tracing::Span;
 
     use super::*;
+    use crate::socket::biased_rtt_path_selector::BiasedRttPathSelector;
 
     fn make_remote_map() -> (RemoteMap, CancellationToken, impl Sized) {
         let metrics = Arc::new(SocketMetrics::default());
@@ -394,7 +400,7 @@ mod tests {
             local_direct_addrs,
             address_lookup::AddressLookupServices::default(),
             shutdown_token.clone(),
-            TransportBiasMap::default(),
+            Arc::new(BiasedRttPathSelector::default()),
             Span::none(),
         );
         let guards = (watchable, shutdown_token.clone().drop_guard());
