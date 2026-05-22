@@ -208,14 +208,12 @@ async fn nat_easy_x_hard() -> Result {
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing (but did in iroh 0.35)"]
 async fn nat_hard_x_none() -> Result {
     run_nat_holepunch(NatKind::Hard, NatKind::None).await
 }
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing (but did in iroh 0.35)"]
 async fn nat_hard_x_easiest() -> Result {
     run_nat_holepunch(NatKind::Hard, NatKind::Easiest).await
 }

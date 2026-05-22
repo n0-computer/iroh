@@ -331,7 +331,7 @@ mod tests {
         Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
         endpoint::{Builder, Connection, presets, transports::AddrKind},
         protocol::{AcceptError, ProtocolHandler, Router},
-        socket::transports::TransportBias,
+        socket::biased_rtt_path_selector::{BiasedRttPathSelector, TransportBias},
         test_utils::run_relay_server,
     };
 
@@ -391,7 +391,10 @@ mod tests {
             .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
             .add_custom_transport(transport);
         if let Some(bias) = config.custom_bias {
-            builder = builder.transport_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias);
+            builder = builder.path_selector(Arc::new(
+                BiasedRttPathSelector::default()
+                    .with_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias),
+            ));
         }
         if !config.keep_ip {
             builder = builder.clear_ip_transports();
