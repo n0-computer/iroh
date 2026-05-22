@@ -23,10 +23,7 @@ use crate::{
     endpoint::RelayStatus,
     metrics::EndpointMetrics,
     net_report::Report,
-    socket::{
-        EndpointInner,
-        mapped_addrs::{AddrMap, CustomMappedAddr},
-    },
+    socket::mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr},
 };
 
 pub(crate) mod custom;
@@ -697,7 +694,7 @@ impl Addr {
 }
 
 /// The local address of a network path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum LocalTransportAddr {
     /// The local IP, if the OS surfaced it.
@@ -711,10 +708,11 @@ pub enum LocalTransportAddr {
 impl LocalTransportAddr {
     /// Converts a local address from noq into a [`LocalTransportAddr`], via an endpoint reference.
     ///
+
+    /// Converts a local address from noq into a [`LocalTransportAddr`].
+    ///
     /// This also needs the `remote_addr`, because currently the meaning of the local_ip as returned
     /// from noq depends on the kind of network path, which we can gather from the remote address.
-    ///
-    /// We also need a reference to the endpoint to access the address map.
     ///
     /// The meaning of the local IP is a bit particular:
     ///
@@ -724,22 +722,7 @@ impl LocalTransportAddr {
     /// * For custom transports, the custom transport implementation can set a [`CustomAddr`]
     ///   through [`RecvInfo`], which is passed as a mapped address to noq. So we convert it
     ///   back into the [`CustomAddr`] here.
-    pub(crate) fn from_noq_local_ip(
-        noq_local_ip: Option<IpAddr>,
-        remote_addr: &Addr,
-        ep: &EndpointInner,
-    ) -> Self {
-        Self::from_noq_local_ip_with_custom_addr_map(
-            noq_local_ip,
-            remote_addr,
-            &ep.mapped_addrs.custom_addrs,
-        )
-    }
-
-    /// Converts a local address from noq into a [`LocalTransportAddr`], via the custom mapped addrs.
-    ///
-    /// See [`Self::from_noq_local_ip`] for details.
-    pub(super) fn from_noq_local_ip_with_custom_addr_map(
+    pub(super) fn from_noq_local_ip(
         noq_local_ip: Option<IpAddr>,
         remote_addr: &Addr,
         custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
@@ -759,6 +742,20 @@ impl LocalTransportAddr {
                     .and_then(|custom_mapped_addr| custom_mapped_addrs.lookup(&custom_mapped_addr));
                 LocalTransportAddr::Custom(addr)
             }
+        }
+    }
+
+    /// Converts this [`LocalTransportAddr`] into a QUIC-mapped [`IpAddr`] to be passed to noq, if any.
+    pub(super) fn to_noq_local_ip(
+        &self,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> Option<IpAddr> {
+        match self {
+            LocalTransportAddr::Ip(ip_addr) => *ip_addr,
+            LocalTransportAddr::Relay(_url) => None,
+            LocalTransportAddr::Custom(custom_addr) => custom_addr
+                .as_ref()
+                .map(|addr| custom_mapped_addrs.get(addr).private_socket_addr().ip()),
         }
     }
 }

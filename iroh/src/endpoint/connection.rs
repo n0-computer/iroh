@@ -194,9 +194,9 @@ impl Incoming {
 
     /// Returns the local address that received this incoming connection.
     pub fn local_addr(&self) -> LocalTransportAddr {
-        let remote_addr = self.ep.to_transport_addr(self.inner.remote_address());
-        let noq_local_ip = self.inner.local_ip();
-        LocalTransportAddr::from_noq_local_ip(noq_local_ip, &remote_addr, &self.ep.inner)
+        let remote_addr = self.inner.remote_address();
+        let local_ip = self.inner.local_ip();
+        self.ep.inner.to_local_transport_addr(local_ip, remote_addr)
     }
 
     /// Returns the remote address of this incoming connection.

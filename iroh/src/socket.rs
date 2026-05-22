@@ -68,7 +68,9 @@ use crate::net_report::QuicConfig;
 use crate::{
     address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    endpoint::{RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig},
+    endpoint::{
+        LocalTransportAddr, RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig,
+    },
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
     portmapper,
@@ -531,6 +533,19 @@ impl Socket {
             &self.mapped_addrs.custom_addrs,
         )
         .unwrap_or(transports::Addr::Ip(addr))
+    }
+
+    pub(crate) fn to_local_transport_addr(
+        &self,
+        local_ip: Option<IpAddr>,
+        remote_addr: SocketAddr,
+    ) -> LocalTransportAddr {
+        let remote_addr = self.to_transport_addr(remote_addr);
+        LocalTransportAddr::from_noq_local_ip(
+            local_ip,
+            &remote_addr,
+            &self.mapped_addrs.custom_addrs,
+        )
     }
 
     /// Reference to the internal Address Lookup
