@@ -194,9 +194,9 @@
 <a href=#194 id=194 data-nosnippet>194</a>
 <a href=#195 id=195 data-nosnippet>195</a>    <span class="doccomment">/// Returns the local address that received this incoming connection.
 <a href=#196 id=196 data-nosnippet>196</a>    </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; LocalTransportAddr {
-<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>remote_addr = <span class="self">self</span>.ep.to_transport_addr(<span class="self">self</span>.inner.remote_address());
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>noq_local_ip = <span class="self">self</span>.inner.local_ip();
-<a href=#199 id=199 data-nosnippet>199</a>        LocalTransportAddr::from_noq_local_ip(noq_local_ip, <span class="kw-2">&amp;</span>remote_addr, <span class="kw-2">&amp;</span><span class="self">self</span>.ep.inner)
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>remote_addr = <span class="self">self</span>.inner.remote_address();
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>local_ip = <span class="self">self</span>.inner.local_ip();
+<a href=#199 id=199 data-nosnippet>199</a>        <span class="self">self</span>.ep.inner.to_local_transport_addr(local_ip, remote_addr)
 <a href=#200 id=200 data-nosnippet>200</a>    }
 <a href=#201 id=201 data-nosnippet>201</a>
 <a href=#202 id=202 data-nosnippet>202</a>    <span class="doccomment">/// Returns the remote address of this incoming connection.
