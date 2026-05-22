@@ -1543,10 +1543,10 @@ impl PathSelection {
         Self { selection: None }
     }
 
-    /// Adds a path to the selection.
+    /// Sets the path as the selected path.
     ///
-    /// Today the selection holds at most one path: the first call wins, subsequent
-    /// calls log a warning and are ignored.
+    /// This discards any previously selected path and sets this one as a single selected
+    /// path.
     pub fn set(&mut self, path: &PathSelectionData<'_>) {
         if self.selection.is_some() {
             tracing::warn!(
