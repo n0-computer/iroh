@@ -249,7 +249,7 @@
 <a href=#249 id=249 data-nosnippet>249</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
 <a href=#250 id=250 data-nosnippet>250</a>        <span class="macro">assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
 <a href=#251 id=251 data-nosnippet>251</a>        <span class="macro">assert!</span>(bufs.len() &lt;= noq_udp::BATCH_SIZE, <span class="string">"too many buffers"</span>);
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">if </span>sock.is_closing() {
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">if </span>sock.is_closed() {
 <a href=#253 id=253 data-nosnippet>253</a>            <span class="kw">return </span>Poll::Pending;
 <a href=#254 id=254 data-nosnippet>254</a>        }
 <a href=#255 id=255 data-nosnippet>255</a>
