@@ -29,7 +29,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use iroh_base::{CustomAddr, TransportAddr};
+use iroh_base::TransportAddr;
 use n0_future::{StreamExt, time::Duration};
 use noq::WeakPathHandle;
 use noq_proto::PathId;
@@ -42,13 +42,7 @@ use tokio_stream::{
 use tracing::warn;
 
 use super::TransportFourTuple;
-use crate::{
-    endpoint::PathStats,
-    socket::{
-        mapped_addrs::{AddrMap, CustomMappedAddr},
-        transports::LocalTransportAddr,
-    },
-};
+use crate::{endpoint::PathStats, socket::transports::LocalTransportAddr};
 
 /// Per-connection broadcast channel capacity for path events.
 const BROADCAST_CAPACITY: usize = 8;
@@ -136,7 +130,6 @@ struct State {
 struct Shared {
     state: Mutex<State>,
     notify: Notify,
-    custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
 }
 
 /// The writer-side handle for a connection's path state.
@@ -157,14 +150,11 @@ impl PathStateSender {
     ///
     /// Gets passed a clone of the custom address map, so that we can convert local addresses
     /// to the public [`LocalTransportAddr`] exposed to users.
-    pub(super) fn new(
-        custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
-    ) -> (Self, PathStateReceiver) {
+    pub(super) fn new() -> (Self, PathStateReceiver) {
         let (events, _) = broadcast::channel(BROADCAST_CAPACITY);
         let shared = Arc::new(Shared {
             state: Default::default(),
             notify: Notify::new(),
-            custom_mapped_addrs,
         });
         let receiver = PathStateReceiver {
             shared: shared.clone(),
@@ -178,7 +168,7 @@ impl PathStateSender {
     pub(super) fn record_opened(&self, handle: WeakPathHandle, network_path: TransportFourTuple) {
         let id = handle.id();
         let remote_addr: TransportAddr = network_path.remote().clone().into();
-        let local_addr = network_path.local(&self.shared.custom_mapped_addrs);
+        let local_addr = network_path.local().clone();
         {
             let mut state = self.shared.state.lock().expect("poisoned");
             let entry = PathData {
@@ -227,7 +217,7 @@ impl PathStateSender {
     /// Updates the selected transmission path.
     pub(super) fn record_selected(&self, network_path: &TransportFourTuple) {
         let remote_addr: TransportAddr = network_path.remote().clone().into();
-        let local_addr = network_path.local(&self.shared.custom_mapped_addrs);
+        let local_addr = network_path.local().clone();
         let event = {
             let mut state = self.shared.state.lock().expect("poisoned");
             let selected_path_id = state
@@ -239,8 +229,8 @@ impl PathStateSender {
                 state.selected = selected_path_id;
                 selected_path_id.map(|path_id| PathEvent::Selected {
                     id: path_id,
-                    remote_addr: TransportAddr::from(network_path.remote.clone()),
-                    local_addr: network_path.local(&self.shared.custom_mapped_addrs),
+                    remote_addr: remote_addr.clone(),
+                    local_addr: local_addr.clone(),
                 })
             } else {
                 None

@@ -25,7 +25,7 @@ use crate::{
     net_report::Report,
     socket::{
         EndpointInner,
-        mapped_addrs::{AddrMap, CustomMappedAddr},
+        mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr},
     },
 };
 
@@ -697,7 +697,7 @@ impl Addr {
 }
 
 /// The local address of a network path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum LocalTransportAddr {
     /// The local IP, if the OS surfaced it.
@@ -762,6 +762,20 @@ impl LocalTransportAddr {
                     .and_then(|custom_mapped_addr| custom_mapped_addrs.lookup(&custom_mapped_addr));
                 LocalTransportAddr::Custom(addr)
             }
+        }
+    }
+
+    /// Converts this [`LocalTransportAddr`] back into an IpAddr to be passed to noq, if any.
+    pub(super) fn to_noq_local_ip(
+        &self,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> Option<IpAddr> {
+        match self {
+            LocalTransportAddr::Ip(ip_addr) => *ip_addr,
+            LocalTransportAddr::Relay { url: _ } => None,
+            LocalTransportAddr::Custom(custom_addr) => custom_addr
+                .as_ref()
+                .map(|addr| custom_mapped_addrs.get(addr).private_socket_addr().ip()),
         }
     }
 }
