@@ -348,6 +348,60 @@ pub enum Access {
     Deny,
 }
 
+/// Reports a connection's disconnect to [`AccessControl`] when dropped.
+///
+/// A guard is created the moment [`AccessControl::on_connect`] admits a
+/// connection, and is then held for the connection's entire lifetime. Dropping
+/// it - whether the connection closed cleanly, hit an error, or setup returned
+/// early - calls [`AccessControl::on_disconnect`] exactly once.
+///
+/// Threading the guard through connection setup and into the connection actor
+/// makes it impossible to admit a connection without eventually reporting its
+/// disconnect, even as the surrounding code changes.
+///
+/// Embedders that register connections through [`Clients::register`] construct
+/// the guard themselves; see that method for the expected lifecycle.
+///
+/// [`Clients::register`]: crate::server::clients::Clients::register
+#[derive(Debug)]
+pub struct OnDisconnectGuard {
+    access: Arc<dyn DynAccessControl>,
+    endpoint_id: EndpointId,
+    connection_id: ConnectionId,
+}
+
+impl OnDisconnectGuard {
+    /// Creates a guard for the connection described by `request`.
+    ///
+    /// Dropping the guard calls [`AccessControl::on_disconnect`] on `access`
+    /// with the request's [`EndpointId`] and [`ConnectionId`]. Create it only
+    /// once [`AccessControl::on_connect`] has admitted the connection.
+    pub fn new(access: Arc<dyn DynAccessControl>, request: &ClientRequest) -> Self {
+        Self {
+            access,
+            endpoint_id: request.endpoint_id(),
+            connection_id: request.connection_id(),
+        }
+    }
+
+    /// Returns the [`EndpointId`] of the guarded connection.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint_id
+    }
+
+    /// Returns the [`ConnectionId`] of the guarded connection.
+    pub fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
+}
+
+impl Drop for OnDisconnectGuard {
+    fn drop(&mut self) {
+        self.access
+            .on_disconnect(self.endpoint_id, self.connection_id);
+    }
+}
+
 /// Configuration for the QUIC server.
 #[derive(Debug)]
 #[non_exhaustive]

@@ -26,7 +26,7 @@ use crate::{
         streams::BytesStreamSink,
     },
     server::{
-        ClientRequest, ConnectionId,
+        ClientRequest, ConnectionId, OnDisconnectGuard,
         clients::Clients,
         metrics::Metrics,
         streams::{RecvError as RelayRecvError, RelayedStream, SendError as RelaySendError},
@@ -83,7 +83,7 @@ impl<S> Config<S> {
 /// [`Server`]: crate::server::Server
 /// [`Client`]: crate::client::Client
 #[derive(Debug)]
-pub struct Client {
+pub(super) struct Client {
     /// Identity of the connected peer.
     endpoint_id: EndpointId,
     /// Connection identifier.
@@ -103,8 +103,17 @@ pub struct Client {
 impl Client {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
+    ///
+    /// The `guard` is moved into the connection actor and reports the disconnect to access
+    /// control once the connection ends.
+    ///
     /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
-    pub(super) fn new<S>(config: Config<S>, clients: &Clients, metrics: Arc<Metrics>) -> Client
+    pub(super) fn new<S>(
+        config: Config<S>,
+        guard: OnDisconnectGuard,
+        clients: &Clients,
+        metrics: Arc<Metrics>,
+    ) -> Client
     where
         S: BytesStreamSink + Send + 'static,
     {
@@ -126,8 +135,7 @@ impl Client {
             timeout: write_timeout,
             packet_send_queue: packet_send_queue_r,
             message_send_queue: message_send_queue_r,
-            endpoint_id,
-            connection_id,
+            guard,
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
@@ -288,10 +296,10 @@ struct Actor<S> {
     packet_send_queue: mpsc::Receiver<Packet>,
     /// Receiver for non-packet messages to be sent to the client.
     message_send_queue: mpsc::Receiver<RelayToClientMsg>,
-    /// [`EndpointId`] of this client
-    endpoint_id: EndpointId,
-    /// Connection identifier.
-    connection_id: ConnectionId,
+    /// Reports the disconnect to access control when dropped.
+    ///
+    /// Also the owner of this connection's [`EndpointId`] and [`ConnectionId`].
+    guard: OnDisconnectGuard,
     /// Reference to the other connected clients.
     clients: Clients,
     /// Statistics about the connected clients
@@ -309,7 +317,7 @@ where
         // connection is accepted long before this in the HTTP server, but it is clearer to
         // handle the metric here.
         self.metrics.accepts.inc();
-        if self.client_counter.update(self.endpoint_id) {
+        if self.client_counter.update(self.guard.endpoint_id()) {
             self.metrics.unique_client_keys.inc();
         }
         match self.run_inner(done).await {
@@ -321,8 +329,7 @@ where
             }
         }
 
-        self.clients
-            .unregister(self.connection_id, self.endpoint_id, &self.metrics);
+        self.clients.unregister(self.guard, &self.metrics);
         self.metrics.disconnects.inc();
     }
 
@@ -477,7 +484,7 @@ where
     ) -> Result<(), ForwardPacketError> {
         self.metrics.send_packets_recv.inc();
         self.clients
-            .send_packet(dst, data, self.endpoint_id, &self.metrics)?;
+            .send_packet(dst, data, self.guard.endpoint_id(), &self.metrics)?;
 
         Ok(())
     }
@@ -546,7 +553,10 @@ mod tests {
         client::conn::Conn,
         http::ProtocolVersion,
         protos::{common::FrameType, relay::Status, streams::WsBytesFramed},
-        server::streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
+        server::{
+            AllowAll,
+            streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
+        },
     };
 
     async fn recv_frame<
@@ -587,13 +597,13 @@ mod tests {
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
+        let request = ClientRequest::new(endpoint_id, Default::default(), None);
         let actor = Actor {
             stream,
             timeout: Duration::from_secs(1),
             packet_send_queue: send_queue_r,
             message_send_queue: message_r,
-            connection_id: ConnectionId::next(),
-            endpoint_id,
+            guard: OnDisconnectGuard::new(Arc::new(AllowAll), &request),
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
@@ -673,13 +683,18 @@ mod tests {
     fn test_client_builder(
         key: EndpointId,
         protocol_version: ProtocolVersion,
-    ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
+    ) -> (
+        Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>,
+        OnDisconnectGuard,
+        Conn,
+    ) {
         let (server, client) = tokio::io::duplex(1024);
         let request = ClientRequest::new(key, protocol_version, None);
+        let guard = OnDisconnectGuard::new(Arc::new(AllowAll), &request);
         let mut config = Config::new(&request, ServerRelayedStream::test(server));
         config.write_timeout = Duration::from_secs(1);
         config.channel_capacity = 10;
-        (config, Conn::test(client, protocol_version))
+        (config, guard, Conn::test(client, protocol_version))
     }
 
     #[tokio::test]
@@ -689,11 +704,11 @@ mod tests {
         let a_key = SecretKey::from_bytes(&rng.random()).public();
         let b_key = SecretKey::from_bytes(&rng.random()).public();
 
-        let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V1);
+        let (builder_a, guard_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V1);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_a, metrics.clone());
+        clients.register(builder_a, guard_a, metrics.clone());
 
         // Verify basic packet delivery works with V1.
         let data = b"hello world v1!";
@@ -718,11 +733,11 @@ mod tests {
         let a_key = SecretKey::from_bytes(&rng.random()).public();
         let b_key = SecretKey::from_bytes(&rng.random()).public();
 
-        let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V2);
+        let (builder_a, guard_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V2);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_a, metrics.clone());
+        clients.register(builder_a, guard_a, metrics.clone());
 
         // Verify basic packet delivery works with V2.
         let data = b"hello world v2!";
@@ -747,16 +762,18 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
         let key = SecretKey::from_bytes(&rng.random()).public();
 
-        let (builder_first, mut first_rw) = test_client_builder(key, ProtocolVersion::V1);
+        let (builder_first, guard_first, mut first_rw) =
+            test_client_builder(key, ProtocolVersion::V1);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_first, metrics.clone());
+        clients.register(builder_first, guard_first, metrics.clone());
 
         // Register a second client with the same endpoint ID.
         // The first client should receive a V1Health message.
-        let (builder_second, _second_rw) = test_client_builder(key, ProtocolVersion::V1);
-        clients.register(builder_second, metrics.clone());
+        let (builder_second, guard_second, _second_rw) =
+            test_client_builder(key, ProtocolVersion::V1);
+        clients.register(builder_second, guard_second, metrics.clone());
 
         let frame = recv_frame(FrameType::Health, &mut first_rw).await?;
         assert!(
@@ -775,16 +792,18 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
         let key = SecretKey::from_bytes(&rng.random()).public();
 
-        let (builder_first, mut first_rw) = test_client_builder(key, ProtocolVersion::V2);
+        let (builder_first, guard_first, mut first_rw) =
+            test_client_builder(key, ProtocolVersion::V2);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_first, metrics.clone());
+        clients.register(builder_first, guard_first, metrics.clone());
 
         // Register a second client with the same endpoint ID.
         // The first client should receive a Health message (V2 frame).
-        let (builder_second, _second_rw) = test_client_builder(key, ProtocolVersion::V2);
-        clients.register(builder_second, metrics.clone());
+        let (builder_second, guard_second, _second_rw) =
+            test_client_builder(key, ProtocolVersion::V2);
+        clients.register(builder_second, guard_second, metrics.clone());
 
         let frame = recv_frame(FrameType::Status, &mut first_rw).await?;
         assert_eq!(

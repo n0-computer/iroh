@@ -32,8 +32,8 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
 
 use super::{
-    Access, AllowAll, ClientRequest, DynAccessControl, SpawnError, clients::Clients,
-    streams::InvalidBucketConfig,
+    Access, AllowAll, ClientRequest, DynAccessControl, OnDisconnectGuard, SpawnError,
+    clients::Clients, streams::InvalidBucketConfig,
 };
 use crate::{
     KeyCache,
@@ -873,17 +873,22 @@ impl Inner {
             protocol_version,
             &request_parts,
         );
-        let is_allowed = matches!(self.access.on_connect(&request).await, Access::Allow);
-        if let Err(err) = authentication.authorize_if(is_allowed, &mut io).await {
-            // The connection was admitted by `on_connect` but failed before it
-            // was registered: report it as disconnected so the access control
-            // implementation does not keep a stale entry.
-            if is_allowed {
-                self.access
-                    .on_disconnect(request.endpoint_id(), request.connection_id())
-            }
-            return Err(err.into());
-        }
+
+        // Run the access check. On `Access::Allow`, build the disconnect guard
+        // right away: from here until the connection ends, dropping the guard
+        // reports the disconnect, so no later error or early return can skip it.
+        let guard = match self.access.on_connect(&request).await {
+            Access::Allow => Some(OnDisconnectGuard::new(self.access.clone(), &request)),
+            Access::Deny => None,
+        };
+
+        // Tell the client the access decision. A denied client receives an
+        // error here, and `guard` is `None`. An admitted client whose
+        // confirmation fails to send drops `guard`, reporting the disconnect.
+        authentication
+            .authorize_if(guard.is_some(), &mut io)
+            .await?;
+        let guard = guard.expect("authorize_if errors unless the connection was admitted");
 
         trace!("accept: verified authorization");
 
@@ -899,7 +904,7 @@ impl Inner {
         // build and register client, starting up read & write loops for the client
         // connection
         self.clients
-            .register(client_conn_builder, self.metrics.clone());
+            .register(client_conn_builder, guard, self.metrics.clone());
         Ok(())
     }
 }
@@ -929,7 +934,7 @@ impl RelayService {
         Self(Arc::new(Inner {
             handlers,
             headers,
-            clients: Clients::with_access_control(access.clone()),
+            clients: Clients::default(),
             rate_limit,
             key_cache,
             access,

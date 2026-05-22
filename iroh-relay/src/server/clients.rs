@@ -10,7 +10,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
 use super::{
-    ConnectionId,
+    ConnectionId, OnDisconnectGuard,
     client::{Client, Config, ForwardPacketError},
 };
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
         relay::{Datagrams, Status},
         streams::BytesStreamSink,
     },
-    server::{DynAccessControl, client::SendError, metrics::Metrics},
+    server::{client::SendError, metrics::Metrics},
 };
 
 /// Manages the connections to all currently connected clients.
@@ -35,8 +35,6 @@ struct Inner {
     clients: DashMap<EndpointId, ClientState>,
     /// Map of which client has sent where
     sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
-    /// Access control which we inform about closed connections.
-    access: Option<Arc<dyn DynAccessControl>>,
 }
 
 #[derive(Debug)]
@@ -57,17 +55,6 @@ impl ClientState {
 }
 
 impl Clients {
-    /// Creates a new [`Clients`] map, informing access control about closed connections.
-    ///
-    /// The `access_control` is informed about closed connections. Note that [`Self::register`] does
-    /// not validate access, it is assumed that the caller already validated access before calling `register`.
-    pub fn with_access_control(access: Arc<dyn DynAccessControl>) -> Self {
-        Self(Arc::new(Inner {
-            access: Some(access),
-            clients: Default::default(),
-            sent_to: Default::default(),
-        }))
-    }
     /// Shuts down all connected clients.
     ///
     /// This method gracefully disconnects all active client connections managed by
@@ -81,14 +68,23 @@ impl Clients {
     }
 
     /// Builds the client handler and starts the read & write loops for the connection.
-    pub fn register<S>(&self, client_config: Config<S>, metrics: Arc<Metrics>)
-    where
+    ///
+    /// Once the client disconnects, the `guard` will be dropped, allowing callers to be notified
+    /// of the disconnect.
+    ///
+    /// [`AccessControl`]: crate::server::AccessControl
+    pub fn register<S>(
+        &self,
+        client_config: Config<S>,
+        guard: OnDisconnectGuard,
+        metrics: Arc<Metrics>,
+    ) where
         S: BytesStreamSink + Send + 'static,
     {
         let endpoint_id = client_config.endpoint_id;
         trace!(remote_endpoint = %endpoint_id.fmt_short(), "registering client");
 
-        let client = Client::new(client_config, self, metrics.clone());
+        let client = Client::new(client_config, guard, self, metrics.clone());
         match self.0.clients.entry(endpoint_id) {
             dashmap::Entry::Occupied(mut entry) => {
                 let state = entry.get_mut();
@@ -117,20 +113,13 @@ impl Clients {
     /// peer is gone from the network.
     ///
     /// Must be passed a matching connection_id.
-    pub(super) fn unregister(
-        &self,
-        connection_id: ConnectionId,
-        endpoint_id: EndpointId,
-        metrics: &Metrics,
-    ) {
+    pub(super) fn unregister(&self, guard: OnDisconnectGuard, metrics: &Metrics) {
+        let endpoint_id = guard.endpoint_id;
+        let connection_id = guard.connection_id;
         trace!(
             endpoint_id = %endpoint_id.fmt_short(),
             %connection_id, "unregistering client"
         );
-
-        if let Some(access) = self.0.access.as_ref() {
-            access.on_disconnect(endpoint_id, connection_id);
-        }
 
         let mut notify_peers = None;
 
@@ -276,7 +265,7 @@ mod tests {
         http::ProtocolVersion,
         protos::{common::FrameType, relay::RelayToClientMsg, streams::WsBytesFramed},
         server::{
-            ClientRequest,
+            AllowAll, ClientRequest,
             streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
         },
     };
@@ -306,14 +295,19 @@ mod tests {
 
     fn test_client_builder(
         key: EndpointId,
-    ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
+    ) -> (
+        Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>,
+        OnDisconnectGuard,
+        Conn,
+    ) {
         let (server, client) = tokio::io::duplex(1024);
         let protocol_version = ProtocolVersion::default();
         let request = ClientRequest::new(key, protocol_version, None);
+        let guard = OnDisconnectGuard::new(Arc::new(AllowAll), &request);
         let mut config = Config::new(&request, ServerRelayedStream::test(server));
         config.write_timeout = Duration::from_secs(1);
         config.channel_capacity = 10;
-        (config, Conn::test(client, protocol_version))
+        (config, guard, Conn::test(client, protocol_version))
     }
 
     #[tokio::test]
@@ -323,11 +317,11 @@ mod tests {
         let a_key = SecretKey::from_bytes(&rng.random()).public();
         let b_key = SecretKey::from_bytes(&rng.random()).public();
 
-        let (builder_a, mut a_rw) = test_client_builder(a_key);
+        let (builder_a, guard_a, mut a_rw) = test_client_builder(a_key);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_a, metrics.clone());
+        clients.register(builder_a, guard_a, metrics.clone());
 
         // send packet
         let data = b"hello world!";
@@ -371,13 +365,13 @@ mod tests {
         let a_key = SecretKey::from_bytes(&rng.random()).public();
         let b_key = SecretKey::from_bytes(&rng.random()).public();
 
-        let (a1_builder, mut a1_rw) = test_client_builder(a_key);
+        let (a1_builder, guard_a1, mut a1_rw) = test_client_builder(a_key);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
 
         // register client a
-        clients.register(a1_builder, metrics.clone());
+        clients.register(a1_builder, guard_a1, metrics.clone());
         let a1_conn_id = clients.active_connection_id(a_key).unwrap();
 
         // send packet and verify it is send to a1
@@ -393,8 +387,8 @@ mod tests {
         );
 
         // register new client with same endpoint id
-        let (a2_builder, mut a2_rw) = test_client_builder(a_key);
-        clients.register(a2_builder, metrics.clone());
+        let (a2_builder, guard_a2, mut a2_rw) = test_client_builder(a_key);
+        clients.register(a2_builder, guard_a2, metrics.clone());
         let a2_conn_id = clients.active_connection_id(a_key).unwrap();
         assert!(a2_conn_id != a1_conn_id);
 
@@ -494,10 +488,10 @@ mod tests {
         let metrics = Arc::new(Metrics::default());
 
         // Register both clients
-        let (builder_a, _a_rw) = test_client_builder(a_key);
-        let (builder_b, mut b_rw) = test_client_builder(b_key);
-        clients.register(builder_a, metrics.clone());
-        clients.register(builder_b, metrics.clone());
+        let (builder_a, guard_a, _a_rw) = test_client_builder(a_key);
+        let (builder_b, guard_b, mut b_rw) = test_client_builder(b_key);
+        clients.register(builder_a, guard_a, metrics.clone());
+        clients.register(builder_b, guard_b, metrics.clone());
 
         // A sends a packet to B (records sent_to[A] = {B})
         let data = b"hello b!";
