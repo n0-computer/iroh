@@ -295,6 +295,9 @@ pub trait AccessControl: std::fmt::Debug + Send + Sync + 'static {
     ///
     /// Called once for every connection that [`Self::on_connect`] admitted,
     /// identified by the same [`ConnectionId`].
+    ///
+    /// Note that this is a sync method being called in an async context. Make sure that your
+    /// implementation does not block the runtime.
     fn on_disconnect(&self, endpoint_id: EndpointId, connection_id: ConnectionId) {
         let _ = (endpoint_id, connection_id);
     }
