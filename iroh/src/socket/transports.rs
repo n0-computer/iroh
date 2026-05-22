@@ -706,8 +706,6 @@ pub enum LocalTransportAddr {
 }
 
 impl LocalTransportAddr {
-    /// Converts a local address from noq into a [`LocalTransportAddr`], via an endpoint reference.
-
     /// Converts a local address from noq into a [`LocalTransportAddr`].
     ///
     /// This also needs the `remote_addr`, because currently the meaning of the local_ip as returned
