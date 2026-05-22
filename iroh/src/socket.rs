@@ -17,7 +17,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
-    future::poll_fn,
     io,
     net::{IpAddr, SocketAddr},
     sync::{
@@ -26,7 +25,7 @@ use std::{
     },
 };
 
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use mapped_addrs::MultipathMappedAddr;
 use n0_error::{AnyError, anyerr, bail, e, stack_error};
@@ -43,7 +42,7 @@ use netwatch::{
     ip::LocalAddresses,
 };
 use noq::{
-    NetworkChangeHint, WeakConnectionHandle,
+    NetworkChangeHint,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use rand::RngExt;
@@ -69,7 +68,9 @@ use crate::net_report::QuicConfig;
 use crate::{
     address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    endpoint::{RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig},
+    endpoint::{
+        LocalTransportAddr, RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig,
+    },
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
     portmapper,
@@ -337,9 +338,6 @@ pub(crate) struct Socket {
     /// `RemoteStateActor`s must go through the socket actor channel.
     remote_actors: ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
 
-    /// EndpointId of this endpoint.
-    public_key: PublicKey,
-
     // - Shutdown Management
     shutdown: ShutdownState,
 
@@ -537,14 +535,17 @@ impl Socket {
         .unwrap_or(transports::Addr::Ip(addr))
     }
 
-    /// Reverse-resolves a custom mapped address back to its [`iroh_base::CustomAddr`].
-    pub(crate) fn lookup_custom_addr(&self, addr: SocketAddr) -> Option<iroh_base::CustomAddr> {
-        match MultipathMappedAddr::from(addr) {
-            MultipathMappedAddr::Custom(custom_mapped) => {
-                self.mapped_addrs.custom_addrs.lookup(&custom_mapped)
-            }
-            _ => None,
-        }
+    pub(crate) fn to_local_transport_addr(
+        &self,
+        local_ip: Option<IpAddr>,
+        remote_addr: SocketAddr,
+    ) -> LocalTransportAddr {
+        let remote_addr = self.to_transport_addr(remote_addr);
+        LocalTransportAddr::from_noq_local_ip(
+            local_ip,
+            &remote_addr,
+            &self.mapped_addrs.custom_addrs,
+        )
     }
 
     /// Reference to the internal Address Lookup
@@ -980,7 +981,6 @@ impl EndpointInner {
         let home_relay_watch = transports.home_relay_watch();
 
         let sock = Arc::new(Socket {
-            public_key: secret_key.public(),
             remote_actors: remote_map.senders(),
             shutdown: shutdown_state,
             ipv6_reported,
@@ -1125,7 +1125,7 @@ impl EndpointInner {
         if self.sock.is_closed() || self.sock.is_closing() {
             return;
         }
-        trace!(me = ?self.public_key, "socket closing...");
+        trace!("socket closing...");
 
         // Cancel at_close_start token, which cancels running netreports.
         self.sock.shutdown.at_close_start.cancel();
@@ -1151,9 +1151,9 @@ impl EndpointInner {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
-        trace!("wait_idle start");
-        self.noq_endpoint().wait_idle().await;
-        trace!("wait_idle done");
+        trace!("wait_all_draining start");
+        self.noq_endpoint().wait_all_draining().await;
+        trace!("wait_all_draining done");
 
         // Start cancellation of all actors.
         self.sock.shutdown.at_endpoint_closed.cancel();
@@ -1200,12 +1200,12 @@ impl EndpointInner {
     ///
     /// This should only be called in the `iroh::Endpoint` `Drop` impl when the
     /// `iroh::Endpoint` is dropped without first calling `Endpoint::close`.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, parent = self.sock.span.clone())]
     pub(crate) fn abort(&self) {
         if self.sock.is_closed() || self.sock.is_closing() {
             return;
         }
-        trace!(me = ?self.public_key, "aborting socket...");
+        trace!("socket aborting...");
 
         // Cancel at_close_start token, which cancels running netreports.
         self.sock.shutdown.at_close_start.cancel();
@@ -1350,7 +1350,7 @@ impl EndpointInner {
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
-        conn: WeakConnectionHandle,
+        conn: noq::Connection,
     ) -> impl Future<Output = Result<PathStateReceiver, RemoteStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
@@ -1378,7 +1378,7 @@ enum ActorMessage {
     #[debug("AddConnection(..)")]
     AddConnection(
         EndpointId,
-        WeakConnectionHandle,
+        noq::Connection,
         oneshot::Sender<PathStateReceiver>,
     ),
     /// Re-evaluate direct addresses, e.g. after configured external addresses changed.
@@ -1603,9 +1603,7 @@ impl Actor {
                     self.sock.metrics.socket.actor_link_change.inc();
                     self.handle_network_change(is_major);
                 }
-                remote_id = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
-                    trace!(%remote_id, "cleaned up RemoteStateActor");
-                }
+                _remote_id = self.remote_map.cleanup() => {},
                 _ = &mut notify_quic_network_change => {
                     let has_network = self.has_usable_network();
                     let Some(pending) = self.call_notify_quic_network_change.as_mut() else {
@@ -1775,16 +1773,10 @@ impl Actor {
                 self.handle_relay_map_change();
             }
             ActorMessage::ResolveRemote(addr, tx) => {
-                // Swallowing the error is fine here; if a send on the channel to the
-                // remote state actor ever fails (which it shouldn't), `tx` will be
-                // dropped and thus the failure will be propagated to the caller.
-                self.remote_map.resolve_remote(addr, tx).await.ok();
+                self.remote_map.resolve_remote(addr, tx).await;
             }
             ActorMessage::AddConnection(remote, conn, tx) => {
-                // Swallowing the error is fine here; if a send on the channel to the
-                // remote state actor ever fails (which it shouldn't), `tx` will be
-                // dropped and thus the failure will be propagated to the caller.
-                self.remote_map.add_connection(remote, conn, tx).await.ok();
+                self.remote_map.add_connection(remote, conn, tx).await;
             }
             ActorMessage::DirectAddrRefresh => {
                 #[cfg(not(wasm_browser))]
@@ -2206,7 +2198,6 @@ mod tests {
 
         info!("finishing");
         send_bi.finish().std_context("finish")?;
-        send_bi.stopped().await.std_context("stopped")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
@@ -2247,7 +2238,6 @@ mod tests {
 
         info!("finishing");
         send_bi.finish().std_context("finish")?;
-        send_bi.stopped().await.std_context("stopped")?;
 
         info!("reading_to_end");
         let val = recv_bi

@@ -19,7 +19,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
 use super::{Socket, mapped_addrs::MultipathMappedAddr};
-use crate::{endpoint::RelayStatus, metrics::EndpointMetrics, net_report::Report};
+use crate::{
+    endpoint::RelayStatus,
+    metrics::EndpointMetrics,
+    net_report::Report,
+    socket::mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr},
+};
 
 pub(crate) mod custom;
 #[cfg(not(wasm_browser))]
@@ -249,7 +254,7 @@ impl Transports {
     ) -> Poll<io::Result<usize>> {
         assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
-        if sock.is_closing() {
+        if sock.is_closed() {
             return Poll::Pending;
         }
 
@@ -684,6 +689,70 @@ impl Addr {
             },
             Self::Relay(_, _) => AddrKind::Relay,
             Self::Custom(addr) => AddrKind::Custom(addr.id()),
+        }
+    }
+}
+
+/// The local address of a network path.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum LocalTransportAddr {
+    /// The local IP, if the OS surfaced it.
+    Ip(Option<IpAddr>),
+    /// The relay over which this network path is connected.
+    Relay(RelayUrl),
+    /// The local custom address, if the transport reports one.
+    Custom(Option<iroh_base::CustomAddr>),
+}
+
+impl LocalTransportAddr {
+    /// Converts a local address from noq into a [`LocalTransportAddr`].
+    ///
+    /// This also needs the `remote_addr`, because currently the meaning of the local_ip as returned
+    /// from noq depends on the kind of network path, which we can gather from the remote address.
+    ///
+    /// The meaning of the local IP is a bit particular:
+    ///
+    /// * For IP transports, it is the address of the local socket.
+    /// * For relay transports, we never set the local_ip in the recv meta.
+    ///   We take the relay URL of the remote address here instead.
+    /// * For custom transports, the custom transport implementation can set a [`CustomAddr`]
+    ///   through [`RecvInfo`], which is passed as a mapped address to noq. So we convert it
+    ///   back into the [`CustomAddr`] here.
+    pub(super) fn from_noq_local_ip(
+        noq_local_ip: Option<IpAddr>,
+        remote_addr: &Addr,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> Self {
+        match &remote_addr {
+            // If the remote is a relay, noq_local_ip will be unset because we never set it for relay transports.
+            // We return a [`LocalTransportAddr`] with the relay URL.
+            Addr::Relay(url, _endpoint_id) => LocalTransportAddr::Relay(url.clone()),
+            // For IP transports, the local_ip as reported from noq is the interface IP (umapped), if known.
+            Addr::Ip(_) => LocalTransportAddr::Ip(noq_local_ip),
+            // For custom transports, the custom transport implementation can set a `CustomAddr` in `RecvInfo`.
+            // The custom addr is converted to a mapped address in `super::Socket::process_datagrams`.
+            // We convert back to a `CustomAddr` here.
+            Addr::Custom(_) => {
+                let addr = noq_local_ip
+                    .and_then(|ip_addr| CustomMappedAddr::try_from(ip_addr).ok())
+                    .and_then(|custom_mapped_addr| custom_mapped_addrs.lookup(&custom_mapped_addr));
+                LocalTransportAddr::Custom(addr)
+            }
+        }
+    }
+
+    /// Converts this [`LocalTransportAddr`] into a QUIC-mapped [`IpAddr`] to be passed to noq, if any.
+    pub(super) fn to_noq_local_ip(
+        &self,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> Option<IpAddr> {
+        match self {
+            LocalTransportAddr::Ip(ip_addr) => *ip_addr,
+            LocalTransportAddr::Relay(_url) => None,
+            LocalTransportAddr::Custom(custom_addr) => custom_addr
+                .as_ref()
+                .map(|addr| custom_mapped_addrs.get(addr).private_socket_addr().ip()),
         }
     }
 }

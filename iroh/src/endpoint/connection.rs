@@ -19,7 +19,7 @@
 use std::{
     any::Any,
     future::{Future, IntoFuture},
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::Poll,
@@ -48,7 +48,7 @@ use crate::{
     socket::{
         RemoteStateActorStoppedError,
         remote_map::{PathEventStream, PathList, PathListStream, PathStateReceiver},
-        transports,
+        transports::{self, LocalTransportAddr},
     },
 };
 
@@ -90,21 +90,6 @@ impl From<transports::Addr> for IncomingAddr {
             transports::Addr::Custom(addr) => Self::Custom(addr),
         }
     }
-}
-
-/// The local address that received an incoming connection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum IncomingLocalAddr {
-    /// The local IP, if the OS surfaced it.
-    Ip(Option<IpAddr>),
-    /// The relay this connection arrived through.
-    Relay {
-        /// The URL of the relay.
-        url: RelayUrl,
-    },
-    /// The local custom address, if the transport reports one.
-    Custom(Option<iroh_base::CustomAddr>),
 }
 
 /// Future produced by [`Endpoint::accept`].
@@ -208,18 +193,10 @@ impl Incoming {
     }
 
     /// Returns the local address that received this incoming connection.
-    pub fn local_addr(&self) -> IncomingLocalAddr {
-        match self.ep.to_transport_addr(self.inner.remote_address()) {
-            transports::Addr::Ip(_) => IncomingLocalAddr::Ip(self.inner.local_ip()),
-            transports::Addr::Relay(url, _) => IncomingLocalAddr::Relay { url },
-            transports::Addr::Custom(_) => {
-                let local = self
-                    .inner
-                    .local_ip()
-                    .and_then(|ip| self.ep.lookup_custom_addr(SocketAddr::new(ip, 0)));
-                IncomingLocalAddr::Custom(local)
-            }
-        }
+    pub fn local_addr(&self) -> LocalTransportAddr {
+        let remote_addr = self.inner.remote_address();
+        let local_ip = self.inner.local_ip();
+        self.ep.inner.to_local_transport_addr(local_ip, remote_addr)
     }
 
     /// Returns the remote address of this incoming connection.
@@ -361,9 +338,7 @@ fn conn_from_noq_conn(
     );
 
     // Register this connection with the socket.
-    let fut = ep
-        .inner
-        .register_connection(info.endpoint_id, conn.weak_handle());
+    let fut = ep.inner.register_connection(info.endpoint_id, conn.clone());
 
     // Check hooks
     let inner = ep.inner.clone();
