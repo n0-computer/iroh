@@ -41,8 +41,10 @@ use tokio_stream::{
 };
 use tracing::warn;
 
-use super::TransportFourTuple;
-use crate::{endpoint::PathStats, socket::transports::LocalTransportAddr};
+use crate::{
+    endpoint::PathStats,
+    socket::transports::{self, LocalTransportAddr},
+};
 
 /// Per-connection broadcast channel capacity for path events.
 const BROADCAST_CAPACITY: usize = 8;
@@ -165,10 +167,14 @@ impl PathStateSender {
     }
 
     /// Records a newly-opened path and emits [`PathEvent::Opened`].
-    pub(super) fn record_opened(&self, handle: WeakPathHandle, network_path: TransportFourTuple) {
+    pub(super) fn record_opened(
+        &self,
+        handle: WeakPathHandle,
+        network_path: transports::FourTuple,
+    ) {
         let id = handle.id();
-        let remote_addr: TransportAddr = network_path.remote().clone().into();
-        let local_addr = network_path.local().clone();
+        let remote_addr: TransportAddr = network_path.remote().into();
+        let local_addr = network_path.local();
         {
             let mut state = self.shared.state.lock().expect("poisoned");
             let entry = PathData {
@@ -215,9 +221,9 @@ impl PathStateSender {
     }
 
     /// Updates the selected transmission path.
-    pub(super) fn record_selected(&self, network_path: &TransportFourTuple) {
-        let remote_addr: TransportAddr = network_path.remote().clone().into();
-        let local_addr = network_path.local().clone();
+    pub(super) fn record_selected(&self, network_path: &transports::FourTuple) {
+        let remote_addr: TransportAddr = network_path.remote().into();
+        let local_addr = network_path.local();
         let event = {
             let mut state = self.shared.state.lock().expect("poisoned");
             let selected_path_id = state
