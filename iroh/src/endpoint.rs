@@ -42,6 +42,7 @@ pub use super::socket::{
         Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream, RemoteInfo,
         TransportAddrInfo, TransportAddrUsage,
     },
+    transports::LocalTransportAddr,
 };
 #[cfg(wasm_browser)]
 use crate::address_lookup::PkarrResolver;
@@ -82,7 +83,7 @@ pub use self::{
     connection::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
         ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingZeroRtt,
-        IncomingZeroRttConnection, LocalTransportAddr, OutgoingZeroRtt, OutgoingZeroRttConnection,
+        IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
         RemoteEndpointIdError, RetryError, WeakConnectionHandle, ZeroRttStatus,
     },
     quic::{
@@ -1680,11 +1681,6 @@ impl Endpoint {
     /// a transport address.
     pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> crate::socket::transports::Addr {
         self.inner.to_transport_addr(addr)
-    }
-
-    /// Reverse-resolves a custom mapped address back to its [`iroh_base::CustomAddr`].
-    pub(crate) fn lookup_custom_addr(&self, addr: SocketAddr) -> Option<iroh_base::CustomAddr> {
-        self.inner.lookup_custom_addr(addr)
     }
 
     #[cfg(all(test, with_crypto_provider))]
