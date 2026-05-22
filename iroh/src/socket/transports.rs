@@ -23,7 +23,10 @@ use crate::{
     endpoint::RelayStatus,
     metrics::EndpointMetrics,
     net_report::Report,
-    socket::mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr},
+    socket::{
+        mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
+        remote_map::to_transport_addr,
+    },
 };
 
 pub(crate) mod custom;
@@ -667,10 +670,6 @@ impl Addr {
         matches!(self, Self::Relay(..))
     }
 
-    pub(crate) fn is_ip(&self) -> bool {
-        matches!(self, Self::Ip(_))
-    }
-
     /// Returns `None` if not an `Ip`.
     pub(crate) fn into_socket_addr(self) -> Option<SocketAddr> {
         match self {
@@ -739,20 +738,6 @@ impl LocalTransportAddr {
                     .and_then(|custom_mapped_addr| custom_mapped_addrs.lookup(&custom_mapped_addr));
                 LocalTransportAddr::Custom(addr)
             }
-        }
-    }
-
-    /// Converts this [`LocalTransportAddr`] into a QUIC-mapped [`IpAddr`] to be passed to noq, if any.
-    pub(super) fn to_noq_local_ip(
-        &self,
-        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
-    ) -> Option<IpAddr> {
-        match self {
-            LocalTransportAddr::Ip(ip_addr) => *ip_addr,
-            LocalTransportAddr::Relay(_url) => None,
-            LocalTransportAddr::Custom(custom_addr) => custom_addr
-                .as_ref()
-                .map(|addr| custom_mapped_addrs.get(addr).private_socket_addr().ip()),
         }
     }
 }
@@ -929,7 +914,15 @@ impl PartialEq<TransportAddr> for Addr {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Identifies a network path by the combination of remote and local addresses.
+///
+/// Mirrors [`noq::FourTuple`] but uses transport-level addresses for the remote side.
+///
+/// The meaning of the local address is a bit particular:
+/// * For IP transports it is the interface IP, if known.
+/// * For custom transports it is a custom transport address, if the transport reports one.
+/// * For relay transports there is no separate local address; the relay URL identifies the path.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum FourTuple {
     Ip {
         remote: SocketAddr,
@@ -946,6 +939,7 @@ pub(crate) enum FourTuple {
 }
 
 impl FourTuple {
+    /// Creates a four-tuple from a remote address, with no known local address.
     pub(super) fn from_remote(remote: Addr) -> Self {
         match remote {
             Addr::Ip(remote) => Self::Ip {
@@ -959,6 +953,106 @@ impl FourTuple {
             },
         }
     }
+
+    /// Creates a four-tuple from a remote and a local transport address.
+    ///
+    /// The variant is determined by `remote`. The `local` address is retained only when
+    /// it matches that variant. A mismatched `local` is dropped, which cannot happen for
+    /// values derived together from the same network path.
+    pub(super) fn new(remote: Addr, local: LocalTransportAddr) -> Self {
+        match remote {
+            Addr::Ip(remote) => Self::Ip {
+                remote,
+                local: match local {
+                    LocalTransportAddr::Ip(local) => local,
+                    _ => None,
+                },
+            },
+            Addr::Relay(url, endpoint_id) => Self::Relay { url, endpoint_id },
+            Addr::Custom(remote) => Self::Custom {
+                remote,
+                local: match local {
+                    LocalTransportAddr::Custom(local) => local,
+                    _ => None,
+                },
+            },
+        }
+    }
+
+    /// Returns the [`FourTuple] for a noq network path by looking up QUIC-mapped addresses.
+    pub(super) fn from_noq(
+        noq_four_tuple: noq::FourTuple,
+        relay_mapped_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> Option<Self> {
+        let remote = to_transport_addr(
+            noq_four_tuple.remote(),
+            relay_mapped_addrs,
+            custom_mapped_addrs,
+        )?;
+        let local = LocalTransportAddr::from_noq_local_ip(
+            noq_four_tuple.local_ip(),
+            &remote,
+            custom_mapped_addrs,
+        );
+        Some(Self::new(remote, local))
+    }
+
+    /// Returns the remote transport address.
+    pub(super) fn remote(&self) -> Addr {
+        match self {
+            Self::Ip { remote, .. } => Addr::Ip(*remote),
+            Self::Relay { url, endpoint_id } => Addr::Relay(url.clone(), *endpoint_id),
+            Self::Custom { remote, .. } => Addr::Custom(remote.clone()),
+        }
+    }
+
+    /// Returns the local transport address.
+    pub(super) fn local(&self) -> LocalTransportAddr {
+        match self {
+            Self::Ip { local, .. } => LocalTransportAddr::Ip(*local),
+            Self::Relay { url, .. } => LocalTransportAddr::Relay(url.clone()),
+            Self::Custom { local, .. } => LocalTransportAddr::Custom(local.clone()),
+        }
+    }
+
+    /// Returns `true` if the remote is an IP address.
+    pub(super) fn is_ip(&self) -> bool {
+        matches!(self, Self::Ip { .. })
+    }
+
+    /// Returns `true` if the remote is a relay address.
+    pub(super) fn is_relay(&self) -> bool {
+        matches!(self, Self::Relay { .. })
+    }
+
+    /// Returns the QUIC-mapped [`noq::FourTuple`] for this [`FourTuple`].
+    pub(super) fn to_noq_four_tuple(
+        &self,
+        relay_mapped_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> noq::FourTuple {
+        let (remote, local) = match self {
+            FourTuple::Ip { remote, local } => (*remote, *local),
+            FourTuple::Relay { url, endpoint_id } => (
+                relay_mapped_addrs
+                    .get(&(url.clone(), *endpoint_id))
+                    .private_socket_addr(),
+                None,
+            ),
+            FourTuple::Custom { remote, local } => {
+                let remote = custom_mapped_addrs.get(remote).private_socket_addr();
+                let local = local.as_ref().map(|custom_addr| {
+                    custom_mapped_addrs
+                        .get(custom_addr)
+                        .private_socket_addr()
+                        .ip()
+                });
+                (remote, local)
+            }
+        };
+        noq::FourTuple::new(remote, local)
+    }
 }
 
 impl fmt::Display for FourTuple {
@@ -966,19 +1060,19 @@ impl fmt::Display for FourTuple {
         match self {
             FourTuple::Ip { remote, local } => {
                 if let Some(local) = local {
-                    write!(f, "{local}->{remote}")
+                    write!(f, "Ip({local}->{remote})")
                 } else {
-                    write!(f, "{remote}")
+                    write!(f, "Ip({remote})")
                 }
             }
             FourTuple::Relay { url, endpoint_id } => {
-                write!(f, "Relay({url})->{}", endpoint_id.fmt_short())
+                write!(f, "Relay({url}, {})", endpoint_id.fmt_short())
             }
             FourTuple::Custom { remote, local } => {
                 if let Some(local) = local {
-                    write!(f, "{local}->{remote}")
+                    write!(f, "Custom({local}->{remote})")
                 } else {
-                    write!(f, "{remote}")
+                    write!(f, "Custom({remote})")
                 }
             }
         }
