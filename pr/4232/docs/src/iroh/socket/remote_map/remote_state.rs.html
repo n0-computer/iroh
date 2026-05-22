@@ -1496,133 +1496,134 @@
 <a href=#1496 id=1496 data-nosnippet>1496</a>    }
 <a href=#1497 id=1497 data-nosnippet>1497</a>
 <a href=#1498 id=1498 data-nosnippet>1498</a>    <span class="doccomment">/// The local address of the candidate path.
-<a href=#1499 id=1499 data-nosnippet>1499</a>    </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>LocalTransportAddr {
-<a href=#1500 id=1500 data-nosnippet>1500</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.network_path.local
-<a href=#1501 id=1501 data-nosnippet>1501</a>    }
-<a href=#1502 id=1502 data-nosnippet>1502</a>
-<a href=#1503 id=1503 data-nosnippet>1503</a>    <span class="doccomment">/// Returns path statistics if available.
-<a href=#1504 id=1504 data-nosnippet>1504</a>    </span><span class="kw">pub fn </span>stats(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;PathStats&gt; {
-<a href=#1505 id=1505 data-nosnippet>1505</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.source {
-<a href=#1506 id=1506 data-nosnippet>1506</a>            StatsSource::Live { path_id, conn } =&gt; conn.path_stats(<span class="kw-2">*</span>path_id),
-<a href=#1507 id=1507 data-nosnippet>1507</a>            <span class="attr">#[cfg(test)]
-<a href=#1508 id=1508 data-nosnippet>1508</a>            </span>StatsSource::Test(stats) =&gt; stats.as_deref().copied(),
-<a href=#1509 id=1509 data-nosnippet>1509</a>        }
-<a href=#1510 id=1510 data-nosnippet>1510</a>    }
-<a href=#1511 id=1511 data-nosnippet>1511</a>}
-<a href=#1512 id=1512 data-nosnippet>1512</a>
-<a href=#1513 id=1513 data-nosnippet>1513</a><span class="doccomment">/// Trait to configure path selection.
-<a href=#1514 id=1514 data-nosnippet>1514</a>///
-<a href=#1515 id=1515 data-nosnippet>1515</a>/// Most users do not need to provide their own selector.
-<a href=#1516 id=1516 data-nosnippet>1516</a></span><span class="attr">#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
-<a href=#1517 id=1517 data-nosnippet>1517</a></span><span class="kw">pub trait </span>PathSelector: Send + Sync + std::fmt::Debug + <span class="lifetime">'static </span>{
-<a href=#1518 id=1518 data-nosnippet>1518</a>    <span class="doccomment">/// Pick the selected path to carry application data among the currently
-<a href=#1519 id=1519 data-nosnippet>1519</a>    /// open network paths to the remote endpoint.
-<a href=#1520 id=1520 data-nosnippet>1520</a>    ///
-<a href=#1521 id=1521 data-nosnippet>1521</a>    /// Build the result by starting from [`PathSelection::none`] and calling
-<a href=#1522 id=1522 data-nosnippet>1522</a>    /// [`PathSelection::set`] for the path the selector wants active.
-<a href=#1523 id=1523 data-nosnippet>1523</a>    ///
-<a href=#1524 id=1524 data-nosnippet>1524</a>    /// Returning an empty [`PathSelection`] keeps the current selection unchanged.
-<a href=#1525 id=1525 data-nosnippet>1525</a>    </span><span class="kw">fn </span>select(<span class="kw-2">&amp;</span><span class="self">self</span>, ctx: <span class="kw-2">&amp;</span>PathSelectionContext&lt;<span class="lifetime">'_</span>&gt;) -&gt; PathSelection;
-<a href=#1526 id=1526 data-nosnippet>1526</a>}
-<a href=#1527 id=1527 data-nosnippet>1527</a>
-<a href=#1528 id=1528 data-nosnippet>1528</a><span class="doccomment">/// The set of paths a [`PathSelector`] has chosen.
-<a href=#1529 id=1529 data-nosnippet>1529</a>///
-<a href=#1530 id=1530 data-nosnippet>1530</a>/// Today this holds at most one path.  Build via [`PathSelection::none`] +
-<a href=#1531 id=1531 data-nosnippet>1531</a>/// [`PathSelection::set`].
-<a href=#1532 id=1532 data-nosnippet>1532</a></span><span class="attr">#[derive(Debug, Clone)]
-<a href=#1533 id=1533 data-nosnippet>1533</a>#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
-<a href=#1534 id=1534 data-nosnippet>1534</a></span><span class="kw">pub struct </span>PathSelection {
-<a href=#1535 id=1535 data-nosnippet>1535</a>    selection: <span class="prelude-ty">Option</span>&lt;TransportFourTuple&gt;,
-<a href=#1536 id=1536 data-nosnippet>1536</a>}
-<a href=#1537 id=1537 data-nosnippet>1537</a>
-<a href=#1538 id=1538 data-nosnippet>1538</a><span class="attr">#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
-<a href=#1539 id=1539 data-nosnippet>1539</a></span><span class="kw">impl </span>PathSelection {
-<a href=#1540 id=1540 data-nosnippet>1540</a>    <span class="doccomment">/// An empty selection.
-<a href=#1541 id=1541 data-nosnippet>1541</a>    </span><span class="kw">pub fn </span>none() -&gt; <span class="self">Self </span>{
-<a href=#1542 id=1542 data-nosnippet>1542</a>        <span class="self">Self </span>{ selection: <span class="prelude-val">None </span>}
-<a href=#1543 id=1543 data-nosnippet>1543</a>    }
-<a href=#1544 id=1544 data-nosnippet>1544</a>
-<a href=#1545 id=1545 data-nosnippet>1545</a>    <span class="doccomment">/// Adds a path to the selection.
-<a href=#1546 id=1546 data-nosnippet>1546</a>    ///
-<a href=#1547 id=1547 data-nosnippet>1547</a>    /// Today the selection holds at most one path: the first call wins, subsequent
-<a href=#1548 id=1548 data-nosnippet>1548</a>    /// calls log a warning and are ignored.
-<a href=#1549 id=1549 data-nosnippet>1549</a>    </span><span class="kw">pub fn </span>set(<span class="kw-2">&amp;mut </span><span class="self">self</span>, path: <span class="kw-2">&amp;</span>PathSelectionData&lt;<span class="lifetime">'_</span>&gt;) {
-<a href=#1550 id=1550 data-nosnippet>1550</a>        <span class="kw">if </span><span class="self">self</span>.selection.is_some() {
-<a href=#1551 id=1551 data-nosnippet>1551</a>            <span class="macro">tracing::warn!</span>(
-<a href=#1552 id=1552 data-nosnippet>1552</a>                remote_addr = <span class="question-mark">?</span>path.remote_addr(),
-<a href=#1553 id=1553 data-nosnippet>1553</a>                <span class="string">"PathSelection already contains a path; ignoring additional path"
-<a href=#1554 id=1554 data-nosnippet>1554</a>            </span>);
-<a href=#1555 id=1555 data-nosnippet>1555</a>            <span class="kw">return</span>;
-<a href=#1556 id=1556 data-nosnippet>1556</a>        }
-<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="self">self</span>.selection = <span class="prelude-val">Some</span>(path.network_path.clone());
-<a href=#1558 id=1558 data-nosnippet>1558</a>    }
-<a href=#1559 id=1559 data-nosnippet>1559</a>
-<a href=#1560 id=1560 data-nosnippet>1560</a>    <span class="doccomment">/// The selected path: the one data should be sent on. This is not public so
-<a href=#1561 id=1561 data-nosnippet>1561</a>    /// we can later allow for selecting multiple paths without changing the
-<a href=#1562 id=1562 data-nosnippet>1562</a>    /// public API of `PathSelection`.
-<a href=#1563 id=1563 data-nosnippet>1563</a>    ///
-<a href=#1564 id=1564 data-nosnippet>1564</a>    /// Returns `None` when nothing has been selected.
-<a href=#1565 id=1565 data-nosnippet>1565</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>selected(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>TransportFourTuple&gt; {
-<a href=#1566 id=1566 data-nosnippet>1566</a>        <span class="self">self</span>.selection.as_ref()
-<a href=#1567 id=1567 data-nosnippet>1567</a>    }
-<a href=#1568 id=1568 data-nosnippet>1568</a>}
-<a href=#1569 id=1569 data-nosnippet>1569</a>
-<a href=#1570 id=1570 data-nosnippet>1570</a><span class="doccomment">/// Poll a future once, like n0_future::future::poll_once but sync.
-<a href=#1571 id=1571 data-nosnippet>1571</a></span><span class="kw">fn </span>now_or_never&lt;T, F: Future&lt;Output = T&gt;&gt;(fut: F) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
-<a href=#1572 id=1572 data-nosnippet>1572</a>    <span class="kw">let </span>fut = <span class="macro">std::pin::pin!</span>(fut);
-<a href=#1573 id=1573 data-nosnippet>1573</a>    <span class="kw">match </span>fut.poll(<span class="kw-2">&amp;mut </span>std::task::Context::from_waker(std::task::Waker::noop())) {
-<a href=#1574 id=1574 data-nosnippet>1574</a>        Poll::Ready(res) =&gt; <span class="prelude-val">Some</span>(res),
-<a href=#1575 id=1575 data-nosnippet>1575</a>        Poll::Pending =&gt; <span class="prelude-val">None</span>,
-<a href=#1576 id=1576 data-nosnippet>1576</a>    }
-<a href=#1577 id=1577 data-nosnippet>1577</a>}
-<a href=#1578 id=1578 data-nosnippet>1578</a>
-<a href=#1579 id=1579 data-nosnippet>1579</a><span class="doccomment">/// Future that resolves to the `conn_id` once a connection is closed.
-<a href=#1580 id=1580 data-nosnippet>1580</a>///
-<a href=#1581 id=1581 data-nosnippet>1581</a>/// This uses [`noq::Connection::on_closed`], which does not keep the connection alive
-<a href=#1582 id=1582 data-nosnippet>1582</a>/// while awaiting the future.
-<a href=#1583 id=1583 data-nosnippet>1583</a></span><span class="kw">struct </span>OnClosed {
-<a href=#1584 id=1584 data-nosnippet>1584</a>    conn_id: ConnId,
-<a href=#1585 id=1585 data-nosnippet>1585</a>    inner: noq::OnClosed,
-<a href=#1586 id=1586 data-nosnippet>1586</a>}
-<a href=#1587 id=1587 data-nosnippet>1587</a>
-<a href=#1588 id=1588 data-nosnippet>1588</a><span class="kw">impl </span>OnClosed {
-<a href=#1589 id=1589 data-nosnippet>1589</a>    <span class="kw">fn </span>new(conn: <span class="kw-2">&amp;</span>noq::Connection) -&gt; <span class="self">Self </span>{
-<a href=#1590 id=1590 data-nosnippet>1590</a>        <span class="self">Self </span>{
-<a href=#1591 id=1591 data-nosnippet>1591</a>            conn_id: ConnId(conn.stable_id()),
-<a href=#1592 id=1592 data-nosnippet>1592</a>            inner: conn.on_closed(),
-<a href=#1593 id=1593 data-nosnippet>1593</a>        }
-<a href=#1594 id=1594 data-nosnippet>1594</a>    }
-<a href=#1595 id=1595 data-nosnippet>1595</a>}
-<a href=#1596 id=1596 data-nosnippet>1596</a>
-<a href=#1597 id=1597 data-nosnippet>1597</a><span class="kw">impl </span>Future <span class="kw">for </span>OnClosed {
-<a href=#1598 id=1598 data-nosnippet>1598</a>    <span class="kw">type </span>Output = (ConnId, Closed);
-<a href=#1599 id=1599 data-nosnippet>1599</a>
-<a href=#1600 id=1600 data-nosnippet>1600</a>    <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-<a href=#1601 id=1601 data-nosnippet>1601</a>        <span class="kw">let </span>closed = <span class="macro">std::task::ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx));
-<a href=#1602 id=1602 data-nosnippet>1602</a>        Poll::Ready((<span class="self">self</span>.conn_id, closed))
-<a href=#1603 id=1603 data-nosnippet>1603</a>    }
-<a href=#1604 id=1604 data-nosnippet>1604</a>}
-<a href=#1605 id=1605 data-nosnippet>1605</a>
-<a href=#1606 id=1606 data-nosnippet>1606</a><span class="doccomment">/// Converts an iterator of [`TransportAddr'] into an iterator of [`transports::Addr`].
-<a href=#1607 id=1607 data-nosnippet>1607</a></span><span class="kw">fn </span>to_transports_addr(
-<a href=#1608 id=1608 data-nosnippet>1608</a>    endpoint_id: EndpointId,
-<a href=#1609 id=1609 data-nosnippet>1609</a>    addrs: <span class="kw">impl </span>IntoIterator&lt;Item = TransportAddr&gt;,
-<a href=#1610 id=1610 data-nosnippet>1610</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = transports::Addr&gt; {
-<a href=#1611 id=1611 data-nosnippet>1611</a>    addrs.into_iter().filter_map(<span class="kw">move </span>|addr| <span class="kw">match </span>addr {
-<a href=#1612 id=1612 data-nosnippet>1612</a>        TransportAddr::Relay(relay_url) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from((relay_url, endpoint_id))),
-<a href=#1613 id=1613 data-nosnippet>1613</a>        TransportAddr::Ip(sockaddr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(sockaddr)),
-<a href=#1614 id=1614 data-nosnippet>1614</a>        TransportAddr::Custom(custom_addr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(custom_addr)),
-<a href=#1615 id=1615 data-nosnippet>1615</a>        <span class="kw">_ </span>=&gt; {
-<a href=#1616 id=1616 data-nosnippet>1616</a>            <span class="macro">warn!</span>(<span class="question-mark">?</span>addr, <span class="string">"Unsupported TransportAddr"</span>);
-<a href=#1617 id=1617 data-nosnippet>1617</a>            <span class="prelude-val">None
-<a href=#1618 id=1618 data-nosnippet>1618</a>        </span>}
-<a href=#1619 id=1619 data-nosnippet>1619</a>    })
-<a href=#1620 id=1620 data-nosnippet>1620</a>}
-<a href=#1621 id=1621 data-nosnippet>1621</a>
-<a href=#1622 id=1622 data-nosnippet>1622</a><span class="doccomment">/// Returns the next item if `maybe_stream` is `Some`, or `None` otherwise.
-<a href=#1623 id=1623 data-nosnippet>1623</a></span><span class="kw">async fn </span>maybe_next&lt;S: Stream + Unpin&gt;(maybe_stream: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>S&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Option</span>&lt;S::Item&gt;&gt; {
-<a href=#1624 id=1624 data-nosnippet>1624</a>    <span class="kw">match </span>maybe_stream {
-<a href=#1625 id=1625 data-nosnippet>1625</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#1626 id=1626 data-nosnippet>1626</a>        <span class="prelude-val">Some</span>(s) =&gt; <span class="prelude-val">Some</span>(s.next().<span class="kw">await</span>),
-<a href=#1627 id=1627 data-nosnippet>1627</a>    }
-<a href=#1628 id=1628 data-nosnippet>1628</a>}</code></pre></div></section></main></body></html>
+<a href=#1499 id=1499 data-nosnippet>1499</a>    </span><span class="attr">#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(dead_code))]
+<a href=#1500 id=1500 data-nosnippet>1500</a>    </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>LocalTransportAddr {
+<a href=#1501 id=1501 data-nosnippet>1501</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.network_path.local
+<a href=#1502 id=1502 data-nosnippet>1502</a>    }
+<a href=#1503 id=1503 data-nosnippet>1503</a>
+<a href=#1504 id=1504 data-nosnippet>1504</a>    <span class="doccomment">/// Returns path statistics if available.
+<a href=#1505 id=1505 data-nosnippet>1505</a>    </span><span class="kw">pub fn </span>stats(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;PathStats&gt; {
+<a href=#1506 id=1506 data-nosnippet>1506</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.source {
+<a href=#1507 id=1507 data-nosnippet>1507</a>            StatsSource::Live { path_id, conn } =&gt; conn.path_stats(<span class="kw-2">*</span>path_id),
+<a href=#1508 id=1508 data-nosnippet>1508</a>            <span class="attr">#[cfg(test)]
+<a href=#1509 id=1509 data-nosnippet>1509</a>            </span>StatsSource::Test(stats) =&gt; stats.as_deref().copied(),
+<a href=#1510 id=1510 data-nosnippet>1510</a>        }
+<a href=#1511 id=1511 data-nosnippet>1511</a>    }
+<a href=#1512 id=1512 data-nosnippet>1512</a>}
+<a href=#1513 id=1513 data-nosnippet>1513</a>
+<a href=#1514 id=1514 data-nosnippet>1514</a><span class="doccomment">/// Trait to configure path selection.
+<a href=#1515 id=1515 data-nosnippet>1515</a>///
+<a href=#1516 id=1516 data-nosnippet>1516</a>/// Most users do not need to provide their own selector.
+<a href=#1517 id=1517 data-nosnippet>1517</a></span><span class="attr">#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
+<a href=#1518 id=1518 data-nosnippet>1518</a></span><span class="kw">pub trait </span>PathSelector: Send + Sync + std::fmt::Debug + <span class="lifetime">'static </span>{
+<a href=#1519 id=1519 data-nosnippet>1519</a>    <span class="doccomment">/// Pick the selected path to carry application data among the currently
+<a href=#1520 id=1520 data-nosnippet>1520</a>    /// open network paths to the remote endpoint.
+<a href=#1521 id=1521 data-nosnippet>1521</a>    ///
+<a href=#1522 id=1522 data-nosnippet>1522</a>    /// Build the result by starting from [`PathSelection::none`] and calling
+<a href=#1523 id=1523 data-nosnippet>1523</a>    /// [`PathSelection::set`] for the path the selector wants active.
+<a href=#1524 id=1524 data-nosnippet>1524</a>    ///
+<a href=#1525 id=1525 data-nosnippet>1525</a>    /// Returning an empty [`PathSelection`] keeps the current selection unchanged.
+<a href=#1526 id=1526 data-nosnippet>1526</a>    </span><span class="kw">fn </span>select(<span class="kw-2">&amp;</span><span class="self">self</span>, ctx: <span class="kw-2">&amp;</span>PathSelectionContext&lt;<span class="lifetime">'_</span>&gt;) -&gt; PathSelection;
+<a href=#1527 id=1527 data-nosnippet>1527</a>}
+<a href=#1528 id=1528 data-nosnippet>1528</a>
+<a href=#1529 id=1529 data-nosnippet>1529</a><span class="doccomment">/// The set of paths a [`PathSelector`] has chosen.
+<a href=#1530 id=1530 data-nosnippet>1530</a>///
+<a href=#1531 id=1531 data-nosnippet>1531</a>/// Today this holds at most one path.  Build via [`PathSelection::none`] +
+<a href=#1532 id=1532 data-nosnippet>1532</a>/// [`PathSelection::set`].
+<a href=#1533 id=1533 data-nosnippet>1533</a></span><span class="attr">#[derive(Debug, Clone)]
+<a href=#1534 id=1534 data-nosnippet>1534</a>#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
+<a href=#1535 id=1535 data-nosnippet>1535</a></span><span class="kw">pub struct </span>PathSelection {
+<a href=#1536 id=1536 data-nosnippet>1536</a>    selection: <span class="prelude-ty">Option</span>&lt;TransportFourTuple&gt;,
+<a href=#1537 id=1537 data-nosnippet>1537</a>}
+<a href=#1538 id=1538 data-nosnippet>1538</a>
+<a href=#1539 id=1539 data-nosnippet>1539</a><span class="attr">#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
+<a href=#1540 id=1540 data-nosnippet>1540</a></span><span class="kw">impl </span>PathSelection {
+<a href=#1541 id=1541 data-nosnippet>1541</a>    <span class="doccomment">/// An empty selection.
+<a href=#1542 id=1542 data-nosnippet>1542</a>    </span><span class="kw">pub fn </span>none() -&gt; <span class="self">Self </span>{
+<a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="self">Self </span>{ selection: <span class="prelude-val">None </span>}
+<a href=#1544 id=1544 data-nosnippet>1544</a>    }
+<a href=#1545 id=1545 data-nosnippet>1545</a>
+<a href=#1546 id=1546 data-nosnippet>1546</a>    <span class="doccomment">/// Adds a path to the selection.
+<a href=#1547 id=1547 data-nosnippet>1547</a>    ///
+<a href=#1548 id=1548 data-nosnippet>1548</a>    /// Today the selection holds at most one path: the first call wins, subsequent
+<a href=#1549 id=1549 data-nosnippet>1549</a>    /// calls log a warning and are ignored.
+<a href=#1550 id=1550 data-nosnippet>1550</a>    </span><span class="kw">pub fn </span>set(<span class="kw-2">&amp;mut </span><span class="self">self</span>, path: <span class="kw-2">&amp;</span>PathSelectionData&lt;<span class="lifetime">'_</span>&gt;) {
+<a href=#1551 id=1551 data-nosnippet>1551</a>        <span class="kw">if </span><span class="self">self</span>.selection.is_some() {
+<a href=#1552 id=1552 data-nosnippet>1552</a>            <span class="macro">tracing::warn!</span>(
+<a href=#1553 id=1553 data-nosnippet>1553</a>                remote_addr = <span class="question-mark">?</span>path.remote_addr(),
+<a href=#1554 id=1554 data-nosnippet>1554</a>                <span class="string">"PathSelection already contains a path; ignoring additional path"
+<a href=#1555 id=1555 data-nosnippet>1555</a>            </span>);
+<a href=#1556 id=1556 data-nosnippet>1556</a>            <span class="kw">return</span>;
+<a href=#1557 id=1557 data-nosnippet>1557</a>        }
+<a href=#1558 id=1558 data-nosnippet>1558</a>        <span class="self">self</span>.selection = <span class="prelude-val">Some</span>(path.network_path.clone());
+<a href=#1559 id=1559 data-nosnippet>1559</a>    }
+<a href=#1560 id=1560 data-nosnippet>1560</a>
+<a href=#1561 id=1561 data-nosnippet>1561</a>    <span class="doccomment">/// The selected path: the one data should be sent on. This is not public so
+<a href=#1562 id=1562 data-nosnippet>1562</a>    /// we can later allow for selecting multiple paths without changing the
+<a href=#1563 id=1563 data-nosnippet>1563</a>    /// public API of `PathSelection`.
+<a href=#1564 id=1564 data-nosnippet>1564</a>    ///
+<a href=#1565 id=1565 data-nosnippet>1565</a>    /// Returns `None` when nothing has been selected.
+<a href=#1566 id=1566 data-nosnippet>1566</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>selected(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>TransportFourTuple&gt; {
+<a href=#1567 id=1567 data-nosnippet>1567</a>        <span class="self">self</span>.selection.as_ref()
+<a href=#1568 id=1568 data-nosnippet>1568</a>    }
+<a href=#1569 id=1569 data-nosnippet>1569</a>}
+<a href=#1570 id=1570 data-nosnippet>1570</a>
+<a href=#1571 id=1571 data-nosnippet>1571</a><span class="doccomment">/// Poll a future once, like n0_future::future::poll_once but sync.
+<a href=#1572 id=1572 data-nosnippet>1572</a></span><span class="kw">fn </span>now_or_never&lt;T, F: Future&lt;Output = T&gt;&gt;(fut: F) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+<a href=#1573 id=1573 data-nosnippet>1573</a>    <span class="kw">let </span>fut = <span class="macro">std::pin::pin!</span>(fut);
+<a href=#1574 id=1574 data-nosnippet>1574</a>    <span class="kw">match </span>fut.poll(<span class="kw-2">&amp;mut </span>std::task::Context::from_waker(std::task::Waker::noop())) {
+<a href=#1575 id=1575 data-nosnippet>1575</a>        Poll::Ready(res) =&gt; <span class="prelude-val">Some</span>(res),
+<a href=#1576 id=1576 data-nosnippet>1576</a>        Poll::Pending =&gt; <span class="prelude-val">None</span>,
+<a href=#1577 id=1577 data-nosnippet>1577</a>    }
+<a href=#1578 id=1578 data-nosnippet>1578</a>}
+<a href=#1579 id=1579 data-nosnippet>1579</a>
+<a href=#1580 id=1580 data-nosnippet>1580</a><span class="doccomment">/// Future that resolves to the `conn_id` once a connection is closed.
+<a href=#1581 id=1581 data-nosnippet>1581</a>///
+<a href=#1582 id=1582 data-nosnippet>1582</a>/// This uses [`noq::Connection::on_closed`], which does not keep the connection alive
+<a href=#1583 id=1583 data-nosnippet>1583</a>/// while awaiting the future.
+<a href=#1584 id=1584 data-nosnippet>1584</a></span><span class="kw">struct </span>OnClosed {
+<a href=#1585 id=1585 data-nosnippet>1585</a>    conn_id: ConnId,
+<a href=#1586 id=1586 data-nosnippet>1586</a>    inner: noq::OnClosed,
+<a href=#1587 id=1587 data-nosnippet>1587</a>}
+<a href=#1588 id=1588 data-nosnippet>1588</a>
+<a href=#1589 id=1589 data-nosnippet>1589</a><span class="kw">impl </span>OnClosed {
+<a href=#1590 id=1590 data-nosnippet>1590</a>    <span class="kw">fn </span>new(conn: <span class="kw-2">&amp;</span>noq::Connection) -&gt; <span class="self">Self </span>{
+<a href=#1591 id=1591 data-nosnippet>1591</a>        <span class="self">Self </span>{
+<a href=#1592 id=1592 data-nosnippet>1592</a>            conn_id: ConnId(conn.stable_id()),
+<a href=#1593 id=1593 data-nosnippet>1593</a>            inner: conn.on_closed(),
+<a href=#1594 id=1594 data-nosnippet>1594</a>        }
+<a href=#1595 id=1595 data-nosnippet>1595</a>    }
+<a href=#1596 id=1596 data-nosnippet>1596</a>}
+<a href=#1597 id=1597 data-nosnippet>1597</a>
+<a href=#1598 id=1598 data-nosnippet>1598</a><span class="kw">impl </span>Future <span class="kw">for </span>OnClosed {
+<a href=#1599 id=1599 data-nosnippet>1599</a>    <span class="kw">type </span>Output = (ConnId, Closed);
+<a href=#1600 id=1600 data-nosnippet>1600</a>
+<a href=#1601 id=1601 data-nosnippet>1601</a>    <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
+<a href=#1602 id=1602 data-nosnippet>1602</a>        <span class="kw">let </span>closed = <span class="macro">std::task::ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx));
+<a href=#1603 id=1603 data-nosnippet>1603</a>        Poll::Ready((<span class="self">self</span>.conn_id, closed))
+<a href=#1604 id=1604 data-nosnippet>1604</a>    }
+<a href=#1605 id=1605 data-nosnippet>1605</a>}
+<a href=#1606 id=1606 data-nosnippet>1606</a>
+<a href=#1607 id=1607 data-nosnippet>1607</a><span class="doccomment">/// Converts an iterator of [`TransportAddr'] into an iterator of [`transports::Addr`].
+<a href=#1608 id=1608 data-nosnippet>1608</a></span><span class="kw">fn </span>to_transports_addr(
+<a href=#1609 id=1609 data-nosnippet>1609</a>    endpoint_id: EndpointId,
+<a href=#1610 id=1610 data-nosnippet>1610</a>    addrs: <span class="kw">impl </span>IntoIterator&lt;Item = TransportAddr&gt;,
+<a href=#1611 id=1611 data-nosnippet>1611</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = transports::Addr&gt; {
+<a href=#1612 id=1612 data-nosnippet>1612</a>    addrs.into_iter().filter_map(<span class="kw">move </span>|addr| <span class="kw">match </span>addr {
+<a href=#1613 id=1613 data-nosnippet>1613</a>        TransportAddr::Relay(relay_url) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from((relay_url, endpoint_id))),
+<a href=#1614 id=1614 data-nosnippet>1614</a>        TransportAddr::Ip(sockaddr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(sockaddr)),
+<a href=#1615 id=1615 data-nosnippet>1615</a>        TransportAddr::Custom(custom_addr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(custom_addr)),
+<a href=#1616 id=1616 data-nosnippet>1616</a>        <span class="kw">_ </span>=&gt; {
+<a href=#1617 id=1617 data-nosnippet>1617</a>            <span class="macro">warn!</span>(<span class="question-mark">?</span>addr, <span class="string">"Unsupported TransportAddr"</span>);
+<a href=#1618 id=1618 data-nosnippet>1618</a>            <span class="prelude-val">None
+<a href=#1619 id=1619 data-nosnippet>1619</a>        </span>}
+<a href=#1620 id=1620 data-nosnippet>1620</a>    })
+<a href=#1621 id=1621 data-nosnippet>1621</a>}
+<a href=#1622 id=1622 data-nosnippet>1622</a>
+<a href=#1623 id=1623 data-nosnippet>1623</a><span class="doccomment">/// Returns the next item if `maybe_stream` is `Some`, or `None` otherwise.
+<a href=#1624 id=1624 data-nosnippet>1624</a></span><span class="kw">async fn </span>maybe_next&lt;S: Stream + Unpin&gt;(maybe_stream: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>S&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Option</span>&lt;S::Item&gt;&gt; {
+<a href=#1625 id=1625 data-nosnippet>1625</a>    <span class="kw">match </span>maybe_stream {
+<a href=#1626 id=1626 data-nosnippet>1626</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#1627 id=1627 data-nosnippet>1627</a>        <span class="prelude-val">Some</span>(s) =&gt; <span class="prelude-val">Some</span>(s.next().<span class="kw">await</span>),
+<a href=#1628 id=1628 data-nosnippet>1628</a>    }
+<a href=#1629 id=1629 data-nosnippet>1629</a>}</code></pre></div></section></main></body></html>
