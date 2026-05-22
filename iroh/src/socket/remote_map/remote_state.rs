@@ -612,7 +612,7 @@ impl RemoteStateActor {
 
                 // We track all known remote addresses for the peer in `State::paths`. The paths are tracked
                 // by remote address only (we ignore the local IP). Therefore, we mark a remote addr as abandoned
-                // in the remote-global state only once no connections has any path to that remote addr.
+                // in the remote-global state only once no connections have any path to that remote addr.
                 if !conn_state
                     .paths
                     .values()
@@ -855,7 +855,9 @@ impl State {
 
             // TODO(Frando): We might want to include a local IP here in the future, if we confidently
             // know that it is the correct one.
-            if let Err(err) = send_datagram(&mut sender, addr.remote.clone(), transmit).await {
+            // See https://github.com/n0-computer/iroh/issues/4280.
+            if let Err(err) = send_datagram(&mut sender, addr.remote.clone(), None, transmit).await
+            {
                 debug!(?addr, "failed to send datagram on selected_path: {err:#}");
             }
         } else {
@@ -881,8 +883,9 @@ impl State {
 
                 // TODO(Frando): We might want to include a local IP here in the future, if we confidently
                 // know that it is the correct one.
+                // See https://github.com/n0-computer/iroh/issues/4280.
                 } else if let Err(err) =
-                    send_datagram(&mut sender, addr.clone(), transmit.clone()).await
+                    send_datagram(&mut sender, addr.clone(), None, transmit.clone()).await
                 {
                     debug!(?addr, "failed to send datagram: {err:#}");
                 }
@@ -1284,6 +1287,7 @@ fn update_qnt_candidates(conn: &noq::Connection, direct_addrs: &BTreeSet<SocketA
 fn send_datagram<'a>(
     sender: &'a mut TransportsSender,
     addr: transports::Addr,
+    local_ip: Option<IpAddr>,
     owned_transmit: OwnedTransmit,
 ) -> impl Future<Output = n0_error::Result<()>> + 'a {
     std::future::poll_fn(move |cx| {
@@ -1293,9 +1297,8 @@ fn send_datagram<'a>(
             segment_size: owned_transmit.segment_size,
         };
 
-        // TODO: Add support for source address here?
         Pin::new(&mut *sender)
-            .poll_send(cx, &addr, None, &transmit)
+            .poll_send(cx, &addr, local_ip, &transmit)
             .map(|res| res.with_context(|_| format!("failed to send datagram to {:?}", addr)))
     })
 }
