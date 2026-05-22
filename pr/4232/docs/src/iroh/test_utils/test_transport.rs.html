@@ -506,7 +506,7 @@
 <a href=#506 id=506 data-nosnippet>506</a>    </span><span class="attr">#[tokio::test]
 <a href=#507 id=507 data-nosnippet>507</a>    #[traced_test]
 <a href=#508 id=508 data-nosnippet>508</a>    </span><span class="kw">async fn </span>test_custom_transport_local_addr() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">use </span><span class="kw">crate</span>::endpoint::IncomingLocalAddr;
+<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">use </span><span class="kw">crate</span>::endpoint::LocalTransportAddr;
 <a href=#510 id=510 data-nosnippet>510</a>
 <a href=#511 id=511 data-nosnippet>511</a>        <span class="kw">let </span>network = TestNetwork::new();
 <a href=#512 id=512 data-nosnippet>512</a>        <span class="kw">let </span>s1 = SecretKey::generate();
@@ -532,7 +532,7 @@
 <a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">let </span>incoming = ep2.accept().<span class="kw">await</span>.expect(<span class="string">"incoming"</span>);
 <a href=#533 id=533 data-nosnippet>533</a>        <span class="macro">assert_eq!</span>(
 <a href=#534 id=534 data-nosnippet>534</a>            incoming.local_addr(),
-<a href=#535 id=535 data-nosnippet>535</a>            IncomingLocalAddr::Custom(<span class="prelude-val">Some</span>(to_custom_addr(s2.public()))),
+<a href=#535 id=535 data-nosnippet>535</a>            LocalTransportAddr::Custom(<span class="prelude-val">Some</span>(to_custom_addr(s2.public()))),
 <a href=#536 id=536 data-nosnippet>536</a>        );
 <a href=#537 id=537 data-nosnippet>537</a>        <span class="kw">let </span>_conn = incoming.accept().anyerr()<span class="question-mark">?</span>.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
 <a href=#538 id=538 data-nosnippet>538</a>

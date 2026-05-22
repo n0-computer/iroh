@@ -190,117 +190,129 @@
 <a href=#190 id=190 data-nosnippet>190</a>    <span class="kw">use </span>noq::PathStats;
 <a href=#191 id=191 data-nosnippet>191</a>
 <a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">use </span><span class="kw">crate</span>::socket::remote_map::{PathSelectionContext, PathSelectionData};
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">use </span><span class="kw">crate</span>::socket::remote_map::{PathSelectionContext, PathSelectionData, TransportFourTuple};
 <a href=#194 id=194 data-nosnippet>194</a>
-<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">fn </span>v4(port: u16) -&gt; Addr {
-<a href=#196 id=196 data-nosnippet>196</a>        Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
-<a href=#197 id=197 data-nosnippet>197</a>    }
-<a href=#198 id=198 data-nosnippet>198</a>
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">fn </span>v6(port: u16) -&gt; Addr {
-<a href=#200 id=200 data-nosnippet>200</a>        Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
-<a href=#201 id=201 data-nosnippet>201</a>            Ipv6Addr::LOCALHOST,
-<a href=#202 id=202 data-nosnippet>202</a>            port,
-<a href=#203 id=203 data-nosnippet>203</a>            <span class="number">0</span>,
-<a href=#204 id=204 data-nosnippet>204</a>            <span class="number">0</span>,
-<a href=#205 id=205 data-nosnippet>205</a>        )))
-<a href=#206 id=206 data-nosnippet>206</a>    }
-<a href=#207 id=207 data-nosnippet>207</a>
-<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">fn </span>relay(port: u16) -&gt; Addr {
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"https://relay{port}.iroh.computer"</span>)
-<a href=#210 id=210 data-nosnippet>210</a>            .parse::&lt;RelayUrl&gt;()
-<a href=#211 id=211 data-nosnippet>211</a>            .unwrap();
-<a href=#212 id=212 data-nosnippet>212</a>        Addr::Relay(url, EndpointId::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]).unwrap())
-<a href=#213 id=213 data-nosnippet>213</a>    }
-<a href=#214 id=214 data-nosnippet>214</a>
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">fn </span>psd(addr: <span class="kw-2">&amp;</span>Addr, rtt_ms: u64) -&gt; PathSelectionData&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#216 id=216 data-nosnippet>216</a>        <span class="comment">// PathStats is #[non_exhaustive], so build via Default + field assignment.
-<a href=#217 id=217 data-nosnippet>217</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>stats = PathStats::default();
-<a href=#218 id=218 data-nosnippet>218</a>        stats.rtt = Duration::from_millis(rtt_ms);
-<a href=#219 id=219 data-nosnippet>219</a>        PathSelectionData::for_test(addr, <span class="prelude-val">Some</span>(stats))
-<a href=#220 id=220 data-nosnippet>220</a>    }
-<a href=#221 id=221 data-nosnippet>221</a>
-<a href=#222 id=222 data-nosnippet>222</a>    <span class="doccomment">/// Runs [`BiasedRttPathSelector::default`] against the given paths and current
-<a href=#223 id=223 data-nosnippet>223</a>    /// selection, returning the selector's primary pick (cloned, for easier asserts).
-<a href=#224 id=224 data-nosnippet>224</a>    </span><span class="kw">fn </span>select_with_default(
-<a href=#225 id=225 data-nosnippet>225</a>        current: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Addr&gt;,
-<a href=#226 id=226 data-nosnippet>226</a>        paths: Vec&lt;PathSelectionData&lt;<span class="lifetime">'_</span>&gt;&gt;,
-<a href=#227 id=227 data-nosnippet>227</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;Addr&gt; {
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw">let </span>ctx = PathSelectionContext::for_test(current, paths);
-<a href=#229 id=229 data-nosnippet>229</a>        BiasedRttPathSelector::default()
-<a href=#230 id=230 data-nosnippet>230</a>            .select(<span class="kw-2">&amp;</span>ctx)
-<a href=#231 id=231 data-nosnippet>231</a>            .selected()
-<a href=#232 id=232 data-nosnippet>232</a>            .cloned()
-<a href=#233 id=233 data-nosnippet>233</a>    }
-<a href=#234 id=234 data-nosnippet>234</a>
-<a href=#235 id=235 data-nosnippet>235</a>    <span class="attr">#[test]
-<a href=#236 id=236 data-nosnippet>236</a>    </span><span class="kw">fn </span>ipv6_wins_over_ipv4_within_bias() {
-<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">let </span>v4 = v4(<span class="number">1</span>);
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>v6 = v6(<span class="number">1</span>);
-<a href=#239 id=239 data-nosnippet>239</a>
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="comment">// Equal RTTs: IPv6 wins because of the bias advantage.
-<a href=#241 id=241 data-nosnippet>241</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4, <span class="number">10</span>), psd(<span class="kw-2">&amp;</span>v6, <span class="number">10</span>)]);
-<a href=#242 id=242 data-nosnippet>242</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v6));
-<a href=#243 id=243 data-nosnippet>243</a>
-<a href=#244 id=244 data-nosnippet>244</a>        <span class="comment">// IPv6 still wins when 2ms slower (within the 3ms bias).
-<a href=#245 id=245 data-nosnippet>245</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4, <span class="number">10</span>), psd(<span class="kw-2">&amp;</span>v6, <span class="number">12</span>)]);
-<a href=#246 id=246 data-nosnippet>246</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v6));
-<a href=#247 id=247 data-nosnippet>247</a>
-<a href=#248 id=248 data-nosnippet>248</a>        <span class="comment">// IPv4 wins when IPv6 is 10ms slower (exceeds 3ms bias).
-<a href=#249 id=249 data-nosnippet>249</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4, <span class="number">10</span>), psd(<span class="kw-2">&amp;</span>v6, <span class="number">20</span>)]);
-<a href=#250 id=250 data-nosnippet>250</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4));
-<a href=#251 id=251 data-nosnippet>251</a>    }
-<a href=#252 id=252 data-nosnippet>252</a>
-<a href=#253 id=253 data-nosnippet>253</a>    <span class="attr">#[test]
-<a href=#254 id=254 data-nosnippet>254</a>    </span><span class="kw">fn </span>primary_wins_over_backup_regardless_of_rtt() {
-<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">let </span>v4 = v4(<span class="number">1</span>);
-<a href=#256 id=256 data-nosnippet>256</a>        <span class="kw">let </span>relay = relay(<span class="number">1</span>);
-<a href=#257 id=257 data-nosnippet>257</a>
-<a href=#258 id=258 data-nosnippet>258</a>        <span class="comment">// Primary tier beats backup tier even when the backup has a much lower RTT.
-<a href=#259 id=259 data-nosnippet>259</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4, <span class="number">100</span>), psd(<span class="kw-2">&amp;</span>relay, <span class="number">10</span>)]);
-<a href=#260 id=260 data-nosnippet>260</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(chosen, <span class="prelude-val">Some</span>(Addr::Ip(<span class="kw">_</span>))));
-<a href=#261 id=261 data-nosnippet>261</a>
-<a href=#262 id=262 data-nosnippet>262</a>        <span class="comment">// Even more extreme: 1000ms primary still wins over 1ms backup.
-<a href=#263 id=263 data-nosnippet>263</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4, <span class="number">1000</span>), psd(<span class="kw-2">&amp;</span>relay, <span class="number">1</span>)]);
-<a href=#264 id=264 data-nosnippet>264</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(chosen, <span class="prelude-val">Some</span>(Addr::Ip(<span class="kw">_</span>))));
-<a href=#265 id=265 data-nosnippet>265</a>    }
-<a href=#266 id=266 data-nosnippet>266</a>
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="attr">#[test]
-<a href=#268 id=268 data-nosnippet>268</a>    </span><span class="kw">fn </span>same_tier_only_switches_with_significant_rtt_diff() {
-<a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">let </span>v4_1 = v4(<span class="number">1</span>);
-<a href=#270 id=270 data-nosnippet>270</a>        <span class="kw">let </span>v4_2 = v4(<span class="number">2</span>);
-<a href=#271 id=271 data-nosnippet>271</a>
-<a href=#272 id=272 data-nosnippet>272</a>        <span class="comment">// 2ms diff &lt; 5ms threshold → keep current (no switch, primary() == None).
-<a href=#273 id=273 data-nosnippet>273</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_1), <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4_1, <span class="number">20</span>), psd(<span class="kw-2">&amp;</span>v4_2, <span class="number">18</span>)]);
-<a href=#274 id=274 data-nosnippet>274</a>        <span class="macro">assert_eq!</span>(chosen, <span class="prelude-val">None</span>);
-<a href=#275 id=275 data-nosnippet>275</a>
-<a href=#276 id=276 data-nosnippet>276</a>        <span class="comment">// 4ms diff &lt; 5ms → keep current.
-<a href=#277 id=277 data-nosnippet>277</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_1), <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4_1, <span class="number">20</span>), psd(<span class="kw-2">&amp;</span>v4_2, <span class="number">16</span>)]);
-<a href=#278 id=278 data-nosnippet>278</a>        <span class="macro">assert_eq!</span>(chosen, <span class="prelude-val">None</span>);
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="comment">// 5ms diff hits the threshold (the condition is `&lt;=`) → switch.
-<a href=#281 id=281 data-nosnippet>281</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_1), <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4_1, <span class="number">20</span>), psd(<span class="kw-2">&amp;</span>v4_2, <span class="number">15</span>)]);
-<a href=#282 id=282 data-nosnippet>282</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_2));
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">fn </span>v4(port: u16) -&gt; TransportFourTuple {
+<a href=#196 id=196 data-nosnippet>196</a>        TransportFourTuple::from_remote(Addr::Ip(SocketAddr::V4(SocketAddrV4::new(
+<a href=#197 id=197 data-nosnippet>197</a>            Ipv4Addr::LOCALHOST,
+<a href=#198 id=198 data-nosnippet>198</a>            port,
+<a href=#199 id=199 data-nosnippet>199</a>        ))))
+<a href=#200 id=200 data-nosnippet>200</a>    }
+<a href=#201 id=201 data-nosnippet>201</a>
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">fn </span>v6(port: u16) -&gt; TransportFourTuple {
+<a href=#203 id=203 data-nosnippet>203</a>        TransportFourTuple::from_remote(Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
+<a href=#204 id=204 data-nosnippet>204</a>            Ipv6Addr::LOCALHOST,
+<a href=#205 id=205 data-nosnippet>205</a>            port,
+<a href=#206 id=206 data-nosnippet>206</a>            <span class="number">0</span>,
+<a href=#207 id=207 data-nosnippet>207</a>            <span class="number">0</span>,
+<a href=#208 id=208 data-nosnippet>208</a>        ))))
+<a href=#209 id=209 data-nosnippet>209</a>    }
+<a href=#210 id=210 data-nosnippet>210</a>
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">fn </span>relay(port: u16) -&gt; TransportFourTuple {
+<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"https://relay{port}.iroh.computer"</span>)
+<a href=#213 id=213 data-nosnippet>213</a>            .parse::&lt;RelayUrl&gt;()
+<a href=#214 id=214 data-nosnippet>214</a>            .unwrap();
+<a href=#215 id=215 data-nosnippet>215</a>        TransportFourTuple::from_remote(Addr::Relay(
+<a href=#216 id=216 data-nosnippet>216</a>            url,
+<a href=#217 id=217 data-nosnippet>217</a>            EndpointId::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]).unwrap(),
+<a href=#218 id=218 data-nosnippet>218</a>        ))
+<a href=#219 id=219 data-nosnippet>219</a>    }
+<a href=#220 id=220 data-nosnippet>220</a>
+<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">fn </span>psd(addr: <span class="kw-2">&amp;</span>TransportFourTuple, rtt_ms: u64) -&gt; PathSelectionData&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="comment">// PathStats is #[non_exhaustive], so build via Default + field assignment.
+<a href=#223 id=223 data-nosnippet>223</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>stats = PathStats::default();
+<a href=#224 id=224 data-nosnippet>224</a>        stats.rtt = Duration::from_millis(rtt_ms);
+<a href=#225 id=225 data-nosnippet>225</a>        PathSelectionData::for_test(addr, <span class="prelude-val">Some</span>(stats))
+<a href=#226 id=226 data-nosnippet>226</a>    }
+<a href=#227 id=227 data-nosnippet>227</a>
+<a href=#228 id=228 data-nosnippet>228</a>    <span class="doccomment">/// Runs [`BiasedRttPathSelector::default`] against the given paths and current
+<a href=#229 id=229 data-nosnippet>229</a>    /// selection, returning the selector's primary pick (cloned, for easier asserts).
+<a href=#230 id=230 data-nosnippet>230</a>    </span><span class="kw">fn </span>select_with_default(
+<a href=#231 id=231 data-nosnippet>231</a>        current: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>TransportFourTuple&gt;,
+<a href=#232 id=232 data-nosnippet>232</a>        paths: Vec&lt;PathSelectionData&lt;<span class="lifetime">'_</span>&gt;&gt;,
+<a href=#233 id=233 data-nosnippet>233</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;TransportFourTuple&gt; {
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">let </span>ctx = PathSelectionContext::for_test(current, paths);
+<a href=#235 id=235 data-nosnippet>235</a>        BiasedRttPathSelector::default()
+<a href=#236 id=236 data-nosnippet>236</a>            .select(<span class="kw-2">&amp;</span>ctx)
+<a href=#237 id=237 data-nosnippet>237</a>            .selected()
+<a href=#238 id=238 data-nosnippet>238</a>            .cloned()
+<a href=#239 id=239 data-nosnippet>239</a>    }
+<a href=#240 id=240 data-nosnippet>240</a>
+<a href=#241 id=241 data-nosnippet>241</a>    <span class="attr">#[test]
+<a href=#242 id=242 data-nosnippet>242</a>    </span><span class="kw">fn </span>ipv6_wins_over_ipv4_within_bias() {
+<a href=#243 id=243 data-nosnippet>243</a>        <span class="kw">let </span>v4 = v4(<span class="number">1</span>);
+<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">let </span>v6 = v6(<span class="number">1</span>);
+<a href=#245 id=245 data-nosnippet>245</a>
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="comment">// Equal RTTs: IPv6 wins because of the bias advantage.
+<a href=#247 id=247 data-nosnippet>247</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4, <span class="number">10</span>), psd(<span class="kw-2">&amp;</span>v6, <span class="number">10</span>)]);
+<a href=#248 id=248 data-nosnippet>248</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v6));
+<a href=#249 id=249 data-nosnippet>249</a>
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="comment">// IPv6 still wins when 2ms slower (within the 3ms bias).
+<a href=#251 id=251 data-nosnippet>251</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4, <span class="number">10</span>), psd(<span class="kw-2">&amp;</span>v6, <span class="number">12</span>)]);
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v6));
+<a href=#253 id=253 data-nosnippet>253</a>
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="comment">// IPv4 wins when IPv6 is 10ms slower (exceeds 3ms bias).
+<a href=#255 id=255 data-nosnippet>255</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4, <span class="number">10</span>), psd(<span class="kw-2">&amp;</span>v6, <span class="number">20</span>)]);
+<a href=#256 id=256 data-nosnippet>256</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4));
+<a href=#257 id=257 data-nosnippet>257</a>    }
+<a href=#258 id=258 data-nosnippet>258</a>
+<a href=#259 id=259 data-nosnippet>259</a>    <span class="attr">#[test]
+<a href=#260 id=260 data-nosnippet>260</a>    </span><span class="kw">fn </span>primary_wins_over_backup_regardless_of_rtt() {
+<a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span>v4 = v4(<span class="number">1</span>);
+<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">let </span>relay = relay(<span class="number">1</span>);
+<a href=#263 id=263 data-nosnippet>263</a>
+<a href=#264 id=264 data-nosnippet>264</a>        <span class="comment">// Primary tier beats backup tier even when the backup has a much lower RTT.
+<a href=#265 id=265 data-nosnippet>265</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4, <span class="number">100</span>), psd(<span class="kw-2">&amp;</span>relay, <span class="number">10</span>)]);
+<a href=#266 id=266 data-nosnippet>266</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#267 id=267 data-nosnippet>267</a>            chosen.as_ref().map(|t| t.remote()),
+<a href=#268 id=268 data-nosnippet>268</a>            <span class="prelude-val">Some</span>(Addr::Ip(<span class="kw">_</span>))
+<a href=#269 id=269 data-nosnippet>269</a>        ));
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="comment">// Even more extreme: 1000ms primary still wins over 1ms backup.
+<a href=#272 id=272 data-nosnippet>272</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4, <span class="number">1000</span>), psd(<span class="kw-2">&amp;</span>relay, <span class="number">1</span>)]);
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#274 id=274 data-nosnippet>274</a>            chosen.as_ref().map(|t| t.remote()),
+<a href=#275 id=275 data-nosnippet>275</a>            <span class="prelude-val">Some</span>(Addr::Ip(<span class="kw">_</span>))
+<a href=#276 id=276 data-nosnippet>276</a>        ));
+<a href=#277 id=277 data-nosnippet>277</a>    }
+<a href=#278 id=278 data-nosnippet>278</a>
+<a href=#279 id=279 data-nosnippet>279</a>    <span class="attr">#[test]
+<a href=#280 id=280 data-nosnippet>280</a>    </span><span class="kw">fn </span>same_tier_only_switches_with_significant_rtt_diff() {
+<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">let </span>v4_1 = v4(<span class="number">1</span>);
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="kw">let </span>v4_2 = v4(<span class="number">2</span>);
 <a href=#283 id=283 data-nosnippet>283</a>
-<a href=#284 id=284 data-nosnippet>284</a>        <span class="comment">// 6ms diff &gt; 5ms → switch.
-<a href=#285 id=285 data-nosnippet>285</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_1), <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4_1, <span class="number">20</span>), psd(<span class="kw-2">&amp;</span>v4_2, <span class="number">14</span>)]);
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_2));
-<a href=#287 id=287 data-nosnippet>287</a>    }
-<a href=#288 id=288 data-nosnippet>288</a>
-<a href=#289 id=289 data-nosnippet>289</a>    <span class="attr">#[test]
-<a href=#290 id=290 data-nosnippet>290</a>    </span><span class="kw">fn </span>no_current_path_selects_best() {
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>v4_1 = v4(<span class="number">1</span>);
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>v4_2 = v4(<span class="number">2</span>);
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4_1, <span class="number">20</span>), psd(<span class="kw-2">&amp;</span>v4_2, <span class="number">10</span>)]);
+<a href=#284 id=284 data-nosnippet>284</a>        <span class="comment">// 2ms diff &lt; 5ms threshold → keep current (no switch, primary() == None).
+<a href=#285 id=285 data-nosnippet>285</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_1), <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4_1, <span class="number">20</span>), psd(<span class="kw-2">&amp;</span>v4_2, <span class="number">18</span>)]);
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="macro">assert_eq!</span>(chosen, <span class="prelude-val">None</span>);
+<a href=#287 id=287 data-nosnippet>287</a>
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="comment">// 4ms diff &lt; 5ms → keep current.
+<a href=#289 id=289 data-nosnippet>289</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_1), <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4_1, <span class="number">20</span>), psd(<span class="kw-2">&amp;</span>v4_2, <span class="number">16</span>)]);
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="macro">assert_eq!</span>(chosen, <span class="prelude-val">None</span>);
+<a href=#291 id=291 data-nosnippet>291</a>
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="comment">// 5ms diff hits the threshold (the condition is `&lt;=`) → switch.
+<a href=#293 id=293 data-nosnippet>293</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_1), <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4_1, <span class="number">20</span>), psd(<span class="kw-2">&amp;</span>v4_2, <span class="number">15</span>)]);
 <a href=#294 id=294 data-nosnippet>294</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_2));
-<a href=#295 id=295 data-nosnippet>295</a>    }
-<a href=#296 id=296 data-nosnippet>296</a>
-<a href=#297 id=297 data-nosnippet>297</a>    <span class="attr">#[test]
-<a href=#298 id=298 data-nosnippet>298</a>    </span><span class="kw">fn </span>empty_paths_returns_none() {
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="comment">// No current, no candidates: nothing to pick.
-<a href=#300 id=300 data-nosnippet>300</a>        </span><span class="macro">assert_eq!</span>(select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[]), <span class="prelude-val">None</span>);
-<a href=#301 id=301 data-nosnippet>301</a>
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="comment">// Current is set but there are no candidates: keep current (primary() == None).
-<a href=#303 id=303 data-nosnippet>303</a>        </span><span class="kw">let </span>v4 = v4(<span class="number">1</span>);
-<a href=#304 id=304 data-nosnippet>304</a>        <span class="macro">assert_eq!</span>(select_with_default(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4), <span class="macro">vec!</span>[]), <span class="prelude-val">None</span>);
-<a href=#305 id=305 data-nosnippet>305</a>    }
-<a href=#306 id=306 data-nosnippet>306</a>}</code></pre></div></section></main></body></html>
+<a href=#295 id=295 data-nosnippet>295</a>
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="comment">// 6ms diff &gt; 5ms → switch.
+<a href=#297 id=297 data-nosnippet>297</a>        </span><span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_1), <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4_1, <span class="number">20</span>), psd(<span class="kw-2">&amp;</span>v4_2, <span class="number">14</span>)]);
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_2));
+<a href=#299 id=299 data-nosnippet>299</a>    }
+<a href=#300 id=300 data-nosnippet>300</a>
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="attr">#[test]
+<a href=#302 id=302 data-nosnippet>302</a>    </span><span class="kw">fn </span>no_current_path_selects_best() {
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>v4_1 = v4(<span class="number">1</span>);
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">let </span>v4_2 = v4(<span class="number">2</span>);
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>chosen = select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[psd(<span class="kw-2">&amp;</span>v4_1, <span class="number">20</span>), psd(<span class="kw-2">&amp;</span>v4_2, <span class="number">10</span>)]);
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="macro">assert_eq!</span>(chosen.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4_2));
+<a href=#307 id=307 data-nosnippet>307</a>    }
+<a href=#308 id=308 data-nosnippet>308</a>
+<a href=#309 id=309 data-nosnippet>309</a>    <span class="attr">#[test]
+<a href=#310 id=310 data-nosnippet>310</a>    </span><span class="kw">fn </span>empty_paths_returns_none() {
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="comment">// No current, no candidates: nothing to pick.
+<a href=#312 id=312 data-nosnippet>312</a>        </span><span class="macro">assert_eq!</span>(select_with_default(<span class="prelude-val">None</span>, <span class="macro">vec!</span>[]), <span class="prelude-val">None</span>);
+<a href=#313 id=313 data-nosnippet>313</a>
+<a href=#314 id=314 data-nosnippet>314</a>        <span class="comment">// Current is set but there are no candidates: keep current (primary() == None).
+<a href=#315 id=315 data-nosnippet>315</a>        </span><span class="kw">let </span>v4 = v4(<span class="number">1</span>);
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="macro">assert_eq!</span>(select_with_default(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>v4), <span class="macro">vec!</span>[]), <span class="prelude-val">None</span>);
+<a href=#317 id=317 data-nosnippet>317</a>    }
+<a href=#318 id=318 data-nosnippet>318</a>}</code></pre></div></section></main></body></html>
