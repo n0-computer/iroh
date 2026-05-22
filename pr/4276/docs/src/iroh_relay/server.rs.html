@@ -379,7 +379,7 @@
 <a href=#379 id=379 data-nosnippet>379</a>    /// Dropping the guard calls [`AccessControl::on_disconnect`] on `access`
 <a href=#380 id=380 data-nosnippet>380</a>    /// with the request's [`EndpointId`] and [`ConnectionId`]. Create it only
 <a href=#381 id=381 data-nosnippet>381</a>    /// once [`AccessControl::on_connect`] has admitted the connection.
-<a href=#382 id=382 data-nosnippet>382</a>    </span><span class="kw">pub fn </span>new(access: Arc&lt;<span class="kw">dyn </span>DynAccessControl&gt;, request: <span class="kw-2">&amp;</span>ClientRequest) -&gt; <span class="self">Self </span>{
+<a href=#382 id=382 data-nosnippet>382</a>    </span><span class="kw">pub fn </span>for_access_control(access: Arc&lt;<span class="kw">dyn </span>DynAccessControl&gt;, request: <span class="kw-2">&amp;</span>ClientRequest) -&gt; <span class="self">Self </span>{
 <a href=#383 id=383 data-nosnippet>383</a>        <span class="self">Self </span>{
 <a href=#384 id=384 data-nosnippet>384</a>            access: <span class="prelude-val">Some</span>(access),
 <a href=#385 id=385 data-nosnippet>385</a>            endpoint_id: request.endpoint_id(),
