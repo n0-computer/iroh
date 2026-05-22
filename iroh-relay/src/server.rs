@@ -379,7 +379,7 @@ impl OnDisconnectGuard {
     /// Dropping the guard calls [`AccessControl::on_disconnect`] on `access`
     /// with the request's [`EndpointId`] and [`ConnectionId`]. Create it only
     /// once [`AccessControl::on_connect`] has admitted the connection.
-    pub fn new(access: Arc<dyn DynAccessControl>, request: &ClientRequest) -> Self {
+    pub fn for_access_control(access: Arc<dyn DynAccessControl>, request: &ClientRequest) -> Self {
         Self {
             access: Some(access),
             endpoint_id: request.endpoint_id(),

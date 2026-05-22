@@ -71,8 +71,6 @@ impl Clients {
     ///
     /// Once the client disconnects, the `guard` will be dropped, allowing callers to be notified
     /// of the disconnect.
-    ///
-    /// [`AccessControl`]: crate::server::AccessControl
     pub fn register<S>(
         &self,
         client_config: Config<S>,

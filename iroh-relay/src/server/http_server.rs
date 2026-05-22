@@ -37,7 +37,7 @@ use super::{
 };
 use crate::{
     KeyCache,
-    defaults::DEFAULT_KEY_CACHE_CAPACITY,
+    defaults::{DEFAULT_KEY_CACHE_CAPACITY, timeouts::SERVER_WRITE_TIMEOUT},
     http::{
         CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION,
         WEBSOCKET_UPGRADE_PROTOCOL,
@@ -531,6 +531,7 @@ struct Inner {
     handlers: Handlers,
     headers: HeaderMap,
     clients: Clients,
+    write_timeout: Duration,
     rate_limit: Option<ClientRateLimit>,
     key_cache: KeyCache,
     access: Arc<dyn DynAccessControl>,
@@ -887,7 +888,8 @@ impl Inner {
         };
 
         trace!("accept: build client conn");
-        let client_conn_builder = Config::new(&request, io);
+        let mut client_conn_builder = Config::new(&request, io);
+        client_conn_builder.write_timeout = self.write_timeout;
         trace!(endpoint_id = %request.endpoint_id().fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
@@ -924,6 +926,7 @@ impl RelayService {
             handlers,
             headers,
             clients: Clients::default(),
+            write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit,
             key_cache,
             access,

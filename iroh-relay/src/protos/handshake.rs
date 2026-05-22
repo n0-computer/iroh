@@ -481,13 +481,15 @@ pub async fn serverside(
 impl SuccessfulAuthentication {
     /// Authorizes a [`ClientRequest`] and completes the authorization protocol.
     ///
-    /// This invokes [`AccessControl::on_connect] with the [`ClientRequest`] and informs the client about the
+    /// This invokes [`AccessControl::on_connect`] with the [`ClientRequest`] and informs the client about the
     /// authorization decision.
     ///
     /// Returns [`OnDisconnectGuard`] in case the authorization was successful and the confirmation
     /// message was sent to the client. The handshake protocol is now complete.
     ///
     /// Returns an error if the authorization failed or if the confirmation message could not be sent.
+    ///
+    /// [`AccessControl::on_connect`]: crate::server::AccessControl::on_connect
     pub async fn authorize_with(
         self,
         request: &ClientRequest,
@@ -496,7 +498,7 @@ impl SuccessfulAuthentication {
     ) -> Result<OnDisconnectGuard, Error> {
         match access_control.on_connect(request).await {
             Access::Allow => {
-                let guard = OnDisconnectGuard::new(access_control.clone(), request);
+                let guard = OnDisconnectGuard::for_access_control(access_control.clone(), request);
                 self.accept(io).await?;
                 Ok(guard)
             }
