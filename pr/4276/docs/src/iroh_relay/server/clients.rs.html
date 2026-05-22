@@ -265,7 +265,7 @@
 <a href=#265 id=265 data-nosnippet>265</a>        http::ProtocolVersion,
 <a href=#266 id=266 data-nosnippet>266</a>        protos::{common::FrameType, relay::RelayToClientMsg, streams::WsBytesFramed},
 <a href=#267 id=267 data-nosnippet>267</a>        server::{
-<a href=#268 id=268 data-nosnippet>268</a>            AllowAll, ClientRequest,
+<a href=#268 id=268 data-nosnippet>268</a>            ClientRequest,
 <a href=#269 id=269 data-nosnippet>269</a>            streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
 <a href=#270 id=270 data-nosnippet>270</a>        },
 <a href=#271 id=271 data-nosnippet>271</a>    };
@@ -303,7 +303,7 @@
 <a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>(server, client) = tokio::io::duplex(<span class="number">1024</span>);
 <a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">let </span>protocol_version = ProtocolVersion::default();
 <a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>request = ClientRequest::new(key, protocol_version, <span class="prelude-val">None</span>);
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span>guard = OnDisconnectGuard::new(Arc::new(AllowAll), <span class="kw-2">&amp;</span>request);
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span>guard = OnDisconnectGuard::empty(<span class="kw-2">&amp;</span>request);
 <a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span><span class="kw-2">mut </span>config = Config::new(<span class="kw-2">&amp;</span>request, ServerRelayedStream::test(server));
 <a href=#308 id=308 data-nosnippet>308</a>        config.write_timeout = Duration::from_secs(<span class="number">1</span>);
 <a href=#309 id=309 data-nosnippet>309</a>        config.channel_capacity = <span class="number">10</span>;
