@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["HandleFrameError","RunError","WriteFrameError"],"struct":["Client","Config","ForwardPacketError"]};
+window.SIDEBAR_ITEMS = {"enum":["HandleFrameError","RunError","WriteFrameError"],"struct":["Config","ForwardPacketError"]};
