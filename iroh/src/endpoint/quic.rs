@@ -158,6 +158,7 @@ impl QuicTransportConfigBuilder {
         cfg.default_path_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT));
         cfg.max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS);
         cfg.max_remote_nat_traversal_addresses(MAX_QNT_ADDRESSES);
+        cfg.server_handshake_migration(true);
         Self(cfg)
     }
 

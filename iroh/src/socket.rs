@@ -2605,6 +2605,7 @@ mod tests {
     ) -> Result<noq::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = noq::TransportConfig::default();
+        transport_config.server_handshake_migration(true);
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
         socket_connect_with_transport_config(
@@ -2802,6 +2803,7 @@ mod tests {
         // with the next handshake, closing it during the handshake.  This makes the test a
         // little slower though.
         let mut transport_config = noq::TransportConfig::default();
+        transport_config.server_handshake_migration(true);
         transport_config.max_idle_timeout(Some(Duration::from_millis(200).try_into().unwrap()));
         let res = socket_connect_with_transport_config(
             sock_1.noq_endpoint().clone(),
