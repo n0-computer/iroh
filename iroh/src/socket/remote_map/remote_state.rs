@@ -1445,10 +1445,10 @@ impl<'a> PathSelectionContext<'a> {
 }
 
 /// Data the selector sees about one candidate path.
-///
-/// In production this borrows from a live connection and looks up stats from noq on
-/// demand.  In `#[cfg(test)]` builds it can also wrap synthesized stats so selectors
-/// can be unit-tested without standing up real connections.
+//
+// In production this borrows from a live connection and looks up stats from noq on
+// demand.  In `#[cfg(test)]` builds it can also wrap synthesized stats so selectors
+// can be unit-tested without standing up real connections.
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 #[derive(derive_more::Debug, Clone)]
 pub struct PathSelectionData<'a> {
