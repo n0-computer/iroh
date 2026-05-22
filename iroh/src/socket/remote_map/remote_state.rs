@@ -1496,6 +1496,7 @@ impl<'a> PathSelectionData<'a> {
     }
 
     /// The local address of the candidate path.
+    #[cfg_attr(not(feature = "unstable-custom-transports"), allow(dead_code))]
     pub fn local_addr(&self) -> &'a LocalTransportAddr {
         &self.network_path.local
     }

@@ -67,7 +67,7 @@ impl TransportBias {
     }
 
     /// Adds an RTT disadvantage to this transport, making it less preferred.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "unstable-custom-transports"))]
     pub(crate) fn with_rtt_disadvantage(mut self, disadvantage: Duration) -> Self {
         self.rtt_bias += disadvantage.as_nanos() as i128;
         self
@@ -106,7 +106,7 @@ impl Default for BiasedRttPathSelector {
 
 impl BiasedRttPathSelector {
     /// Returns a new selector with the given bias added or updated for `kind`.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "unstable-custom-transports"))]
     pub(crate) fn with_bias(self, kind: AddrKind, bias: TransportBias) -> Self {
         let mut map = (*self.biases).clone();
         map.insert(kind, bias);
