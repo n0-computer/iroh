@@ -3,7 +3,10 @@ use std::{sync::Arc, time::Duration};
 use clap::Parser;
 use iroh::{
     Endpoint, SecretKey, TransportAddr,
-    endpoint::{Builder, Connection, presets},
+    endpoint::{
+        Builder, Connection, presets,
+        transports::{Addr, PathSelection, PathSelectionContext, PathSelector},
+    },
     protocol::{AcceptError, ProtocolHandler, Router},
     test_utils::test_transport::{TEST_TRANSPORT_ID, TestNetwork, TestTransport},
 };
@@ -31,12 +34,49 @@ struct Args {
     delay: u64,
 }
 
+/// A [`PathSelector`] that prefers the test custom transport whenever a candidate path on
+/// it exists, falling back to the lowest-RTT candidate otherwise.
+#[derive(Debug)]
+struct PreferTestTransport;
+
+impl PathSelector for PreferTestTransport {
+    fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection {
+        tracing::debug!("dumping path RTTs");
+        for p in ctx.paths() {
+            let network_path = p.network_path();
+            let rtt = p.stats().map(|s| s.rtt);
+            tracing::debug!(%network_path, ?rtt);
+        }
+        let mut selection = PathSelection::none();
+        // First preference: any path on our test custom transport.
+        if let Some(p) = ctx.paths().find(
+            |p| matches!(p.network_path().remote(), Addr::Custom(c) if c.id() == TEST_TRANSPORT_ID),
+        ) {
+            selection.set(&p);
+            return selection;
+        }
+        // Otherwise: lowest RTT wins.  Paths whose stats can't be read (closed
+        // concurrently with selection) are skipped entirely.
+        if let Some(p) = ctx
+            .paths()
+            .filter_map(|p| p.stats().map(|s| (p, s.rtt)))
+            .min_by_key(|(_, rtt)| *rtt)
+            .map(|(p, _)| p)
+        {
+            selection.set(&p);
+        }
+        selection
+    }
+}
+
 impl Args {
     /// Configure an endpoint builder with the custom transport and optional IP/relay transports.
     fn configure(&self, secret_key: SecretKey, transport: Arc<TestTransport>) -> Builder {
         let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
-            .preset(transport);
+            .preset(transport)
+            // Always prefer the custom transport when it has a working path.
+            .path_selector(Arc::new(PreferTestTransport));
         if !self.keep_ip {
             builder = builder.clear_ip_transports();
         }
