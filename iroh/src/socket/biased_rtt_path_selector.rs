@@ -151,7 +151,7 @@ impl PathSelector for BiasedRttPathSelector {
             };
             let rtt = stats.rtt;
             tracing::debug!(?addr, ?rtt);
-            let key = self.sort_key(&addr, rtt);
+            let key = self.sort_key(addr, rtt);
 
             if Some(addr) == current && current_key.is_none_or(|c| key < c) {
                 current_key = Some(key);

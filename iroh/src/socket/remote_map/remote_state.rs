@@ -687,8 +687,8 @@ impl RemoteStateActor {
                 target: "iroh::_events::path::selected",
                 Level::DEBUG,
                 remote = %self.state.endpoint_id.fmt_short(),
-                path_remote = ?addr,
-                ?prev_remote,
+                network_path = %addr,
+                prev_network_path = prev_remote.map(|p| format!("{p}")).unwrap_or("None".to_string()),
             );
             self.apply_selected_change(&addr);
         } else {
@@ -1412,7 +1412,7 @@ impl<'a> PathSelectionData<'a> {
 
     /// The network path of the candidate path.
     pub fn network_path(&self) -> &transports::FourTuple {
-        &self.network_path
+        self.network_path
     }
 
     /// Returns path statistics if available.

@@ -43,9 +43,9 @@ impl PathSelector for PreferTestTransport {
     fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection {
         tracing::debug!("dumping path RTTs");
         for p in ctx.paths() {
-            let addr = p.network_path();
+            let network_path = p.network_path();
             let rtt = p.stats().map(|s| s.rtt);
-            tracing::debug!(?addr, ?rtt);
+            tracing::debug!(%network_path, ?rtt);
         }
         let mut selection = PathSelection::none();
         // First preference: any path on our test custom transport.
