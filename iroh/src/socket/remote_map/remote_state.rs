@@ -36,7 +36,7 @@ use crate::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, CustomMappedAddr, RelayMappedAddr},
         remote_map::remote_state::path_watcher::PathStateSender,
-        transports::{self, LocalTransportAddr, OwnedTransmit, TransportsSender},
+        transports::{self, OwnedTransmit, TransportsSender},
     },
     util::MaybeFuture,
 };
@@ -1331,8 +1331,8 @@ impl<'a> PathSelectionContext<'a> {
     }
 
     /// The path currently considered the preferred path to the remote endpoint, if any.
-    pub fn current(&self) -> Option<transports::Addr> {
-        self.current.map(|t| t.remote())
+    pub fn current(&self) -> Option<&transports::FourTuple> {
+        self.current
     }
 
     /// Iterator over candidate paths.
@@ -1410,15 +1410,9 @@ impl<'a> PathSelectionData<'a> {
         }
     }
 
-    /// The remote address of the candidate path.
-    pub fn remote_addr(&self) -> transports::Addr {
-        self.network_path.remote()
-    }
-
-    /// The local address of the candidate path.
-    #[cfg_attr(not(feature = "unstable-custom-transports"), allow(dead_code))]
-    pub fn local_addr(&self) -> LocalTransportAddr {
-        self.network_path.local()
+    /// The network path of the candidate path.
+    pub fn network_path(&self) -> &transports::FourTuple {
+        &self.network_path
     }
 
     /// Returns path statistics if available.
@@ -1470,7 +1464,7 @@ impl PathSelection {
     pub fn set(&mut self, path: &PathSelectionData<'_>) {
         if self.selection.is_some() {
             tracing::warn!(
-                remote_addr = ?path.remote_addr(),
+                path = %path.network_path(),
                 "PathSelection already contains a path; ignoring additional path"
             );
             return;

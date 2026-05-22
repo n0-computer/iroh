@@ -676,18 +676,6 @@ impl Addr {
             Self::Custom(_) => None,
         }
     }
-
-    /// Returns the kind of address, for configuring bias.
-    pub(crate) fn addr_kind(&self) -> AddrKind {
-        match self {
-            Self::Ip(addr) => match addr {
-                SocketAddr::V4(_) => AddrKind::IpV4,
-                SocketAddr::V6(_) => AddrKind::IpV6,
-            },
-            Self::Relay(_, _) => AddrKind::Relay,
-            Self::Custom(addr) => AddrKind::Custom(addr.id()),
-        }
-    }
 }
 
 /// The local address of a network path.
@@ -779,21 +767,32 @@ impl PartialEq<TransportAddr> for Addr {
 /// * For custom transports it is a custom transport address, if the transport reports one.
 /// * For relay transports there is no separate local address; the relay URL identifies the path.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum FourTuple {
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
+pub enum FourTuple {
+    /// A path over an IP transport.
     Ip {
+        /// The remote socket address.
         remote: SocketAddr,
+        /// The local interface IP, if the OS reported one.
         local: Option<IpAddr>,
     },
+    /// A path over a relay transport.
     Relay {
+        /// The URL of the relay server carrying this path.
         url: RelayUrl,
+        /// The remote endpoint reached through the relay.
         endpoint_id: EndpointId,
     },
+    /// A path over a custom transport.
     Custom {
+        /// The remote custom transport address.
         remote: CustomAddr,
+        /// The local custom transport address, if the transport reports one.
         local: Option<CustomAddr>,
     },
 }
 
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 impl FourTuple {
     /// Creates a four-tuple from a remote address, with no known local address.
     pub(super) fn from_remote(remote: Addr) -> Self {
@@ -855,7 +854,7 @@ impl FourTuple {
     }
 
     /// Returns the remote transport address.
-    pub(super) fn remote(&self) -> Addr {
+    pub fn remote(&self) -> Addr {
         match self {
             Self::Ip { remote, .. } => Addr::Ip(*remote),
             Self::Relay { url, endpoint_id } => Addr::Relay(url.clone(), *endpoint_id),
@@ -864,7 +863,7 @@ impl FourTuple {
     }
 
     /// Returns the local transport address.
-    pub(super) fn local(&self) -> LocalTransportAddr {
+    pub fn local(&self) -> LocalTransportAddr {
         match self {
             Self::Ip { local, .. } => LocalTransportAddr::Ip(*local),
             Self::Relay { url, .. } => LocalTransportAddr::Relay(url.clone()),
@@ -873,12 +872,12 @@ impl FourTuple {
     }
 
     /// Returns `true` if the remote is an IP address.
-    pub(super) fn is_ip(&self) -> bool {
+    pub fn is_ip(&self) -> bool {
         matches!(self, Self::Ip { .. })
     }
 
     /// Returns `true` if the remote is a relay address.
-    pub(super) fn is_relay(&self) -> bool {
+    pub fn is_relay(&self) -> bool {
         matches!(self, Self::Relay { .. })
     }
 
@@ -908,6 +907,18 @@ impl FourTuple {
             }
         };
         noq::FourTuple::new(remote, local)
+    }
+
+    /// Returns the kind of address, for configuring bias.
+    pub fn addr_kind(&self) -> AddrKind {
+        match self {
+            Self::Ip { remote, .. } => match remote {
+                SocketAddr::V4(_) => AddrKind::IpV4,
+                SocketAddr::V6(_) => AddrKind::IpV6,
+            },
+            Self::Relay { .. } => AddrKind::Relay,
+            Self::Custom { remote, .. } => AddrKind::Custom(remote.id()),
+        }
     }
 }
 

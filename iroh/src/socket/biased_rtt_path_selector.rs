@@ -10,8 +10,9 @@ use rustc_hash::FxHashMap;
 
 use super::{
     remote_map::{PathSelection, PathSelectionContext, PathSelectionData, PathSelector},
-    transports::{Addr, AddrKind},
+    transports::AddrKind,
 };
+use crate::socket::transports::FourTuple;
 
 /// How much do we prefer IPv6 over IPv4 by default.
 const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
@@ -116,7 +117,7 @@ impl BiasedRttPathSelector {
     }
 
     /// Looks up the bias for an address.  Defaults to primary with no RTT bias.
-    fn bias_for(&self, addr: &Addr) -> TransportBias {
+    fn bias_for(&self, addr: &FourTuple) -> TransportBias {
         self.biases
             .get(&addr.addr_kind())
             .copied()
@@ -124,7 +125,7 @@ impl BiasedRttPathSelector {
     }
 
     /// Computes the sort key for a path: lower is better.
-    fn sort_key(&self, addr: &Addr, rtt: Duration) -> (TransportType, i128) {
+    fn sort_key(&self, addr: &FourTuple, rtt: Duration) -> (TransportType, i128) {
         let bias = self.bias_for(addr);
         let biased_rtt = (rtt.as_nanos() as i128).saturating_add(bias.rtt_bias);
         (bias.transport_type, biased_rtt)
@@ -143,14 +144,14 @@ impl PathSelector for BiasedRttPathSelector {
 
         tracing::debug!("dumping path RTTs");
         for psd in ctx.paths() {
-            let addr = psd.remote_addr();
+            let addr = psd.network_path();
             // Skip paths whose stats can't be read (e.g. closed concurrently with select).
             let Some(stats) = psd.stats() else {
                 continue;
             };
             let rtt = stats.rtt;
             tracing::debug!(?addr, ?rtt);
-            let key = self.sort_key(addr, rtt);
+            let key = self.sort_key(&addr, rtt);
 
             if Some(addr) == current && current_key.is_none_or(|c| key < c) {
                 current_key = Some(key);
@@ -190,17 +191,20 @@ mod tests {
     use noq::PathStats;
 
     use super::*;
-    use crate::socket::remote_map::{PathSelectionContext, PathSelectionData, TransportFourTuple};
+    use crate::socket::{
+        remote_map::{PathSelectionContext, PathSelectionData},
+        transports::{self, Addr},
+    };
 
-    fn v4(port: u16) -> TransportFourTuple {
-        TransportFourTuple::from_remote(Addr::Ip(SocketAddr::V4(SocketAddrV4::new(
+    fn v4(port: u16) -> transports::FourTuple {
+        transports::FourTuple::from_remote(Addr::Ip(SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::LOCALHOST,
             port,
         ))))
     }
 
-    fn v6(port: u16) -> TransportFourTuple {
-        TransportFourTuple::from_remote(Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
+    fn v6(port: u16) -> transports::FourTuple {
+        transports::FourTuple::from_remote(Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
             Ipv6Addr::LOCALHOST,
             port,
             0,
@@ -208,17 +212,17 @@ mod tests {
         ))))
     }
 
-    fn relay(port: u16) -> TransportFourTuple {
+    fn relay(port: u16) -> transports::FourTuple {
         let url = format!("https://relay{port}.iroh.computer")
             .parse::<RelayUrl>()
             .unwrap();
-        TransportFourTuple::from_remote(Addr::Relay(
+        transports::FourTuple::from_remote(Addr::Relay(
             url,
             EndpointId::from_bytes(&[0u8; 32]).unwrap(),
         ))
     }
 
-    fn psd(addr: &TransportFourTuple, rtt_ms: u64) -> PathSelectionData<'_> {
+    fn psd(addr: &transports::FourTuple, rtt_ms: u64) -> PathSelectionData<'_> {
         // PathStats is #[non_exhaustive], so build via Default + field assignment.
         let mut stats = PathStats::default();
         stats.rtt = Duration::from_millis(rtt_ms);
@@ -228,9 +232,9 @@ mod tests {
     /// Runs [`BiasedRttPathSelector::default`] against the given paths and current
     /// selection, returning the selector's primary pick (cloned, for easier asserts).
     fn select_with_default(
-        current: Option<&TransportFourTuple>,
+        current: Option<&transports::FourTuple>,
         paths: Vec<PathSelectionData<'_>>,
-    ) -> Option<TransportFourTuple> {
+    ) -> Option<transports::FourTuple> {
         let ctx = PathSelectionContext::for_test(current, paths);
         BiasedRttPathSelector::default()
             .select(&ctx)

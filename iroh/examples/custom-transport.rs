@@ -43,16 +43,15 @@ impl PathSelector for PreferTestTransport {
     fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection {
         tracing::debug!("dumping path RTTs");
         for p in ctx.paths() {
-            let addr = p.remote_addr();
+            let addr = p.network_path();
             let rtt = p.stats().map(|s| s.rtt);
             tracing::debug!(?addr, ?rtt);
         }
         let mut selection = PathSelection::none();
         // First preference: any path on our test custom transport.
-        if let Some(p) = ctx
-            .paths()
-            .find(|p| matches!(p.remote_addr(), Addr::Custom(c) if c.id() == TEST_TRANSPORT_ID))
-        {
+        if let Some(p) = ctx.paths().find(
+            |p| matches!(p.network_path().remote(), Addr::Custom(c) if c.id() == TEST_TRANSPORT_ID),
+        ) {
             selection.set(&p);
             return selection;
         }

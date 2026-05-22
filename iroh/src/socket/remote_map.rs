@@ -16,8 +16,6 @@ use tracing::{Span, error, trace};
 pub(crate) use self::remote_state::PathStateReceiver;
 use self::remote_state::RemoteStateActor;
 pub(super) use self::remote_state::RemoteStateMessage;
-#[cfg(test)]
-pub(crate) use self::remote_state::TransportFourTuple;
 pub use self::remote_state::{
     Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream, RemoteInfo,
     TransportAddrInfo, TransportAddrUsage,
