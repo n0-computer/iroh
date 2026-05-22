@@ -19,7 +19,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
 use super::{Socket, mapped_addrs::MultipathMappedAddr};
-use crate::{endpoint::RelayStatus, metrics::EndpointMetrics, net_report::Report};
+use crate::{
+    endpoint::RelayStatus,
+    metrics::EndpointMetrics,
+    net_report::Report,
+    socket::{
+        EndpointInner,
+        mapped_addrs::{AddrMap, CustomMappedAddr},
+    },
+};
 
 pub(crate) mod custom;
 #[cfg(not(wasm_browser))]
@@ -684,6 +692,76 @@ impl Addr {
             },
             Self::Relay(_, _) => AddrKind::Relay,
             Self::Custom(addr) => AddrKind::Custom(addr.id()),
+        }
+    }
+}
+
+/// The local address of a network path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LocalTransportAddr {
+    /// The local IP, if the OS surfaced it.
+    Ip(Option<IpAddr>),
+    /// The relay this connection arrived through.
+    Relay {
+        /// The URL of the relay.
+        url: RelayUrl,
+    },
+    /// The local custom address, if the transport reports one.
+    Custom(Option<iroh_base::CustomAddr>),
+}
+
+impl LocalTransportAddr {
+    /// Converts a local address from noq into a [`LocalTransportAddr`], via an endpoint reference.
+    ///
+    /// This also needs the `remote_addr`, because currently the meaning of the local_ip as returned
+    /// from noq depends on the kind of network path, which we can gather from the remote address.
+    ///
+    /// We also need a reference to the endpoint to access the address map.
+    ///
+    /// The meaning of the local IP is a bit particular:
+    ///
+    /// * For IP transports, it is the address of the local socket.
+    /// * For relay transports, we never set the local_ip in the recv meta.
+    ///   We take the relay URL of the remote address here instead.
+    /// * For custom transports, the custom transport implementation can set a [`CustomAddr`]
+    ///   through [`RecvInfo`], which is passed as a mapped address to noq. So we convert it
+    ///   back into the [`CustomAddr`] here.
+    pub(crate) fn from_noq_local_ip(
+        noq_local_ip: Option<IpAddr>,
+        remote_addr: &Addr,
+        ep: &EndpointInner,
+    ) -> Self {
+        Self::from_noq_local_ip_with_custom_addr_map(
+            noq_local_ip,
+            remote_addr,
+            &ep.mapped_addrs.custom_addrs,
+        )
+    }
+
+    /// Converts a local address from noq into a [`LocalTransportAddr`], via the custom mapped addrs.
+    ///
+    /// See [`Self::from_noq_local_ip_with_endpoint_ref`] for details.
+    pub(super) fn from_noq_local_ip_with_custom_addr_map(
+        noq_local_ip: Option<IpAddr>,
+        remote_addr: &Addr,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> Self {
+        match &remote_addr {
+            // If the remote is a relay, noq_local_ip will be unset because we never set it for relay transports.
+            // We return a [`LocalTransportAddr`] with the relay URL.
+            Addr::Relay(url, _endpoint_id) => LocalTransportAddr::Relay { url: url.clone() },
+            // For IP transports, the local_ip as reported from noq is the interface IP (umapped), if known.
+            Addr::Ip(_) => LocalTransportAddr::Ip(noq_local_ip),
+            // For custom transports, the custom transport implementation can set a `CustomAddr` in `RecvInfo`.
+            // The custom addr is converted to a mapped address in `super::Socket::process_datagrams`.
+            // We convert back to a `CustomAddr` here.
+            Addr::Custom(_) => {
+                let addr = noq_local_ip
+                    .and_then(|ip_addr| CustomMappedAddr::try_from(ip_addr).ok())
+                    .and_then(|custom_mapped_addr| custom_mapped_addrs.lookup(&custom_mapped_addr));
+                LocalTransportAddr::Custom(addr)
+            }
         }
     }
 }

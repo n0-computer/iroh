@@ -31,14 +31,15 @@ pub use self::{
 use super::Source;
 use crate::{
     address_lookup::{AddressLookupFailed, AddressLookupServices, Item as AddressLookupItem},
-    endpoint::{DirectAddr, LocalTransportAddr},
+    endpoint::DirectAddr,
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
-        mapped_addrs::{
-            AddrMap, CustomMappedAddr, MappedAddr, MultipathMappedAddr, RelayMappedAddr,
-        },
+        mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
         remote_map::{remote_state::path_watcher::PathStateSender, to_transport_addr},
-        transports::{self, OwnedTransmit, PathSelectionData, TransportBiasMap, TransportsSender},
+        transports::{
+            self, LocalTransportAddr, OwnedTransmit, PathSelectionData, TransportBiasMap,
+            TransportsSender,
+        },
     },
     util::MaybeFuture,
 };
@@ -608,7 +609,10 @@ impl RemoteStateActor {
                     debug!(%id, "path not in path_id_map");
                     return;
                 };
-                // Also remove the path from the remote-global path tracking.
+
+                // We track all known remote addresses for the peer in `State::paths`. The paths are tracked
+                // by remote address only (we ignore the local IP). Therefore, we mark a remote addr as abandoned
+                // in the remote-global state only once no connections has any path to that remote addr.
                 if !conn_state
                     .paths
                     .values()
@@ -632,7 +636,7 @@ impl RemoteStateActor {
                     let Some(conn) = conn_state.handle.upgrade() else {
                         continue;
                     };
-                    // Close all paths with the remote address that was abandoned.
+                    // Close all paths with the network paths that was abandoned.
                     for path in conn_state
                         .paths
                         .iter()
@@ -842,7 +846,8 @@ impl State {
         if let Some(addr) = self.selected_path.as_ref() {
             trace!(?addr, "sending datagram to selected path");
 
-            // TODO: We should pass the local addr here, I think.
+            // TODO(Frando): We might want to include a local IP here in the future, if we confidently
+            // know that it is the correct one.
             if let Err(err) = send_datagram(&mut sender, addr.remote.clone(), transmit).await {
                 debug!(?addr, "failed to send datagram on selected_path: {err:#}");
             }
@@ -866,6 +871,9 @@ impl State {
                         .any(|a| a.addr == *sockaddr)
                 {
                     trace!(%sockaddr, "not sending datagram to our own address");
+
+                // TODO(Frando): We might want to include a local IP here in the future, if we confidently
+                // know that it is the correct one.
                 } else if let Err(err) =
                     send_datagram(&mut sender, addr.clone(), transmit.clone()).await
                 {
@@ -1183,33 +1191,21 @@ impl TransportFourTuple {
     }
 
     /// Returns the [`LocalTransportAddr`] for this network path.
-    // * For IP transports, it is the address of the local socket.
-    // * For relay transports, we never set the local_ip in the recv meta.
-    //   We take the relay URL of the remote address here instead.
-    // * For custom transports, the custom transport implementation can set a [`CustomAddr`]
-    //   which we convert back into here from the mapped address.
+    ///
+    /// * For IP transports, it is the address of the local socket.
+    /// * For relay transports, we never set the local_ip in the recv meta.
+    ///   We take the relay URL of the remote address here instead.
+    /// * For custom transports, the custom transport implementation can set a [`CustomAddr`]
+    ///   which we convert back into here from the mapped address.
     pub(super) fn local(
         &self,
         custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
     ) -> LocalTransportAddr {
-        // TODO: Express this cleaner?
-        match &self.remote {
-            transports::Addr::Relay(relay_url, _public_key) => LocalTransportAddr::Relay {
-                url: relay_url.clone(),
-            },
-            transports::Addr::Ip(_) => LocalTransportAddr::Ip(self.noq_local_ip),
-            transports::Addr::Custom(_) => {
-                let addr = self.noq_local_ip.and_then(|ip| {
-                    match MultipathMappedAddr::from(SocketAddr::new(ip, 0)) {
-                        MultipathMappedAddr::Custom(custom_mapped_addr) => {
-                            custom_mapped_addrs.lookup(&custom_mapped_addr)
-                        }
-                        _ => None,
-                    }
-                });
-                LocalTransportAddr::Custom(addr)
-            }
-        }
+        LocalTransportAddr::from_noq_local_ip_with_custom_addr_map(
+            self.noq_local_ip,
+            &self.remote,
+            custom_mapped_addrs,
+        )
     }
 
     /// Returns whether the remote of this tuple is an IP address.

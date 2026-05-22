@@ -43,8 +43,11 @@ use tracing::warn;
 
 use super::TransportFourTuple;
 use crate::{
-    endpoint::{LocalTransportAddr, PathStats},
-    socket::mapped_addrs::{AddrMap, CustomMappedAddr},
+    endpoint::PathStats,
+    socket::{
+        mapped_addrs::{AddrMap, CustomMappedAddr},
+        transports::LocalTransportAddr,
+    },
 };
 
 /// Per-connection broadcast channel capacity for path events.

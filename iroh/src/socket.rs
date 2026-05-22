@@ -533,16 +533,6 @@ impl Socket {
         .unwrap_or(transports::Addr::Ip(addr))
     }
 
-    /// Reverse-resolves a custom mapped address back to its [`iroh_base::CustomAddr`].
-    pub(crate) fn lookup_custom_addr(&self, addr: SocketAddr) -> Option<iroh_base::CustomAddr> {
-        match MultipathMappedAddr::from(addr) {
-            MultipathMappedAddr::Custom(custom_mapped) => {
-                self.mapped_addrs.custom_addrs.lookup(&custom_mapped)
-            }
-            _ => None,
-        }
-    }
-
     /// Reference to the internal Address Lookup
     pub(crate) fn address_lookup(&self) -> &address_lookup::AddressLookupServices {
         &self.address_lookup
