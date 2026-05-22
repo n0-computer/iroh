@@ -26,6 +26,7 @@ use crate::{
         streams::BytesStreamSink,
     },
     server::{
+        ConnectionId, OnDisconnectGuard,
         clients::Clients,
         metrics::Metrics,
         streams::{RecvError as RelayRecvError, RelayedStream, SendError as RelaySendError},
@@ -47,8 +48,10 @@ pub(super) struct Packet {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct Config<S> {
-    /// The endpoint ID of the client
-    pub endpoint_id: EndpointId,
+    /// Reports the disconnect once the connection ends.
+    ///
+    /// Also the owner of this connection's [`EndpointId`] and [`ConnectionId`].
+    pub guard: OnDisconnectGuard,
     /// The relayed stream connection
     pub stream: RelayedStream<S>,
     /// Write timeout for the client connection
@@ -61,13 +64,15 @@ pub struct Config<S> {
 
 impl<S> Config<S> {
     /// Creates a new config with sensible default values for `write_timeout` and `channel_capacity`.
+    ///
+    /// The endpoint and connection ids are taken from `guard`.
     pub fn new(
-        endpoint_id: EndpointId,
+        guard: OnDisconnectGuard,
         stream: RelayedStream<S>,
         protocol_version: ProtocolVersion,
     ) -> Self {
         Self {
-            endpoint_id,
+            guard,
             stream,
             protocol_version,
             write_timeout: SERVER_WRITE_TIMEOUT,
@@ -81,11 +86,11 @@ impl<S> Config<S> {
 /// [`Server`]: crate::server::Server
 /// [`Client`]: crate::client::Client
 #[derive(Debug)]
-pub struct Client {
+pub(super) struct Client {
     /// Identity of the connected peer.
     endpoint_id: EndpointId,
     /// Connection identifier.
-    connection_id: u64,
+    connection_id: ConnectionId,
     /// Used to close the connection loop.
     done: CancellationToken,
     /// Actor handle.
@@ -101,23 +106,24 @@ pub struct Client {
 impl Client {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
+    ///
+    /// The `guard` is moved into the connection actor and reports the disconnect to access
+    /// control once the connection ends.
+    ///
     /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
-    pub(super) fn new<S>(
-        config: Config<S>,
-        connection_id: u64,
-        clients: &Clients,
-        metrics: Arc<Metrics>,
-    ) -> Client
+    pub(super) fn new<S>(config: Config<S>, clients: &Clients, metrics: Arc<Metrics>) -> Client
     where
         S: BytesStreamSink + Send + 'static,
     {
         let Config {
-            endpoint_id,
+            guard,
             stream,
             write_timeout,
             channel_capacity,
             protocol_version,
         } = config;
+        let endpoint_id = guard.endpoint_id;
+        let connection_id = guard.connection_id;
 
         let (packet_send_queue_s, packet_send_queue_r) = mpsc::channel(channel_capacity);
         let (message_send_queue_s, message_send_queue_r) = mpsc::channel(channel_capacity);
@@ -128,8 +134,7 @@ impl Client {
             timeout: write_timeout,
             packet_send_queue: packet_send_queue_r,
             message_send_queue: message_send_queue_r,
-            endpoint_id,
-            connection_id,
+            guard,
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
@@ -141,7 +146,7 @@ impl Client {
         let handle = tokio::task::spawn(actor.run(io_done).instrument(tracing::info_span!(
             "client-connection-actor",
             remote_endpoint = %endpoint_id.fmt_short(),
-            connection_id = connection_id
+            connection_id = %connection_id
         )));
 
         Client {
@@ -155,7 +160,7 @@ impl Client {
         }
     }
 
-    pub(super) fn connection_id(&self) -> u64 {
+    pub(super) fn connection_id(&self) -> ConnectionId {
         self.connection_id
     }
 
@@ -290,10 +295,10 @@ struct Actor<S> {
     packet_send_queue: mpsc::Receiver<Packet>,
     /// Receiver for non-packet messages to be sent to the client.
     message_send_queue: mpsc::Receiver<RelayToClientMsg>,
-    /// [`EndpointId`] of this client
-    endpoint_id: EndpointId,
-    /// Connection identifier.
-    connection_id: u64,
+    /// Reports the disconnect to access control when dropped.
+    ///
+    /// Also the owner of this connection's [`EndpointId`] and [`ConnectionId`].
+    guard: OnDisconnectGuard,
     /// Reference to the other connected clients.
     clients: Clients,
     /// Statistics about the connected clients
@@ -311,7 +316,7 @@ where
         // connection is accepted long before this in the HTTP server, but it is clearer to
         // handle the metric here.
         self.metrics.accepts.inc();
-        if self.client_counter.update(self.endpoint_id) {
+        if self.client_counter.update(self.guard.endpoint_id()) {
             self.metrics.unique_client_keys.inc();
         }
         match self.run_inner(done).await {
@@ -323,8 +328,7 @@ where
             }
         }
 
-        self.clients
-            .unregister(self.connection_id, self.endpoint_id, &self.metrics);
+        self.clients.unregister(self.guard, &self.metrics);
         self.metrics.disconnects.inc();
     }
 
@@ -366,7 +370,7 @@ where
                 }
                 // Last priority, sending other message
                 message = self.message_send_queue.recv() => {
-                    let message = message .ok_or_else(|| e!(RunError::HandleDropped))?;
+                    let message = message.ok_or_else(|| e!(RunError::HandleDropped))?;
                     trace!("send {message:?}");
                     self.write_frame(message)
                         .await
@@ -479,7 +483,7 @@ where
     ) -> Result<(), ForwardPacketError> {
         self.metrics.send_packets_recv.inc();
         self.clients
-            .send_packet(dst, data, self.endpoint_id, &self.metrics)?;
+            .send_packet(dst, data, self.guard.endpoint_id(), &self.metrics)?;
 
         Ok(())
     }
@@ -594,8 +598,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             packet_send_queue: send_queue_r,
             message_send_queue: message_r,
-            connection_id: 0,
-            endpoint_id,
+            guard: OnDisconnectGuard::empty(endpoint_id),
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
@@ -677,16 +680,11 @@ mod tests {
         protocol_version: ProtocolVersion,
     ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
         let (server, client) = tokio::io::duplex(1024);
-        (
-            Config {
-                endpoint_id: key,
-                stream: ServerRelayedStream::test(server),
-                write_timeout: Duration::from_secs(1),
-                channel_capacity: 10,
-                protocol_version,
-            },
-            Conn::test(client, protocol_version),
-        )
+        let guard = OnDisconnectGuard::empty(key);
+        let mut config = Config::new(guard, ServerRelayedStream::test(server), protocol_version);
+        config.write_timeout = Duration::from_secs(1);
+        config.channel_capacity = 10;
+        (config, Conn::test(client, protocol_version))
     }
 
     #[tokio::test]
