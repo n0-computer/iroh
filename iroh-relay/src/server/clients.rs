@@ -265,7 +265,7 @@ mod tests {
         http::ProtocolVersion,
         protos::{common::FrameType, relay::RelayToClientMsg, streams::WsBytesFramed},
         server::{
-            AllowAll, ClientRequest,
+            ClientRequest,
             streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
         },
     };
@@ -303,7 +303,7 @@ mod tests {
         let (server, client) = tokio::io::duplex(1024);
         let protocol_version = ProtocolVersion::default();
         let request = ClientRequest::new(key, protocol_version, None);
-        let guard = OnDisconnectGuard::new(Arc::new(AllowAll), &request);
+        let guard = OnDisconnectGuard::empty(&request);
         let mut config = Config::new(&request, ServerRelayedStream::test(server));
         config.write_timeout = Duration::from_secs(1);
         config.channel_capacity = 10;

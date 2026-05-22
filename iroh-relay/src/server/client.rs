@@ -553,10 +553,7 @@ mod tests {
         client::conn::Conn,
         http::ProtocolVersion,
         protos::{common::FrameType, relay::Status, streams::WsBytesFramed},
-        server::{
-            AllowAll,
-            streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
-        },
+        server::streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
     };
 
     async fn recv_frame<
@@ -603,7 +600,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             packet_send_queue: send_queue_r,
             message_send_queue: message_r,
-            guard: OnDisconnectGuard::new(Arc::new(AllowAll), &request),
+            guard: OnDisconnectGuard::empty(&request),
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
@@ -690,7 +687,7 @@ mod tests {
     ) {
         let (server, client) = tokio::io::duplex(1024);
         let request = ClientRequest::new(key, protocol_version, None);
-        let guard = OnDisconnectGuard::new(Arc::new(AllowAll), &request);
+        let guard = OnDisconnectGuard::empty(&request);
         let mut config = Config::new(&request, ServerRelayedStream::test(server));
         config.write_timeout = Duration::from_secs(1);
         config.channel_capacity = 10;

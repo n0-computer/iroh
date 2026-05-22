@@ -368,7 +368,7 @@ pub enum Access {
 /// [`Clients::register`]: crate::server::clients::Clients::register
 #[derive(Debug)]
 pub struct OnDisconnectGuard {
-    access: Arc<dyn DynAccessControl>,
+    access: Option<Arc<dyn DynAccessControl>>,
     endpoint_id: EndpointId,
     connection_id: ConnectionId,
 }
@@ -381,7 +381,16 @@ impl OnDisconnectGuard {
     /// once [`AccessControl::on_connect`] has admitted the connection.
     pub fn new(access: Arc<dyn DynAccessControl>, request: &ClientRequest) -> Self {
         Self {
-            access,
+            access: Some(access),
+            endpoint_id: request.endpoint_id(),
+            connection_id: request.connection_id(),
+        }
+    }
+
+    /// Creates a no-op guard for the connection described by `request`.
+    pub fn empty(request: &ClientRequest) -> Self {
+        Self {
+            access: None,
             endpoint_id: request.endpoint_id(),
             connection_id: request.connection_id(),
         }
@@ -400,8 +409,9 @@ impl OnDisconnectGuard {
 
 impl Drop for OnDisconnectGuard {
     fn drop(&mut self) {
-        self.access
-            .on_disconnect(self.endpoint_id, self.connection_id);
+        if let Some(access) = self.access.as_ref() {
+            access.on_disconnect(self.endpoint_id, self.connection_id);
+        }
     }
 }
 

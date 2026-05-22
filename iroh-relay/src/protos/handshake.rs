@@ -510,7 +510,7 @@ impl SuccessfulAuthentication {
     /// the authorization decision to the client and completes the handshake protocol.
     ///
     /// # Arguments
-    /// * `is_authorized` - Whether to grant access to the authenticated client
+    /// * `access` - Whether to grant access to the authenticated client
     /// * `io` - The WebSocket stream to send the authorization response on
     ///
     /// # Returns
@@ -527,7 +527,6 @@ impl SuccessfulAuthentication {
         }
     }
 
-    #[cfg(feature = "server")]
     async fn accept(
         self,
         io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
@@ -537,7 +536,6 @@ impl SuccessfulAuthentication {
         Ok(self.client_key)
     }
 
-    #[cfg(feature = "server")]
     async fn deny(
         self,
         reason: Option<String>,
