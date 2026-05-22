@@ -987,13 +987,13 @@
 <a href=#987 id=987 data-nosnippet>987</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
 <a href=#988 id=988 data-nosnippet>988</a>        <span class="kw">let </span>remote = to_transport_addr(
 <a href=#989 id=989 data-nosnippet>989</a>            noq_four_tuple.remote(),
-<a href=#990 id=990 data-nosnippet>990</a>            <span class="kw-2">&amp;</span>relay_mapped_addrs,
-<a href=#991 id=991 data-nosnippet>991</a>            <span class="kw-2">&amp;</span>custom_mapped_addrs,
+<a href=#990 id=990 data-nosnippet>990</a>            relay_mapped_addrs,
+<a href=#991 id=991 data-nosnippet>991</a>            custom_mapped_addrs,
 <a href=#992 id=992 data-nosnippet>992</a>        )<span class="question-mark">?</span>;
 <a href=#993 id=993 data-nosnippet>993</a>        <span class="kw">let </span>local = LocalTransportAddr::from_noq_local_ip(
 <a href=#994 id=994 data-nosnippet>994</a>            noq_four_tuple.local_ip(),
 <a href=#995 id=995 data-nosnippet>995</a>            <span class="kw-2">&amp;</span>remote,
-<a href=#996 id=996 data-nosnippet>996</a>            <span class="kw-2">&amp;</span>custom_mapped_addrs,
+<a href=#996 id=996 data-nosnippet>996</a>            custom_mapped_addrs,
 <a href=#997 id=997 data-nosnippet>997</a>        );
 <a href=#998 id=998 data-nosnippet>998</a>        <span class="prelude-val">Some</span>(<span class="self">Self</span>::new(remote, local))
 <a href=#999 id=999 data-nosnippet>999</a>    }
@@ -1026,7 +1026,7 @@
 <a href=#1026 id=1026 data-nosnippet>1026</a>        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Relay { .. })
 <a href=#1027 id=1027 data-nosnippet>1027</a>    }
 <a href=#1028 id=1028 data-nosnippet>1028</a>
-<a href=#1029 id=1029 data-nosnippet>1029</a>    <span class="doccomment">/// Returns the QUIC-mapped [`noq::FourTuple`] for this [`transports::FourTuple`].
+<a href=#1029 id=1029 data-nosnippet>1029</a>    <span class="doccomment">/// Returns the QUIC-mapped [`noq::FourTuple`] for this [`FourTuple`].
 <a href=#1030 id=1030 data-nosnippet>1030</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>to_noq_four_tuple(
 <a href=#1031 id=1031 data-nosnippet>1031</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#1032 id=1032 data-nosnippet>1032</a>        relay_mapped_addrs: <span class="kw-2">&amp;</span>AddrMap&lt;(RelayUrl, EndpointId), RelayMappedAddr&gt;,
