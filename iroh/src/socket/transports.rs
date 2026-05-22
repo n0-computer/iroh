@@ -916,7 +916,7 @@ impl PartialEq<TransportAddr> for Addr {
 
 /// Identifies a network path by the combination of remote and local addresses.
 ///
-/// Mirrors [`noq::FourTuple`] but uses transport-level addresses for the remote side.
+/// Mirrors [`noq::FourTuple`] but uses transport-specific addresses.
 ///
 /// The meaning of the local address is a bit particular:
 /// * For IP transports it is the interface IP, if known.
