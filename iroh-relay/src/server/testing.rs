@@ -1,7 +1,7 @@
 //! Exposes functions to quickly configure a server suitable for testing.
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, sync::Arc};
 
-use super::{AccessConfig, CertConfig, QuicConfig, RelayConfig, ServerConfig, TlsConfig};
+use super::{AllowAll, CertConfig, QuicConfig, RelayConfig, ServerConfig, TlsConfig};
 
 /// Creates a [`rustls::ServerConfig`] and certificates suitable for testing.
 ///
@@ -56,7 +56,7 @@ pub fn relay_config() -> RelayConfig {
         tls: Some(tls_config()),
         limits: Default::default(),
         key_cache_capacity: Some(1024),
-        access: AccessConfig::Everyone,
+        access: Arc::new(AllowAll),
     }
 }
 

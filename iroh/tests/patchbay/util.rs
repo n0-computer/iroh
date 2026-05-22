@@ -476,13 +476,16 @@ fn addr_relay_only(addr: EndpointAddr) -> EndpointAddr {
 }
 
 mod relay {
-    use std::net::{IpAddr, Ipv6Addr};
+    use std::{
+        net::{IpAddr, Ipv6Addr},
+        sync::Arc,
+    };
 
     use iroh_base::RelayUrl;
     use iroh_relay::{
         RelayConfig, RelayMap, RelayQuicConfig,
         server::{
-            AccessConfig, CertConfig, QuicConfig, RelayConfig as RelayServerConfig, Server,
+            AllowAll, CertConfig, QuicConfig, RelayConfig as RelayServerConfig, Server,
             ServerConfig, SpawnError, TlsConfig, testing::self_signed_tls_certs_and_config,
         },
     };
@@ -501,7 +504,7 @@ mod relay {
         let mut relay = RelayServerConfig::new((bind_ip, 80));
         relay.tls = Some(tls);
         relay.key_cache_capacity = Some(1024);
-        relay.access = AccessConfig::Everyone;
+        relay.access = Arc::new(AllowAll);
 
         let mut config = ServerConfig::default();
         config.relay = Some(relay);

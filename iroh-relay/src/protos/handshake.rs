@@ -24,6 +24,9 @@
 //!
 //! [Concealed HTTP Auth RFC]: https://datatracker.ietf.org/doc/rfc9729/
 //! [RFC 5705]: https://datatracker.ietf.org/doc/html/rfc5705
+#[cfg(feature = "server")]
+use std::sync::Arc;
+
 use bytes::{BufMut, Bytes, BytesMut};
 use data_encoding::BASE32HEX_NOPAD as HEX;
 #[cfg(not(wasm_browser))]
@@ -42,6 +45,8 @@ use super::{
     streams::BytesStreamSink,
 };
 use crate::ExportKeyingMaterial;
+#[cfg(feature = "server")]
+use crate::server::{Access, ClientRequest, DynAccessControl, OnDisconnectGuard};
 
 /// Domain separation string for the [`ServerChallenge`] signature
 const DOMAIN_SEP_CHALLENGE: &str = "iroh-relay handshake v1 challenge signature";
@@ -474,6 +479,32 @@ pub async fn serverside(
 
 #[cfg(feature = "server")]
 impl SuccessfulAuthentication {
+    /// Authorizes a [`ClientRequest`] and completes the authorization protocol.
+    ///
+    /// This invokes [`AccessControl::on_connect`] with the [`ClientRequest`] and informs the client about the
+    /// authorization decision.
+    ///
+    /// Returns [`OnDisconnectGuard`] in case the authorization was successful and the confirmation
+    /// message was sent to the client. The handshake protocol is now complete.
+    ///
+    /// Returns an error if the authorization failed or if the confirmation message could not be sent.
+    ///
+    /// [`AccessControl::on_connect`]: crate::server::AccessControl::on_connect
+    pub async fn authorize_with(
+        self,
+        request: &ClientRequest,
+        access_control: &Arc<dyn DynAccessControl>,
+        io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
+    ) -> Result<OnDisconnectGuard, Error> {
+        match access_control.on_connect(request).await {
+            Access::Allow => {
+                let guard = OnDisconnectGuard::for_access_control(access_control.clone(), request);
+                self.accept(io).await?;
+                Ok(guard)
+            }
+            Access::Deny { reason } => Err(self.deny(reason, io).await),
+        }
+    }
     /// Completes the authorization protocol by notifying the client of success or failure.
     ///
     /// After a client has been successfully authenticated via [`serverside`], the server must
@@ -481,7 +512,7 @@ impl SuccessfulAuthentication {
     /// the authorization decision to the client and completes the handshake protocol.
     ///
     /// # Arguments
-    /// * `is_authorized` - Whether to grant access to the authenticated client
+    /// * `access` - Whether to grant access to the authenticated client
     /// * `io` - The WebSocket stream to send the authorization response on
     ///
     /// # Returns
@@ -489,22 +520,37 @@ impl SuccessfulAuthentication {
     /// * `Err(Error)` - If authorization was denied or communication failed
     pub async fn authorize_if(
         self,
-        is_authorized: bool,
+        access: Access,
         io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     ) -> Result<PublicKey, Error> {
-        if is_authorized {
-            trace!("authorizing client");
-            write_frame(io, ServerConfirmsAuth).await?;
-            Ok(self.client_key)
-        } else {
-            trace!("denying client auth");
-            let denial = ServerDeniesAuth {
-                reason: "not authorized".into(),
-            };
-            write_frame(io, denial.clone()).await?;
-            Err(e!(Error::ServerDeniedAuth {
+        match access {
+            Access::Allow => self.accept(io).await,
+            Access::Deny { reason } => Err(self.deny(reason, io).await),
+        }
+    }
+
+    async fn accept(
+        self,
+        io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
+    ) -> Result<PublicKey, Error> {
+        trace!("authorizing client");
+        write_frame(io, ServerConfirmsAuth).await?;
+        Ok(self.client_key)
+    }
+
+    async fn deny(
+        self,
+        reason: Option<String>,
+        io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
+    ) -> Error {
+        trace!("denying client auth");
+        let reason = reason.unwrap_or_else(|| "not authorized".into());
+        let denial = ServerDeniesAuth { reason };
+        match write_frame(io, denial.clone()).await {
+            Err(err) => err,
+            Ok(()) => e!(Error::ServerDeniedAuth {
                 reason: denial.reason
-            }))
+            }),
         }
     }
 }
@@ -575,7 +621,7 @@ mod tests {
     use super::{
         ClientAuth, KeyMaterialClientAuth, Mechanism, ServerChallenge, ServerConfirmsAuth,
     };
-    use crate::ExportKeyingMaterial;
+    use crate::{ExportKeyingMaterial, server::Access};
 
     struct TestKeyingMaterial<IO> {
         shared_secret: Option<u64>,
@@ -688,7 +734,10 @@ mod tests {
                     .await
                     .context("serverside")?;
                 let mechanism = auth_n.mechanism;
-                let is_authorized = restricted_to.is_none_or(|key| key == auth_n.client_key);
+                let is_authorized = match restricted_to.is_none_or(|key| key == auth_n.client_key) {
+                    true => Access::Allow,
+                    false => Access::Deny { reason: None },
+                };
                 let key = auth_n.authorize_if(is_authorized, &mut server_io).await?;
                 Ok((key, mechanism))
             }

@@ -1,12 +1,12 @@
 //! Internal utilities to support testing.
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, sync::Arc};
 
 use iroh_base::RelayUrl;
 use iroh_relay::{
     RelayConfig, RelayMap, RelayQuicConfig,
     server::{
-        AccessConfig, CertConfig, QuicConfig, RelayConfig as RelayServerConfig, Server,
-        ServerConfig, SpawnError, TlsConfig,
+        AllowAll, CertConfig, DynAccessControl, QuicConfig, RelayConfig as RelayServerConfig,
+        Server, ServerConfig, SpawnError, TlsConfig,
     },
 };
 use tokio::sync::oneshot;
@@ -42,15 +42,15 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server), SpawnErr
 ///
 /// The return value is similar to [`run_relay_server`].
 pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
-    run_relay_server_with_access(quic, AccessConfig::Everyone).await
+    run_relay_server_with_access(quic, Arc::new(AllowAll)).await
 }
 
-/// Runs a relay server with a custom [`AccessConfig`].
+/// Runs a relay server with a custom access control.
 ///
 /// See [`run_relay_server_with`] for details on `quic`.
 pub async fn run_relay_server_with_access(
     quic: bool,
-    access: AccessConfig,
+    access: Arc<dyn DynAccessControl>,
 ) -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
     let (_certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
