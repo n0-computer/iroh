@@ -702,11 +702,8 @@ impl Addr {
 pub enum LocalTransportAddr {
     /// The local IP, if the OS surfaced it.
     Ip(Option<IpAddr>),
-    /// The relay this connection arrived through.
-    Relay {
-        /// The URL of the relay.
-        url: RelayUrl,
-    },
+    /// The relay over which this network path is connected.
+    Relay(RelayUrl),
     /// The local custom address, if the transport reports one.
     Custom(Option<iroh_base::CustomAddr>),
 }
@@ -750,7 +747,7 @@ impl LocalTransportAddr {
         match &remote_addr {
             // If the remote is a relay, noq_local_ip will be unset because we never set it for relay transports.
             // We return a [`LocalTransportAddr`] with the relay URL.
-            Addr::Relay(url, _endpoint_id) => LocalTransportAddr::Relay { url: url.clone() },
+            Addr::Relay(url, _endpoint_id) => LocalTransportAddr::Relay(url.clone()),
             // For IP transports, the local_ip as reported from noq is the interface IP (umapped), if known.
             Addr::Ip(_) => LocalTransportAddr::Ip(noq_local_ip),
             // For custom transports, the custom transport implementation can set a `CustomAddr` in `RecvInfo`.
