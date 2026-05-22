@@ -661,7 +661,7 @@ impl RemoteStateActor {
             NoqPathEvent::Discarded { id, path_stats, .. } => {
                 trace!(%id, ?path_stats, "path discarded");
             }
-            NoqPathEvent::RemoteStatus { .. } | NoqPathEvent::ObservedAddr { .. } => {
+            _ => {
                 // Nothing to do for these events.
             }
             _ => {
