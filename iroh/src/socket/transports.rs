@@ -929,6 +929,62 @@ impl PartialEq<TransportAddr> for Addr {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum FourTuple {
+    Ip {
+        remote: SocketAddr,
+        local: Option<IpAddr>,
+    },
+    Relay {
+        url: RelayUrl,
+        endpoint_id: EndpointId,
+    },
+    Custom {
+        remote: CustomAddr,
+        local: Option<CustomAddr>,
+    },
+}
+
+impl FourTuple {
+    pub(super) fn from_remote(remote: Addr) -> Self {
+        match remote {
+            Addr::Ip(remote) => Self::Ip {
+                remote,
+                local: None,
+            },
+            Addr::Relay(url, endpoint_id) => Self::Relay { url, endpoint_id },
+            Addr::Custom(remote) => Self::Custom {
+                remote,
+                local: None,
+            },
+        }
+    }
+}
+
+impl fmt::Display for FourTuple {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FourTuple::Ip { remote, local } => {
+                if let Some(local) = local {
+                    write!(f, "{local}->{remote}")
+                } else {
+                    write!(f, "{remote}")
+                }
+            }
+            FourTuple::Relay { url, endpoint_id } => {
+                write!(f, "Relay({url})->{}", endpoint_id.fmt_short())
+            }
+            FourTuple::Custom { remote, local } => {
+                if let Some(local) = local {
+                    write!(f, "{local}->{remote}")
+                } else {
+                    write!(f, "{remote}")
+                }
+            }
+        }
+    }
+}
+
 /// A sender that sends to all our transports.
 #[derive(Debug, Clone)]
 pub(crate) struct TransportsSender {
@@ -944,47 +1000,49 @@ impl TransportsSender {
     pub(crate) fn poll_send(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
-        dst: &Addr,
-        src: Option<IpAddr>,
+        network_path: &FourTuple,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
-        match dst {
+        match network_path {
             #[cfg(wasm_browser)]
-            Addr::Ip(..) => {
+            FourTuple::Ip { .. } => {
                 return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
             }
             #[cfg(not(wasm_browser))]
-            Addr::Ip(dst_addr) => match dst_addr {
+            FourTuple::Ip {
+                remote: dst_addr,
+                local: src,
+            } => match dst_addr {
                 SocketAddr::V4(_) => {
                     if let Some(sender) = self
                         .ip
                         .v4_iter_mut()
-                        .find(|s| s.is_valid_send_addr(src, dst_addr))
+                        .find(|s| s.is_valid_send_addr(*src, dst_addr))
                     {
-                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
+                        return Pin::new(sender).poll_send(cx, *dst_addr, *src, transmit);
                     }
                     if let Some(sender) = self.ip.v4_default_mut()
-                        && sender.is_valid_default_addr(src, dst_addr)
+                        && sender.is_valid_default_addr(*src, dst_addr)
                     {
-                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
+                        return Pin::new(sender).poll_send(cx, *dst_addr, *src, transmit);
                     }
                 }
                 SocketAddr::V6(_) => {
                     if let Some(sender) = self
                         .ip
                         .v6_iter_mut()
-                        .find(|s| s.is_valid_send_addr(src, dst_addr))
+                        .find(|s| s.is_valid_send_addr(*src, dst_addr))
                     {
-                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
+                        return Pin::new(sender).poll_send(cx, *dst_addr, *src, transmit);
                     }
                     if let Some(sender) = self.ip.v6_default_mut()
-                        && sender.is_valid_default_addr(src, dst_addr)
+                        && sender.is_valid_default_addr(*src, dst_addr)
                     {
-                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
+                        return Pin::new(sender).poll_send(cx, *dst_addr, *src, transmit);
                     }
                 }
             },
-            Addr::Relay(url, endpoint_id) => {
+            FourTuple::Relay { url, endpoint_id } => {
                 let mut has_valid_sender = false;
                 for sender in self
                     .relay
@@ -1001,10 +1059,10 @@ impl TransportsSender {
                     return Poll::Pending;
                 }
             }
-            Addr::Custom(addr) => {
+            FourTuple::Custom { remote, local } => {
                 for sender in &mut self.custom {
-                    if sender.is_valid_send_addr(addr) {
-                        match sender.poll_send(cx, addr, transmit) {
+                    if sender.is_valid_send_addr(remote) {
+                        match sender.poll_send(cx, remote, local.as_ref(), transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
@@ -1015,7 +1073,7 @@ impl TransportsSender {
 
         // We "blackhole" data that we have not found any usable transport for on
         // to make sure the QUIC stack picks up that currently this data does not arrive.
-        trace!(?src, ?dst, "no valid transport available");
+        trace!(%network_path, "no valid transport available");
         Poll::Ready(Ok(()))
     }
 }
@@ -1154,7 +1212,7 @@ impl noq::UdpSender for Sender {
         // and re-send them.
         let mapped_addr = self.mapped_addr(noq_transmit)?;
 
-        let transport_addr = match mapped_addr {
+        let network_path = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
                 let Some(endpoint_id) = self.sock.mapped_addrs.endpoint_addrs.lookup(&mapped_addr)
                 else {
@@ -1203,7 +1261,7 @@ impl noq::UdpSender for Sender {
                     .relay_addrs
                     .lookup(&relay_mapped_addr)
                 {
-                    Some((relay_url, endpoint_id)) => Addr::Relay(relay_url, endpoint_id),
+                    Some((url, endpoint_id)) => FourTuple::Relay { url, endpoint_id },
                     None => {
                         error!("unknown RelayMappedAddr, dropped transmit");
                         return Poll::Ready(Ok(()));
@@ -1217,7 +1275,16 @@ impl noq::UdpSender for Sender {
                     .custom_addrs
                     .lookup(&custom_mapped_addr)
                 {
-                    Some(addr) => Addr::Custom(addr),
+                    Some(addr) => {
+                        let local = noq_transmit
+                            .src_ip
+                            .and_then(|ip_addr| CustomMappedAddr::try_from(ip_addr).ok())
+                            .and_then(|addr| self.sock.mapped_addrs.custom_addrs.lookup(&addr));
+                        FourTuple::Custom {
+                            remote: addr,
+                            local,
+                        }
+                    }
                     None => {
                         error!("unknown CustomMappedAddr, dropped transmit");
                         return Poll::Ready(Ok(()));
@@ -1228,7 +1295,10 @@ impl noq::UdpSender for Sender {
                 // Ensure IPv6 mapped addresses are converted back
                 let socket_addr =
                     SocketAddr::new(socket_addr.ip().to_canonical(), socket_addr.port());
-                Addr::Ip(socket_addr)
+                FourTuple::Ip {
+                    remote: socket_addr,
+                    local: noq_transmit.src_ip,
+                }
             }
         };
 
@@ -1239,13 +1309,10 @@ impl noq::UdpSender for Sender {
         };
         let this = self.project();
 
-        match this
-            .sender
-            .poll_send(cx, &transport_addr, noq_transmit.src_ip, &transmit)
-        {
+        match this.sender.poll_send(cx, &network_path, &transmit) {
             Poll::Ready(Ok(())) => {
                 trace!(
-                    dst = ?transport_addr,
+                    dst = %network_path,
                     len = transmit.contents.len(),
                     datagram_count = transmit.datagram_count(),
                     "sent transmit"
@@ -1253,7 +1320,7 @@ impl noq::UdpSender for Sender {
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(ref err)) => {
-                warn!(dst=?transport_addr, "dropped transmit: {err:#}");
+                warn!(dst=%network_path, "dropped transmit: {err:#}");
                 Poll::Ready(Ok(()))
             }
             Poll::Pending => {
@@ -1261,7 +1328,7 @@ impl noq::UdpSender for Sender {
                 // different transport.  Instead we let Noq handle this as a lost
                 // datagram.
                 // TODO: Revisit this: we might want to do something better.
-                trace!(dst=?transport_addr, "transport pending, dropped transmit");
+                trace!(dst=%network_path, "transport pending, dropped transmit");
                 Poll::Ready(Ok(()))
             }
         }

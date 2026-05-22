@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeSet, VecDeque},
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::Poll,
@@ -855,8 +855,8 @@ impl State {
             // TODO(Frando): We might want to include a local IP here in the future, if we confidently
             // know that it is the correct one.
             // See https://github.com/n0-computer/iroh/issues/4280.
-            if let Err(err) = send_datagram(&mut sender, addr.remote.clone(), None, transmit).await
-            {
+            let four_tuple = transports::FourTuple::from_remote(addr.remote.clone());
+            if let Err(err) = send_datagram(&mut sender, four_tuple, transmit).await {
                 debug!(?addr, "failed to send datagram on selected_path: {err:#}");
             }
         } else {
@@ -883,8 +883,12 @@ impl State {
                 // TODO(Frando): We might want to include a local IP here in the future, if we confidently
                 // know that it is the correct one.
                 // See https://github.com/n0-computer/iroh/issues/4280.
-                } else if let Err(err) =
-                    send_datagram(&mut sender, addr.clone(), None, transmit.clone()).await
+                } else if let Err(err) = send_datagram(
+                    &mut sender,
+                    transports::FourTuple::from_remote(addr.clone()),
+                    transmit.clone(),
+                )
+                .await
                 {
                     debug!(?addr, "failed to send datagram: {err:#}");
                 }
@@ -1291,8 +1295,7 @@ fn update_qnt_candidates(conn: &noq::Connection, direct_addrs: &BTreeSet<SocketA
 
 fn send_datagram<'a>(
     sender: &'a mut TransportsSender,
-    addr: transports::Addr,
-    local_ip: Option<IpAddr>,
+    addr: transports::FourTuple,
     owned_transmit: OwnedTransmit,
 ) -> impl Future<Output = n0_error::Result<()>> + 'a {
     std::future::poll_fn(move |cx| {
@@ -1303,7 +1306,7 @@ fn send_datagram<'a>(
         };
 
         Pin::new(&mut *sender)
-            .poll_send(cx, &addr, local_ip, &transmit)
+            .poll_send(cx, &addr, &transmit)
             .map(|res| res.with_context(|_| format!("failed to send datagram to {:?}", addr)))
     })
 }
