@@ -1445,10 +1445,10 @@
 <a href=#1445 id=1445 data-nosnippet>1445</a>}
 <a href=#1446 id=1446 data-nosnippet>1446</a>
 <a href=#1447 id=1447 data-nosnippet>1447</a><span class="doccomment">/// Data the selector sees about one candidate path.
-<a href=#1448 id=1448 data-nosnippet>1448</a>///
-<a href=#1449 id=1449 data-nosnippet>1449</a>/// In production this borrows from a live connection and looks up stats from noq on
-<a href=#1450 id=1450 data-nosnippet>1450</a>/// demand.  In `#[cfg(test)]` builds it can also wrap synthesized stats so selectors
-<a href=#1451 id=1451 data-nosnippet>1451</a>/// can be unit-tested without standing up real connections.
+<a href=#1448 id=1448 data-nosnippet>1448</a></span><span class="comment">//
+<a href=#1449 id=1449 data-nosnippet>1449</a>// In production this borrows from a live connection and looks up stats from noq on
+<a href=#1450 id=1450 data-nosnippet>1450</a>// demand.  In `#[cfg(test)]` builds it can also wrap synthesized stats so selectors
+<a href=#1451 id=1451 data-nosnippet>1451</a>// can be unit-tested without standing up real connections.
 <a href=#1452 id=1452 data-nosnippet>1452</a></span><span class="attr">#[cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
 <a href=#1453 id=1453 data-nosnippet>1453</a>#[derive(derive_more::Debug, Clone)]
 <a href=#1454 id=1454 data-nosnippet>1454</a></span><span class="kw">pub struct </span>PathSelectionData&lt;<span class="lifetime">'a</span>&gt; {
