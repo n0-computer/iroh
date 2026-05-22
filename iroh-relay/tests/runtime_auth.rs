@@ -97,12 +97,16 @@ impl AccessControl for TokenAccess {
     async fn on_connect(&self, request: &ClientRequest) -> Access {
         let mut state = self.0.lock().expect("poisoned");
         match request.auth_token() {
-            Some(token) if let Some(token_id) = state.tokens.get(token).copied() => {
-                let conn_id = (request.endpoint_id(), request.connection_id());
-                state.connections.insert(conn_id, token_id);
-                Access::Allow
+            Some(token) => {
+                if let Some(token_id) = state.tokens.get(token).copied() {
+                    let conn_id = (request.endpoint_id(), request.connection_id());
+                    state.connections.insert(conn_id, token_id);
+                    Access::Allow
+                } else {
+                    Access::Deny { reason: None }
+                }
             }
-            _ => Access::Deny { reason: None },
+            None => Access::Deny { reason: None },
         }
     }
 
