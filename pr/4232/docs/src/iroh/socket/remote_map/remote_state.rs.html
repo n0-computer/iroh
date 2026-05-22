@@ -687,8 +687,8 @@
 <a href=#687 id=687 data-nosnippet>687</a>                target: <span class="string">"iroh::_events::path::selected"</span>,
 <a href=#688 id=688 data-nosnippet>688</a>                Level::DEBUG,
 <a href=#689 id=689 data-nosnippet>689</a>                remote = %<span class="self">self</span>.state.endpoint_id.fmt_short(),
-<a href=#690 id=690 data-nosnippet>690</a>                path_remote = <span class="question-mark">?</span>addr,
-<a href=#691 id=691 data-nosnippet>691</a>                <span class="question-mark">?</span>prev_remote,
+<a href=#690 id=690 data-nosnippet>690</a>                network_path = %addr,
+<a href=#691 id=691 data-nosnippet>691</a>                prev_network_path = prev_remote.map(|p| <span class="macro">format!</span>(<span class="string">"{p}"</span>)).unwrap_or(<span class="string">"None"</span>.to_string()),
 <a href=#692 id=692 data-nosnippet>692</a>            );
 <a href=#693 id=693 data-nosnippet>693</a>            <span class="self">self</span>.apply_selected_change(<span class="kw-2">&amp;</span>addr);
 <a href=#694 id=694 data-nosnippet>694</a>        } <span class="kw">else </span>{
@@ -1412,7 +1412,7 @@
 <a href=#1412 id=1412 data-nosnippet>1412</a>
 <a href=#1413 id=1413 data-nosnippet>1413</a>    <span class="doccomment">/// The network path of the candidate path.
 <a href=#1414 id=1414 data-nosnippet>1414</a>    </span><span class="kw">pub fn </span>network_path(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>transports::FourTuple {
-<a href=#1415 id=1415 data-nosnippet>1415</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.network_path
+<a href=#1415 id=1415 data-nosnippet>1415</a>        <span class="self">self</span>.network_path
 <a href=#1416 id=1416 data-nosnippet>1416</a>    }
 <a href=#1417 id=1417 data-nosnippet>1417</a>
 <a href=#1418 id=1418 data-nosnippet>1418</a>    <span class="doccomment">/// Returns path statistics if available.

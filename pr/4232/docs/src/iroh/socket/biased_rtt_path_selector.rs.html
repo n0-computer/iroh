@@ -151,7 +151,7 @@
 <a href=#151 id=151 data-nosnippet>151</a>            };
 <a href=#152 id=152 data-nosnippet>152</a>            <span class="kw">let </span>rtt = stats.rtt;
 <a href=#153 id=153 data-nosnippet>153</a>            <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>addr, <span class="question-mark">?</span>rtt);
-<a href=#154 id=154 data-nosnippet>154</a>            <span class="kw">let </span>key = <span class="self">self</span>.sort_key(<span class="kw-2">&amp;</span>addr, rtt);
+<a href=#154 id=154 data-nosnippet>154</a>            <span class="kw">let </span>key = <span class="self">self</span>.sort_key(addr, rtt);
 <a href=#155 id=155 data-nosnippet>155</a>
 <a href=#156 id=156 data-nosnippet>156</a>            <span class="kw">if </span><span class="prelude-val">Some</span>(addr) == current &amp;&amp; current_key.is_none_or(|c| key &lt; c) {
 <a href=#157 id=157 data-nosnippet>157</a>                current_key = <span class="prelude-val">Some</span>(key);
