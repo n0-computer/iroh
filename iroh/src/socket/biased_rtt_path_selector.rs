@@ -190,29 +190,35 @@ mod tests {
     use noq::PathStats;
 
     use super::*;
-    use crate::socket::remote_map::{PathSelectionContext, PathSelectionData};
+    use crate::socket::remote_map::{PathSelectionContext, PathSelectionData, TransportFourTuple};
 
-    fn v4(port: u16) -> Addr {
-        Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
+    fn v4(port: u16) -> TransportFourTuple {
+        TransportFourTuple::from_remote(Addr::Ip(SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::LOCALHOST,
+            port,
+        ))))
     }
 
-    fn v6(port: u16) -> Addr {
-        Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
+    fn v6(port: u16) -> TransportFourTuple {
+        TransportFourTuple::from_remote(Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
             Ipv6Addr::LOCALHOST,
             port,
             0,
             0,
-        )))
+        ))))
     }
 
-    fn relay(port: u16) -> Addr {
+    fn relay(port: u16) -> TransportFourTuple {
         let url = format!("https://relay{port}.iroh.computer")
             .parse::<RelayUrl>()
             .unwrap();
-        Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap())
+        TransportFourTuple::from_remote(Addr::Relay(
+            url,
+            EndpointId::from_bytes(&[0u8; 32]).unwrap(),
+        ))
     }
 
-    fn psd(addr: &Addr, rtt_ms: u64) -> PathSelectionData<'_> {
+    fn psd(addr: &TransportFourTuple, rtt_ms: u64) -> PathSelectionData<'_> {
         // PathStats is #[non_exhaustive], so build via Default + field assignment.
         let mut stats = PathStats::default();
         stats.rtt = Duration::from_millis(rtt_ms);
@@ -222,9 +228,9 @@ mod tests {
     /// Runs [`BiasedRttPathSelector::default`] against the given paths and current
     /// selection, returning the selector's primary pick (cloned, for easier asserts).
     fn select_with_default(
-        current: Option<&Addr>,
+        current: Option<&TransportFourTuple>,
         paths: Vec<PathSelectionData<'_>>,
-    ) -> Option<Addr> {
+    ) -> Option<TransportFourTuple> {
         let ctx = PathSelectionContext::for_test(current, paths);
         BiasedRttPathSelector::default()
             .select(&ctx)
@@ -257,11 +263,17 @@ mod tests {
 
         // Primary tier beats backup tier even when the backup has a much lower RTT.
         let chosen = select_with_default(None, vec![psd(&v4, 100), psd(&relay, 10)]);
-        assert!(matches!(chosen, Some(Addr::Ip(_))));
+        assert!(matches!(
+            chosen.as_ref().map(|t| t.remote()),
+            Some(Addr::Ip(_))
+        ));
 
         // Even more extreme: 1000ms primary still wins over 1ms backup.
         let chosen = select_with_default(None, vec![psd(&v4, 1000), psd(&relay, 1)]);
-        assert!(matches!(chosen, Some(Addr::Ip(_))));
+        assert!(matches!(
+            chosen.as_ref().map(|t| t.remote()),
+            Some(Addr::Ip(_))
+        ));
     }
 
     #[test]

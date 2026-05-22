@@ -41,7 +41,8 @@ use tokio_stream::{
 };
 use tracing::warn;
 
-use crate::endpoint::PathStats;
+use super::TransportFourTuple;
+use crate::{endpoint::PathStats, socket::transports::LocalTransportAddr};
 
 /// Per-connection broadcast channel capacity for path events.
 const BROADCAST_CAPACITY: usize = 8;
@@ -51,27 +52,36 @@ const BROADCAST_CAPACITY: usize = 8;
 #[non_exhaustive]
 pub enum PathEvent {
     /// A new network path was opened.
+    #[non_exhaustive]
     Opened {
         /// Path identifier.
         id: PathId,
         /// Remote transport address.
         remote_addr: TransportAddr,
+        /// Local address of the path, if known.
+        local_addr: LocalTransportAddr,
     },
     /// A network path was closed.
+    #[non_exhaustive]
     Closed {
         /// Path identifier.
         id: PathId,
         /// Remote transport address.
         remote_addr: TransportAddr,
+        /// Local address of the path, if known.
+        local_addr: LocalTransportAddr,
         /// Path statistics captured at close time.
         last_stats: Box<PathStats>,
     },
     /// This path was selected for transmission of application data.
+    #[non_exhaustive]
     Selected {
         /// Path identifier of the newly selected path.
         id: PathId,
         /// Remote transport address of the newly selected path.
         remote_addr: TransportAddr,
+        /// The local address of the newly selected path, if known.
+        local_addr: LocalTransportAddr,
     },
     /// Events were dropped before the subscriber received them.
     ///
@@ -81,6 +91,7 @@ pub enum PathEvent {
     /// [`Connection::paths`].
     ///
     /// [`Connection::paths`]: crate::endpoint::Connection::paths
+    #[non_exhaustive]
     Lagged {
         /// Number of events dropped since the last delivered event.
         missed: u64,
@@ -92,6 +103,7 @@ pub enum PathEvent {
 struct PathData {
     handle: WeakPathHandle,
     remote_addr: TransportAddr,
+    local_addr: LocalTransportAddr,
 }
 
 impl PathData {
@@ -135,6 +147,9 @@ pub(super) struct PathStateSender {
 
 impl PathStateSender {
     /// Creates a sender/receiver pair sharing empty state.
+    ///
+    /// Gets passed a clone of the custom address map, so that we can convert local addresses
+    /// to the public [`LocalTransportAddr`] exposed to users.
     pub(super) fn new() -> (Self, PathStateReceiver) {
         let (events, _) = broadcast::channel(BROADCAST_CAPACITY);
         let shared = Arc::new(Shared {
@@ -150,13 +165,16 @@ impl PathStateSender {
     }
 
     /// Records a newly-opened path and emits [`PathEvent::Opened`].
-    pub(super) fn record_opened(&self, handle: WeakPathHandle, remote_addr: TransportAddr) {
+    pub(super) fn record_opened(&self, handle: WeakPathHandle, network_path: TransportFourTuple) {
         let id = handle.id();
+        let remote_addr: TransportAddr = network_path.remote().clone().into();
+        let local_addr = network_path.local().clone();
         {
             let mut state = self.shared.state.lock().expect("poisoned");
             let entry = PathData {
                 handle,
                 remote_addr: remote_addr.clone(),
+                local_addr: local_addr.clone(),
             };
             match state.list.iter().position(|e| e.handle.id() == id) {
                 Some(idx) => state.list[idx] = entry,
@@ -164,7 +182,11 @@ impl PathStateSender {
             }
         }
         self.shared.notify.notify_waiters();
-        let _ = self.events.send(PathEvent::Opened { id, remote_addr });
+        let _ = self.events.send(PathEvent::Opened {
+            id,
+            remote_addr,
+            local_addr,
+        });
     }
 
     /// Records that a path was abandoned by `noq`.
@@ -185,30 +207,37 @@ impl PathStateSender {
             self.shared.notify.notify_waiters();
             let _ = self.events.send(PathEvent::Closed {
                 id,
-                remote_addr: data.remote_addr,
+                remote_addr: data.remote_addr.clone(),
+                local_addr: data.local_addr.clone(),
                 last_stats: Box::new(stats),
             });
         }
     }
 
     /// Updates the selected transmission path.
-    pub(super) fn record_selected(&self, remote_addr: TransportAddr) {
-        let changed = {
+    pub(super) fn record_selected(&self, network_path: &TransportFourTuple) {
+        let remote_addr: TransportAddr = network_path.remote().clone().into();
+        let local_addr = network_path.local().clone();
+        let event = {
             let mut state = self.shared.state.lock().expect("poisoned");
             let selected_path_id = state
                 .list
                 .iter()
-                .find(|p| p.remote_addr == remote_addr)
+                .find(|p| p.remote_addr == remote_addr && p.local_addr == local_addr)
                 .map(|p| p.handle.id());
             if selected_path_id != state.selected {
                 state.selected = selected_path_id;
-                selected_path_id.map(|path_id| (path_id, remote_addr))
+                selected_path_id.map(|path_id| PathEvent::Selected {
+                    id: path_id,
+                    remote_addr: remote_addr.clone(),
+                    local_addr: local_addr.clone(),
+                })
             } else {
                 None
             }
         };
-        if let Some((id, remote_addr)) = changed {
-            let _ = self.events.send(PathEvent::Selected { id, remote_addr });
+        if let Some(event) = event {
+            let _ = self.events.send(event);
             self.shared.notify.notify_waiters();
         }
     }
@@ -233,6 +262,7 @@ impl PathStateSender {
                     let _ = self.events.send(PathEvent::Closed {
                         id: path.handle.id(),
                         remote_addr: path.remote_addr.clone(),
+                        local_addr: path.local_addr.clone(),
                         last_stats: Box::new(*stats),
                     });
                 } else {
@@ -423,6 +453,11 @@ impl<'conn> Path<'conn> {
     /// Returns the path's remote transport address.
     pub fn remote_addr(&self) -> &TransportAddr {
         &self.data.remote_addr
+    }
+
+    /// Returns the path's local address, if known.
+    pub fn local_addr(&self) -> &LocalTransportAddr {
+        &self.data.local_addr
     }
 
     /// Returns `true` if this path is currently selected for application data transmission.

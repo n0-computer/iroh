@@ -45,6 +45,7 @@ pub use super::socket::{
         Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream, RemoteInfo,
         TransportAddrInfo, TransportAddrUsage,
     },
+    transports::LocalTransportAddr,
 };
 #[cfg(wasm_browser)]
 use crate::address_lookup::PkarrResolver;
@@ -85,8 +86,8 @@ pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
     connection::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-        ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingLocalAddr,
-        IncomingZeroRtt, IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
+        ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingZeroRtt,
+        IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
         RemoteEndpointIdError, RetryError, WeakConnectionHandle, ZeroRttStatus,
     },
     quic::{
@@ -1693,11 +1694,6 @@ impl Endpoint {
         self.inner.to_transport_addr(addr)
     }
 
-    /// Reverse-resolves a custom mapped address back to its [`iroh_base::CustomAddr`].
-    pub(crate) fn lookup_custom_addr(&self, addr: SocketAddr) -> Option<iroh_base::CustomAddr> {
-        self.inner.lookup_custom_addr(addr)
-    }
-
     #[cfg(all(test, with_crypto_provider))]
     pub(crate) fn inner(&self) -> Result<Arc<EndpointInner>, EndpointError> {
         if self.is_closed() {
@@ -2940,7 +2936,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     #[tokio::test]
     #[traced_test]
     async fn graceful_close() -> Result {
@@ -3503,7 +3498,7 @@ mod tests {
                 if let PathEvent::Closed {
                     remote_addr,
                     last_stats,
-                    id: _,
+                    ..
                 } = event
                 {
                     stats.insert(remote_addr, *last_stats);

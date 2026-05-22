@@ -434,7 +434,10 @@ fn watch_selected_path(conn: &Connection) {
     tokio::spawn(
         async move {
             while let Some(event) = events.next().await {
-                if let PathEvent::Selected { id, remote_addr } = event {
+                if let PathEvent::Selected {
+                    id, remote_addr, ..
+                } = event
+                {
                     debug!("selected path: [{id}] {remote_addr}");
                 }
             }

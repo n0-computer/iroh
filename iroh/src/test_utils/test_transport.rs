@@ -506,7 +506,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_custom_transport_local_addr() -> Result<()> {
-        use crate::endpoint::IncomingLocalAddr;
+        use crate::endpoint::LocalTransportAddr;
 
         let network = TestNetwork::new();
         let s1 = SecretKey::generate();
@@ -532,7 +532,7 @@ mod tests {
         let incoming = ep2.accept().await.expect("incoming");
         assert_eq!(
             incoming.local_addr(),
-            IncomingLocalAddr::Custom(Some(to_custom_addr(s2.public()))),
+            LocalTransportAddr::Custom(Some(to_custom_addr(s2.public()))),
         );
         let _conn = incoming.accept().anyerr()?.await.anyerr()?;
 

@@ -287,6 +287,17 @@ impl MappedAddr for CustomMappedAddr {
     }
 }
 
+impl TryFrom<IpAddr> for CustomMappedAddr {
+    type Error = CustomMappedAddrError;
+
+    fn try_from(value: IpAddr) -> std::result::Result<Self, Self::Error> {
+        match value {
+            IpAddr::V4(_) => Err(e!(CustomMappedAddrError)),
+            IpAddr::V6(addr) => addr.try_into(),
+        }
+    }
+}
+
 impl TryFrom<Ipv6Addr> for CustomMappedAddr {
     type Error = CustomMappedAddrError;
 
