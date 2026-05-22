@@ -16,6 +16,7 @@
 //! - HTTPS `/generate_204`: Used for net_report probes.
 
 use std::{
+    borrow::Cow,
     future::Future,
     net::SocketAddr,
     num::NonZeroU32,
@@ -187,38 +188,26 @@ impl ConnectionId {
 pub struct ClientRequest {
     connection_id: ConnectionId,
     endpoint_id: EndpointId,
-    auth_token: Option<String>,
     protocol_version: ProtocolVersion,
+    request: http::request::Parts,
 }
 
 impl ClientRequest {
-    /// Creates a new [`ClientRequest`] from an [`EndpointId`] and authorization token.
+    /// Creates a new [`ClientRequest`] from an [`EndpointId`] and HTTP request parts.
     ///
-    /// A fresh [`ConnectionId`] is assigned.
+    /// The [`EndpointId`] must be proven by the relay handshake. The request parts
+    /// come from the client's WebSocket request. A fresh [`ConnectionId`] is assigned.
     pub fn new(
         endpoint_id: EndpointId,
         protocol_version: ProtocolVersion,
-        auth_token: Option<String>,
+        request: http::request::Parts,
     ) -> Self {
         Self {
             connection_id: ConnectionId::next(),
             endpoint_id,
             protocol_version,
-            auth_token,
+            request,
         }
-    }
-
-    /// Creates a new [`ClientRequest`] from an [`EndpointId`] and HTTP request parts.
-    ///
-    /// The [`EndpointId`] must be proven by the relay handshake. The request parts
-    /// come from the client's WebSocket request. A fresh [`ConnectionId`] is assigned.
-    pub fn from_http_request(
-        endpoint_id: EndpointId,
-        protocol_version: ProtocolVersion,
-        request: &http::request::Parts,
-    ) -> Self {
-        let auth_token = auth_token_from_request(request);
-        Self::new(endpoint_id, protocol_version, auth_token)
     }
 
     /// Returns the [`ConnectionId`] assigned to this connection.
@@ -241,36 +230,49 @@ impl ClientRequest {
         self.endpoint_id
     }
 
-    /// Returns the authorization token provided by the client, if any.
-    pub fn auth_token(&self) -> Option<&str> {
-        self.auth_token.as_deref()
+    /// Returns the URI of the HTTP request with which the client connected.
+    pub fn uri(&self) -> &http::Uri {
+        &self.request.uri
     }
-}
 
-/// Returns the authorization token from the client's HTTP request, if any.
-///
-/// Walks the `Authorization` headers in order and returns the value of
-/// the first one whose scheme is `Bearer` (matched case-insensitively).
-/// Headers with a different scheme are skipped.
-///
-/// If none of the `Authorization` headers carries a `Bearer` scheme,
-/// returns the value of the `token` URL query parameter, or `None` if
-/// the URL has no `token` parameter.
-///
-/// If an `Authorization` header value is not valid UTF-8 the function returns
-/// `None` immediately, without checking later headers or the URL query.
-fn auth_token_from_request(request: &http::request::Parts) -> Option<String> {
-    for value in request.headers.get_all(AUTHORIZATION) {
-        let value = value.to_str().ok()?;
-        if let Some((scheme, token)) = value.split_once(' ')
-            && scheme.eq_ignore_ascii_case("Bearer")
-        {
-            return Some(token.to_string());
-        }
+    /// Returns an iterator over the query parameters set in the URI of the HTTP request.
+    ///
+    /// Each item is a `(name, value)` pair. Both names and values are percent-decoded.
+    /// The query string is parsed in order, and the same name may appear more than once.
+    pub fn query_pairs(&self) -> impl Iterator<Item = (Cow<'_, str>, Cow<'_, str>)> {
+        url::form_urlencoded::parse(self.request.uri.query().unwrap_or("").as_bytes())
     }
-    url::form_urlencoded::parse(request.uri.query().unwrap_or("").as_bytes())
-        .find(|(name, _)| name == AUTH_TOKEN_URL_QUERY_PARAM)
-        .map(|(_, value)| value.into_owned())
+
+    /// Returns the headers of the HTTP request with which the client connected.
+    pub fn headers(&self) -> &http::HeaderMap {
+        &self.request.headers
+    }
+
+    /// Returns the authorization token from the client's HTTP request, if any.
+    ///
+    /// Walks the `Authorization` headers in order and returns the value of
+    /// the first one whose scheme is `Bearer` (matched case-insensitively).
+    /// Headers with a different scheme are skipped.
+    ///
+    /// If none of the `Authorization` headers carries a `Bearer` scheme,
+    /// returns the value of the `token` URL query parameter, or `None` if
+    /// the URL has no `token` parameter.
+    ///
+    /// If an `Authorization` header value is not valid UTF-8 the function returns
+    /// `None` immediately, without checking later headers or the URL query.
+    pub fn auth_token(&self) -> Option<String> {
+        for value in self.request.headers.get_all(AUTHORIZATION) {
+            let value = value.to_str().ok()?;
+            if let Some((scheme, token)) = value.split_once(' ')
+                && scheme.eq_ignore_ascii_case("Bearer")
+            {
+                return Some(token.to_string());
+            }
+        }
+        self.query_pairs()
+            .find(|(name, _)| name == AUTH_TOKEN_URL_QUERY_PARAM)
+            .map(|(_, value)| value.into_owned())
+    }
 }
 
 /// Controls which endpoints may use the relay and observes their lifecycle.
@@ -387,12 +389,15 @@ impl OnDisconnectGuard {
         }
     }
 
-    /// Creates a no-op guard for the connection described by `request`.
-    pub fn empty(request: &ClientRequest) -> Self {
+    /// Creates a no-op guard for `endpoint_id`.
+    ///
+    /// The guard carries `endpoint_id` and a fresh [`ConnectionId`] but has no
+    /// access control attached, so dropping it does nothing.
+    pub fn empty(endpoint_id: EndpointId) -> Self {
         Self {
             access: None,
-            endpoint_id: request.endpoint_id(),
-            connection_id: request.connection_id(),
+            endpoint_id,
+            connection_id: ConnectionId::next(),
         }
     }
 
@@ -1467,7 +1472,7 @@ mod tests {
         let mut relay = RelayConfig::new((Ipv4Addr::LOCALHOST, 0));
         relay.key_cache_capacity = Some(1024);
         relay.access = Arc::new(TestAccess(Box::new(move |request| {
-            if request.auth_token() == Some(TOKEN) {
+            if request.auth_token().as_deref() == Some(TOKEN) {
                 Access::Allow
             } else {
                 Access::Deny { reason: None }

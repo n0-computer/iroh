@@ -26,7 +26,7 @@ use crate::{
         streams::BytesStreamSink,
     },
     server::{
-        ClientRequest, ConnectionId, OnDisconnectGuard,
+        ConnectionId, OnDisconnectGuard,
         clients::Clients,
         metrics::Metrics,
         streams::{RecvError as RelayRecvError, RelayedStream, SendError as RelaySendError},
@@ -48,10 +48,10 @@ pub(super) struct Packet {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct Config<S> {
-    /// The endpoint ID of the client
-    pub endpoint_id: EndpointId,
-    /// The connection ID of the client, assigned when its [`ClientRequest`] was created.
-    pub connection_id: ConnectionId,
+    /// Reports the disconnect once the connection ends.
+    ///
+    /// Also the owner of this connection's [`EndpointId`] and [`ConnectionId`].
+    pub guard: OnDisconnectGuard,
     /// The relayed stream connection
     pub stream: RelayedStream<S>,
     /// Write timeout for the client connection
@@ -65,13 +65,16 @@ pub struct Config<S> {
 impl<S> Config<S> {
     /// Creates a new config with sensible default values for `write_timeout` and `channel_capacity`.
     ///
-    /// The endpoint and connection ids are taken from `request`.
-    pub fn new(request: &ClientRequest, stream: RelayedStream<S>) -> Self {
+    /// The endpoint and connection ids are taken from `guard`.
+    pub fn new(
+        guard: OnDisconnectGuard,
+        stream: RelayedStream<S>,
+        protocol_version: ProtocolVersion,
+    ) -> Self {
         Self {
-            endpoint_id: request.endpoint_id(),
-            connection_id: request.connection_id(),
+            guard,
             stream,
-            protocol_version: request.protocol_version(),
+            protocol_version,
             write_timeout: SERVER_WRITE_TIMEOUT,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
         }
@@ -108,23 +111,19 @@ impl Client {
     /// control once the connection ends.
     ///
     /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
-    pub(super) fn new<S>(
-        config: Config<S>,
-        guard: OnDisconnectGuard,
-        clients: &Clients,
-        metrics: Arc<Metrics>,
-    ) -> Client
+    pub(super) fn new<S>(config: Config<S>, clients: &Clients, metrics: Arc<Metrics>) -> Client
     where
         S: BytesStreamSink + Send + 'static,
     {
         let Config {
-            endpoint_id,
-            connection_id,
+            guard,
             stream,
             write_timeout,
             channel_capacity,
             protocol_version,
         } = config;
+        let endpoint_id = guard.endpoint_id;
+        let connection_id = guard.connection_id;
 
         let (packet_send_queue_s, packet_send_queue_r) = mpsc::channel(channel_capacity);
         let (message_send_queue_s, message_send_queue_r) = mpsc::channel(channel_capacity);
@@ -594,13 +593,12 @@ mod tests {
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        let request = ClientRequest::new(endpoint_id, Default::default(), None);
         let actor = Actor {
             stream,
             timeout: Duration::from_secs(1),
             packet_send_queue: send_queue_r,
             message_send_queue: message_r,
-            guard: OnDisconnectGuard::empty(&request),
+            guard: OnDisconnectGuard::empty(endpoint_id),
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
@@ -680,18 +678,13 @@ mod tests {
     fn test_client_builder(
         key: EndpointId,
         protocol_version: ProtocolVersion,
-    ) -> (
-        Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>,
-        OnDisconnectGuard,
-        Conn,
-    ) {
+    ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
         let (server, client) = tokio::io::duplex(1024);
-        let request = ClientRequest::new(key, protocol_version, None);
-        let guard = OnDisconnectGuard::empty(&request);
-        let mut config = Config::new(&request, ServerRelayedStream::test(server));
+        let guard = OnDisconnectGuard::empty(key);
+        let mut config = Config::new(guard, ServerRelayedStream::test(server), protocol_version);
         config.write_timeout = Duration::from_secs(1);
         config.channel_capacity = 10;
-        (config, guard, Conn::test(client, protocol_version))
+        (config, Conn::test(client, protocol_version))
     }
 
     #[tokio::test]
@@ -701,11 +694,11 @@ mod tests {
         let a_key = SecretKey::from_bytes(&rng.random()).public();
         let b_key = SecretKey::from_bytes(&rng.random()).public();
 
-        let (builder_a, guard_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V1);
+        let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V1);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_a, guard_a, metrics.clone());
+        clients.register(builder_a, metrics.clone());
 
         // Verify basic packet delivery works with V1.
         let data = b"hello world v1!";
@@ -730,11 +723,11 @@ mod tests {
         let a_key = SecretKey::from_bytes(&rng.random()).public();
         let b_key = SecretKey::from_bytes(&rng.random()).public();
 
-        let (builder_a, guard_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V2);
+        let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V2);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_a, guard_a, metrics.clone());
+        clients.register(builder_a, metrics.clone());
 
         // Verify basic packet delivery works with V2.
         let data = b"hello world v2!";
@@ -759,18 +752,16 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
         let key = SecretKey::from_bytes(&rng.random()).public();
 
-        let (builder_first, guard_first, mut first_rw) =
-            test_client_builder(key, ProtocolVersion::V1);
+        let (builder_first, mut first_rw) = test_client_builder(key, ProtocolVersion::V1);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_first, guard_first, metrics.clone());
+        clients.register(builder_first, metrics.clone());
 
         // Register a second client with the same endpoint ID.
         // The first client should receive a V1Health message.
-        let (builder_second, guard_second, _second_rw) =
-            test_client_builder(key, ProtocolVersion::V1);
-        clients.register(builder_second, guard_second, metrics.clone());
+        let (builder_second, _second_rw) = test_client_builder(key, ProtocolVersion::V1);
+        clients.register(builder_second, metrics.clone());
 
         let frame = recv_frame(FrameType::Health, &mut first_rw).await?;
         assert!(
@@ -789,18 +780,16 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
         let key = SecretKey::from_bytes(&rng.random()).public();
 
-        let (builder_first, guard_first, mut first_rw) =
-            test_client_builder(key, ProtocolVersion::V2);
+        let (builder_first, mut first_rw) = test_client_builder(key, ProtocolVersion::V2);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
-        clients.register(builder_first, guard_first, metrics.clone());
+        clients.register(builder_first, metrics.clone());
 
         // Register a second client with the same endpoint ID.
         // The first client should receive a Health message (V2 frame).
-        let (builder_second, guard_second, _second_rw) =
-            test_client_builder(key, ProtocolVersion::V2);
-        clients.register(builder_second, guard_second, metrics.clone());
+        let (builder_second, _second_rw) = test_client_builder(key, ProtocolVersion::V2);
+        clients.register(builder_second, metrics.clone());
 
         let frame = recv_frame(FrameType::Status, &mut first_rw).await?;
         assert_eq!(

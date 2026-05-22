@@ -98,7 +98,7 @@ impl AccessControl for TokenAccess {
         let mut state = self.0.lock().expect("poisoned");
         match request.auth_token() {
             Some(token) => {
-                if let Some(token_id) = state.tokens.get(token).copied() {
+                if let Some(token_id) = state.tokens.get(&token).copied() {
                     let conn_id = (request.endpoint_id(), request.connection_id());
                     state.connections.insert(conn_id, token_id);
                     Access::Allow

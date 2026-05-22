@@ -3914,7 +3914,7 @@ mod tests {
 
         impl iroh_relay::server::AccessControl for TokenAccess {
             async fn on_connect(&self, request: &iroh_relay::server::ClientRequest) -> Access {
-                if request.auth_token() == Some(self.0) {
+                if request.auth_token().as_deref() == Some(self.0) {
                     Access::Allow
                 } else {
                     Access::Deny { reason: None }

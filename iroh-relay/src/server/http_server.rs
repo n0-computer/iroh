@@ -869,11 +869,8 @@ impl Inner {
 
         trace!(?authentication.mechanism, "accept: verified authentication");
 
-        let request = ClientRequest::from_http_request(
-            authentication.client_key,
-            protocol_version,
-            &request_parts,
-        );
+        let request =
+            ClientRequest::new(authentication.client_key, protocol_version, request_parts);
 
         // Authorize the request against the configured `AccessControl`.
         let guard = authentication
@@ -888,14 +885,14 @@ impl Inner {
         };
 
         trace!("accept: build client conn");
-        let mut client_conn_builder = Config::new(&request, io);
+        let mut client_conn_builder = Config::new(guard, io, protocol_version);
         client_conn_builder.write_timeout = self.write_timeout;
         trace!(endpoint_id = %request.endpoint_id().fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
         // connection
         self.clients
-            .register(client_conn_builder, guard, self.metrics.clone());
+            .register(client_conn_builder, self.metrics.clone());
         Ok(())
     }
 }
