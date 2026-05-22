@@ -36,8 +36,8 @@ use iroh_relay::{
     http::{CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, RELAY_PROBE_PATH},
     protos::{handshake, streams::StreamError},
     server::{
-        Access, AllowAll, ClientRequest, DynAccessControl, Metrics, OnDisconnectGuard,
-        client::Config, clients::Clients, streams::RelayedStream,
+        AllowAll, ClientRequest, DynAccessControl, Metrics, client::Config, clients::Clients,
+        streams::RelayedStream,
     },
     tls::{CaRootsConfig, default_provider},
 };
@@ -192,17 +192,9 @@ async fn handle_relay_websocket(
         ProtocolVersion::V2,
         &request_parts,
     );
-    // On `Access::Allow`, build the disconnect guard now: holding it until the
-    // connection ends - and dropping it on any earlier error - reports the
-    // disconnect without a manual call site that a refactor could miss.
-    let guard = match state.access.on_connect(&request).await {
-        Access::Allow => Some(OnDisconnectGuard::new(state.access.clone(), &request)),
-        Access::Deny => None,
-    };
-    authentication
-        .authorize_if(guard.is_some(), &mut adapter)
+    let guard = authentication
+        .authorize_with(&request, &state.access, &mut adapter)
         .await?;
-    let guard = guard.expect("authorize_if errors unless the connection was admitted");
     trace!("verified authorization");
 
     let stream = RelayedStream::new(adapter, state.key_cache.clone());

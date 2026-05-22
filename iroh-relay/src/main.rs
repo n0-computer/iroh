@@ -211,7 +211,7 @@ impl AccessControl for AllowlistAccess {
         if self.0.contains(&request.endpoint_id()) {
             Access::Allow
         } else {
-            Access::Deny
+            Access::Deny { reason: None }
         }
     }
 }
@@ -223,7 +223,7 @@ struct DenylistAccess(Vec<EndpointId>);
 impl AccessControl for DenylistAccess {
     async fn on_connect(&self, request: &ClientRequest) -> Access {
         if self.0.contains(&request.endpoint_id()) {
-            Access::Deny
+            Access::Deny { reason: None }
         } else {
             Access::Allow
         }
@@ -249,7 +249,7 @@ impl AccessControl for HttpAccess {
             }
             Err(err) => {
                 debug!("HTTP access check failed: Deny access (reason: {err:#})");
-                Access::Deny
+                Access::Deny { reason: None }
             }
         }
     }

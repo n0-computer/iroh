@@ -32,8 +32,8 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
 
 use super::{
-    Access, AllowAll, ClientRequest, DynAccessControl, OnDisconnectGuard, SpawnError,
-    clients::Clients, streams::InvalidBucketConfig,
+    AllowAll, ClientRequest, DynAccessControl, SpawnError, clients::Clients,
+    streams::InvalidBucketConfig,
 };
 use crate::{
     KeyCache,
@@ -874,21 +874,10 @@ impl Inner {
             &request_parts,
         );
 
-        // Run the access check. On `Access::Allow`, build the disconnect guard
-        // right away: from here until the connection ends, dropping the guard
-        // reports the disconnect, so no later error or early return can skip it.
-        let guard = match self.access.on_connect(&request).await {
-            Access::Allow => Some(OnDisconnectGuard::new(self.access.clone(), &request)),
-            Access::Deny => None,
-        };
-
-        // Tell the client the access decision. A denied client receives an
-        // error here, and `guard` is `None`. An admitted client whose
-        // confirmation fails to send drops `guard`, reporting the disconnect.
-        authentication
-            .authorize_if(guard.is_some(), &mut io)
+        // Authorize the request against the configured `AccessControl`.
+        let guard = authentication
+            .authorize_with(&request, &self.access, &mut io)
             .await?;
-        let guard = guard.expect("authorize_if errors unless the connection was admitted");
 
         trace!("accept: verified authorization");
 

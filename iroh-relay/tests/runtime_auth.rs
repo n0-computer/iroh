@@ -102,7 +102,7 @@ impl AccessControl for TokenAccess {
                 state.connections.insert(conn_id, token_id);
                 Access::Allow
             }
-            _ => Access::Deny,
+            _ => Access::Deny { reason: None },
         }
     }
 

@@ -3917,7 +3917,7 @@ mod tests {
                 if request.auth_token() == Some(self.0) {
                     Access::Allow
                 } else {
-                    Access::Deny
+                    Access::Deny { reason: None }
                 }
             }
         }

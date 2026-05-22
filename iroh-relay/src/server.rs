@@ -340,12 +340,15 @@ impl AccessControl for AllowAll {
 }
 
 /// Access restriction for an endpoint.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Access {
     /// Access is allowed.
     Allow,
     /// Access is denied.
-    Deny,
+    Deny {
+        /// Optional reason for denial to send back to the client.
+        reason: Option<String>,
+    },
 }
 
 /// Reports a connection's disconnect to [`AccessControl`] when dropped.
@@ -1372,7 +1375,7 @@ mod tests {
             info!("checking {}", endpoint_id);
             // reject endpoint a
             if endpoint_id == a_key {
-                Access::Deny
+                Access::Deny { reason: None }
             } else {
                 Access::Allow
             }
@@ -1457,7 +1460,7 @@ mod tests {
             if request.auth_token() == Some(TOKEN) {
                 Access::Allow
             } else {
-                Access::Deny
+                Access::Deny { reason: None }
             }
         })));
         let server = Server::spawn(ServerConfig {
