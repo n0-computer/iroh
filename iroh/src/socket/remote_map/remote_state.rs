@@ -624,30 +624,6 @@ impl RemoteStateActor {
                     ?reason
                 );
 
-                // If one connection abandons a path, close it on all connections.
-                for (conn_id, conn_state) in self.connections.iter() {
-                    let Some(conn) = conn_state.handle.upgrade() else {
-                        continue;
-                    };
-                    // Close all paths with the network paths that was abandoned.
-                    for path in conn_state
-                        .paths
-                        .iter()
-                        .filter(|(_id, addr)| **addr == network_path)
-                        .filter_map(|(id, _addr)| conn.path(*id))
-                    {
-                        trace!(%conn_id, path_id=%path.id(), %network_path, "closing path");
-                        if let Err(err) = path.close() {
-                            trace!(
-                                %conn_id,
-                                path_id=%path.id(),
-                                %network_path,
-                                "path close failed: {err:#}"
-                            );
-                        }
-                    }
-                }
-
                 // If the remote closed our selected path, select a new one.
                 self.select_path();
             }
