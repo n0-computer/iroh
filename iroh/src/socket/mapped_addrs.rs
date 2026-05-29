@@ -364,6 +364,31 @@ where
         let inner = self.inner.lock().expect("poisoned");
         inner.lookup.get(addr).cloned()
     }
+
+    pub(super) fn remove(&self, key: &K) -> Option<V> {
+        let mut inner = self.inner.lock().expect("poisoned");
+        if let Some(v) = inner.addrs.remove(key) {
+            inner.lookup.remove(&v);
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn retain(&self, mut f: impl FnMut(&K, &V) -> bool) {
+        let mut inner = self.inner.lock().expect("poisoned");
+        // Disjoint borrows: `addrs.retain` holds `addrs` mutably while the
+        // closure also needs `lookup` — destructure so they aren't both
+        // routed through `inner` (avoids E0499).
+        let AddrMapInner { addrs, lookup } = &mut *inner;
+        addrs.retain(|k, v| {
+            let keep = f(k, v);
+            if !keep {
+                lookup.remove(v);
+            }
+            keep
+        });
+    }
 }
 
 #[derive(Debug)]
@@ -379,5 +404,39 @@ impl<K, V> Default for AddrMapInner<K, V> {
             addrs: Default::default(),
             lookup: Default::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The map is generic over the key, so a plain `u32` key exercises the
+    // forward/reverse bookkeeping; `EndpointIdMappedAddr::generate()` is a
+    // process-global counter with no other dependencies.
+    #[test]
+    fn remove_clears_forward_and_reverse_maps() {
+        let map: AddrMap<u32, EndpointIdMappedAddr> = AddrMap::default();
+        let addr = map.get(&1);
+        assert_eq!(map.lookup(&addr), Some(1), "reverse lookup present after insert");
+
+        assert_eq!(map.remove(&1), Some(addr), "remove returns the mapped addr");
+        assert_eq!(map.lookup(&addr), None, "reverse lookup cleared on remove");
+
+        // Re-inserting generates a fresh addr, proving the old entry was gone.
+        let addr2 = map.get(&1);
+        assert_ne!(addr, addr2);
+    }
+
+    #[test]
+    fn retain_drops_unmatched_entries_and_their_reverse() {
+        let map: AddrMap<u32, EndpointIdMappedAddr> = AddrMap::default();
+        let kept = map.get(&1);
+        let dropped = map.get(&2);
+
+        map.retain(|k, _| *k == 1);
+
+        assert_eq!(map.lookup(&kept), Some(1), "retained entry keeps its reverse lookup");
+        assert_eq!(map.lookup(&dropped), None, "dropped entry reverse lookup is cleared");
     }
 }
