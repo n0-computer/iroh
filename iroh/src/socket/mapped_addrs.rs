@@ -377,9 +377,6 @@ where
 
     pub(super) fn retain(&self, mut f: impl FnMut(&K, &V) -> bool) {
         let mut inner = self.inner.lock().expect("poisoned");
-        // Disjoint borrows: `addrs.retain` holds `addrs` mutably while the
-        // closure also needs `lookup` — destructure so they aren't both
-        // routed through `inner` (avoids E0499).
         let AddrMapInner { addrs, lookup } = &mut *inner;
         addrs.retain(|k, v| {
             let keep = f(k, v);
@@ -411,9 +408,6 @@ impl<K, V> Default for AddrMapInner<K, V> {
 mod tests {
     use super::*;
 
-    // The map is generic over the key, so a plain `u32` key exercises the
-    // forward/reverse bookkeeping; `EndpointIdMappedAddr::generate()` is a
-    // process-global counter with no other dependencies.
     #[test]
     fn remove_clears_forward_and_reverse_maps() {
         let map: AddrMap<u32, EndpointIdMappedAddr> = AddrMap::default();
