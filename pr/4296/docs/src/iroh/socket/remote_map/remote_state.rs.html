@@ -670,7 +670,7 @@
 <a href=#670 id=670 data-nosnippet>670</a>            <span class="macro">trace!</span>(<span class="question-mark">?</span>current_path, <span class="string">"keeping current path"</span>);
 <a href=#671 id=671 data-nosnippet>671</a>        }
 <a href=#672 id=672 data-nosnippet>672</a>
-<a href=#673 id=673 data-nosnippet>673</a>        <span class="self">self</span>.apply_selected_change();
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="self">self</span>.apply_selected_path();
 <a href=#674 id=674 data-nosnippet>674</a>    }
 <a href=#675 id=675 data-nosnippet>675</a>
 <a href=#676 id=676 data-nosnippet>676</a>    <span class="doccomment">/// Propagates a change of [`State::selected_path`] to noq.
@@ -680,7 +680,7 @@
 <a href=#680 id=680 data-nosnippet>680</a>    /// - Sets all non-selected paths to [`PathStatus::Backup`]
 <a href=#681 id=681 data-nosnippet>681</a>    /// - Opens the selected path if it does not exist on the connection
 <a href=#682 id=682 data-nosnippet>682</a>    /// - Sets the selected path to [`PathStatus::Available`]
-<a href=#683 id=683 data-nosnippet>683</a>    </span><span class="kw">fn </span>apply_selected_change(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#683 id=683 data-nosnippet>683</a>    </span><span class="kw">fn </span>apply_selected_path(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
 <a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(selected) = <span class="self">self</span>.state.selected_path.clone() <span class="kw">else </span>{
 <a href=#685 id=685 data-nosnippet>685</a>            <span class="comment">// We can't open the selected path on all paths if we don't have one yet.
 <a href=#686 id=686 data-nosnippet>686</a>            // And we can't close all "unselected" paths either, because we don't know which one is selected.
