@@ -670,7 +670,7 @@ impl RemoteStateActor {
             trace!(?current_path, "keeping current path");
         }
 
-        self.apply_selected_change();
+        self.apply_selected_path();
     }
 
     /// Propagates a change of [`State::selected_path`] to noq.
@@ -680,7 +680,7 @@ impl RemoteStateActor {
     /// - Sets all non-selected paths to [`PathStatus::Backup`]
     /// - Opens the selected path if it does not exist on the connection
     /// - Sets the selected path to [`PathStatus::Available`]
-    fn apply_selected_change(&mut self) {
+    fn apply_selected_path(&mut self) {
         let Some(selected) = self.state.selected_path.clone() else {
             // We can't open the selected path on all paths if we don't have one yet.
             // And we can't close all "unselected" paths either, because we don't know which one is selected.
