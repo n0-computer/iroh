@@ -1503,7 +1503,7 @@ mod tests {
     async fn test_paths_watcher() -> Result {
         const ALPN: &[u8] = b"test";
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let (relay_map, _relay_map, _guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
@@ -1532,7 +1532,7 @@ mod tests {
         let mut paths_client = conn_client.paths_stream();
         let mut paths_server = conn_server.paths_stream();
 
-        /// Advances the path stream until at least one IP and one relay paths are available.
+        /// Advances the path stream until at least one IP and one relay path is available.
         ///
         /// Panics if the path stream finishes before that happens.
         async fn wait_for_paths(mut stream: impl Send + Unpin + Stream<Item = PathList<'_>>) {
