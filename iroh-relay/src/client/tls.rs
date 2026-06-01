@@ -10,9 +10,11 @@ use bytes::Bytes;
 use data_encoding::BASE64URL;
 use http_body_util::Empty;
 use hyper::{Request, upgrade::Parts};
+use hyper_util::rt::TokioIo;
 use n0_error::e;
-use n0_future::{task, time};
+use n0_future::{IterExt, StreamExt, task, time};
 use rustls::client::Resumption;
+use tokio::net::TcpStream;
 use tracing::error;
 
 use super::{
@@ -111,31 +113,10 @@ impl MaybeTlsStreamBuilder {
             let stream = self.dial_url_proxy(proxy.clone(), tls_connector).await?;
             Ok(ProxyStream::Proxied(stream))
         } else {
-            let stream = self.dial_url_direct().await?;
+            let stream =
+                dial_happy_eyeballs(&self.dns_resolver, &self.url, self.prefer_ipv6).await?;
             Ok(ProxyStream::Raw(stream))
         }
-    }
-
-    async fn dial_url_direct(&self) -> Result<tokio::net::TcpStream, DialError> {
-        use tokio::net::TcpStream;
-        let dst_ip = self
-            .dns_resolver
-            .resolve_host(&self.url, self.prefer_ipv6, DNS_TIMEOUT)
-            .await?;
-
-        let port = url_port(&self.url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
-        let addr = SocketAddr::new(dst_ip, port);
-
-        trace!("connecting to {}", addr);
-        let tcp_stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, async move {
-            TcpStream::connect(addr).await
-        })
-        .await
-        .map_err(|err| e!(DialError::Timeout, err))??;
-
-        tcp_stream.set_nodelay(true)?;
-
-        Ok(tcp_stream)
     }
 
     async fn dial_url_proxy(
@@ -144,28 +125,14 @@ impl MaybeTlsStreamBuilder {
         tls_connector: &tokio_rustls::TlsConnector,
     ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<tokio::net::TcpStream>>, DialError>
     {
-        use hyper_util::rt::TokioIo;
-        use tokio::net::TcpStream;
         debug!(%self.url, %proxy_url, "dial url via proxy");
 
-        // Resolve proxy DNS
-        let proxy_ip = self
-            .dns_resolver
-            .resolve_host(&proxy_url, self.prefer_ipv6, DNS_TIMEOUT)
-            .await?;
-
-        let proxy_port =
-            url_port(&proxy_url).ok_or_else(|| e!(DialError::ProxyInvalidTargetPort))?;
-        let proxy_addr = SocketAddr::new(proxy_ip, proxy_port);
-
-        debug!(%proxy_addr, "connecting to proxy");
-
-        let tcp_stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, async move {
-            TcpStream::connect(proxy_addr).await
-        })
-        .await??;
-
-        tcp_stream.set_nodelay(true)?;
+        let tcp_stream = dial_happy_eyeballs(&self.dns_resolver, &proxy_url, self.prefer_ipv6)
+            .await
+            .map_err(|err| match err {
+                DialError::InvalidTargetPort { meta } => DialError::ProxyInvalidTargetPort { meta },
+                err @ _ => err,
+            })?;
 
         // Setup TLS if necessary
         let io = if proxy_url.scheme() == "http" {
@@ -252,6 +219,56 @@ impl MaybeTlsStreamBuilder {
 
         Ok(res)
     }
+}
+
+/// Resolves `url` and races a TCP connection across the resolved addresses.
+///
+/// The host is resolved to all of its addresses in preference order (IPv6 first
+/// when `prefer_ipv6`, otherwise IPv4). Each successive dial is started
+/// [`DIAL_STAGGER_DELAY`] after the previous one and capped at
+/// [`DIAL_ENDPOINT_TIMEOUT`], so a slow or unreachable preferred address
+/// does not hold back the rest for the full timeout. The first connection to succeed
+/// is returned. The remaining attempts are cancelled.
+async fn dial_happy_eyeballs(
+    dns_resolver: &DnsResolver,
+    url: &Url,
+    prefer_ipv6: bool,
+) -> Result<TcpStream, DialError> {
+    let port = url_port(url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
+    let addrs = dns_resolver
+        .resolve_host_all(url, prefer_ipv6, DNS_TIMEOUT)
+        .await?;
+    let mut dials = addrs
+        .into_iter()
+        .enumerate()
+        .map(|(i, ip)| {
+            let addr = SocketAddr::new(ip, port);
+            async move {
+                time::sleep(DIAL_STAGGER_DELAY * i as u32).await;
+                trace!("connecting to {}", addr);
+                let tcp_stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, TcpStream::connect(addr))
+                    .await
+                    .map_err(|err| e!(DialError::Timeout, err))
+                    .and_then(|res| res.map_err(|err| e!(DialError::Io, err)))
+                    .inspect_err(|err| {
+                        debug!(%addr, "failed to connect to relay at {addr}: {err:#}");
+                    })?;
+                tcp_stream.set_nodelay(true)?;
+                Ok(tcp_stream)
+            }
+        })
+        .into_unordered_stream();
+
+    let mut last_err = None;
+    while let Some(res) = dials.next().await {
+        match res {
+            Ok(tcp_stream) => return Ok(tcp_stream),
+            Err(err) => last_err = Some(err),
+        }
+    }
+
+    // If we haven't returned yet, last_err is always set unless `addrs` was empty.
+    Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse).into()))
 }
 
 fn url_port(url: &Url) -> Option<u16> {

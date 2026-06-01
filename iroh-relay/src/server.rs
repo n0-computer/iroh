@@ -1156,16 +1156,21 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, sync::Arc, time::Duration};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr},
+        sync::Arc,
+        time::Duration,
+    };
 
     use http::StatusCode;
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
-    use iroh_dns::dns::DnsResolver;
-    use n0_error::Result;
-    use n0_future::{SinkExt, StreamExt};
+    use iroh_dns::dns::{BoxIter, DnsError, DnsResolver, Resolver, TxtRecordData};
+    use n0_error::{Result, StackResultExt, StdResultExt};
+    use n0_future::{SinkExt, StreamExt, boxed::BoxFuture};
     use n0_tracing_test::traced_test;
     use rand::{RngExt, SeedableRng};
     use tracing::{info, instrument};
+    use url::Url;
 
     use super::{
         Access, AccessControl, ClientRequest, NO_CONTENT_CHALLENGE_HEADER,
@@ -1177,7 +1182,7 @@ mod tests {
             handshake,
             relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         },
-        tls::{CaRootsConfig, default_provider},
+        tls::{self, CaRootsConfig, default_provider},
     };
 
     /// An [`AccessControl`] backed by a closure, for tests.
@@ -1567,6 +1572,72 @@ mod tests {
                 })
                 .await?;
         }
+        Ok(())
+    }
+
+    /// A resolver that hands out fixed IPv4 and IPv6 addresses for every host.
+    #[derive(Debug, Clone)]
+    struct StaticResolver {
+        v4: Vec<Ipv4Addr>,
+        v6: Vec<Ipv6Addr>,
+    }
+
+    impl Resolver for StaticResolver {
+        fn lookup_ipv4(&self, _host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
+            let v4 = self.v4.clone();
+            Box::pin(async move { Ok(Box::new(v4.into_iter()) as BoxIter<Ipv4Addr>) })
+        }
+
+        fn lookup_ipv6(&self, _host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
+            let v6 = self.v6.clone();
+            Box::pin(async move { Ok(Box::new(v6.into_iter()) as BoxIter<Ipv6Addr>) })
+        }
+
+        fn lookup_txt(&self, _host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
+            Box::pin(async move { Ok(Box::new(std::iter::empty()) as BoxIter<TxtRecordData>) })
+        }
+
+        fn clear_cache(&self) {}
+
+        fn reset(&self) -> Box<dyn Resolver> {
+            Box::new(self.clone())
+        }
+    }
+
+    /// A relay client that prefers IPv6 falls back to IPv4 when the advertised IPv6
+    /// address is unreachable.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_relay_client_falls_back_to_ipv4() -> Result {
+        // A relay reachable only over IPv4.
+        let mut config = ServerConfig::default();
+        config.relay = Some(RelayConfig::new((Ipv4Addr::LOCALHOST, 0)));
+        let server = Server::spawn(config).await?;
+        let addr = server.http_addr().expect("http relay address");
+
+        // `relay.test` resolves to the relay's real IPv4 address alongside an
+        // unreachable IPv6 address from the RFC 3849 documentation prefix, standing
+        // in for the stale AAAA record from the issue.
+        let resolver = DnsResolver::custom(StaticResolver {
+            v4: vec![Ipv4Addr::LOCALHOST],
+            v6: vec!["2001:db8::dead".parse().expect("valid IPv6")],
+        });
+        let url: Url = format!("http://relay.test:{}", addr.port())
+            .parse()
+            .expect("valid relay url");
+
+        // Force the IPv6 preference, as a client with working IPv6 connectivity
+        // would have after a net report.
+        let client = ClientBuilder::new(url, SecretKey::generate(), resolver)
+            .tls_client_config(tls::make_dangerous_client_config())
+            .address_family_selector(|| true);
+
+        tokio::time::timeout(Duration::from_secs(10), client.connect())
+            .await
+            .with_std_context(|_| "relay connect timed out")?
+            .context("relay connect")?;
+
+        server.shutdown().await.context("relay server shutdown")?;
         Ok(())
     }
 }

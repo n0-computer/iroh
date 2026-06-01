@@ -31,6 +31,10 @@ pub mod timeouts {
     /// using `TcpStream::connect`
     pub(crate) const DIAL_ENDPOINT_TIMEOUT: Duration = Duration::from_millis(1500);
 
+    /// Delay before starting the next address's dial in the staggered
+    /// "happy eyeballs" connection race.
+    pub(crate) const DIAL_STAGGER_DELAY: Duration = Duration::from_millis(250);
+
     /// Default timeout for DNS queries issued by [`DnsResolver`].
     ///
     /// [`DnsResolver`]: iroh_dns::dns::DnsResolver

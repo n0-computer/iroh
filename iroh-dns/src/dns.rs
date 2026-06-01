@@ -479,6 +479,53 @@ impl DnsResolver {
         }
     }
 
+    /// Resolves a hostname from a URL to all of its IP addresses, ordered by preference.
+    ///
+    /// The addresses of the preferred family come first (IPv6 when `prefer_ipv6`,
+    /// otherwise IPv4), followed by the addresses of the other family. Callers can
+    /// dial these in order and fall back across families when the preferred address
+    /// is unreachable.
+    pub async fn resolve_host_all(
+        &self,
+        url: &Url,
+        prefer_ipv6: bool,
+        timeout: Duration,
+    ) -> Result<Vec<IpAddr>, DnsError> {
+        let host = url.host().ok_or_else(|| e!(DnsError::MissingHost))?;
+        match host {
+            url::Host::Domain(domain) => {
+                let lookup = tokio::join!(
+                    self.lookup_ipv4(domain, timeout),
+                    self.lookup_ipv6(domain, timeout)
+                );
+                let addrs: Vec<IpAddr> = match lookup {
+                    (Err(ipv4_err), Err(ipv6_err)) => {
+                        return Err(e!(DnsError::ResolveBoth {
+                            ipv4: Box::new(ipv4_err),
+                            ipv6: Box::new(ipv6_err)
+                        }));
+                    }
+                    (Err(_), Ok(v6)) => v6.collect(),
+                    (Ok(v4), Err(_)) => v4.collect(),
+                    (Ok(v4), Ok(v6)) => {
+                        if prefer_ipv6 {
+                            v6.chain(v4).collect()
+                        } else {
+                            v4.chain(v6).collect()
+                        }
+                    }
+                };
+                if addrs.is_empty() {
+                    Err(e!(DnsError::NoResponse))
+                } else {
+                    Ok(addrs)
+                }
+            }
+            url::Host::Ipv4(ip) => Ok(vec![IpAddr::V4(ip)]),
+            url::Host::Ipv6(ip) => Ok(vec![IpAddr::V6(ip)]),
+        }
+    }
+
     /// Performs an IPv4 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
