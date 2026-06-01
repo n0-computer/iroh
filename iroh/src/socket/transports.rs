@@ -278,11 +278,18 @@ impl Transports {
         assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
         macro_rules! poll_transport {
-            ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas, &mut self.recv_infos)? {
-                    Poll::Pending | Poll::Ready(0) => {}
-                    Poll::Ready(n) => {
+            ($debug_label:expr, $socket:expr) => {
+                match $socket.poll_recv(cx, bufs, metas, &mut self.recv_infos) {
+                    Poll::Pending | Poll::Ready(Ok(0)) => {}
+                    Poll::Ready(Ok(n)) => {
                         return Poll::Ready(Ok(n));
+                    }
+                    Poll::Ready(Err(err)) => {
+                        // noq treats an error returned from poll_recv as unrecoverable and terminates
+                        // its `EndpointDriver`, which silently kills the endpoint.
+                        // As we have multiple transports, and each might recover from errors individually,
+                        // we never forward transport errors to noq and instead only warn-log them.
+                        warn!(transport=$debug_label, "recv error: {err:#}");
                     }
                 }
             };
@@ -294,23 +301,23 @@ impl Transports {
 
         if counter.is_multiple_of(2) {
             #[cfg(not(wasm_browser))]
-            poll_transport!(&mut self.ip);
+            poll_transport!("IP", &mut self.ip);
 
             for transport in self.relay.iter_mut() {
-                poll_transport!(transport);
+                poll_transport!("relay", transport);
             }
             for transport in self.custom.iter_mut() {
-                poll_transport!(transport);
+                poll_transport!("custom", transport);
             }
         } else {
             for transport in self.custom.iter_mut().rev() {
-                poll_transport!(transport);
+                poll_transport!("custom", transport);
             }
             for transport in self.relay.iter_mut().rev() {
-                poll_transport!(transport);
+                poll_transport!("relay", transport);
             }
             #[cfg(not(wasm_browser))]
-            poll_transport!(&mut self.ip);
+            poll_transport!("IP", &mut self.ip);
         }
 
         Poll::Pending
