@@ -1610,8 +1610,10 @@ mod tests {
     #[traced_test]
     async fn test_relay_client_falls_back_to_ipv4() -> Result {
         // A relay reachable only over IPv4.
-        let mut config = ServerConfig::default();
-        config.relay = Some(RelayConfig::new((Ipv4Addr::LOCALHOST, 0)));
+        let config = ServerConfig {
+            relay: Some(RelayConfig::new((Ipv4Addr::LOCALHOST, 0))),
+            ..Default::default()
+        };
         let server = Server::spawn(config).await?;
         let addr = server.http_addr().expect("http relay address");
 

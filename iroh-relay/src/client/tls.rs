@@ -131,7 +131,7 @@ impl MaybeTlsStreamBuilder {
             .await
             .map_err(|err| match err {
                 DialError::InvalidTargetPort { meta } => DialError::ProxyInvalidTargetPort { meta },
-                err @ _ => err,
+                err => err,
             })?;
 
         // Setup TLS if necessary
