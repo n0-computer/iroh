@@ -412,7 +412,11 @@ mod tests {
     fn remove_clears_forward_and_reverse_maps() {
         let map: AddrMap<u32, EndpointIdMappedAddr> = AddrMap::default();
         let addr = map.get(&1);
-        assert_eq!(map.lookup(&addr), Some(1), "reverse lookup present after insert");
+        assert_eq!(
+            map.lookup(&addr),
+            Some(1),
+            "reverse lookup present after insert"
+        );
 
         assert_eq!(map.remove(&1), Some(addr), "remove returns the mapped addr");
         assert_eq!(map.lookup(&addr), None, "reverse lookup cleared on remove");
@@ -430,7 +434,15 @@ mod tests {
 
         map.retain(|k, _| *k == 1);
 
-        assert_eq!(map.lookup(&kept), Some(1), "retained entry keeps its reverse lookup");
-        assert_eq!(map.lookup(&dropped), None, "dropped entry reverse lookup is cleared");
+        assert_eq!(
+            map.lookup(&kept),
+            Some(1),
+            "retained entry keeps its reverse lookup"
+        );
+        assert_eq!(
+            map.lookup(&dropped),
+            None,
+            "dropped entry reverse lookup is cleared"
+        );
     }
 }
