@@ -501,12 +501,9 @@ impl Builder {
 
     /// Sets a secret key to authenticate with other peers.
     ///
-    /// This secret key's public key will be the [`PublicKey`] of this endpoint and thus
-    /// also its [`EndpointId`]
+    /// This secret key's public key will be the [`EndpointId`] of this endpoint.
     ///
     /// If not set, a new secret key will be generated.
-    ///
-    /// [`PublicKey`]: iroh_base::PublicKey
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
         self.secret_key = Some(secret_key);
         self

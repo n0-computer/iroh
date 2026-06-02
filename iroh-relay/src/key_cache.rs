@@ -3,10 +3,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iroh_base::PublicKey;
+use iroh_base::EndpointId;
 
-type SignatureError = <PublicKey as TryFrom<&'static [u8]>>::Error;
-type PublicKeyBytes = [u8; PublicKey::LENGTH];
+type SignatureError = <EndpointId as TryFrom<&'static [u8]>>::Error;
+type PublicKeyBytes = [u8; EndpointId::LENGTH];
 
 /// A cache for public keys.
 ///
@@ -24,7 +24,7 @@ enum Inner {
     Disabled,
     /// The key cache is enabled with a fixed capacity. It is shared between
     /// multiple threads.
-    Shared(Arc<Mutex<lru::LruCache<PublicKey, ()>>>),
+    Shared(Arc<Mutex<lru::LruCache<EndpointId, ()>>>),
 }
 
 impl KeyCache {
@@ -48,20 +48,20 @@ impl KeyCache {
     }
 
     /// Get a key from a slice of bytes.
-    pub fn key_from_slice(&self, slice: &[u8]) -> Result<PublicKey, SignatureError> {
+    pub fn key_from_slice(&self, slice: &[u8]) -> Result<EndpointId, SignatureError> {
         let Inner::Shared(cache) = &self.0 else {
-            return PublicKey::try_from(slice);
+            return EndpointId::try_from(slice);
         };
         let Ok(bytes) = PublicKeyBytes::try_from(slice) else {
             // if the size is wrong, use PublicKey::try_from to fail with a
             // SignatureError.
-            return Err(PublicKey::try_from(slice).expect_err("invalid length"));
+            return Err(EndpointId::try_from(slice).expect_err("invalid length"));
         };
         let mut cache = cache.lock().expect("not poisoned");
         if let Some((key, _)) = cache.get_key_value(&bytes) {
             return Ok(*key);
         }
-        let key = PublicKey::from_bytes(&bytes)?;
+        let key = EndpointId::from_bytes(&bytes)?;
         cache.put(key, ());
         Ok(key)
     }

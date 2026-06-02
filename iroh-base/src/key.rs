@@ -21,21 +21,22 @@ const Z_BASE_32: Encoding = new_encoding! {
     symbols: "ybndrfg8ejkmcpqxot1uwisza345h769",
 };
 
-/// A public key.
+/// The identifier and public key for an endpoint in the (iroh) network.
 ///
-/// The key itself is stored as the `CompressedEdwards` y coordinate of the public key
-/// It is verified to decompress into a valid key when created.
+/// Each endpoint in iroh has a unique identifier created as a cryptographic key.  This can be
+/// used to globally identify an endpoint.  Since it is also a cryptographic key it is also the
+/// mechanism by which all traffic is always encrypted for a specific endpoint only.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct PublicKey(CompressedEdwardsY);
+pub struct EndpointId(CompressedEdwardsY);
 
-impl Borrow<[u8; 32]> for PublicKey {
+impl Borrow<[u8; 32]> for EndpointId {
     fn borrow(&self) -> &[u8; 32] {
         self.as_bytes()
     }
 }
 
-impl Deref for PublicKey {
+impl Deref for EndpointId {
     type Target = [u8; 32];
 
     fn deref(&self) -> &Self::Target {
@@ -43,39 +44,25 @@ impl Deref for PublicKey {
     }
 }
 
-impl PartialOrd for PublicKey {
+impl PartialOrd for EndpointId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for PublicKey {
+impl Ord for EndpointId {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0.as_bytes().cmp(other.0.as_bytes())
     }
 }
 
-/// The identifier for an endpoint in the (iroh) network.
-///
-/// Each endpoint in iroh has a unique identifier created as a cryptographic key.  This can be
-/// used to globally identify an endpoint.  Since it is also a cryptographic key it is also the
-/// mechanism by which all traffic is always encrypted for a specific endpoint only.
-///
-/// This is equivalent to [`PublicKey`].  By convention we will (or should) use `PublicKey`
-/// as type name when performing cryptographic operations, but use `EndpointId` when referencing
-/// an endpoint.  E.g.:
-///
-/// - `encrypt(key: PublicKey)`
-/// - `send_to(endpoint: EndpointId)`
-pub type EndpointId = PublicKey;
-
-impl Hash for PublicKey {
+impl Hash for EndpointId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);
     }
 }
 
-impl Serialize for PublicKey {
+impl Serialize for EndpointId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -88,7 +75,7 @@ impl Serialize for PublicKey {
     }
 }
 
-impl<'de> Deserialize<'de> for PublicKey {
+impl<'de> Deserialize<'de> for EndpointId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -103,16 +90,16 @@ impl<'de> Deserialize<'de> for PublicKey {
     }
 }
 
-impl PublicKey {
-    /// The length of an ed25519 `PublicKey`, in bytes.
+impl EndpointId {
+    /// The length of an `EndpointId`, in bytes.
     pub const LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
 
-    /// Get this public key as a byte array.
+    /// Get this `EndpointId` as a byte array.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
     }
 
-    /// Construct a `PublicKey` from a slice of bytes.
+    /// Construct a `EndpointId` from a slice of bytes.
     ///
     /// # Warning
     ///
@@ -137,8 +124,9 @@ impl PublicKey {
             .map_err(|_| SignatureError::new())
     }
 
-    /// Convert to a hex string limited to the first 5 bytes for a friendly string
-    /// representation of the key.
+    /// Converts to a hex string limited to the first 5 bytes.
+    ///
+    /// This may be used as a short string representation of the key, e.g. in logs.
     pub fn fmt_short(&self) -> impl Display + Copy + 'static {
         PublicKeyShort(
             self.0.as_bytes()[0..5]
@@ -183,7 +171,7 @@ impl Display for PublicKeyShort {
     }
 }
 
-impl TryFrom<&[u8]> for PublicKey {
+impl TryFrom<&[u8]> for EndpointId {
     type Error = KeyParsingError;
 
     #[inline]
@@ -193,7 +181,7 @@ impl TryFrom<&[u8]> for PublicKey {
     }
 }
 
-impl TryFrom<&[u8; 32]> for PublicKey {
+impl TryFrom<&[u8; 32]> for EndpointId {
     type Error = KeyParsingError;
 
     #[inline]
@@ -202,13 +190,13 @@ impl TryFrom<&[u8; 32]> for PublicKey {
     }
 }
 
-impl AsRef<[u8]> for PublicKey {
+impl AsRef<[u8]> for EndpointId {
     fn as_ref(&self) -> &[u8] {
         self.as_bytes()
     }
 }
 
-impl Debug for PublicKey {
+impl Debug for EndpointId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -218,13 +206,13 @@ impl Debug for PublicKey {
     }
 }
 
-impl Display for PublicKey {
+impl Display for EndpointId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", data_encoding::HEXLOWER.encode(self.as_bytes()))
     }
 }
 
-/// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
+/// Error when deserialising a [`EndpointId`] or a [`SecretKey`].
 #[stack_error(derive, add_meta, from_sources, std_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
@@ -243,10 +231,10 @@ pub enum KeyParsingError {
     InvalidKeyData,
 }
 
-/// Deserialises the [`PublicKey`] from it's base32 encoding.
+/// Deserialises the [`EndpointId`] from its hex or base32 encoding.
 ///
 /// [`Display`] is capable of serialising this format.
-impl FromStr for PublicKey {
+impl FromStr for EndpointId {
     type Err = KeyParsingError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -296,9 +284,9 @@ impl<'de> Deserialize<'de> for SecretKey {
 
 impl SecretKey {
     /// The public key of this [`SecretKey`].
-    pub fn public(&self) -> PublicKey {
+    pub fn public(&self) -> EndpointId {
         let key = self.0.verifying_key().to_bytes();
-        PublicKey(CompressedEdwardsY(key))
+        EndpointId(CompressedEdwardsY(key))
     }
 
     /// Generate a new [`SecretKey`] with a randomness generator.
@@ -475,7 +463,7 @@ pub struct SignatureError {}
 fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
     let mut bytes = [0u8; 32];
 
-    let len = if s.len() == PublicKey::LENGTH * 2 {
+    let len = if s.len() == EndpointId::LENGTH * 2 {
         // hex
         data_encoding::HEXLOWER
             .decode_mut(s.as_bytes(), &mut bytes)
@@ -491,7 +479,7 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
             .decode_mut(input, &mut bytes)
             .map_err(|_| e!(KeyParsingError::FailedToDecodeBase32))?
     };
-    ensure!(len == PublicKey::LENGTH, KeyParsingError::InvalidLength);
+    ensure!(len == EndpointId::LENGTH, KeyParsingError::InvalidLength);
     Ok(bytes)
 }
 
@@ -504,9 +492,10 @@ mod tests {
 
     #[test]
     fn test_public_key_postcard() {
-        let public_key =
-            PublicKey::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
-                .unwrap();
+        let public_key = EndpointId::from_str(
+            "ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6",
+        )
+        .unwrap();
         let bytes = postcard::to_stdvec(&public_key).unwrap();
         let expected = HEXLOWER
             .decode(b"ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
@@ -516,17 +505,17 @@ mod tests {
 
     #[test]
     fn public_key_postcard() {
-        let key = PublicKey::from_bytes(&[0; 32]).unwrap();
+        let key = EndpointId::from_bytes(&[0; 32]).unwrap();
         let bytes = postcard::to_stdvec(&key).unwrap();
-        let key2: PublicKey = postcard::from_bytes(&bytes).unwrap();
+        let key2: EndpointId = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(key, key2);
     }
 
     #[test]
     fn public_key_json() {
-        let key = PublicKey::from_bytes(&[0; 32]).unwrap();
+        let key = EndpointId::from_bytes(&[0; 32]).unwrap();
         let bytes = serde_json::to_string(&key).unwrap();
-        let key2: PublicKey = serde_json::from_str(&bytes).unwrap();
+        let key2: EndpointId = serde_json::from_str(&bytes).unwrap();
         assert_eq!(key, key2);
     }
 
@@ -542,7 +531,7 @@ mod tests {
         );
 
         assert_eq!(
-            PublicKey::from_str(&key.public().to_string()).unwrap(),
+            EndpointId::from_str(&key.public().to_string()).unwrap(),
             key.public()
         );
     }
@@ -550,7 +539,7 @@ mod tests {
     #[test]
     fn test_regression_parse_endpoint_id_panic() {
         let not_a_endpoint_id = "foobarbaz";
-        assert!(PublicKey::from_str(not_a_endpoint_id).is_err());
+        assert!(EndpointId::from_str(not_a_endpoint_id).is_err());
     }
 
     #[test]

@@ -83,10 +83,10 @@
 //! The connection is encrypted using TLS, like standard QUIC connections.  Unlike standard
 //! QUIC there is no client, server or server TLS key and certificate chain.  Instead each iroh endpoint has a
 //! unique [`SecretKey`] used to authenticate and encrypt the connection.  When an iroh
-//! endpoint connects, it uses the corresponding [`PublicKey`] to ensure the connection is only
+//! endpoint connects, it uses the corresponding public key to ensure the connection is only
 //! established with the intended peer.
 //!
-//! Since the [`PublicKey`] is also used to identify the iroh endpoint it is also known as
+//! Since the public key  is also used to identify the iroh endpoint it is called
 //! the [`EndpointId`].  As encryption is an integral part of TLS as used in QUIC this
 //! [`EndpointId`] is always a required parameter to establish a connection.
 //!
@@ -249,7 +249,6 @@
 //! [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
 //! [HTTP3]: https://en.wikipedia.org/wiki/HTTP/3
 //! [`SecretKey`]: crate::SecretKey
-//! [`PublicKey`]: crate::PublicKey
 //! [`RelayUrl`]: crate::RelayUrl
 //! [`address_lookup`]: crate::endpoint::Builder::address_lookup
 //! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
@@ -281,8 +280,8 @@ pub mod protocol;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
-    EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
-    Signature, SignatureError, TransportAddr,
+    EndpointAddr, EndpointId, KeyParsingError, RelayUrl, RelayUrlParseError, SecretKey, Signature,
+    SignatureError, TransportAddr,
 };
 #[cfg(not(wasm_browser))]
 pub use iroh_dns::dns;

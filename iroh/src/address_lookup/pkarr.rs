@@ -2,9 +2,8 @@
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
-//! corresponding [`PublicKey`], also known as the [`EndpointId`].  Additionally this pkarr
-//! Resource Record is signed using the same [`SecretKey`], ensuring authenticity of the
-//! record.
+//! corresponding [`EndpointId`].  Additionally this pkarr Resource Record is signed using the
+//! same [`SecretKey`], ensuring authenticity of the record.
 //!
 //! Pkarr normally stores these records on the [Mainline DHT], but also provides two bridges
 //! that do not require clients to directly interact with the DHT:
@@ -45,7 +44,6 @@
 //! [DNS Resource Records]: https://en.wikipedia.org/wiki/Domain_Name_System#Resource_records
 //! [Mainline DHT]: https://en.wikipedia.org/wiki/Mainline_DHT
 //! [`SecretKey`]: crate::SecretKey
-//! [`PublicKey`]: crate::PublicKey
 //! [`EndpointId`]: crate::EndpointId
 //! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
 //! [`N0` preset]: crate::endpoint::presets::N0

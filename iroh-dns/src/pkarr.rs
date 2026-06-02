@@ -9,7 +9,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use iroh_base::{PublicKey, SecretKey, Signature};
+use iroh_base::{EndpointId, SecretKey, Signature};
 use n0_error::{AnyError, anyerr, e, stack_error};
 use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata::RData};
 
@@ -95,7 +95,7 @@ impl SignedPacket {
             return Err(e!(SignedPacketVerifyError::TooLarge { len: bytes.len() }));
         }
 
-        let public_key = PublicKey::try_from(&bytes[..32])
+        let public_key = EndpointId::try_from(&bytes[..32])
             .map_err(|e| e!(SignedPacketVerifyError::InvalidKey, e))?;
         let signature =
             Signature::from_bytes(bytes[32..96].try_into().expect("64 bytes for signature"));
@@ -117,7 +117,7 @@ impl SignedPacket {
 
     /// Create from a public key and relay payload (signature + timestamp + dns).
     pub fn from_relay_payload(
-        public_key: &PublicKey,
+        public_key: &EndpointId,
         payload: &[u8],
     ) -> Result<SignedPacket, SignedPacketVerifyError> {
         let mut bytes = Vec::with_capacity(32 + payload.len());
@@ -154,8 +154,8 @@ impl SignedPacket {
     }
 
     /// Return the public key.
-    pub fn public_key(&self) -> PublicKey {
-        PublicKey::try_from(&self.bytes[..32]).expect("valid public key in SignedPacket")
+    pub fn public_key(&self) -> EndpointId {
+        EndpointId::try_from(&self.bytes[..32]).expect("valid public key in SignedPacket")
     }
 
     /// Return the signature.

@@ -33,7 +33,7 @@ use data_encoding::BASE32HEX_NOPAD as HEX;
 use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
-use iroh_base::{PublicKey, SecretKey};
+use iroh_base::{EndpointId, SecretKey};
 use n0_error::{AnyError, anyerr, e, ensure, stack_error};
 use n0_future::{SinkExt, TryStreamExt};
 #[cfg(feature = "server")]
@@ -60,7 +60,7 @@ const DOMAIN_SEP_TLS_EXPORT_LABEL: &[u8] = b"iroh-relay handshake v1";
 #[cfg_attr(wasm_browser, allow(unused))]
 pub(crate) struct KeyMaterialClientAuth {
     /// The client's public key
-    pub(crate) public_key: PublicKey,
+    pub(crate) public_key: EndpointId,
     /// A signature of (a hash of) extracted key material.
     #[serde(with = "serde_bytes")]
     #[debug("{}", HEX.encode(signature))]
@@ -87,7 +87,7 @@ pub(crate) struct ServerChallenge {
 #[derive(derive_more::Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ClientAuth {
     /// The client's public key, a.k.a. the `EndpointId`
-    pub(crate) public_key: PublicKey,
+    pub(crate) public_key: EndpointId,
     /// A signature of (a hash of) the [`ServerChallenge`].
     ///
     /// This is what provides the authentication.
@@ -193,7 +193,7 @@ pub(crate) enum VerificationError {
         source: iroh_base::SignatureError,
         message: Vec<u8>,
         signature: [u8; 64],
-        public_key: PublicKey,
+        public_key: EndpointId,
     },
 }
 
@@ -391,7 +391,7 @@ pub(crate) async fn clientside(
 #[must_use = "the protocol is not finished unless `authorize_if` is called"]
 pub struct SuccessfulAuthentication {
     /// The authenticated client's public key.
-    pub client_key: PublicKey,
+    pub client_key: EndpointId,
     /// The authentication mechanism that was used.
     pub mechanism: Mechanism,
 }
@@ -516,13 +516,13 @@ impl SuccessfulAuthentication {
     /// * `io` - The WebSocket stream to send the authorization response on
     ///
     /// # Returns
-    /// * `Ok(PublicKey)` - The client's public key if authorization was granted
+    /// * `Ok(EndpointId)` - The client's public key if authorization was granted
     /// * `Err(Error)` - If authorization was denied or communication failed
     pub async fn authorize_if(
         self,
         access: Access,
         io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
-    ) -> Result<PublicKey, Error> {
+    ) -> Result<EndpointId, Error> {
         match access {
             Access::Allow => self.accept(io).await,
             Access::Deny { reason } => Err(self.deny(reason, io).await),
@@ -532,7 +532,7 @@ impl SuccessfulAuthentication {
     async fn accept(
         self,
         io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
-    ) -> Result<PublicKey, Error> {
+    ) -> Result<EndpointId, Error> {
         trace!("authorizing client");
         write_frame(io, ServerConfirmsAuth).await?;
         Ok(self.client_key)
@@ -610,7 +610,7 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use bytes::BytesMut;
-    use iroh_base::{PublicKey, SecretKey};
+    use iroh_base::{EndpointId, SecretKey};
     use n0_error::{AnyError, Result, StackResultExt, StdResultExt};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use n0_tracing_test::traced_test;
@@ -704,8 +704,8 @@ mod tests {
         secret_key: &SecretKey,
         client_shared_secret: Option<u64>,
         server_shared_secret: Option<u64>,
-        restricted_to: Option<PublicKey>,
-    ) -> (Result<ServerConfirmsAuth>, Result<(PublicKey, Mechanism)>) {
+        restricted_to: Option<EndpointId>,
+    ) -> (Result<ServerConfirmsAuth>, Result<(EndpointId, Mechanism)>) {
         let (client, server) = tokio::io::duplex(1024);
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())

@@ -368,12 +368,10 @@ fn static_info_from_conn(conn: &noq::Connection) -> Result<StaticInfo, Authentic
 
 /// Returns the [`EndpointId`] from the peer's TLS certificate.
 ///
-/// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+/// The public key of an endpoint is also known as an [`EndpointId`].  This public key is
 /// included in the TLS certificate presented during the handshake when connecting.
 /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
 /// connection.
-///
-/// [`PublicKey`]: iroh_base::PublicKey
 fn remote_id_from_noq_conn(conn: &noq::Connection) -> Result<EndpointId, RemoteEndpointIdError> {
     let data = conn.peer_identity();
     match data {
@@ -1067,12 +1065,10 @@ impl Connection<HandshakeCompleted> {
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// The public key of an endpoint is known as an [`EndpointId`].  This public key is
     /// included in the TLS certificate presented during the handshake when connecting.
     /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
     /// connection.
-    ///
-    /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> EndpointId {
         self.data.info.endpoint_id
     }
@@ -1169,12 +1165,10 @@ impl Connection<IncomingZeroRtt> {
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// The public key of an endpoint is known as an [`EndpointId`].  This public key is
     /// included in the TLS certificate presented during the handshake when connecting.
     /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
     /// connection.
-    ///
-    /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
         remote_id_from_noq_conn(&self.inner)
     }
@@ -1211,12 +1205,10 @@ impl Connection<OutgoingZeroRtt> {
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// The public key of an endpoint is known as an [`EndpointId`].  This public key is
     /// included in the TLS certificate presented during the handshake when connecting.
     /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
     /// connection.
-    ///
-    /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
         remote_id_from_noq_conn(&self.inner)
     }

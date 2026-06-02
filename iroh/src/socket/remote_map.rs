@@ -230,7 +230,7 @@ impl RemoteMap {
     /// Removes an actor sender if `leftover_msgs` is empty, or restarts the actor otherwise.
     fn remove_or_restart_actor(
         &mut self,
-        remote_id: iroh_base::PublicKey,
+        remote_id: iroh_base::EndpointId,
         leftover_msgs: Vec<RemoteStateMessage>,
     ) -> bool {
         if leftover_msgs.is_empty() {

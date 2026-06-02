@@ -1183,7 +1183,7 @@ struct Elapsed;
 mod tests {
     use std::sync::Arc;
 
-    use iroh_base::{PublicKey, SecretKey};
+    use iroh_base::{EndpointId, SecretKey};
     use iroh_dns::dns::DnsResolver;
     use n0_error::{Result, StdResultExt, bail_any};
     use n0_future::{SinkExt, StreamExt};
@@ -1300,7 +1300,7 @@ mod tests {
     async fn create_test_client(
         key: SecretKey,
         server_url: Url,
-    ) -> Result<(PublicKey, Client), ConnectError> {
+    ) -> Result<(EndpointId, Client), ConnectError> {
         let public_key = key.public();
         let client = ClientBuilder::new(server_url, key, DnsResolver::new()).tls_client_config(
             CaRootsConfig::insecure_skip_verify()
@@ -1314,7 +1314,7 @@ mod tests {
 
     fn process_msg(
         msg: Option<Result<RelayToClientMsg, crate::client::RecvError>>,
-    ) -> Option<(PublicKey, Datagrams)> {
+    ) -> Option<(EndpointId, Datagrams)> {
         match msg {
             Some(Err(e)) => {
                 info!("client `recv` error {e}");

@@ -3,7 +3,7 @@
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates, or using raw public keys.
 
-use iroh_base::{PublicKey, Signature};
+use iroh_base::{EndpointId, Signature};
 use rustls::{
     CertificateError, DigitallySignedStruct, DistinguishedName, SignatureScheme,
     SupportedProtocolVersion,
@@ -189,7 +189,7 @@ impl webpki_types::SignatureVerificationAlgorithm for Ed25519Dalek {
         signature: &[u8],
     ) -> Result<(), webpki_types::InvalidSignature> {
         let public_key =
-            PublicKey::try_from(public_key).map_err(|_| webpki_types::InvalidSignature)?;
+            EndpointId::try_from(public_key).map_err(|_| webpki_types::InvalidSignature)?;
         let signature =
             Signature::try_from(signature).map_err(|_| webpki_types::InvalidSignature)?;
         public_key
