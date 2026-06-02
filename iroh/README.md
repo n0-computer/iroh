@@ -1,87 +1,149 @@
 # iroh
 
-Iroh is a library to establish direct connectivity between peers.
-It's built on peer-to-peer [QUIC](https://en.wikipedia.org/wiki/QUIC) using both relays and holepunching.
-The main structure for connection is the `Endpoint` entrypoint.
+Iroh is a library to establish direct connectivity between endpoints.
+It gives you an API for dialingy by public key. You say "connect to that
+endpoint", and iroh finds and maintains the fastest connection for you,
+regardless of where it is.
 
-Peer to peer connectivity is established with the help of a _relay server_. The relay server provides [QUIC Address Discovery](https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html) (QAD) and hole-punching assistance for the peers. If no direct connection can be established, the connection is relayed via the server.
+Under the hood iroh establishes peer-to-peer [QUIC] connections between
+endpoints. The fastest route is a direct connection, so iroh tries to
+[hole-punch] one whenever it can. If that fails it falls back to using
+relay servers. Because it is built on QUIC, you get
+authenticated encryption, concurrent streams with priorities, a datagram
+transport, and no head-of-line blocking out of the box.
 
-Peers must know and do verify the PeerID of each other before they can connect. When using a relay server to aid the connection establishment they will register with a home relay server using their PublicKey.  Other peers which can not establish a direct connection can then establish connection via this relay server.  This will try to assist establishing a direct connection using QAD and holepunching but continue relaying if not possible.
+## How it works
 
-Peers can also connect directly without using a relay server. For this, however the listening peer must be directly reachable by the connecting peer via one of it's addresses.
+An iroh endpoint is created and controlled by the [`Endpoint`]. Each endpoint
+has a unique [`SecretKey`]; its [`PublicKey`] doubles as the endpoint's
+identity, the [`EndpointId`]. Connections are encrypted and authenticated
+against this key, so you always connect to exactly the peer you intended.
 
-## Examples
+A connection is usually established with the help of a *relay server*. When an
+endpoint is created it connects to the closest relay and designates it as its
+*home relay*. Other endpoints reach it first through this relay, then both
+sides attempt a direct connection using [QUIC Address Discovery][QAD] and hole
+punching. Once the direct connection is up, the relay is no longer involved. If
+hole punching does not succeed, traffic keeps flowing over the relay as a
+fallback. Relay servers only ever forward encrypted traffic addressed by
+[`EndpointId`]; they cannot read it.
 
-Examples for `iroh` are in `iroh/examples`, run them with `cargo run --example $NAME`. Details for each example are in the file/directory itself.
+Endpoints can also connect directly without a relay, as long as the accepting
+endpoint is reachable at one of its addresses. You can supply a [`RelayUrl`],
+direct addresses, or both.
 
-## Structured Events
+## Example
 
-The library uses [tracing](https://docs.rs/tracing) to for logging as
-well as for **structured events**.  Events are different from normal
-logging by convention:
+This is an echo protocol: the accepting side copies back whatever it receives.
+The full, commented version is in [`echo.rs`][echo-rs].
 
-- The [target] has a prefix of `$crate_name::_events` and target names
-  are `::` separated.
+```rust,no_run
+use iroh::{
+    Endpoint,
+    endpoint::{Connection, presets},
+    protocol::{AcceptError, ProtocolHandler, Router},
+};
 
-  For this library the target will always start with `iroh::_events::`.
+/// Each protocol is identified by its ALPN, exchanged during the handshake.
+const ALPN: &[u8] = b"iroh-example/echo/0";
 
-- There is **no message**.
+#[tokio::main]
+async fn main() -> n0_error::Result<()> {
+    // The accepting side: bind an endpoint and route the ALPN to a handler.
+    let endpoint = Endpoint::bind(presets::N0).await?;
+    let router = Router::builder(endpoint).accept(ALPN, Echo).spawn();
+    router.endpoint().online().await;
+    let addr = router.endpoint().addr();
 
-  Each event has a unique [target] which indicates the meaning.
+    // The connecting side: dial the accepting endpoint by its address.
+    let endpoint = Endpoint::bind(presets::N0).await?;
+    let conn = endpoint.connect(addr, ALPN).await?;
+    let (mut send, mut recv) = conn.open_bi().await?;
 
-- The event [fields] are exclusively used for structured data.
+    send.write_all(b"Hello, world!").await?;
+    send.finish()?;
+    let response = recv.read_to_end(1000).await?;
+    assert_eq!(&response, b"Hello, world!");
 
+    conn.close(0u32.into(), b"bye!");
+    endpoint.close().await;
+    router.shutdown().await?;
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct Echo;
+
+impl ProtocolHandler for Echo {
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        let (mut send, mut recv) = connection.accept_bi().await?;
+        // Echo bytes back until the sender signals the end of data.
+        tokio::io::copy(&mut recv, &mut send).await?;
+        send.finish()?;
+        connection.closed().await;
+        Ok(())
+    }
+}
+```
+
+More examples live in `iroh/examples`; run them with `cargo run --example
+$NAME --features=examples`. Details for each are in the file itself.
+
+## Compose protocols
+
+Instead of writing your own, you can build on protocols that already exist on
+top of iroh:
+
+- [iroh-blobs] for [BLAKE3]-based content-addressed blob transfer, scaling from
+  kilobytes to terabytes.
+- [iroh-gossip] for publish-subscribe overlay networks that scale down to what
+  an average phone can handle.
+- and many more.
+
+To use iroh from other languages, see [iroh-ffi].
+
+## Structured events
+
+The library uses [tracing] both for logging and for *structured events*.
+Events differ from normal logging by convention:
+
+- The [target] is prefixed with `iroh::_events::`, with `::`-separated names.
+- There is **no message**; the unique target indicates the meaning.
+- The [fields] carry exclusively structured data.
 - The [Level] is always `DEBUG`.
 
-This is a compromise between being able to process events using
-automated tooling using custom subscribers and them still producing
-distinguishing output in logs when using the default tracing
-subscriber formatters.  While still being unlikely to conflict with
-real modules.
+This lets automated tooling process events through custom subscribers while
+still producing distinct output under the default tracing formatters, and makes
+them unlikely to conflict with real modules.
 
-[target]: https://docs.rs/tracing/latest/tracing/struct.Metadata.html#method.target
-[fields]: https://docs.rs/tracing/latest/tracing/#recording-fields
-[Level]: https://docs.rs/tracing/latest/tracing/struct.Level.html
+An application can subscribe to the `iroh::_events` target separately. With the
+default file logging it is also easy to grep for all events:
 
-### Using events
+```sh
+rg 'events::[a-z_\-:]+' path/to/iroh/logs/iroh.YYYY-MM-DD-NN.log
+```
 
-If desired an application can use the `$crate_name::_events` target to
-handle events by a different subscriber.  However with the default
-file logging it is already easy to search for all events, e.g. using
-ripgrep:
+When adding events, aim for a high signal-to-noise ratio and design them to be
+extracted automatically. To keep them distinct from normal logging, write them
+with the `event!()` macro:
 
-`rg 'events::[a-z_\-:]+' path/to/iroh/logs/iroh.YYYY-MM-DD-NN.log`
-
-Which will also highlight the full target name by default on a colour
-supporting terminal.
-
-### Development
-
-Be cautious about adding new events.  Events aim for a high
-signal-to-noise ratio.  Events should be designed to be able to
-extract in an automated way.  If multiple events need to be related,
-fields with special values can be used.
-
-To make events distinct from normal logging in the code it is
-recommended to write them using the `event!()` macro:
-
-```rust
+```rust,ignore
 event!(
-    target: "iroh::_event::subject",
+    target: "iroh::_events::subject",
     Level::DEBUG,
     field = value,
 );
 ```
 
+[target]: https://docs.rs/tracing/latest/tracing/struct.Metadata.html#method.target
+[fields]: https://docs.rs/tracing/latest/tracing/#recording-fields
+[Level]: https://docs.rs/tracing/latest/tracing/struct.Level.html
+
 ## Building documentation
 
-Building the documentation is only supported when using
-`--all-features`.
-
-Additionally you might want to enable documenting the cargo features
-required for certain APIs, which is done by also passing the `--cfg
-iroh_docsrs` flag to rustdoc when building the documentation.  This
-also requires using nightly rust, e.g.:
+Building the documentation is only supported with `--all-features`. To also
+document the cargo features required for certain APIs, pass the `iroh_docsrs`
+cfg to rustdoc, which requires nightly Rust:
 
 ```sh
 RUSTDOCFLAGS="--cfg iroh_docsrs" cargo +nightly doc --workspace --no-deps --all-features
@@ -103,3 +165,18 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in this project by you, as defined in the Apache-2.0 license,
 shall be dual licensed as above, without any additional terms or conditions.
+
+[QUIC]: https://en.wikipedia.org/wiki/QUIC
+[hole-punch]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
+[QAD]: https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html
+[BLAKE3]: https://github.com/BLAKE3-team/BLAKE3
+[tracing]: https://docs.rs/tracing
+[`Endpoint`]: https://docs.rs/iroh/latest/iroh/struct.Endpoint.html
+[`SecretKey`]: https://docs.rs/iroh/latest/iroh/struct.SecretKey.html
+[`PublicKey`]: https://docs.rs/iroh/latest/iroh/struct.PublicKey.html
+[`EndpointId`]: https://docs.rs/iroh/latest/iroh/struct.EndpointId.html
+[`RelayUrl`]: https://docs.rs/iroh/latest/iroh/struct.RelayUrl.html
+[iroh-blobs]: https://github.com/n0-computer/iroh-blobs
+[iroh-gossip]: https://github.com/n0-computer/iroh-gossip
+[iroh-ffi]: https://github.com/n0-computer/iroh-ffi
+[echo-rs]: /iroh/examples/echo.rs
