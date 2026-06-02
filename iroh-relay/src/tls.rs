@@ -24,7 +24,7 @@ pub struct CaRootsConfig {
     extra_roots: Vec<CertificateDer<'static>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 enum Mode {
     /// Use a compiled-in copy of the root certificates trusted by Mozilla.
     ///
@@ -42,6 +42,12 @@ enum Mode {
     /// May only be used in tests or local development setups.
     #[cfg(any(test, feature = "test-utils"))]
     InsecureSkipVerify,
+    /// Use a callback to create a [`ClientConfig`] used in all TLS requests.
+    Custom {
+        #[debug("Arc<dyn Fn>")]
+        make_client_config:
+            Arc<dyn 'static + Send + Sync + Fn(Arc<CryptoProvider>) -> io::Result<ClientConfig>>,
+    },
 }
 
 impl Default for CaRootsConfig {
@@ -90,10 +96,49 @@ impl CaRootsConfig {
     }
 
     /// Only trust the explicitly set root certificates.
-    pub fn custom(roots: impl IntoIterator<Item = CertificateDer<'static>>) -> Self {
+    pub fn custom_roots(roots: impl IntoIterator<Item = CertificateDer<'static>>) -> Self {
         Self {
             mode: Mode::ExtraRootsOnly,
             extra_roots: roots.into_iter().collect(),
+        }
+    }
+
+    /// Creates a [`CaRootsConfig`] that uses a callback function to create a [`ClientConfig`].
+    ///
+    /// This is an advanced feature and you should only use this if none of the other constructor
+    /// functions cover your needs. Wrongly implementing the callback may lead to insecure connections
+    /// being accepted.
+    ///
+    /// The [`CryptoProvider`] passed to the callback should be used for all cryptographic operations.
+    ///
+    /// ## Example
+    ///
+    /// This example implements the behavior of [`Self::embedded`] via [`Self::custom`].
+    ///
+    /// ```rust
+    /// # use std::sync::Arc;
+    /// # use iroh_relay::tls::CaRootsConfig;
+    /// let root_store = Arc::new(rustls::RootCertStore {
+    ///     roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    /// });
+    /// let ca_roots_config =
+    ///     CaRootsConfig::custom_client_config_builder(Arc::new(move |crypto_provider| {
+    ///         let client_config = rustls::ClientConfig::builder_with_provider(crypto_provider)
+    ///             .with_safe_default_protocol_versions()
+    ///             .expect("protocols supported by crypto provider")
+    ///             .with_root_certificates(root_store.clone())
+    ///             .with_no_client_auth();
+    ///         Ok(client_config)
+    ///     }));
+    /// ```
+    pub fn custom_client_config_builder(
+        make_client_config: Arc<
+            dyn 'static + Send + Sync + Fn(Arc<CryptoProvider>) -> io::Result<ClientConfig>,
+        >,
+    ) -> Self {
+        Self {
+            mode: Mode::Custom { make_client_config },
+            extra_roots: Vec::new(),
         }
     }
 
@@ -106,21 +151,18 @@ impl CaRootsConfig {
         self
     }
 
-    /// Builds a [`ServerCertVerifier`] from this config.
-    pub fn server_cert_verifier(
-        &self,
-        crypto_provider: Arc<CryptoProvider>,
-    ) -> io::Result<Arc<dyn ServerCertVerifier>> {
-        Ok(match self.mode {
+    /// Build a [`ClientConfig`] from this config.
+    pub fn client_config(&self, crypto_provider: Arc<CryptoProvider>) -> io::Result<ClientConfig> {
+        let verifier: Arc<dyn ServerCertVerifier> = match self.mode {
             #[cfg(feature = "platform-verifier")]
             Mode::System => {
                 #[cfg(not(target_os = "android"))]
                 let verifier = rustls_platform_verifier::Verifier::new_with_extra_roots(
                     self.extra_roots.clone(),
-                    crypto_provider,
+                    crypto_provider.clone(),
                 );
                 #[cfg(target_os = "android")]
-                let verifier = rustls_platform_verifier::Verifier::new(crypto_provider);
+                let verifier = rustls_platform_verifier::Verifier::new(crypto_provider.clone());
                 Arc::new(verifier.map_err(io::Error::other)?)
             }
             Mode::EmbeddedWebPki => {
@@ -128,27 +170,31 @@ impl CaRootsConfig {
                     roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
                 };
                 root_store.add_parsable_certificates(self.extra_roots.clone());
-                WebPkiServerVerifier::builder_with_provider(Arc::new(root_store), crypto_provider)
-                    .build()
-                    .map_err(io::Error::other)?
+                WebPkiServerVerifier::builder_with_provider(
+                    Arc::new(root_store),
+                    crypto_provider.clone(),
+                )
+                .build()
+                .map_err(io::Error::other)?
             }
             Mode::ExtraRootsOnly => {
                 let mut root_store = rustls::RootCertStore { roots: vec![] };
                 root_store.add_parsable_certificates(self.extra_roots.clone());
-                WebPkiServerVerifier::builder_with_provider(Arc::new(root_store), crypto_provider)
-                    .build()
-                    .map_err(io::Error::other)?
+                WebPkiServerVerifier::builder_with_provider(
+                    Arc::new(root_store),
+                    crypto_provider.clone(),
+                )
+                .build()
+                .map_err(io::Error::other)?
             }
             #[cfg(any(test, feature = "test-utils"))]
-            Mode::InsecureSkipVerify => {
-                Arc::new(no_cert_verifier::NoCertVerifier { crypto_provider })
-            }
-        })
-    }
-
-    /// Build a [`ClientConfig`] from this config.
-    pub fn client_config(&self, crypto_provider: Arc<CryptoProvider>) -> io::Result<ClientConfig> {
-        let verifier = self.server_cert_verifier(crypto_provider.clone())?;
+            Mode::InsecureSkipVerify => Arc::new(no_cert_verifier::NoCertVerifier {
+                crypto_provider: crypto_provider.clone(),
+            }),
+            Mode::Custom {
+                ref make_client_config,
+            } => return make_client_config(crypto_provider),
+        };
         let config = ClientConfig::builder_with_provider(crypto_provider)
             .with_safe_default_protocol_versions()
             .expect("protocols supported by ring")
