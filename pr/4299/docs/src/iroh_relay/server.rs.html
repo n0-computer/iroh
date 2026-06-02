@@ -1610,34 +1610,36 @@
 <a href=#1610 id=1610 data-nosnippet>1610</a>    #[traced_test]
 <a href=#1611 id=1611 data-nosnippet>1611</a>    </span><span class="kw">async fn </span>test_relay_client_falls_back_to_ipv4() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#1612 id=1612 data-nosnippet>1612</a>        <span class="comment">// A relay reachable only over IPv4.
-<a href=#1613 id=1613 data-nosnippet>1613</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>config = ServerConfig::default();
-<a href=#1614 id=1614 data-nosnippet>1614</a>        config.relay = <span class="prelude-val">Some</span>(RelayConfig::new((Ipv4Addr::LOCALHOST, <span class="number">0</span>)));
-<a href=#1615 id=1615 data-nosnippet>1615</a>        <span class="kw">let </span>server = Server::spawn(config).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1616 id=1616 data-nosnippet>1616</a>        <span class="kw">let </span>addr = server.http_addr().expect(<span class="string">"http relay address"</span>);
-<a href=#1617 id=1617 data-nosnippet>1617</a>
-<a href=#1618 id=1618 data-nosnippet>1618</a>        <span class="comment">// `relay.test` resolves to the relay's real IPv4 address alongside an
-<a href=#1619 id=1619 data-nosnippet>1619</a>        // unreachable IPv6 address from the RFC 3849 documentation prefix, standing
-<a href=#1620 id=1620 data-nosnippet>1620</a>        // in for the stale AAAA record from the issue.
-<a href=#1621 id=1621 data-nosnippet>1621</a>        </span><span class="kw">let </span>resolver = DnsResolver::custom(StaticResolver {
-<a href=#1622 id=1622 data-nosnippet>1622</a>            v4: <span class="macro">vec!</span>[Ipv4Addr::LOCALHOST],
-<a href=#1623 id=1623 data-nosnippet>1623</a>            v6: <span class="macro">vec!</span>[<span class="string">"2001:db8::dead"</span>.parse().expect(<span class="string">"valid IPv6"</span>)],
-<a href=#1624 id=1624 data-nosnippet>1624</a>        });
-<a href=#1625 id=1625 data-nosnippet>1625</a>        <span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"http://relay.test:{}"</span>, addr.port())
-<a href=#1626 id=1626 data-nosnippet>1626</a>            .parse()
-<a href=#1627 id=1627 data-nosnippet>1627</a>            .expect(<span class="string">"valid relay url"</span>);
-<a href=#1628 id=1628 data-nosnippet>1628</a>
-<a href=#1629 id=1629 data-nosnippet>1629</a>        <span class="comment">// Force the IPv6 preference, as a client with working IPv6 connectivity
-<a href=#1630 id=1630 data-nosnippet>1630</a>        // would have after a net report.
-<a href=#1631 id=1631 data-nosnippet>1631</a>        </span><span class="kw">let </span>client = ClientBuilder::new(url, SecretKey::generate(), resolver)
-<a href=#1632 id=1632 data-nosnippet>1632</a>            .tls_client_config(tls::make_dangerous_client_config())
-<a href=#1633 id=1633 data-nosnippet>1633</a>            .address_family_selector(|| <span class="bool-val">true</span>);
-<a href=#1634 id=1634 data-nosnippet>1634</a>
-<a href=#1635 id=1635 data-nosnippet>1635</a>        tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), client.connect())
-<a href=#1636 id=1636 data-nosnippet>1636</a>            .<span class="kw">await
-<a href=#1637 id=1637 data-nosnippet>1637</a>            </span>.with_std_context(|<span class="kw">_</span>| <span class="string">"relay connect timed out"</span>)<span class="question-mark">?
-<a href=#1638 id=1638 data-nosnippet>1638</a>            </span>.context(<span class="string">"relay connect"</span>)<span class="question-mark">?</span>;
-<a href=#1639 id=1639 data-nosnippet>1639</a>
-<a href=#1640 id=1640 data-nosnippet>1640</a>        server.shutdown().<span class="kw">await</span>.context(<span class="string">"relay server shutdown"</span>)<span class="question-mark">?</span>;
-<a href=#1641 id=1641 data-nosnippet>1641</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1642 id=1642 data-nosnippet>1642</a>    }
-<a href=#1643 id=1643 data-nosnippet>1643</a>}</code></pre></div></section></main></body></html>
+<a href=#1613 id=1613 data-nosnippet>1613</a>        </span><span class="kw">let </span>config = ServerConfig {
+<a href=#1614 id=1614 data-nosnippet>1614</a>            relay: <span class="prelude-val">Some</span>(RelayConfig::new((Ipv4Addr::LOCALHOST, <span class="number">0</span>))),
+<a href=#1615 id=1615 data-nosnippet>1615</a>            ..Default::default()
+<a href=#1616 id=1616 data-nosnippet>1616</a>        };
+<a href=#1617 id=1617 data-nosnippet>1617</a>        <span class="kw">let </span>server = Server::spawn(config).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1618 id=1618 data-nosnippet>1618</a>        <span class="kw">let </span>addr = server.http_addr().expect(<span class="string">"http relay address"</span>);
+<a href=#1619 id=1619 data-nosnippet>1619</a>
+<a href=#1620 id=1620 data-nosnippet>1620</a>        <span class="comment">// `relay.test` resolves to the relay's real IPv4 address alongside an
+<a href=#1621 id=1621 data-nosnippet>1621</a>        // unreachable IPv6 address from the RFC 3849 documentation prefix, standing
+<a href=#1622 id=1622 data-nosnippet>1622</a>        // in for the stale AAAA record from the issue.
+<a href=#1623 id=1623 data-nosnippet>1623</a>        </span><span class="kw">let </span>resolver = DnsResolver::custom(StaticResolver {
+<a href=#1624 id=1624 data-nosnippet>1624</a>            v4: <span class="macro">vec!</span>[Ipv4Addr::LOCALHOST],
+<a href=#1625 id=1625 data-nosnippet>1625</a>            v6: <span class="macro">vec!</span>[<span class="string">"2001:db8::dead"</span>.parse().expect(<span class="string">"valid IPv6"</span>)],
+<a href=#1626 id=1626 data-nosnippet>1626</a>        });
+<a href=#1627 id=1627 data-nosnippet>1627</a>        <span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"http://relay.test:{}"</span>, addr.port())
+<a href=#1628 id=1628 data-nosnippet>1628</a>            .parse()
+<a href=#1629 id=1629 data-nosnippet>1629</a>            .expect(<span class="string">"valid relay url"</span>);
+<a href=#1630 id=1630 data-nosnippet>1630</a>
+<a href=#1631 id=1631 data-nosnippet>1631</a>        <span class="comment">// Force the IPv6 preference, as a client with working IPv6 connectivity
+<a href=#1632 id=1632 data-nosnippet>1632</a>        // would have after a net report.
+<a href=#1633 id=1633 data-nosnippet>1633</a>        </span><span class="kw">let </span>client = ClientBuilder::new(url, SecretKey::generate(), resolver)
+<a href=#1634 id=1634 data-nosnippet>1634</a>            .tls_client_config(tls::make_dangerous_client_config())
+<a href=#1635 id=1635 data-nosnippet>1635</a>            .address_family_selector(|| <span class="bool-val">true</span>);
+<a href=#1636 id=1636 data-nosnippet>1636</a>
+<a href=#1637 id=1637 data-nosnippet>1637</a>        tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), client.connect())
+<a href=#1638 id=1638 data-nosnippet>1638</a>            .<span class="kw">await
+<a href=#1639 id=1639 data-nosnippet>1639</a>            </span>.with_std_context(|<span class="kw">_</span>| <span class="string">"relay connect timed out"</span>)<span class="question-mark">?
+<a href=#1640 id=1640 data-nosnippet>1640</a>            </span>.context(<span class="string">"relay connect"</span>)<span class="question-mark">?</span>;
+<a href=#1641 id=1641 data-nosnippet>1641</a>
+<a href=#1642 id=1642 data-nosnippet>1642</a>        server.shutdown().<span class="kw">await</span>.context(<span class="string">"relay server shutdown"</span>)<span class="question-mark">?</span>;
+<a href=#1643 id=1643 data-nosnippet>1643</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1644 id=1644 data-nosnippet>1644</a>    }
+<a href=#1645 id=1645 data-nosnippet>1645</a>}</code></pre></div></section></main></body></html>

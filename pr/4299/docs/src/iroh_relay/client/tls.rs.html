@@ -131,7 +131,7 @@
 <a href=#131 id=131 data-nosnippet>131</a>            .<span class="kw">await
 <a href=#132 id=132 data-nosnippet>132</a>            </span>.map_err(|err| <span class="kw">match </span>err {
 <a href=#133 id=133 data-nosnippet>133</a>                DialError::InvalidTargetPort { meta } =&gt; DialError::ProxyInvalidTargetPort { meta },
-<a href=#134 id=134 data-nosnippet>134</a>                err @ <span class="kw">_ </span>=&gt; err,
+<a href=#134 id=134 data-nosnippet>134</a>                err =&gt; err,
 <a href=#135 id=135 data-nosnippet>135</a>            })<span class="question-mark">?</span>;
 <a href=#136 id=136 data-nosnippet>136</a>
 <a href=#137 id=137 data-nosnippet>137</a>        <span class="comment">// Setup TLS if necessary
