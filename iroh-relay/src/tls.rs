@@ -60,7 +60,7 @@ impl Default for CaRootsConfig {
 }
 
 impl CaRootsConfig {
-    /// Use the operating system's certificate facilities for verifying the validity of TLS certificates.
+    /// Uses the operating system's certificate facilities for verifying the validity of TLS certificates.
     ///
     /// See [`rustls_platform_verifier`] for details how trust anchors are retrieved on different platforms.
     ///
@@ -74,7 +74,7 @@ impl CaRootsConfig {
         }
     }
 
-    /// Use a compiled-in copy of the root certificates trusted by Mozilla.
+    /// Uses a compiled-in copy of the root certificates trusted by Mozilla.
     ///
     /// See [`webpki_roots`] for details.
     pub fn embedded() -> Self {
@@ -95,7 +95,7 @@ impl CaRootsConfig {
         }
     }
 
-    /// Only trust the explicitly set root certificates.
+    /// Only trusts the explicitly set root certificates.
     pub fn custom_roots(roots: impl IntoIterator<Item = CertificateDer<'static>>) -> Self {
         Self {
             mode: Mode::ExtraRootsOnly,
@@ -113,7 +113,7 @@ impl CaRootsConfig {
     ///
     /// ## Example
     ///
-    /// This example implements the behavior of [`Self::embedded`] via [`Self::custom`].
+    /// This example implements the behavior of [`Self::embedded`] via [`Self::custom_client_config_builder`].
     ///
     /// ```rust
     /// # use std::sync::Arc;
@@ -142,7 +142,9 @@ impl CaRootsConfig {
         }
     }
 
-    /// Add additional root certificates to the list of trusted certificates.
+    /// Adds additional root certificates to the list of trusted certificates.
+    ///
+    /// Ignored when using [`Self::custom_client_config_builder`].
     pub fn with_extra_roots(
         mut self,
         extra_roots: impl IntoIterator<Item = CertificateDer<'static>>,
@@ -151,7 +153,7 @@ impl CaRootsConfig {
         self
     }
 
-    /// Build a [`ClientConfig`] from this config.
+    /// Builds a [`ClientConfig`] from this config.
     pub fn client_config(&self, crypto_provider: Arc<CryptoProvider>) -> io::Result<ClientConfig> {
         let verifier: Arc<dyn ServerCertVerifier> = match self.mode {
             #[cfg(feature = "platform-verifier")]
