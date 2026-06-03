@@ -563,7 +563,7 @@ impl RouterBuilder {
                             match filter(&incoming) {
                                 IncomingFilterOutcome::Accept => {}
                                 IncomingFilterOutcome::Retry => {
-                                    if !incoming.remote_addr_validated() {
+                                    if incoming.remote_addr_validated() {
                                         warn!(
                                             "filter returned Retry for an already validated connection",
                                         );
