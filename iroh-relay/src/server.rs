@@ -1584,17 +1584,18 @@ mod tests {
 
     impl Resolver for StaticResolver {
         fn lookup_ipv4(&self, _host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
-            let v4 = self.v4.clone();
-            Box::pin(async move { Ok(Box::new(v4.into_iter()) as BoxIter<Ipv4Addr>) })
+            let addrs: BoxIter<_> = Box::new(self.v4.clone().into_iter());
+            Box::pin(std::future::ready(Ok(addrs)))
         }
 
         fn lookup_ipv6(&self, _host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
-            let v6 = self.v6.clone();
-            Box::pin(async move { Ok(Box::new(v6.into_iter()) as BoxIter<Ipv6Addr>) })
+            let addrs: BoxIter<_> = Box::new(self.v6.clone().into_iter());
+            Box::pin(std::future::ready(Ok(addrs)))
         }
 
         fn lookup_txt(&self, _host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
-            Box::pin(async move { Ok(Box::new(std::iter::empty()) as BoxIter<TxtRecordData>) })
+            let records: BoxIter<_> = Box::new(std::iter::empty());
+            Box::pin(std::future::ready(Ok(records)))
         }
 
         fn clear_cache(&self) {}
