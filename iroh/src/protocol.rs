@@ -1001,16 +1001,38 @@ mod tests {
 
             // Dial whatever the server discovered about itself — all of it.
             let addr = r1.endpoint().addr();
+            let ip_count = addr.addrs.iter().filter(|a| a.is_ip()).count();
+            tracing::info!(
+                server_bound = ?r1.endpoint().bound_sockets(),
+                ?addr,
+                ip_count,
+                "addr_retry_multihomed: dialing server address",
+            );
+            if ip_count < 2 {
+                tracing::warn!(
+                    ip_count,
+                    "addr_retry_multihomed: single-homed (<2 IP addresses) — \
+                     NOT exercising the #4114 multi-homed retry condition",
+                );
+            }
             let e2 = Endpoint::builder(presets::Minimal).bind().await?;
             let conn = e2.connect(addr, ECHO_ALPN).await;
-            assert!(
-                conn.is_ok(),
-                "multi-homed retry handshake failed (#4114): {conn:?}"
-            );
+            match &conn {
+                Ok(_) => tracing::info!("addr_retry_multihomed: connect SUCCEEDED"),
+                Err(err) => tracing::info!("addr_retry_multihomed: connect FAILED: {err:#}"),
+            }
 
             r1.shutdown().await.anyerr()?;
             e2.close().await;
-            Ok(())
+
+            // Temporary: fail unconditionally so the diagnostics above are shown
+            // (successful tests swallow tracing logs). Revert to
+            // `assert!(conn.is_ok(), ...)` once we've read the CI output.
+            panic!(
+                "forcing failure to surface diagnostics: connect_ok={} ip_count={ip_count} \
+                 (see logs above for the dialed address)",
+                conn.is_ok(),
+            );
         }
 
         /// Verify that returning `Retry` for a relay connection also causes
