@@ -7,9 +7,11 @@
 //! are structured.
 
 use std::{
+    collections::VecDeque,
     fmt,
     future::Future,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    pin::Pin,
     sync::Arc,
 };
 
@@ -23,8 +25,9 @@ use hickory_resolver::{
 use iroh_base::EndpointId;
 use n0_error::{AnyError, StackError, StdResultExt, e, stack_error};
 use n0_future::{
-    StreamExt,
+    Either, MaybeFuture, Stream, StreamExt,
     boxed::BoxFuture,
+    stream,
     time::{self, Duration},
 };
 use tokio::sync::Notify;
@@ -479,51 +482,106 @@ impl DnsResolver {
         }
     }
 
-    /// Resolves a hostname from a URL to all of its IP addresses, ordered by preference.
+    /// Resolves a hostname from a URL to its IP addresses, streamed as they resolve.
     ///
-    /// The addresses of the preferred family come first (IPv6 when `prefer_ipv6`,
-    /// otherwise IPv4), followed by the addresses of the other family. Callers can
-    /// dial these in order and fall back across families when the preferred address
-    /// is unreachable.
-    pub async fn resolve_host_all(
-        &self,
-        url: &Url,
-        prefer_ipv6: bool,
+    /// IPv4 and IPv6 are looked up concurrently and each address is yielded as
+    /// soon as its lookup completes, so a caller can start dialing without
+    /// waiting for both families.
+    /// A lookup failure is swallowedas long as the other family yields an address.
+    /// Only if both lookups fail does the stream yield a single [`DnsError`].
+    ///
+    /// The stream ends once both lookups have finished and every address or the error
+    /// have been yielded.
+    pub fn resolve_host_all<'a>(
+        &'a self,
+        url: &'a Url,
+        _prefer_ipv6: bool,
         timeout: Duration,
-    ) -> Result<Vec<IpAddr>, DnsError> {
-        let host = url.host().ok_or_else(|| e!(DnsError::MissingHost))?;
-        match host {
-            url::Host::Domain(domain) => {
-                let lookup = tokio::join!(
-                    self.lookup_ipv4(domain, timeout),
-                    self.lookup_ipv6(domain, timeout)
-                );
-                let addrs: Vec<IpAddr> = match lookup {
-                    (Err(ipv4_err), Err(ipv6_err)) => {
-                        return Err(e!(DnsError::ResolveBoth {
-                            ipv4: Box::new(ipv4_err),
-                            ipv6: Box::new(ipv6_err)
-                        }));
+    ) -> impl Stream<Item = Result<IpAddr, DnsError>> + Send + 'a {
+        let host = match url.host() {
+            None => {
+                return Either::Left(stream::once(Err(e!(DnsError::MissingHost))));
+            }
+            Some(url::Host::Ipv4(ip)) => {
+                return Either::Left(stream::once(Ok(IpAddr::V4(ip))));
+            }
+            Some(url::Host::Ipv6(ip)) => {
+                return Either::Left(stream::once(Ok(IpAddr::V6(ip))));
+            }
+            Some(url::Host::Domain(domain)) => domain.to_string(),
+        };
+
+        type Lookup<'a, A> =
+            Pin<Box<dyn Future<Output = Result<BoxIter<A>, DnsError>> + Send + 'a>>;
+
+        struct State<'a> {
+            v4: MaybeFuture<Lookup<'a, Ipv4Addr>>,
+            v6: MaybeFuture<Lookup<'a, Ipv6Addr>>,
+            v4_err: Option<DnsError>,
+            v6_err: Option<DnsError>,
+            queue: VecDeque<IpAddr>,
+            closed: bool,
+            yielded: bool,
+        }
+
+        let state = State {
+            v4: MaybeFuture::Some(Box::pin({
+                let host = host.clone();
+                self.inner.op(timeout, move |r| r.lookup_ipv4(host.clone()))
+            })),
+            v6: MaybeFuture::Some(Box::pin({
+                let host = host.clone();
+                self.inner.op(timeout, move |r| r.lookup_ipv6(host.clone()))
+            })),
+            v4_err: None,
+            v6_err: None,
+            queue: VecDeque::new(),
+            closed: false,
+            yielded: false,
+        };
+        Either::Right(stream::unfold(state, async |mut state| {
+            loop {
+                if state.closed {
+                    return None;
+                }
+                if let Some(item) = state.queue.pop_front() {
+                    state.yielded = true;
+                    return Some((Ok(item), state));
+                }
+                if state.v4_err.is_some() && state.v6_err.is_some() {
+                    state.closed = true;
+                    let error = e!(DnsError::ResolveBoth {
+                        ipv4: Box::new(state.v4_err.take().expect("checked to be Some")),
+                        ipv6: Box::new(state.v6_err.take().expect("checked to be Some")),
+                    });
+                    return Some((Err(error), state));
+                }
+                if state.v4.is_none() && state.v6.is_none() {
+                    state.closed = true;
+                    if !state.yielded {
+                        return Some((Err(e!(DnsError::NoResponse)), state));
+                    } else {
+                        return None;
                     }
-                    (Err(_), Ok(v6)) => v6.collect(),
-                    (Ok(v4), Err(_)) => v4.collect(),
-                    (Ok(v4), Ok(v6)) => {
-                        if prefer_ipv6 {
-                            v6.chain(v4).collect()
-                        } else {
-                            v4.chain(v6).collect()
+                }
+                tokio::select! {
+                    res = &mut state.v4 => {
+                        state.v4 = MaybeFuture::None;
+                        match res {
+                            Ok(items) => state.queue.extend(items.map(IpAddr::V4)),
+                            Err(err) => state.v4_err = Some(err),
                         }
                     }
-                };
-                if addrs.is_empty() {
-                    Err(e!(DnsError::NoResponse))
-                } else {
-                    Ok(addrs)
+                    res = &mut state.v6 => {
+                        state.v6 = MaybeFuture::None;
+                        match res {
+                            Ok(items) => state.queue.extend(items.map(IpAddr::V6)),
+                            Err(err) => state.v6_err = Some(err),
+                        }
+                    }
                 }
             }
-            url::Host::Ipv4(ip) => Ok(vec![IpAddr::V4(ip)]),
-            url::Host::Ipv6(ip) => Ok(vec![IpAddr::V6(ip)]),
-        }
+        }))
     }
 
     /// Performs an IPv4 lookup with a timeout in a staggered fashion.
