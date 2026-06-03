@@ -982,56 +982,62 @@ mod tests {
         /// Asserts the handshake succeeds, so if the bug is present this test
         /// **fails**. On a single-homed host there is only one address and it
         /// trivially passes.
+        /// Number of handshakes to run, to turn a rare timing race into a
+        /// measurable failure rate rather than a single lucky/unlucky sample.
+        const MULTIHOMED_ITERS: usize = 100;
+
         #[tokio::test]
         #[traced_test]
         async fn addr_retry_multihomed() -> Result {
             // Default bind: wildcard, every interface and address family. No
-            // `clear_ip_transports`, no `bind_addr`, no NIC picking.
-            let e1 = Endpoint::builder(presets::Minimal).bind().await?;
-            let r1 = Router::builder(e1.clone())
-                .incoming_filter(Arc::new(|incoming: &crate::endpoint::Incoming| {
-                    if incoming.remote_addr_validated() {
-                        IncomingFilterOutcome::Accept
-                    } else {
-                        IncomingFilterOutcome::Retry
+            // `clear_ip_transports`, no `bind_addr`, no NIC picking. Repeated many
+            // times so a rare race surfaces as a failure count.
+            let mut failures = 0usize;
+            let mut first_err: Option<String> = None;
+            let mut ip_count = 0usize;
+
+            for i in 0..MULTIHOMED_ITERS {
+                let e1 = Endpoint::builder(presets::Minimal).bind().await?;
+                let r1 = Router::builder(e1.clone())
+                    .incoming_filter(Arc::new(|incoming: &crate::endpoint::Incoming| {
+                        if incoming.remote_addr_validated() {
+                            IncomingFilterOutcome::Accept
+                        } else {
+                            IncomingFilterOutcome::Retry
+                        }
+                    }))
+                    .accept(ECHO_ALPN, Echo)
+                    .spawn();
+
+                // Dial whatever the server discovered about itself — all of it.
+                let addr = r1.endpoint().addr();
+                ip_count = addr.addrs.iter().filter(|a| a.is_ip()).count();
+
+                let e2 = Endpoint::builder(presets::Minimal).bind().await?;
+                let conn =
+                    tokio::time::timeout(Duration::from_secs(8), e2.connect(addr, ECHO_ALPN)).await;
+                match conn {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        failures += 1;
+                        first_err.get_or_insert_with(|| format!("iter {i}: {err:#}"));
                     }
-                }))
-                .accept(ECHO_ALPN, Echo)
-                .spawn();
+                    Err(_) => {
+                        failures += 1;
+                        first_err.get_or_insert_with(|| format!("iter {i}: connect timed out"));
+                    }
+                }
 
-            // Dial whatever the server discovered about itself — all of it.
-            let addr = r1.endpoint().addr();
-            let ip_count = addr.addrs.iter().filter(|a| a.is_ip()).count();
-            tracing::info!(
-                server_bound = ?r1.endpoint().bound_sockets(),
-                ?addr,
-                ip_count,
-                "addr_retry_multihomed: dialing server address",
-            );
-            if ip_count < 2 {
-                tracing::warn!(
-                    ip_count,
-                    "addr_retry_multihomed: single-homed (<2 IP addresses) — \
-                     NOT exercising the #4114 multi-homed retry condition",
-                );
-            }
-            let e2 = Endpoint::builder(presets::Minimal).bind().await?;
-            let conn = e2.connect(addr, ECHO_ALPN).await;
-            match &conn {
-                Ok(_) => tracing::info!("addr_retry_multihomed: connect SUCCEEDED"),
-                Err(err) => tracing::info!("addr_retry_multihomed: connect FAILED: {err:#}"),
+                r1.shutdown().await.anyerr()?;
+                e2.close().await;
             }
 
-            r1.shutdown().await.anyerr()?;
-            e2.close().await;
-
-            // Temporary: fail unconditionally so the diagnostics above are shown
-            // (successful tests swallow tracing logs). Revert to
-            // `assert!(conn.is_ok(), ...)` once we've read the CI output.
+            // Temporary: fail unconditionally so the tally is shown in CI output
+            // (successful tests swallow tracing logs). Once we trust the result,
+            // replace with `assert_eq!(failures, 0, ...)`.
             panic!(
-                "forcing failure to surface diagnostics: connect_ok={} ip_count={ip_count} \
-                 (see logs above for the dialed address)",
-                conn.is_ok(),
+                "addr_retry_multihomed stress: failures={failures}/{MULTIHOMED_ITERS} \
+                 ip_count={ip_count} first_err={first_err:?}",
             );
         }
 
