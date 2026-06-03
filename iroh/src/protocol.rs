@@ -966,6 +966,53 @@ mod tests {
             Ok(())
         }
 
+        /// Reproduces <https://github.com/n0-computer/iroh/issues/4114>: the same
+        /// retry-then-validate flow as [`addr_retry_then_validated`], but with no
+        /// interface selection at all.
+        ///
+        /// [`direct_pair`] binds IPv4 loopback *only*, precisely to dodge this
+        /// bug. Here we bind normally — the default is the wildcard address on
+        /// every interface and address family — and the client dials whatever the
+        /// server discovers as its own [`EndpointAddr`]. On a multi-homed host
+        /// (multiple NICs, or dual-stack) that is several direct addresses reached
+        /// via several source addresses, so the sprayed Initial can yield a retry
+        /// token whose address doesn't match the source the token-bearing Initial
+        /// later arrives from → `INVALID_TOKEN`.
+        ///
+        /// Asserts the handshake succeeds, so if the bug is present this test
+        /// **fails**. On a single-homed host there is only one address and it
+        /// trivially passes.
+        #[tokio::test]
+        #[traced_test]
+        async fn addr_retry_multihomed() -> Result {
+            // Default bind: wildcard, every interface and address family. No
+            // `clear_ip_transports`, no `bind_addr`, no NIC picking.
+            let e1 = Endpoint::builder(presets::Minimal).bind().await?;
+            let r1 = Router::builder(e1.clone())
+                .incoming_filter(Arc::new(|incoming: &crate::endpoint::Incoming| {
+                    if incoming.remote_addr_validated() {
+                        IncomingFilterOutcome::Accept
+                    } else {
+                        IncomingFilterOutcome::Retry
+                    }
+                }))
+                .accept(ECHO_ALPN, Echo)
+                .spawn();
+
+            // Dial whatever the server discovered about itself — all of it.
+            let addr = r1.endpoint().addr();
+            let e2 = Endpoint::builder(presets::Minimal).bind().await?;
+            let conn = e2.connect(addr, ECHO_ALPN).await;
+            assert!(
+                conn.is_ok(),
+                "multi-homed retry handshake failed (#4114): {conn:?}"
+            );
+
+            r1.shutdown().await.anyerr()?;
+            e2.close().await;
+            Ok(())
+        }
+
         /// Verify that returning `Retry` for a relay connection also causes
         /// the remote to retry with a token. The "validation" has no
         /// security meaning over a relay, but it does impose a round-trip

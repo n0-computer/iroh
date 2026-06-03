@@ -45,6 +45,8 @@ use crate::util::is_relayed;
 mod degrade;
 #[path = "patchbay/nat.rs"]
 mod nat;
+#[path = "patchbay/retry.rs"]
+mod retry;
 #[path = "patchbay/switch-uplink.rs"]
 mod switch_uplink;
 #[path = "patchbay/util.rs"]

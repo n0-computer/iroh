@@ -15,7 +15,7 @@ use tracing::{Instrument, debug, error, error_span, event, info};
 
 use self::relay::run_relay_server;
 
-const TEST_ALPN: &[u8] = b"test";
+pub(crate) const TEST_ALPN: &[u8] = b"test";
 
 /// Creates a lab with a relay server.
 ///
@@ -446,7 +446,7 @@ fn watch_selected_path(conn: &Connection) {
     );
 }
 
-fn endpoint_builder(device: &Device, relay_map: RelayMap) -> iroh::endpoint::Builder {
+pub(crate) fn endpoint_builder(device: &Device, relay_map: RelayMap) -> iroh::endpoint::Builder {
     #[allow(unused_mut)]
     let mut builder = Endpoint::builder(presets::Minimal)
         .relay_mode(RelayMode::Custom(relay_map))
