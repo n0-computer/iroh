@@ -42,9 +42,7 @@ use std::{net::SocketAddr, time::Duration};
 use iroh::{Endpoint, EndpointAddr, RelayMode, TransportAddr, endpoint::presets};
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_tracing_test::traced_test;
-use patchbay::{
-    IfaceConfig, Lab, LinkCondition, LinkDirection, LinkLimits, OutDir, RouterPreset,
-};
+use patchbay::{IfaceConfig, Lab, LinkCondition, LinkDirection, LinkLimits, OutDir, RouterPreset};
 use testdir::testdir;
 use tokio::sync::oneshot;
 use tracing::info;
@@ -122,13 +120,11 @@ async fn retry_multi_interface() -> Result {
         .add_device("server")
         .iface(
             "eth0",
-            IfaceConfig::routed(seg_a.id())
-                .condition(delay(SEG_A_LATENCY_MS), LinkDirection::Both),
+            IfaceConfig::routed(seg_a.id()).condition(delay(SEG_A_LATENCY_MS), LinkDirection::Both),
         )
         .iface(
             "eth1",
-            IfaceConfig::routed(seg_b.id())
-                .condition(delay(SEG_B_LATENCY_MS), LinkDirection::Both),
+            IfaceConfig::routed(seg_b.id()).condition(delay(SEG_B_LATENCY_MS), LinkDirection::Both),
         )
         .build()
         .await?;
