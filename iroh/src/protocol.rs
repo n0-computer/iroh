@@ -1043,6 +1043,121 @@ mod tests {
             Ok(())
         }
 
+        /// Reproduces <https://github.com/n0-computer/iroh/issues/4114> with a
+        /// manual retry-then-validate accept loop (no Router / incoming filter).
+        ///
+        /// Both peers bind the wildcard address (every interface, dual-stack);
+        /// the client dials all of the server's discovered addresses. On a
+        /// multi-homed host the client sprays from several source IPs, so a retry
+        /// token minted for one source can be answered from another →
+        /// `INVALID_TOKEN`. Runs many handshakes and reports the failure rate.
+        ///
+        /// On this (April 2026) code we expect failures > 0 on a multi-homed box.
+        #[tokio::test]
+        #[traced_test]
+        async fn addr_retry_multihomed() -> Result {
+            use std::net::{Ipv4Addr, SocketAddr};
+
+            use crate::{TransportAddr, endpoint::IncomingAddr};
+
+            const ITERS: usize = 10;
+            let mut failures = 0usize;
+            let mut first_err: Option<String> = None;
+            let mut ip_count = 0usize;
+            let mut max_client_sources = 0usize;
+            let mut multi_source_iters = 0usize;
+
+            for i in 0..ITERS {
+                // Bind v4-only wildcard on both sides, and advertise the server on
+                // two *same-family* IPv4 loopback addresses (127.0.0.1 + 127.0.0.2,
+                // both routable on Linux's 127.0.0.0/8). Same-family is essential:
+                // the bug is path_id=0's local source flapping between two IPv4
+                // addresses, which can't happen across v4/v6 (separate transports).
+                let server = Endpoint::builder(presets::Minimal)
+                    .alpns(vec![ECHO_ALPN.to_vec()])
+                    .clear_ip_transports()
+                    .bind_addr((Ipv4Addr::UNSPECIFIED, 0))
+                    .anyerr()?
+                    .bind()
+                    .await?;
+                let port = server
+                    .bound_sockets()
+                    .into_iter()
+                    .find(|s| s.is_ipv4())
+                    .expect("v4 socket")
+                    .port();
+                let addr = EndpointAddr::from_parts(
+                    server.id(),
+                    [
+                        TransportAddr::Ip(SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), port)),
+                        TransportAddr::Ip(SocketAddr::new(Ipv4Addr::new(127, 0, 0, 2).into(), port)),
+                    ],
+                );
+                ip_count = addr.addrs.iter().filter(|a| a.is_ip()).count();
+
+                let client = Endpoint::builder(presets::Minimal)
+                    .clear_ip_transports()
+                    .bind_addr((Ipv4Addr::UNSPECIFIED, 0))
+                    .anyerr()?
+                    .bind()
+                    .await?;
+
+                let sources = Arc::new(std::sync::Mutex::new(std::collections::HashSet::<
+                    std::net::IpAddr,
+                >::new()));
+                let sources_task = sources.clone();
+                let server_accept = server.clone();
+                let accept = tokio::spawn(async move {
+                    while let Some(incoming) = server_accept.accept().await {
+                        if let IncomingAddr::Ip(sa) = incoming.remote_addr() {
+                            sources_task.lock().unwrap().insert(sa.ip());
+                        }
+                        if incoming.remote_addr_validated() {
+                            if let Ok(accepting) = incoming.accept() {
+                                let _ = accepting.await;
+                            }
+                        } else {
+                            let _ = incoming.retry();
+                        }
+                    }
+                });
+
+                let conn =
+                    tokio::time::timeout(Duration::from_secs(8), client.connect(addr, ECHO_ALPN))
+                        .await;
+                match conn {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        failures += 1;
+                        first_err.get_or_insert_with(|| format!("iter {i}: {err:#}"));
+                    }
+                    Err(_) => {
+                        failures += 1;
+                        first_err.get_or_insert_with(|| format!("iter {i}: connect timed out"));
+                    }
+                }
+
+                accept.abort();
+                client.close().await;
+                server.close().await;
+
+                let n = sources.lock().unwrap().len();
+                max_client_sources = max_client_sources.max(n);
+                if n >= 2 {
+                    multi_source_iters += 1;
+                }
+            }
+
+            // Demo branch: fail unconditionally so the tally prints in CI output
+            // (a passing test swallows it). `multi_source_iters` tells us whether
+            // the runner was actually multi-homed; `failures` is the #4114 signal.
+            panic!(
+                "addr_retry_multihomed: failures={failures}/{ITERS} \
+                 server_ip_count={ip_count} max_client_sources={max_client_sources} \
+                 multi_source_iters={multi_source_iters}/{ITERS} first_err={first_err:?}",
+            );
+        }
+
         /// Verify that returning `Retry` for a relay connection also causes
         /// the remote to retry with a token. The "validation" has no
         /// security meaning over a relay, but it does impose a round-trip
