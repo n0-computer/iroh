@@ -487,7 +487,8 @@ impl DnsResolver {
     /// IPv4 and IPv6 are looked up concurrently and each address is yielded as
     /// soon as its lookup completes, so a caller can start dialing without
     /// waiting for both families.
-    /// A lookup failure is swallowedas long as the other family yields an address.
+    ///
+    /// A lookup failure is swallowed as long as the other family yields an address.
     /// Only if both lookups fail does the stream yield a single [`DnsError`].
     ///
     /// The stream ends once both lookups have finished and every address or the error
@@ -495,7 +496,6 @@ impl DnsResolver {
     pub fn resolve_host_all<'a>(
         &'a self,
         url: &'a Url,
-        _prefer_ipv6: bool,
         timeout: Duration,
     ) -> impl Stream<Item = Result<IpAddr, DnsError>> + Send + 'a {
         let host = match url.host() {
@@ -515,8 +515,8 @@ impl DnsResolver {
             Pin<Box<dyn Future<Output = Result<BoxIter<A>, DnsError>> + Send + 'a>>;
 
         struct State<'a> {
-            v4: MaybeFuture<Lookup<'a, Ipv4Addr>>,
-            v6: MaybeFuture<Lookup<'a, Ipv6Addr>>,
+            v4_fut: MaybeFuture<Lookup<'a, Ipv4Addr>>,
+            v6_fut: MaybeFuture<Lookup<'a, Ipv6Addr>>,
             v4_err: Option<DnsError>,
             v6_err: Option<DnsError>,
             queue: VecDeque<IpAddr>,
@@ -525,11 +525,11 @@ impl DnsResolver {
         }
 
         let state = State {
-            v4: MaybeFuture::Some(Box::pin({
+            v4_fut: MaybeFuture::Some(Box::pin({
                 let host = host.clone();
                 self.inner.op(timeout, move |r| r.lookup_ipv4(host.clone()))
             })),
-            v6: MaybeFuture::Some(Box::pin({
+            v6_fut: MaybeFuture::Some(Box::pin({
                 let host = host.clone();
                 self.inner.op(timeout, move |r| r.lookup_ipv6(host.clone()))
             })),
@@ -539,41 +539,43 @@ impl DnsResolver {
             closed: false,
             yielded: false,
         };
+
         Either::Right(stream::unfold(state, async |mut state| {
             loop {
                 if state.closed {
                     return None;
                 }
+
                 if let Some(item) = state.queue.pop_front() {
                     state.yielded = true;
                     return Some((Ok(item), state));
                 }
-                if state.v4_err.is_some() && state.v6_err.is_some() {
+
+                // Return final error item once both futures completed, or None if items were yielded.
+                if state.v4_fut.is_none() && state.v6_fut.is_none() {
                     state.closed = true;
-                    let error = e!(DnsError::ResolveBoth {
-                        ipv4: Box::new(state.v4_err.take().expect("checked to be Some")),
-                        ipv6: Box::new(state.v6_err.take().expect("checked to be Some")),
-                    });
-                    return Some((Err(error), state));
-                }
-                if state.v4.is_none() && state.v6.is_none() {
-                    state.closed = true;
-                    if !state.yielded {
+                    if let (Some(v4), Some(v6)) = (state.v4_err.take(), state.v6_err.take()) {
+                        let error = e!(DnsError::ResolveBoth {
+                            ipv4: Box::new(v4),
+                            ipv6: Box::new(v6),
+                        });
+                        return Some((Err(error), state));
+                    } else if !state.yielded {
                         return Some((Err(e!(DnsError::NoResponse)), state));
                     } else {
                         return None;
                     }
                 }
                 tokio::select! {
-                    res = &mut state.v4 => {
-                        state.v4 = MaybeFuture::None;
+                    res = &mut state.v4_fut => {
+                        state.v4_fut = MaybeFuture::None;
                         match res {
                             Ok(items) => state.queue.extend(items.map(IpAddr::V4)),
                             Err(err) => state.v4_err = Some(err),
                         }
                     }
-                    res = &mut state.v6 => {
-                        state.v6 = MaybeFuture::None;
+                    res = &mut state.v6_fut => {
+                        state.v6_fut = MaybeFuture::None;
                         match res {
                             Ok(items) => state.queue.extend(items.map(IpAddr::V6)),
                             Err(err) => state.v6_err = Some(err),

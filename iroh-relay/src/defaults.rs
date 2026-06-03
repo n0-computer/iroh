@@ -31,9 +31,15 @@ pub mod timeouts {
     /// using `TcpStream::connect`
     pub(crate) const DIAL_ENDPOINT_TIMEOUT: Duration = Duration::from_millis(1500);
 
-    /// Delay before starting the next address's dial in the staggered
-    /// "happy eyeballs" connection race.
-    pub(crate) const DIAL_STAGGER_DELAY: Duration = Duration::from_millis(250);
+    /// Happy Eyeballs (RFC 8305) Connection Attempt Delay: the maximum time to
+    /// wait before starting the next connection attempt. A faster failure
+    /// starts the next attempt immediately.
+    pub(crate) const CONNECTION_ATTEMPT_DELAY: Duration = Duration::from_millis(250);
+
+    /// Happy Eyeballs (RFC 8305) Resolution Delay: when the non-preferred
+    /// address family resolves first, wait this long for the preferred family
+    /// before starting to connect, so the preference is honored.
+    pub(crate) const RESOLUTION_DELAY: Duration = Duration::from_millis(50);
 
     /// Default timeout for DNS queries issued by [`DnsResolver`].
     ///
