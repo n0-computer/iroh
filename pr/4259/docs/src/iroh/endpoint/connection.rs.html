@@ -1503,7 +1503,7 @@
 <a href=#1503 id=1503 data-nosnippet>1503</a>    </span><span class="kw">async fn </span>test_paths_watcher() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#1504 id=1504 data-nosnippet>1504</a>        <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"test"</span>;
 <a href=#1505 id=1505 data-nosnippet>1505</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#1506 id=1506 data-nosnippet>1506</a>        <span class="kw">let </span>(relay_map, _relay_map, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1506 id=1506 data-nosnippet>1506</a>        <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1507 id=1507 data-nosnippet>1507</a>        <span class="kw">let </span>server = Endpoint::builder(presets::Minimal)
 <a href=#1508 id=1508 data-nosnippet>1508</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#1509 id=1509 data-nosnippet>1509</a>            .secret_key(SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()))
@@ -1532,7 +1532,7 @@
 <a href=#1532 id=1532 data-nosnippet>1532</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_client = conn_client.paths_stream();
 <a href=#1533 id=1533 data-nosnippet>1533</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_server = conn_server.paths_stream();
 <a href=#1534 id=1534 data-nosnippet>1534</a>
-<a href=#1535 id=1535 data-nosnippet>1535</a>        <span class="doccomment">/// Advances the path stream until at least one IP and one relay paths are available.
+<a href=#1535 id=1535 data-nosnippet>1535</a>        <span class="doccomment">/// Advances the path stream until at least one IP and one relay path is available.
 <a href=#1536 id=1536 data-nosnippet>1536</a>        ///
 <a href=#1537 id=1537 data-nosnippet>1537</a>        /// Panics if the path stream finishes before that happens.
 <a href=#1538 id=1538 data-nosnippet>1538</a>        </span><span class="kw">async fn </span>wait_for_paths(<span class="kw-2">mut </span>stream: <span class="kw">impl </span>Send + Unpin + Stream&lt;Item = PathList&lt;<span class="lifetime">'_</span>&gt;&gt;) {
