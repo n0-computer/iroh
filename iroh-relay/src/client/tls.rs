@@ -375,9 +375,8 @@ mod tests {
 
     use tokio::net::TcpListener;
 
-    use crate::test_utils::StaticResolver;
-
     use super::*;
+    use crate::test_utils::StaticResolver;
 
     fn relay_url(port: u16) -> Url {
         format!("http://relay.test:{port}")
