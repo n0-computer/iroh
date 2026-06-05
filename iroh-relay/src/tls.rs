@@ -45,12 +45,7 @@ enum Mode {
     /// Use a callback to create a [`ServerCertVerifier`] used in all TLS requests.
     CustomServerCertVerifier {
         #[debug("Arc<dyn Fn>")]
-        builder: Arc<
-            dyn 'static
-                + Send
-                + Sync
-                + Fn(Arc<CryptoProvider>) -> io::Result<Arc<dyn ServerCertVerifier>>,
-        >,
+        builder: ServerCertVerifierBuilder,
     },
 }
 
@@ -138,14 +133,7 @@ impl CaTlsConfig {
     ///         Ok(verifier)
     ///     }));
     /// ```
-    pub fn custom_server_cert_verifier(
-        builder: Arc<
-            dyn 'static
-                + Send
-                + Sync
-                + Fn(Arc<CryptoProvider>) -> io::Result<Arc<dyn ServerCertVerifier>>,
-        >,
-    ) -> Self {
+    pub fn custom_server_cert_verifier(builder: ServerCertVerifierBuilder) -> Self {
         Self {
             mode: Mode::CustomServerCertVerifier { builder },
             extra_roots: Vec::new(),
@@ -154,7 +142,7 @@ impl CaTlsConfig {
 
     /// Adds additional root certificates to the list of trusted certificates.
     ///
-    /// Ignored when using [`Self::custom_client_config_builder`].
+    /// Ignored when using [`Self::custom_server_cert_verifier`].
     pub fn with_extra_roots(
         mut self,
         extra_roots: impl IntoIterator<Item = CertificateDer<'static>>,
@@ -214,6 +202,13 @@ impl CaTlsConfig {
         Ok(config)
     }
 }
+
+/// Function to build a [`ServerCertVerifier`] from a [`CryptoProvider`].
+///
+/// See [`CaTlsConfig::custom_server_cert_verifier].
+pub type ServerCertVerifierBuilder = Arc<
+    dyn Fn(Arc<CryptoProvider>) -> io::Result<Arc<dyn ServerCertVerifier>> + Send + Sync + 'static,
+>;
 
 /// Returns the default crypto provider, if enabled via a feature flag.
 ///
