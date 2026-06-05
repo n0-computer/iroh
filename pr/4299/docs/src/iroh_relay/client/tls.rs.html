@@ -375,68 +375,67 @@
 <a href=#375 id=375 data-nosnippet>375</a>
 <a href=#376 id=376 data-nosnippet>376</a>    <span class="kw">use </span>tokio::net::TcpListener;
 <a href=#377 id=377 data-nosnippet>377</a>
-<a href=#378 id=378 data-nosnippet>378</a>    <span class="kw">use </span><span class="kw">crate</span>::test_utils::StaticResolver;
-<a href=#379 id=379 data-nosnippet>379</a>
-<a href=#380 id=380 data-nosnippet>380</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#381 id=381 data-nosnippet>381</a>
-<a href=#382 id=382 data-nosnippet>382</a>    <span class="kw">fn </span>relay_url(port: u16) -&gt; Url {
-<a href=#383 id=383 data-nosnippet>383</a>        <span class="macro">format!</span>(<span class="string">"http://relay.test:{port}"</span>)
-<a href=#384 id=384 data-nosnippet>384</a>            .parse()
-<a href=#385 id=385 data-nosnippet>385</a>            .expect(<span class="string">"valid url"</span>)
-<a href=#386 id=386 data-nosnippet>386</a>    }
-<a href=#387 id=387 data-nosnippet>387</a>
-<a href=#388 id=388 data-nosnippet>388</a>    <span class="doccomment">/// An unreachable IPv4 address (RFC 5737 TEST-NET-1).
-<a href=#389 id=389 data-nosnippet>389</a>    </span><span class="kw">fn </span>dead_v4(n: u8) -&gt; Ipv4Addr {
-<a href=#390 id=390 data-nosnippet>390</a>        Ipv4Addr::new(<span class="number">192</span>, <span class="number">0</span>, <span class="number">2</span>, n)
-<a href=#391 id=391 data-nosnippet>391</a>    }
-<a href=#392 id=392 data-nosnippet>392</a>
-<a href=#393 id=393 data-nosnippet>393</a>    <span class="doccomment">/// An unreachable IPv6 address (RFC 3849 documentation prefix).
-<a href=#394 id=394 data-nosnippet>394</a>    </span><span class="kw">fn </span>dead_v6(n: u16) -&gt; Ipv6Addr {
-<a href=#395 id=395 data-nosnippet>395</a>        Ipv6Addr::new(<span class="number">0x2001</span>, <span class="number">0xdb8</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, n)
-<a href=#396 id=396 data-nosnippet>396</a>    }
-<a href=#397 id=397 data-nosnippet>397</a>
-<a href=#398 id=398 data-nosnippet>398</a>    <span class="doccomment">/// Tests that all addresses are tried until one succeeds.
-<a href=#399 id=399 data-nosnippet>399</a>    </span><span class="attr">#[tokio::test]
-<a href=#400 id=400 data-nosnippet>400</a>    </span><span class="kw">async fn </span>tries_addresses_until_one_connects() {
-<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>listener = TcpListener::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>)).<span class="kw">await</span>.unwrap();
-<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">let </span>port = listener.local_addr().unwrap().port();
-<a href=#403 id=403 data-nosnippet>403</a>
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>addrs = (<span class="number">1</span>..<span class="number">5</span>).map(dead_v4).chain([Ipv4Addr::LOCALHOST]).collect();
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>resolver = StaticResolver::new(addrs, <span class="macro">vec!</span>[]);
-<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">let </span>stream = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(port), <span class="bool-val">false</span>)
-<a href=#407 id=407 data-nosnippet>407</a>            .<span class="kw">await
-<a href=#408 id=408 data-nosnippet>408</a>            </span>.expect(<span class="string">"should skip the invalid addrs and still connect"</span>);
-<a href=#409 id=409 data-nosnippet>409</a>        <span class="macro">assert_eq!</span>(stream.peer_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
-<a href=#410 id=410 data-nosnippet>410</a>    }
-<a href=#411 id=411 data-nosnippet>411</a>
-<a href=#412 id=412 data-nosnippet>412</a>    <span class="doccomment">/// Tests if the preferred family is unreachable the non-preferred family is used.
-<a href=#413 id=413 data-nosnippet>413</a>    </span><span class="attr">#[tokio::test]
-<a href=#414 id=414 data-nosnippet>414</a>    </span><span class="kw">async fn </span>falls_back_from_unreachable_preferred_family() {
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>listener = TcpListener::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>)).<span class="kw">await</span>.unwrap();
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>port = listener.local_addr().unwrap().port();
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[Ipv4Addr::LOCALHOST], <span class="macro">vec!</span>[dead_v6(<span class="number">1</span>), dead_v6(<span class="number">2</span>)]);
-<a href=#418 id=418 data-nosnippet>418</a>
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="kw">let </span>stream = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(port), <span class="bool-val">true</span>)
-<a href=#420 id=420 data-nosnippet>420</a>            .<span class="kw">await
-<a href=#421 id=421 data-nosnippet>421</a>            </span>.expect(<span class="string">"falls back to IPv4"</span>);
-<a href=#422 id=422 data-nosnippet>422</a>        <span class="macro">assert!</span>(stream.peer_addr().unwrap().is_ipv4());
-<a href=#423 id=423 data-nosnippet>423</a>    }
-<a href=#424 id=424 data-nosnippet>424</a>
-<a href=#425 id=425 data-nosnippet>425</a>    <span class="attr">#[tokio::test]
-<a href=#426 id=426 data-nosnippet>426</a>    </span><span class="kw">async fn </span>errors_when_all_addresses_unreachable() {
-<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[dead_v4(<span class="number">1</span>), dead_v4(<span class="number">2</span>)], <span class="macro">vec!</span>[dead_v6(<span class="number">1</span>)]);
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">let </span>err = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(<span class="number">80</span>), <span class="bool-val">true</span>)
-<a href=#429 id=429 data-nosnippet>429</a>            .<span class="kw">await
-<a href=#430 id=430 data-nosnippet>430</a>            </span>.expect_err(<span class="string">"nothing reachable"</span>);
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(err, DialError::Io { .. }));
-<a href=#432 id=432 data-nosnippet>432</a>    }
-<a href=#433 id=433 data-nosnippet>433</a>
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="attr">#[tokio::test]
-<a href=#435 id=435 data-nosnippet>435</a>    </span><span class="kw">async fn </span>errors_when_nothing_resolves() {
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[], <span class="macro">vec!</span>[]);
-<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">let </span>err = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(<span class="number">80</span>), <span class="bool-val">false</span>)
-<a href=#438 id=438 data-nosnippet>438</a>            .<span class="kw">await
-<a href=#439 id=439 data-nosnippet>439</a>            </span>.expect_err(<span class="string">"no addresses to dial"</span>);
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(err, DialError::Dns { .. }));
-<a href=#441 id=441 data-nosnippet>441</a>    }
-<a href=#442 id=442 data-nosnippet>442</a>}</code></pre></div></section></main></body></html>
+<a href=#378 id=378 data-nosnippet>378</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#379 id=379 data-nosnippet>379</a>    <span class="kw">use </span><span class="kw">crate</span>::test_utils::StaticResolver;
+<a href=#380 id=380 data-nosnippet>380</a>
+<a href=#381 id=381 data-nosnippet>381</a>    <span class="kw">fn </span>relay_url(port: u16) -&gt; Url {
+<a href=#382 id=382 data-nosnippet>382</a>        <span class="macro">format!</span>(<span class="string">"http://relay.test:{port}"</span>)
+<a href=#383 id=383 data-nosnippet>383</a>            .parse()
+<a href=#384 id=384 data-nosnippet>384</a>            .expect(<span class="string">"valid url"</span>)
+<a href=#385 id=385 data-nosnippet>385</a>    }
+<a href=#386 id=386 data-nosnippet>386</a>
+<a href=#387 id=387 data-nosnippet>387</a>    <span class="doccomment">/// An unreachable IPv4 address (RFC 5737 TEST-NET-1).
+<a href=#388 id=388 data-nosnippet>388</a>    </span><span class="kw">fn </span>dead_v4(n: u8) -&gt; Ipv4Addr {
+<a href=#389 id=389 data-nosnippet>389</a>        Ipv4Addr::new(<span class="number">192</span>, <span class="number">0</span>, <span class="number">2</span>, n)
+<a href=#390 id=390 data-nosnippet>390</a>    }
+<a href=#391 id=391 data-nosnippet>391</a>
+<a href=#392 id=392 data-nosnippet>392</a>    <span class="doccomment">/// An unreachable IPv6 address (RFC 3849 documentation prefix).
+<a href=#393 id=393 data-nosnippet>393</a>    </span><span class="kw">fn </span>dead_v6(n: u16) -&gt; Ipv6Addr {
+<a href=#394 id=394 data-nosnippet>394</a>        Ipv6Addr::new(<span class="number">0x2001</span>, <span class="number">0xdb8</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, n)
+<a href=#395 id=395 data-nosnippet>395</a>    }
+<a href=#396 id=396 data-nosnippet>396</a>
+<a href=#397 id=397 data-nosnippet>397</a>    <span class="doccomment">/// Tests that all addresses are tried until one succeeds.
+<a href=#398 id=398 data-nosnippet>398</a>    </span><span class="attr">#[tokio::test]
+<a href=#399 id=399 data-nosnippet>399</a>    </span><span class="kw">async fn </span>tries_addresses_until_one_connects() {
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">let </span>listener = TcpListener::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>)).<span class="kw">await</span>.unwrap();
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>port = listener.local_addr().unwrap().port();
+<a href=#402 id=402 data-nosnippet>402</a>
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">let </span>addrs = (<span class="number">1</span>..<span class="number">5</span>).map(dead_v4).chain([Ipv4Addr::LOCALHOST]).collect();
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>resolver = StaticResolver::new(addrs, <span class="macro">vec!</span>[]);
+<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>stream = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(port), <span class="bool-val">false</span>)
+<a href=#406 id=406 data-nosnippet>406</a>            .<span class="kw">await
+<a href=#407 id=407 data-nosnippet>407</a>            </span>.expect(<span class="string">"should skip the invalid addrs and still connect"</span>);
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="macro">assert_eq!</span>(stream.peer_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
+<a href=#409 id=409 data-nosnippet>409</a>    }
+<a href=#410 id=410 data-nosnippet>410</a>
+<a href=#411 id=411 data-nosnippet>411</a>    <span class="doccomment">/// Tests if the preferred family is unreachable the non-preferred family is used.
+<a href=#412 id=412 data-nosnippet>412</a>    </span><span class="attr">#[tokio::test]
+<a href=#413 id=413 data-nosnippet>413</a>    </span><span class="kw">async fn </span>falls_back_from_unreachable_preferred_family() {
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span>listener = TcpListener::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>)).<span class="kw">await</span>.unwrap();
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>port = listener.local_addr().unwrap().port();
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[Ipv4Addr::LOCALHOST], <span class="macro">vec!</span>[dead_v6(<span class="number">1</span>), dead_v6(<span class="number">2</span>)]);
+<a href=#417 id=417 data-nosnippet>417</a>
+<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>stream = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(port), <span class="bool-val">true</span>)
+<a href=#419 id=419 data-nosnippet>419</a>            .<span class="kw">await
+<a href=#420 id=420 data-nosnippet>420</a>            </span>.expect(<span class="string">"falls back to IPv4"</span>);
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="macro">assert!</span>(stream.peer_addr().unwrap().is_ipv4());
+<a href=#422 id=422 data-nosnippet>422</a>    }
+<a href=#423 id=423 data-nosnippet>423</a>
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="attr">#[tokio::test]
+<a href=#425 id=425 data-nosnippet>425</a>    </span><span class="kw">async fn </span>errors_when_all_addresses_unreachable() {
+<a href=#426 id=426 data-nosnippet>426</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[dead_v4(<span class="number">1</span>), dead_v4(<span class="number">2</span>)], <span class="macro">vec!</span>[dead_v6(<span class="number">1</span>)]);
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">let </span>err = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(<span class="number">80</span>), <span class="bool-val">true</span>)
+<a href=#428 id=428 data-nosnippet>428</a>            .<span class="kw">await
+<a href=#429 id=429 data-nosnippet>429</a>            </span>.expect_err(<span class="string">"nothing reachable"</span>);
+<a href=#430 id=430 data-nosnippet>430</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(err, DialError::Io { .. }));
+<a href=#431 id=431 data-nosnippet>431</a>    }
+<a href=#432 id=432 data-nosnippet>432</a>
+<a href=#433 id=433 data-nosnippet>433</a>    <span class="attr">#[tokio::test]
+<a href=#434 id=434 data-nosnippet>434</a>    </span><span class="kw">async fn </span>errors_when_nothing_resolves() {
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[], <span class="macro">vec!</span>[]);
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span>err = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(<span class="number">80</span>), <span class="bool-val">false</span>)
+<a href=#437 id=437 data-nosnippet>437</a>            .<span class="kw">await
+<a href=#438 id=438 data-nosnippet>438</a>            </span>.expect_err(<span class="string">"no addresses to dial"</span>);
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(err, DialError::Dns { .. }));
+<a href=#440 id=440 data-nosnippet>440</a>    }
+<a href=#441 id=441 data-nosnippet>441</a>}</code></pre></div></section></main></body></html>
