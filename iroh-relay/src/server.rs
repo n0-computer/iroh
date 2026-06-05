@@ -1178,7 +1178,7 @@ mod tests {
             handshake,
             relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         },
-        test_utils::StaticResolver,
+        test_utils::static_resolver,
         tls::{self, CaRootsConfig, default_provider},
     };
 
@@ -1586,7 +1586,7 @@ mod tests {
         let addr = server.http_addr().expect("http relay address");
 
         // Resolves to both the real IPv4 address and an unreachable IPv6 address.
-        let resolver = StaticResolver::new(
+        let resolver = static_resolver(
             vec![Ipv4Addr::LOCALHOST],
             vec!["2001:db8::dead".parse().expect("valid IPv6")],
         );

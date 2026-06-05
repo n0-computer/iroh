@@ -238,7 +238,7 @@ impl MaybeTlsStreamBuilder {
 ///   family while only the other family has resolved, and starts immediately
 ///   once the preferred family resolves;
 /// - each later attempt starts [`CONNECTION_ATTEMPT_DELAY`] after the previous
-///   one, or as soon as an attempt fails (fail fast), whichever comes first;
+///   one, or as soon as the last in-flight attempt fails, whichever comes first;
 /// - every attempt is itself capped at [`DIAL_ENDPOINT_TIMEOUT`].
 ///
 /// The first connection to succeed is returned; the rest are dropped, which
@@ -253,8 +253,8 @@ async fn dial_happy_eyeballs(
     // Stream of DNS results, or `None` once the resolver has finished
     let resolve_stream = dns_resolver.resolve_host_all(url, DNS_TIMEOUT);
     tokio::pin!(resolve_stream);
-    let mut resolve_stream = Some(resolve_stream);
-
+    // Set to `true` once `resolve_stream` yielded `None`, to not poll it again after completion.
+    let mut resolve_stream_finished = false;
     // Addresses resolved but not yet tried, in arrival order.
     let mut queue: VecDeque<IpAddr> = VecDeque::new();
     // Family to dial next, toggled to interleave.
@@ -265,61 +265,19 @@ async fn dial_happy_eyeballs(
     let mut started = false;
     // Last error that occurred, returned if no connection attempt succeeded.
     let mut last_err: Option<DialError> = None;
-    // Delay after which to start the next connection attempt, or `None` for immediately.
-    let next_dial_delay = MaybeFuture::None;
-    tokio::pin!(next_dial_delay);
+    // Timer after which to start the next connection attempt, or `None` for immediately.
+    let next_dial_delayed_until = MaybeFuture::None;
+    tokio::pin!(next_dial_delayed_until);
 
     loop {
-        if resolve_stream.is_none() && queue.is_empty() && dials.is_empty() {
+        if resolve_stream_finished && queue.is_empty() && dials.is_empty() {
             // Nothing left to resolve, attempt, or wait on.
             return Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse).into()));
         }
 
-        let next_addr = match resolve_stream.as_mut() {
-            Some(stream) => MaybeFuture::Some(stream.next()),
-            None => MaybeFuture::None,
-        };
-
-        tokio::select! {
-            biased;
-            Some(res) = dials.next(), if !dials.is_empty() => match res {
-                Ok(stream) => return Ok(stream),
-                Err(err) => {
-                    last_err = Some(err);
-                    // Fail fast: start the next attempt now rather than waiting it out.
-                    next_dial_delay.as_mut().set_none();
-                }
-            },
-            () = &mut next_dial_delay => {},
-            addr = next_addr => match addr {
-                Some(Ok(ip)) => {
-                    queue.push_back(ip);
-                    if !started {
-                        // If no connection attempt has been started, and a non-preferred
-                        // address is resolved, delay the connect by `RESOLUTION_DELAY`.
-                        // If a preferred address arrives later but before this delay expires,
-                        // it will be dialed instead.
-                        if prefer_ipv6 == ip.is_ipv6() {
-                            next_dial_delay.as_mut().set_none()
-                        } else if next_dial_delay.is_none() {
-                            next_dial_delay.as_mut().set_future(time::sleep(RESOLUTION_DELAY));
-                        }
-                    }
-                }
-                Some(Err(err)) => last_err = Some(err.into()),
-                None => {
-                    resolve_stream = None;
-                    if !started {
-                        next_dial_delay.as_mut().set_none()
-                    }
-                }
-            },
-        }
-
-        // The delay has elapsed and an address is waiting: dial the next one
-        // (interleaved by family) and arm the Connection Attempt Delay before
-        // the one after it.
-        if next_dial_delay.as_mut().is_none()
+        // The next dial is due and an address is waiting: dial the next address,
+        // interleaved by family, and set the timer for the next attempt.
+        if next_dial_delayed_until.is_none()
             && let Some(ip) = pop_family(&mut queue, &mut next_prefer_v6)
         {
             let addr = SocketAddr::new(ip, port);
@@ -338,9 +296,56 @@ async fn dial_happy_eyeballs(
                 .instrument(info_span!("connect", %addr)),
             );
             started = true;
-            next_dial_delay
+            next_dial_delayed_until
                 .as_mut()
                 .set_future(time::sleep(CONNECTION_ATTEMPT_DELAY));
+        }
+
+        // All three arms are guarded, but it is guaranteed that at least one arm
+        // is enabled, otherwise the check at the top of the loop returns.
+        tokio::select! {
+            biased;
+            // Yields when a dial attempt completed.
+            Some(res) = dials.next(), if !dials.is_empty() => match res {
+                Ok(stream) => return Ok(stream),
+                Err(err) => {
+                    last_err = Some(err);
+                    if dials.is_empty() {
+                        // Fail fast: start the next attempt now rather than waiting it out.
+                        next_dial_delayed_until.as_mut().set_none();
+                    }
+                }
+            },
+            // Yields when the next address is resolved.
+            addr = resolve_stream.next(), if !resolve_stream_finished => {
+                match addr {
+                    Some(Ok(ip)) => {
+                        queue.push_back(ip);
+                        if !started {
+                            // If no connection attempt has been started, and a non-preferred
+                            // address is resolved, delay the connect by `RESOLUTION_DELAY`.
+                            // If a preferred address arrives later but before this delay expires,
+                            // it will be dialed instead.
+                            if prefer_ipv6 == ip.is_ipv6() {
+                                next_dial_delayed_until.as_mut().set_none();
+                            } else if next_dial_delayed_until.is_none() {
+                                next_dial_delayed_until.as_mut().set_future(time::sleep(RESOLUTION_DELAY));
+                            }
+                        }
+                    }
+                    Some(Err(err)) => {
+                        last_err = Some(err.into());
+                    }
+                    None => {
+                        resolve_stream_finished = true;
+                        if !started {
+                            next_dial_delayed_until.as_mut().set_none();
+                        }
+                    }
+                }
+            }
+            // Yields when the next dial attempt is due, if the timer is set.
+            () = &mut next_dial_delayed_until, if next_dial_delayed_until.is_some() => {},
         }
     }
 }
@@ -376,7 +381,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
-    use crate::test_utils::StaticResolver;
+    use crate::test_utils::static_resolver;
 
     fn relay_url(port: u16) -> Url {
         format!("http://relay.test:{port}")
@@ -401,7 +406,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let addrs = (1..5).map(dead_v4).chain([Ipv4Addr::LOCALHOST]).collect();
-        let resolver = StaticResolver::new(addrs, vec![]);
+        let resolver = static_resolver(addrs, vec![]);
         let stream = dial_happy_eyeballs(&resolver, &relay_url(port), false)
             .await
             .expect("should skip the invalid addrs and still connect");
@@ -413,7 +418,7 @@ mod tests {
     async fn falls_back_from_unreachable_preferred_family() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let resolver = StaticResolver::new(vec![Ipv4Addr::LOCALHOST], vec![dead_v6(1), dead_v6(2)]);
+        let resolver = static_resolver(vec![Ipv4Addr::LOCALHOST], vec![dead_v6(1), dead_v6(2)]);
 
         let stream = dial_happy_eyeballs(&resolver, &relay_url(port), true)
             .await
@@ -423,7 +428,7 @@ mod tests {
 
     #[tokio::test]
     async fn errors_when_all_addresses_unreachable() {
-        let resolver = StaticResolver::new(vec![dead_v4(1), dead_v4(2)], vec![dead_v6(1)]);
+        let resolver = static_resolver(vec![dead_v4(1), dead_v4(2)], vec![dead_v6(1)]);
         let err = dial_happy_eyeballs(&resolver, &relay_url(80), true)
             .await
             .expect_err("nothing reachable");
@@ -436,7 +441,7 @@ mod tests {
 
     #[tokio::test]
     async fn errors_when_nothing_resolves() {
-        let resolver = StaticResolver::new(vec![], vec![]);
+        let resolver = static_resolver(vec![], vec![]);
         let err = dial_happy_eyeballs(&resolver, &relay_url(80), false)
             .await
             .expect_err("no addresses to dial");

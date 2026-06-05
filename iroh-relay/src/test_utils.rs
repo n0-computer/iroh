@@ -3,9 +3,13 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use iroh_dns::dns::{BoxIter, DnsError, DnsResolver, Resolver, TxtRecordData};
 use n0_future::boxed::BoxFuture;
 
-/// Resolver that hands out fixed IPv4 and IPv6 addresses for every host.
+/// Returns a [`DnsResolver`] that hands out fixed IPv4 and IPv6 addresses for every host.
+pub(crate) fn static_resolver(v4: Vec<Ipv4Addr>, v6: Vec<Ipv6Addr>) -> DnsResolver {
+    DnsResolver::custom(StaticResolver { v4, v6 })
+}
+
 #[derive(Debug, Clone)]
-pub(crate) struct StaticResolver {
+struct StaticResolver {
     v4: Vec<Ipv4Addr>,
     v6: Vec<Ipv6Addr>,
 }
@@ -30,11 +34,5 @@ impl Resolver for StaticResolver {
 
     fn reset(&self) -> Box<dyn Resolver> {
         Box::new(self.clone())
-    }
-}
-
-impl StaticResolver {
-    pub(crate) fn new(v4: Vec<Ipv4Addr>, v6: Vec<Ipv6Addr>) -> DnsResolver {
-        DnsResolver::custom(StaticResolver { v4, v6 })
     }
 }
