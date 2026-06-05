@@ -42,11 +42,15 @@ enum Mode {
     /// May only be used in tests or local development setups.
     #[cfg(any(test, feature = "test-utils"))]
     InsecureSkipVerify,
-    /// Use a callback to create a [`ClientConfig`] used in all TLS requests.
-    Custom {
+    /// Use a callback to create a [`ServerCertVerifier`] used in all TLS requests.
+    CustomServerCertVerifier {
         #[debug("Arc<dyn Fn>")]
-        make_client_config:
-            Arc<dyn 'static + Send + Sync + Fn(Arc<CryptoProvider>) -> io::Result<ClientConfig>>,
+        builder: Arc<
+            dyn 'static
+                + Send
+                + Sync
+                + Fn(Arc<CryptoProvider>) -> io::Result<Arc<dyn ServerCertVerifier>>,
+        >,
     },
 }
 
@@ -103,7 +107,7 @@ impl CaRootsConfig {
         }
     }
 
-    /// Creates a [`CaRootsConfig`] that uses a callback function to create a [`ClientConfig`].
+    /// Creates a [`CaRootsConfig`] that uses a callback function to create a [`ServerCertVerifier`].
     ///
     /// This is an advanced feature and you should only use this if none of the other constructor
     /// functions cover your needs. Wrongly implementing the callback may lead to insecure connections
@@ -113,31 +117,37 @@ impl CaRootsConfig {
     ///
     /// ## Example
     ///
-    /// This example implements the behavior of [`Self::embedded`] via [`Self::custom_client_config_builder`].
+    /// This example implements the behavior of [`Self::embedded`] via [`Self::custom_server_cert_verifier`].
     ///
     /// ```rust
-    /// # use std::sync::Arc;
+    /// # use std::{io, sync::Arc};
     /// # use iroh_relay::tls::CaRootsConfig;
+    /// # use rustls::client::WebPkiServerVerifier;
     /// let root_store = Arc::new(rustls::RootCertStore {
     ///     roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     /// });
     /// let ca_roots_config =
-    ///     CaRootsConfig::custom_client_config_builder(Arc::new(move |crypto_provider| {
-    ///         let client_config = rustls::ClientConfig::builder_with_provider(crypto_provider)
-    ///             .with_safe_default_protocol_versions()
-    ///             .expect("protocols supported by crypto provider")
-    ///             .with_root_certificates(root_store.clone())
-    ///             .with_no_client_auth();
-    ///         Ok(client_config)
+    ///     CaRootsConfig::custom_server_cert_verifier(Arc::new(move |crypto_provider| {
+    ///         let mut root_store = rustls::RootCertStore {
+    ///             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    ///         };
+    ///         let verifier =
+    ///             WebPkiServerVerifier::builder_with_provider(Arc::new(root_store), crypto_provider)
+    ///                 .build()
+    ///                 .map_err(io::Error::other)?;
+    ///         Ok(verifier)
     ///     }));
     /// ```
-    pub fn custom_client_config_builder(
-        make_client_config: Arc<
-            dyn 'static + Send + Sync + Fn(Arc<CryptoProvider>) -> io::Result<ClientConfig>,
+    pub fn custom_server_cert_verifier(
+        builder: Arc<
+            dyn 'static
+                + Send
+                + Sync
+                + Fn(Arc<CryptoProvider>) -> io::Result<Arc<dyn ServerCertVerifier>>,
         >,
     ) -> Self {
         Self {
-            mode: Mode::Custom { make_client_config },
+            mode: Mode::CustomServerCertVerifier { builder },
             extra_roots: Vec::new(),
         }
     }
@@ -193,9 +203,7 @@ impl CaRootsConfig {
             Mode::InsecureSkipVerify => Arc::new(no_cert_verifier::NoCertVerifier {
                 crypto_provider: crypto_provider.clone(),
             }),
-            Mode::Custom {
-                ref make_client_config,
-            } => return make_client_config(crypto_provider),
+            Mode::CustomServerCertVerifier { ref builder } => builder(crypto_provider.clone())?,
         };
         let config = ClientConfig::builder_with_provider(crypto_provider)
             .with_safe_default_protocol_versions()
