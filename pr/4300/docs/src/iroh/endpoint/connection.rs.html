@@ -1274,7 +1274,7 @@
 <a href=#1274 id=1274 data-nosnippet>1274</a>    <span class="kw">use </span>std::time::Duration;
 <a href=#1275 id=1275 data-nosnippet>1275</a>
 <a href=#1276 id=1276 data-nosnippet>1276</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey};
-<a href=#1277 id=1277 data-nosnippet>1277</a>    <span class="kw">use </span>iroh_relay::tls::CaRootsConfig;
+<a href=#1277 id=1277 data-nosnippet>1277</a>    <span class="kw">use </span>iroh_relay::tls::CaTlsConfig;
 <a href=#1278 id=1278 data-nosnippet>1278</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#1279 id=1279 data-nosnippet>1279</a>    <span class="kw">use </span>n0_future::{Stream, StreamExt};
 <a href=#1280 id=1280 data-nosnippet>1280</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -1507,7 +1507,7 @@
 <a href=#1507 id=1507 data-nosnippet>1507</a>        <span class="kw">let </span>server = Endpoint::builder(presets::Minimal)
 <a href=#1508 id=1508 data-nosnippet>1508</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#1509 id=1509 data-nosnippet>1509</a>            .secret_key(SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()))
-<a href=#1510 id=1510 data-nosnippet>1510</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#1510 id=1510 data-nosnippet>1510</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#1511 id=1511 data-nosnippet>1511</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
 <a href=#1512 id=1512 data-nosnippet>1512</a>            .bind()
 <a href=#1513 id=1513 data-nosnippet>1513</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1515,7 +1515,7 @@
 <a href=#1515 id=1515 data-nosnippet>1515</a>        <span class="kw">let </span>client = Endpoint::builder(presets::Minimal)
 <a href=#1516 id=1516 data-nosnippet>1516</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#1517 id=1517 data-nosnippet>1517</a>            .secret_key(SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()))
-<a href=#1518 id=1518 data-nosnippet>1518</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#1518 id=1518 data-nosnippet>1518</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#1519 id=1519 data-nosnippet>1519</a>            .bind()
 <a href=#1520 id=1520 data-nosnippet>1520</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1521 id=1521 data-nosnippet>1521</a>

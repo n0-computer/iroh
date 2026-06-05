@@ -16,7 +16,7 @@
 <a href=#16 id=16 data-nosnippet>16</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#17 id=17 data-nosnippet>17</a></span><span class="kw">use </span>ipnet::{Ipv4Net, Ipv6Net};
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>iroh_relay::{RelayConfig, RelayMap, tls::CaRootsConfig};
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>iroh_relay::{RelayConfig, RelayMap, tls::CaTlsConfig};
 <a href=#20 id=20 data-nosnippet>20</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#21 id=21 data-nosnippet>21</a></span><span class="kw">use </span>n0_error::bail;
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>n0_error::{AnyError, e, ensure, stack_error};
@@ -127,7 +127,7 @@
 <a href=#127 id=127 data-nosnippet>127</a>    /// [`Builder::address_lookup`].
 <a href=#128 id=128 data-nosnippet>128</a>    </span>addr_filter: <span class="prelude-ty">Option</span>&lt;AddrFilter&gt;,
 <a href=#129 id=129 data-nosnippet>129</a>    proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
-<a href=#130 id=130 data-nosnippet>130</a>    ca_roots_config: <span class="prelude-ty">Option</span>&lt;CaRootsConfig&gt;,
+<a href=#130 id=130 data-nosnippet>130</a>    ca_tls_config: <span class="prelude-ty">Option</span>&lt;CaTlsConfig&gt;,
 <a href=#131 id=131 data-nosnippet>131</a>    <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#132 id=132 data-nosnippet>132</a>    </span>dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
 <a href=#133 id=133 data-nosnippet>133</a>    transports: Vec&lt;TransportConfig&gt;,
@@ -194,7 +194,7 @@
 <a href=#194 id=194 data-nosnippet>194</a>            address_lookup_user_data: Default::default(),
 <a href=#195 id=195 data-nosnippet>195</a>            addr_filter: <span class="prelude-val">None</span>,
 <a href=#196 id=196 data-nosnippet>196</a>            proxy_url: <span class="prelude-val">None</span>,
-<a href=#197 id=197 data-nosnippet>197</a>            ca_roots_config: <span class="prelude-val">None</span>,
+<a href=#197 id=197 data-nosnippet>197</a>            ca_tls_config: <span class="prelude-val">None</span>,
 <a href=#198 id=198 data-nosnippet>198</a>            <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#199 id=199 data-nosnippet>199</a>            </span>dns_resolver: <span class="prelude-val">None</span>,
 <a href=#200 id=200 data-nosnippet>200</a>            max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
@@ -245,7 +245,7 @@
 <a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">let </span>metrics = EndpointMetrics::default();
 <a href=#246 id=246 data-nosnippet>246</a>
 <a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span>tls_config = <span class="self">self
-<a href=#248 id=248 data-nosnippet>248</a>            </span>.ca_roots_config
+<a href=#248 id=248 data-nosnippet>248</a>            </span>.ca_tls_config
 <a href=#249 id=249 data-nosnippet>249</a>            .unwrap_or_default()
 <a href=#250 id=250 data-nosnippet>250</a>            .client_config(crypto_provider)
 <a href=#251 id=251 data-nosnippet>251</a>            .map_err(|err| <span class="macro">e!</span>(BindError::InvalidCaRootConfig, err))<span class="question-mark">?</span>;
@@ -696,8 +696,8 @@
 <a href=#696 id=696 data-nosnippet>696</a>    /// iroh relays, pkarr servers, or DNS-over-HTTPS resolvers.
 <a href=#697 id=697 data-nosnippet>697</a>    /// They don't need to be trusted for the integrity or authenticity of native
 <a href=#698 id=698 data-nosnippet>698</a>    /// iroh connections, which rely on iroh's own cryptographic authentication mechanisms.
-<a href=#699 id=699 data-nosnippet>699</a>    </span><span class="kw">pub fn </span>ca_roots_config(<span class="kw-2">mut </span><span class="self">self</span>, ca_roots_config: CaRootsConfig) -&gt; <span class="self">Self </span>{
-<a href=#700 id=700 data-nosnippet>700</a>        <span class="self">self</span>.ca_roots_config = <span class="prelude-val">Some</span>(ca_roots_config);
+<a href=#699 id=699 data-nosnippet>699</a>    </span><span class="kw">pub fn </span>ca_tls_config(<span class="kw-2">mut </span><span class="self">self</span>, ca_tls_config: CaTlsConfig) -&gt; <span class="self">Self </span>{
+<a href=#700 id=700 data-nosnippet>700</a>        <span class="self">self</span>.ca_tls_config = <span class="prelude-val">Some</span>(ca_tls_config);
 <a href=#701 id=701 data-nosnippet>701</a>        <span class="self">self
 <a href=#702 id=702 data-nosnippet>702</a>    </span>}
 <a href=#703 id=703 data-nosnippet>703</a>
@@ -1417,7 +1417,7 @@
 <a href=#1417 id=1417 data-nosnippet>1417</a>    /// Note that this TLS config is unrelated to how iroh validates the authenticity
 <a href=#1418 id=1418 data-nosnippet>1418</a>    /// of iroh connections itself.
 <a href=#1419 id=1419 data-nosnippet>1419</a>    ///
-<a href=#1420 id=1420 data-nosnippet>1420</a>    /// The config is based on the trust anchors set via [`Builder::ca_roots_config`].
+<a href=#1420 id=1420 data-nosnippet>1420</a>    /// The config is based on the trust anchors set via [`Builder::ca_tls_config`].
 <a href=#1421 id=1421 data-nosnippet>1421</a>    </span><span class="kw">pub fn </span>tls_config(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>rustls::ClientConfig {
 <a href=#1422 id=1422 data-nosnippet>1422</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.inner.tls_config
 <a href=#1423 id=1423 data-nosnippet>1423</a>    }
@@ -1946,7 +1946,7 @@
 <a href=#1946 id=1946 data-nosnippet>1946</a>
 <a href=#1947 id=1947 data-nosnippet>1947</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 <a href=#1948 id=1948 data-nosnippet>1948</a>    <span class="kw">use </span>iroh_dns::endpoint_info::UserData;
-<a href=#1949 id=1949 data-nosnippet>1949</a>    <span class="kw">use </span>iroh_relay::{RelayConfig, server::Access, tls::CaRootsConfig};
+<a href=#1949 id=1949 data-nosnippet>1949</a>    <span class="kw">use </span>iroh_relay::{RelayConfig, server::Access, tls::CaTlsConfig};
 <a href=#1950 id=1950 data-nosnippet>1950</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#1951 id=1951 data-nosnippet>1951</a>    <span class="kw">use </span>n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
 <a href=#1952 id=1952 data-nosnippet>1952</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -2006,7 +2006,7 @@
 <a href=#2006 id=2006 data-nosnippet>2006</a>            .secret_key(server_secret_key)
 <a href=#2007 id=2007 data-nosnippet>2007</a>            .transport_config(qlog.create(<span class="string">"server"</span>)<span class="question-mark">?</span>)
 <a href=#2008 id=2008 data-nosnippet>2008</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2009 id=2009 data-nosnippet>2009</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2009 id=2009 data-nosnippet>2009</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2010 id=2010 data-nosnippet>2010</a>            .bind()
 <a href=#2011 id=2011 data-nosnippet>2011</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2012 id=2012 data-nosnippet>2012</a>        <span class="comment">// Wait for the endpoint to be reachable via relay
@@ -2047,7 +2047,7 @@
 <a href=#2047 id=2047 data-nosnippet>2047</a>                <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
 <a href=#2048 id=2048 data-nosnippet>2048</a>                    .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2049 id=2049 data-nosnippet>2049</a>                    .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2050 id=2050 data-nosnippet>2050</a>                    .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2050 id=2050 data-nosnippet>2050</a>                    .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2051 id=2051 data-nosnippet>2051</a>                    .transport_config(qlog.create(<span class="string">"client"</span>)<span class="question-mark">?</span>)
 <a href=#2052 id=2052 data-nosnippet>2052</a>                    .bind()
 <a href=#2053 id=2053 data-nosnippet>2053</a>                    .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2108,7 +2108,7 @@
 <a href=#2108 id=2108 data-nosnippet>2108</a>        <span class="comment">// Make sure the server is bound before having clients connect to it:
 <a href=#2109 id=2109 data-nosnippet>2109</a>        </span><span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
 <a href=#2110 id=2110 data-nosnippet>2110</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
-<a href=#2111 id=2111 data-nosnippet>2111</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2111 id=2111 data-nosnippet>2111</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2112 id=2112 data-nosnippet>2112</a>            .secret_key(server_secret_key)
 <a href=#2113 id=2113 data-nosnippet>2113</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2114 id=2114 data-nosnippet>2114</a>            .bind()
@@ -2174,7 +2174,7 @@
 <a href=#2174 id=2174 data-nosnippet>2174</a>                <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
 <a href=#2175 id=2175 data-nosnippet>2175</a>                    .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#2176 id=2176 data-nosnippet>2176</a>                    .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2177 id=2177 data-nosnippet>2177</a>                    .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2177 id=2177 data-nosnippet>2177</a>                    .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2178 id=2178 data-nosnippet>2178</a>                    .secret_key(client_secret_key)
 <a href=#2179 id=2179 data-nosnippet>2179</a>                    .bind()
 <a href=#2180 id=2180 data-nosnippet>2180</a>                    .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2227,12 +2227,12 @@
 <a href=#2227 id=2227 data-nosnippet>2227</a>        <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2228 id=2228 data-nosnippet>2228</a>        <span class="kw">let </span>client = Endpoint::builder(presets::Minimal)
 <a href=#2229 id=2229 data-nosnippet>2229</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
-<a href=#2230 id=2230 data-nosnippet>2230</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2230 id=2230 data-nosnippet>2230</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2231 id=2231 data-nosnippet>2231</a>            .bind()
 <a href=#2232 id=2232 data-nosnippet>2232</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2233 id=2233 data-nosnippet>2233</a>        <span class="kw">let </span>server = Endpoint::builder(presets::Minimal)
 <a href=#2234 id=2234 data-nosnippet>2234</a>            .relay_mode(RelayMode::Custom(relay_map))
-<a href=#2235 id=2235 data-nosnippet>2235</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2235 id=2235 data-nosnippet>2235</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2236 id=2236 data-nosnippet>2236</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2237 id=2237 data-nosnippet>2237</a>            .bind()
 <a href=#2238 id=2238 data-nosnippet>2238</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2353,7 +2353,7 @@
 <a href=#2353 id=2353 data-nosnippet>2353</a>            <span class="kw">let </span>ep = Endpoint::builder(presets::N0)
 <a href=#2354 id=2354 data-nosnippet>2354</a>                .secret_key(secret)
 <a href=#2355 id=2355 data-nosnippet>2355</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2356 id=2356 data-nosnippet>2356</a>                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2356 id=2356 data-nosnippet>2356</a>                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2357 id=2357 data-nosnippet>2357</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2358 id=2358 data-nosnippet>2358</a>                .transport_config(qlog.create(<span class="string">"client"</span>)<span class="question-mark">?</span>)
 <a href=#2359 id=2359 data-nosnippet>2359</a>                .bind()
@@ -2400,7 +2400,7 @@
 <a href=#2400 id=2400 data-nosnippet>2400</a>            <span class="kw">let </span>ep = Endpoint::builder(presets::N0)
 <a href=#2401 id=2401 data-nosnippet>2401</a>                .secret_key(secret)
 <a href=#2402 id=2402 data-nosnippet>2402</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2403 id=2403 data-nosnippet>2403</a>                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2403 id=2403 data-nosnippet>2403</a>                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2404 id=2404 data-nosnippet>2404</a>                .transport_config(qlog.create(<span class="string">"server"</span>)<span class="question-mark">?</span>)
 <a href=#2405 id=2405 data-nosnippet>2405</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2406 id=2406 data-nosnippet>2406</a>                .bind()
@@ -2458,7 +2458,7 @@
 <a href=#2458 id=2458 data-nosnippet>2458</a>            <span class="kw">let </span>ep = Endpoint::builder(presets::N0)
 <a href=#2459 id=2459 data-nosnippet>2459</a>                .secret_key(secret)
 <a href=#2460 id=2460 data-nosnippet>2460</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2461 id=2461 data-nosnippet>2461</a>                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2461 id=2461 data-nosnippet>2461</a>                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2462 id=2462 data-nosnippet>2462</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2463 id=2463 data-nosnippet>2463</a>                .clear_ip_transports() <span class="comment">// disable direct
 <a href=#2464 id=2464 data-nosnippet>2464</a>                </span>.bind()
@@ -2502,7 +2502,7 @@
 <a href=#2502 id=2502 data-nosnippet>2502</a>            <span class="kw">let </span>ep = Endpoint::builder(presets::N0)
 <a href=#2503 id=2503 data-nosnippet>2503</a>                .secret_key(secret)
 <a href=#2504 id=2504 data-nosnippet>2504</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2505 id=2505 data-nosnippet>2505</a>                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2505 id=2505 data-nosnippet>2505</a>                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2506 id=2506 data-nosnippet>2506</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2507 id=2507 data-nosnippet>2507</a>                .clear_ip_transports()
 <a href=#2508 id=2508 data-nosnippet>2508</a>                .bind()
@@ -2558,7 +2558,7 @@
 <a href=#2558 id=2558 data-nosnippet>2558</a>            <span class="kw">let </span>ep = Endpoint::builder(presets::N0)
 <a href=#2559 id=2559 data-nosnippet>2559</a>                .secret_key(secret)
 <a href=#2560 id=2560 data-nosnippet>2560</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2561 id=2561 data-nosnippet>2561</a>                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2561 id=2561 data-nosnippet>2561</a>                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2562 id=2562 data-nosnippet>2562</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2563 id=2563 data-nosnippet>2563</a>                .bind()
 <a href=#2564 id=2564 data-nosnippet>2564</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2608,7 +2608,7 @@
 <a href=#2608 id=2608 data-nosnippet>2608</a>            <span class="kw">let </span>ep = Endpoint::builder(presets::N0)
 <a href=#2609 id=2609 data-nosnippet>2609</a>                .secret_key(secret)
 <a href=#2610 id=2610 data-nosnippet>2610</a>                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2611 id=2611 data-nosnippet>2611</a>                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2611 id=2611 data-nosnippet>2611</a>                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2612 id=2612 data-nosnippet>2612</a>                .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2613 id=2613 data-nosnippet>2613</a>                .bind()
 <a href=#2614 id=2614 data-nosnippet>2614</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2663,12 +2663,12 @@
 <a href=#2663 id=2663 data-nosnippet>2663</a>        <span class="kw">let </span>(relay_map, relay_url, _guard1) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2664 id=2664 data-nosnippet>2664</a>        <span class="kw">let </span>client = Endpoint::builder(presets::Minimal)
 <a href=#2665 id=2665 data-nosnippet>2665</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
-<a href=#2666 id=2666 data-nosnippet>2666</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2666 id=2666 data-nosnippet>2666</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2667 id=2667 data-nosnippet>2667</a>            .bind()
 <a href=#2668 id=2668 data-nosnippet>2668</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2669 id=2669 data-nosnippet>2669</a>        <span class="kw">let </span>server = Endpoint::builder(presets::Minimal)
 <a href=#2670 id=2670 data-nosnippet>2670</a>            .relay_mode(RelayMode::Custom(relay_map))
-<a href=#2671 id=2671 data-nosnippet>2671</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2671 id=2671 data-nosnippet>2671</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2672 id=2672 data-nosnippet>2672</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2673 id=2673 data-nosnippet>2673</a>            .bind()
 <a href=#2674 id=2674 data-nosnippet>2674</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2874,7 +2874,7 @@
 <a href=#2874 id=2874 data-nosnippet>2874</a>        <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
 <a href=#2875 id=2875 data-nosnippet>2875</a>            .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2876 id=2876 data-nosnippet>2876</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2877 id=2877 data-nosnippet>2877</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#2877 id=2877 data-nosnippet>2877</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#2878 id=2878 data-nosnippet>2878</a>            .bind()
 <a href=#2879 id=2879 data-nosnippet>2879</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2880 id=2880 data-nosnippet>2880</a>
@@ -3505,13 +3505,13 @@
 <a href=#3505 id=3505 data-nosnippet>3505</a>
 <a href=#3506 id=3506 data-nosnippet>3506</a>        <span class="kw">let </span>client = Endpoint::builder(presets::Minimal)
 <a href=#3507 id=3507 data-nosnippet>3507</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
-<a href=#3508 id=3508 data-nosnippet>3508</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#3508 id=3508 data-nosnippet>3508</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#3509 id=3509 data-nosnippet>3509</a>            .transport_config(qlog.create(<span class="string">"client"</span>)<span class="question-mark">?</span>)
 <a href=#3510 id=3510 data-nosnippet>3510</a>            .bind()
 <a href=#3511 id=3511 data-nosnippet>3511</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3512 id=3512 data-nosnippet>3512</a>        <span class="kw">let </span>server = Endpoint::builder(presets::Minimal)
 <a href=#3513 id=3513 data-nosnippet>3513</a>            .relay_mode(RelayMode::Custom(relay_map))
-<a href=#3514 id=3514 data-nosnippet>3514</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#3514 id=3514 data-nosnippet>3514</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#3515 id=3515 data-nosnippet>3515</a>            .transport_config(qlog.create(<span class="string">"server"</span>)<span class="question-mark">?</span>)
 <a href=#3516 id=3516 data-nosnippet>3516</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#3517 id=3517 data-nosnippet>3517</a>            .bind()
@@ -3589,7 +3589,7 @@
 <a href=#3589 id=3589 data-nosnippet>3589</a>
 <a href=#3590 id=3590 data-nosnippet>3590</a>        <span class="kw">let </span>client = Endpoint::builder(presets::Minimal)
 <a href=#3591 id=3591 data-nosnippet>3591</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
-<a href=#3592 id=3592 data-nosnippet>3592</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#3592 id=3592 data-nosnippet>3592</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#3593 id=3593 data-nosnippet>3593</a>            .bind()
 <a href=#3594 id=3594 data-nosnippet>3594</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"ep-client"</span>))
 <a href=#3595 id=3595 data-nosnippet>3595</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -3600,7 +3600,7 @@
 <a href=#3600 id=3600 data-nosnippet>3600</a>        </span><span class="kw">let </span>ep1 = Endpoint::builder(presets::Minimal)
 <a href=#3601 id=3601 data-nosnippet>3601</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#3602 id=3602 data-nosnippet>3602</a>            .secret_key(secret_key.clone())
-<a href=#3603 id=3603 data-nosnippet>3603</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#3603 id=3603 data-nosnippet>3603</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#3604 id=3604 data-nosnippet>3604</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#3605 id=3605 data-nosnippet>3605</a>            .bind()
 <a href=#3606 id=3606 data-nosnippet>3606</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"ep1"</span>))
@@ -3630,7 +3630,7 @@
 <a href=#3630 id=3630 data-nosnippet>3630</a>        </span><span class="kw">let </span>ep2 = Endpoint::builder(presets::Minimal)
 <a href=#3631 id=3631 data-nosnippet>3631</a>            .relay_mode(RelayMode::Custom(relay_map))
 <a href=#3632 id=3632 data-nosnippet>3632</a>            .secret_key(secret_key.clone())
-<a href=#3633 id=3633 data-nosnippet>3633</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#3633 id=3633 data-nosnippet>3633</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#3634 id=3634 data-nosnippet>3634</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#3635 id=3635 data-nosnippet>3635</a>            .bind()
 <a href=#3636 id=3636 data-nosnippet>3636</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"ep2"</span>))
@@ -3867,7 +3867,7 @@
 <a href=#3867 id=3867 data-nosnippet>3867</a>    </span><span class="kw">async fn </span>test_endpoint_online_add_relay() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#3868 id=3868 data-nosnippet>3868</a>        <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
 <a href=#3869 id=3869 data-nosnippet>3869</a>            .relay_mode(RelayMode::Custom(RelayMap::empty()))
-<a href=#3870 id=3870 data-nosnippet>3870</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#3870 id=3870 data-nosnippet>3870</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#3871 id=3871 data-nosnippet>3871</a>            .bind()
 <a href=#3872 id=3872 data-nosnippet>3872</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3873 id=3873 data-nosnippet>3873</a>        <span class="comment">// should not come online without relays.
@@ -3943,7 +3943,7 @@
 <a href=#3943 id=3943 data-nosnippet>3943</a>            .into();
 <a href=#3944 id=3944 data-nosnippet>3944</a>        <span class="kw">let </span>bad_ep = Endpoint::builder(presets::Minimal)
 <a href=#3945 id=3945 data-nosnippet>3945</a>            .relay_mode(RelayMode::Custom(bad_map))
-<a href=#3946 id=3946 data-nosnippet>3946</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#3946 id=3946 data-nosnippet>3946</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#3947 id=3947 data-nosnippet>3947</a>            .bind()
 <a href=#3948 id=3948 data-nosnippet>3948</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3949 id=3949 data-nosnippet>3949</a>        <span class="kw">let </span><span class="kw-2">mut </span>stream = bad_ep.home_relay_status().stream();
@@ -3968,7 +3968,7 @@
 <a href=#3968 id=3968 data-nosnippet>3968</a>            .into();
 <a href=#3969 id=3969 data-nosnippet>3969</a>        <span class="kw">let </span>good_ep = Endpoint::builder(presets::Minimal)
 <a href=#3970 id=3970 data-nosnippet>3970</a>            .relay_mode(RelayMode::Custom(good_map))
-<a href=#3971 id=3971 data-nosnippet>3971</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#3971 id=3971 data-nosnippet>3971</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#3972 id=3972 data-nosnippet>3972</a>            .bind()
 <a href=#3973 id=3973 data-nosnippet>3973</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3974 id=3974 data-nosnippet>3974</a>        tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), good_ep.online())

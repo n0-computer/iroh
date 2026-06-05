@@ -950,7 +950,7 @@
 <a href=#950 id=950 data-nosnippet>950</a>
 <a href=#951 id=951 data-nosnippet>951</a>    <span class="kw">use </span>iroh_base::RelayUrl;
 <a href=#952 id=952 data-nosnippet>952</a>    <span class="kw">use </span>iroh_dns::dns::DnsResolver;
-<a href=#953 id=953 data-nosnippet>953</a>    <span class="kw">use </span>iroh_relay::tls::{CaRootsConfig, default_provider};
+<a href=#953 id=953 data-nosnippet>953</a>    <span class="kw">use </span>iroh_relay::tls::{CaTlsConfig, default_provider};
 <a href=#954 id=954 data-nosnippet>954</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#955 id=955 data-nosnippet>955</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
 <a href=#956 id=956 data-nosnippet>956</a>    <span class="kw">use </span>tokio_util::sync::CancellationToken;
@@ -973,7 +973,7 @@
 <a href=#973 id=973 data-nosnippet>973</a>        <span class="kw">let </span>relay_map = RelayMap::from(relay);
 <a href=#974 id=974 data-nosnippet>974</a>
 <a href=#975 id=975 data-nosnippet>975</a>        <span class="kw">let </span>resolver = DnsResolver::new();
-<a href=#976 id=976 data-nosnippet>976</a>        <span class="kw">let </span>tls_config = CaRootsConfig::insecure_skip_verify()
+<a href=#976 id=976 data-nosnippet>976</a>        <span class="kw">let </span>tls_config = CaTlsConfig::insecure_skip_verify()
 <a href=#977 id=977 data-nosnippet>977</a>            .client_config(default_provider())
 <a href=#978 id=978 data-nosnippet>978</a>            .expect(<span class="string">"infallible"</span>);
 <a href=#979 id=979 data-nosnippet>979</a>        <span class="kw">let </span>opts = Options::new(tls_config).quic_config(<span class="prelude-val">Some</span>(quic_addr_disc.clone()));
@@ -1177,7 +1177,7 @@
 <a href=#1177 id=1177 data-nosnippet>1177</a>            </span>},
 <a href=#1178 id=1178 data-nosnippet>1178</a>        ];
 <a href=#1179 id=1179 data-nosnippet>1179</a>        <span class="kw">let </span>resolver = DnsResolver::new();
-<a href=#1180 id=1180 data-nosnippet>1180</a>        <span class="kw">let </span>tls_config = CaRootsConfig::insecure_skip_verify()
+<a href=#1180 id=1180 data-nosnippet>1180</a>        <span class="kw">let </span>tls_config = CaTlsConfig::insecure_skip_verify()
 <a href=#1181 id=1181 data-nosnippet>1181</a>            .client_config(default_provider())
 <a href=#1182 id=1182 data-nosnippet>1182</a>            .expect(<span class="string">"infallible"</span>);
 <a href=#1183 id=1183 data-nosnippet>1183</a>        <span class="kw">for </span><span class="kw-2">mut </span>tt <span class="kw">in </span>tests {

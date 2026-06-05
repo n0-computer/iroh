@@ -1177,7 +1177,7 @@
 <a href=#1177 id=1177 data-nosnippet>1177</a>            handshake,
 <a href=#1178 id=1178 data-nosnippet>1178</a>            relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 <a href=#1179 id=1179 data-nosnippet>1179</a>        },
-<a href=#1180 id=1180 data-nosnippet>1180</a>        tls::{CaRootsConfig, default_provider},
+<a href=#1180 id=1180 data-nosnippet>1180</a>        tls::{CaTlsConfig, default_provider},
 <a href=#1181 id=1181 data-nosnippet>1181</a>    };
 <a href=#1182 id=1182 data-nosnippet>1182</a>
 <a href=#1183 id=1183 data-nosnippet>1183</a>    <span class="doccomment">/// An [`AccessControl`] backed by a closure, for tests.
@@ -1314,7 +1314,7 @@
 <a href=#1314 id=1314 data-nosnippet>1314</a>        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
 <a href=#1315 id=1315 data-nosnippet>1315</a>        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse()<span class="question-mark">?</span>;
 <a href=#1316 id=1316 data-nosnippet>1316</a>
-<a href=#1317 id=1317 data-nosnippet>1317</a>        <span class="kw">let </span>client_config = CaRootsConfig::default()
+<a href=#1317 id=1317 data-nosnippet>1317</a>        <span class="kw">let </span>client_config = CaTlsConfig::default()
 <a href=#1318 id=1318 data-nosnippet>1318</a>            .client_config(default_provider())
 <a href=#1319 id=1319 data-nosnippet>1319</a>            .unwrap();
 <a href=#1320 id=1320 data-nosnippet>1320</a>
@@ -1379,7 +1379,7 @@
 <a href=#1379 id=1379 data-nosnippet>1379</a>        <span class="kw">let </span>current_span = <span class="macro">tracing::info_span!</span>(<span class="string">"this is a test"</span>);
 <a href=#1380 id=1380 data-nosnippet>1380</a>        <span class="kw">let </span>_guard = current_span.enter();
 <a href=#1381 id=1381 data-nosnippet>1381</a>
-<a href=#1382 id=1382 data-nosnippet>1382</a>        <span class="kw">let </span>client_config = CaRootsConfig::default()
+<a href=#1382 id=1382 data-nosnippet>1382</a>        <span class="kw">let </span>client_config = CaTlsConfig::default()
 <a href=#1383 id=1383 data-nosnippet>1383</a>            .client_config(default_provider())
 <a href=#1384 id=1384 data-nosnippet>1384</a>            .unwrap();
 <a href=#1385 id=1385 data-nosnippet>1385</a>
@@ -1468,7 +1468,7 @@
 <a href=#1468 id=1468 data-nosnippet>1468</a>        <span class="kw">const </span>TOKEN: <span class="kw-2">&amp;</span>str = <span class="string">"secret-token"</span>;
 <a href=#1469 id=1469 data-nosnippet>1469</a>
 <a href=#1470 id=1470 data-nosnippet>1470</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#1471 id=1471 data-nosnippet>1471</a>        <span class="kw">let </span>client_config = CaRootsConfig::default()
+<a href=#1471 id=1471 data-nosnippet>1471</a>        <span class="kw">let </span>client_config = CaTlsConfig::default()
 <a href=#1472 id=1472 data-nosnippet>1472</a>            .client_config(default_provider())
 <a href=#1473 id=1473 data-nosnippet>1473</a>            .unwrap();
 <a href=#1474 id=1474 data-nosnippet>1474</a>
@@ -1535,7 +1535,7 @@
 <a href=#1535 id=1535 data-nosnippet>1535</a>        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
 <a href=#1536 id=1536 data-nosnippet>1536</a>        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
 <a href=#1537 id=1537 data-nosnippet>1537</a>
-<a href=#1538 id=1538 data-nosnippet>1538</a>        <span class="kw">let </span>client_config = CaRootsConfig::default()
+<a href=#1538 id=1538 data-nosnippet>1538</a>        <span class="kw">let </span>client_config = CaTlsConfig::default()
 <a href=#1539 id=1539 data-nosnippet>1539</a>            .client_config(default_provider())
 <a href=#1540 id=1540 data-nosnippet>1540</a>            .unwrap();
 <a href=#1541 id=1541 data-nosnippet>1541</a>

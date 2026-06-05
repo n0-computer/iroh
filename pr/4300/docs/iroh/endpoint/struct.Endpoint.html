@@ -204,7 +204,7 @@ that want to use the same trust anchors as iroh does for verifying the
 validity of TLS certificates presented by external services.</p>
 <p>Note that this TLS config is unrelated to how iroh validates the authenticity
 of iroh connections itself.</p>
-<p>The config is based on the trust anchors set via <a href="struct.Builder.html#method.ca_roots_config" title="method iroh::endpoint::Builder::ca_roots_config"><code>Builder::ca_roots_config</code></a>.</p>
+<p>The config is based on the trust anchors set via <a href="struct.Builder.html#method.ca_tls_config" title="method iroh::endpoint::Builder::ca_tls_config"><code>Builder::ca_tls_config</code></a>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.address_lookup" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1432-1437">Source</a><h4 class="code-header">pub fn <a href="#method.address_lookup" class="fn">address_lookup</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;&amp;<a class="struct" href="../address_lookup/struct.AddressLookupServices.html" title="struct iroh::address_lookup::AddressLookupServices">AddressLookupServices</a>, <a class="enum" href="enum.EndpointError.html" title="enum iroh::endpoint::EndpointError">EndpointError</a>&gt;</h4></section></summary><div class="docblock"><p>Returns the Address Lookup service, if configured.</p>
 <h5 id="errors-1"><a class="doc-anchor" href="#errors-1">§</a>Errors</h5>
 <p>Returns a <code>EndpointError::Closed</code> error if the endpoint is closed.</p>
