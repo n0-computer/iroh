@@ -3,7 +3,7 @@ use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
 use iroh::{
     Endpoint, EndpointAddr, RelayMap, RelayMode, TransportAddr,
     endpoint::{Connection, Path, PathEvent, presets},
-    tls::CaRootsConfig,
+    tls::CaTlsConfig,
 };
 use iroh_metrics::MetricsGroupSet;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
@@ -450,7 +450,7 @@ fn endpoint_builder(device: &Device, relay_map: RelayMap) -> iroh::endpoint::Bui
     #[allow(unused_mut)]
     let mut builder = Endpoint::builder(presets::Minimal)
         .relay_mode(RelayMode::Custom(relay_map))
-        .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+        .ca_tls_config(CaTlsConfig::insecure_skip_verify())
         .alpns(vec![TEST_ALPN.to_vec()]);
 
     #[cfg(not(feature = "qlog"))]

@@ -1177,7 +1177,7 @@ mod tests {
             handshake,
             relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         },
-        tls::{CaRootsConfig, default_provider},
+        tls::{CaTlsConfig, default_provider},
     };
 
     /// An [`AccessControl`] backed by a closure, for tests.
@@ -1314,7 +1314,7 @@ mod tests {
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse()?;
 
-        let client_config = CaRootsConfig::default()
+        let client_config = CaTlsConfig::default()
             .client_config(default_provider())
             .unwrap();
 
@@ -1379,7 +1379,7 @@ mod tests {
         let current_span = tracing::info_span!("this is a test");
         let _guard = current_span.enter();
 
-        let client_config = CaRootsConfig::default()
+        let client_config = CaTlsConfig::default()
             .client_config(default_provider())
             .unwrap();
 
@@ -1468,7 +1468,7 @@ mod tests {
         const TOKEN: &str = "secret-token";
 
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let client_config = CaRootsConfig::default()
+        let client_config = CaTlsConfig::default()
             .client_config(default_provider())
             .unwrap();
 
@@ -1535,7 +1535,7 @@ mod tests {
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
-        let client_config = CaRootsConfig::default()
+        let client_config = CaTlsConfig::default()
             .client_config(default_provider())
             .unwrap();
 

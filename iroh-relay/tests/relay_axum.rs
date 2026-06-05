@@ -39,7 +39,7 @@ use iroh_relay::{
         AllowAll, ClientRequest, DynAccessControl, Metrics, client::Config, clients::Clients,
         streams::RelayedStream,
     },
-    tls::{CaRootsConfig, default_provider},
+    tls::{CaTlsConfig, default_provider},
 };
 use n0_error::{AnyError, Result, StdResultExt};
 use n0_future::{Sink, Stream, task::AbortOnDropHandle};
@@ -217,7 +217,7 @@ async fn relay_embed_axum() -> Result<()> {
     // Connect a relay client to `/relay` on the same axum-fronted port.
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
     let relay_url: RelayUrl = format!("http://{addr}").parse()?;
-    let tls_config = CaRootsConfig::default().client_config(default_provider())?;
+    let tls_config = CaTlsConfig::default().client_config(default_provider())?;
     tokio::time::timeout(
         Duration::from_secs(5),
         ClientBuilder::new(

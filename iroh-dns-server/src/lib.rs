@@ -47,7 +47,7 @@ mod tests {
         address_lookup::PkarrRelayClient,
         dns::DnsResolver,
         endpoint_info::EndpointInfo,
-        tls::{CaRootsConfig, default_provider},
+        tls::{CaTlsConfig, default_provider},
     };
     use iroh_dns::pkarr::SignedPacket;
     use mainline::{DhtBuilder, MutableItem, Testnet};
@@ -151,7 +151,7 @@ mod tests {
         let signed_packet = SignedPacket::from_bytes(&raw).anyerr()?;
 
         // Publish via relay
-        let tls_config = CaRootsConfig::default()
+        let tls_config = CaTlsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
         let pkarr_client =
@@ -220,7 +220,7 @@ mod tests {
 
         let secret_key = SecretKey::from_bytes(&rng.random());
         let endpoint_id = secret_key.public();
-        let tls_config = CaRootsConfig::default()
+        let tls_config = CaTlsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
         let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config, DnsResolver::default());

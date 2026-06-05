@@ -19,7 +19,7 @@ use webpki_types::CertificateDer;
 /// CAs don't need to be trusted for the integrity or authenticity of native
 /// iroh connections, which rely on iroh's own cryptographic authentication mechanisms.
 #[derive(Debug, Clone)]
-pub struct CaRootsConfig {
+pub struct CaTlsConfig {
     mode: Mode,
     extra_roots: Vec<CertificateDer<'static>>,
 }
@@ -54,7 +54,7 @@ enum Mode {
     },
 }
 
-impl Default for CaRootsConfig {
+impl Default for CaTlsConfig {
     fn default() -> Self {
         Self {
             mode: Mode::EmbeddedWebPki,
@@ -63,7 +63,7 @@ impl Default for CaRootsConfig {
     }
 }
 
-impl CaRootsConfig {
+impl CaTlsConfig {
     /// Uses the operating system's certificate facilities for verifying the validity of TLS certificates.
     ///
     /// See [`rustls_platform_verifier`] for details how trust anchors are retrieved on different platforms.
@@ -107,7 +107,7 @@ impl CaRootsConfig {
         }
     }
 
-    /// Creates a [`CaRootsConfig`] that uses a callback function to create a [`ServerCertVerifier`].
+    /// Creates a [`CaTlsConfig`] that uses a callback function to create a [`ServerCertVerifier`].
     ///
     /// This is an advanced feature and you should only use this if none of the other constructor
     /// functions cover your needs. Wrongly implementing the callback may lead to insecure connections
@@ -121,13 +121,13 @@ impl CaRootsConfig {
     ///
     /// ```rust
     /// # use std::{io, sync::Arc};
-    /// # use iroh_relay::tls::CaRootsConfig;
+    /// # use iroh_relay::tls::CaTlsConfig;
     /// # use rustls::client::WebPkiServerVerifier;
     /// let root_store = Arc::new(rustls::RootCertStore {
     ///     roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     /// });
-    /// let ca_roots_config =
-    ///     CaRootsConfig::custom_server_cert_verifier(Arc::new(move |crypto_provider| {
+    /// let ca_tls_config =
+    ///     CaTlsConfig::custom_server_cert_verifier(Arc::new(move |crypto_provider| {
     ///         let mut root_store = rustls::RootCertStore {
     ///             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     ///         };
