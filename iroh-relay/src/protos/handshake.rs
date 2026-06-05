@@ -256,7 +256,7 @@ impl KeyMaterialClientAuth {
         let key_material = io.export_keying_material(
             [0u8; 32],
             DOMAIN_SEP_TLS_EXPORT_LABEL,
-            Some(secret_key.public().as_bytes()),
+            Some(secret_key.endpoint_id().as_bytes()),
         )?;
         // We split the export and only sign the first 16 bytes, and
         // pass through the last 16 bytes. See also the note in [Self::verify].

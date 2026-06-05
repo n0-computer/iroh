@@ -391,12 +391,12 @@ fn remote_id_from_noq_conn(conn: &noq::Connection) -> Result<EndpointId, RemoteE
                     return Err(RemoteEndpointIdError::new());
                 }
 
-                let peer_id = EndpointId::from_verifying_key(
+                let peer_id = iroh_base::PublicKey::from_verifying_key(
                     VerifyingKey::from_public_key_der(&certs[0])
                         .map_err(|_| RemoteEndpointIdError::new())?,
                 );
 
-                Ok(peer_id)
+                Ok(peer_id.to_endpoint_id())
             }
             Err(err) => {
                 warn!("invalid peer certificate: {:?}", err);

@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iroh_base::PublicKey;
+use iroh_base::{EndpointId, PublicKey};
 
 type SignatureError = <PublicKey as TryFrom<&'static [u8]>>::Error;
 type PublicKeyBytes = [u8; PublicKey::LENGTH];
@@ -48,9 +48,9 @@ impl KeyCache {
     }
 
     /// Get a key from a slice of bytes.
-    pub fn key_from_slice(&self, slice: &[u8]) -> Result<PublicKey, SignatureError> {
+    pub fn key_from_slice(&self, slice: &[u8]) -> Result<EndpointId, SignatureError> {
         let Inner::Shared(cache) = &self.0 else {
-            return PublicKey::try_from(slice);
+            return PublicKey::try_from(slice).map(|key| key.to_endpoint_id());
         };
         let Ok(bytes) = PublicKeyBytes::try_from(slice) else {
             // if the size is wrong, use PublicKey::try_from to fail with a
@@ -59,10 +59,10 @@ impl KeyCache {
         };
         let mut cache = cache.lock().expect("not poisoned");
         if let Some((key, _)) = cache.get_key_value(&bytes) {
-            return Ok(*key);
+            return Ok(key.to_endpoint_id());
         }
         let key = PublicKey::from_bytes(&bytes)?;
         cache.put(key, ());
-        Ok(key)
+        Ok(key.to_endpoint_id())
     }
 }

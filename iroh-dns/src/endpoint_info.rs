@@ -584,7 +584,7 @@ mod tests {
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
         ])
         .with_user_data("foobar".parse().unwrap());
-        let expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
+        let expected = EndpointInfo::from_parts(secret_key.endpoint_id(), endpoint_data);
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
         let actual = EndpointInfo::from_pkarr_signed_packet(&packet).unwrap();
         assert_eq!(expected, actual);
@@ -630,7 +630,7 @@ mod tests {
         ])
         .with_user_data("foobar".parse().unwrap());
 
-        let expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
+        let expected = EndpointInfo::from_parts(secret_key.endpoint_id(), endpoint_data);
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
         let actual = EndpointInfo::from_pkarr_signed_packet(&packet).unwrap();
         assert_eq!(expected, actual);

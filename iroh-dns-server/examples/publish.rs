@@ -76,7 +76,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    let endpoint_id = secret_key.public();
+    let endpoint_id = secret_key.endpoint_id();
     let pkarr_relay_url = match (args.pkarr_relay_url, args.env) {
         (Some(url), _) => url,
         (None, Env::Staging) => N0_DNS_PKARR_RELAY_STAGING.parse().expect("valid url"),

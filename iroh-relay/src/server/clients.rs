@@ -300,8 +300,8 @@ mod tests {
     #[traced_test]
     async fn test_clients() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let a_key = SecretKey::from_bytes(&rng.random()).public();
-        let b_key = SecretKey::from_bytes(&rng.random()).public();
+        let a_key = SecretKey::from_bytes(&rng.random()).endpoint_id();
+        let b_key = SecretKey::from_bytes(&rng.random()).endpoint_id();
 
         let (builder_a, mut a_rw) = test_client_builder(a_key);
 
@@ -348,8 +348,8 @@ mod tests {
     #[traced_test]
     async fn test_clients_same_endpoint_id() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let a_key = SecretKey::from_bytes(&rng.random()).public();
-        let b_key = SecretKey::from_bytes(&rng.random()).public();
+        let a_key = SecretKey::from_bytes(&rng.random()).endpoint_id();
+        let b_key = SecretKey::from_bytes(&rng.random()).endpoint_id();
 
         let (a1_builder, mut a1_rw) = test_client_builder(a_key);
 
@@ -467,8 +467,8 @@ mod tests {
     #[traced_test]
     async fn test_peer_gone_notification() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let a_key = SecretKey::from_bytes(&rng.random()).public();
-        let b_key = SecretKey::from_bytes(&rng.random()).public();
+        let a_key = SecretKey::from_bytes(&rng.random()).endpoint_id();
+        let b_key = SecretKey::from_bytes(&rng.random()).endpoint_id();
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());

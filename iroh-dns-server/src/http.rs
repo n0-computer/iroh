@@ -347,11 +347,11 @@ mod tests {
         const RELAY_URL: &str = "https://relay.example./";
         let (name_z32, signed_packet) = {
             let secret_key = SecretKey::from_bytes(&rng.random());
-            let endpoint_id = secret_key.public();
+            let endpoint_id = secret_key.endpoint_id();
             let relay_url: RelayUrl = RELAY_URL.parse().expect("valid url");
             let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
             (
-                secret_key.public().to_z32(),
+                secret_key.endpoint_id().to_z32(),
                 endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?,
             )
         };

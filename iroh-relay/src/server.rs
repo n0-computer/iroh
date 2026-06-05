@@ -1320,7 +1320,7 @@ mod tests {
 
         // set up client a
         let a_secret_key = SecretKey::from_bytes(&rng.random());
-        let a_key = a_secret_key.public();
+        let a_key = a_secret_key.endpoint_id();
         let resolver = dns_resolver();
         info!("client a build & connect");
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
@@ -1330,7 +1330,7 @@ mod tests {
 
         // set up client b
         let b_secret_key = SecretKey::from_bytes(&rng.random());
-        let b_key = b_secret_key.public();
+        let b_key = b_secret_key.endpoint_id();
         info!("client b build & connect");
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
             .tls_client_config(client_config)
@@ -1384,7 +1384,7 @@ mod tests {
             .unwrap();
 
         let a_secret_key = SecretKey::from_bytes(&rng.random());
-        let a_key = a_secret_key.public();
+        let a_key = a_secret_key.endpoint_id();
 
         let mut relay = RelayConfig::new((Ipv4Addr::LOCALHOST, 0));
         relay.key_cache_capacity = Some(1024);
@@ -1423,7 +1423,7 @@ mod tests {
 
         // set up client b
         let b_secret_key = SecretKey::from_bytes(&rng.random());
-        let b_key = b_secret_key.public();
+        let b_key = b_secret_key.endpoint_id();
 
         let resolver = dns_resolver();
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
@@ -1433,7 +1433,7 @@ mod tests {
 
         // set up client c
         let c_secret_key = SecretKey::from_bytes(&rng.random());
-        let c_key = c_secret_key.public();
+        let c_key = c_secret_key.endpoint_id();
 
         let resolver = dns_resolver();
         let mut client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
@@ -1549,7 +1549,7 @@ mod tests {
 
         // set up client b
         let b_secret_key = SecretKey::from_bytes(&rng.random());
-        let b_key = b_secret_key.public();
+        let b_key = b_secret_key.endpoint_id();
         let _client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
             .tls_client_config(client_config)
             .connect()

@@ -303,7 +303,7 @@ impl PkarrPublisher {
         addr_filter: AddrFilter,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
-        let endpoint_id = secret_key.public();
+        let endpoint_id = secret_key.endpoint_id();
 
         #[cfg(wasm_browser)]
         let pkarr_client = PkarrRelayClient::new(pkarr_relay);
@@ -650,7 +650,7 @@ impl PkarrRelayClient {
             .bytes()
             .await
             .map_err(|err| e!(PkarrError::HttpPayload, anyerr!(err)))?;
-        let packet = SignedPacket::from_relay_payload(&endpoint_id, &payload)
+        let packet = SignedPacket::from_relay_payload(&endpoint_id.to_public_key(), &payload)
             .map_err(|err| e!(PkarrError::Verify, err))?;
         Ok(packet)
     }

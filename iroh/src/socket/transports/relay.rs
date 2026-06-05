@@ -49,7 +49,7 @@ impl RelayTransport {
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
-        let my_endpoint_id = config.secret_key.public();
+        let my_endpoint_id = config.secret_key.endpoint_id();
         let my_relay = config.my_relay.clone();
 
         let relay_actor = RelayActor::new(config, relay_datagram_recv_tx, cancel_token);

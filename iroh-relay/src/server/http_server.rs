@@ -869,8 +869,11 @@ impl Inner {
 
         trace!(?authentication.mechanism, "accept: verified authentication");
 
-        let request =
-            ClientRequest::new(authentication.client_key, protocol_version, request_parts);
+        let request = ClientRequest::new(
+            authentication.client_key.to_endpoint_id(),
+            protocol_version,
+            request_parts,
+        );
 
         // Authorize the request against the configured `AccessControl`.
         let guard = authentication
@@ -1183,7 +1186,7 @@ struct Elapsed;
 mod tests {
     use std::sync::Arc;
 
-    use iroh_base::{PublicKey, SecretKey};
+    use iroh_base::{EndpointId, SecretKey};
     use iroh_dns::dns::DnsResolver;
     use n0_error::{Result, StdResultExt, bail_any};
     use n0_future::{SinkExt, StreamExt};
@@ -1300,8 +1303,8 @@ mod tests {
     async fn create_test_client(
         key: SecretKey,
         server_url: Url,
-    ) -> Result<(PublicKey, Client), ConnectError> {
-        let public_key = key.public();
+    ) -> Result<(EndpointId, Client), ConnectError> {
+        let public_key = key.endpoint_id();
         let client = ClientBuilder::new(server_url, key, DnsResolver::new()).tls_client_config(
             CaRootsConfig::insecure_skip_verify()
                 .client_config(default_provider())
@@ -1314,7 +1317,7 @@ mod tests {
 
     fn process_msg(
         msg: Option<Result<RelayToClientMsg, crate::client::RecvError>>,
-    ) -> Option<(PublicKey, Datagrams)> {
+    ) -> Option<(EndpointId, Datagrams)> {
         match msg {
             Some(Err(e)) => {
                 info!("client `recv` error {e}");
@@ -1485,7 +1488,7 @@ mod tests {
 
         info!("Create client A and connect it to the server.");
         let key_a = SecretKey::from_bytes(&rng.random());
-        let public_key_a = key_a.public();
+        let public_key_a = key_a.endpoint_id();
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
@@ -1501,7 +1504,7 @@ mod tests {
 
         info!("Create client B and connect it to the server.");
         let key_b = SecretKey::from_bytes(&rng.random());
-        let public_key_b = key_b.public();
+        let public_key_b = key_b.endpoint_id();
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
@@ -1597,7 +1600,7 @@ mod tests {
 
         info!("Create client A and connect it to the server.");
         let key_a = SecretKey::from_bytes(&rng.random());
-        let public_key_a = key_a.public();
+        let public_key_a = key_a.endpoint_id();
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
@@ -1613,7 +1616,7 @@ mod tests {
 
         info!("Create client B and connect it to the server.");
         let key_b = SecretKey::from_bytes(&rng.random());
-        let public_key_b = key_b.public();
+        let public_key_b = key_b.endpoint_id();
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {

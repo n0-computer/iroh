@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
     println!("\nconnect (unreliable) example!\n");
     let args = Cli::parse();
     let secret_key = SecretKey::from_bytes(&rand::random());
-    println!("public key: {}", secret_key.public());
+    println!("public key: {}", secret_key.endpoint_id());
 
     // Build a `Endpoint`, which uses PublicKeys as endpoint identifiers, uses QUIC for directly connecting to other endpoints, and uses the relay protocol and relay servers to holepunch direct connections between endpoints when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
     let endpoint = Endpoint::builder(presets::N0)

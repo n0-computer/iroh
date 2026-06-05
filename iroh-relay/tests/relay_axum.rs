@@ -188,7 +188,7 @@ async fn handle_relay_websocket(
     trace!(?authentication.mechanism, "verified authentication");
 
     let request = ClientRequest::new(
-        authentication.client_key,
+        authentication.client_key.to_endpoint_id(),
         ProtocolVersion::V2,
         request_parts,
     );

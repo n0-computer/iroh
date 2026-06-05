@@ -53,7 +53,7 @@ impl Preset for Arc<TestTransport> {
     ///
     /// ```ignore
     /// let network = TestNetwork::new();
-    /// let transport = network.create_transport(secret_key.public())?;
+    /// let transport = network.create_transport(secret_key.endpoint_id())?;
     /// let ep = Endpoint::builder()
     ///     .secret_key(secret_key)
     ///     .preset(transport)
@@ -474,8 +474,8 @@ mod tests {
         let s1 = SecretKey::generate();
         let s2 = SecretKey::generate();
 
-        let t1 = network.create_transport(s1.public())?;
-        let t2 = network.create_transport(s2.public())?;
+        let t1 = network.create_transport(s1.endpoint_id())?;
+        let t2 = network.create_transport(s2.endpoint_id())?;
 
         let ep1 = endpoint_builder(s1, t1, EndpointConfig::default())
             .bind()
@@ -486,7 +486,7 @@ mod tests {
         let router = Router::builder(ep2).accept(ECHO_ALPN, Echo).spawn();
 
         let conn = ep1
-            .connect(custom_only_addr(s2.public()), ECHO_ALPN)
+            .connect(custom_only_addr(s2.endpoint_id()), ECHO_ALPN)
             .await?;
 
         // Verify exactly one path exists and it's the custom transport
@@ -513,8 +513,8 @@ mod tests {
         let s1 = SecretKey::generate();
         let s2 = SecretKey::generate();
 
-        let t1 = network.create_transport(s1.public())?;
-        let t2 = network.create_transport(s2.public())?;
+        let t1 = network.create_transport(s1.endpoint_id())?;
+        let t2 = network.create_transport(s2.endpoint_id())?;
 
         let ep1 = endpoint_builder(s1, t1, EndpointConfig::default())
             .bind()
@@ -526,14 +526,14 @@ mod tests {
 
         let connect = tokio::spawn({
             let ep1 = ep1.clone();
-            let dst = custom_only_addr(s2.public());
+            let dst = custom_only_addr(s2.endpoint_id());
             async move { ep1.connect(dst, ECHO_ALPN).await }
         });
 
         let incoming = ep2.accept().await.expect("incoming");
         assert_eq!(
             incoming.local_addr(),
-            LocalTransportAddr::Custom(Some(to_custom_addr(s2.public()))),
+            LocalTransportAddr::Custom(Some(to_custom_addr(s2.endpoint_id()))),
         );
         let _conn = incoming.accept().anyerr()?.await.anyerr()?;
 
@@ -549,8 +549,8 @@ mod tests {
         let s1 = SecretKey::generate();
         let s2 = SecretKey::generate();
 
-        let t1 = network.create_transport(s1.public())?;
-        let t2 = network.create_transport(s2.public())?;
+        let t1 = network.create_transport(s1.endpoint_id())?;
+        let t2 = network.create_transport(s2.endpoint_id())?;
 
         // Strong RTT advantage for custom transport
         let custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_secs(10));
@@ -563,7 +563,7 @@ mod tests {
         let router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
 
         let conn = ep1
-            .connect(mixed_addr(&ep2, s2.public()), ECHO_ALPN)
+            .connect(mixed_addr(&ep2, s2.endpoint_id()), ECHO_ALPN)
             .await?;
 
         // Wait for paths to settle
@@ -588,8 +588,8 @@ mod tests {
         let s1 = SecretKey::generate();
         let s2 = SecretKey::generate();
 
-        let t1 = network.create_transport(s1.public())?;
-        let t2 = network.create_transport(s2.public())?;
+        let t1 = network.create_transport(s1.endpoint_id())?;
+        let t2 = network.create_transport(s2.endpoint_id())?;
 
         // Strong RTT disadvantage for custom transport
         let custom_bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_secs(10));
@@ -602,7 +602,7 @@ mod tests {
         let router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
 
         let conn = ep1
-            .connect(mixed_addr(&ep2, s2.public()), ECHO_ALPN)
+            .connect(mixed_addr(&ep2, s2.endpoint_id()), ECHO_ALPN)
             .await?;
 
         // Wait for paths to settle
@@ -632,8 +632,8 @@ mod tests {
         let s1 = SecretKey::generate();
         let s2 = SecretKey::generate();
 
-        let t1 = network.create_transport(s1.public())?;
-        let t2 = network.create_transport(s2.public())?;
+        let t1 = network.create_transport(s1.endpoint_id())?;
+        let t2 = network.create_transport(s2.endpoint_id())?;
 
         // Custom transport is primary by default, relay is backup
         let config = EndpointConfig::default().with_relay(relay_map.clone());
@@ -649,14 +649,14 @@ mod tests {
 
         // Get all addresses including relay and custom
         let ep2_addr = ep2.addr();
-        let custom_addr = to_custom_addr(s2.public());
+        let custom_addr = to_custom_addr(s2.endpoint_id());
 
         // Debug: print ep2 address to see what's available
         eprintln!("ep2 address: {:?}", ep2_addr);
 
         // Create address with both relay and custom
         let all_addrs = EndpointAddr::from_parts(
-            s2.public(),
+            s2.endpoint_id(),
             ep2_addr
                 .addrs
                 .iter()
@@ -681,7 +681,8 @@ mod tests {
             );
         } else {
             // Connect with relay-only address first to verify relay works
-            let relay_only_addr = EndpointAddr::from_parts(s2.public(), relay_addrs.into_iter());
+            let relay_only_addr =
+                EndpointAddr::from_parts(s2.endpoint_id(), relay_addrs.into_iter());
             eprintln!("Connecting with relay-only address: {:?}", relay_only_addr);
 
             let conn = ep1.connect(relay_only_addr, ECHO_ALPN).await?;

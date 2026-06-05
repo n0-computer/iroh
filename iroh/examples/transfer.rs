@@ -409,7 +409,7 @@ async fn main() -> Result<()> {
     };
 
     // Determine file logging path and init tracing subscriber.
-    let log = log.init(&command, secret_key.public())?;
+    let log = log.init(&command, secret_key.endpoint_id())?;
     let endpoint_args = match &command {
         Commands::Provide { endpoint_args } => endpoint_args,
         Commands::Fetch { endpoint_args, .. } => endpoint_args,

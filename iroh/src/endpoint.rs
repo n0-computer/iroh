@@ -222,7 +222,7 @@ impl Builder {
                 .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?,
         );
 
-        let span = info_span!("endpoint", id = %secret_key.public().fmt_short());
+        let span = info_span!("endpoint", id = %secret_key.endpoint_id().fmt_short());
         let _guard = span.enter();
 
         let tls_config = tls::TlsConfig::new(
@@ -271,7 +271,7 @@ impl Builder {
             .instrument(Span::current())
             .await?;
         debug!(
-            id = %inner.static_config.tls_config.secret_key.public(),
+            id = %inner.static_config.tls_config.secret_key.endpoint_id(),
             iroh_version = %env!("CARGO_PKG_VERSION"),
             "iroh endpoint bound"
         );
@@ -1120,7 +1120,7 @@ impl Endpoint {
     /// This ID is the unique addressing information of this endpoint and other peers must know
     /// it to be able to connect to this endpoint.
     pub fn id(&self) -> EndpointId {
-        self.inner.static_config.tls_config.secret_key.public()
+        self.inner.static_config.tls_config.secret_key.endpoint_id()
     }
 
     /// Returns the current [`EndpointAddr`].
@@ -1996,7 +1996,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, relay_url, _guard) = run_relay_server().await?;
         let server_secret_key = SecretKey::from_bytes(&rng.random());
-        let server_peer_id = server_secret_key.public();
+        let server_peer_id = server_secret_key.endpoint_id();
 
         let qlog = QlogFileGroup::from_env("endpoint_connect_close");
 
@@ -2103,7 +2103,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let server_secret_key = SecretKey::from_bytes(&rng.random());
-        let server_endpoint_id = server_secret_key.public();
+        let server_endpoint_id = server_secret_key.endpoint_id();
 
         // Make sure the server is bound before having clients connect to it:
         let ep = Endpoint::builder(presets::Minimal)
@@ -3609,7 +3609,7 @@ mod tests {
         ep1.online().await;
         info!("ep1 online");
 
-        let addr = EndpointAddr::new(secret_key.public()).with_relay_url(relay_url.clone());
+        let addr = EndpointAddr::new(secret_key.endpoint_id()).with_relay_url(relay_url.clone());
 
         tokio::try_join!(
             async {
@@ -3739,7 +3739,7 @@ mod tests {
 
         info!("Connecting");
         let mut rng = ChaCha8Rng::seed_from_u64(41);
-        let ep_id = SecretKey::from_bytes(&rng.random()).public();
+        let ep_id = SecretKey::from_bytes(&rng.random()).endpoint_id();
 
         // should likely be an error that states that the
         // endpoint is closed instead:

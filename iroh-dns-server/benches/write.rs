@@ -27,7 +27,7 @@ fn benchmark_dns_server(c: &mut Criterion) {
 
                     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
                     let secret_key = SecretKey::from_bytes(&rng.random());
-                    let endpoint_id = secret_key.public();
+                    let endpoint_id = secret_key.endpoint_id();
 
                     let tls_config = CaRootsConfig::default()
                         .client_config(default_provider())

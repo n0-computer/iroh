@@ -586,7 +586,7 @@ mod tests {
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (message_s, message_r) = mpsc::channel(10);
 
-        let endpoint_id = SecretKey::from_bytes(&rng.random()).public();
+        let endpoint_id = SecretKey::from_bytes(&rng.random()).endpoint_id();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Conn::test(io_rw, Default::default());
         let stream = RelayedStream::test(io);
@@ -657,7 +657,7 @@ mod tests {
         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
         assert_eq!(frame, RelayToClientMsg::Pong(*data));
 
-        let target = SecretKey::from_bytes(&rng.random()).public();
+        let target = SecretKey::from_bytes(&rng.random()).endpoint_id();
 
         // send packet
         println!("  send packet");
@@ -691,8 +691,8 @@ mod tests {
     #[traced_test]
     async fn test_client_v1_protocol() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
-        let a_key = SecretKey::from_bytes(&rng.random()).public();
-        let b_key = SecretKey::from_bytes(&rng.random()).public();
+        let a_key = SecretKey::from_bytes(&rng.random()).endpoint_id();
+        let b_key = SecretKey::from_bytes(&rng.random()).endpoint_id();
 
         let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V1);
 
@@ -720,8 +720,8 @@ mod tests {
     #[traced_test]
     async fn test_client_v2_protocol() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
-        let a_key = SecretKey::from_bytes(&rng.random()).public();
-        let b_key = SecretKey::from_bytes(&rng.random()).public();
+        let a_key = SecretKey::from_bytes(&rng.random()).endpoint_id();
+        let b_key = SecretKey::from_bytes(&rng.random()).endpoint_id();
 
         let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V2);
 
@@ -750,7 +750,7 @@ mod tests {
     #[traced_test]
     async fn test_duplicate_endpoint_v1_receives_v1health() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
-        let key = SecretKey::from_bytes(&rng.random()).public();
+        let key = SecretKey::from_bytes(&rng.random()).endpoint_id();
 
         let (builder_first, mut first_rw) = test_client_builder(key, ProtocolVersion::V1);
 
@@ -778,7 +778,7 @@ mod tests {
     #[traced_test]
     async fn test_duplicate_endpoint_v2_receives_health() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
-        let key = SecretKey::from_bytes(&rng.random()).public();
+        let key = SecretKey::from_bytes(&rng.random()).endpoint_id();
 
         let (builder_first, mut first_rw) = test_client_builder(key, ProtocolVersion::V2);
 
@@ -817,7 +817,7 @@ mod tests {
 
         // Prepare a frame to send, assert its size.
         let data = Datagrams::from(b"hello world!!!!!");
-        let target = SecretKey::from_bytes(&rng.random()).public();
+        let target = SecretKey::from_bytes(&rng.random()).endpoint_id();
         let frame = ClientToRelayMsg::Datagrams {
             dst_endpoint_id: target,
             datagrams: data.clone(),

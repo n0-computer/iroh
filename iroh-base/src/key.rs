@@ -55,20 +55,6 @@ impl Ord for PublicKey {
     }
 }
 
-/// The identifier for an endpoint in the (iroh) network.
-///
-/// Each endpoint in iroh has a unique identifier created as a cryptographic key.  This can be
-/// used to globally identify an endpoint.  Since it is also a cryptographic key it is also the
-/// mechanism by which all traffic is always encrypted for a specific endpoint only.
-///
-/// This is equivalent to [`PublicKey`].  By convention we will (or should) use `PublicKey`
-/// as type name when performing cryptographic operations, but use `EndpointId` when referencing
-/// an endpoint.  E.g.:
-///
-/// - `encrypt(key: PublicKey)`
-/// - `send_to(endpoint: EndpointId)`
-pub type EndpointId = PublicKey;
-
 impl Hash for PublicKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);
@@ -110,6 +96,11 @@ impl PublicKey {
     /// Get this public key as a byte array.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
+    }
+
+    /// Converts this [`PublicKey`] into an [`EndpointId`].
+    pub fn to_endpoint_id(&self) -> EndpointId {
+        EndpointId(*self)
     }
 
     /// Construct a `PublicKey` from a slice of bytes.
@@ -171,6 +162,99 @@ impl PublicKey {
             .decode(s.as_bytes())
             .map_err(|_| e!(KeyParsingError::FailedToDecodeBase32))?;
         Self::try_from(bytes.as_slice())
+    }
+}
+
+/// The identifier for an endpoint in the (iroh) network.
+///
+/// Each endpoint in iroh has a unique identifier created as a cryptographic key.  This can be
+/// used to globally identify an endpoint.  Since it is also a cryptographic key it is also the
+/// mechanism by which all traffic is always encrypted for a specific endpoint only.
+///
+/// This is equivalent to [`PublicKey`].  By convention we will (or should) use `PublicKey`
+/// as type name when performing cryptographic operations, but use `EndpointId` when referencing
+/// an endpoint.  E.g.:
+///
+/// - `encrypt(key: PublicKey)`
+/// - `send_to(endpoint: EndpointId)`
+#[derive(
+    Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize, derive_more::Debug, Hash,
+)]
+#[debug("EndpointId({})", self)]
+pub struct EndpointId(PublicKey);
+
+impl EndpointId {
+    /// The length of an ed25519 `PublicKey`, in bytes.
+    pub const LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
+
+    /// Get this public key as a byte array.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_bytes()
+    }
+
+    /// Construct a `PublicKey` from a slice of bytes.
+    ///
+    /// # Warning
+    ///
+    /// This will return a [`SignatureError`] if the bytes passed into this method do not represent
+    /// a valid `ed25519_dalek` curve point. Will never fail for bytes return from [`Self::as_bytes`].
+    /// See [`VerifyingKey::from_bytes`] for details.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, KeyParsingError> {
+        Ok(Self(PublicKey::from_bytes(bytes)?))
+    }
+
+    /// Converts this [`EndpointId`] into a [`PublicKey`] suitable for verifying signatures.
+    pub fn to_public_key(self) -> PublicKey {
+        self.0
+    }
+
+    /// Convert to a hex string limited to the first 5 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> impl Display + Copy + 'static {
+        PublicKeyShort(
+            self.0.as_bytes()[0..5]
+                .try_into()
+                .expect("slice with incorrect length"),
+        )
+    }
+
+    /// Creates an [`EndpointId`] by wrapping a [`PublicKey`].
+    pub fn from_public_key(key: PublicKey) -> Self {
+        Self(key)
+    }
+
+    /// Encodes this key in [z-base-32](https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt),
+    /// the encoding used by [pkarr](https://pkarr.org) domain names.
+    pub fn to_z32(&self) -> String {
+        Z_BASE_32.encode(self.as_bytes())
+    }
+
+    /// Parses a key from its [z-base-32](https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt) encoding.
+    pub fn from_z32(s: &str) -> Result<Self, KeyParsingError> {
+        let bytes = Z_BASE_32
+            .decode(s.as_bytes())
+            .map_err(|_| e!(KeyParsingError::FailedToDecodeBase32))?;
+        Ok(Self(PublicKey::try_from(bytes.as_slice())?))
+    }
+}
+
+impl FromStr for EndpointId {
+    type Err = KeyParsingError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(PublicKey::from_str(s)?))
+    }
+}
+
+impl fmt::Display for EndpointId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl AsRef<[u8]> for EndpointId {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
     }
 }
 
@@ -299,6 +383,11 @@ impl SecretKey {
     pub fn public(&self) -> PublicKey {
         let key = self.0.verifying_key().to_bytes();
         PublicKey(CompressedEdwardsY(key))
+    }
+
+    /// Returns the [`EndpointId`] for this secret key, wrapping the [`PublicKey`].
+    pub fn endpoint_id(&self) -> EndpointId {
+        EndpointId(self.public())
     }
 
     /// Generate a new [`SecretKey`] with a randomness generator.
@@ -542,7 +631,7 @@ mod tests {
         );
 
         assert_eq!(
-            PublicKey::from_str(&key.public().to_string()).unwrap(),
+            PublicKey::from_str(&key.endpoint_id().to_string()).unwrap(),
             key.public()
         );
     }

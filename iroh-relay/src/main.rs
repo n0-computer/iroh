@@ -746,7 +746,7 @@ mod tests {
         assert_eq!(config.access, AccessConfig::Everyone);
 
         let mut rng = ChaCha8Rng::seed_from_u64(0);
-        let endpoint_id = SecretKey::from_bytes(&rng.random()).public();
+        let endpoint_id = SecretKey::from_bytes(&rng.random()).endpoint_id();
 
         let config = format!(
             "

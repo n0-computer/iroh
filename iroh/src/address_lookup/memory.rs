@@ -258,7 +258,7 @@ mod tests {
 
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr::from_parts(
-            key.public(),
+            key.endpoint_id(),
             [TransportAddr::Relay("https://example.com".parse()?)],
         );
         let user_data = Some("foobar".parse().unwrap());
@@ -266,7 +266,7 @@ mod tests {
         address_lookup.add_endpoint_info(endpoint_info.clone());
 
         let back = address_lookup
-            .get_endpoint_info(key.public())
+            .get_endpoint_info(key.endpoint_id())
             .context("no addr")?;
 
         assert_eq!(back, endpoint_info);
@@ -274,10 +274,10 @@ mod tests {
         assert_eq!(back.into_endpoint_addr(), addr);
 
         let removed = address_lookup
-            .remove_endpoint_info(key.public())
+            .remove_endpoint_info(key.endpoint_id())
             .context("nothing removed")?;
         assert_eq!(removed, endpoint_info);
-        let res = address_lookup.get_endpoint_info(key.public());
+        let res = address_lookup.get_endpoint_info(key.endpoint_id());
         assert!(res.is_none());
 
         Ok(())
@@ -288,11 +288,11 @@ mod tests {
         let address_lookup = MemoryLookup::with_provenance("foo");
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr::from_parts(
-            key.public(),
+            key.endpoint_id(),
             [TransportAddr::Relay("https://example.com".parse()?)],
         );
         address_lookup.add_endpoint_info(addr);
-        let mut stream = address_lookup.resolve(key.public()).unwrap();
+        let mut stream = address_lookup.resolve(key.endpoint_id()).unwrap();
         let item = stream.next().await.unwrap()?;
         assert_eq!(item.provenance(), "foo");
         assert_eq!(

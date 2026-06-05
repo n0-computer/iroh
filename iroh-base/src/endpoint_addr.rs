@@ -12,7 +12,7 @@ use data_encoding::HEXLOWER;
 use n0_error::stack_error;
 use serde::{Deserialize, Serialize};
 
-use crate::{EndpointId, PublicKey, RelayUrl};
+use crate::{EndpointId, RelayUrl};
 
 /// Network-level addressing information for an iroh endpoint.
 ///
@@ -93,7 +93,7 @@ impl EndpointAddr {
     ///
     /// This still is usable with e.g. an address lookup service to establish a connection,
     /// depending on the situation.
-    pub fn new(id: PublicKey) -> Self {
+    pub fn new(id: EndpointId) -> Self {
         EndpointAddr {
             id,
             addrs: Default::default(),
@@ -101,7 +101,7 @@ impl EndpointAddr {
     }
 
     /// Creates a new [`EndpointAddr`] from its parts.
-    pub fn from_parts(id: PublicKey, addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
+    pub fn from_parts(id: EndpointId, addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
         Self {
             id,
             addrs: addrs.into_iter().collect(),

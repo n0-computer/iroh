@@ -1506,7 +1506,7 @@ mod tests {
             };
         });
         let supervisor_task = AbortOnDropHandle::new(supervisor_task);
-        (secret_key.public(), supervisor_task)
+        (secret_key.endpoint_id(), supervisor_task)
     }
 
     /// Sends a message to the echo endpoint, receives the response.

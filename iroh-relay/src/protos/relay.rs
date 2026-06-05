@@ -606,7 +606,7 @@ mod tests {
                 20 69 73 20 64 6f 67 2e",
             ),
             (
-                RelayToClientMsg::EndpointGone(client_key.public()).write_to(Vec::new()),
+                RelayToClientMsg::EndpointGone(client_key.endpoint_id()).write_to(Vec::new()),
                 "08 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
                 a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
                 61",
@@ -621,7 +621,7 @@ mod tests {
             ),
             (
                 RelayToClientMsg::Datagrams {
-                    remote_endpoint_id: client_key.public(),
+                    remote_endpoint_id: client_key.endpoint_id(),
                     datagrams: Datagrams {
                         ecn: Some(noq::EcnCodepoint::Ce),
                         segment_size: NonZeroU16::new(6),
@@ -644,7 +644,7 @@ mod tests {
             ),
             (
                 RelayToClientMsg::Datagrams {
-                    remote_endpoint_id: client_key.public(),
+                    remote_endpoint_id: client_key.endpoint_id(),
                     datagrams: Datagrams {
                         ecn: Some(noq::EcnCodepoint::Ce),
                         segment_size: None,
@@ -695,7 +695,7 @@ mod tests {
             ),
             (
                 ClientToRelayMsg::Datagrams {
-                    dst_endpoint_id: client_key.public(),
+                    dst_endpoint_id: client_key.endpoint_id(),
                     datagrams: Datagrams {
                         ecn: Some(noq::EcnCodepoint::Ce),
                         segment_size: NonZeroU16::new(6),
@@ -718,7 +718,7 @@ mod tests {
             ),
             (
                 ClientToRelayMsg::Datagrams {
-                    dst_endpoint_id: client_key.public(),
+                    dst_endpoint_id: client_key.endpoint_id(),
                     datagrams: Datagrams {
                         ecn: Some(noq::EcnCodepoint::Ce),
                         segment_size: None,
@@ -755,7 +755,7 @@ mod proptests {
     }
 
     fn key() -> impl Strategy<Value = EndpointId> {
-        secret_key().prop_map(|key| key.public())
+        secret_key().prop_map(|key| key.endpoint_id())
     }
 
     fn ecn() -> impl Strategy<Value = Option<noq_proto::EcnCodepoint>> {

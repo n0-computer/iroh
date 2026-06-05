@@ -64,7 +64,7 @@ impl IrohSecretKey {
     fn spki_public_key(&self) -> webpki_types::SubjectPublicKeyInfoDer<'static> {
         rustls::sign::public_key_to_spki(
             &webpki_types::alg_id::ED25519,
-            self.key.public().as_bytes(),
+            self.key.endpoint_id().as_bytes(),
         )
     }
 }

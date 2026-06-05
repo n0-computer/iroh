@@ -230,7 +230,7 @@ impl RemoteMap {
     /// Removes an actor sender if `leftover_msgs` is empty, or restarts the actor otherwise.
     fn remove_or_restart_actor(
         &mut self,
-        remote_id: iroh_base::PublicKey,
+        remote_id: EndpointId,
         leftover_msgs: Vec<RemoteStateMessage>,
     ) -> bool {
         if leftover_msgs.is_empty() {
@@ -413,7 +413,7 @@ mod tests {
     #[traced_test]
     async fn poll_cleanup_preserves_restarted_sender() {
         let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
-        let eid = SecretKey::from_bytes(&[0u8; 32]).public();
+        let eid = SecretKey::from_bytes(&[0u8; 32]).endpoint_id();
 
         // Non-empty addrs so each `resolve_remote` resolves its tx
         // immediately and does not park in `paths.pending_resolve_requests`;

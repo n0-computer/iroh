@@ -44,7 +44,7 @@ mod tests {
     fn test_roundtrip() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let key = SecretKey::from_bytes(&rng.random());
-        let endpoint_id = key.public();
+        let endpoint_id = key.endpoint_id();
         println!("{}", super::encode(endpoint_id));
         assert_eq!(
             Some(endpoint_id),
@@ -56,7 +56,7 @@ mod tests {
     fn test_snapshot() {
         let key = SecretKey::from_bytes(&[0; 32]);
         assert_eq!(
-            super::encode(key.public()),
+            super::encode(key.endpoint_id()),
             "7dl2ff6emqi2qol3l382krodedij45bn3nh479hqo14a32qpr8kg.iroh.invalid",
         );
     }

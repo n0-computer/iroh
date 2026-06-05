@@ -979,7 +979,7 @@ mod tests {
 
         // One connect to an unknown id; the socket actor will `.await` its
         // hanging `ResolveRemote` forever.
-        let offline_id = SecretKey::from_bytes(&rng.random()).public();
+        let offline_id = SecretKey::from_bytes(&rng.random()).endpoint_id();
         let _offline_connect = AbortOnDropHandle::new(tokio::spawn({
             let ep = ep_client.clone();
             async move {
@@ -1017,7 +1017,7 @@ mod tests {
             .expect("endpoint is still open")
             .add(HangingAddressLookup);
 
-        let offline_id = SecretKey::from_bytes(&rng.random()).public();
+        let offline_id = SecretKey::from_bytes(&rng.random()).endpoint_id();
         let connect_task = tokio::spawn(async move { ep.connect(offline_id, TEST_ALPN).await });
 
         // `iroh::socket::remote_map::remote_state::ACTOR_MAX_IDLE_TIMEOUT`
@@ -1269,7 +1269,7 @@ mod test_dns_pkarr {
             .context("Running DNS server")?;
 
         let secret_key = SecretKey::from_bytes(&rng.random());
-        let endpoint_info = EndpointInfo::new(secret_key.public())
+        let endpoint_info = EndpointInfo::new(secret_key.endpoint_id())
             .with_relay_url("https://relay.example".parse().unwrap());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state
@@ -1297,7 +1297,7 @@ mod test_dns_pkarr {
             .context("DnsPkarrServer")?;
 
         let secret_key = SecretKey::from_bytes(&rng.random());
-        let endpoint_id = secret_key.public();
+        let endpoint_id = secret_key.endpoint_id();
 
         let relay_url = Some(TransportAddr::Relay(
             "https://relay.example".parse().unwrap(),

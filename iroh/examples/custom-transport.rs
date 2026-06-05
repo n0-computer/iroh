@@ -136,10 +136,10 @@ async fn main() -> Result<()> {
     let s2 = SecretKey::from([1u8; 32]);
 
     // Create transports and configure builders with transport + address lookup
-    let t1 = network.create_transport(s1.public())?;
+    let t1 = network.create_transport(s1.endpoint_id())?;
     let ep1 = args.configure(s1.clone(), t1).bind().await?;
 
-    let t2 = network.create_transport(s2.public())?;
+    let t2 = network.create_transport(s2.endpoint_id())?;
     let ep2 = args.configure(s2.clone(), t2).bind().await?;
     println!("ep2 addr: {:?}", ep2.addr());
     let server = Router::builder(ep2).accept(ALPN, Echo).spawn();
@@ -147,8 +147,8 @@ async fn main() -> Result<()> {
     // Connect using just the endpoint ID - discovery will resolve addresses
     // Note: The test network's discovery is very fast (in-memory), so the custom
     // transport address is available immediately and wins before IP discovery runs.
-    println!("Connecting to: {:?}", s2.public());
-    let conn = ep1.connect(s2.public(), ALPN).await?;
+    println!("Connecting to: {:?}", s2.endpoint_id());
+    let conn = ep1.connect(s2.endpoint_id(), ALPN).await?;
 
     // Helper to print paths and verify test transport is selected
     let verify_test_transport = |label: &str| {

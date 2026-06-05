@@ -1016,7 +1016,7 @@ impl EndpointInner {
         let local_addrs_watch = transports.local_addrs_watch();
         let transports_network_change = transports.create_network_change_sender();
 
-        let runtime = Arc::new(Runtime::new(secret_key.public()));
+        let runtime = Arc::new(Runtime::new(secret_key.endpoint_id()));
 
         let endpoint = noq::Endpoint::new_with_abstract_socket(
             endpoint_config,
@@ -2550,7 +2550,7 @@ mod tests {
     /// connections using [`ALPN`].
     ///
     /// Use [`socket_connect`] to establish connections.
-    #[instrument(name = "ep", skip_all, fields(me = %secret_key.public().fmt_short()))]
+    #[instrument(name = "ep", skip_all, fields(me = %secret_key.endpoint_id().fmt_short()))]
     async fn socket_ep(secret_key: SecretKey) -> Result<EndpointInner> {
         let crypto_provider = default_provider();
         let tls_config = tls::TlsConfig::new(
@@ -2596,7 +2596,7 @@ mod tests {
     /// Connects from `ep` returned by [`socket_ep`] to the `endpoint_id`.
     ///
     /// Uses [`ALPN`], `endpoint_id`, must match `addr`.
-    #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
+    #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.endpoint_id().fmt_short()))]
     async fn socket_connect(
         ep: noq::Endpoint,
         ep_secret_key: SecretKey,
@@ -2623,7 +2623,7 @@ mod tests {
     /// This version allows customising the transport config.
     ///
     /// Uses [`ALPN`], `endpoint_id`, must match `addr`.
-    #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
+    #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.endpoint_id().fmt_short()))]
     async fn socket_connect_with_transport_config(
         ep: noq::Endpoint,
         ep_secret_key: SecretKey,
@@ -2659,9 +2659,9 @@ mod tests {
 
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
-        let endpoint_id_2 = secret_key_2.public();
+        let endpoint_id_2 = secret_key_2.endpoint_id();
         let secret_key_missing_endpoint = SecretKey::from_bytes(&[255u8; 32]);
-        let endpoint_id_missing_endpoint = secret_key_missing_endpoint.public();
+        let endpoint_id_missing_endpoint = secret_key_missing_endpoint.endpoint_id();
 
         let sock_1 = socket_ep(secret_key_1.clone()).await.unwrap();
 
@@ -2750,7 +2750,7 @@ mod tests {
 
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
-        let endpoint_id_2 = secret_key_2.public();
+        let endpoint_id_2 = secret_key_2.endpoint_id();
 
         let sock_1 = socket_ep(secret_key_1.clone()).await.unwrap();
         let sock_2 = socket_ep(secret_key_2.clone()).await.unwrap();

@@ -79,7 +79,7 @@ mod tests {
 
         // Build a DNS packet with various record types using simple_dns directly
         let secret_key = SecretKey::generate();
-        let origin = secret_key.public().to_z32();
+        let origin = secret_key.endpoint_id().to_z32();
 
         let mut packet = Packet::new_reply(0);
         // record at root
@@ -144,7 +144,7 @@ mod tests {
         };
         let signature = secret_key.sign(&signable);
         let mut raw = Vec::with_capacity(104 + encoded.len());
-        raw.extend_from_slice(secret_key.public().as_bytes());
+        raw.extend_from_slice(secret_key.endpoint_id().as_bytes());
         raw.extend_from_slice(&signature.to_bytes());
         raw.extend_from_slice(&timestamp.to_be_bytes());
         raw.extend_from_slice(&encoded);
@@ -219,7 +219,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let secret_key = SecretKey::from_bytes(&rng.random());
-        let endpoint_id = secret_key.public();
+        let endpoint_id = secret_key.endpoint_id();
         let tls_config = CaRootsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
@@ -296,7 +296,7 @@ mod tests {
 
         // create a signed packet
         let secret_key = SecretKey::from_bytes(&rng.random());
-        let endpoint_id = secret_key.public();
+        let endpoint_id = secret_key.endpoint_id();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
@@ -306,7 +306,7 @@ mod tests {
         dht_builder.bootstrap(&bootstrap);
         let dht = dht_builder.build().anyerr()?;
         let item = MutableItem::new_signed_unchecked(
-            *secret_key.public().as_bytes(),
+            *secret_key.endpoint_id().as_bytes(),
             signed_packet.signature().to_bytes(),
             signed_packet.encoded_packet(),
             signed_packet.timestamp().as_micros() as i64,
@@ -335,7 +335,7 @@ mod tests {
 
     fn random_signed_packet<R: CryptoRng + ?Sized>(rng: &mut R) -> Result<SignedPacket> {
         let secret_key = SecretKey::from_bytes(&rng.random());
-        let endpoint_id = secret_key.public();
+        let endpoint_id = secret_key.endpoint_id();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;

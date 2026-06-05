@@ -46,7 +46,7 @@ impl SignedPacket {
         values: impl IntoIterator<Item = impl AsRef<str>>,
         ttl: u32,
     ) -> Result<SignedPacket, SignedPacketBuildError> {
-        let public_key = secret_key.public();
+        let public_key = secret_key.endpoint_id();
         let origin = public_key.to_z32();
         let normalized = normalize_name(&origin, name.to_string());
         let dns_name = Name::new_unchecked(&normalized).into_owned();
