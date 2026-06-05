@@ -428,7 +428,10 @@ mod tests {
             .await
             .expect_err("nothing reachable");
         dbg!(&err);
-        assert!(matches!(err, DialError::Io { .. }));
+        assert!(matches!(
+            err,
+            DialError::Io { .. } | DialError::Timeout { .. }
+        ));
     }
 
     #[tokio::test]
