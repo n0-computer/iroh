@@ -1178,7 +1178,7 @@
 <a href=#1178 id=1178 data-nosnippet>1178</a>            handshake,
 <a href=#1179 id=1179 data-nosnippet>1179</a>            relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 <a href=#1180 id=1180 data-nosnippet>1180</a>        },
-<a href=#1181 id=1181 data-nosnippet>1181</a>        test_utils::StaticResolver,
+<a href=#1181 id=1181 data-nosnippet>1181</a>        test_utils::static_resolver,
 <a href=#1182 id=1182 data-nosnippet>1182</a>        tls::{<span class="self">self</span>, CaRootsConfig, default_provider},
 <a href=#1183 id=1183 data-nosnippet>1183</a>    };
 <a href=#1184 id=1184 data-nosnippet>1184</a>
@@ -1586,7 +1586,7 @@
 <a href=#1586 id=1586 data-nosnippet>1586</a>        <span class="kw">let </span>addr = server.http_addr().expect(<span class="string">"http relay address"</span>);
 <a href=#1587 id=1587 data-nosnippet>1587</a>
 <a href=#1588 id=1588 data-nosnippet>1588</a>        <span class="comment">// Resolves to both the real IPv4 address and an unreachable IPv6 address.
-<a href=#1589 id=1589 data-nosnippet>1589</a>        </span><span class="kw">let </span>resolver = StaticResolver::new(
+<a href=#1589 id=1589 data-nosnippet>1589</a>        </span><span class="kw">let </span>resolver = static_resolver(
 <a href=#1590 id=1590 data-nosnippet>1590</a>            <span class="macro">vec!</span>[Ipv4Addr::LOCALHOST],
 <a href=#1591 id=1591 data-nosnippet>1591</a>            <span class="macro">vec!</span>[<span class="string">"2001:db8::dead"</span>.parse().expect(<span class="string">"valid IPv6"</span>)],
 <a href=#1592 id=1592 data-nosnippet>1592</a>        );

@@ -567,15 +567,15 @@
 <a href=#567 id=567 data-nosnippet>567</a>                    }
 <a href=#568 id=568 data-nosnippet>568</a>                }
 <a href=#569 id=569 data-nosnippet>569</a>                <span class="macro">tokio::select!</span> {
-<a href=#570 id=570 data-nosnippet>570</a>                    res = <span class="kw-2">&amp;mut </span>state.v4_fut =&gt; {
-<a href=#571 id=571 data-nosnippet>571</a>                        state.v4_fut = MaybeFuture::None;
-<a href=#572 id=572 data-nosnippet>572</a>                        <span class="kw">match </span>res {
-<a href=#573 id=573 data-nosnippet>573</a>                            <span class="prelude-val">Ok</span>(items) =&gt; state.queue.extend(items.map(IpAddr::V4)),
-<a href=#574 id=574 data-nosnippet>574</a>                            <span class="prelude-val">Err</span>(err) =&gt; state.v4_err = <span class="prelude-val">Some</span>(err),
-<a href=#575 id=575 data-nosnippet>575</a>                        }
-<a href=#576 id=576 data-nosnippet>576</a>                    }
-<a href=#577 id=577 data-nosnippet>577</a>                    res = <span class="kw-2">&amp;mut </span>state.v6_fut =&gt; {
-<a href=#578 id=578 data-nosnippet>578</a>                        state.v6_fut = MaybeFuture::None;
+<a href=#570 id=570 data-nosnippet>570</a>                    <span class="comment">// We don't actually care about polling order, but `biased` saves the randomization cost.
+<a href=#571 id=571 data-nosnippet>571</a>                    </span>biased;
+<a href=#572 id=572 data-nosnippet>572</a>                    res = <span class="kw-2">&amp;mut </span>state.v4_fut =&gt; {
+<a href=#573 id=573 data-nosnippet>573</a>                        <span class="kw">match </span>res {
+<a href=#574 id=574 data-nosnippet>574</a>                            <span class="prelude-val">Ok</span>(items) =&gt; state.queue.extend(items.map(IpAddr::V4)),
+<a href=#575 id=575 data-nosnippet>575</a>                            <span class="prelude-val">Err</span>(err) =&gt; state.v4_err = <span class="prelude-val">Some</span>(err),
+<a href=#576 id=576 data-nosnippet>576</a>                        }
+<a href=#577 id=577 data-nosnippet>577</a>                    }
+<a href=#578 id=578 data-nosnippet>578</a>                    res = <span class="kw-2">&amp;mut </span>state.v6_fut =&gt; {
 <a href=#579 id=579 data-nosnippet>579</a>                        <span class="kw">match </span>res {
 <a href=#580 id=580 data-nosnippet>580</a>                            <span class="prelude-val">Ok</span>(items) =&gt; state.queue.extend(items.map(IpAddr::V6)),
 <a href=#581 id=581 data-nosnippet>581</a>                            <span class="prelude-val">Err</span>(err) =&gt; state.v6_err = <span class="prelude-val">Some</span>(err),

@@ -238,7 +238,7 @@
 <a href=#238 id=238 data-nosnippet>238</a>///   family while only the other family has resolved, and starts immediately
 <a href=#239 id=239 data-nosnippet>239</a>///   once the preferred family resolves;
 <a href=#240 id=240 data-nosnippet>240</a>/// - each later attempt starts [`CONNECTION_ATTEMPT_DELAY`] after the previous
-<a href=#241 id=241 data-nosnippet>241</a>///   one, or as soon as an attempt fails (fail fast), whichever comes first;
+<a href=#241 id=241 data-nosnippet>241</a>///   one, or as soon as the last in-flight attempt fails, whichever comes first;
 <a href=#242 id=242 data-nosnippet>242</a>/// - every attempt is itself capped at [`DIAL_ENDPOINT_TIMEOUT`].
 <a href=#243 id=243 data-nosnippet>243</a>///
 <a href=#244 id=244 data-nosnippet>244</a>/// The first connection to succeed is returned; the rest are dropped, which
@@ -253,8 +253,8 @@
 <a href=#253 id=253 data-nosnippet>253</a>    <span class="comment">// Stream of DNS results, or `None` once the resolver has finished
 <a href=#254 id=254 data-nosnippet>254</a>    </span><span class="kw">let </span>resolve_stream = dns_resolver.resolve_host_all(url, DNS_TIMEOUT);
 <a href=#255 id=255 data-nosnippet>255</a>    <span class="macro">tokio::pin!</span>(resolve_stream);
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span><span class="kw-2">mut </span>resolve_stream = <span class="prelude-val">Some</span>(resolve_stream);
-<a href=#257 id=257 data-nosnippet>257</a>
+<a href=#256 id=256 data-nosnippet>256</a>    <span class="comment">// Set to `true` once `resolve_stream` yielded `None`, to not poll it again after completion.
+<a href=#257 id=257 data-nosnippet>257</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>resolve_stream_finished = <span class="bool-val">false</span>;
 <a href=#258 id=258 data-nosnippet>258</a>    <span class="comment">// Addresses resolved but not yet tried, in arrival order.
 <a href=#259 id=259 data-nosnippet>259</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>queue: VecDeque&lt;IpAddr&gt; = VecDeque::new();
 <a href=#260 id=260 data-nosnippet>260</a>    <span class="comment">// Family to dial next, toggled to interleave.
@@ -265,181 +265,186 @@
 <a href=#265 id=265 data-nosnippet>265</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>started = <span class="bool-val">false</span>;
 <a href=#266 id=266 data-nosnippet>266</a>    <span class="comment">// Last error that occurred, returned if no connection attempt succeeded.
 <a href=#267 id=267 data-nosnippet>267</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>last_err: <span class="prelude-ty">Option</span>&lt;DialError&gt; = <span class="prelude-val">None</span>;
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="comment">// Delay after which to start the next connection attempt, or `None` for immediately.
-<a href=#269 id=269 data-nosnippet>269</a>    </span><span class="kw">let </span>next_dial_delay = MaybeFuture::None;
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="macro">tokio::pin!</span>(next_dial_delay);
+<a href=#268 id=268 data-nosnippet>268</a>    <span class="comment">// Timer after which to start the next connection attempt, or `None` for immediately.
+<a href=#269 id=269 data-nosnippet>269</a>    </span><span class="kw">let </span>next_dial_delayed_until = MaybeFuture::None;
+<a href=#270 id=270 data-nosnippet>270</a>    <span class="macro">tokio::pin!</span>(next_dial_delayed_until);
 <a href=#271 id=271 data-nosnippet>271</a>
 <a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">loop </span>{
-<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">if </span>resolve_stream.is_none() &amp;&amp; queue.is_empty() &amp;&amp; dials.is_empty() {
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">if </span>resolve_stream_finished &amp;&amp; queue.is_empty() &amp;&amp; dials.is_empty() {
 <a href=#274 id=274 data-nosnippet>274</a>            <span class="comment">// Nothing left to resolve, attempt, or wait on.
 <a href=#275 id=275 data-nosnippet>275</a>            </span><span class="kw">return </span><span class="prelude-val">Err</span>(last_err.unwrap_or_else(|| <span class="macro">e!</span>(DnsError::NoResponse).into()));
 <a href=#276 id=276 data-nosnippet>276</a>        }
 <a href=#277 id=277 data-nosnippet>277</a>
-<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">let </span>next_addr = <span class="kw">match </span>resolve_stream.as_mut() {
-<a href=#279 id=279 data-nosnippet>279</a>            <span class="prelude-val">Some</span>(stream) =&gt; MaybeFuture::Some(stream.next()),
-<a href=#280 id=280 data-nosnippet>280</a>            <span class="prelude-val">None </span>=&gt; MaybeFuture::None,
-<a href=#281 id=281 data-nosnippet>281</a>        };
-<a href=#282 id=282 data-nosnippet>282</a>
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="macro">tokio::select!</span> {
-<a href=#284 id=284 data-nosnippet>284</a>            biased;
-<a href=#285 id=285 data-nosnippet>285</a>            <span class="prelude-val">Some</span>(res) = dials.next(), <span class="kw">if </span>!dials.is_empty() =&gt; <span class="kw">match </span>res {
-<a href=#286 id=286 data-nosnippet>286</a>                <span class="prelude-val">Ok</span>(stream) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(stream),
-<a href=#287 id=287 data-nosnippet>287</a>                <span class="prelude-val">Err</span>(err) =&gt; {
-<a href=#288 id=288 data-nosnippet>288</a>                    last_err = <span class="prelude-val">Some</span>(err);
-<a href=#289 id=289 data-nosnippet>289</a>                    <span class="comment">// Fail fast: start the next attempt now rather than waiting it out.
-<a href=#290 id=290 data-nosnippet>290</a>                    </span>next_dial_delay.as_mut().set_none();
-<a href=#291 id=291 data-nosnippet>291</a>                }
-<a href=#292 id=292 data-nosnippet>292</a>            },
-<a href=#293 id=293 data-nosnippet>293</a>            () = <span class="kw-2">&amp;mut </span>next_dial_delay =&gt; {},
-<a href=#294 id=294 data-nosnippet>294</a>            addr = next_addr =&gt; <span class="kw">match </span>addr {
-<a href=#295 id=295 data-nosnippet>295</a>                <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(ip)) =&gt; {
-<a href=#296 id=296 data-nosnippet>296</a>                    queue.push_back(ip);
-<a href=#297 id=297 data-nosnippet>297</a>                    <span class="kw">if </span>!started {
-<a href=#298 id=298 data-nosnippet>298</a>                        <span class="comment">// If no connection attempt has been started, and a non-preferred
-<a href=#299 id=299 data-nosnippet>299</a>                        // address is resolved, delay the connect by `RESOLUTION_DELAY`.
-<a href=#300 id=300 data-nosnippet>300</a>                        // If a preferred address arrives later but before this delay expires,
-<a href=#301 id=301 data-nosnippet>301</a>                        // it will be dialed instead.
-<a href=#302 id=302 data-nosnippet>302</a>                        </span><span class="kw">if </span>prefer_ipv6 == ip.is_ipv6() {
-<a href=#303 id=303 data-nosnippet>303</a>                            next_dial_delay.as_mut().set_none()
-<a href=#304 id=304 data-nosnippet>304</a>                        } <span class="kw">else if </span>next_dial_delay.is_none() {
-<a href=#305 id=305 data-nosnippet>305</a>                            next_dial_delay.as_mut().set_future(time::sleep(RESOLUTION_DELAY));
-<a href=#306 id=306 data-nosnippet>306</a>                        }
-<a href=#307 id=307 data-nosnippet>307</a>                    }
-<a href=#308 id=308 data-nosnippet>308</a>                }
-<a href=#309 id=309 data-nosnippet>309</a>                <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; last_err = <span class="prelude-val">Some</span>(err.into()),
-<a href=#310 id=310 data-nosnippet>310</a>                <span class="prelude-val">None </span>=&gt; {
-<a href=#311 id=311 data-nosnippet>311</a>                    resolve_stream = <span class="prelude-val">None</span>;
-<a href=#312 id=312 data-nosnippet>312</a>                    <span class="kw">if </span>!started {
-<a href=#313 id=313 data-nosnippet>313</a>                        next_dial_delay.as_mut().set_none()
-<a href=#314 id=314 data-nosnippet>314</a>                    }
-<a href=#315 id=315 data-nosnippet>315</a>                }
-<a href=#316 id=316 data-nosnippet>316</a>            },
-<a href=#317 id=317 data-nosnippet>317</a>        }
-<a href=#318 id=318 data-nosnippet>318</a>
-<a href=#319 id=319 data-nosnippet>319</a>        <span class="comment">// The delay has elapsed and an address is waiting: dial the next one
-<a href=#320 id=320 data-nosnippet>320</a>        // (interleaved by family) and arm the Connection Attempt Delay before
-<a href=#321 id=321 data-nosnippet>321</a>        // the one after it.
-<a href=#322 id=322 data-nosnippet>322</a>        </span><span class="kw">if </span>next_dial_delay.as_mut().is_none()
-<a href=#323 id=323 data-nosnippet>323</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(ip) = pop_family(<span class="kw-2">&amp;mut </span>queue, <span class="kw-2">&amp;mut </span>next_prefer_v6)
-<a href=#324 id=324 data-nosnippet>324</a>        {
-<a href=#325 id=325 data-nosnippet>325</a>            <span class="kw">let </span>addr = SocketAddr::new(ip, port);
-<a href=#326 id=326 data-nosnippet>326</a>            dials.push(
-<a href=#327 id=327 data-nosnippet>327</a>                <span class="kw">async move </span>{
-<a href=#328 id=328 data-nosnippet>328</a>                    <span class="macro">trace!</span>(<span class="string">"connecting TCP stream"</span>);
-<a href=#329 id=329 data-nosnippet>329</a>                    <span class="kw">let </span>stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, TcpStream::connect(addr))
-<a href=#330 id=330 data-nosnippet>330</a>                        .<span class="kw">await
-<a href=#331 id=331 data-nosnippet>331</a>                        </span>.map_err(DialError::from)
-<a href=#332 id=332 data-nosnippet>332</a>                        .and_then(|res| res.map_err(DialError::from))
-<a href=#333 id=333 data-nosnippet>333</a>                        .inspect_err(|err| <span class="macro">debug!</span>(<span class="string">"failed to connect: {err:#}"</span>))<span class="question-mark">?</span>;
-<a href=#334 id=334 data-nosnippet>334</a>                    <span class="macro">trace!</span>(<span class="string">"TCP stream connected"</span>);
-<a href=#335 id=335 data-nosnippet>335</a>                    stream.set_nodelay(<span class="bool-val">true</span>)<span class="question-mark">?</span>;
-<a href=#336 id=336 data-nosnippet>336</a>                    <span class="prelude-val">Ok</span>(stream)
-<a href=#337 id=337 data-nosnippet>337</a>                }
-<a href=#338 id=338 data-nosnippet>338</a>                .instrument(<span class="macro">info_span!</span>(<span class="string">"connect"</span>, %addr)),
-<a href=#339 id=339 data-nosnippet>339</a>            );
-<a href=#340 id=340 data-nosnippet>340</a>            started = <span class="bool-val">true</span>;
-<a href=#341 id=341 data-nosnippet>341</a>            next_dial_delay
-<a href=#342 id=342 data-nosnippet>342</a>                .as_mut()
-<a href=#343 id=343 data-nosnippet>343</a>                .set_future(time::sleep(CONNECTION_ATTEMPT_DELAY));
-<a href=#344 id=344 data-nosnippet>344</a>        }
-<a href=#345 id=345 data-nosnippet>345</a>    }
-<a href=#346 id=346 data-nosnippet>346</a>}
-<a href=#347 id=347 data-nosnippet>347</a>
-<a href=#348 id=348 data-nosnippet>348</a><span class="doccomment">/// Removes the next address to attempt, preferring `*next_is_v6`'s family and
-<a href=#349 id=349 data-nosnippet>349</a>/// flipping it so families interleave; falls back to whatever is available.
-<a href=#350 id=350 data-nosnippet>350</a></span><span class="kw">fn </span>pop_family(addrs: <span class="kw-2">&amp;mut </span>VecDeque&lt;IpAddr&gt;, next_is_v6: <span class="kw-2">&amp;mut </span>bool) -&gt; <span class="prelude-ty">Option</span>&lt;IpAddr&gt; {
-<a href=#351 id=351 data-nosnippet>351</a>    <span class="kw">let </span>idx = addrs
-<a href=#352 id=352 data-nosnippet>352</a>        .iter()
-<a href=#353 id=353 data-nosnippet>353</a>        .position(|ip| ip.is_ipv6() == <span class="kw-2">*</span>next_is_v6)
-<a href=#354 id=354 data-nosnippet>354</a>        .unwrap_or(<span class="number">0</span>);
-<a href=#355 id=355 data-nosnippet>355</a>    <span class="kw">let </span>addr = addrs.remove(idx)<span class="question-mark">?</span>;
-<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw-2">*</span>next_is_v6 = !<span class="kw-2">*</span>next_is_v6;
-<a href=#357 id=357 data-nosnippet>357</a>    <span class="prelude-val">Some</span>(addr)
-<a href=#358 id=358 data-nosnippet>358</a>}
-<a href=#359 id=359 data-nosnippet>359</a>
-<a href=#360 id=360 data-nosnippet>360</a><span class="kw">fn </span>url_port(url: <span class="kw-2">&amp;</span>Url) -&gt; <span class="prelude-ty">Option</span>&lt;u16&gt; {
-<a href=#361 id=361 data-nosnippet>361</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = url.port() {
-<a href=#362 id=362 data-nosnippet>362</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(port);
-<a href=#363 id=363 data-nosnippet>363</a>    }
+<a href=#278 id=278 data-nosnippet>278</a>        <span class="comment">// The next dial is due and an address is waiting: dial the next address,
+<a href=#279 id=279 data-nosnippet>279</a>        // interleaved by family, and set the timer for the next attempt.
+<a href=#280 id=280 data-nosnippet>280</a>        </span><span class="kw">if </span>next_dial_delayed_until.is_none()
+<a href=#281 id=281 data-nosnippet>281</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(ip) = pop_family(<span class="kw-2">&amp;mut </span>queue, <span class="kw-2">&amp;mut </span>next_prefer_v6)
+<a href=#282 id=282 data-nosnippet>282</a>        {
+<a href=#283 id=283 data-nosnippet>283</a>            <span class="kw">let </span>addr = SocketAddr::new(ip, port);
+<a href=#284 id=284 data-nosnippet>284</a>            dials.push(
+<a href=#285 id=285 data-nosnippet>285</a>                <span class="kw">async move </span>{
+<a href=#286 id=286 data-nosnippet>286</a>                    <span class="macro">trace!</span>(<span class="string">"connecting TCP stream"</span>);
+<a href=#287 id=287 data-nosnippet>287</a>                    <span class="kw">let </span>stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, TcpStream::connect(addr))
+<a href=#288 id=288 data-nosnippet>288</a>                        .<span class="kw">await
+<a href=#289 id=289 data-nosnippet>289</a>                        </span>.map_err(DialError::from)
+<a href=#290 id=290 data-nosnippet>290</a>                        .and_then(|res| res.map_err(DialError::from))
+<a href=#291 id=291 data-nosnippet>291</a>                        .inspect_err(|err| <span class="macro">debug!</span>(<span class="string">"failed to connect: {err:#}"</span>))<span class="question-mark">?</span>;
+<a href=#292 id=292 data-nosnippet>292</a>                    <span class="macro">trace!</span>(<span class="string">"TCP stream connected"</span>);
+<a href=#293 id=293 data-nosnippet>293</a>                    stream.set_nodelay(<span class="bool-val">true</span>)<span class="question-mark">?</span>;
+<a href=#294 id=294 data-nosnippet>294</a>                    <span class="prelude-val">Ok</span>(stream)
+<a href=#295 id=295 data-nosnippet>295</a>                }
+<a href=#296 id=296 data-nosnippet>296</a>                .instrument(<span class="macro">info_span!</span>(<span class="string">"connect"</span>, %addr)),
+<a href=#297 id=297 data-nosnippet>297</a>            );
+<a href=#298 id=298 data-nosnippet>298</a>            started = <span class="bool-val">true</span>;
+<a href=#299 id=299 data-nosnippet>299</a>            next_dial_delayed_until
+<a href=#300 id=300 data-nosnippet>300</a>                .as_mut()
+<a href=#301 id=301 data-nosnippet>301</a>                .set_future(time::sleep(CONNECTION_ATTEMPT_DELAY));
+<a href=#302 id=302 data-nosnippet>302</a>        }
+<a href=#303 id=303 data-nosnippet>303</a>
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="comment">// All three arms are guarded, but it is guaranteed that at least one arm
+<a href=#305 id=305 data-nosnippet>305</a>        // is enabled, otherwise the check at the top of the loop returns.
+<a href=#306 id=306 data-nosnippet>306</a>        </span><span class="macro">tokio::select!</span> {
+<a href=#307 id=307 data-nosnippet>307</a>            biased;
+<a href=#308 id=308 data-nosnippet>308</a>            <span class="comment">// Yields when a dial attempt completed.
+<a href=#309 id=309 data-nosnippet>309</a>            </span><span class="prelude-val">Some</span>(res) = dials.next(), <span class="kw">if </span>!dials.is_empty() =&gt; <span class="kw">match </span>res {
+<a href=#310 id=310 data-nosnippet>310</a>                <span class="prelude-val">Ok</span>(stream) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(stream),
+<a href=#311 id=311 data-nosnippet>311</a>                <span class="prelude-val">Err</span>(err) =&gt; {
+<a href=#312 id=312 data-nosnippet>312</a>                    last_err = <span class="prelude-val">Some</span>(err);
+<a href=#313 id=313 data-nosnippet>313</a>                    <span class="kw">if </span>dials.is_empty() {
+<a href=#314 id=314 data-nosnippet>314</a>                        <span class="comment">// Fail fast: start the next attempt now rather than waiting it out.
+<a href=#315 id=315 data-nosnippet>315</a>                        </span>next_dial_delayed_until.as_mut().set_none();
+<a href=#316 id=316 data-nosnippet>316</a>                    }
+<a href=#317 id=317 data-nosnippet>317</a>                }
+<a href=#318 id=318 data-nosnippet>318</a>            },
+<a href=#319 id=319 data-nosnippet>319</a>            <span class="comment">// Yields when the next address is resolved.
+<a href=#320 id=320 data-nosnippet>320</a>            </span>addr = resolve_stream.next(), <span class="kw">if </span>!resolve_stream_finished =&gt; {
+<a href=#321 id=321 data-nosnippet>321</a>                <span class="kw">match </span>addr {
+<a href=#322 id=322 data-nosnippet>322</a>                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(ip)) =&gt; {
+<a href=#323 id=323 data-nosnippet>323</a>                        queue.push_back(ip);
+<a href=#324 id=324 data-nosnippet>324</a>                        <span class="kw">if </span>!started {
+<a href=#325 id=325 data-nosnippet>325</a>                            <span class="comment">// If no connection attempt has been started, and a non-preferred
+<a href=#326 id=326 data-nosnippet>326</a>                            // address is resolved, delay the connect by `RESOLUTION_DELAY`.
+<a href=#327 id=327 data-nosnippet>327</a>                            // If a preferred address arrives later but before this delay expires,
+<a href=#328 id=328 data-nosnippet>328</a>                            // it will be dialed instead.
+<a href=#329 id=329 data-nosnippet>329</a>                            </span><span class="kw">if </span>prefer_ipv6 == ip.is_ipv6() {
+<a href=#330 id=330 data-nosnippet>330</a>                                next_dial_delayed_until.as_mut().set_none();
+<a href=#331 id=331 data-nosnippet>331</a>                            } <span class="kw">else if </span>next_dial_delayed_until.is_none() {
+<a href=#332 id=332 data-nosnippet>332</a>                                next_dial_delayed_until.as_mut().set_future(time::sleep(RESOLUTION_DELAY));
+<a href=#333 id=333 data-nosnippet>333</a>                            }
+<a href=#334 id=334 data-nosnippet>334</a>                        }
+<a href=#335 id=335 data-nosnippet>335</a>                    }
+<a href=#336 id=336 data-nosnippet>336</a>                    <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
+<a href=#337 id=337 data-nosnippet>337</a>                        last_err = <span class="prelude-val">Some</span>(err.into());
+<a href=#338 id=338 data-nosnippet>338</a>                    }
+<a href=#339 id=339 data-nosnippet>339</a>                    <span class="prelude-val">None </span>=&gt; {
+<a href=#340 id=340 data-nosnippet>340</a>                        resolve_stream_finished = <span class="bool-val">true</span>;
+<a href=#341 id=341 data-nosnippet>341</a>                        <span class="kw">if </span>!started {
+<a href=#342 id=342 data-nosnippet>342</a>                            next_dial_delayed_until.as_mut().set_none();
+<a href=#343 id=343 data-nosnippet>343</a>                        }
+<a href=#344 id=344 data-nosnippet>344</a>                    }
+<a href=#345 id=345 data-nosnippet>345</a>                }
+<a href=#346 id=346 data-nosnippet>346</a>            }
+<a href=#347 id=347 data-nosnippet>347</a>            <span class="comment">// Yields when the next dial attempt is due, if the timer is set.
+<a href=#348 id=348 data-nosnippet>348</a>            </span>() = <span class="kw-2">&amp;mut </span>next_dial_delayed_until, <span class="kw">if </span>next_dial_delayed_until.is_some() =&gt; {},
+<a href=#349 id=349 data-nosnippet>349</a>        }
+<a href=#350 id=350 data-nosnippet>350</a>    }
+<a href=#351 id=351 data-nosnippet>351</a>}
+<a href=#352 id=352 data-nosnippet>352</a>
+<a href=#353 id=353 data-nosnippet>353</a><span class="doccomment">/// Removes the next address to attempt, preferring `*next_is_v6`'s family and
+<a href=#354 id=354 data-nosnippet>354</a>/// flipping it so families interleave; falls back to whatever is available.
+<a href=#355 id=355 data-nosnippet>355</a></span><span class="kw">fn </span>pop_family(addrs: <span class="kw-2">&amp;mut </span>VecDeque&lt;IpAddr&gt;, next_is_v6: <span class="kw-2">&amp;mut </span>bool) -&gt; <span class="prelude-ty">Option</span>&lt;IpAddr&gt; {
+<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">let </span>idx = addrs
+<a href=#357 id=357 data-nosnippet>357</a>        .iter()
+<a href=#358 id=358 data-nosnippet>358</a>        .position(|ip| ip.is_ipv6() == <span class="kw-2">*</span>next_is_v6)
+<a href=#359 id=359 data-nosnippet>359</a>        .unwrap_or(<span class="number">0</span>);
+<a href=#360 id=360 data-nosnippet>360</a>    <span class="kw">let </span>addr = addrs.remove(idx)<span class="question-mark">?</span>;
+<a href=#361 id=361 data-nosnippet>361</a>    <span class="kw-2">*</span>next_is_v6 = !<span class="kw-2">*</span>next_is_v6;
+<a href=#362 id=362 data-nosnippet>362</a>    <span class="prelude-val">Some</span>(addr)
+<a href=#363 id=363 data-nosnippet>363</a>}
 <a href=#364 id=364 data-nosnippet>364</a>
-<a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">match </span>url.scheme() {
-<a href=#366 id=366 data-nosnippet>366</a>        <span class="string">"http" </span>| <span class="string">"ws" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">80</span>),
-<a href=#367 id=367 data-nosnippet>367</a>        <span class="string">"https" </span>| <span class="string">"wss" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">443</span>),
-<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#369 id=369 data-nosnippet>369</a>    }
-<a href=#370 id=370 data-nosnippet>370</a>}
-<a href=#371 id=371 data-nosnippet>371</a>
-<a href=#372 id=372 data-nosnippet>372</a><span class="attr">#[cfg(test)]
-<a href=#373 id=373 data-nosnippet>373</a></span><span class="kw">mod </span>tests {
-<a href=#374 id=374 data-nosnippet>374</a>    <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr};
-<a href=#375 id=375 data-nosnippet>375</a>
-<a href=#376 id=376 data-nosnippet>376</a>    <span class="kw">use </span>tokio::net::TcpListener;
-<a href=#377 id=377 data-nosnippet>377</a>
-<a href=#378 id=378 data-nosnippet>378</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#379 id=379 data-nosnippet>379</a>    <span class="kw">use </span><span class="kw">crate</span>::test_utils::StaticResolver;
+<a href=#365 id=365 data-nosnippet>365</a><span class="kw">fn </span>url_port(url: <span class="kw-2">&amp;</span>Url) -&gt; <span class="prelude-ty">Option</span>&lt;u16&gt; {
+<a href=#366 id=366 data-nosnippet>366</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = url.port() {
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(port);
+<a href=#368 id=368 data-nosnippet>368</a>    }
+<a href=#369 id=369 data-nosnippet>369</a>
+<a href=#370 id=370 data-nosnippet>370</a>    <span class="kw">match </span>url.scheme() {
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="string">"http" </span>| <span class="string">"ws" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">80</span>),
+<a href=#372 id=372 data-nosnippet>372</a>        <span class="string">"https" </span>| <span class="string">"wss" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">443</span>),
+<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#374 id=374 data-nosnippet>374</a>    }
+<a href=#375 id=375 data-nosnippet>375</a>}
+<a href=#376 id=376 data-nosnippet>376</a>
+<a href=#377 id=377 data-nosnippet>377</a><span class="attr">#[cfg(test)]
+<a href=#378 id=378 data-nosnippet>378</a></span><span class="kw">mod </span>tests {
+<a href=#379 id=379 data-nosnippet>379</a>    <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr};
 <a href=#380 id=380 data-nosnippet>380</a>
-<a href=#381 id=381 data-nosnippet>381</a>    <span class="kw">fn </span>relay_url(port: u16) -&gt; Url {
-<a href=#382 id=382 data-nosnippet>382</a>        <span class="macro">format!</span>(<span class="string">"http://relay.test:{port}"</span>)
-<a href=#383 id=383 data-nosnippet>383</a>            .parse()
-<a href=#384 id=384 data-nosnippet>384</a>            .expect(<span class="string">"valid url"</span>)
-<a href=#385 id=385 data-nosnippet>385</a>    }
-<a href=#386 id=386 data-nosnippet>386</a>
-<a href=#387 id=387 data-nosnippet>387</a>    <span class="doccomment">/// An unreachable IPv4 address (RFC 5737 TEST-NET-1).
-<a href=#388 id=388 data-nosnippet>388</a>    </span><span class="kw">fn </span>dead_v4(n: u8) -&gt; Ipv4Addr {
-<a href=#389 id=389 data-nosnippet>389</a>        Ipv4Addr::new(<span class="number">192</span>, <span class="number">0</span>, <span class="number">2</span>, n)
+<a href=#381 id=381 data-nosnippet>381</a>    <span class="kw">use </span>tokio::net::TcpListener;
+<a href=#382 id=382 data-nosnippet>382</a>
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#384 id=384 data-nosnippet>384</a>    <span class="kw">use </span><span class="kw">crate</span>::test_utils::static_resolver;
+<a href=#385 id=385 data-nosnippet>385</a>
+<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">fn </span>relay_url(port: u16) -&gt; Url {
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="macro">format!</span>(<span class="string">"http://relay.test:{port}"</span>)
+<a href=#388 id=388 data-nosnippet>388</a>            .parse()
+<a href=#389 id=389 data-nosnippet>389</a>            .expect(<span class="string">"valid url"</span>)
 <a href=#390 id=390 data-nosnippet>390</a>    }
 <a href=#391 id=391 data-nosnippet>391</a>
-<a href=#392 id=392 data-nosnippet>392</a>    <span class="doccomment">/// An unreachable IPv6 address (RFC 3849 documentation prefix).
-<a href=#393 id=393 data-nosnippet>393</a>    </span><span class="kw">fn </span>dead_v6(n: u16) -&gt; Ipv6Addr {
-<a href=#394 id=394 data-nosnippet>394</a>        Ipv6Addr::new(<span class="number">0x2001</span>, <span class="number">0xdb8</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, n)
+<a href=#392 id=392 data-nosnippet>392</a>    <span class="doccomment">/// An unreachable IPv4 address (RFC 5737 TEST-NET-1).
+<a href=#393 id=393 data-nosnippet>393</a>    </span><span class="kw">fn </span>dead_v4(n: u8) -&gt; Ipv4Addr {
+<a href=#394 id=394 data-nosnippet>394</a>        Ipv4Addr::new(<span class="number">192</span>, <span class="number">0</span>, <span class="number">2</span>, n)
 <a href=#395 id=395 data-nosnippet>395</a>    }
 <a href=#396 id=396 data-nosnippet>396</a>
-<a href=#397 id=397 data-nosnippet>397</a>    <span class="doccomment">/// Tests that all addresses are tried until one succeeds.
-<a href=#398 id=398 data-nosnippet>398</a>    </span><span class="attr">#[tokio::test]
-<a href=#399 id=399 data-nosnippet>399</a>    </span><span class="kw">async fn </span>tries_addresses_until_one_connects() {
-<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">let </span>listener = TcpListener::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>)).<span class="kw">await</span>.unwrap();
-<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>port = listener.local_addr().unwrap().port();
-<a href=#402 id=402 data-nosnippet>402</a>
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">let </span>addrs = (<span class="number">1</span>..<span class="number">5</span>).map(dead_v4).chain([Ipv4Addr::LOCALHOST]).collect();
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>resolver = StaticResolver::new(addrs, <span class="macro">vec!</span>[]);
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>stream = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(port), <span class="bool-val">false</span>)
-<a href=#406 id=406 data-nosnippet>406</a>            .<span class="kw">await
-<a href=#407 id=407 data-nosnippet>407</a>            </span>.expect(<span class="string">"should skip the invalid addrs and still connect"</span>);
-<a href=#408 id=408 data-nosnippet>408</a>        <span class="macro">assert_eq!</span>(stream.peer_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
-<a href=#409 id=409 data-nosnippet>409</a>    }
-<a href=#410 id=410 data-nosnippet>410</a>
-<a href=#411 id=411 data-nosnippet>411</a>    <span class="doccomment">/// Tests if the preferred family is unreachable the non-preferred family is used.
-<a href=#412 id=412 data-nosnippet>412</a>    </span><span class="attr">#[tokio::test]
-<a href=#413 id=413 data-nosnippet>413</a>    </span><span class="kw">async fn </span>falls_back_from_unreachable_preferred_family() {
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span>listener = TcpListener::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>)).<span class="kw">await</span>.unwrap();
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>port = listener.local_addr().unwrap().port();
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[Ipv4Addr::LOCALHOST], <span class="macro">vec!</span>[dead_v6(<span class="number">1</span>), dead_v6(<span class="number">2</span>)]);
-<a href=#417 id=417 data-nosnippet>417</a>
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>stream = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(port), <span class="bool-val">true</span>)
-<a href=#419 id=419 data-nosnippet>419</a>            .<span class="kw">await
-<a href=#420 id=420 data-nosnippet>420</a>            </span>.expect(<span class="string">"falls back to IPv4"</span>);
-<a href=#421 id=421 data-nosnippet>421</a>        <span class="macro">assert!</span>(stream.peer_addr().unwrap().is_ipv4());
-<a href=#422 id=422 data-nosnippet>422</a>    }
-<a href=#423 id=423 data-nosnippet>423</a>
-<a href=#424 id=424 data-nosnippet>424</a>    <span class="attr">#[tokio::test]
-<a href=#425 id=425 data-nosnippet>425</a>    </span><span class="kw">async fn </span>errors_when_all_addresses_unreachable() {
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[dead_v4(<span class="number">1</span>), dead_v4(<span class="number">2</span>)], <span class="macro">vec!</span>[dead_v6(<span class="number">1</span>)]);
-<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">let </span>err = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(<span class="number">80</span>), <span class="bool-val">true</span>)
-<a href=#428 id=428 data-nosnippet>428</a>            .<span class="kw">await
-<a href=#429 id=429 data-nosnippet>429</a>            </span>.expect_err(<span class="string">"nothing reachable"</span>);
-<a href=#430 id=430 data-nosnippet>430</a>        <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>err);
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#432 id=432 data-nosnippet>432</a>            err,
-<a href=#433 id=433 data-nosnippet>433</a>            DialError::Io { .. } | DialError::Timeout { .. }
-<a href=#434 id=434 data-nosnippet>434</a>        ));
-<a href=#435 id=435 data-nosnippet>435</a>    }
-<a href=#436 id=436 data-nosnippet>436</a>
-<a href=#437 id=437 data-nosnippet>437</a>    <span class="attr">#[tokio::test]
-<a href=#438 id=438 data-nosnippet>438</a>    </span><span class="kw">async fn </span>errors_when_nothing_resolves() {
-<a href=#439 id=439 data-nosnippet>439</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[], <span class="macro">vec!</span>[]);
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="kw">let </span>err = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(<span class="number">80</span>), <span class="bool-val">false</span>)
-<a href=#441 id=441 data-nosnippet>441</a>            .<span class="kw">await
-<a href=#442 id=442 data-nosnippet>442</a>            </span>.expect_err(<span class="string">"no addresses to dial"</span>);
-<a href=#443 id=443 data-nosnippet>443</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(err, DialError::Dns { .. }));
-<a href=#444 id=444 data-nosnippet>444</a>    }
-<a href=#445 id=445 data-nosnippet>445</a>}</code></pre></div></section></main></body></html>
+<a href=#397 id=397 data-nosnippet>397</a>    <span class="doccomment">/// An unreachable IPv6 address (RFC 3849 documentation prefix).
+<a href=#398 id=398 data-nosnippet>398</a>    </span><span class="kw">fn </span>dead_v6(n: u16) -&gt; Ipv6Addr {
+<a href=#399 id=399 data-nosnippet>399</a>        Ipv6Addr::new(<span class="number">0x2001</span>, <span class="number">0xdb8</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, n)
+<a href=#400 id=400 data-nosnippet>400</a>    }
+<a href=#401 id=401 data-nosnippet>401</a>
+<a href=#402 id=402 data-nosnippet>402</a>    <span class="doccomment">/// Tests that all addresses are tried until one succeeds.
+<a href=#403 id=403 data-nosnippet>403</a>    </span><span class="attr">#[tokio::test]
+<a href=#404 id=404 data-nosnippet>404</a>    </span><span class="kw">async fn </span>tries_addresses_until_one_connects() {
+<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>listener = TcpListener::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>)).<span class="kw">await</span>.unwrap();
+<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">let </span>port = listener.local_addr().unwrap().port();
+<a href=#407 id=407 data-nosnippet>407</a>
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>addrs = (<span class="number">1</span>..<span class="number">5</span>).map(dead_v4).chain([Ipv4Addr::LOCALHOST]).collect();
+<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">let </span>resolver = static_resolver(addrs, <span class="macro">vec!</span>[]);
+<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">let </span>stream = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(port), <span class="bool-val">false</span>)
+<a href=#411 id=411 data-nosnippet>411</a>            .<span class="kw">await
+<a href=#412 id=412 data-nosnippet>412</a>            </span>.expect(<span class="string">"should skip the invalid addrs and still connect"</span>);
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="macro">assert_eq!</span>(stream.peer_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
+<a href=#414 id=414 data-nosnippet>414</a>    }
+<a href=#415 id=415 data-nosnippet>415</a>
+<a href=#416 id=416 data-nosnippet>416</a>    <span class="doccomment">/// Tests if the preferred family is unreachable the non-preferred family is used.
+<a href=#417 id=417 data-nosnippet>417</a>    </span><span class="attr">#[tokio::test]
+<a href=#418 id=418 data-nosnippet>418</a>    </span><span class="kw">async fn </span>falls_back_from_unreachable_preferred_family() {
+<a href=#419 id=419 data-nosnippet>419</a>        <span class="kw">let </span>listener = TcpListener::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>)).<span class="kw">await</span>.unwrap();
+<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">let </span>port = listener.local_addr().unwrap().port();
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">let </span>resolver = static_resolver(<span class="macro">vec!</span>[Ipv4Addr::LOCALHOST], <span class="macro">vec!</span>[dead_v6(<span class="number">1</span>), dead_v6(<span class="number">2</span>)]);
+<a href=#422 id=422 data-nosnippet>422</a>
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">let </span>stream = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(port), <span class="bool-val">true</span>)
+<a href=#424 id=424 data-nosnippet>424</a>            .<span class="kw">await
+<a href=#425 id=425 data-nosnippet>425</a>            </span>.expect(<span class="string">"falls back to IPv4"</span>);
+<a href=#426 id=426 data-nosnippet>426</a>        <span class="macro">assert!</span>(stream.peer_addr().unwrap().is_ipv4());
+<a href=#427 id=427 data-nosnippet>427</a>    }
+<a href=#428 id=428 data-nosnippet>428</a>
+<a href=#429 id=429 data-nosnippet>429</a>    <span class="attr">#[tokio::test]
+<a href=#430 id=430 data-nosnippet>430</a>    </span><span class="kw">async fn </span>errors_when_all_addresses_unreachable() {
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="kw">let </span>resolver = static_resolver(<span class="macro">vec!</span>[dead_v4(<span class="number">1</span>), dead_v4(<span class="number">2</span>)], <span class="macro">vec!</span>[dead_v6(<span class="number">1</span>)]);
+<a href=#432 id=432 data-nosnippet>432</a>        <span class="kw">let </span>err = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(<span class="number">80</span>), <span class="bool-val">true</span>)
+<a href=#433 id=433 data-nosnippet>433</a>            .<span class="kw">await
+<a href=#434 id=434 data-nosnippet>434</a>            </span>.expect_err(<span class="string">"nothing reachable"</span>);
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>err);
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#437 id=437 data-nosnippet>437</a>            err,
+<a href=#438 id=438 data-nosnippet>438</a>            DialError::Io { .. } | DialError::Timeout { .. }
+<a href=#439 id=439 data-nosnippet>439</a>        ));
+<a href=#440 id=440 data-nosnippet>440</a>    }
+<a href=#441 id=441 data-nosnippet>441</a>
+<a href=#442 id=442 data-nosnippet>442</a>    <span class="attr">#[tokio::test]
+<a href=#443 id=443 data-nosnippet>443</a>    </span><span class="kw">async fn </span>errors_when_nothing_resolves() {
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="kw">let </span>resolver = static_resolver(<span class="macro">vec!</span>[], <span class="macro">vec!</span>[]);
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">let </span>err = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(<span class="number">80</span>), <span class="bool-val">false</span>)
+<a href=#446 id=446 data-nosnippet>446</a>            .<span class="kw">await
+<a href=#447 id=447 data-nosnippet>447</a>            </span>.expect_err(<span class="string">"no addresses to dial"</span>);
+<a href=#448 id=448 data-nosnippet>448</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(err, DialError::Dns { .. }));
+<a href=#449 id=449 data-nosnippet>449</a>    }
+<a href=#450 id=450 data-nosnippet>450</a>}</code></pre></div></section></main></body></html>
