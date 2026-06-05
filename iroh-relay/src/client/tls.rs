@@ -427,6 +427,7 @@ mod tests {
         let err = dial_happy_eyeballs(&resolver, &relay_url(80), true)
             .await
             .expect_err("nothing reachable");
+        dbg!(&err);
         assert!(matches!(err, DialError::Io { .. }));
     }
 
