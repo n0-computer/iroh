@@ -373,45 +373,11 @@ fn url_port(url: &Url) -> Option<u16> {
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
-    use iroh_dns::dns::{BoxIter, DnsError, DnsResolver, Resolver, TxtRecordData};
-    use n0_future::boxed::BoxFuture;
     use tokio::net::TcpListener;
 
+    use crate::test_utils::StaticResolver;
+
     use super::*;
-
-    /// Resolver that hands out fixed IPv4 and IPv6 addresses for every host.
-    #[derive(Debug, Clone)]
-    struct StaticResolver {
-        v4: Vec<Ipv4Addr>,
-        v6: Vec<Ipv6Addr>,
-    }
-
-    impl Resolver for StaticResolver {
-        fn lookup_ipv4(&self, _host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
-            let addrs: BoxIter<_> = Box::new(self.v4.clone().into_iter());
-            Box::pin(std::future::ready(Ok(addrs)))
-        }
-
-        fn lookup_ipv6(&self, _host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
-            let addrs: BoxIter<_> = Box::new(self.v6.clone().into_iter());
-            Box::pin(std::future::ready(Ok(addrs)))
-        }
-
-        fn lookup_txt(&self, _host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
-            let records: BoxIter<_> = Box::new(std::iter::empty());
-            Box::pin(std::future::ready(Ok(records)))
-        }
-
-        fn clear_cache(&self) {}
-
-        fn reset(&self) -> Box<dyn Resolver> {
-            Box::new(self.clone())
-        }
-    }
-
-    fn resolver(v4: Vec<Ipv4Addr>, v6: Vec<Ipv6Addr>) -> DnsResolver {
-        DnsResolver::custom(StaticResolver { v4, v6 })
-    }
 
     fn relay_url(port: u16) -> Url {
         format!("http://relay.test:{port}")
@@ -419,8 +385,7 @@ mod tests {
             .expect("valid url")
     }
 
-    /// An unreachable IPv4 address (RFC 5737 TEST-NET-1): a connection attempt to
-    /// it never succeeds, modelling a stale or dead record.
+    /// An unreachable IPv4 address (RFC 5737 TEST-NET-1).
     fn dead_v4(n: u8) -> Ipv4Addr {
         Ipv4Addr::new(192, 0, 2, n)
     }
@@ -430,65 +395,28 @@ mod tests {
         Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, n)
     }
 
-    /// Runs the dialer against `relay.test` on `port`. An attempt to an
-    /// unreachable address is capped by [`DIAL_ENDPOINT_TIMEOUT`] internally, so
-    /// the dialer always makes progress; the outer timeout only guards against a
-    /// true hang.
-    async fn dial(
-        resolver: &DnsResolver,
-        port: u16,
-        prefer_ipv6: bool,
-    ) -> Result<TcpStream, DialError> {
-        time::timeout(
-            time::Duration::from_secs(10),
-            dial_happy_eyeballs(resolver, &relay_url(port), prefer_ipv6),
-        )
-        .await
-        .expect("dialer finishes in time")
-    }
-
-    #[tokio::test]
-    async fn connects_to_the_resolved_address() {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        let stream = dial(&resolver(vec![Ipv4Addr::LOCALHOST], vec![]), port, false)
-            .await
-            .expect("connects to the listener");
-        assert_eq!(
-            stream.peer_addr().unwrap(),
-            (Ipv4Addr::LOCALHOST, port).into()
-        );
-    }
-
+    /// Tests that all addresses are tried until one succeeds.
     #[tokio::test]
     async fn tries_addresses_until_one_connects() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        // Vary the number of unreachable addresses preceding the reachable one:
-        // the dialer should skip the dead ones and still connect.
-        for dead in [0u8, 1, 3] {
-            let v4 = (1..=dead)
-                .map(dead_v4)
-                .chain([Ipv4Addr::LOCALHOST])
-                .collect();
-            let stream = dial(&resolver(v4, vec![]), port, false)
-                .await
-                .unwrap_or_else(|err| panic!("connects with {dead} dead addresses: {err:#}"));
-            assert_eq!(stream.peer_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
-        }
+        let addrs = (1..5).map(dead_v4).chain([Ipv4Addr::LOCALHOST]).collect();
+        let resolver = StaticResolver::new(addrs, vec![]);
+        let stream = dial_happy_eyeballs(&resolver, &relay_url(port), false)
+            .await
+            .expect("should skip the invalid addrs and still connect");
+        assert_eq!(stream.peer_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
     }
 
+    /// Tests if the preferred family is unreachable the non-preferred family is used.
     #[tokio::test]
     async fn falls_back_from_unreachable_preferred_family() {
-        // IPv6 is preferred but every IPv6 address is unreachable; the dialer must
-        // interleave across families and fall back to the reachable IPv4 address.
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let resolver = resolver(vec![Ipv4Addr::LOCALHOST], vec![dead_v6(1), dead_v6(2)]);
+        let resolver = StaticResolver::new(vec![Ipv4Addr::LOCALHOST], vec![dead_v6(1), dead_v6(2)]);
 
-        let stream = dial(&resolver, port, true)
+        let stream = dial_happy_eyeballs(&resolver, &relay_url(port), true)
             .await
             .expect("falls back to IPv4");
         assert!(stream.peer_addr().unwrap().is_ipv4());
@@ -496,19 +424,17 @@ mod tests {
 
     #[tokio::test]
     async fn errors_when_all_addresses_unreachable() {
-        let resolver = resolver(vec![dead_v4(1), dead_v4(2)], vec![dead_v6(1)]);
-        let err = dial(&resolver, 8080, true)
+        let resolver = StaticResolver::new(vec![dead_v4(1), dead_v4(2)], vec![dead_v6(1)]);
+        let err = dial_happy_eyeballs(&resolver, &relay_url(80), true)
             .await
             .expect_err("nothing reachable");
-        assert!(matches!(
-            err,
-            DialError::Io { .. } | DialError::Timeout { .. }
-        ));
+        assert!(matches!(err, DialError::Io { .. }));
     }
 
     #[tokio::test]
     async fn errors_when_nothing_resolves() {
-        let err = dial_happy_eyeballs(&resolver(vec![], vec![]), &relay_url(80), false)
+        let resolver = StaticResolver::new(vec![], vec![]);
+        let err = dial_happy_eyeballs(&resolver, &relay_url(80), false)
             .await
             .expect_err("no addresses to dial");
         assert!(matches!(err, DialError::Dns { .. }));
