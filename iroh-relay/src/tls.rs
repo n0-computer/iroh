@@ -118,20 +118,15 @@ impl CaTlsConfig {
     /// # use std::{io, sync::Arc};
     /// # use iroh_relay::tls::CaTlsConfig;
     /// # use rustls::client::WebPkiServerVerifier;
-    /// let root_store = Arc::new(rustls::RootCertStore {
-    ///     roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    /// });
-    /// let ca_tls_config =
-    ///     CaTlsConfig::custom_server_cert_verifier(Arc::new(move |crypto_provider| {
-    ///         let mut root_store = rustls::RootCertStore {
-    ///             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    ///         };
-    ///         let verifier =
-    ///             WebPkiServerVerifier::builder_with_provider(Arc::new(root_store), crypto_provider)
-    ///                 .build()
-    ///                 .map_err(io::Error::other)?;
-    ///         Ok(verifier)
-    ///     }));
+    /// let tls_config = CaTlsConfig::custom_server_cert_verifier(Arc::new(move |crypto_provider| {
+    ///     let root_store = Arc::new(rustls::RootCertStore {
+    ///         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    ///     });
+    ///     let verifier = WebPkiServerVerifier::builder_with_provider(root_store, crypto_provider)
+    ///         .build()
+    ///         .map_err(io::Error::other)?;
+    ///     Ok(verifier)
+    /// }));
     /// ```
     pub fn custom_server_cert_verifier(builder: ServerCertVerifierBuilder) -> Self {
         Self {
