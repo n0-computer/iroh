@@ -17,7 +17,7 @@ missing support in [<code>rustls</code>].</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.custom_roots" class="method"><a class="src rightside" href="../../src/iroh_relay/tls.rs.html#98">Source</a><h4 class="code-header">pub fn <a href="#method.custom_roots" class="fn">custom_roots</a>(
     roots: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/iter/traits/collect/trait.IntoIterator.html" title="trait core::iter::traits::collect::IntoIterator">IntoIterator</a>&lt;Item = CertificateDer&lt;'static&gt;&gt;,
 ) -&gt; <a class="struct" href="struct.CaTlsConfig.html" title="struct iroh::tls::CaTlsConfig">CaTlsConfig</a></h4></section></summary><div class="docblock"><p>Only trusts the explicitly set root certificates.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.custom_server_cert_verifier" class="method"><a class="src rightside" href="../../src/iroh_relay/tls.rs.html#136">Source</a><h4 class="code-header">pub fn <a href="#method.custom_server_cert_verifier" class="fn">custom_server_cert_verifier</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.custom_server_cert_verifier" class="method"><a class="src rightside" href="../../src/iroh_relay/tls.rs.html#131">Source</a><h4 class="code-header">pub fn <a href="#method.custom_server_cert_verifier" class="fn">custom_server_cert_verifier</a>(
     builder: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;dyn <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.Fn.html" title="trait core::ops::function::Fn">Fn</a>(<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;CryptoProvider&gt;) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;dyn ServerCertVerifier&gt;, <a class="struct" href="https://doc.rust-lang.org/nightly/std/io/error/struct.Error.html" title="struct std::io::error::Error">Error</a>&gt; + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a>&gt;,
 ) -&gt; <a class="struct" href="struct.CaTlsConfig.html" title="struct iroh::tls::CaTlsConfig">CaTlsConfig</a></h4></section></summary><div class="docblock"><p>Creates a <a href="struct.CaTlsConfig.html" title="struct iroh::tls::CaTlsConfig"><code>CaTlsConfig</code></a> that uses a callback function to create a [<code>ServerCertVerifier</code>].</p>
 <p>This is an advanced feature and you should only use this if none of the other constructor
@@ -27,25 +27,20 @@ being accepted.</p>
 <h6 id="example"><a class="doc-anchor" href="#example">§</a>Example</h6>
 <p>This example implements the behavior of <a href="struct.CaTlsConfig.html#method.embedded" title="associated function iroh::tls::CaTlsConfig::embedded"><code>Self::embedded</code></a> via <a href="struct.CaTlsConfig.html#method.custom_server_cert_verifier" title="associated function iroh::tls::CaTlsConfig::custom_server_cert_verifier"><code>Self::custom_server_cert_verifier</code></a>.</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>root_store = Arc::new(rustls::RootCertStore {
-    roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-});
-<span class="kw">let </span>ca_tls_config =
-    CaTlsConfig::custom_server_cert_verifier(Arc::new(<span class="kw">move </span>|crypto_provider| {
-        <span class="kw">let </span><span class="kw-2">mut </span>root_store = rustls::RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-        };
-        <span class="kw">let </span>verifier =
-            WebPkiServerVerifier::builder_with_provider(Arc::new(root_store), crypto_provider)
-                .build()
-                .map_err(io::Error::other)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(verifier)
-    }));</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.with_extra_roots" class="method"><a class="src rightside" href="../../src/iroh_relay/tls.rs.html#146-149">Source</a><h4 class="code-header">pub fn <a href="#method.with_extra_roots" class="fn">with_extra_roots</a>(
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>tls_config = CaTlsConfig::custom_server_cert_verifier(Arc::new(<span class="kw">move </span>|crypto_provider| {
+    <span class="kw">let </span>root_store = Arc::new(rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    });
+    <span class="kw">let </span>verifier = WebPkiServerVerifier::builder_with_provider(root_store, crypto_provider)
+        .build()
+        .map_err(io::Error::other)<span class="question-mark">?</span>;
+    <span class="prelude-val">Ok</span>(verifier)
+}));</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.with_extra_roots" class="method"><a class="src rightside" href="../../src/iroh_relay/tls.rs.html#141-144">Source</a><h4 class="code-header">pub fn <a href="#method.with_extra_roots" class="fn">with_extra_roots</a>(
     self,
     extra_roots: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/iter/traits/collect/trait.IntoIterator.html" title="trait core::iter::traits::collect::IntoIterator">IntoIterator</a>&lt;Item = CertificateDer&lt;'static&gt;&gt;,
 ) -&gt; <a class="struct" href="struct.CaTlsConfig.html" title="struct iroh::tls::CaTlsConfig">CaTlsConfig</a></h4></section></summary><div class="docblock"><p>Adds additional root certificates to the list of trusted certificates.</p>
 <p>Ignored when using <a href="struct.CaTlsConfig.html#method.custom_server_cert_verifier" title="associated function iroh::tls::CaTlsConfig::custom_server_cert_verifier"><code>Self::custom_server_cert_verifier</code></a>.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.client_config" class="method"><a class="src rightside" href="../../src/iroh_relay/tls.rs.html#155">Source</a><h4 class="code-header">pub fn <a href="#method.client_config" class="fn">client_config</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.client_config" class="method"><a class="src rightside" href="../../src/iroh_relay/tls.rs.html#150">Source</a><h4 class="code-header">pub fn <a href="#method.client_config" class="fn">client_config</a>(
     &amp;self,
     crypto_provider: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;CryptoProvider&gt;,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;ClientConfig, <a class="struct" href="https://doc.rust-lang.org/nightly/std/io/error/struct.Error.html" title="struct std::io::error::Error">Error</a>&gt;</h4></section></summary><div class="docblock"><p>Builds a [<code>ClientConfig</code>] from this config.</p>
