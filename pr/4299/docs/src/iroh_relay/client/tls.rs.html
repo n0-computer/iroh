@@ -428,15 +428,18 @@
 <a href=#428 id=428 data-nosnippet>428</a>            .<span class="kw">await
 <a href=#429 id=429 data-nosnippet>429</a>            </span>.expect_err(<span class="string">"nothing reachable"</span>);
 <a href=#430 id=430 data-nosnippet>430</a>        <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>err);
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(err, DialError::Io { .. }));
-<a href=#432 id=432 data-nosnippet>432</a>    }
-<a href=#433 id=433 data-nosnippet>433</a>
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="attr">#[tokio::test]
-<a href=#435 id=435 data-nosnippet>435</a>    </span><span class="kw">async fn </span>errors_when_nothing_resolves() {
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[], <span class="macro">vec!</span>[]);
-<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">let </span>err = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(<span class="number">80</span>), <span class="bool-val">false</span>)
-<a href=#438 id=438 data-nosnippet>438</a>            .<span class="kw">await
-<a href=#439 id=439 data-nosnippet>439</a>            </span>.expect_err(<span class="string">"no addresses to dial"</span>);
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(err, DialError::Dns { .. }));
-<a href=#441 id=441 data-nosnippet>441</a>    }
-<a href=#442 id=442 data-nosnippet>442</a>}</code></pre></div></section></main></body></html>
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#432 id=432 data-nosnippet>432</a>            err,
+<a href=#433 id=433 data-nosnippet>433</a>            DialError::Io { .. } | DialError::Timeout { .. }
+<a href=#434 id=434 data-nosnippet>434</a>        ));
+<a href=#435 id=435 data-nosnippet>435</a>    }
+<a href=#436 id=436 data-nosnippet>436</a>
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="attr">#[tokio::test]
+<a href=#438 id=438 data-nosnippet>438</a>    </span><span class="kw">async fn </span>errors_when_nothing_resolves() {
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="kw">let </span>resolver = StaticResolver::new(<span class="macro">vec!</span>[], <span class="macro">vec!</span>[]);
+<a href=#440 id=440 data-nosnippet>440</a>        <span class="kw">let </span>err = dial_happy_eyeballs(<span class="kw-2">&amp;</span>resolver, <span class="kw-2">&amp;</span>relay_url(<span class="number">80</span>), <span class="bool-val">false</span>)
+<a href=#441 id=441 data-nosnippet>441</a>            .<span class="kw">await
+<a href=#442 id=442 data-nosnippet>442</a>            </span>.expect_err(<span class="string">"no addresses to dial"</span>);
+<a href=#443 id=443 data-nosnippet>443</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(err, DialError::Dns { .. }));
+<a href=#444 id=444 data-nosnippet>444</a>    }
+<a href=#445 id=445 data-nosnippet>445</a>}</code></pre></div></section></main></body></html>
