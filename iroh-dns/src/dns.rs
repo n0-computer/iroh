@@ -567,15 +567,15 @@ impl DnsResolver {
                     }
                 }
                 tokio::select! {
+                    // We don't actually care about polling order, but `biased` saves the randomization cost.
+                    biased;
                     res = &mut state.v4_fut => {
-                        state.v4_fut = MaybeFuture::None;
                         match res {
                             Ok(items) => state.queue.extend(items.map(IpAddr::V4)),
                             Err(err) => state.v4_err = Some(err),
                         }
                     }
                     res = &mut state.v6_fut => {
-                        state.v6_fut = MaybeFuture::None;
                         match res {
                             Ok(items) => state.queue.extend(items.map(IpAddr::V6)),
                             Err(err) => state.v6_err = Some(err),
