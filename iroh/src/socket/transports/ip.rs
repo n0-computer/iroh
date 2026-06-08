@@ -11,7 +11,7 @@ use ipnet::{Ipv4Net, Ipv6Net};
 use n0_watcher::Watchable;
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
 use super::{RecvInfo, Transmit};
 use crate::metrics::{EndpointMetrics, SocketMetrics};
@@ -169,20 +169,16 @@ impl IpTransport {
         })?;
         let local_addr = socket.local_addr()?;
         debug!(%addr, %local_addr, "successfully bound");
-        Ok(Self::new(config, Arc::new(socket), metrics.clone()))
-    }
-
-    pub(crate) fn new(config: Config, socket: Arc<UdpSocket>, metrics: Arc<SocketMetrics>) -> Self {
         // Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
-        let local_addr = Watchable::new(socket.local_addr().expect("invalid socket"));
+        let local_addr = Watchable::new(local_addr);
 
-        Self {
+        Ok(Self {
             config,
-            socket,
+            socket: Arc::new(socket),
             local_addr,
             metrics,
-        }
+        })
     }
 
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
@@ -478,10 +474,13 @@ impl IpTransports {
     ) -> Poll<io::Result<usize>> {
         macro_rules! poll_transport {
             ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas, recv_infos)? {
-                    Poll::Pending | Poll::Ready(0) => {}
-                    Poll::Ready(n) => {
+                match $socket.poll_recv(cx, bufs, metas, recv_infos) {
+                    Poll::Pending | Poll::Ready(Ok(0)) => {}
+                    Poll::Ready(Ok(n)) => {
                         return Poll::Ready(Ok(n));
+                    }
+                    Poll::Ready(Err(err)) => {
+                        warn!(socket=%$socket.local_addr.get(), "recv error: {err:#}");
                     }
                 }
             };
