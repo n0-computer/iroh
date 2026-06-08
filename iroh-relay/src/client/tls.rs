@@ -76,7 +76,7 @@ impl MaybeTlsStreamBuilder {
         debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
         if self.use_tls() {
-            debug!("Starting TLS handshake");
+            trace!("Starting TLS handshake");
             let hostname = self
                 .tls_servername()
                 .ok_or_else(|| e!(ConnectError::InvalidTlsServername))?;
@@ -86,10 +86,10 @@ impl MaybeTlsStreamBuilder {
                 .connect(hostname, tcp_stream)
                 .await
                 .map_err(|err| e!(ConnectError::Tls, err))?;
-            debug!("tls_connector connect success");
+            trace!("tls_connector connect success");
             Ok(MaybeTlsStream::Tls(tls_stream))
         } else {
-            debug!("Starting handshake");
+            trace!("Starting handshake");
             Ok(MaybeTlsStream::Raw(tcp_stream))
         }
     }
