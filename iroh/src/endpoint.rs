@@ -236,6 +236,7 @@ impl Builder {
             tls_config,
             transport_config: self.transport_config.clone(),
             token_key,
+            token_store: Arc::new(noq::TokenMemoryCache::default()),
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
