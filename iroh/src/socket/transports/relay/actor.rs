@@ -505,7 +505,7 @@ impl ActiveRelayActor {
         &mut self,
         client: iroh_relay::client::Client,
     ) -> Result<(), RelayConnectionError> {
-        debug!("Actor loop: connected to relay");
+        trace!("Actor loop: connected to relay");
         event!(
             target: "iroh::_events::relay::connected",
             Level::DEBUG,

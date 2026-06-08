@@ -21,7 +21,7 @@ use n0_future::{
     split::{SplitSink, SplitStream, split},
     time,
 };
-use tracing::{Level, debug, event, trace};
+use tracing::{debug, trace};
 use url::Url;
 
 pub use self::conn::{RecvError, SendError};
@@ -362,12 +362,6 @@ impl ClientBuilder {
         )
         .await?;
 
-        event!(
-            target: "iroh::_events::net::relay::connected",
-            Level::DEBUG,
-            url = %self.url,
-        );
-
         trace!("connect done");
 
         Ok(Client {
@@ -439,12 +433,6 @@ impl ClientBuilder {
             protocol_version,
         )
         .await?;
-
-        event!(
-            target: "iroh::_events::net::relay::connected",
-            Level::DEBUG,
-            url = %self.url,
-        );
 
         trace!("connect done");
 

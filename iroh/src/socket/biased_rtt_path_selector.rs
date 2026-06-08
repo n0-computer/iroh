@@ -7,6 +7,7 @@
 use std::{sync::Arc, time::Duration};
 
 use rustc_hash::FxHashMap;
+use tracing::trace;
 
 use super::{
     remote_map::{PathSelection, PathSelectionContext, PathSelectionData, PathSelector},
@@ -142,18 +143,18 @@ impl PathSelector for BiasedRttPathSelector {
         let mut best: Option<(PathSelectionData<'_>, (TransportType, i128))> = None;
         let mut current_key: Option<(TransportType, i128)> = None;
 
-        tracing::debug!("dumping path RTTs");
+        trace!("dumping path RTTs");
         for psd in ctx.paths() {
-            let addr = psd.network_path();
+            let network_path = psd.network_path();
             // Skip paths whose stats can't be read (e.g. closed concurrently with select).
             let Some(stats) = psd.stats() else {
                 continue;
             };
             let rtt = stats.rtt;
-            tracing::debug!(?addr, ?rtt);
-            let key = self.sort_key(addr, rtt);
+            trace!(%network_path, ?rtt);
+            let key = self.sort_key(network_path, rtt);
 
-            if Some(addr) == current && current_key.is_none_or(|c| key < c) {
+            if Some(network_path) == current && current_key.is_none_or(|c| key < c) {
                 current_key = Some(key);
             }
             if best.as_ref().is_none_or(|(_, b)| key < *b) {
