@@ -495,7 +495,7 @@ impl DnsResolver {
     /// have been yielded.
     pub fn resolve_host_all<'a>(
         &'a self,
-        url: &'a Url,
+        url: &Url,
         timeout: Duration,
     ) -> impl Stream<Item = Result<IpAddr, DnsError>> + Send + 'a {
         let host = match url.host() {
