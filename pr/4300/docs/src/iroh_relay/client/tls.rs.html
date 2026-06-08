@@ -76,7 +76,7 @@
 <a href=#76 id=76 data-nosnippet>76</a>        <span class="macro">debug!</span>(server_addr = <span class="question-mark">?</span>tcp_stream.peer_addr(), %local_addr, <span class="string">"TCP stream connected"</span>);
 <a href=#77 id=77 data-nosnippet>77</a>
 <a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">if </span><span class="self">self</span>.use_tls() {
-<a href=#79 id=79 data-nosnippet>79</a>            <span class="macro">debug!</span>(<span class="string">"Starting TLS handshake"</span>);
+<a href=#79 id=79 data-nosnippet>79</a>            <span class="macro">trace!</span>(<span class="string">"Starting TLS handshake"</span>);
 <a href=#80 id=80 data-nosnippet>80</a>            <span class="kw">let </span>hostname = <span class="self">self
 <a href=#81 id=81 data-nosnippet>81</a>                </span>.tls_servername()
 <a href=#82 id=82 data-nosnippet>82</a>                .ok_or_else(|| <span class="macro">e!</span>(ConnectError::InvalidTlsServername))<span class="question-mark">?</span>;
@@ -86,10 +86,10 @@
 <a href=#86 id=86 data-nosnippet>86</a>                .connect(hostname, tcp_stream)
 <a href=#87 id=87 data-nosnippet>87</a>                .<span class="kw">await
 <a href=#88 id=88 data-nosnippet>88</a>                </span>.map_err(|err| <span class="macro">e!</span>(ConnectError::Tls, err))<span class="question-mark">?</span>;
-<a href=#89 id=89 data-nosnippet>89</a>            <span class="macro">debug!</span>(<span class="string">"tls_connector connect success"</span>);
+<a href=#89 id=89 data-nosnippet>89</a>            <span class="macro">trace!</span>(<span class="string">"tls_connector connect success"</span>);
 <a href=#90 id=90 data-nosnippet>90</a>            <span class="prelude-val">Ok</span>(MaybeTlsStream::Tls(tls_stream))
 <a href=#91 id=91 data-nosnippet>91</a>        } <span class="kw">else </span>{
-<a href=#92 id=92 data-nosnippet>92</a>            <span class="macro">debug!</span>(<span class="string">"Starting handshake"</span>);
+<a href=#92 id=92 data-nosnippet>92</a>            <span class="macro">trace!</span>(<span class="string">"Starting handshake"</span>);
 <a href=#93 id=93 data-nosnippet>93</a>            <span class="prelude-val">Ok</span>(MaybeTlsStream::Raw(tcp_stream))
 <a href=#94 id=94 data-nosnippet>94</a>        }
 <a href=#95 id=95 data-nosnippet>95</a>    }

@@ -617,9 +617,9 @@
 <a href=#617 id=617 data-nosnippet>617</a>                    target: <span class="string">"iroh::_events::path::abandoned"</span>,
 <a href=#618 id=618 data-nosnippet>618</a>                    Level::DEBUG,
 <a href=#619 id=619 data-nosnippet>619</a>                    remote = %<span class="self">self</span>.state.endpoint_id.fmt_short(),
-<a href=#620 id=620 data-nosnippet>620</a>                    %network_path,
-<a href=#621 id=621 data-nosnippet>621</a>                    %conn_id,
-<a href=#622 id=622 data-nosnippet>622</a>                    path_id = <span class="question-mark">?</span>id,
+<a href=#620 id=620 data-nosnippet>620</a>                    %conn_id,
+<a href=#621 id=621 data-nosnippet>621</a>                    path_id = %id,
+<a href=#622 id=622 data-nosnippet>622</a>                    %network_path,
 <a href=#623 id=623 data-nosnippet>623</a>                    <span class="question-mark">?</span>reason
 <a href=#624 id=624 data-nosnippet>624</a>                );
 <a href=#625 id=625 data-nosnippet>625</a>
@@ -663,7 +663,7 @@
 <a href=#663 id=663 data-nosnippet>663</a>                Level::DEBUG,
 <a href=#664 id=664 data-nosnippet>664</a>                remote = %<span class="self">self</span>.state.endpoint_id.fmt_short(),
 <a href=#665 id=665 data-nosnippet>665</a>                network_path = %addr,
-<a href=#666 id=666 data-nosnippet>666</a>                prev_network_path = prev_remote.map(|p| <span class="macro">format!</span>(<span class="string">"{p}"</span>)).unwrap_or(<span class="string">"None"</span>.to_string()),
+<a href=#666 id=666 data-nosnippet>666</a>                prev_network_path = %prev_remote.map(|p| <span class="macro">format!</span>(<span class="string">"{p}"</span>)).unwrap_or(<span class="string">"None"</span>.to_string()),
 <a href=#667 id=667 data-nosnippet>667</a>            );
 <a href=#668 id=668 data-nosnippet>668</a>        } <span class="kw">else </span>{
 <a href=#669 id=669 data-nosnippet>669</a>            <span class="macro">trace!</span>(<span class="question-mark">?</span>current_path, <span class="string">"keeping current path"</span>);
@@ -980,9 +980,9 @@
 <a href=#980 id=980 data-nosnippet>980</a>            target: <span class="string">"iroh::_events::path::open"</span>,
 <a href=#981 id=981 data-nosnippet>981</a>            Level::DEBUG,
 <a href=#982 id=982 data-nosnippet>982</a>            remote = %<span class="self">self</span>.endpoint_id.fmt_short(),
-<a href=#983 id=983 data-nosnippet>983</a>            <span class="question-mark">?</span>network_path,
-<a href=#984 id=984 data-nosnippet>984</a>            %conn_id,
-<a href=#985 id=985 data-nosnippet>985</a>            path_id=%path.id(),
+<a href=#983 id=983 data-nosnippet>983</a>            %conn_id,
+<a href=#984 id=984 data-nosnippet>984</a>            path_id=%path.id(),
+<a href=#985 id=985 data-nosnippet>985</a>            %network_path,
 <a href=#986 id=986 data-nosnippet>986</a>        );
 <a href=#987 id=987 data-nosnippet>987</a>        conn_state.add_open_path(network_path.clone(), path.id(), <span class="kw-2">&amp;</span><span class="self">self</span>.metrics);
 <a href=#988 id=988 data-nosnippet>988</a>        <span class="kw">if </span>network_path.is_relay()
@@ -1011,10 +1011,10 @@
 <a href=#1011 id=1011 data-nosnippet>1011</a>                    target: <span class="string">"iroh::_events::path::set_status"</span>,
 <a href=#1012 id=1012 data-nosnippet>1012</a>                    Level::DEBUG,
 <a href=#1013 id=1013 data-nosnippet>1013</a>                    remote = %<span class="self">self</span>.endpoint_id.fmt_short(),
-<a href=#1014 id=1014 data-nosnippet>1014</a>                    path_remote = <span class="question-mark">?</span>network_path,
-<a href=#1015 id=1015 data-nosnippet>1015</a>                    <span class="question-mark">?</span>status,
-<a href=#1016 id=1016 data-nosnippet>1016</a>                    %conn_id,
-<a href=#1017 id=1017 data-nosnippet>1017</a>                    path_id=%path.id(),
+<a href=#1014 id=1014 data-nosnippet>1014</a>                    %conn_id,
+<a href=#1015 id=1015 data-nosnippet>1015</a>                    path_id=%path.id(),
+<a href=#1016 id=1016 data-nosnippet>1016</a>                    %network_path,
+<a href=#1017 id=1017 data-nosnippet>1017</a>                    <span class="question-mark">?</span>status,
 <a href=#1018 id=1018 data-nosnippet>1018</a>                    <span class="question-mark">?</span>prev_status,
 <a href=#1019 id=1019 data-nosnippet>1019</a>                );
 <a href=#1020 id=1020 data-nosnippet>1020</a>            }
@@ -1159,7 +1159,7 @@
 <a href=#1159 id=1159 data-nosnippet>1159</a>    /// but only update to a strong [`noq::Connection`] for brief moments.
 <a href=#1160 id=1160 data-nosnippet>1160</a>    ///
 <a href=#1161 id=1161 data-nosnippet>1161</a>    /// The actor will actively manage paths on the connection and start holepunching as needed.
-<a href=#1162 id=1162 data-nosnippet>1162</a>    </span><span class="attr">#[debug(<span class="string">"AddConnection(..)"</span>)]
+<a href=#1162 id=1162 data-nosnippet>1162</a>    </span><span class="attr">#[debug(<span class="string">"AddConnection({})"</span>, _0.stable_id())]
 <a href=#1163 id=1163 data-nosnippet>1163</a>    </span>AddConnection(noq::Connection, oneshot::Sender&lt;PathStateReceiver&gt;),
 <a href=#1164 id=1164 data-nosnippet>1164</a>    <span class="doccomment">/// Asks if there is any possible path that could be used.
 <a href=#1165 id=1165 data-nosnippet>1165</a>    ///
