@@ -250,7 +250,7 @@
 <a href=#250 id=250 data-nosnippet>250</a>) -&gt; <span class="prelude-ty">Result</span>&lt;TcpStream, DialError&gt; {
 <a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">let </span>port = url_port(url).ok_or_else(|| <span class="macro">e!</span>(DialError::InvalidTargetPort))<span class="question-mark">?</span>;
 <a href=#252 id=252 data-nosnippet>252</a>
-<a href=#253 id=253 data-nosnippet>253</a>    <span class="comment">// Stream of DNS results, or `None` once the resolver has finished
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="comment">// Stream of resolved addresses.
 <a href=#254 id=254 data-nosnippet>254</a>    </span><span class="kw">let </span>resolve_stream = dns_resolver.resolve_host_all(url, DNS_TIMEOUT);
 <a href=#255 id=255 data-nosnippet>255</a>    <span class="macro">tokio::pin!</span>(resolve_stream);
 <a href=#256 id=256 data-nosnippet>256</a>    <span class="comment">// Set to `true` once `resolve_stream` yielded `None`, to not poll it again after completion.
@@ -261,7 +261,7 @@
 <a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>next_prefer_v6 = prefer_ipv6;
 <a href=#262 id=262 data-nosnippet>262</a>    <span class="comment">// In-progress connection attempts.
 <a href=#263 id=263 data-nosnippet>263</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>dials = FuturesUnordered::new();
-<a href=#264 id=264 data-nosnippet>264</a>    <span class="comment">// Whether the first attempt has been scheduled yet.
+<a href=#264 id=264 data-nosnippet>264</a>    <span class="comment">// Whether the first connection attempt has been started yet.
 <a href=#265 id=265 data-nosnippet>265</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>started = <span class="bool-val">false</span>;
 <a href=#266 id=266 data-nosnippet>266</a>    <span class="comment">// Last error that occurred, returned if no connection attempt succeeded.
 <a href=#267 id=267 data-nosnippet>267</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>last_err: <span class="prelude-ty">Option</span>&lt;DialError&gt; = <span class="prelude-val">None</span>;
