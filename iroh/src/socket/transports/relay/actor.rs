@@ -46,7 +46,7 @@ use iroh_relay::{
 };
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
-    FuturesUnorderedBounded, SinkExt, StreamExt,
+    FuturesUnorderedBounded, MaybeFuture, SinkExt, StreamExt,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
 };
@@ -59,9 +59,7 @@ use url::Url;
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-use crate::{
-    endpoint::RelayStatus, net_report::Report, socket::Metrics as SocketMetrics, util::MaybeFuture,
-};
+use crate::{endpoint::RelayStatus, net_report::Report, socket::Metrics as SocketMetrics};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -1019,7 +1017,7 @@ impl RelayActor {
     ) {
         // When this future is present, it is sending pending datagrams to an
         // ActiveRelayActor.  We can not process further datagrams during this time.
-        let mut datagram_send_fut = std::pin::pin!(MaybeFuture::none());
+        let mut datagram_send_fut = std::pin::pin!(MaybeFuture::None);
 
         loop {
             tokio::select! {
