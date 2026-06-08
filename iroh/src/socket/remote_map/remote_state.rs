@@ -9,7 +9,7 @@ use std::{
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_error::StackResultExt;
 use n0_future::{
-    FuturesUnordered, MergeUnbounded, Stream, StreamExt,
+    FuturesUnordered, MaybeFuture, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
     task::JoinSet,
     time::{self, Duration, Instant},
@@ -38,7 +38,6 @@ use crate::{
         remote_map::remote_state::path_watcher::PathStateSender,
         transports::{self, OwnedTransmit, TransportsSender},
     },
-    util::MaybeFuture,
 };
 
 mod path_state;
