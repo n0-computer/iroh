@@ -701,6 +701,12 @@ impl Builder {
         self
     }
 
+    /// Renamed to [`Builder::ca_tls_config`].
+    #[deprecated(since = "1.0.0", note = "Renamed to `ca_tls_config`")]
+    pub fn ca_roots_config(self, ca_roots_config: CaTlsConfig) -> Self {
+        self.ca_tls_config(ca_roots_config)
+    }
+
     /// Enables saving the TLS pre-master key for connections.
     ///
     /// This key should normally remain secret but can be useful to debug networking issues

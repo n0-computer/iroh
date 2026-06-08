@@ -24,6 +24,10 @@ pub struct CaTlsConfig {
     extra_roots: Vec<CertificateDer<'static>>,
 }
 
+/// Renamed to [`CaTlsConfig`].
+#[deprecated(since = "1.0.0", note = "Renamed to `CaTlsConfig`")]
+pub type CaRootsConfig = CaTlsConfig;
+
 #[derive(derive_more::Debug, Clone)]
 enum Mode {
     /// Use a compiled-in copy of the root certificates trusted by Mozilla.
@@ -100,6 +104,12 @@ impl CaTlsConfig {
             mode: Mode::ExtraRootsOnly,
             extra_roots: roots.into_iter().collect(),
         }
+    }
+
+    /// Renamed to [`Self::custom_roots`].
+    #[deprecated(since = "1.0.0", note = "Renamed to `custom_roots`")]
+    pub fn custom(roots: impl IntoIterator<Item = CertificateDer<'static>>) -> Self {
+        Self::custom_roots(roots)
     }
 
     /// Creates a [`CaTlsConfig`] that uses a callback function to create a [`ServerCertVerifier`].
