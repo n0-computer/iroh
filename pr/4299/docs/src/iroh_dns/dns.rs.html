@@ -495,7 +495,7 @@
 <a href=#495 id=495 data-nosnippet>495</a>    /// have been yielded.
 <a href=#496 id=496 data-nosnippet>496</a>    </span><span class="kw">pub fn </span>resolve_host_all&lt;<span class="lifetime">'a</span>&gt;(
 <a href=#497 id=497 data-nosnippet>497</a>        <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
-<a href=#498 id=498 data-nosnippet>498</a>        url: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Url,
+<a href=#498 id=498 data-nosnippet>498</a>        url: <span class="kw-2">&amp;</span>Url,
 <a href=#499 id=499 data-nosnippet>499</a>        timeout: Duration,
 <a href=#500 id=500 data-nosnippet>500</a>    ) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;IpAddr, DnsError&gt;&gt; + Send + <span class="lifetime">'a </span>{
 <a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>host = <span class="kw">match </span>url.host() {
