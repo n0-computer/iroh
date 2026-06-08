@@ -1,38 +1,37 @@
-//! Utilities used in [`iroh`][`crate`]
+//! Utilities used in [`iroh`](crate).
+
+/// Creates a [`reqwest::ClientBuilder`] from a [`rustls::ClientConfig`] and our [`DnsResolver`].
+///
+/// In a browser context these options are not supported, so this function takes no arguments
+/// if `wasm_browser` is enabled.
+///
+/// [`DnsResolver`]: crate::dns::DnsResolver
+#[cfg(not(wasm_browser))]
+pub(crate) fn reqwest_client_builder(
+    tls_client_config: rustls::ClientConfig,
+    dns_resolver: crate::dns::DnsResolver,
+) -> reqwest::ClientBuilder {
+    use self::reqwest_dns_resolver::ReqwestDnsResolver;
+
+    reqwest::Client::builder()
+        .tls_backend_preconfigured(tls_client_config)
+        .dns_resolver(ReqwestDnsResolver(dns_resolver))
+}
 
 #[cfg(wasm_browser)]
 pub(crate) fn reqwest_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
 }
 
-/// Creates a reqwest client builder that always uses the rustls backend, unless we
-/// are in a browser context, where that is not supported.
-#[cfg(not(wasm_browser))]
-pub(crate) fn reqwest_client_builder(
-    tls_client_config: rustls::ClientConfig,
-    dns_resolver: crate::dns::DnsResolver,
-) -> reqwest::ClientBuilder {
-    use std::sync::Arc;
-
-    use self::reqwest_dns_resolver::ReqwestDnsResolver;
-
-    reqwest::Client::builder()
-        .use_preconfigured_tls(tls_client_config)
-        .dns_resolver(Arc::new(ReqwestDnsResolver(dns_resolver)))
-}
-
 #[cfg(not(wasm_browser))]
 mod reqwest_dns_resolver {
-    //! Implementation of [`reqwest::dns::Resolve`] for [`DnsResolver`].
-    //!
-    //! Wrapped in a newtype to not expose this in the public iroh API.
+    use std::net::SocketAddr;
 
-    use std::{net::SocketAddr, time::Duration};
+    use iroh_dns::dns::{DNS_TIMEOUT, DnsResolver};
 
-    use iroh_dns::dns::DnsResolver;
-
-    const DNS_TIMEOUT: Duration = Duration::from_secs(3);
-
+    /// Implementation of [`reqwest::dns::Resolve`] for [`DnsResolver`].
+    ///
+    /// Wrapped in a newtype to not expose this in the public iroh API.
     pub(super) struct ReqwestDnsResolver(pub(super) DnsResolver);
 
     impl reqwest::dns::Resolve for ReqwestDnsResolver {
