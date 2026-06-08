@@ -250,7 +250,7 @@ async fn dial_happy_eyeballs(
 ) -> Result<TcpStream, DialError> {
     let port = url_port(url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
 
-    // Stream of DNS results, or `None` once the resolver has finished
+    // Stream of resolved addresses.
     let resolve_stream = dns_resolver.resolve_host_all(url, DNS_TIMEOUT);
     tokio::pin!(resolve_stream);
     // Set to `true` once `resolve_stream` yielded `None`, to not poll it again after completion.
@@ -261,7 +261,7 @@ async fn dial_happy_eyeballs(
     let mut next_prefer_v6 = prefer_ipv6;
     // In-progress connection attempts.
     let mut dials = FuturesUnordered::new();
-    // Whether the first attempt has been scheduled yet.
+    // Whether the first connection attempt has been started yet.
     let mut started = false;
     // Last error that occurred, returned if no connection attempt succeeded.
     let mut last_err: Option<DialError> = None;
