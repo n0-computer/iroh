@@ -319,11 +319,7 @@ impl PkarrPublisher {
             pkarr_client,
             republish_interval,
         };
-        let join_handle = task::spawn(
-            service
-                .run()
-                .instrument(error_span!("pkarr_publish", me=%endpoint_id.fmt_short())),
-        );
+        let join_handle = task::spawn(service.run().instrument(error_span!("pkarr_publish")));
         Self {
             watchable,
             endpoint_id,
