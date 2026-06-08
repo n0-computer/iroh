@@ -210,12 +210,13 @@ impl ClientBuilder {
         self
     }
 
-    /// Returns if we should prefer ipv6
-    /// it replaces the relayhttp.AddressFamilySelector we pass
-    /// It provides the hint as to whether in an IPv4-vs-IPv6 race that
-    /// IPv4 should be held back a bit to give IPv6 a better-than-50/50
-    /// chance of winning. We only return true when we believe IPv6 will
-    /// work anyway, so we don't artificially delay the connection speed.
+    /// Sets a callback hinting whether to prefer IPv6 when dialing the relay.
+    ///
+    /// The callback runs on each dial. When it returns `true`, IPv6 addresses
+    /// are tried first and IPv4 dials are held back slightly, biasing the
+    /// happy-eyeballs race towards IPv6; when it returns `false`, IPv4 is
+    /// preferred. Only return `true` when IPv6 is expected to work, since
+    /// otherwise the bias just delays the connection.
     pub fn address_family_selector<S>(mut self, selector: S) -> Self
     where
         S: Fn() -> bool + Send + Sync + 'static,
