@@ -52,6 +52,7 @@ allowed_external_types = [
     "n0_error::*",
     "rustls::*",
     "url::*",
+    "futures_core::stream::Stream",
     # only type alias
     "futures_lite::future::Boxed",
 ]
