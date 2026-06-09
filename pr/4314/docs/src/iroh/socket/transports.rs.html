@@ -59,7 +59,7 @@
 <a href=#59 id=59 data-nosnippet>59</a>    poll_recv_counter: usize,
 <a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// Cache for per-packet recv info, to speed up access
 <a href=#61 id=61 data-nosnippet>61</a>    </span>recv_infos: [RecvInfo; noq_udp::BATCH_SIZE],
-<a href=#62 id=62 data-nosnippet>62</a>    consecutive_errors: usize,
+<a href=#62 id=62 data-nosnippet>62</a>    consecutive_total_recv_failures: usize,
 <a href=#63 id=63 data-nosnippet>63</a>}
 <a href=#64 id=64 data-nosnippet>64</a>
 <a href=#65 id=65 data-nosnippet>65</a><span class="doccomment">/// Combined watcher type for all ip transports
@@ -250,7 +250,7 @@
 <a href=#250 id=250 data-nosnippet>250</a>            custom,
 <a href=#251 id=251 data-nosnippet>251</a>            poll_recv_counter: Default::default(),
 <a href=#252 id=252 data-nosnippet>252</a>            recv_infos: Default::default(),
-<a href=#253 id=253 data-nosnippet>253</a>            consecutive_errors: <span class="number">0</span>,
+<a href=#253 id=253 data-nosnippet>253</a>            consecutive_total_recv_failures: <span class="number">0</span>,
 <a href=#254 id=254 data-nosnippet>254</a>        })
 <a href=#255 id=255 data-nosnippet>255</a>    }
 <a href=#256 id=256 data-nosnippet>256</a>
@@ -294,10 +294,10 @@
 <a href=#294 id=294 data-nosnippet>294</a>                total_polled += <span class="number">1</span>;
 <a href=#295 id=295 data-nosnippet>295</a>                <span class="kw">match </span><span class="macro-nonterminal">$socket</span>.poll_recv(cx, bufs, metas, <span class="kw-2">&amp;mut </span><span class="self">self</span>.recv_infos) {
 <a href=#296 id=296 data-nosnippet>296</a>                    Poll::Pending | Poll::Ready(<span class="prelude-val">Ok</span>(<span class="number">0</span>)) =&gt; {
-<a href=#297 id=297 data-nosnippet>297</a>                        <span class="self">self</span>.consecutive_errors = <span class="number">0</span>;
+<a href=#297 id=297 data-nosnippet>297</a>                        <span class="self">self</span>.consecutive_total_recv_failures = <span class="number">0</span>;
 <a href=#298 id=298 data-nosnippet>298</a>                    }
 <a href=#299 id=299 data-nosnippet>299</a>                    Poll::Ready(<span class="prelude-val">Ok</span>(n)) =&gt; {
-<a href=#300 id=300 data-nosnippet>300</a>                        <span class="self">self</span>.consecutive_errors = <span class="number">0</span>;
+<a href=#300 id=300 data-nosnippet>300</a>                        <span class="self">self</span>.consecutive_total_recv_failures = <span class="number">0</span>;
 <a href=#301 id=301 data-nosnippet>301</a>                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(n));
 <a href=#302 id=302 data-nosnippet>302</a>                    }
 <a href=#303 id=303 data-nosnippet>303</a>                    Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
@@ -337,8 +337,8 @@
 <a href=#337 id=337 data-nosnippet>337</a>
 <a href=#338 id=338 data-nosnippet>338</a>        <span class="kw">if </span>total_polled == total_errors {
 <a href=#339 id=339 data-nosnippet>339</a>            <span class="comment">// All transports errored.
-<a href=#340 id=340 data-nosnippet>340</a>            </span><span class="self">self</span>.consecutive_errors += <span class="number">1</span>;
-<a href=#341 id=341 data-nosnippet>341</a>            <span class="kw">if </span><span class="self">self</span>.consecutive_errors &gt;= MAX_CONSECUTIVE_RECV_ERRORS {
+<a href=#340 id=340 data-nosnippet>340</a>            </span><span class="self">self</span>.consecutive_total_recv_failures += <span class="number">1</span>;
+<a href=#341 id=341 data-nosnippet>341</a>            <span class="kw">if </span><span class="self">self</span>.consecutive_total_recv_failures &gt;= MAX_CONSECUTIVE_RECV_ERRORS {
 <a href=#342 id=342 data-nosnippet>342</a>                Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
 <a href=#343 id=343 data-nosnippet>343</a>                    io::ErrorKind::NetworkDown,
 <a href=#344 id=344 data-nosnippet>344</a>                    <span class="string">"All transports failed to receive"</span>,
