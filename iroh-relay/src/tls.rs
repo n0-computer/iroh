@@ -156,18 +156,21 @@ impl CaTlsConfig {
         self
     }
 
-    /// Builds a [`ClientConfig`] from this config.
-    pub fn client_config(&self, crypto_provider: Arc<CryptoProvider>) -> io::Result<ClientConfig> {
-        let verifier: Arc<dyn ServerCertVerifier> = match self.mode {
+    /// Builds a [`ServerCertVerifier`] from this config.
+    pub fn server_cert_verifier(
+        &self,
+        crypto_provider: Arc<CryptoProvider>,
+    ) -> io::Result<Arc<dyn ServerCertVerifier>> {
+        Ok(match self.mode {
             #[cfg(feature = "platform-verifier")]
             Mode::System => {
                 #[cfg(not(target_os = "android"))]
                 let verifier = rustls_platform_verifier::Verifier::new_with_extra_roots(
                     self.extra_roots.clone(),
-                    crypto_provider.clone(),
+                    crypto_provider,
                 );
                 #[cfg(target_os = "android")]
-                let verifier = rustls_platform_verifier::Verifier::new(crypto_provider.clone());
+                let verifier = rustls_platform_verifier::Verifier::new(crypto_provider);
                 Arc::new(verifier.map_err(io::Error::other)?)
             }
             Mode::EmbeddedWebPki => {
@@ -175,29 +178,28 @@ impl CaTlsConfig {
                     roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
                 };
                 root_store.add_parsable_certificates(self.extra_roots.clone());
-                WebPkiServerVerifier::builder_with_provider(
-                    Arc::new(root_store),
-                    crypto_provider.clone(),
-                )
-                .build()
-                .map_err(io::Error::other)?
+                WebPkiServerVerifier::builder_with_provider(Arc::new(root_store), crypto_provider)
+                    .build()
+                    .map_err(io::Error::other)?
             }
             Mode::ExtraRootsOnly => {
                 let mut root_store = rustls::RootCertStore { roots: vec![] };
                 root_store.add_parsable_certificates(self.extra_roots.clone());
-                WebPkiServerVerifier::builder_with_provider(
-                    Arc::new(root_store),
-                    crypto_provider.clone(),
-                )
-                .build()
-                .map_err(io::Error::other)?
+                WebPkiServerVerifier::builder_with_provider(Arc::new(root_store), crypto_provider)
+                    .build()
+                    .map_err(io::Error::other)?
             }
             #[cfg(any(test, feature = "test-utils"))]
-            Mode::InsecureSkipVerify => Arc::new(no_cert_verifier::NoCertVerifier {
-                crypto_provider: crypto_provider.clone(),
-            }),
+            Mode::InsecureSkipVerify => {
+                Arc::new(no_cert_verifier::NoCertVerifier { crypto_provider })
+            }
             Mode::CustomServerCertVerifier { ref builder } => builder(crypto_provider.clone())?,
-        };
+        })
+    }
+
+    /// Builds a [`ClientConfig`] from this config.
+    pub fn client_config(&self, crypto_provider: Arc<CryptoProvider>) -> io::Result<ClientConfig> {
+        let verifier = self.server_cert_verifier(crypto_provider.clone())?;
         let config = ClientConfig::builder_with_provider(crypto_provider)
             .with_safe_default_protocol_versions()
             .expect("protocols supported by ring")
