@@ -9,7 +9,7 @@ use std::{
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_error::StackResultExt;
 use n0_future::{
-    FuturesUnordered, MergeUnbounded, Stream, StreamExt,
+    FuturesUnordered, MaybeFuture, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
     task::JoinSet,
     time::{self, Duration, Instant},
@@ -38,7 +38,6 @@ use crate::{
         remote_map::remote_state::path_watcher::PathStateSender,
         transports::{self, OwnedTransmit, TransportsSender},
     },
-    util::MaybeFuture,
 };
 
 mod path_state;
@@ -618,9 +617,9 @@ impl RemoteStateActor {
                     target: "iroh::_events::path::abandoned",
                     Level::DEBUG,
                     remote = %self.state.endpoint_id.fmt_short(),
-                    %network_path,
                     %conn_id,
-                    path_id = ?id,
+                    path_id = %id,
+                    %network_path,
                     ?reason
                 );
 
@@ -664,7 +663,7 @@ impl RemoteStateActor {
                 Level::DEBUG,
                 remote = %self.state.endpoint_id.fmt_short(),
                 network_path = %addr,
-                prev_network_path = prev_remote.map(|p| format!("{p}")).unwrap_or("None".to_string()),
+                prev_network_path = %prev_remote.map(|p| format!("{p}")).unwrap_or("None".to_string()),
             );
         } else {
             trace!(?current_path, "keeping current path");
@@ -981,9 +980,9 @@ impl State {
             target: "iroh::_events::path::open",
             Level::DEBUG,
             remote = %self.endpoint_id.fmt_short(),
-            ?network_path,
             %conn_id,
             path_id=%path.id(),
+            %network_path,
         );
         conn_state.add_open_path(network_path.clone(), path.id(), &self.metrics);
         if network_path.is_relay()
@@ -1012,10 +1011,10 @@ impl State {
                     target: "iroh::_events::path::set_status",
                     Level::DEBUG,
                     remote = %self.endpoint_id.fmt_short(),
-                    path_remote = ?network_path,
-                    ?status,
                     %conn_id,
                     path_id=%path.id(),
+                    %network_path,
+                    ?status,
                     ?prev_status,
                 );
             }
@@ -1160,7 +1159,7 @@ pub(crate) enum RemoteStateMessage {
     /// but only update to a strong [`noq::Connection`] for brief moments.
     ///
     /// The actor will actively manage paths on the connection and start holepunching as needed.
-    #[debug("AddConnection(..)")]
+    #[debug("AddConnection({})", _0.stable_id())]
     AddConnection(noq::Connection, oneshot::Sender<PathStateReceiver>),
     /// Asks if there is any possible path that could be used.
     ///
