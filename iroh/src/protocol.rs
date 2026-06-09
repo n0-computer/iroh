@@ -53,7 +53,7 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
+use tracing::{Instrument, debug, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
@@ -564,7 +564,7 @@ impl RouterBuilder {
                                 IncomingFilterOutcome::Accept => {}
                                 IncomingFilterOutcome::Retry => {
                                     if incoming.remote_addr_validated() {
-                                        warn!(
+                                        debug!(
                                             "filter returned Retry for an already validated connection",
                                         );
                                     }
