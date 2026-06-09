@@ -33,21 +33,21 @@
 pub mod client;
 pub mod defaults;
 pub mod http;
+mod key_cache;
+mod ping_tracker;
 pub mod protos;
 pub mod quic;
+mod relay_map;
 #[cfg(feature = "server")]
 pub mod server;
+#[cfg(test)]
+pub(crate) mod test_utils;
 pub mod tls;
 
-mod ping_tracker;
-
-mod key_cache;
-mod relay_map;
-pub use key_cache::KeyCache;
-pub use protos::relay::MAX_PACKET_SIZE;
-
 pub use crate::{
+    key_cache::KeyCache,
     ping_tracker::PingTracker,
+    protos::relay::MAX_PACKET_SIZE,
     relay_map::{RelayConfig, RelayMap, RelayQuicConfig},
 };
 

@@ -812,7 +812,7 @@ impl DirectAddrUpdateState {
         self.sock.metrics.net_report.portmap_attempts.inc();
         self.port_mapper.procure_mapping();
 
-        debug!("requesting net_report report");
+        trace!("requesting net_report report");
         let sock = self.sock.clone();
 
         let run_done = self.run_done.clone();

@@ -1161,11 +1161,12 @@ mod tests {
     use http::StatusCode;
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use iroh_dns::dns::DnsResolver;
-    use n0_error::Result;
+    use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{SinkExt, StreamExt};
     use n0_tracing_test::traced_test;
     use rand::{RngExt, SeedableRng};
     use tracing::{info, instrument};
+    use url::Url;
 
     use super::{
         Access, AccessControl, ClientRequest, NO_CONTENT_CHALLENGE_HEADER,
@@ -1177,7 +1178,8 @@ mod tests {
             handshake,
             relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         },
-        tls::{CaRootsConfig, default_provider},
+        test_utils::static_resolver,
+        tls::{self, CaRootsConfig, default_provider},
     };
 
     /// An [`AccessControl`] backed by a closure, for tests.
@@ -1567,6 +1569,42 @@ mod tests {
                 })
                 .await?;
         }
+        Ok(())
+    }
+
+    /// Regression test: A relay client that prefers IPv6 falls back to IPv4
+    /// when the advertised IPv6 address is unreachable.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_relay_client_falls_back_to_ipv4() -> Result {
+        // A relay reachable only over IPv4.
+        let config = ServerConfig {
+            relay: Some(RelayConfig::new((Ipv4Addr::LOCALHOST, 0))),
+            ..Default::default()
+        };
+        let server = Server::spawn(config).await?;
+        let addr = server.http_addr().expect("http relay address");
+
+        // Resolves to both the real IPv4 address and an unreachable IPv6 address.
+        let resolver = static_resolver(
+            vec![Ipv4Addr::LOCALHOST],
+            vec!["2001:db8::dead".parse().expect("valid IPv6")],
+        );
+        let url: Url = format!("http://relay.test:{}", addr.port())
+            .parse()
+            .expect("valid relay url");
+
+        let client = ClientBuilder::new(url, SecretKey::generate(), resolver)
+            .tls_client_config(tls::make_dangerous_client_config())
+            // Force IPv6 preference
+            .address_family_selector(|| true);
+
+        tokio::time::timeout(Duration::from_secs(10), client.connect())
+            .await
+            .with_std_context(|_| "relay connect timed out")?
+            .context("relay connect")?;
+
+        server.shutdown().await.context("relay server shutdown")?;
         Ok(())
     }
 }
