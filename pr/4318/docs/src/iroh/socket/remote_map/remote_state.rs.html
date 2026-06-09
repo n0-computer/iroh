@@ -894,9 +894,9 @@
 <a href=#894 id=894 data-nosnippet>894</a>            }
 <a href=#895 id=895 data-nosnippet>895</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
 <a href=#896 id=896 data-nosnippet>896</a>                <span class="kw">if let </span>AddressLookupFailed::NoServiceConfigured { .. } = err {
-<a href=#897 id=897 data-nosnippet>897</a>                    <span class="macro">debug!</span>(<span class="string">"Address Lookup not configured"</span>);
+<a href=#897 id=897 data-nosnippet>897</a>                    <span class="macro">trace!</span>(<span class="string">"Address Lookup not configured"</span>);
 <a href=#898 id=898 data-nosnippet>898</a>                } <span class="kw">else </span>{
-<a href=#899 id=899 data-nosnippet>899</a>                    <span class="macro">warn!</span>(<span class="string">"Address Lookup failed: {err:#}"</span>);
+<a href=#899 id=899 data-nosnippet>899</a>                    <span class="macro">debug!</span>(<span class="string">"Address Lookup failed: {err:#}"</span>);
 <a href=#900 id=900 data-nosnippet>900</a>                }
 <a href=#901 id=901 data-nosnippet>901</a>                <span class="self">self</span>.paths.address_lookup_finished(<span class="prelude-val">Err</span>(err));
 <a href=#902 id=902 data-nosnippet>902</a>                <span class="self">self</span>.address_lookup_stream = <span class="prelude-val">None</span>;
