@@ -238,13 +238,6 @@ pub(crate) struct StaticConfig {
     pub(crate) client_config: QuicClientConfig,
     #[debug("Arc<RustlsTokenKey>")]
     pub(crate) token_key: Arc<RustlsTokenKey>,
-    /// Client-side store for QUIC address-validation tokens (`NEW_TOKEN` frames).
-    ///
-    /// Shared across all connections created from this endpoint so a token issued
-    /// by a server on one connection can be replayed on a later connection to the
-    /// same server, validating the client's address and lifting the 3x
-    /// anti-amplification limit (notably for 0.5-RTT responses to 0-RTT requests).
-    /// This mirrors how `tls_config`'s session store is shared to enable 0-RTT.
     #[debug("Arc<dyn TokenStore>")]
     pub(crate) token_store: Arc<dyn TokenStore>,
     pub(crate) transport_config: QuicTransportConfig,
@@ -274,8 +267,6 @@ impl StaticConfig {
         quic_client_config.set_alpn_protocols(alpn_protocols);
         let mut inner = noq::ClientConfig::new(Arc::new(quic_client_config));
         inner.transport_config(transport_config);
-        // Share the endpoint-wide token store so NEW_TOKEN tokens survive across
-        // connections (the default would mint a fresh, empty store per connection).
         inner.token_store(self.token_store.clone());
         inner
     }
