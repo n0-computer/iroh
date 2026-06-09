@@ -223,13 +223,19 @@ impl PkarrPublisherBuilder {
     ///
     /// This publisher will be able to publish [pkarr](https://pkarr.org) records for [`SecretKey`].
     pub fn build(self, secret_key: SecretKey, tls_config: rustls::ClientConfig) -> PkarrPublisher {
+        #[cfg(all(not(wasm_browser), with_dns))]
+        let dns_resolver = self.dns_resolver.unwrap_or_default();
+        #[cfg(all(not(wasm_browser), not(with_dns)))]
+        let dns_resolver = self
+            .dns_resolver
+            .expect("`dns-hickory` feature is disabled and no custom DNS resolver is set");
         PkarrPublisher::new(
             secret_key,
             self.pkarr_relay,
             self.ttl,
             self.republish_interval,
             #[cfg(not(wasm_browser))]
-            self.dns_resolver.unwrap_or_default(),
+            dns_resolver,
             tls_config,
             self.filter,
         )
@@ -457,11 +463,15 @@ impl PkarrResolverBuilder {
         let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
 
         #[cfg(not(wasm_browser))]
-        let pkarr_client = PkarrRelayClient::new(
-            self.pkarr_relay,
-            tls_config,
-            self.dns_resolver.unwrap_or_default(),
-        );
+        let pkarr_client = {
+            #[cfg(with_dns)]
+            let dns_resolver = self.dns_resolver.unwrap_or_default();
+            #[cfg(not(with_dns))]
+            let dns_resolver = self
+                .dns_resolver
+                .expect("`dns-hickory` feature is disabled and no custom DNS resolver is set");
+            PkarrRelayClient::new(self.pkarr_relay, tls_config, dns_resolver)
+        };
 
         PkarrResolver { pkarr_client }
     }

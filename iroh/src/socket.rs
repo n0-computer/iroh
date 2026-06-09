@@ -1285,7 +1285,7 @@ impl EndpointInner {
             .ok();
     }
 
-    #[cfg(all(test, with_crypto_provider))]
+    #[cfg(all(test, with_crypto_provider, with_dns))]
     async fn force_network_change(&self, is_major: bool) {
         self.actor_sender
             .send(ActorMessage::ForceNetworkChange(is_major))
@@ -1384,7 +1384,7 @@ enum ActorMessage {
     ),
     /// Re-evaluate direct addresses, e.g. after configured external addresses changed.
     DirectAddrRefresh,
-    #[cfg(all(test, with_crypto_provider))]
+    #[cfg(all(test, with_crypto_provider, with_dns))]
     ForceNetworkChange(bool),
 }
 
@@ -1786,7 +1786,7 @@ impl Actor {
                     self.update_direct_addresses(report.as_ref());
                 }
             }
-            #[cfg(all(test, with_crypto_provider))]
+            #[cfg(all(test, with_crypto_provider, with_dns))]
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major);
             }
@@ -2107,7 +2107,7 @@ impl Display for DirectAddrType {
     }
 }
 
-#[cfg(all(test, with_crypto_provider))]
+#[cfg(all(test, with_crypto_provider, with_dns))]
 mod tests {
     use std::{net::SocketAddrV4, sync::Arc, time::Duration};
 

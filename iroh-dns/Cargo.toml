@@ -29,7 +29,7 @@ url = "2.5.3"
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "0.26.0", features = ["tokio", "system-config"] }
+hickory-resolver = { version = "0.26.0", features = ["tokio", "system-config"], optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 ndk-context = "0.1"
@@ -41,6 +41,7 @@ cfg_aliases = "0.2.1"
 default = []
 tls-ring = ["rustls/ring", "hickory-resolver/https-ring"]
 tls-aws-lc-rs = ["rustls/aws-lc-rs", "hickory-resolver/https-aws-lc-rs"]
+dns-hickory = ["hickory-resolver"]
 
 [dev-dependencies]
 n0-tracing-test = "0.3"

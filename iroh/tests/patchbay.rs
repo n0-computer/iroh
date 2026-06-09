@@ -24,7 +24,7 @@
 
 // patchbay only runs on linux, and is skipped in cross-compile environments
 // via a cfg directive
-#![cfg(all(target_os = "linux", not(skip_patchbay)))]
+#![cfg(all(target_os = "linux", not(skip_patchbay), feature = "metrics"))]
 
 use std::{net::Ipv4Addr, time::Duration};
 

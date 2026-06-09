@@ -239,8 +239,12 @@ impl Builder {
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
-        #[cfg(not(wasm_browser))]
+        #[cfg(all(not(wasm_browser), with_dns))]
         let dns_resolver = self.dns_resolver.unwrap_or_default();
+        #[cfg(all(not(wasm_browser), not(with_dns)))]
+        let dns_resolver = self
+            .dns_resolver
+            .expect("`dns-hickory` feature is disabled and no custom DNS resolver is set");
 
         let metrics = EndpointMetrics::default();
 
@@ -1694,7 +1698,7 @@ impl Endpoint {
         self.inner.to_transport_addr(addr)
     }
 
-    #[cfg(all(test, with_crypto_provider))]
+    #[cfg(all(test, with_crypto_provider, with_dns))]
     pub(crate) fn inner(&self) -> Result<Arc<EndpointInner>, EndpointError> {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));

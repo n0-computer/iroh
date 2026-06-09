@@ -6,16 +6,19 @@
 //! See the [`crate::endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
+#[cfg(feature = "dns-hickory")]
+use std::net::SocketAddr;
 use std::{
     collections::VecDeque,
     fmt,
     future::Future,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     pin::Pin,
     sync::Arc,
 };
 
 use arc_swap::ArcSwap;
+#[cfg(feature = "dns-hickory")]
 use hickory_resolver::{
     TokioResolver,
     config::{ConnectionConfig, ResolverConfig, ResolverOpts},
@@ -23,7 +26,9 @@ use hickory_resolver::{
     proto::rr::RData,
 };
 use iroh_base::EndpointId;
-use n0_error::{AnyError, StackError, StdResultExt, e, stack_error};
+#[cfg(feature = "dns-hickory")]
+use n0_error::StdResultExt;
+use n0_error::{AnyError, StackError, e, stack_error};
 use n0_future::{
     Either, MaybeFuture, Stream, StreamExt,
     boxed::BoxFuture,
@@ -31,6 +36,7 @@ use n0_future::{
     time::{self, Duration},
 };
 use tokio::sync::Notify;
+#[cfg(feature = "dns-hickory")]
 use tracing::warn;
 use url::Url;
 
@@ -125,6 +131,7 @@ impl<E: StackError + 'static> StaggeredError<E> {
 }
 
 /// Builder for [`DnsResolver`].
+#[cfg(feature = "dns-hickory")]
 #[derive(Debug, Clone, Default)]
 pub struct Builder {
     use_system_defaults: bool,
@@ -167,6 +174,7 @@ impl DnsProtocol {
         not(with_crypto_provider),
         expect(unused_variables, reason = "unused when TLS is disabled in DNS")
     )]
+    #[cfg(feature = "dns-hickory")]
     fn to_hickory(self, ip: IpAddr) -> ConnectionConfig {
         match self {
             DnsProtocol::Udp => ConnectionConfig::udp(),
@@ -179,6 +187,7 @@ impl DnsProtocol {
     }
 }
 
+#[cfg(feature = "dns-hickory")]
 impl Builder {
     /// Makes the builder respect the host system's DNS configuration.
     ///
@@ -335,11 +344,13 @@ impl DnsResolver {
     /// We first try to read the system's resolver from `/etc/resolv.conf`.
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
+    #[cfg(feature = "dns-hickory")]
     pub fn new() -> Self {
         Builder::default().with_system_defaults().build()
     }
 
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
+    #[cfg(feature = "dns-hickory")]
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         Builder::default()
             .with_nameserver(nameserver, DnsProtocol::Udp)
@@ -347,6 +358,7 @@ impl DnsResolver {
     }
 
     /// Creates a builder to construct a DNS resolver with custom options.
+    #[cfg(feature = "dns-hickory")]
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -700,18 +712,21 @@ impl DnsResolver {
     }
 }
 
+#[cfg(feature = "dns-hickory")]
 impl Default for DnsResolver {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "dns-hickory")]
 #[derive(Debug)]
 struct HickoryResolver {
     resolver: TokioResolver,
     builder: Builder,
 }
 
+#[cfg(feature = "dns-hickory")]
 impl HickoryResolver {
     fn new(builder: Builder) -> Self {
         let resolver = Self::build_resolver(&builder);
@@ -783,6 +798,7 @@ impl HickoryResolver {
     }
 }
 
+#[cfg(feature = "dns-hickory")]
 impl Resolver for HickoryResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let resolver = self.resolver.clone();
@@ -897,6 +913,7 @@ impl From<Vec<Box<[u8]>>> for TxtRecordData {
 /// **only** relying on these servers and not also being configured normally are also almost
 /// zero.  The chance of the DNS resolver accidentally trying one of these and taking a
 /// bunch of timeouts to figure out they're no good are on the other hand very high.
+#[cfg(feature = "dns-hickory")]
 const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
     IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 1)),
     IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 2)),

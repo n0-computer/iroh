@@ -66,8 +66,14 @@ impl DnsAddressLookupBuilder {
 
     /// Builds a [`DnsAddressLookup`] with the passed [`DnsResolver`].
     pub fn build(self) -> DnsAddressLookup {
+        #[cfg(with_dns)]
+        let dns_resolver = self.dns_resolver.unwrap_or_default();
+        #[cfg(not(with_dns))]
+        let dns_resolver = self
+            .dns_resolver
+            .expect("`dns-hickory` feature is disabled and no custom DNS resolver is set");
         DnsAddressLookup {
-            dns_resolver: self.dns_resolver.unwrap_or_default(),
+            dns_resolver,
             origin_domain: self.origin_domain,
         }
     }

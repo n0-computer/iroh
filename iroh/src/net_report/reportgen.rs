@@ -79,7 +79,7 @@ pub(crate) struct IfStateDetails {
 }
 
 impl IfStateDetails {
-    #[cfg(test)]
+    #[cfg(all(test, with_dns))]
     pub(super) fn fake() -> Self {
         IfStateDetails {
             have_v4: true,
@@ -877,7 +877,7 @@ async fn run_https_probe(
     }
 }
 
-#[cfg(all(test, with_crypto_provider))]
+#[cfg(all(test, with_crypto_provider, with_dns))]
 mod tests {
     use std::net::Ipv4Addr;
 

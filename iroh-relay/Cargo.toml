@@ -129,7 +129,7 @@ cfg_aliases = "0.2.1"
 vergen-gitcl = "9.1"
 
 [features]
-default = ["metrics", "tls-ring"]
+default = ["metrics", "tls-ring", "dns-hickory"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["dep:rustls-platform-verifier"]
 server = [
@@ -154,6 +154,7 @@ server = [
     "noq/runtime-tokio",
     "iroh-metrics/service",
     "tls-ring",
+    "dns-hickory"
 ]
 metrics = ["iroh-metrics/metrics"]
 test-utils = []
@@ -173,6 +174,7 @@ tls-aws-lc-rs = [
     "hickory-resolver/https-aws-lc-rs",
     "iroh-dns/tls-aws-lc-rs",
 ]
+dns-hickory = ["iroh-dns/dns-hickory"]
 
 [[bin]]
 name = "iroh-relay"

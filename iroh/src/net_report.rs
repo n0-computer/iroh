@@ -944,7 +944,7 @@ mod test_utils {
     }
 }
 
-#[cfg(all(test, with_crypto_provider))]
+#[cfg(all(test, with_crypto_provider, with_dns))]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 

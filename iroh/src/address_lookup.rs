@@ -1239,7 +1239,7 @@ mod tests {
 ///
 /// The tests run a minimal test DNS server to resolve against, and a minimal pkarr relay to
 /// publish to. The DNS and pkarr servers share their state.
-#[cfg(test)]
+#[cfg(all(test, with_dns))]
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;

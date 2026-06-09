@@ -24,7 +24,7 @@
 //!
 //! [`Client`]: iroh_relay::client::Client
 
-#[cfg(test)]
+#[cfg(all(test, with_dns))]
 use std::net::SocketAddr;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -167,9 +167,9 @@ enum ActiveRelayMessage {
     CheckConnection { local_ips: Vec<IpAddr> },
     /// Sets this relay as the home relay, or not.
     SetHomeRelay(bool),
-    #[cfg(test)]
+    #[cfg(all(test, with_dns))]
     GetLocalAddr(oneshot::Sender<Option<SocketAddr>>),
-    #[cfg(test)]
+    #[cfg(all(test, with_dns))]
     PingServer(oneshot::Sender<()>),
 }
 
@@ -450,11 +450,11 @@ impl ActiveRelayActor {
                             self.set_home_relay(is_home);
                         }
                         ActiveRelayMessage::CheckConnection { .. } => {}
-                        #[cfg(test)]
+                        #[cfg(all(test, with_dns))]
                         ActiveRelayMessage::GetLocalAddr(sender) => {
                             sender.send(None).ok();
                         }
-                        #[cfg(test)]
+                        #[cfg(all(test, with_dns))]
                         ActiveRelayMessage::PingServer(sender) => {
                             drop(sender);
                         }
@@ -594,12 +594,12 @@ impl ActiveRelayActor {
                                 None => break Err(e!(RunError::LocalAddrMissing)),
                             }
                         }
-                        #[cfg(test)]
+                        #[cfg(all(test, with_dns))]
                         ActiveRelayMessage::GetLocalAddr(sender) => {
                             let addr = client_stream.local_addr();
                             sender.send(addr).ok();
                         }
-                        #[cfg(test)]
+                        #[cfg(all(test, with_dns))]
                         ActiveRelayMessage::PingServer(sender) => {
                             let data = rand::random();
                             state.test_pong = Some((data, sender));
@@ -1384,7 +1384,7 @@ pub(crate) struct RelayRecvDatagram {
     pub(crate) datagrams: Datagrams,
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_dns))]
 mod tests {
     use std::{
         sync::{Arc, atomic::AtomicBool},

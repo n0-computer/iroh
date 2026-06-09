@@ -129,7 +129,7 @@ pub(crate) mod timeouts {
     pub(crate) const NET_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 }
 
-#[cfg(test)]
+#[cfg(all(test, with_dns))]
 pub(crate) mod tests {
     use std::time::Duration;
 
