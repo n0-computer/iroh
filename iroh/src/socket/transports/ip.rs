@@ -11,7 +11,7 @@ use ipnet::{Ipv4Net, Ipv6Net};
 use n0_watcher::Watchable;
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 
 use super::{RecvInfo, Transmit};
 use crate::metrics::{EndpointMetrics, SocketMetrics};
@@ -222,7 +222,9 @@ impl IpTransport {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
+}
 
+impl IpTransport {
     pub(super) fn local_addr_watch(&self) -> n0_watcher::Direct<SocketAddr> {
         self.local_addr.watch()
     }
@@ -465,36 +467,8 @@ impl IpTransports {
         })
     }
 
-    pub(super) fn poll_recv(
-        &mut self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [noq_udp::RecvMeta],
-        recv_infos: &mut [RecvInfo],
-    ) -> Poll<io::Result<usize>> {
-        macro_rules! poll_transport {
-            ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas, recv_infos) {
-                    Poll::Pending | Poll::Ready(Ok(0)) => {}
-                    Poll::Ready(Ok(n)) => {
-                        return Poll::Ready(Ok(n));
-                    }
-                    Poll::Ready(Err(err)) => {
-                        warn!(socket=%$socket.local_addr.get(), "recv error: {err:#}");
-                    }
-                }
-            };
-        }
-
-        for transport in &mut self.v4 {
-            poll_transport!(transport);
-        }
-
-        for transport in &mut self.v6 {
-            poll_transport!(transport);
-        }
-
-        Poll::Pending
+    pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = &mut IpTransport> {
+        self.v4.iter_mut().chain(self.v6.iter_mut())
     }
 }
 

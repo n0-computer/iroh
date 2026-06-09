@@ -42,6 +42,12 @@ pub(crate) use self::relay::{
     HomeRelayWatch, RelayActorConfig, RelayConnectionState, RelayTransport,
 };
 
+/// How many times all transports may error on `poll_recv` before we give up.
+///
+/// Once all transports errored for this many times in a row, we give up and forward
+/// the error to noq, which will kill the endpoint driver then.
+const MAX_CONSECUTIVE_RECV_ERRORS: usize = 8;
+
 /// Manages the different underlying data transports that the socket can support.
 #[derive(Debug)]
 pub(crate) struct Transports {
@@ -53,6 +59,7 @@ pub(crate) struct Transports {
     poll_recv_counter: usize,
     /// Cache for per-packet recv info, to speed up access
     recv_infos: [RecvInfo; noq_udp::BATCH_SIZE],
+    consecutive_total_recv_failures: usize,
 }
 
 /// Combined watcher type for all ip transports
@@ -243,6 +250,7 @@ impl Transports {
             custom,
             poll_recv_counter: Default::default(),
             recv_infos: Default::default(),
+            consecutive_total_recv_failures: 0,
         })
     }
 
@@ -260,7 +268,8 @@ impl Transports {
         }
 
         match self.inner_poll_recv(cx, bufs, metas)? {
-            Poll::Pending | Poll::Ready(0) => Poll::Pending,
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(0) => Poll::Ready(Ok(0)),
             Poll::Ready(n) => {
                 sock.process_datagrams(&mut bufs[..n], &mut metas[..n], &self.recv_infos[..n]);
                 Poll::Ready(Ok(n))
@@ -277,31 +286,35 @@ impl Transports {
     ) -> Poll<io::Result<usize>> {
         assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
+        let mut total_polled = 0;
+        let mut total_errors = 0;
+
         macro_rules! poll_transport {
             ($debug_label:expr, $socket:expr) => {
+                total_polled += 1;
                 match $socket.poll_recv(cx, bufs, metas, &mut self.recv_infos) {
-                    Poll::Pending | Poll::Ready(Ok(0)) => {}
+                    Poll::Pending | Poll::Ready(Ok(0)) => {
+                        self.consecutive_total_recv_failures = 0;
+                    }
                     Poll::Ready(Ok(n)) => {
+                        self.consecutive_total_recv_failures = 0;
                         return Poll::Ready(Ok(n));
                     }
                     Poll::Ready(Err(err)) => {
-                        // noq treats an error returned from poll_recv as unrecoverable and terminates
-                        // its `EndpointDriver`, which silently kills the endpoint.
-                        // As we have multiple transports, and each might recover from errors individually,
-                        // we never forward transport errors to noq and instead only warn-log them.
-                        warn!(transport=$debug_label, "recv error: {err:#}");
+                        total_errors += 1;
+                        warn!(transport = $debug_label, "recv error: {err:#}");
                     }
                 }
             };
         }
 
         // To improve fairness, every other call reverses the ordering of polling.
-
         let counter = self.poll_recv_counter.wrapping_add(1);
-
         if counter.is_multiple_of(2) {
             #[cfg(not(wasm_browser))]
-            poll_transport!("IP", &mut self.ip);
+            for transport in self.ip.iter_mut() {
+                poll_transport!("IP", transport);
+            }
 
             for transport in self.relay.iter_mut() {
                 poll_transport!("relay", transport);
@@ -317,10 +330,25 @@ impl Transports {
                 poll_transport!("relay", transport);
             }
             #[cfg(not(wasm_browser))]
-            poll_transport!("IP", &mut self.ip);
+            for transport in self.ip.iter_mut() {
+                poll_transport!("IP", transport);
+            }
         }
 
-        Poll::Pending
+        if total_polled == total_errors {
+            // All transports errored.
+            self.consecutive_total_recv_failures += 1;
+            if self.consecutive_total_recv_failures >= MAX_CONSECUTIVE_RECV_ERRORS {
+                Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::NetworkDown,
+                    "All transports failed to receive",
+                )))
+            } else {
+                Poll::Ready(Ok(0))
+            }
+        } else {
+            Poll::Pending
+        }
     }
 
     /// Returns a list of all currently known local addresses.
