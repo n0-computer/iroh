@@ -53,7 +53,7 @@
 <a href=#53 id=53 data-nosnippet>53</a>    task::{<span class="self">self</span>, AbortOnDropHandle, JoinSet},
 <a href=#54 id=54 data-nosnippet>54</a>};
 <a href=#55 id=55 data-nosnippet>55</a><span class="kw">use </span>tokio_util::sync::CancellationToken;
-<a href=#56 id=56 data-nosnippet>56</a><span class="kw">use </span>tracing::{Instrument, error, field::Empty, info_span, trace, warn};
+<a href=#56 id=56 data-nosnippet>56</a><span class="kw">use </span>tracing::{Instrument, debug, error, field::Empty, info_span, trace, warn};
 <a href=#57 id=57 data-nosnippet>57</a>
 <a href=#58 id=58 data-nosnippet>58</a><span class="kw">use crate</span>::{
 <a href=#59 id=59 data-nosnippet>59</a>    Endpoint,
@@ -564,7 +564,7 @@
 <a href=#564 id=564 data-nosnippet>564</a>                                IncomingFilterOutcome::Accept =&gt; {}
 <a href=#565 id=565 data-nosnippet>565</a>                                IncomingFilterOutcome::Retry =&gt; {
 <a href=#566 id=566 data-nosnippet>566</a>                                    <span class="kw">if </span>incoming.remote_addr_validated() {
-<a href=#567 id=567 data-nosnippet>567</a>                                        <span class="macro">warn!</span>(
+<a href=#567 id=567 data-nosnippet>567</a>                                        <span class="macro">debug!</span>(
 <a href=#568 id=568 data-nosnippet>568</a>                                            <span class="string">"filter returned Retry for an already validated connection"</span>,
 <a href=#569 id=569 data-nosnippet>569</a>                                        );
 <a href=#570 id=570 data-nosnippet>570</a>                                    }
