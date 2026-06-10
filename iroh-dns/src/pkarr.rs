@@ -6,11 +6,12 @@
 
 use std::{
     fmt::{self, Display, Formatter},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::Ordering,
 };
 
 use iroh_base::{PublicKey, SecretKey, Signature};
 use n0_error::{AnyError, anyerr, e, stack_error};
+use portable_atomic::AtomicU64;
 use simple_dns::{CLASS, Name, Packet, ResourceRecord, rdata::RData};
 
 /// Maximum size of the encoded DNS packet within a signed packet.

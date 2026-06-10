@@ -854,7 +854,7 @@ mod tests {
 
             let e1 = Endpoint::builder(presets::Minimal)
                 .relay_mode(relay_mode.clone())
-                .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(crate::tls::CaTlsConfig::insecure_skip_verify())
                 .bind()
                 .await?;
             let r1 = Router::builder(e1.clone())
@@ -864,7 +864,7 @@ mod tests {
             let addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
             let e2 = Endpoint::builder(presets::Minimal)
                 .relay_mode(relay_mode)
-                .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(crate::tls::CaTlsConfig::insecure_skip_verify())
                 .bind()
                 .await?;
             Ok((r1, e2, addr, guard))

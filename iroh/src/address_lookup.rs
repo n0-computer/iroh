@@ -1243,7 +1243,7 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
-    use iroh_relay::tls::{CaRootsConfig, default_provider};
+    use iroh_relay::tls::{CaTlsConfig, default_provider};
     use n0_error::{Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
@@ -1303,7 +1303,7 @@ mod test_dns_pkarr {
             "https://relay.example".parse().unwrap(),
         ));
 
-        let tls_config = CaRootsConfig::insecure_skip_verify()
+        let tls_config = CaTlsConfig::insecure_skip_verify()
             .client_config(default_provider())
             .expect("infallible");
         let resolver = dns_pkarr_server.dns_resolver();
@@ -1374,7 +1374,7 @@ mod test_dns_pkarr {
         let secret_key = SecretKey::from_bytes(&rng.random());
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .preset(dns_pkarr_server.preset())

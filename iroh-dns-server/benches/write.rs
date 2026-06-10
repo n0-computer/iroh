@@ -4,7 +4,7 @@ use iroh::{
     address_lookup::pkarr::PkarrRelayClient,
     dns::DnsResolver,
     endpoint_info::EndpointInfo,
-    tls::{CaRootsConfig, default_provider},
+    tls::{CaTlsConfig, default_provider},
 };
 use iroh_dns_server::{Server, config::Config};
 use rand::RngExt;
@@ -29,7 +29,7 @@ fn benchmark_dns_server(c: &mut Criterion) {
                     let secret_key = SecretKey::from_bytes(&rng.random());
                     let endpoint_id = secret_key.public();
 
-                    let tls_config = CaRootsConfig::default()
+                    let tls_config = CaTlsConfig::default()
                         .client_config(default_provider())
                         .expect("infallible");
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
