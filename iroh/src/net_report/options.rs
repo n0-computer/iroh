@@ -6,7 +6,7 @@ pub(crate) use imp::Options;
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::net_report::{QuicConfig, probes::Probe};
+    use crate::net_report::{Config, QuicConfig, probes::Probe};
 
     /// Options for running probes
     ///
@@ -21,6 +21,8 @@ mod imp {
         pub(crate) quic_config: Option<QuicConfig>,
         /// TLS config for HTTPS probes.
         pub(crate) tls_config: rustls::ClientConfig,
+        /// User-facing configuration.
+        pub(crate) config: Config,
     }
 
     impl Options {
@@ -28,11 +30,18 @@ mod imp {
             Self {
                 quic_config: None,
                 tls_config,
+                config: Config::default(),
             }
         }
         /// Enable quic probes
         pub(crate) fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
             self.quic_config = quic_config;
+            self
+        }
+
+        /// Set the net report configuration.
+        pub(crate) fn net_report_config(mut self, config: Config) -> Self {
+            self.config = config;
             self
         }
 
@@ -47,7 +56,9 @@ mod imp {
                     protocols.insert(Probe::QadIpv6);
                 }
             }
-            protocols.insert(Probe::Https);
+            if self.config.https_probes {
+                protocols.insert(Probe::Https);
+            }
             protocols
         }
     }
@@ -57,7 +68,7 @@ mod imp {
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::net_report::Probe;
+    use crate::net_report::{Config, Probe};
 
     /// Options for running probes (in browsers).
     ///
@@ -65,34 +76,39 @@ mod imp {
     /// These are run by default.
     #[derive(Debug, Clone)]
     pub(crate) struct Options {
-        /// Enable https probes
-        ///
-        /// On by default
-        pub(crate) https: bool,
+        /// User-facing configuration.
+        pub(crate) config: Config,
     }
 
     impl Default for Options {
         fn default() -> Self {
-            Self { https: true }
+            Self {
+                config: Config::default(),
+            }
         }
     }
 
     impl Options {
         /// Create an [`Options`] that disables all probes
         pub(crate) fn disabled() -> Self {
-            Self { https: false }
+            Self {
+                config: Config {
+                    https_probes: false,
+                    captive_portal_check: false,
+                },
+            }
         }
 
-        /// Enable or disable https probe
-        pub(crate) fn https(mut self, enable: bool) -> Self {
-            self.https = enable;
+        /// Set the net report configuration.
+        pub(crate) fn net_report_config(mut self, config: Config) -> Self {
+            self.config = config;
             self
         }
 
         /// Turn the options into set of valid protocols
         pub(crate) fn as_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();
-            if self.https {
+            if self.config.https_probes {
                 protocols.insert(Probe::Https);
             }
             protocols
