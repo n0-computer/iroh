@@ -1243,7 +1243,7 @@
 <a href=#1243 id=1243 data-nosnippet>1243</a></span><span class="kw">mod </span>test_dns_pkarr {
 <a href=#1244 id=1244 data-nosnippet>1244</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey, TransportAddr};
 <a href=#1245 id=1245 data-nosnippet>1245</a>    <span class="kw">use </span>iroh_dns::endpoint_info::UserData;
-<a href=#1246 id=1246 data-nosnippet>1246</a>    <span class="kw">use </span>iroh_relay::tls::{CaRootsConfig, default_provider};
+<a href=#1246 id=1246 data-nosnippet>1246</a>    <span class="kw">use </span>iroh_relay::tls::{CaTlsConfig, default_provider};
 <a href=#1247 id=1247 data-nosnippet>1247</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt};
 <a href=#1248 id=1248 data-nosnippet>1248</a>    <span class="kw">use </span>n0_future::time::Duration;
 <a href=#1249 id=1249 data-nosnippet>1249</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -1303,7 +1303,7 @@
 <a href=#1303 id=1303 data-nosnippet>1303</a>            <span class="string">"https://relay.example"</span>.parse().unwrap(),
 <a href=#1304 id=1304 data-nosnippet>1304</a>        ));
 <a href=#1305 id=1305 data-nosnippet>1305</a>
-<a href=#1306 id=1306 data-nosnippet>1306</a>        <span class="kw">let </span>tls_config = CaRootsConfig::insecure_skip_verify()
+<a href=#1306 id=1306 data-nosnippet>1306</a>        <span class="kw">let </span>tls_config = CaTlsConfig::insecure_skip_verify()
 <a href=#1307 id=1307 data-nosnippet>1307</a>            .client_config(default_provider())
 <a href=#1308 id=1308 data-nosnippet>1308</a>            .expect(<span class="string">"infallible"</span>);
 <a href=#1309 id=1309 data-nosnippet>1309</a>        <span class="kw">let </span>resolver = dns_pkarr_server.dns_resolver();
@@ -1374,7 +1374,7 @@
 <a href=#1374 id=1374 data-nosnippet>1374</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random());
 <a href=#1375 id=1375 data-nosnippet>1375</a>        <span class="kw">let </span>ep = Endpoint::builder(presets::Minimal)
 <a href=#1376 id=1376 data-nosnippet>1376</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
-<a href=#1377 id=1377 data-nosnippet>1377</a>            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+<a href=#1377 id=1377 data-nosnippet>1377</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
 <a href=#1378 id=1378 data-nosnippet>1378</a>            .secret_key(secret_key.clone())
 <a href=#1379 id=1379 data-nosnippet>1379</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#1380 id=1380 data-nosnippet>1380</a>            .preset(dns_pkarr_server.preset())

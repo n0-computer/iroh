@@ -1197,7 +1197,7 @@
 <a href=#1197 id=1197 data-nosnippet>1197</a>    <span class="kw">use crate</span>::{
 <a href=#1198 id=1198 data-nosnippet>1198</a>        client::{Client, ClientBuilder, ConnectError, conn::Conn},
 <a href=#1199 id=1199 data-nosnippet>1199</a>        protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
-<a href=#1200 id=1200 data-nosnippet>1200</a>        tls::{CaRootsConfig, default_provider},
+<a href=#1200 id=1200 data-nosnippet>1200</a>        tls::{CaTlsConfig, default_provider},
 <a href=#1201 id=1201 data-nosnippet>1201</a>    };
 <a href=#1202 id=1202 data-nosnippet>1202</a>
 <a href=#1203 id=1203 data-nosnippet>1203</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_tls_config() -&gt; TlsConfig {
@@ -1303,7 +1303,7 @@
 <a href=#1303 id=1303 data-nosnippet>1303</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, Client), ConnectError&gt; {
 <a href=#1304 id=1304 data-nosnippet>1304</a>        <span class="kw">let </span>public_key = key.public();
 <a href=#1305 id=1305 data-nosnippet>1305</a>        <span class="kw">let </span>client = ClientBuilder::new(server_url, key, DnsResolver::new()).tls_client_config(
-<a href=#1306 id=1306 data-nosnippet>1306</a>            CaRootsConfig::insecure_skip_verify()
+<a href=#1306 id=1306 data-nosnippet>1306</a>            CaTlsConfig::insecure_skip_verify()
 <a href=#1307 id=1307 data-nosnippet>1307</a>                .client_config(default_provider())
 <a href=#1308 id=1308 data-nosnippet>1308</a>                .expect(<span class="string">"infallible"</span>),
 <a href=#1309 id=1309 data-nosnippet>1309</a>        );

@@ -882,7 +882,7 @@
 <a href=#882 id=882 data-nosnippet>882</a>    <span class="kw">use </span>std::net::Ipv4Addr;
 <a href=#883 id=883 data-nosnippet>883</a>
 <a href=#884 id=884 data-nosnippet>884</a>    <span class="kw">use </span>iroh_dns::dns::DnsResolver;
-<a href=#885 id=885 data-nosnippet>885</a>    <span class="kw">use </span>iroh_relay::tls::{CaRootsConfig, default_provider};
+<a href=#885 id=885 data-nosnippet>885</a>    <span class="kw">use </span>iroh_relay::tls::{CaTlsConfig, default_provider};
 <a href=#886 id=886 data-nosnippet>886</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#887 id=887 data-nosnippet>887</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
 <a href=#888 id=888 data-nosnippet>888</a>
@@ -896,7 +896,7 @@
 <a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let </span>report = run_https_probe(
 <a href=#897 id=897 data-nosnippet>897</a>            <span class="kw-2">&amp;</span>dns_resolver,
 <a href=#898 id=898 data-nosnippet>898</a>            relay.url,
-<a href=#899 id=899 data-nosnippet>899</a>            CaRootsConfig::insecure_skip_verify()
+<a href=#899 id=899 data-nosnippet>899</a>            CaTlsConfig::insecure_skip_verify()
 <a href=#900 id=900 data-nosnippet>900</a>                .client_config(default_provider())
 <a href=#901 id=901 data-nosnippet>901</a>                .expect(<span class="string">"infallible"</span>),
 <a href=#902 id=902 data-nosnippet>902</a>        )
