@@ -854,7 +854,7 @@
 <a href=#854 id=854 data-nosnippet>854</a>
 <a href=#855 id=855 data-nosnippet>855</a>            <span class="kw">let </span>e1 = Endpoint::builder(presets::Minimal)
 <a href=#856 id=856 data-nosnippet>856</a>                .relay_mode(relay_mode.clone())
-<a href=#857 id=857 data-nosnippet>857</a>                .ca_roots_config(<span class="kw">crate</span>::tls::CaRootsConfig::insecure_skip_verify())
+<a href=#857 id=857 data-nosnippet>857</a>                .ca_tls_config(<span class="kw">crate</span>::tls::CaTlsConfig::insecure_skip_verify())
 <a href=#858 id=858 data-nosnippet>858</a>                .bind()
 <a href=#859 id=859 data-nosnippet>859</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#860 id=860 data-nosnippet>860</a>            <span class="kw">let </span>r1 = Router::builder(e1.clone())
@@ -864,7 +864,7 @@
 <a href=#864 id=864 data-nosnippet>864</a>            <span class="kw">let </span>addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
 <a href=#865 id=865 data-nosnippet>865</a>            <span class="kw">let </span>e2 = Endpoint::builder(presets::Minimal)
 <a href=#866 id=866 data-nosnippet>866</a>                .relay_mode(relay_mode)
-<a href=#867 id=867 data-nosnippet>867</a>                .ca_roots_config(<span class="kw">crate</span>::tls::CaRootsConfig::insecure_skip_verify())
+<a href=#867 id=867 data-nosnippet>867</a>                .ca_tls_config(<span class="kw">crate</span>::tls::CaTlsConfig::insecure_skip_verify())
 <a href=#868 id=868 data-nosnippet>868</a>                .bind()
 <a href=#869 id=869 data-nosnippet>869</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#870 id=870 data-nosnippet>870</a>            <span class="prelude-val">Ok</span>((r1, e2, addr, guard))

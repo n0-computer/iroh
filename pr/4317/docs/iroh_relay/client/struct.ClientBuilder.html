@@ -7,14 +7,14 @@
 </div></details><details class="toggle method-toggle" open><summary><section id="method.tls_client_config" class="method"><a class="src rightside" href="../../src/iroh_relay/client.rs.html#208-211">Source</a><h4 class="code-header">pub fn <a href="#method.tls_client_config" class="fn">tls_client_config</a>(self, tls_config: ClientConfig) -&gt; Self</h4></section></summary><div class="docblock"><p>Sets a custom TLS config.</p>
 <p>This is a required option.</p>
 <p>You can construct a [<code>rustls::ClientConfig</code>] by combining a [<code>rustls::crypto::CryptoProvider</code>]
-with a <a href="../tls/struct.CaRootsConfig.html" title="struct iroh_relay::tls::CaRootsConfig"><code>tls::CaRootsConfig</code></a> using <a href="../tls/struct.CaRootsConfig.html#method.client_config" title="method iroh_relay::tls::CaRootsConfig::client_config"><code>tls::CaRootsConfig::client_config</code></a>, for example:</p>
+with a <a href="../tls/struct.CaTlsConfig.html" title="struct iroh_relay::tls::CaTlsConfig"><code>tls::CaTlsConfig</code></a> using <a href="../tls/struct.CaTlsConfig.html#method.client_config" title="method iroh_relay::tls::CaTlsConfig::client_config"><code>tls::CaTlsConfig::client_config</code></a>, for example:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use </span>iroh_relay::tls::CaRootsConfig;
+<span class="kw">use </span>iroh_relay::tls::CaTlsConfig;
 
 <span class="kw">let </span>crypto_provider: rustls::crypto::CryptoProvider = <span class="macro">todo!</span>();
-<span class="kw">let </span>client_config = CaRootsConfig::default().client_config(Arc::new(crypto_provider));</code></pre></div>
+<span class="kw">let </span>client_config = CaTlsConfig::default().client_config(Arc::new(crypto_provider));</code></pre></div>
 <p>If you enable the tls-ring or tls-aws-lc-rs feature, you can use the enabled crypto provider
 by using <a href="../tls/fn.default_provider.html" title="fn iroh_relay::tls::default_provider"><code>tls::default_provider</code></a>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.address_family_selector" class="method"><a class="src rightside" href="../../src/iroh_relay/client.rs.html#220-226">Source</a><h4 class="code-header">pub fn <a href="#method.address_family_selector" class="fn">address_family_selector</a>&lt;S&gt;(self, selector: S) -&gt; Self<div class="where">where

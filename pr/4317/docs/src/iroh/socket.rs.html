@@ -2116,7 +2116,7 @@
 <a href=#2116 id=2116 data-nosnippet>2116</a>
 <a href=#2117 id=2117 data-nosnippet>2117</a>    <span class="kw">use </span>data_encoding::HEXLOWER;
 <a href=#2118 id=2118 data-nosnippet>2118</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, TransportAddr};
-<a href=#2119 id=2119 data-nosnippet>2119</a>    <span class="kw">use </span>iroh_relay::tls::{CaRootsConfig, default_provider};
+<a href=#2119 id=2119 data-nosnippet>2119</a>    <span class="kw">use </span>iroh_relay::tls::{CaTlsConfig, default_provider};
 <a href=#2120 id=2120 data-nosnippet>2120</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#2121 id=2121 data-nosnippet>2121</a>    <span class="kw">use </span>n0_future::{MergeBounded, StreamExt, time};
 <a href=#2122 id=2122 data-nosnippet>2122</a>    <span class="kw">use </span>n0_tracing_test::traced_test;
@@ -2167,7 +2167,7 @@
 <a href=#2167 id=2167 data-nosnippet>2167</a>            proxy_url: <span class="prelude-val">None</span>,
 <a href=#2168 id=2168 data-nosnippet>2168</a>            dns_resolver: DnsResolver::new(),
 <a href=#2169 id=2169 data-nosnippet>2169</a>            server_config,
-<a href=#2170 id=2170 data-nosnippet>2170</a>            tls_config: CaRootsConfig::default()
+<a href=#2170 id=2170 data-nosnippet>2170</a>            tls_config: CaTlsConfig::default()
 <a href=#2171 id=2171 data-nosnippet>2171</a>                .client_config(crypto_provider.clone())
 <a href=#2172 id=2172 data-nosnippet>2172</a>                .unwrap(),
 <a href=#2173 id=2173 data-nosnippet>2173</a>            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
@@ -2584,7 +2584,7 @@
 <a href=#2584 id=2584 data-nosnippet>2584</a>            dns_resolver,
 <a href=#2585 id=2585 data-nosnippet>2585</a>            proxy_url: <span class="prelude-val">None</span>,
 <a href=#2586 id=2586 data-nosnippet>2586</a>            server_config,
-<a href=#2587 id=2587 data-nosnippet>2587</a>            tls_config: CaRootsConfig::default()
+<a href=#2587 id=2587 data-nosnippet>2587</a>            tls_config: CaTlsConfig::default()
 <a href=#2588 id=2588 data-nosnippet>2588</a>                .client_config(crypto_provider.clone())
 <a href=#2589 id=2589 data-nosnippet>2589</a>                .unwrap(),
 <a href=#2590 id=2590 data-nosnippet>2590</a>            metrics: Default::default(),

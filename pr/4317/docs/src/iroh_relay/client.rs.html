@@ -188,22 +188,22 @@
 <a href=#188 id=188 data-nosnippet>188</a>    /// This is a required option.
 <a href=#189 id=189 data-nosnippet>189</a>    ///
 <a href=#190 id=190 data-nosnippet>190</a>    /// You can construct a [`rustls::ClientConfig`] by combining a [`rustls::crypto::CryptoProvider`]
-<a href=#191 id=191 data-nosnippet>191</a>    /// with a [`tls::CaRootsConfig`] using [`tls::CaRootsConfig::client_config`], for example:
+<a href=#191 id=191 data-nosnippet>191</a>    /// with a [`tls::CaTlsConfig`] using [`tls::CaTlsConfig::client_config`], for example:
 <a href=#192 id=192 data-nosnippet>192</a>    ///
 <a href=#193 id=193 data-nosnippet>193</a>    /// ```no_run
 <a href=#194 id=194 data-nosnippet>194</a>    /// use std::sync::Arc;
 <a href=#195 id=195 data-nosnippet>195</a>    ///
-<a href=#196 id=196 data-nosnippet>196</a>    /// use iroh_relay::tls::CaRootsConfig;
+<a href=#196 id=196 data-nosnippet>196</a>    /// use iroh_relay::tls::CaTlsConfig;
 <a href=#197 id=197 data-nosnippet>197</a>    ///
 <a href=#198 id=198 data-nosnippet>198</a>    /// let crypto_provider: rustls::crypto::CryptoProvider = todo!();
-<a href=#199 id=199 data-nosnippet>199</a>    /// let client_config = CaRootsConfig::default().client_config(Arc::new(crypto_provider));
+<a href=#199 id=199 data-nosnippet>199</a>    /// let client_config = CaTlsConfig::default().client_config(Arc::new(crypto_provider));
 <a href=#200 id=200 data-nosnippet>200</a>    /// ```
 <a href=#201 id=201 data-nosnippet>201</a>    ///
 <a href=#202 id=202 data-nosnippet>202</a>    /// If you enable the tls-ring or tls-aws-lc-rs feature, you can use the enabled crypto provider
 <a href=#203 id=203 data-nosnippet>203</a>    /// by using [`tls::default_provider`].
 <a href=#204 id=204 data-nosnippet>204</a>    ///
-<a href=#205 id=205 data-nosnippet>205</a>    /// [`tls::CaRootsConfig`]: crate::tls::CaRootsConfig
-<a href=#206 id=206 data-nosnippet>206</a>    /// [`tls::CaRootsConfig::client_config`]: crate::tls::CaRootsConfig::client_config
+<a href=#205 id=205 data-nosnippet>205</a>    /// [`tls::CaTlsConfig`]: crate::tls::CaTlsConfig
+<a href=#206 id=206 data-nosnippet>206</a>    /// [`tls::CaTlsConfig::client_config`]: crate::tls::CaTlsConfig::client_config
 <a href=#207 id=207 data-nosnippet>207</a>    /// [`tls::default_provider`]: crate::tls::default_provider
 <a href=#208 id=208 data-nosnippet>208</a>    </span><span class="kw">pub fn </span>tls_client_config(<span class="kw-2">mut </span><span class="self">self</span>, tls_config: rustls::ClientConfig) -&gt; <span class="self">Self </span>{
 <a href=#209 id=209 data-nosnippet>209</a>        <span class="self">self</span>.tls_config = <span class="prelude-val">Some</span>(tls_config);
