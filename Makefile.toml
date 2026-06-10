@@ -46,6 +46,7 @@ description = "Run cargo check-external-types on workspace crates"
 workspace = true
 # cargo check-external-types needs a specific nightly toolchain,
 # see https://github.com/awslabs/cargo-check-external-types#how-to-use
-toolchain = "${TOOLCHAIN:nightly-2025-10-18}"
+toolchain = "${TOOLCHAIN:nightly-2026-03-20}"
 command = "cargo"
+install_crate = false
 args = ["check-external-types", "--all-features"]
