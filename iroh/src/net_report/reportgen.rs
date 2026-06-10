@@ -882,7 +882,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use iroh_dns::dns::DnsResolver;
-    use iroh_relay::tls::{CaRootsConfig, default_provider};
+    use iroh_relay::tls::{CaTlsConfig, default_provider};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
 
@@ -896,7 +896,7 @@ mod tests {
         let report = run_https_probe(
             &dns_resolver,
             relay.url,
-            CaRootsConfig::insecure_skip_verify()
+            CaTlsConfig::insecure_skip_verify()
                 .client_config(default_provider())
                 .expect("infallible"),
         )

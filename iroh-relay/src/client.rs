@@ -188,22 +188,22 @@ impl ClientBuilder {
     /// This is a required option.
     ///
     /// You can construct a [`rustls::ClientConfig`] by combining a [`rustls::crypto::CryptoProvider`]
-    /// with a [`tls::CaRootsConfig`] using [`tls::CaRootsConfig::client_config`], for example:
+    /// with a [`tls::CaTlsConfig`] using [`tls::CaTlsConfig::client_config`], for example:
     ///
     /// ```no_run
     /// use std::sync::Arc;
     ///
-    /// use iroh_relay::tls::CaRootsConfig;
+    /// use iroh_relay::tls::CaTlsConfig;
     ///
     /// let crypto_provider: rustls::crypto::CryptoProvider = todo!();
-    /// let client_config = CaRootsConfig::default().client_config(Arc::new(crypto_provider));
+    /// let client_config = CaTlsConfig::default().client_config(Arc::new(crypto_provider));
     /// ```
     ///
     /// If you enable the tls-ring or tls-aws-lc-rs feature, you can use the enabled crypto provider
     /// by using [`tls::default_provider`].
     ///
-    /// [`tls::CaRootsConfig`]: crate::tls::CaRootsConfig
-    /// [`tls::CaRootsConfig::client_config`]: crate::tls::CaRootsConfig::client_config
+    /// [`tls::CaTlsConfig`]: crate::tls::CaTlsConfig
+    /// [`tls::CaTlsConfig::client_config`]: crate::tls::CaTlsConfig::client_config
     /// [`tls::default_provider`]: crate::tls::default_provider
     pub fn tls_client_config(mut self, tls_config: rustls::ClientConfig) -> Self {
         self.tls_config = Some(tls_config);

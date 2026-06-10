@@ -16,7 +16,7 @@ use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-use iroh_relay::{RelayConfig, RelayMap, tls::CaRootsConfig};
+use iroh_relay::{RelayConfig, RelayMap, tls::CaTlsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
 use n0_error::{AnyError, e, ensure, stack_error};
@@ -127,7 +127,7 @@ pub struct Builder {
     /// [`Builder::address_lookup`].
     addr_filter: Option<AddrFilter>,
     proxy_url: Option<Url>,
-    ca_roots_config: Option<CaRootsConfig>,
+    ca_tls_config: Option<CaTlsConfig>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     transports: Vec<TransportConfig>,
@@ -194,7 +194,7 @@ impl Builder {
             address_lookup_user_data: Default::default(),
             addr_filter: None,
             proxy_url: None,
-            ca_roots_config: None,
+            ca_tls_config: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
@@ -245,7 +245,7 @@ impl Builder {
         let metrics = EndpointMetrics::default();
 
         let tls_config = self
-            .ca_roots_config
+            .ca_tls_config
             .unwrap_or_default()
             .client_config(crypto_provider)
             .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
@@ -696,9 +696,15 @@ impl Builder {
     /// iroh relays, pkarr servers, or DNS-over-HTTPS resolvers.
     /// They don't need to be trusted for the integrity or authenticity of native
     /// iroh connections, which rely on iroh's own cryptographic authentication mechanisms.
-    pub fn ca_roots_config(mut self, ca_roots_config: CaRootsConfig) -> Self {
-        self.ca_roots_config = Some(ca_roots_config);
+    pub fn ca_tls_config(mut self, ca_tls_config: CaTlsConfig) -> Self {
+        self.ca_tls_config = Some(ca_tls_config);
         self
+    }
+
+    /// Renamed to [`Builder::ca_tls_config`].
+    #[deprecated(since = "1.0.0", note = "Renamed to `ca_tls_config`")]
+    pub fn ca_roots_config(self, ca_roots_config: CaTlsConfig) -> Self {
+        self.ca_tls_config(ca_roots_config)
     }
 
     /// Enables saving the TLS pre-master key for connections.
@@ -1417,7 +1423,7 @@ impl Endpoint {
     /// Note that this TLS config is unrelated to how iroh validates the authenticity
     /// of iroh connections itself.
     ///
-    /// The config is based on the trust anchors set via [`Builder::ca_roots_config`].
+    /// The config is based on the trust anchors set via [`Builder::ca_tls_config`].
     pub fn tls_config(&self) -> &rustls::ClientConfig {
         &self.inner.tls_config
     }
@@ -1946,7 +1952,7 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
-    use iroh_relay::{RelayConfig, server::Access, tls::CaRootsConfig};
+    use iroh_relay::{RelayConfig, server::Access, tls::CaTlsConfig};
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
@@ -2006,7 +2012,7 @@ mod tests {
             .secret_key(server_secret_key)
             .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
         // Wait for the endpoint to be reachable via relay
@@ -2047,7 +2053,7 @@ mod tests {
                 let ep = Endpoint::builder(presets::Minimal)
                     .relay_mode(RelayMode::Custom(relay_map))
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                    .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                     .transport_config(qlog.create("client")?)
                     .bind()
                     .await?;
@@ -2108,7 +2114,7 @@ mod tests {
         // Make sure the server is bound before having clients connect to it:
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .secret_key(server_secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2174,7 +2180,7 @@ mod tests {
                 let ep = Endpoint::builder(presets::Minimal)
                     .relay_mode(RelayMode::Custom(relay_map.clone()))
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                    .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                     .secret_key(client_secret_key)
                     .bind()
                     .await?;
@@ -2227,12 +2233,12 @@ mod tests {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2353,7 +2359,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .transport_config(qlog.create("client")?)
                 .bind()
@@ -2400,7 +2406,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .transport_config(qlog.create("server")?)
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
@@ -2458,7 +2464,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .clear_ip_transports() // disable direct
                 .bind()
@@ -2502,7 +2508,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .clear_ip_transports()
                 .bind()
@@ -2558,7 +2564,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
@@ -2608,7 +2614,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
@@ -2663,12 +2669,12 @@ mod tests {
         let (relay_map, relay_url, _guard1) = run_relay_server().await?;
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2874,7 +2880,7 @@ mod tests {
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map))
             .alpns(vec![TEST_ALPN.to_vec()])
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
 
@@ -3505,13 +3511,13 @@ mod tests {
 
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .transport_config(qlog.create("client")?)
             .bind()
             .await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -3589,7 +3595,7 @@ mod tests {
 
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .instrument(error_span!("ep-client"))
             .await?;
@@ -3600,7 +3606,7 @@ mod tests {
         let ep1 = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(secret_key.clone())
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .instrument(error_span!("ep1"))
@@ -3630,7 +3636,7 @@ mod tests {
         let ep2 = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map))
             .secret_key(secret_key.clone())
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .instrument(error_span!("ep2"))
@@ -3867,7 +3873,7 @@ mod tests {
     async fn test_endpoint_online_add_relay() -> Result {
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(RelayMap::empty()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
         // should not come online without relays.
@@ -3943,7 +3949,7 @@ mod tests {
             .into();
         let bad_ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(bad_map))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
         let mut stream = bad_ep.home_relay_status().stream();
@@ -3968,7 +3974,7 @@ mod tests {
             .into();
         let good_ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(good_map))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
         tokio::time::timeout(Duration::from_secs(5), good_ep.online())

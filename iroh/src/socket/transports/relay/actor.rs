@@ -1395,7 +1395,7 @@ mod tests {
     use iroh_relay::{
         PingTracker,
         protos::relay::Datagrams,
-        tls::{CaRootsConfig, default_provider},
+        tls::{CaTlsConfig, default_provider},
     };
     use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use n0_tracing_test::traced_test;
@@ -1433,7 +1433,7 @@ mod tests {
                 dns_resolver: DnsResolver::new(),
                 proxy_url: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
-                tls_config: CaRootsConfig::insecure_skip_verify()
+                tls_config: CaTlsConfig::insecure_skip_verify()
                     .client_config(default_provider())
                     .expect("infallible"),
                 auth_token: None,
