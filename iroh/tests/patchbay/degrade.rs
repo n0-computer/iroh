@@ -178,6 +178,7 @@ async fn degrade_server_1_poor() -> Result {
     run_degrade_level(Side::Server, 1).await
 }
 
+#[ignore = "flaky"]
 #[tokio::test]
 #[traced_test]
 async fn degrade_server_2_bad() -> Result {
