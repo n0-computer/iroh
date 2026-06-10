@@ -27,7 +27,7 @@ use iroh_relay::{
         http_server::{BytesBody, Handlers, RelayService, RelayServiceWithNotify},
         streams::MaybeTlsStream,
     },
-    tls::{CaRootsConfig, default_provider},
+    tls::{CaTlsConfig, default_provider},
 };
 use n0_error::{Result, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
@@ -106,7 +106,7 @@ async fn relay_embed_hyper() -> Result<()> {
     // Connect a relay client to `/relay`.
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
     let relay_url: RelayUrl = format!("http://{addr}").parse()?;
-    let tls_config = CaRootsConfig::default().client_config(default_provider())?;
+    let tls_config = CaTlsConfig::default().client_config(default_provider())?;
     tokio::time::timeout(
         Duration::from_secs(5),
         ClientBuilder::new(

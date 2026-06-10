@@ -29,7 +29,7 @@ use iroh_relay::{
     server::{
         Access, AccessControl, ClientRequest, ConnectionId, RelayConfig, Server, ServerConfig,
     },
-    tls::{CaRootsConfig, default_provider},
+    tls::{CaTlsConfig, default_provider},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::{SinkExt, StreamExt};
@@ -297,7 +297,7 @@ async fn connect_as(
     secret: &SecretKey,
     token: &str,
 ) -> Result<Client, ConnectError> {
-    let tls = CaRootsConfig::default()
+    let tls = CaTlsConfig::default()
         .client_config(default_provider())
         .expect("valid client config");
     ClientBuilder::new(relay_url.clone(), secret.clone(), DnsResolver::new())

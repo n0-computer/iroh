@@ -18,7 +18,7 @@ pub(crate) mod name;
 mod resolver;
 mod verifier;
 
-pub use iroh_relay::tls::CaRootsConfig;
+pub use iroh_relay::tls::CaTlsConfig;
 #[cfg(with_crypto_provider)]
 pub use iroh_relay::tls::default_provider;
 
