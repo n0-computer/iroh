@@ -76,7 +76,6 @@ axum = { version = "0.8", optional = true }
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 
-hickory-resolver = { version = "0.26.0", default-features = false }
 portmapper = { version = "0.18", optional = true, default-features = false }
 noq = { version = "=1.0.0-rc.1", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
@@ -88,6 +87,10 @@ tokio = { version = "1", features = [
     "fs",
     "io-std",
 ] }
+
+# non-wasm, non-esp-idf dependencies (hickory is too large for esp32; only used by test_utils)
+[target.'cfg(not(any(target_os = "espidf", all(target_family = "wasm", target_os = "unknown"))))'.dependencies]
+hickory-resolver = { version = "0.26.0", default-features = false }
 
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]

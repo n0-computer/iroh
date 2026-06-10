@@ -87,7 +87,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "0.26.0", features = ["tokio", "system-config"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -98,6 +97,10 @@ tokio = { version = "1", features = [
     "io-std",
 ] }
 tokio-websockets = { version = "0.13", features = ["rustls-bring-your-own-connector", "getrandom", "rand", "client", "sha1_smol"] }
+
+# non-wasm, non-esp-idf dependencies (hickory is too large for esp32)
+[target.'cfg(not(any(target_os = "espidf", all(target_family = "wasm", target_os = "unknown"))))'.dependencies]
+hickory-resolver = { version = "0.26.0", features = ["tokio", "system-config"] }
 
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]

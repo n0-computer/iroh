@@ -16,6 +16,9 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
+// `hickory-resolver` is not compiled on esp-idf (too large for the device); the
+// `StdResolver` getaddrinfo fallback below is used there instead.
+#[cfg(not(target_os = "espidf"))]
 use hickory_resolver::{
     TokioResolver,
     config::{ConnectionConfig, ResolverConfig, ResolverOpts},
@@ -23,7 +26,10 @@ use hickory_resolver::{
     proto::rr::RData,
 };
 use iroh_base::EndpointId;
-use n0_error::{AnyError, StackError, StdResultExt, e, stack_error};
+use n0_error::{AnyError, StackError, e, stack_error};
+// `StdResultExt` (`.anyerr()`) is only used by the hickory resolver below.
+#[cfg(not(target_os = "espidf"))]
+use n0_error::StdResultExt;
 use n0_future::{
     Either, MaybeFuture, Stream, StreamExt,
     boxed::BoxFuture,
@@ -31,6 +37,7 @@ use n0_future::{
     time::{self, Duration},
 };
 use tokio::sync::Notify;
+#[cfg(not(target_os = "espidf"))]
 use tracing::warn;
 use url::Url;
 
@@ -162,6 +169,7 @@ pub enum DnsProtocol {
     Https,
 }
 
+#[cfg(not(target_os = "espidf"))]
 impl DnsProtocol {
     #[cfg_attr(
         not(with_crypto_provider),
@@ -216,8 +224,19 @@ impl Builder {
     }
 
     /// Builds the DNS resolver.
+    #[cfg(not(target_os = "espidf"))]
     pub fn build(self) -> DnsResolver {
         DnsResolver::custom(HickoryResolver::new(self))
+    }
+
+    /// Builds the DNS resolver.
+    ///
+    /// On esp-idf, `hickory-resolver` is not compiled in, so the builder
+    /// configuration is ignored and a [`StdResolver`] (system `getaddrinfo`) is
+    /// returned. Use [`DnsResolver::custom`] for full control.
+    #[cfg(target_os = "espidf")]
+    pub fn build(self) -> DnsResolver {
+        DnsResolver::custom(StdResolver)
     }
 }
 
@@ -706,12 +725,14 @@ impl Default for DnsResolver {
     }
 }
 
+#[cfg(not(target_os = "espidf"))]
 #[derive(Debug)]
 struct HickoryResolver {
     resolver: TokioResolver,
     builder: Builder,
 }
 
+#[cfg(not(target_os = "espidf"))]
 impl HickoryResolver {
     fn new(builder: Builder) -> Self {
         let resolver = Self::build_resolver(&builder);
@@ -783,6 +804,7 @@ impl HickoryResolver {
     }
 }
 
+#[cfg(not(target_os = "espidf"))]
 impl Resolver for HickoryResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let resolver = self.resolver.clone();
@@ -847,6 +869,84 @@ impl Resolver for HickoryResolver {
     }
 }
 
+/// Runs a blocking `getaddrinfo` lookup off the async runtime, on esp-idf.
+///
+/// On ESP-IDF the single-threaded tokio runtime is typically configured with a
+/// tiny blocking pool, so we spawn a raw OS thread and use a oneshot channel to
+/// return the result rather than relying on `tokio::task::spawn_blocking`.
+#[cfg(target_os = "espidf")]
+async fn resolve_blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, DnsError> + Send + 'static,
+) -> Result<T, DnsError> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.await.map_err(|_| e!(DnsError::NoResponse))?
+}
+
+/// A minimal DNS resolver backed by the system's `getaddrinfo`
+/// (via [`std::net::ToSocketAddrs`]).
+///
+/// This is the default resolver on esp-idf, where `hickory-resolver` is not
+/// compiled in. It supports A and AAAA lookups; TXT lookups are unsupported and
+/// return [`DnsError::NoResponse`]. For iroh endpoint discovery over DNS use a
+/// pkarr-based address lookup or a [`DnsResolver::custom`] resolver instead.
+#[cfg(target_os = "espidf")]
+#[derive(Debug)]
+struct StdResolver;
+
+#[cfg(target_os = "espidf")]
+impl Resolver for StdResolver {
+    fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
+        Box::pin(async move {
+            let addrs = resolve_blocking(move || -> Result<Vec<Ipv4Addr>, DnsError> {
+                use std::net::ToSocketAddrs;
+                let host = host.strip_suffix('.').unwrap_or(&host);
+                Ok((host, 0u16)
+                    .to_socket_addrs()
+                    .map_err(|_| e!(DnsError::NoResponse))?
+                    .filter_map(|a| match a.ip() {
+                        IpAddr::V4(v4) => Some(v4),
+                        IpAddr::V6(_) => None,
+                    })
+                    .collect())
+            })
+            .await?;
+            Ok(Box::new(addrs.into_iter()) as BoxIter<Ipv4Addr>)
+        })
+    }
+
+    fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
+        Box::pin(async move {
+            let addrs = resolve_blocking(move || -> Result<Vec<Ipv6Addr>, DnsError> {
+                use std::net::ToSocketAddrs;
+                let host = host.strip_suffix('.').unwrap_or(&host);
+                Ok((host, 0u16)
+                    .to_socket_addrs()
+                    .map_err(|_| e!(DnsError::NoResponse))?
+                    .filter_map(|a| match a.ip() {
+                        IpAddr::V6(v6) => Some(v6),
+                        IpAddr::V4(_) => None,
+                    })
+                    .collect())
+            })
+            .await?;
+            Ok(Box::new(addrs.into_iter()) as BoxIter<Ipv6Addr>)
+        })
+    }
+
+    fn lookup_txt(&self, _host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
+        Box::pin(async { Err(e!(DnsError::NoResponse)) })
+    }
+
+    fn clear_cache(&self) {}
+
+    fn reset(&self) -> Box<dyn Resolver> {
+        Box::new(StdResolver)
+    }
+}
+
 /// Record data for a TXT record.
 ///
 /// This contains a list of character strings, as defined in [RFC 1035 Section 3.3.14].
@@ -897,6 +997,7 @@ impl From<Vec<Box<[u8]>>> for TxtRecordData {
 /// **only** relying on these servers and not also being configured normally are also almost
 /// zero.  The chance of the DNS resolver accidentally trying one of these and taking a
 /// bunch of timeouts to figure out they're no good are on the other hand very high.
+#[cfg(not(target_os = "espidf"))]
 const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
     IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 1)),
     IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 2)),

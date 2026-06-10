@@ -29,8 +29,9 @@ tokio = { version = "1", features = ["sync"] }
 tracing = "0.1"
 url = "2.5.3"
 
-# non-wasm-in-browser dependencies
-[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+# non-wasm-in-browser, non-esp-idf dependencies.
+# hickory-resolver is too large for esp32; there a getaddrinfo-based StdResolver is used.
+[target.'cfg(not(any(target_os = "espidf", all(target_family = "wasm", target_os = "unknown"))))'.dependencies]
 hickory-resolver = { version = "0.26.0", features = ["tokio", "system-config"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
