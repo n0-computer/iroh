@@ -19,12 +19,16 @@ use webpki_types::CertificateDer;
 /// CAs don't need to be trusted for the integrity or authenticity of native
 /// iroh connections, which rely on iroh's own cryptographic authentication mechanisms.
 #[derive(Debug, Clone)]
-pub struct CaRootsConfig {
+pub struct CaTlsConfig {
     mode: Mode,
     extra_roots: Vec<CertificateDer<'static>>,
 }
 
-#[derive(Debug, Clone)]
+/// Renamed to [`CaTlsConfig`].
+#[deprecated(since = "1.0.0", note = "Renamed to `CaTlsConfig`")]
+pub type CaRootsConfig = CaTlsConfig;
+
+#[derive(derive_more::Debug, Clone)]
 enum Mode {
     /// Use a compiled-in copy of the root certificates trusted by Mozilla.
     ///
@@ -37,6 +41,11 @@ enum Mode {
     System,
     /// Only trust explicitly set root certificates.
     ExtraRootsOnly,
+    /// Use a callback to create a [`ServerCertVerifier`].
+    CustomServerCertVerifier {
+        #[debug("Arc<dyn Fn>")]
+        builder: ServerCertVerifierBuilder,
+    },
     /// INSECURE: Do not verify server certificates at all.
     ///
     /// May only be used in tests or local development setups.
@@ -44,7 +53,7 @@ enum Mode {
     InsecureSkipVerify,
 }
 
-impl Default for CaRootsConfig {
+impl Default for CaTlsConfig {
     fn default() -> Self {
         Self {
             mode: Mode::EmbeddedWebPki,
@@ -53,8 +62,8 @@ impl Default for CaRootsConfig {
     }
 }
 
-impl CaRootsConfig {
-    /// Use the operating system's certificate facilities for verifying the validity of TLS certificates.
+impl CaTlsConfig {
+    /// Uses the operating system's certificate facilities for verifying the validity of TLS certificates.
     ///
     /// See [`rustls_platform_verifier`] for details how trust anchors are retrieved on different platforms.
     ///
@@ -68,7 +77,7 @@ impl CaRootsConfig {
         }
     }
 
-    /// Use a compiled-in copy of the root certificates trusted by Mozilla.
+    /// Uses a compiled-in copy of the root certificates trusted by Mozilla.
     ///
     /// See [`webpki_roots`] for details.
     pub fn embedded() -> Self {
@@ -89,15 +98,56 @@ impl CaRootsConfig {
         }
     }
 
-    /// Only trust the explicitly set root certificates.
-    pub fn custom(roots: impl IntoIterator<Item = CertificateDer<'static>>) -> Self {
+    /// Only trusts the explicitly set root certificates.
+    pub fn custom_roots(roots: impl IntoIterator<Item = CertificateDer<'static>>) -> Self {
         Self {
             mode: Mode::ExtraRootsOnly,
             extra_roots: roots.into_iter().collect(),
         }
     }
 
-    /// Add additional root certificates to the list of trusted certificates.
+    /// Renamed to [`Self::custom_roots`].
+    #[deprecated(since = "1.0.0", note = "Renamed to `custom_roots`")]
+    pub fn custom(roots: impl IntoIterator<Item = CertificateDer<'static>>) -> Self {
+        Self::custom_roots(roots)
+    }
+
+    /// Creates a [`CaTlsConfig`] that uses a callback function to create a [`ServerCertVerifier`].
+    ///
+    /// This is an advanced feature and you should only use this if none of the other constructor
+    /// functions cover your needs. Wrongly implementing the callback may lead to insecure connections
+    /// being accepted.
+    ///
+    /// The [`CryptoProvider`] passed to the callback should be used for all cryptographic operations.
+    ///
+    /// ## Example
+    ///
+    /// This example implements the behavior of [`Self::embedded`] via [`Self::custom_server_cert_verifier`].
+    ///
+    /// ```rust
+    /// # use std::{io, sync::Arc};
+    /// # use iroh_relay::tls::CaTlsConfig;
+    /// # use rustls::client::WebPkiServerVerifier;
+    /// let tls_config = CaTlsConfig::custom_server_cert_verifier(Arc::new(move |crypto_provider| {
+    ///     let root_store = Arc::new(rustls::RootCertStore {
+    ///         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    ///     });
+    ///     let verifier = WebPkiServerVerifier::builder_with_provider(root_store, crypto_provider)
+    ///         .build()
+    ///         .map_err(io::Error::other)?;
+    ///     Ok(verifier)
+    /// }));
+    /// ```
+    pub fn custom_server_cert_verifier(builder: ServerCertVerifierBuilder) -> Self {
+        Self {
+            mode: Mode::CustomServerCertVerifier { builder },
+            extra_roots: Vec::new(),
+        }
+    }
+
+    /// Adds additional root certificates to the list of trusted certificates.
+    ///
+    /// Ignored when using [`Self::custom_server_cert_verifier`].
     pub fn with_extra_roots(
         mut self,
         extra_roots: impl IntoIterator<Item = CertificateDer<'static>>,
@@ -139,19 +189,25 @@ impl CaRootsConfig {
                     .build()
                     .map_err(io::Error::other)?
             }
+            Mode::CustomServerCertVerifier { ref builder } => builder(crypto_provider)?,
             #[cfg(any(test, feature = "test-utils"))]
             Mode::InsecureSkipVerify => {
+                tracing::warn!(
+                    "Insecure TLS config: server certificates will be trusted without verification"
+                );
                 Arc::new(no_cert_verifier::NoCertVerifier { crypto_provider })
             }
         })
     }
 
-    /// Build a [`ClientConfig`] from this config.
+    /// Builds a [`ClientConfig`] from this config.
     pub fn client_config(&self, crypto_provider: Arc<CryptoProvider>) -> io::Result<ClientConfig> {
         let verifier = self.server_cert_verifier(crypto_provider.clone())?;
         let config = ClientConfig::builder_with_provider(crypto_provider)
             .with_safe_default_protocol_versions()
-            .expect("protocols supported by ring")
+            .expect(
+                "configured crypto provider is missing support for required TLS protocol versions",
+            )
             .dangerous()
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
@@ -159,9 +215,16 @@ impl CaRootsConfig {
     }
 }
 
+/// Function to build a [`ServerCertVerifier`] from a [`CryptoProvider`].
+///
+/// See [`CaTlsConfig::custom_server_cert_verifier].
+pub type ServerCertVerifierBuilder = Arc<
+    dyn Fn(Arc<CryptoProvider>) -> io::Result<Arc<dyn ServerCertVerifier>> + Send + Sync + 'static,
+>;
+
 /// Returns the default crypto provider, if enabled via a feature flag.
 ///
-/// Prefers to ring over aws-lc-rs if both are enabled.
+/// Prefers `ring` over `aws-lc-rs` if both are enabled.
 #[cfg(feature = "tls-ring")]
 pub fn default_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
@@ -169,29 +232,20 @@ pub fn default_provider() -> Arc<CryptoProvider> {
 
 /// Returns the default crypto provider, if enabled via a feature flag.
 ///
-/// Prefers to ring over aws-lc-rs if both are enabled.
+/// Prefers `ring` over `aws-lc-rs` if both are enabled.
 #[cfg(all(feature = "tls-aws-lc-rs", not(feature = "tls-ring")))]
 pub fn default_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 }
 
-#[cfg(all(any(test, feature = "test-utils"), with_crypto_provider))]
 /// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.
-pub fn make_dangerous_client_config() -> rustls::ClientConfig {
-    tracing::warn!(
-        "Insecure config: SSL certificates from relay servers will be trusted without verification"
-    );
-    let crypto_provider = crate::tls::default_provider();
-    rustls::client::ClientConfig::builder_with_provider(crypto_provider.clone())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .expect("protocols supported by ring")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(no_cert_verifier::NoCertVerifier {
-            crypto_provider,
-        }))
-        .with_no_client_auth()
+#[cfg(all(any(test, feature = "test-utils"), with_crypto_provider))]
+pub fn make_dangerous_client_config() -> ClientConfig {
+    CaTlsConfig::insecure_skip_verify()
+        .client_config(default_provider())
+        .expect("infallible")
 }
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -221,6 +275,7 @@ mod no_cert_verifier {
         ) -> Result<ServerCertVerified, rustls::Error> {
             Ok(ServerCertVerified::assertion())
         }
+
         fn verify_tls12_signature(
             &self,
             _message: &[u8],

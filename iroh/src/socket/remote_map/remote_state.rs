@@ -893,7 +893,11 @@ impl State {
                 self.address_lookup_stream = None;
             }
             Some(Err(err)) => {
-                warn!("Address Lookup failed: {err:#}");
+                if let AddressLookupFailed::NoServiceConfigured { .. } = err {
+                    trace!("Address Lookup not configured");
+                } else {
+                    debug!("Address Lookup failed: {err:#}");
+                }
                 self.paths.address_lookup_finished(Err(err));
                 self.address_lookup_stream = None;
             }
