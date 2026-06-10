@@ -288,19 +288,26 @@ impl Transports {
 
         let mut total_polled = 0;
         let mut total_errors = 0;
+        let mut return_ready = false;
 
         macro_rules! poll_transport {
             ($debug_label:expr, $socket:expr) => {
                 total_polled += 1;
                 match $socket.poll_recv(cx, bufs, metas, &mut self.recv_infos) {
-                    Poll::Pending | Poll::Ready(Ok(0)) => {
-                        self.consecutive_total_recv_failures = 0;
+                    Poll::Pending => {}
+                    Poll::Ready(Ok(0)) => {
+                        return_ready = true;
                     }
                     Poll::Ready(Ok(n)) => {
+                        // Once a transport has data ready, we return directly.
                         self.consecutive_total_recv_failures = 0;
                         return Poll::Ready(Ok(n));
                     }
                     Poll::Ready(Err(err)) => {
+                        // We don't set `has_poll_ready` to `true` here, because if we did,
+                        // a single always-failing transport would put us into a hot loop
+                        // where `poll_recv` would be called right away again and again even if
+                        // the non-failing transports are all pending.
                         total_errors += 1;
                         warn!(transport = $debug_label, "recv error: {err:#}");
                     }
@@ -315,7 +322,6 @@ impl Transports {
             for transport in self.ip.iter_mut() {
                 poll_transport!("IP", transport);
             }
-
             for transport in self.relay.iter_mut() {
                 poll_transport!("relay", transport);
             }
@@ -347,7 +353,13 @@ impl Transports {
                 Poll::Ready(Ok(0))
             }
         } else {
-            Poll::Pending
+            // At least one transport is pending or returned Ok(0).
+            self.consecutive_total_recv_failures = 0;
+            if return_ready {
+                Poll::Ready(Ok(0))
+            } else {
+                Poll::Pending
+            }
         }
     }
 

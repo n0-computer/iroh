@@ -222,9 +222,7 @@ impl IpTransport {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
-}
 
-impl IpTransport {
     pub(super) fn local_addr_watch(&self) -> n0_watcher::Direct<SocketAddr> {
         self.local_addr.watch()
     }
