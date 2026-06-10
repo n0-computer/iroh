@@ -3,7 +3,7 @@
 //! Dialing by [`EndpointId`] is supported by iroh endpoints publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
 //!
-//! [`EndpointInfo`] combines an [`iroh_base::EndpointId`] with [`EndpointData`] —
+//! [`EndpointInfo`] combines an [`iroh_base::EndpointId`] with [`EndpointData`]:
 //! the addressing and metadata that discovery services publish and resolve.
 //! Discovery services use [`AddrFilter`] to control which addresses are published.
 //!
@@ -120,7 +120,7 @@ impl EndpointData {
         self.add_addrs(addresses.into_iter().map(TransportAddr::Ip))
     }
 
-    /// Adds addresses to the endpoint data in the given ordered, but with duplicates filtered.
+    /// Adds addresses to the endpoint data in the given order, but with duplicates filtered.
     pub fn add_addrs(&mut self, addrs: impl IntoIterator<Item = TransportAddr>) {
         let mut addr_set = dedup(&mut self.addrs);
         for addr in addrs.into_iter() {
@@ -131,7 +131,7 @@ impl EndpointData {
         }
     }
 
-    /// Sets the user-defined data and returns the updated endpoint data.
+    /// Sets the user-defined data.
     pub fn set_user_data(&mut self, user_data: Option<UserData>) {
         self.user_data = user_data;
     }
@@ -142,7 +142,7 @@ impl EndpointData {
             .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
     }
 
-    /// Removes all direct addresses from the endpoint data.
+    /// Removes all relay URLs from the endpoint data.
     pub fn clear_relay_urls(&mut self) {
         self.addrs
             .retain(|addr| !matches!(addr, TransportAddr::Relay(_)));
@@ -169,12 +169,12 @@ impl EndpointData {
         })
     }
 
-    /// Returns the full list of all known addresses
+    /// Returns the full list of all known addresses.
     pub fn addrs(&self) -> impl Iterator<Item = &TransportAddr> {
         self.addrs.iter()
     }
 
-    /// Does this have any addresses?
+    /// Returns whether this has any addresses.
     pub fn has_addrs(&self) -> bool {
         !self.addrs.is_empty()
     }
@@ -294,9 +294,9 @@ impl From<EndpointAddr> for EndpointData {
     }
 }
 
-// User-defined data that can be published and resolved through endpoint discovery.
+/// User-defined data that can be published and resolved through endpoint discovery.
 ///
-/// Under the hood this is a UTF-8 String is no longer than [`UserData::MAX_LENGTH`] bytes.
+/// Under the hood this is a UTF-8 string no longer than [`UserData::MAX_LENGTH`] bytes.
 ///
 /// Iroh does not keep track of or examine the user-defined data.
 ///

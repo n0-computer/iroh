@@ -111,7 +111,7 @@ impl BindOpts {
     /// Returns whether this is a default route.
     ///
     /// If [`Self::set_is_default_route`] has been called then that value is returned.
-    /// Otherwise, returns `true` if the [`prefix_len`][`Self::prefix_len] is `0` and
+    /// Otherwise, returns `true` if the [`prefix_len`][`Self::prefix_len`] is `0` and
     /// `false` otherwise.
     pub fn is_default_route(&self) -> bool {
         match self.is_default_route {

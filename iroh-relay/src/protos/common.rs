@@ -39,8 +39,7 @@ pub enum FrameType {
     ///
     /// 32B pub key of peer that's gone
     EndpointGone = 8,
-    /// Messages with these frames will be ignored.
-    /// 8 byte ping payload, to be echoed back in FrameType::Pong
+    /// 8 byte ping payload, to be echoed back in a [`FrameType::Pong`].
     Ping = 9,
     /// 8 byte payload, the contents of ping being replied to
     Pong = 10,

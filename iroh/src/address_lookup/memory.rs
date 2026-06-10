@@ -3,7 +3,7 @@
 //! Often an application might get endpoint addressing information out-of-band in an
 //! application-specific way.  [`EndpointTicket`]'s are one common way used to achieve this.
 //! This addressing information is often only usable for a limited time so needs to
-//! be able to be removed again once know it is no longer useful.
+//! be able to be removed again once you know it is no longer useful.
 //!
 //! This is where the [`MemoryLookup`] is useful: it allows applications to add and
 //! retract endpoint addressing information that is otherwise out-of-band to iroh.
@@ -29,10 +29,11 @@ use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 /// Often an application might get endpoint addressing information out-of-band in an
 /// application-specific way.  [`EndpointTicket`]'s are one common way used to achieve this.
 /// This addressing information is often only usable for a limited time so needs to
-/// be able to be removed again once know it is no longer useful.
+/// be able to be removed again once you know it is no longer useful.
 ///
 /// This is where the [`MemoryLookup`] is useful: it allows applications to add and
 /// retract endpoint addressing information that is otherwise out-of-band to iroh.
+///
 /// # Examples
 ///
 /// ```no_run
@@ -100,7 +101,7 @@ impl MemoryLookup {
     /// [`Endpoint`]: crate::Endpoint
     pub const PROVENANCE: &'static str = "memory_lookup";
 
-    /// Creates a new static Address Lookup instance.
+    /// Creates a new empty Memory Lookup instance.
     pub fn new() -> Self {
         Self::default()
     }

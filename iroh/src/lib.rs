@@ -1,6 +1,6 @@
 //! Peer-to-peer QUIC connections.
 //!
-//! iroh is a library to establish direct connectivity between peers.  It exposes an
+//! iroh is a library to establish direct connectivity between peers. It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
 //! connectivity using [hole punching] complemented by relay servers under the hood.
 //!
@@ -73,7 +73,7 @@
 //!
 //! If one of the iroh endpoints can be reached directly, connectivity can also be
 //! established without involving a Relay server.  This is done by using the endpoint's
-//! listening addresses in the connection establishement instead of the [`RelayUrl`] which
+//! listening addresses in the connection establishment instead of the [`RelayUrl`] which
 //! is used to identify a Relay server.  Of course it is also possible to use both a
 //! [`RelayUrl`] and direct addresses at the same time to connect.
 //!

@@ -10,20 +10,20 @@ pub struct Metrics {
     /*
      * Metrics about packets
      */
-    /// Bytes sent from a `FrameType::SendPacket`
+    /// Bytes sent in relayed 'send' packets.
     #[metrics(help = "Number of bytes sent.")]
     pub bytes_sent: Counter,
-    /// Bytes received from a `FrameType::SendPacket`
+    /// Bytes received in relayed 'send' packets.
     #[metrics(help = "Number of bytes received.")]
     pub bytes_recv: Counter,
 
-    /// `FrameType::SendPacket` sent
+    /// Number of 'send' packets sent.
     #[metrics(help = "Number of 'send' packets relayed.")]
     pub send_packets_sent: Counter,
-    /// `FrameType::SendPacket` received
+    /// Number of 'send' packets received.
     #[metrics(help = "Number of 'send' packets received.")]
     pub send_packets_recv: Counter,
-    /// `FrameType::SendPacket` dropped
+    /// Number of 'send' packets dropped.
     #[metrics(help = "Number of 'send' packets dropped.")]
     pub send_packets_dropped: Counter,
 
@@ -43,7 +43,7 @@ pub struct Metrics {
     /// Number of `FrameType::Pong`s sent
     #[metrics(help = "Number of times the server has sent a Pong to a client.")]
     pub sent_pong: Counter,
-    /// Number of `FrameType::Unknown` received
+    /// Number of unknown frames received.
     #[metrics(help = "Number of unknown frames sent to this server.")]
     pub unknown_frames: Counter,
 

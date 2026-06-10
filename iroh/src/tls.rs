@@ -1,6 +1,6 @@
 //! TLS configuration for iroh.
 //!
-//! Currently there is one mechanisms available
+//! Currently there is one mechanism available:
 //! - Raw Public Keys, using the TLS extension described in [RFC 7250]
 //!
 //! [RFC 7250]: https://datatracker.ietf.org/doc/html/rfc7250

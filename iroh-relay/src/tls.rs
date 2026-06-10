@@ -217,7 +217,7 @@ impl CaTlsConfig {
 
 /// Function to build a [`ServerCertVerifier`] from a [`CryptoProvider`].
 ///
-/// See [`CaTlsConfig::custom_server_cert_verifier].
+/// See [`CaTlsConfig::custom_server_cert_verifier`].
 pub type ServerCertVerifierBuilder = Arc<
     dyn Fn(Arc<CryptoProvider>) -> io::Result<Arc<dyn ServerCertVerifier>> + Send + Sync + 'static,
 >;

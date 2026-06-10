@@ -69,7 +69,7 @@ pub mod prod {
         RelayConfig::from(RelayUrl::from(url))
     }
 
-    /// Get the default [`RelayConfig`] for Asia-Pacific
+    /// Get the default [`RelayConfig`] for Asia-Pacific.
     pub fn default_ap_relay() -> RelayConfig {
         // The default Asia-Pacific relay server run by number0.
         let url: Url = format!("https://{AP_RELAY_HOSTNAME}")

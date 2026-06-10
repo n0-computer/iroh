@@ -20,7 +20,7 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 /// contact the endpoint.
 ///
 /// To establish a network connection to an endpoint both the [`EndpointId`] and one or more network
-/// paths are needed.  The network paths can come from various sources, current sources can come from
+/// paths are needed.  The network paths can come from various sources:
 ///
 /// - An [Address Lookup] service which can provide routing information for a given [`EndpointId`].
 ///
@@ -42,7 +42,7 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 pub struct EndpointAddr {
     /// The endpoint's identifier.
     pub id: EndpointId,
-    /// The endpoint's addresses
+    /// The endpoint's addresses.
     pub addrs: BTreeSet<TransportAddr>,
 }
 
@@ -52,10 +52,10 @@ pub struct EndpointAddr {
 )]
 #[non_exhaustive]
 pub enum TransportAddr {
-    /// Relays
+    /// A relay server address.
     #[debug("Relay({_0})")]
     Relay(RelayUrl),
-    /// IP based addresses
+    /// An IP based address.
     Ip(SocketAddr),
     /// Custom transport address
     Custom(CustomAddr),
@@ -128,12 +128,12 @@ impl EndpointAddr {
         self
     }
 
-    /// Returns true, if only a [`EndpointId`] is present.
+    /// Returns true if only an [`EndpointId`] is present.
     pub fn is_empty(&self) -> bool {
         self.addrs.is_empty()
     }
 
-    /// Returns a list of IP addresses of this peer.
+    /// Returns an iterator over the IP addresses of this endpoint.
     pub fn ip_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
         self.addrs.iter().filter_map(|addr| match addr {
             TransportAddr::Ip(addr) => Some(addr),
@@ -141,7 +141,7 @@ impl EndpointAddr {
         })
     }
 
-    /// Returns a list of relay urls of this peer.
+    /// Returns an iterator over the relay URLs of this endpoint.
     ///
     ///  In practice this is expected to be zero or one home relay for all known cases currently.
     pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl> {
