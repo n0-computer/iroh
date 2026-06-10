@@ -40,7 +40,7 @@ enum Mode {
     /// INSECURE: Do not verify server certificates at all.
     ///
     /// May only be used in tests or local development setups.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(any(test, feature = "test-utils", feature = "insecure-skip-verify"))]
     InsecureSkipVerify,
 }
 
@@ -81,7 +81,7 @@ impl CaRootsConfig {
     /// INSECURE: Do not verify server certificates at all.
     ///
     /// May only be used in tests or local development setups.
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(any(test, feature = "test-utils", feature = "insecure-skip-verify"))]
     pub fn insecure_skip_verify() -> Self {
         Self {
             mode: Mode::InsecureSkipVerify,
@@ -139,7 +139,7 @@ impl CaRootsConfig {
                     .build()
                     .map_err(io::Error::other)?
             }
-            #[cfg(any(test, feature = "test-utils"))]
+            #[cfg(any(test, feature = "test-utils", feature = "insecure-skip-verify"))]
             Mode::InsecureSkipVerify => {
                 Arc::new(no_cert_verifier::NoCertVerifier { crypto_provider })
             }
@@ -194,7 +194,7 @@ pub fn make_dangerous_client_config() -> rustls::ClientConfig {
         .with_no_client_auth()
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(any(test, feature = "test-utils", feature = "insecure-skip-verify"))]
 mod no_cert_verifier {
     use std::sync::Arc;
 

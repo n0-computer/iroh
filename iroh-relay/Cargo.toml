@@ -135,6 +135,11 @@ vergen-gitcl = "9.1"
 default = ["metrics", "tls-ring"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["dep:rustls-platform-verifier"]
+# INSECURE: exposes `CaRootsConfig::insecure_skip_verify()` without pulling in the
+# heavyweight `test-utils`/`server` stack. Intended for resource-constrained clients
+# (e.g. esp32) whose minimal crypto provider cannot verify real relay certificate
+# signatures. Do not enable in production deployments that need real cert validation.
+insecure-skip-verify = []
 server = [
     "metrics",
     "tokio/signal",
