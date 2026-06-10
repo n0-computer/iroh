@@ -1274,7 +1274,7 @@ mod tests {
     use std::time::Duration;
 
     use iroh_base::{EndpointAddr, SecretKey};
-    use iroh_relay::tls::CaRootsConfig;
+    use iroh_relay::tls::CaTlsConfig;
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{Stream, StreamExt};
     use n0_tracing_test::traced_test;
@@ -1507,7 +1507,7 @@ mod tests {
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
@@ -1515,7 +1515,7 @@ mod tests {
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
 

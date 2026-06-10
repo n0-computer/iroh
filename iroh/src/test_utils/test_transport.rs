@@ -388,7 +388,7 @@ mod tests {
         let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
             .relay_mode(relay_mode)
-            .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(crate::tls::CaTlsConfig::insecure_skip_verify())
             .add_custom_transport(transport);
         if let Some(bias) = config.custom_bias {
             builder = builder.path_selector(Arc::new(
