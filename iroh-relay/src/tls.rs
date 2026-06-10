@@ -41,16 +41,16 @@ enum Mode {
     System,
     /// Only trust explicitly set root certificates.
     ExtraRootsOnly,
+    /// Use a callback to create a [`ServerCertVerifier`].
+    CustomServerCertVerifier {
+        #[debug("Arc<dyn Fn>")]
+        builder: ServerCertVerifierBuilder,
+    },
     /// INSECURE: Do not verify server certificates at all.
     ///
     /// May only be used in tests or local development setups.
     #[cfg(any(test, feature = "test-utils"))]
     InsecureSkipVerify,
-    /// Use a callback to create a [`ServerCertVerifier`] used in all TLS requests.
-    CustomServerCertVerifier {
-        #[debug("Arc<dyn Fn>")]
-        builder: ServerCertVerifierBuilder,
-    },
 }
 
 impl Default for CaTlsConfig {
@@ -189,11 +189,14 @@ impl CaTlsConfig {
                     .build()
                     .map_err(io::Error::other)?
             }
+            Mode::CustomServerCertVerifier { ref builder } => builder(crypto_provider)?,
             #[cfg(any(test, feature = "test-utils"))]
             Mode::InsecureSkipVerify => {
+                tracing::warn!(
+                    "Insecure TLS config: server certificates will be trusted without verification"
+                );
                 Arc::new(no_cert_verifier::NoCertVerifier { crypto_provider })
             }
-            Mode::CustomServerCertVerifier { ref builder } => builder(crypto_provider.clone())?,
         })
     }
 
@@ -202,7 +205,9 @@ impl CaTlsConfig {
         let verifier = self.server_cert_verifier(crypto_provider.clone())?;
         let config = ClientConfig::builder_with_provider(crypto_provider)
             .with_safe_default_protocol_versions()
-            .expect("protocols supported by ring")
+            .expect(
+                "configured crypto provider is missing support for required TLS protocol versions",
+            )
             .dangerous()
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
@@ -219,7 +224,7 @@ pub type ServerCertVerifierBuilder = Arc<
 
 /// Returns the default crypto provider, if enabled via a feature flag.
 ///
-/// Prefers to ring over aws-lc-rs if both are enabled.
+/// Prefers `ring` over `aws-lc-rs` if both are enabled.
 #[cfg(feature = "tls-ring")]
 pub fn default_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
@@ -227,29 +232,20 @@ pub fn default_provider() -> Arc<CryptoProvider> {
 
 /// Returns the default crypto provider, if enabled via a feature flag.
 ///
-/// Prefers to ring over aws-lc-rs if both are enabled.
+/// Prefers `ring` over `aws-lc-rs` if both are enabled.
 #[cfg(all(feature = "tls-aws-lc-rs", not(feature = "tls-ring")))]
 pub fn default_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 }
 
-#[cfg(all(any(test, feature = "test-utils"), with_crypto_provider))]
 /// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.
-pub fn make_dangerous_client_config() -> rustls::ClientConfig {
-    tracing::warn!(
-        "Insecure config: SSL certificates from relay servers will be trusted without verification"
-    );
-    let crypto_provider = crate::tls::default_provider();
-    rustls::client::ClientConfig::builder_with_provider(crypto_provider.clone())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .expect("protocols supported by ring")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(no_cert_verifier::NoCertVerifier {
-            crypto_provider,
-        }))
-        .with_no_client_auth()
+#[cfg(all(any(test, feature = "test-utils"), with_crypto_provider))]
+pub fn make_dangerous_client_config() -> ClientConfig {
+    CaTlsConfig::insecure_skip_verify()
+        .client_config(default_provider())
+        .expect("infallible")
 }
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -279,6 +275,7 @@ mod no_cert_verifier {
         ) -> Result<ServerCertVerified, rustls::Error> {
             Ok(ServerCertVerified::assertion())
         }
+
         fn verify_tls12_signature(
             &self,
             _message: &[u8],
