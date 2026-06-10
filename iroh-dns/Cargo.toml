@@ -18,8 +18,6 @@ derive_more = { version = "2.0.1", features = ["debug"] }
 iroh-base = { version = "1.0.0-rc.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 n0-error = "=1.0.0-rc.0"
 n0-future = "0.3"
-# AtomicU64 polyfill for 32-bit targets without native 64-bit atomics (e.g. xtensa-esp32).
-portable-atomic = "1"
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false }
 rustls = { version = "0.23.33", default-features = false }

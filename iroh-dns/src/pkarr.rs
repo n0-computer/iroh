@@ -6,12 +6,8 @@
 
 use std::{
     fmt::{self, Display, Formatter},
-    sync::atomic::Ordering,
+    sync::atomic::{AtomicU64, Ordering},
 };
-
-// `AtomicU64` is not natively available on 32-bit targets such as xtensa-esp32;
-// `portable-atomic` provides it via a 32-bit-atomic-based fallback.
-use portable_atomic::AtomicU64;
 
 use iroh_base::{PublicKey, SecretKey, Signature};
 use n0_error::{AnyError, anyerr, e, stack_error};
