@@ -10,55 +10,57 @@ pub struct Metrics {
     /*
      * Metrics about packets
      */
-    /// Bytes sent in [`RelayToClientDatagram`] or [`RelayToClientDatagramBatch`] frames.
+    /// Bytes sent to a client in [`RelayToClientDatagram`] or [`RelayToClientDatagramBatch`] frames.
     ///
     /// [`RelayToClientDatagram`]: crate::protos::common::FrameType::RelayToClientDatagram
     /// [`RelayToClientDatagramBatch`]: crate::protos::common::FrameType::RelayToClientDatagramBatch
     #[metrics(help = "Number of bytes sent.")]
     pub bytes_sent: Counter,
-    /// Bytes received in [`ClientToRelayDatagram`] or [`ClientToRelayDatagramBatch`] frames.
+    /// Bytes received from a client in [`ClientToRelayDatagram`] or [`ClientToRelayDatagramBatch`] frames.
     ///
     /// [`ClientToRelayDatagram`]: crate::protos::common::FrameType::ClientToRelayDatagram
     /// [`ClientToRelayDatagramBatch`]: crate::protos::common::FrameType::ClientToRelayDatagramBatch
     #[metrics(help = "Number of bytes received.")]
     pub bytes_recv: Counter,
 
-    /// [`RelayToClientDatagram`] or [`RelayToClientDatagramBatch`] frames sent.
+    /// [`RelayToClientDatagram`] or [`RelayToClientDatagramBatch`] frames sent to a client.
     ///
     /// [`RelayToClientDatagram`]: crate::protos::common::FrameType::RelayToClientDatagram
     /// [`RelayToClientDatagramBatch`]: crate::protos::common::FrameType::RelayToClientDatagramBatch
     #[metrics(help = "Number of 'send' packets relayed.")]
     pub send_packets_sent: Counter,
-    /// [`ClientToRelayDatagram`] or [`ClientToRelayDatagramBatch`] frames received.
+    /// [`ClientToRelayDatagram`] or [`ClientToRelayDatagramBatch`] frames received from a client.
     ///
     /// [`ClientToRelayDatagram`]: crate::protos::common::FrameType::ClientToRelayDatagram
     /// [`ClientToRelayDatagramBatch`]: crate::protos::common::FrameType::ClientToRelayDatagramBatch
     #[metrics(help = "Number of 'send' packets received.")]
     pub send_packets_recv: Counter,
-    /// [`RelayToClientDatagram`] or [`RelayToClientDatagramBatch`] frames dropped.
+    /// [`RelayToClientDatagram`] or [`RelayToClientDatagramBatch`] frames dropped instead of being
+    /// delivered to a client, because the recipient is not connected or its send queue is full.
     ///
     /// [`RelayToClientDatagram`]: crate::protos::common::FrameType::RelayToClientDatagram
     /// [`RelayToClientDatagramBatch`]: crate::protos::common::FrameType::RelayToClientDatagramBatch
     #[metrics(help = "Number of 'send' packets dropped.")]
     pub send_packets_dropped: Counter,
 
-    /// Packets of other [`FrameType`](crate::protos::common::FrameType)s sent.
+    /// Intended to count sent frames other than datagrams, but currently unused (never incremented).
     #[metrics(help = "Number of packets sent that were not 'send' packets")]
     pub other_packets_sent: Counter,
-    /// Packets of other [`FrameType`](crate::protos::common::FrameType)s received.
+    /// Intended to count received frames other than datagrams, but currently unused (never incremented).
     #[metrics(help = "Number of packets received that were not 'send' packets")]
     pub other_packets_recv: Counter,
-    /// Packets of other [`FrameType`](crate::protos::common::FrameType)s dropped.
+    /// Intended to count dropped frames other than datagrams, but currently unused (never incremented).
     #[metrics(help = "Number of times, non-send packet was dropped.")]
     pub other_packets_dropped: Counter,
 
-    /// Number of [`FrameType::Ping`](crate::protos::common::FrameType::Ping)s received.
+    /// Number of [`FrameType::Ping`](crate::protos::common::FrameType::Ping) frames received from a client.
     #[metrics(help = "Number of times the server has received a Ping from a client.")]
     pub got_ping: Counter,
-    /// Number of [`FrameType::Pong`](crate::protos::common::FrameType::Pong)s sent.
+    /// Number of [`FrameType::Pong`](crate::protos::common::FrameType::Pong) frames sent to a client.
     #[metrics(help = "Number of times the server has sent a Pong to a client.")]
     pub sent_pong: Counter,
-    /// Number of frames with an unknown [`FrameType`](crate::protos::common::FrameType) received.
+    /// Intended to count received frames with an unrecognized [`FrameType`](crate::protos::common::FrameType),
+    /// but currently unused (never incremented).
     #[metrics(help = "Number of unknown frames sent to this server.")]
     pub unknown_frames: Counter,
 
@@ -72,7 +74,9 @@ pub struct Metrics {
      */
     /// Number of times this server has accepted a connection.
     pub accepts: Counter,
-    /// Number of connections we have removed because of an error
+    /// Number of times a client connection was disconnected.
+    ///
+    /// Incremented once per connection, paired with [`Self::accepts`].
     #[metrics(help = "Number of clients that have then disconnected.")]
     pub disconnects: Counter,
 

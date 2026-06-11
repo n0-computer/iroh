@@ -1287,6 +1287,7 @@ impl Endpoint {
     /// ```no_run
     /// # #[cfg(with_crypto_provider)]
     /// # {
+    /// # use iroh::Endpoint;
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
     /// // After this await returns, the endpoint is bound to a local socket.
