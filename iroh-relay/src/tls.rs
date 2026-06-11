@@ -49,7 +49,7 @@ enum Mode {
     /// INSECURE: Do not verify server certificates at all.
     ///
     /// May only be used in tests or local development setups.
-    #[cfg(any(test, feature = "test-utils", feature = "insecure-skip-verify"))]
+    #[cfg(any(test, feature = "test-utils"))]
     InsecureSkipVerify,
 }
 
@@ -90,7 +90,7 @@ impl CaTlsConfig {
     /// INSECURE: Do not verify server certificates at all.
     ///
     /// May only be used in tests or local development setups.
-    #[cfg(any(test, feature = "test-utils", feature = "insecure-skip-verify"))]
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn insecure_skip_verify() -> Self {
         Self {
             mode: Mode::InsecureSkipVerify,
@@ -190,7 +190,7 @@ impl CaTlsConfig {
                     .map_err(io::Error::other)?
             }
             Mode::CustomServerCertVerifier { ref builder } => builder(crypto_provider)?,
-            #[cfg(any(test, feature = "test-utils", feature = "insecure-skip-verify"))]
+            #[cfg(any(test, feature = "test-utils"))]
             Mode::InsecureSkipVerify => {
                 tracing::warn!(
                     "Insecure TLS config: server certificates will be trusted without verification"
@@ -248,7 +248,7 @@ pub fn make_dangerous_client_config() -> ClientConfig {
         .expect("infallible")
 }
 
-#[cfg(any(test, feature = "test-utils", feature = "insecure-skip-verify"))]
+#[cfg(any(test, feature = "test-utils"))]
 mod no_cert_verifier {
     use std::sync::Arc;
 
