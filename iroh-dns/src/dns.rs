@@ -17,6 +17,9 @@ mod system_config;
 #[cfg(not(wasm_browser))]
 mod transport;
 
+#[cfg(target_os = "android")]
+pub use system_config::install_android_jni_context;
+
 use std::{
     collections::VecDeque,
     fmt,
