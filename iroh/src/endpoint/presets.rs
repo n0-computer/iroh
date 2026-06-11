@@ -17,7 +17,7 @@
 
 use crate::endpoint::Builder;
 
-/// Defines a preset
+/// A reusable bundle of endpoint [`Builder`] configuration.
 pub trait Preset {
     /// Applies the configuration to the passed in [`Builder`].
     fn apply(self, builder: Builder) -> Builder;
@@ -86,8 +86,8 @@ impl Preset for Minimal {
 /// - setting the [`rustls::crypto::CryptoProvider`] to [ring] or [aws-lc-rs], depending
 ///   on which feature is enabled in iroh (preferring ring if both are enabled).
 ///
-/// Due to the last point, this preset is only available with the `ring` or
-/// `aws-lc-rs` preset installed.
+/// Due to the last point, this preset is only available with the `tls-ring` or
+/// `tls-aws-lc-rs` feature enabled.
 /// If you want to set your own crypto provider, we recommend copying the
 /// implementation of this preset into your own and setting the appropriate crypto
 /// provider there.
@@ -148,8 +148,8 @@ impl Preset for N0 {
 /// - setting the [`rustls::crypto::CryptoProvider`] to [ring] or [aws-lc-rs], depending
 ///   on which feature is enabled in iroh (preferring ring if both are enabled).
 ///
-/// Due to the last point, this preset is only available with the `ring` or
-/// `aws-lc-rs` preset installed.
+/// Due to the last point, this preset is only available with the `tls-ring` or
+/// `tls-aws-lc-rs` feature enabled.
 /// If you want to set your own crypto provider, we recommend copying the
 /// implementation of this preset into your own and setting the appropriate crypto
 /// provider there.

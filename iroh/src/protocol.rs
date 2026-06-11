@@ -174,7 +174,7 @@ pub enum IncomingFilterOutcome {
     ///
     /// What this does depends on the connection type:
     ///
-    /// - **Direct (UDP) connections** : this is QUIC source address
+    /// - **Direct (UDP) connections**: this is QUIC source address
     ///   validation. If the socket address was spoofed, the retry token is
     ///   sent to the spoofed address, so we never hear from the attacker
     ///   again. If the address was real, the client repeats the connection
@@ -182,7 +182,7 @@ pub enum IncomingFilterOutcome {
     ///   [`Incoming::remote_addr_validated`] set to `true`. The token is
     ///   bound to the source address.
     ///
-    /// - **Relay connections** : there is no source address to validate
+    /// - **Relay connections**: there is no source address to validate
     ///   (the relay already vouches for the packet origin), so the
     ///   "validation" itself has no security meaning. However, the retry
     ///   still imposes a real cost on the client: an extra round trip
@@ -491,7 +491,7 @@ impl RouterBuilder {
         self
     }
 
-    /// Returns the [`Endpoint`] of the endpoint.
+    /// Returns the [`Endpoint`] stored in this builder.
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
     }

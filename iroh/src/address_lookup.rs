@@ -3,10 +3,10 @@
 //! To connect to an iroh endpoint a [`EndpointAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`EndpointId`].
 //!
-//! Since there is a conversion from [`EndpointId`] to [`EndpointAddr`], you can also use
+//! Since there is a conversion from [`EndpointId`] to [`EndpointAddr`], you can also
 //! connect directly with a [`EndpointId`].
 //!
-//! For this to work however, the endpoint has to get the addressing  information by
+//! For this to work however, the endpoint has to get the addressing information by
 //! other means.
 //!
 //! [`AddressLookup`] is an automated system for an [`Endpoint`] to retrieve this addressing
@@ -50,9 +50,9 @@
 //! [`iroh-mdns-address-lookup`]: https://docs.rs/iroh-mdns-address-lookup
 //! [`iroh-mainline-address-lookup`]: https://docs.rs/iroh-mainline-address-lookup
 //!
-//! To use multiple Address Lookup'ssimultaneously you can call [`Builder::address_lookup`].
+//! To use multiple Address Lookups simultaneously you can call [`Builder::address_lookup`].
 //! This will use [`AddressLookupServices`] under the hood, which performs lookups to all
-//! Address Lookupsystems at the same time.
+//! Address Lookup systems at the same time.
 //!
 //! [`Builder::address_lookup`] takes any type that implements [`AddressLookupBuilder`]. You can
 //! implement that trait on a builder struct if your Address Lookup needs information
@@ -60,8 +60,8 @@
 //! is built by calling [`AddressLookupBuilder::into_address_lookup`], passing the finished [`Endpoint`] to your
 //! builder.
 //!
-//! If your Address Lookupdoes not need any information from its endpoint, you can
-//! pass the Address Lookupservice directly to [`Builder::address_lookup`]: All types that
+//! If your Address Lookup does not need any information from its endpoint, you can
+//! pass the Address Lookup service directly to [`Builder::address_lookup`]: All types that
 //! implement [`AddressLookup`] also have a blanket implementation of [`AddressLookupBuilder`].
 //!
 //! # Examples
@@ -334,7 +334,7 @@ pub trait AddressLookup: std::fmt::Debug + Send + Sync + 'static {
     /// Publishes the given [`EndpointData`] to the Address Lookup mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
-    /// publishing. If publishing is async, the implementation should start it's own task.
+    /// publishing. If publishing is async, the implementation should start its own task.
     ///
     /// This will be called from a tokio task, so it is safe to spawn new tasks.
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
@@ -369,7 +369,7 @@ impl<T: AddressLookup> AddressLookup for Arc<T> {
 /// directly from [`Item`].
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Item {
-    /// The endpoint info for the endpoint, as discovered by the the Address Lookup.
+    /// The endpoint info for the endpoint, as discovered by the Address Lookup.
     endpoint_info: EndpointInfo,
     /// A static string to identify the Address Lookup source.
     ///
@@ -421,12 +421,12 @@ impl Item {
         self.last_updated
     }
 
-    /// Converts into a [`EndpointAddr`] by cloning the needed fields.
+    /// Returns an [`EndpointAddr`] by cloning the needed fields.
     pub fn to_endpoint_addr(&self) -> EndpointAddr {
         self.endpoint_info.to_endpoint_addr()
     }
 
-    /// Converts into a [`EndpointAddr`] without cloning.
+    /// Converts into an [`EndpointAddr`] without cloning.
     pub fn into_endpoint_addr(self) -> EndpointAddr {
         self.endpoint_info.into_endpoint_addr()
     }
@@ -457,7 +457,7 @@ impl From<Item> for EndpointInfo {
 ///
 /// See [`AddressLookup`] and [`Self::resolve`] for details.
 ///
-/// [`Endpoint]: crate::Endpoint
+/// [`Endpoint`]: crate::Endpoint
 #[derive(Debug, Default, Clone)]
 pub struct AddressLookupServices {
     services: Arc<RwLock<Vec<Box<dyn AddressLookup>>>>,

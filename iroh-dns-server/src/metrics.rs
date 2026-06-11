@@ -13,7 +13,7 @@ pub struct Metrics {
     pub pkarr_publish_noop: Counter,
     /// Total number of DNS requests across all transports.
     pub dns_requests: Counter,
-    /// Number of DNS requests received over UDP or TCP.
+    /// Number of DNS requests received over UDP.
     pub dns_requests_udp: Counter,
     /// Number of DNS requests received over HTTPS (DoH).
     pub dns_requests_https: Counter,
@@ -34,6 +34,8 @@ pub struct Metrics {
     /// Number of signed packets newly inserted into the store.
     pub store_packets_inserted: Counter,
     /// Number of signed packets removed from the store.
+    ///
+    /// Currently always at 0 because the removal API is not used.
     pub store_packets_removed: Counter,
     /// Number of times an existing signed packet was replaced by a newer one.
     pub store_packets_updated: Counter,

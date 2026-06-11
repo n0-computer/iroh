@@ -465,7 +465,7 @@ pub struct TlsConfig {
     /// the main relay server this has to be on a different port.  When TLS is not enabled
     /// this is served on the [`RelayConfig::http_bind_addr`] socket address.
     ///
-    /// Normally you'd choose port `80`.
+    /// Normally you'd choose port `443`.
     pub https_bind_addr: SocketAddr,
     /// Mode for getting a cert.
     pub cert: CertConfig,
@@ -486,12 +486,16 @@ impl TlsConfig {
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct Limits {
-    /// Rate limit for accepting new connection. Unlimited if not set.
-    pub accept_conn_limit: Option<f64>,
-    /// Burst limit for accepting new connection. Unlimited if not set.
-    pub accept_conn_burst: Option<usize>,
     /// Rate limits for incoming traffic from a client connection.
     pub client_rx: Option<ClientRateLimit>,
+    /// Rate limit for accepting new connections. Unlimited if not set.
+    ///
+    /// Not currently implemented, setting this has no effect.
+    pub accept_conn_limit: Option<f64>,
+    /// Burst limit for accepting new connections. Unlimited if not set.
+    ///
+    /// Not currently implemented, setting this has no effect.
+    pub accept_conn_burst: Option<usize>,
 }
 
 /// Per-client rate limit configuration.

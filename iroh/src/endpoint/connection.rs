@@ -214,7 +214,7 @@ impl Incoming {
         self.inner.remote_address_validated()
     }
 
-    /// Decrypt the Initial packet payload
+    /// Decrypts the Initial packet payload.
     ///
     /// This clones and decrypts the packet payload (~1200 bytes).
     /// Can be used to extract information from the TLS ClientHello without completing the handshake.
@@ -840,7 +840,7 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.accept_uni()
     }
 
-    /// Accept the next incoming bidirectional stream.
+    /// Accepts the next incoming bidirectional stream.
     ///
     /// **Important Note**: The peer that calls [`open_bi`] must write to its [`SendStream`]
     /// before the peer `Connection` is able to accept the stream using
@@ -861,7 +861,7 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.read_datagram()
     }
 
-    /// Wait for the connection to be closed for any reason.
+    /// Waits for the connection to be closed for any reason.
     ///
     /// Despite the return type's name, closed connections are often not an error condition
     /// at the application layer. Cases that might be routine include
@@ -1043,6 +1043,8 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.set_max_concurrent_uni_streams(count)
     }
 
+    /// Sets the connection-level flow control receive window.
+    ///
     /// See [`noq_proto::TransportConfig::receive_window`].
     #[inline]
     pub fn set_receive_window(&self, receive_window: VarInt) {
@@ -1188,10 +1190,10 @@ impl Connection<OutgoingZeroRtt> {
 
     /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
     ///
-    /// If `ZeroRttStatus::Accepted` is returned, than any streams created before
+    /// If `ZeroRttStatus::Accepted` is returned, then any streams created before
     /// the handshake has completed can still be used.
     ///
-    /// If `ZeroRttStatus::Rejected` is returned, than any streams created before
+    /// If `ZeroRttStatus::Rejected` is returned, then any streams created before
     /// the handshake will error and any data sent should be re-sent on a
     /// new stream.
     ///
