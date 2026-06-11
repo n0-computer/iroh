@@ -1,10 +1,12 @@
 //! Built-in DNS resolver using `simple-dns` for packet construction/parsing
 //! and tokio for transport.
 
+#[cfg(with_crypto_provider)]
+use std::sync::Mutex;
 use std::{
     future::Future,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use n0_error::{AnyError, e};
