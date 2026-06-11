@@ -77,7 +77,7 @@
 <a href=#77 id=77 data-nosnippet>77</a>        <span class="self">Self</span>::all().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().join(<span class="string">", "</span>)
 <a href=#78 id=78 data-nosnippet>78</a>    }
 <a href=#79 id=79 data-nosnippet>79</a>
-<a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// Returns all supported protocol versions in a comma-seperated string as an HTTP header value.
+<a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// Returns all supported protocol versions in a comma-separated string as an HTTP header value.
 <a href=#81 id=81 data-nosnippet>81</a>    </span><span class="kw">pub fn </span>all_as_header_value() -&gt; HeaderValue {
 <a href=#82 id=82 data-nosnippet>82</a>        HeaderValue::from_bytes(<span class="self">Self</span>::all_joined().as_bytes()).expect(<span class="string">"valid header name"</span>)
 <a href=#83 id=83 data-nosnippet>83</a>    }

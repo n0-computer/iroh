@@ -174,7 +174,7 @@
 <a href=#174 id=174 data-nosnippet>174</a>    ///
 <a href=#175 id=175 data-nosnippet>175</a>    /// What this does depends on the connection type:
 <a href=#176 id=176 data-nosnippet>176</a>    ///
-<a href=#177 id=177 data-nosnippet>177</a>    /// - **Direct (UDP) connections** : this is QUIC source address
+<a href=#177 id=177 data-nosnippet>177</a>    /// - **Direct (UDP) connections**: this is QUIC source address
 <a href=#178 id=178 data-nosnippet>178</a>    ///   validation. If the socket address was spoofed, the retry token is
 <a href=#179 id=179 data-nosnippet>179</a>    ///   sent to the spoofed address, so we never hear from the attacker
 <a href=#180 id=180 data-nosnippet>180</a>    ///   again. If the address was real, the client repeats the connection
@@ -182,7 +182,7 @@
 <a href=#182 id=182 data-nosnippet>182</a>    ///   [`Incoming::remote_addr_validated`] set to `true`. The token is
 <a href=#183 id=183 data-nosnippet>183</a>    ///   bound to the source address.
 <a href=#184 id=184 data-nosnippet>184</a>    ///
-<a href=#185 id=185 data-nosnippet>185</a>    /// - **Relay connections** : there is no source address to validate
+<a href=#185 id=185 data-nosnippet>185</a>    /// - **Relay connections**: there is no source address to validate
 <a href=#186 id=186 data-nosnippet>186</a>    ///   (the relay already vouches for the packet origin), so the
 <a href=#187 id=187 data-nosnippet>187</a>    ///   "validation" itself has no security meaning. However, the retry
 <a href=#188 id=188 data-nosnippet>188</a>    ///   still imposes a real cost on the client: an extra round trip
@@ -491,7 +491,7 @@
 <a href=#491 id=491 data-nosnippet>491</a>        <span class="self">self
 <a href=#492 id=492 data-nosnippet>492</a>    </span>}
 <a href=#493 id=493 data-nosnippet>493</a>
-<a href=#494 id=494 data-nosnippet>494</a>    <span class="doccomment">/// Returns the [`Endpoint`] of the endpoint.
+<a href=#494 id=494 data-nosnippet>494</a>    <span class="doccomment">/// Returns the [`Endpoint`] stored in this builder.
 <a href=#495 id=495 data-nosnippet>495</a>    </span><span class="kw">pub fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Endpoint {
 <a href=#496 id=496 data-nosnippet>496</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.endpoint
 <a href=#497 id=497 data-nosnippet>497</a>    }
