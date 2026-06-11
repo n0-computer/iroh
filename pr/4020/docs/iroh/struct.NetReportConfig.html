@@ -8,8 +8,8 @@ All options default to <code>true</code>.</p>
 <p>HTTPS latency probes perform an empty HTTPS GET request to each configured
 relay server and measure latency.</p>
 <p>They are performed in addition to the QUIC address discovery (QAD) probes.
-They are the only way to detect relay latencies and thus the preferred relay
-in networks that do not allow QUIC traffic.</p>
+In networks that do not allow QUIC traffic, they are the only way to detect
+relay latencies and thus the preferred relay.</p>
 <p>Disabling them is harmless on networks that do allow QUIC traffic, but will
 completely prevent finding the home relay on networks that do block QUIC.</p>
 </div><span id="structfield.captive_portal_check" class="structfield section-header"><a href="#structfield.captive_portal_check" class="anchor field">§</a><code>captive_portal_check: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></span><div class="docblock"><p>Check for captive portals when generating the first report.</p>
