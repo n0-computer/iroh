@@ -171,7 +171,7 @@ connection is independent of the endpoint’s online status.</p>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="comment">// After this await returns, the endpoint is bound to a local socket.
 // It can be dialed, but almost certainly hasn't finished picking a
 // relay.
-</span><span class="kw">let </span>endpoint = Endpoint::bind(presets::N0).<span class="kw">await</span>.unwrap();
+</span><span class="kw">let </span>endpoint = Endpoint::bind(presets::N0).<span class="kw">await</span><span class="question-mark">?</span>;
 
 <span class="comment">// After this await returns we have a connection to at least one relay
 // and holepunching should work as expected.

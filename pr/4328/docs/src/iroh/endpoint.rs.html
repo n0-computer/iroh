@@ -1287,18 +1287,18 @@
 <a href=#1287 id=1287 data-nosnippet>1287</a>    /// ```no_run
 <a href=#1288 id=1288 data-nosnippet>1288</a>    /// # #[cfg(with_crypto_provider)]
 <a href=#1289 id=1289 data-nosnippet>1289</a>    /// # {
-<a href=#1290 id=1290 data-nosnippet>1290</a>    /// # use iroh::Endpoint;
-<a href=#1291 id=1291 data-nosnippet>1291</a>    /// # #[tokio::main]
-<a href=#1292 id=1292 data-nosnippet>1292</a>    /// # async fn main() -&gt; n0_error::Result&lt;()&gt; {
+<a href=#1290 id=1290 data-nosnippet>1290</a>    /// # #[tokio::main]
+<a href=#1291 id=1291 data-nosnippet>1291</a>    /// # async fn main() -&gt; n0_error::Result&lt;()&gt; {
+<a href=#1292 id=1292 data-nosnippet>1292</a>    /// # use iroh::{Endpoint, endpoint::presets};
 <a href=#1293 id=1293 data-nosnippet>1293</a>    /// // After this await returns, the endpoint is bound to a local socket.
 <a href=#1294 id=1294 data-nosnippet>1294</a>    /// // It can be dialed, but almost certainly hasn't finished picking a
 <a href=#1295 id=1295 data-nosnippet>1295</a>    /// // relay.
-<a href=#1296 id=1296 data-nosnippet>1296</a>    /// let endpoint = Endpoint::bind(presets::N0).await.unwrap();
+<a href=#1296 id=1296 data-nosnippet>1296</a>    /// let endpoint = Endpoint::bind(presets::N0).await?;
 <a href=#1297 id=1297 data-nosnippet>1297</a>    ///
 <a href=#1298 id=1298 data-nosnippet>1298</a>    /// // After this await returns we have a connection to at least one relay
 <a href=#1299 id=1299 data-nosnippet>1299</a>    /// // and holepunching should work as expected.
 <a href=#1300 id=1300 data-nosnippet>1300</a>    /// endpoint.online().await;
-<a href=#1301 id=1301 data-nosnippet>1301</a>    /// # });
+<a href=#1301 id=1301 data-nosnippet>1301</a>    /// # Ok(()) }
 <a href=#1302 id=1302 data-nosnippet>1302</a>    /// # }
 <a href=#1303 id=1303 data-nosnippet>1303</a>    /// ```
 <a href=#1304 id=1304 data-nosnippet>1304</a>    </span><span class="kw">pub async fn </span>online(<span class="kw-2">&amp;</span><span class="self">self</span>) {
