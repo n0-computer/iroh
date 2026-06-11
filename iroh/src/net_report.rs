@@ -96,8 +96,8 @@ pub struct NetReportConfig {
     /// relay server and measure latency.
     ///
     /// They are performed in addition to the QUIC address discovery (QAD) probes.
-    /// They are the only way to detect relay latencies and thus the preferred relay
-    /// in networks that do not allow QUIC traffic.
+    /// In networks that do not allow QUIC traffic, they are the only way to detect
+    /// relay latencies and thus the preferred relay.
     ///
     /// Disabling them is harmless on networks that do allow QUIC traffic, but will
     /// completely prevent finding the home relay on networks that do block QUIC.
