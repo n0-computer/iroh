@@ -36,7 +36,10 @@ pub struct Metrics {
     #[metrics(help = "Number of 'send' packets received.")]
     pub send_packets_recv: Counter,
     /// [`RelayToClientDatagram`] or [`RelayToClientDatagramBatch`] frames dropped instead of being
-    /// delivered to a client, because the recipient is not connected or its send queue is full.
+    /// delivered to a client, because the recipient is not connected or writing to its stream failed.
+    ///
+    /// Note that frames dropped because the recipient's send queue is full or closed are not counted
+    /// here.
     ///
     /// [`RelayToClientDatagram`]: crate::protos::common::FrameType::RelayToClientDatagram
     /// [`RelayToClientDatagramBatch`]: crate::protos::common::FrameType::RelayToClientDatagramBatch
