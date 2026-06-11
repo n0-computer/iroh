@@ -42,7 +42,7 @@ use netwatch::{
     ip::LocalAddresses,
 };
 use noq::{
-    NetworkChangeHint,
+    NetworkChangeHint, TokenStore,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use rand::RngExt;
@@ -189,6 +189,7 @@ pub(crate) struct Options {
     pub(crate) hooks: EndpointHooksList,
     pub(crate) path_selector: Arc<dyn PathSelector>,
     pub(crate) portmapper_config: portmapper::PortmapperConfig,
+    pub(crate) net_report_config: crate::net_report::NetReportConfig,
 
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
@@ -238,6 +239,8 @@ pub(crate) struct StaticConfig {
     pub(crate) client_config: QuicClientConfig,
     #[debug("Arc<RustlsTokenKey>")]
     pub(crate) token_key: Arc<RustlsTokenKey>,
+    #[debug("Arc<dyn TokenStore>")]
+    pub(crate) token_store: Arc<dyn TokenStore>,
     pub(crate) transport_config: QuicTransportConfig,
 }
 
@@ -265,6 +268,7 @@ impl StaticConfig {
         quic_client_config.set_alpn_protocols(alpn_protocols);
         let mut inner = noq::ClientConfig::new(Arc::new(quic_client_config));
         inner.transport_config(transport_config);
+        inner.token_store(self.token_store.clone());
         inner
     }
 }
@@ -885,6 +889,7 @@ impl EndpointInner {
             hooks,
             path_selector,
             portmapper_config,
+            net_report_config,
             static_config,
             configured_addrs,
         } = opts;
@@ -1044,11 +1049,13 @@ impl EndpointInner {
                 ipv4: true,
                 ipv6: has_ipv6_transport,
             });
-            net_report::Options::new(tls_config.clone()).quic_config(qad_config)
+            net_report::Options::new(tls_config.clone())
+                .quic_config(qad_config)
+                .net_report_config(net_report_config)
         };
 
         #[cfg(wasm_browser)]
-        let net_report_config = net_report::Options::default();
+        let net_report_config = net_report::Options::default().net_report_config(net_report_config);
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
@@ -2151,6 +2158,7 @@ mod tests {
             client_config: tls_config.make_client_config(false).unwrap(),
             tls_config,
             token_key: Arc::new(RustlsTokenKey::new(rng, &crypto_provider).unwrap()),
+            token_store: Arc::new(noq::TokenMemoryCache::default()),
             transport_config: QuicTransportConfig::default(),
         };
         let server_config = static_config.create_server_config(vec![]);
@@ -2172,6 +2180,7 @@ mod tests {
             hooks: Default::default(),
             path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
+            net_report_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
         }
@@ -2564,6 +2573,7 @@ mod tests {
             client_config: tls_config.make_client_config(keylog).unwrap(),
             tls_config,
             token_key: Arc::new(RustlsTokenKey::new(&mut rand::rng(), &crypto_provider).unwrap()),
+            token_store: Arc::new(noq::TokenMemoryCache::default()),
             transport_config: QuicTransportConfig::default(),
         };
         let server_config = static_config.create_server_config(vec![ALPN.to_vec()]);
@@ -2586,6 +2596,7 @@ mod tests {
             hooks: Default::default(),
             path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
+            net_report_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
         };

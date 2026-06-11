@@ -104,10 +104,10 @@ pub use self::{
         VarIntBoundsExceeded, WriteError,
     },
 };
-pub use crate::portmapper::PortmapperConfig;
 #[cfg(not(wasm_browser))]
 use crate::socket::transports::IpConfig;
 use crate::socket::transports::TransportConfig;
+pub use crate::{net_report::NetReportConfig, portmapper::PortmapperConfig};
 
 /// Builder for [`Endpoint`].
 ///
@@ -135,6 +135,7 @@ pub struct Builder {
     hooks: EndpointHooksList,
     path_selector: Arc<dyn PathSelector>,
     portmapper_config: PortmapperConfig,
+    net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
 }
@@ -202,6 +203,7 @@ impl Builder {
             hooks: Default::default(),
             path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
+            net_report_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
         }
@@ -236,6 +238,7 @@ impl Builder {
             tls_config,
             transport_config: self.transport_config.clone(),
             token_key,
+            token_store: Arc::new(noq::TokenMemoryCache::default()),
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
@@ -263,6 +266,7 @@ impl Builder {
             hooks: self.hooks,
             path_selector: self.path_selector,
             portmapper_config: self.portmapper_config,
+            net_report_config: self.net_report_config,
             static_config,
             configured_addrs: self.configured_addrs,
         };
@@ -769,6 +773,18 @@ impl Builder {
     /// Defaults to [`PortmapperConfig::Enabled`].
     pub fn portmapper_config(mut self, config: PortmapperConfig) -> Self {
         self.portmapper_config = config;
+        self
+    }
+
+    /// Configures the net report.
+    ///
+    /// The net report component is responsible for figuring out if and how the endpoint is connected to the internet.
+    /// It does this by doing various probes to the configured relay servers to get public addresses, NAT behaviour, and
+    /// relay latencies. In addition it tries to detect captive portals.
+    ///
+    /// Some non-essential features of the net report component can be disabled via this configuration.
+    pub fn net_report_config(mut self, config: NetReportConfig) -> Self {
+        self.net_report_config = config;
         self
     }
 
