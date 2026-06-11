@@ -3,12 +3,12 @@
 <a href=#3 id=3 data-nosnippet>3</a>//! Dialing by [`EndpointId`] is supported by iroh endpoints publishing [Pkarr] records to DNS
 <a href=#4 id=4 data-nosnippet>4</a>//! servers or the Mainline DHT.  This module supports creating and parsing these records.
 <a href=#5 id=5 data-nosnippet>5</a>//!
-<a href=#6 id=6 data-nosnippet>6</a>//! [`EndpointInfo`] combines an [`iroh_base::EndpointId`] with [`EndpointData`] —
+<a href=#6 id=6 data-nosnippet>6</a>//! [`EndpointInfo`] combines an [`iroh_base::EndpointId`] with [`EndpointData`]:
 <a href=#7 id=7 data-nosnippet>7</a>//! the addressing and metadata that discovery services publish and resolve.
 <a href=#8 id=8 data-nosnippet>8</a>//! Discovery services use [`AddrFilter`] to control which addresses are published.
 <a href=#9 id=9 data-nosnippet>9</a>//!
 <a href=#10 id=10 data-nosnippet>10</a>//! This module also provides serialization to and from pkarr signed packets and
-<a href=#11 id=11 data-nosnippet>11</a>//! DNS TXT records. See the [`crate::attrs`] module for the on-the-wire format.
+<a href=#11 id=11 data-nosnippet>11</a>//! DNS TXT records.
 <a href=#12 id=12 data-nosnippet>12</a>//!
 <a href=#13 id=13 data-nosnippet>13</a>//! DNS records are published under the following names:
 <a href=#14 id=14 data-nosnippet>14</a>//!
@@ -120,7 +120,7 @@
 <a href=#120 id=120 data-nosnippet>120</a>        <span class="self">self</span>.add_addrs(addresses.into_iter().map(TransportAddr::Ip))
 <a href=#121 id=121 data-nosnippet>121</a>    }
 <a href=#122 id=122 data-nosnippet>122</a>
-<a href=#123 id=123 data-nosnippet>123</a>    <span class="doccomment">/// Adds addresses to the endpoint data in the given ordered, but with duplicates filtered.
+<a href=#123 id=123 data-nosnippet>123</a>    <span class="doccomment">/// Adds addresses to the endpoint data in the given order, but with duplicates filtered.
 <a href=#124 id=124 data-nosnippet>124</a>    </span><span class="kw">pub fn </span>add_addrs(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addrs: <span class="kw">impl </span>IntoIterator&lt;Item = TransportAddr&gt;) {
 <a href=#125 id=125 data-nosnippet>125</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr_set = dedup(<span class="kw-2">&amp;mut </span><span class="self">self</span>.addrs);
 <a href=#126 id=126 data-nosnippet>126</a>        <span class="kw">for </span>addr <span class="kw">in </span>addrs.into_iter() {
@@ -131,7 +131,7 @@
 <a href=#131 id=131 data-nosnippet>131</a>        }
 <a href=#132 id=132 data-nosnippet>132</a>    }
 <a href=#133 id=133 data-nosnippet>133</a>
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Sets the user-defined data and returns the updated endpoint data.
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Sets the user-defined data.
 <a href=#135 id=135 data-nosnippet>135</a>    </span><span class="kw">pub fn </span>set_user_data(<span class="kw-2">&amp;mut </span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
 <a href=#136 id=136 data-nosnippet>136</a>        <span class="self">self</span>.user_data = user_data;
 <a href=#137 id=137 data-nosnippet>137</a>    }
@@ -142,7 +142,7 @@
 <a href=#142 id=142 data-nosnippet>142</a>            .retain(|addr| !<span class="macro">matches!</span>(addr, TransportAddr::Ip(<span class="kw">_</span>)));
 <a href=#143 id=143 data-nosnippet>143</a>    }
 <a href=#144 id=144 data-nosnippet>144</a>
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Removes all direct addresses from the endpoint data.
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Removes all relay URLs from the endpoint data.
 <a href=#146 id=146 data-nosnippet>146</a>    </span><span class="kw">pub fn </span>clear_relay_urls(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
 <a href=#147 id=147 data-nosnippet>147</a>        <span class="self">self</span>.addrs
 <a href=#148 id=148 data-nosnippet>148</a>            .retain(|addr| !<span class="macro">matches!</span>(addr, TransportAddr::Relay(<span class="kw">_</span>)));
@@ -169,12 +169,12 @@
 <a href=#169 id=169 data-nosnippet>169</a>        })
 <a href=#170 id=170 data-nosnippet>170</a>    }
 <a href=#171 id=171 data-nosnippet>171</a>
-<a href=#172 id=172 data-nosnippet>172</a>    <span class="doccomment">/// Returns the full list of all known addresses
+<a href=#172 id=172 data-nosnippet>172</a>    <span class="doccomment">/// Returns the full list of all known addresses.
 <a href=#173 id=173 data-nosnippet>173</a>    </span><span class="kw">pub fn </span>addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>TransportAddr&gt; {
 <a href=#174 id=174 data-nosnippet>174</a>        <span class="self">self</span>.addrs.iter()
 <a href=#175 id=175 data-nosnippet>175</a>    }
 <a href=#176 id=176 data-nosnippet>176</a>
-<a href=#177 id=177 data-nosnippet>177</a>    <span class="doccomment">/// Does this have any addresses?
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="doccomment">/// Returns whether this has any addresses.
 <a href=#178 id=178 data-nosnippet>178</a>    </span><span class="kw">pub fn </span>has_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
 <a href=#179 id=179 data-nosnippet>179</a>        !<span class="self">self</span>.addrs.is_empty()
 <a href=#180 id=180 data-nosnippet>180</a>    }
@@ -294,9 +294,9 @@
 <a href=#294 id=294 data-nosnippet>294</a>    }
 <a href=#295 id=295 data-nosnippet>295</a>}
 <a href=#296 id=296 data-nosnippet>296</a>
-<a href=#297 id=297 data-nosnippet>297</a><span class="comment">// User-defined data that can be published and resolved through endpoint discovery.
-<a href=#298 id=298 data-nosnippet>298</a></span><span class="doccomment">///
-<a href=#299 id=299 data-nosnippet>299</a>/// Under the hood this is a UTF-8 String is no longer than [`UserData::MAX_LENGTH`] bytes.
+<a href=#297 id=297 data-nosnippet>297</a><span class="doccomment">/// User-defined data that can be published and resolved through endpoint discovery.
+<a href=#298 id=298 data-nosnippet>298</a>///
+<a href=#299 id=299 data-nosnippet>299</a>/// Under the hood this is a UTF-8 string no longer than [`UserData::MAX_LENGTH`] bytes.
 <a href=#300 id=300 data-nosnippet>300</a>///
 <a href=#301 id=301 data-nosnippet>301</a>/// Iroh does not keep track of or examine the user-defined data.
 <a href=#302 id=302 data-nosnippet>302</a>///

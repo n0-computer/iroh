@@ -6,8 +6,8 @@
 <li>setting the [<code>rustls::crypto::CryptoProvider</code>] to <a href="rustls::crypto::ring::default_provider">ring</a> or <a href="rustls::crypto::aws_lc_rs::default_provider">aws-lc-rs</a>, depending
 on which feature is enabled in iroh (preferring ring if both are enabled).</li>
 </ul>
-<p>Due to the last point, this preset is only available with the <code>ring</code> or
-<code>aws-lc-rs</code> preset installed.
+<p>Due to the last point, this preset is only available with the <code>tls-ring</code> or
+<code>tls-aws-lc-rs</code> feature enabled.
 If you want to set your own crypto provider, we recommend copying the
 implementation of this preset into your own and setting the appropriate crypto
 provider there.</p>
