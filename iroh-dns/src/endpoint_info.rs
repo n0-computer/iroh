@@ -8,7 +8,7 @@
 //! Discovery services use [`AddrFilter`] to control which addresses are published.
 //!
 //! This module also provides serialization to and from pkarr signed packets and
-//! DNS TXT records. See the [`crate::attrs`] module for the on-the-wire format.
+//! DNS TXT records.
 //!
 //! DNS records are published under the following names:
 //!

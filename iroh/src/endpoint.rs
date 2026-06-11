@@ -1287,18 +1287,18 @@ impl Endpoint {
     /// ```no_run
     /// # #[cfg(with_crypto_provider)]
     /// # {
-    /// # use iroh::Endpoint;
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
+    /// # use iroh::{Endpoint, endpoint::presets};
     /// // After this await returns, the endpoint is bound to a local socket.
     /// // It can be dialed, but almost certainly hasn't finished picking a
     /// // relay.
-    /// let endpoint = Endpoint::bind(presets::N0).await.unwrap();
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     ///
     /// // After this await returns we have a connection to at least one relay
     /// // and holepunching should work as expected.
     /// endpoint.online().await;
-    /// # });
+    /// # Ok(()) }
     /// # }
     /// ```
     pub async fn online(&self) {
