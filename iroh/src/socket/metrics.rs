@@ -10,11 +10,11 @@ pub struct Metrics {
     /// (never incremented).
     pub update_direct_addrs: Counter,
 
-    /// Number of bytes sent over IPv4 (data or disco).
+    /// Number of bytes sent over IPv4.
     pub send_ipv4: Counter,
-    /// Number of bytes sent over IPv6 (data or disco).
+    /// Number of bytes sent over IPv6.
     pub send_ipv6: Counter,
-    /// Number of bytes sent over the relay transport (data or disco).
+    /// Number of bytes sent over the relay transport.
     pub send_relay: Counter,
 
     /// Number of data bytes received over the relay transport.

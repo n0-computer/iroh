@@ -486,16 +486,16 @@ impl TlsConfig {
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct Limits {
+    /// Rate limits for incoming traffic from a client connection.
+    pub client_rx: Option<ClientRateLimit>,
     /// Rate limit for accepting new connections. Unlimited if not set.
     ///
-    /// Not currently implemented; setting this has no effect.
+    /// Not currently implemented, setting this has no effect.
     pub accept_conn_limit: Option<f64>,
     /// Burst limit for accepting new connections. Unlimited if not set.
     ///
-    /// Not currently implemented; setting this has no effect.
+    /// Not currently implemented, setting this has no effect.
     pub accept_conn_burst: Option<usize>,
-    /// Rate limits for incoming traffic from a client connection.
-    pub client_rx: Option<ClientRateLimit>,
 }
 
 /// Per-client rate limit configuration.
