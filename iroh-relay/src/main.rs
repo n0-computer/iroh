@@ -217,14 +217,12 @@ impl From<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
                 }
                 Arc::new(HttpAccess { client, config })
             },
-           AccessConfig::Token(mut token) => {
+            AccessConfig::Token(mut token) => {
                 if let Ok(env_token) = std::env::var(ENV_RELAY_ACCESS_TOKEN) {
                     token = env_token;
                 }
-                if token.is_empty() {
-                    bail_any!("Access token must not be empty");
-                }
                 Arc::new(TokenAccess(token))
+            }
         }
     }
 }
@@ -717,6 +715,12 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
         relay_config.tls = tls_config;
         relay_config.limits = limits;
         relay_config.key_cache_capacity = cfg.key_cache_capacity;
+        if let AccessConfig::Token(ref token) = cfg.access {
+            let effective = std::env::var(ENV_RELAY_ACCESS_TOKEN).unwrap_or_else(|_| token.clone());
+            if effective.is_empty() {
+                bail_any!("Access token must not be an empty string");
+            }
+        }
         relay_config.access = cfg.access.clone().into();
         Some(relay_config)
     } else {
@@ -849,6 +853,27 @@ mod tests {
                 url: "https://example.com/foo".parse().unwrap(),
                 bearer_token: Some("foo".to_string())
             })
+        );
+
+        let config = r#"
+            access.token = "my-static-token"
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(config.access, AccessConfig::Token("my-static-token".to_string()));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_access_token_empty_is_rejected() -> Result {
+        let config = r#"
+            access.token = ""
+        "#;
+        let config = Config::from_str(config)?;
+        assert!(
+            build_relay_config(config).await.is_err(),
+            "empty access token should be rejected at startup"
         );
         Ok(())
     }
