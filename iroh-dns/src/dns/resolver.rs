@@ -56,6 +56,7 @@ pub(super) struct SimpleDnsResolver {
     #[cfg(with_crypto_provider)]
     tls_config: Option<Arc<rustls::ClientConfig>>,
     /// Lazily initialized, cached reqwest client for DNS-over-HTTPS queries.
+    #[cfg(with_crypto_provider)]
     https_client: Mutex<Option<reqwest::Client>>,
     cache: DnsCache,
     builder: Builder,
@@ -81,6 +82,7 @@ impl SimpleDnsResolver {
             ndots,
             #[cfg(with_crypto_provider)]
             tls_config,
+            #[cfg(with_crypto_provider)]
             https_client: Mutex::new(None),
             cache: DnsCache::new(),
             builder,
@@ -414,21 +416,6 @@ impl SimpleDnsResolver {
 
     pub(super) fn reset(&self) -> Self {
         Self::new(self.builder.clone())
-        // let (nameservers, search_domains, ndots) = Self::build_config(&self.builder);
-        // self.nameservers = nameservers;
-        // self.search_domains = search_domains;
-        // self.ndots = ndots;
-        // #[cfg(with_crypto_provider)]
-        // {
-        //     self.tls_config = self
-        //         .builder
-        //         .tls_client_config
-        //         .as_ref()
-        //         .map(|c| Arc::new(c.clone()));
-        // }
-        // // Clear cached HTTPS client so it gets rebuilt with the new TLS config on next use
-        // *self.https_client.lock().expect("poisoned") = None;
-        // self.clear_cache();
     }
 }
 

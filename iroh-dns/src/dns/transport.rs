@@ -8,6 +8,7 @@ use std::sync::Arc;
 use n0_error::{AnyError, StdResultExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[cfg(with_crypto_provider)]
 use super::DnsError;
 
 // Known limitation: TCP and TLS connections are not reused across queries.
