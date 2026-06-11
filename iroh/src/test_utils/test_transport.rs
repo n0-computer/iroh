@@ -20,7 +20,7 @@ use crate::{
     endpoint::{
         Builder,
         presets::Preset,
-        transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit},
+        transports::{CustomEndpoint, CustomSender, CustomTransport, RecvInfo, Transmit},
     },
 };
 
@@ -234,6 +234,7 @@ impl CustomSender for TestSender {
         &self,
         _cx: &mut std::task::Context,
         dst: &CustomAddr,
+        _src: Option<&CustomAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         let packets = self.split(transmit).collect();
@@ -264,11 +265,15 @@ impl CustomEndpoint for TestTransport {
         cx: &mut std::task::Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(
+            bufs.len(),
+            recv_infos.len(),
+            "non matching bufs & recv_infos"
+        );
         let n = bufs.len();
-        debug_assert_eq!(n, metas.len());
-        debug_assert_eq!(n, source_addrs.len());
         if n == 0 {
             return Poll::Ready(Ok(0));
         }
@@ -284,9 +289,10 @@ impl CustomEndpoint for TestTransport {
             Poll::Ready(n) => n,
         };
         let mut count = 0;
-        for (((packet, meta), buf), source_addr) in
-            packets.into_iter().zip(metas).zip(bufs).zip(source_addrs)
-        {
+        for (i, packet) in packets.into_iter().enumerate() {
+            let meta = &mut metas[i];
+            let buf = &mut bufs[i];
+            let recv_info = &mut recv_infos[i];
             if buf.len() < packet.data.len() {
                 break;
             }
@@ -298,7 +304,7 @@ impl CustomEndpoint for TestTransport {
                 packet.data.len()
             );
             buf[..packet.data.len()].copy_from_slice(&packet.data);
-            *source_addr = packet.from.into();
+            *recv_info = RecvInfo::new(packet.from, Some(to_custom_addr(self.id)));
             meta.len = packet.data.len();
             meta.stride = packet.data.len();
             count += 1;
@@ -319,16 +325,13 @@ mod tests {
     use iroh_relay::RelayMap;
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
-    use n0_watcher::Watcher;
 
     use super::*;
     use crate::{
         Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
-        endpoint::{
-            Builder, Connection, presets,
-            transports::{AddrKind, TransportBias},
-        },
+        endpoint::{Builder, Connection, presets, transports::AddrKind},
         protocol::{AcceptError, ProtocolHandler, Router},
+        socket::biased_rtt_path_selector::{BiasedRttPathSelector, TransportBias},
         test_utils::run_relay_server,
     };
 
@@ -385,10 +388,13 @@ mod tests {
         let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
             .relay_mode(relay_mode)
-            .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(crate::tls::CaTlsConfig::insecure_skip_verify())
             .add_custom_transport(transport);
         if let Some(bias) = config.custom_bias {
-            builder = builder.transport_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias);
+            builder = builder.path_selector(Arc::new(
+                BiasedRttPathSelector::default()
+                    .with_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias),
+            ));
         }
         if !config.keep_ip {
             builder = builder.clear_ip_transports();
@@ -420,7 +426,7 @@ mod tests {
 
     /// Returns true if the selected path is the custom transport.
     fn is_custom_selected(conn: &crate::endpoint::Connection) -> bool {
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         paths.iter().find(|p| p.is_selected()).is_some_and(
             |p| matches!(p.remote_addr(), TransportAddr::Custom(a) if a.id() == TEST_TRANSPORT_ID),
         )
@@ -430,7 +436,7 @@ mod tests {
     /// - we have both IP and custom paths, and the selected path is IP.
     /// - we only have one path
     fn is_ip_selected_from_ip_and_custom(conn: &crate::endpoint::Connection) -> bool {
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         let has_ip = paths.iter().any(|p| p.remote_addr().is_ip());
         let has_custom = paths.iter().any(|p| p.remote_addr().is_custom());
         if !has_ip || !has_custom {
@@ -443,7 +449,7 @@ mod tests {
 
     /// Returns true if the selected path is a relay transport.
     fn is_relay_selected(conn: &crate::endpoint::Connection) -> bool {
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         paths
             .iter()
             .find(|p| p.is_selected())
@@ -484,7 +490,7 @@ mod tests {
             .await?;
 
         // Verify exactly one path exists and it's the custom transport
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         assert_eq!(paths.len(), 1, "Expected exactly one path");
         assert!(
             is_custom_selected(&conn),
@@ -494,6 +500,44 @@ mod tests {
         verify_echo(&conn, b"custom only").await?;
         conn.close(0u32.into(), b"done");
         router.shutdown().await.anyerr()?;
+        Ok(())
+    }
+
+    /// Test that custom transports can surface a local address per incoming packet.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_custom_transport_local_addr() -> Result<()> {
+        use crate::endpoint::LocalTransportAddr;
+
+        let network = TestNetwork::new();
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
+
+        let t1 = network.create_transport(s1.public())?;
+        let t2 = network.create_transport(s2.public())?;
+
+        let ep1 = endpoint_builder(s1, t1, EndpointConfig::default())
+            .bind()
+            .await?;
+        let ep2 = endpoint_builder(s2.clone(), t2, EndpointConfig::default())
+            .alpns(vec![ECHO_ALPN.to_vec()])
+            .bind()
+            .await?;
+
+        let connect = tokio::spawn({
+            let ep1 = ep1.clone();
+            let dst = custom_only_addr(s2.public());
+            async move { ep1.connect(dst, ECHO_ALPN).await }
+        });
+
+        let incoming = ep2.accept().await.expect("incoming");
+        assert_eq!(
+            incoming.local_addr(),
+            LocalTransportAddr::Custom(Some(to_custom_addr(s2.public()))),
+        );
+        let _conn = incoming.accept().anyerr()?.await.anyerr()?;
+
+        connect.await.anyerr()??;
         Ok(())
     }
 
@@ -646,7 +690,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(200)).await;
 
             // Debug: print paths after relay-only connect
-            let paths = conn.paths().get();
+            let paths = conn.paths();
             eprintln!("Paths after relay-only connect:");
             for path in paths.iter() {
                 eprintln!(
@@ -675,7 +719,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Debug: print all paths
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         eprintln!("Paths after connecting with all addresses:");
         for path in paths.iter() {
             eprintln!(

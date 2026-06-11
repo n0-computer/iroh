@@ -3,6 +3,13 @@
 //! Dialing by [`EndpointId`] is supported by iroh endpoints publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
 //!
+//! [`EndpointInfo`] combines an [`iroh_base::EndpointId`] with [`EndpointData`] —
+//! the addressing and metadata that discovery services publish and resolve.
+//! Discovery services use [`AddrFilter`] to control which addresses are published.
+//!
+//! This module also provides serialization to and from pkarr signed packets and
+//! DNS TXT records. See the [`crate::attrs`] module for the on-the-wire format.
+//!
 //! DNS records are published under the following names:
 //!
 //! `_iroh.<z32-endpoint-id>.<origin-domain> TXT`
@@ -29,6 +36,7 @@
 //! [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 //! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
 //! [`RelayUrl`]: iroh_base::RelayUrl
+//! [`IROH_TXT_NAME`]: crate::IROH_TXT_NAME
 //! [`N0_DNS_ENDPOINT_ORIGIN_PROD`]: crate::dns::N0_DNS_ENDPOINT_ORIGIN_PROD
 //! [`N0_DNS_ENDPOINT_ORIGIN_STAGING`]: crate::dns::N0_DNS_ENDPOINT_ORIGIN_STAGING
 
@@ -43,11 +51,13 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-pub use iroh_dns::attrs::{EncodingError, IROH_TXT_NAME, ParseError};
-pub(crate) use iroh_dns::attrs::{IrohAttr, TxtAttrs};
-use iroh_dns::pkarr;
 use n0_error::{ensure, stack_error};
 use url::Url;
+
+use crate::{
+    attrs::{EncodingError, IrohAttr, ParseError, TxtAttrs},
+    pkarr,
+};
 
 /// Data about an endpoint that may be published to and resolved from discovery services.
 ///

@@ -8,24 +8,22 @@ use std::{
 
 use iroh_dns::pkarr::{SignedPacket, Timestamp};
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
-use redb::{
-    Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition,
-    backends::InMemoryBackend,
-};
+use redb::{Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
-pub type SignedPacketsKey = [u8; 32];
+type SignedPacketsKey = [u8; 32];
+
 const SIGNED_PACKETS_TABLE: TableDefinition<&SignedPacketsKey, &[u8]> =
     TableDefinition::new("signed-packets-1");
 const UPDATE_TIME_TABLE: MultimapTableDefinition<[u8; 8], SignedPacketsKey> =
     MultimapTableDefinition::new("update-time-1");
 
 #[derive(Debug)]
-pub struct SignedPacketStore {
+pub(super) struct SignedPacketStore {
     send: mpsc::Sender<Message>,
     cancel: CancellationToken,
     _write_thread: IoThread,
@@ -50,6 +48,7 @@ enum Message {
         key: PublicKeyBytes,
         res: oneshot::Sender<Option<SignedPacket>>,
     },
+    #[cfg(test)]
     Remove {
         key: PublicKeyBytes,
         res: oneshot::Sender<bool>,
@@ -72,16 +71,20 @@ struct Actor {
     metrics: Arc<Metrics>,
 }
 
+/// Configuration for the signed-packet store.
+///
+/// Controls how incoming packets are batched into write transactions and how
+/// long packets are retained before the eviction task removes them.
 #[derive(Debug, Clone, Copy)]
-pub struct Options {
+pub(crate) struct Options {
     /// Maximum number of packets to process in a single write transaction.
-    pub max_batch_size: usize,
+    pub(crate) max_batch_size: usize,
     /// Maximum time to keep a write transaction open.
-    pub max_batch_time: Duration,
+    pub(crate) max_batch_time: Duration,
     /// Time to keep packets in the store before eviction.
-    pub eviction: Duration,
+    pub(crate) eviction: Duration,
     /// Pause between eviction checks.
-    pub eviction_interval: Duration,
+    pub(crate) eviction_interval: Duration,
 }
 
 impl Default for Options {
@@ -190,6 +193,7 @@ impl Actor {
                 }
                 res.send(true).ok();
             }
+            #[cfg(test)]
             Message::Remove { key, res } => {
                 trace!("remove {}", key);
                 let updated = match tables.signed_packets.remove(key.as_bytes()).anyerr()? {
@@ -257,13 +261,13 @@ fn fmt_time(t: Timestamp) -> String {
 
 /// A struct similar to [`redb::Table`] but for all tables that make up the
 /// signed packet store.
-pub(super) struct Tables<'a> {
+struct Tables<'a> {
     pub signed_packets: redb::Table<'a, &'static SignedPacketsKey, &'static [u8]>,
     pub update_time: redb::MultimapTable<'a, [u8; 8], SignedPacketsKey>,
 }
 
 impl<'txn> Tables<'txn> {
-    pub fn new(tx: &'txn redb::WriteTransaction) -> result::Result<Self, redb::TableError> {
+    fn new(tx: &'txn redb::WriteTransaction) -> result::Result<Self, redb::TableError> {
         Ok(Self {
             signed_packets: tx.open_table(SIGNED_PACKETS_TABLE)?,
             update_time: tx.open_multimap_table(UPDATE_TIME_TABLE)?,
@@ -271,14 +275,14 @@ impl<'txn> Tables<'txn> {
     }
 }
 
-pub(super) struct Snapshot {
+struct Snapshot {
     #[allow(dead_code)]
     pub signed_packets: redb::ReadOnlyTable<&'static SignedPacketsKey, &'static [u8]>,
     pub update_time: redb::ReadOnlyMultimapTable<[u8; 8], SignedPacketsKey>,
 }
 
 impl Snapshot {
-    pub fn new(db: &Database) -> Result<Self> {
+    fn new(db: &Database) -> Result<Self> {
         let tx = db.begin_read().anyerr()?;
         Ok(Self {
             signed_packets: tx.open_table(SIGNED_PACKETS_TABLE).anyerr()?,
@@ -288,7 +292,7 @@ impl Snapshot {
 }
 
 impl SignedPacketStore {
-    pub fn persistent(
+    pub(crate) fn persistent(
         path: impl AsRef<Path>,
         options: Options,
         metrics: Arc<Metrics>,
@@ -309,15 +313,16 @@ impl SignedPacketStore {
         Self::open(db, options, metrics)
     }
 
-    pub fn in_memory(options: Options, metrics: Arc<Metrics>) -> Result<Self> {
+    #[cfg(test)]
+    pub(crate) fn in_memory(options: Options, metrics: Arc<Metrics>) -> Result<Self> {
         info!("using in-memory packet database");
         let db = Database::builder()
-            .create_with_backend(InMemoryBackend::new())
+            .create_with_backend(redb::backends::InMemoryBackend::new())
             .anyerr()?;
         Self::open(db, options, metrics)
     }
 
-    pub fn open(db: Database, options: Options, metrics: Arc<Metrics>) -> Result<Self> {
+    pub(crate) fn open(db: Database, options: Options, metrics: Arc<Metrics>) -> Result<Self> {
         // create tables
         let write_tx = db.begin_write().anyerr()?;
         let _ = Tables::new(&write_tx).anyerr()?;
@@ -348,7 +353,7 @@ impl SignedPacketStore {
         })
     }
 
-    pub async fn upsert(&self, packet: SignedPacket) -> Result<bool> {
+    pub(crate) async fn upsert(&self, packet: SignedPacket) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
         self.send
             .send(Message::Upsert { packet, res: tx })
@@ -357,7 +362,7 @@ impl SignedPacketStore {
         rx.await.anyerr()
     }
 
-    pub async fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
+    pub(crate) async fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
         let (tx, rx) = oneshot::channel();
         self.send
             .send(Message::Get { key: *key, res: tx })
@@ -366,7 +371,8 @@ impl SignedPacketStore {
         rx.await.anyerr()
     }
 
-    pub async fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
+    #[cfg(test)]
+    pub(crate) async fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
         self.send
             .send(Message::Remove { key: *key, res: tx })
@@ -523,14 +529,14 @@ impl Drop for IoThread {
 
 /// A wrapper for a tokio mpsc receiver that allows peeking at the next message.
 #[derive(Debug)]
-pub(super) struct PeekableReceiver<T> {
+struct PeekableReceiver<T> {
     msg: Option<T>,
     recv: tokio::sync::mpsc::Receiver<T>,
 }
 
 #[allow(dead_code)]
 impl<T> PeekableReceiver<T> {
-    pub fn new(recv: tokio::sync::mpsc::Receiver<T>) -> Self {
+    fn new(recv: tokio::sync::mpsc::Receiver<T>) -> Self {
         Self { msg: None, recv }
     }
 
@@ -538,7 +544,7 @@ impl<T> PeekableReceiver<T> {
     ///
     /// Will block if there are no messages.
     /// Returns None only if there are no more messages (sender is dropped).
-    pub async fn recv(&mut self) -> Option<T> {
+    async fn recv(&mut self) -> Option<T> {
         if let Some(msg) = self.msg.take() {
             return Some(msg);
         }
@@ -547,7 +553,7 @@ impl<T> PeekableReceiver<T> {
 
     /// Push back a message. This will only work if there is room for it.
     /// Otherwise, it will fail and return the message.
-    pub fn push_back(&mut self, msg: T) -> std::result::Result<(), T> {
+    fn push_back(&mut self, msg: T) -> std::result::Result<(), T> {
         if self.msg.is_none() {
             self.msg = Some(msg);
             Ok(())
@@ -584,5 +590,21 @@ mod tests {
         let old_format = packet.as_bytes().to_vec();
         let deserialized = deserialize(&old_format).expect("old format should be readable");
         assert_eq!(packet.as_bytes(), deserialized.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn remove_in_memory() {
+        let store = SignedPacketStore::in_memory(Options::default(), Arc::new(Metrics::default()))
+            .expect("in-memory store");
+        let packet = test_signed_packet();
+        let key = PublicKeyBytes::from_signed_packet(&packet);
+
+        assert!(store.upsert(packet.clone()).await.expect("upsert"));
+        assert!(store.get(&key).await.expect("get").is_some());
+
+        assert!(store.remove(&key).await.expect("remove existing"));
+        assert!(store.get(&key).await.expect("get after remove").is_none());
+
+        assert!(!store.remove(&key).await.expect("remove missing"));
     }
 }

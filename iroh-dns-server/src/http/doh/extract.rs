@@ -17,11 +17,10 @@ use axum::{
 };
 use bytes::Bytes;
 use hickory_server::{
-    authority::MessageRequest,
+    net::xfer::Protocol,
     proto::{
-        serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
-        xfer::Protocol,
-        {self},
+        self,
+        serialize::binary::{BinEncodable, BinEncoder},
     },
     server::Request as DNSRequest,
 };
@@ -33,7 +32,7 @@ use crate::http::error::AppError;
 
 /// A DNS packet encoding type
 #[derive(Debug)]
-pub enum DnsMimeType {
+pub(super) enum DnsMimeType {
     /// application/dns-message
     Message,
     /// application/dns-json
@@ -51,7 +50,7 @@ impl Display for DnsMimeType {
 
 impl DnsMimeType {
     /// Turn this mime type to an `Accept` HTTP header value
-    pub fn to_header_value(&self) -> HeaderValue {
+    pub(super) fn to_header_value(&self) -> HeaderValue {
         HeaderValue::from_static(match self {
             Self::Message => "application/dns-message",
             Self::Json => "application/dns-json",
@@ -66,38 +65,38 @@ struct DnsMessageQuery {
 
 // See: https://developers.google.com/speed/public-dns/docs/doh/json#supported_parameters
 #[derive(Debug, Deserialize)]
-pub struct DnsQuery {
+struct DnsQuery {
     /// Record name to look up, e.g. example.com
-    pub name: String,
+    name: String,
     /// Record type, e.g. A/AAAA/TXT, etc.
     #[serde(rename = "type")]
-    pub record_type: Option<String>,
+    record_type: Option<String>,
     /// Used to disable DNSSEC validation
-    pub cd: Option<bool>,
+    cd: Option<bool>,
     /// Desired content type. E.g. "application/dns-message" or "application/dns-json"
     #[allow(dead_code)]
-    pub ct: Option<String>,
+    ct: Option<String>,
     /// Whether to return DNSSEC entries such as RRSIG, NSEC or NSEC3
     #[serde(rename = "do")]
-    pub dnssec_ok: Option<bool>,
+    dnssec_ok: Option<bool>,
     /// Privacy setting for how your IP address is forwarded to authoritative nameservers
     #[allow(dead_code)]
-    pub edns_client_subnet: Option<String>,
+    edns_client_subnet: Option<String>,
     /// Some url-safe random characters to pad your messages for privacy (to avoid being fingerprinted by encrypted message length)
     #[allow(dead_code)]
-    pub random_padding: Option<String>,
+    random_padding: Option<String>,
     /// Whether to provide answers for all records up to the root
     #[serde(rename = "rd")]
-    pub recursion_desired: Option<bool>,
+    recursion_desired: Option<bool>,
 }
 
 /// A DNS request encoded in the query string
 #[derive(Debug)]
-pub struct DnsRequestQuery(pub(crate) DNSRequest, pub(crate) DnsMimeType);
+pub(crate) struct DnsRequestQuery(pub(super) DNSRequest, pub(super) DnsMimeType);
 
 /// A DNS request encoded in the body
 #[derive(Debug)]
-pub struct DnsRequestBody(pub(crate) DNSRequest);
+pub(crate) struct DnsRequestBody(pub(crate) DNSRequest);
 
 impl<S> FromRequestParts<S> for DnsRequestQuery
 where
@@ -193,7 +192,7 @@ where
 }
 
 /// Exposed to make it usable internally...
-pub(crate) fn encode_query_as_request(
+fn encode_query_as_request(
     question: DnsQuery,
     src_addr: SocketAddr,
 ) -> Result<DNSRequest, AppError> {
@@ -212,16 +211,12 @@ pub(crate) fn encode_query_as_request(
 
     let query = proto::op::Query::query(name, query_type);
 
-    let mut message = proto::op::Message::new();
-
-    message
-        .add_query(query)
-        .set_message_type(proto::op::MessageType::Query)
-        .set_op_code(proto::op::OpCode::Query)
-        .set_checking_disabled(question.cd.unwrap_or(false))
-        .set_recursion_desired(question.recursion_desired.unwrap_or(true))
-        .set_recursion_available(true)
-        .set_authentic_data(question.dnssec_ok.unwrap_or(false));
+    let mut message = proto::op::Message::query();
+    message.metadata.checking_disabled = question.cd.unwrap_or(false);
+    message.metadata.recursion_desired = question.recursion_desired.unwrap_or(true);
+    message.metadata.recursion_available = true;
+    message.metadata.authentic_data = question.dnssec_ok.unwrap_or(false);
+    message.add_query(query);
 
     // This is kind of a hack, but the only way I can find to
     // create a MessageRequest is by decoding a buffer of bytes,
@@ -239,20 +234,15 @@ pub(crate) fn encode_query_as_request(
 }
 
 fn decode_request(bytes: &[u8], src_addr: SocketAddr) -> Result<DNSRequest, AppError> {
-    let mut decoder = BinDecoder::new(bytes);
-
-    match MessageRequest::read(&mut decoder) {
-        Ok(message) => {
-            info!("received message {message:?}");
-            if message.message_type() != proto::op::MessageType::Query {
+    match DNSRequest::from_bytes(bytes.to_vec(), src_addr, Protocol::Https) {
+        Ok(request) => {
+            info!("received message {:?}", *request);
+            if request.metadata.message_type != proto::op::MessageType::Query {
                 return Err(AppError::new(
                     StatusCode::BAD_REQUEST,
                     Some("Invalid message type: expected query"),
                 ));
             }
-
-            let request = DNSRequest::new(message, src_addr, Protocol::Https);
-
             Ok(request)
         }
         Err(err) => Err(AppError::new(

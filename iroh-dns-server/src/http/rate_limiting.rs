@@ -8,22 +8,27 @@ use tower_governor::{
     key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor},
 };
 
-/// Config for http server rate limit.
+/// Rate limiting strategy for the HTTP server.
 #[derive(Debug, Deserialize, Default, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum RateLimitConfig {
-    /// Disable rate limit.
+    /// Disables rate limiting entirely.
     Disabled,
-    /// Enable rate limit based on the connection's peer IP address.
+    /// Rate limits by the connection's peer IP address.
     ///
-    /// <https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html>
+    /// See [`PeerIpKeyExtractor`].
+    ///
+    /// [`PeerIpKeyExtractor`]: https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html
     #[default]
     Simple,
-    /// Enable rate limit based on headers commonly used by reverse proxies.
+    /// Rate limits by the client IP, extracted from reverse-proxy headers.
     ///
-    /// Uses headers commonly used by reverse proxies to extract the original IP address,
-    /// falling back to the connection's peer IP address.
-    /// <https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html>
+    /// Uses the headers commonly set by reverse proxies (for example
+    /// `X-Forwarded-For`) to extract the original client IP, falling back to the
+    /// connection's peer IP address. See [`SmartIpKeyExtractor`].
+    ///
+    /// [`SmartIpKeyExtractor`]: https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html
     Smart,
 }
 
@@ -36,7 +41,7 @@ impl Default for &RateLimitConfig {
 /// Create the default rate-limiting layer.
 ///
 /// This spawns a background thread to clean up the rate limiting cache.
-pub fn create<RespBody>(
+pub(super) fn create<RespBody>(
     rate_limit_config: &RateLimitConfig,
 ) -> Option<GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>, RespBody>> {
     let use_smart_extractor = match rate_limit_config {

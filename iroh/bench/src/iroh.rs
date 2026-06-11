@@ -38,7 +38,7 @@ pub fn server_endpoint(
         #[cfg(feature = "local-relay")]
         {
             if relay_url.is_some() {
-                builder = builder.ca_roots_config(iroh::tls::CaRootsConfig::insecure_skip_verify());
+                builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify());
             }
             if opt.only_relay {
                 builder = builder.clear_ip_transports();
@@ -103,7 +103,7 @@ pub async fn connect_client(
     #[cfg(feature = "local-relay")]
     {
         if relay_url.is_some() {
-            builder = builder.ca_roots_config(iroh::tls::CaRootsConfig::insecure_skip_verify());
+            builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify());
         }
         if opt.only_relay {
             builder = builder.clear_ip_transports();
@@ -189,7 +189,7 @@ async fn drain_stream(
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.anyerr()? {
+        while let Some(n) = stream.read_many_chunks(&mut bufs[..]).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;

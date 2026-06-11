@@ -19,7 +19,7 @@
 use std::{
     any::Any,
     future::{Future, IntoFuture},
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::Poll,
@@ -30,7 +30,7 @@ use futures_util::{FutureExt, future::Shared};
 use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
-use noq::WeakConnectionHandle;
+use noq::WeakConnectionHandle as NoqWeakConnectionHandle;
 use pin_project::pin_project;
 use tracing::{event, warn};
 
@@ -40,15 +40,15 @@ use crate::{
     endpoint::{
         AfterHandshakeOutcome,
         quic::{
-            AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
+            AcceptBi, AcceptUni, Closed, ConnectionError, ConnectionStats, Controller,
             ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
             SendDatagramError, ServerConfig, Side, VarInt,
         },
     },
     socket::{
         RemoteStateActorStoppedError,
-        remote_map::{PathInfo, PathWatchable, PathWatcher},
-        transports,
+        remote_map::{PathEventStream, PathList, PathListStream, PathStateReceiver},
+        transports::{self, LocalTransportAddr},
     },
 };
 
@@ -192,10 +192,11 @@ impl Incoming {
         self.inner.ignore()
     }
 
-    /// Returns the local IP address which was used when the peer established the
-    /// connection.
-    pub fn local_ip(&self) -> Option<IpAddr> {
-        self.inner.local_ip()
+    /// Returns the local address that received this incoming connection.
+    pub fn local_addr(&self) -> LocalTransportAddr {
+        let remote_addr = self.inner.remote_address();
+        let local_ip = self.inner.local_ip();
+        self.ep.inner.to_local_transport_addr(local_ip, remote_addr)
     }
 
     /// Returns the remote address of this incoming connection.
@@ -337,9 +338,7 @@ fn conn_from_noq_conn(
     );
 
     // Register this connection with the socket.
-    let fut = ep
-        .inner
-        .register_connection(info.endpoint_id, conn.weak_handle());
+    let fut = ep.inner.register_connection(info.endpoint_id, conn.clone());
 
     // Check hooks
     let inner = ep.inner.clone();
@@ -351,7 +350,7 @@ fn conn_from_noq_conn(
         };
 
         if let AfterHandshakeOutcome::Reject { error_code, reason } =
-            inner.hooks.after_handshake(&conn.to_info()).await
+            inner.hooks.after_handshake(&conn).await
         {
             conn.close(error_code, &reason);
             return Err(e!(ConnectingError::LocallyRejected));
@@ -745,7 +744,7 @@ pub struct Connection<State: ConnectionState = HandshakeCompleted> {
 #[derive(Debug, Clone)]
 pub struct HandshakeCompletedData {
     info: StaticInfo,
-    paths: PathWatchable,
+    paths: PathStateReceiver,
 }
 
 /// Static info from a completed TLS handshake.
@@ -1078,35 +1077,53 @@ impl Connection<HandshakeCompleted> {
         self.data.info.endpoint_id
     }
 
-    /// Returns a [`Watcher`] for the network paths of this connection.
+    /// Returns the currently open network paths for this connection.
     ///
-    /// A connection can have several network paths to the remote endpoint, commonly there
-    /// will be a path via the relay server and a holepunched path.
+    /// A connection typically has one path via the relay server and,
+    /// once holepunching succeeds, a direct path. The returned
+    /// [`PathList`] is a snapshot taken at call time: it does not
+    /// reflect later changes, and it does not include paths that have
+    /// already closed.
     ///
-    /// Returns a [`PathWatcher`], which implements the [`Watcher`] trait. The watcher is updated
-    /// whenever a path is opened or closed, or when the path selected for transmission changes
-    /// (see [`PathInfo::is_selected`]).
+    /// To observe changes over time, see [`Connection::paths_stream`]
+    /// for a stream of [`PathList`] snapshots and
+    /// [`Connection::path_events`] for individual [`PathEvent`]s.
     ///
-    /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
-    /// network path.
+    /// [`PathEvent`]: crate::endpoint::PathEvent
+    pub fn paths(&self) -> PathList<'_> {
+        self.data.paths.get(&self.inner)
+    }
+
+    /// Returns a stream of [`PathList`] snapshots for this connection.
     ///
-    /// As long as a [`PathWatcher`] is alive, the list of paths will only grow. If paths
-    /// are closed, they will be marked as closed (see [`PathInfo::is_closed`]) but will
-    /// not be removed from the list of paths. This allows to reliably retrieve stats for
-    /// closed paths.
+    /// Yields the current snapshot on the first poll, and a fresh
+    /// snapshot whenever the open paths or the selected path change.
+    /// Ends when the connection closes.
     ///
-    /// A [`PathWatcher`] does not keep the [`Connection`] itself alive. If all references to
-    /// a connection are dropped, the [`PathWatcher`] will start to return an error when
-    /// updating. Its last value may still be used - note however that accessing
-    /// stats for a path via [`PathInfo::stats`] returns `None` if all references to a
-    /// [`Connection`] have been dropped. To reliably access path stats when a connection closes,
-    /// wait for [`Connection::closed`] and then call [`Connection::paths`] and directly
-    /// iterate over the path stats while the [`Connection`] struct is still in scope.
+    /// The stream borrows this [`Connection`]. To consume it from a
+    /// spawned task, move a [`Connection`] clone into the task and
+    /// call this method inside.
+    pub fn paths_stream(&self) -> PathListStream<'_> {
+        self.data.paths.stream(&self.inner)
+    }
+
+    /// Returns a stream of [`PathEvent`]s for this connection.
     ///
-    /// [`PathInfoList`]: crate::endpoint::PathInfoList
-    /// [`Watcher`]: crate::Watcher
-    pub fn paths(&self) -> PathWatcher {
-        self.data.paths.watch()
+    /// Each event reports one of: a path opened, a path closed (with
+    /// final per-path statistics), the selected transmission path
+    /// changed, or the consumer fell behind. The stream ends when the
+    /// connection closes. It does not borrow this [`Connection`] and
+    /// may be moved into a spawned task.
+    ///
+    /// If the consumer does not poll fast enough, the stream yields a
+    /// single [`PathEvent::Lagged`]; the current state of the open
+    /// paths and the selected path remains recoverable via
+    /// [`Connection::paths`].
+    ///
+    /// [`PathEvent`]: crate::endpoint::PathEvent
+    /// [`PathEvent::Lagged`]: crate::endpoint::PathEvent::Lagged
+    pub fn path_events(&self) -> PathEventStream {
+        self.data.paths.events()
     }
 
     /// Returns the side of the connection (client or server).
@@ -1114,15 +1131,16 @@ impl Connection<HandshakeCompleted> {
         self.inner.side()
     }
 
-    /// Returns a connection info struct.
+    /// Returns a [`WeakConnectionHandle`] for this connection.
     ///
-    /// A [`ConnectionInfo`] is a weak handle to the connection that does not keep the connection alive,
-    /// but does allow to access some information about the connection and to wait for the connection to be closed.
-    pub fn to_info(&self) -> ConnectionInfo {
-        ConnectionInfo {
+    /// A [`WeakConnectionHandle`] does not keep the connection alive. It can be used to
+    /// wait for the connection to be closed via [`WeakConnectionHandle::closed`] and to
+    /// attempt to upgrade back to a strong [`Connection`] via
+    /// [`WeakConnectionHandle::upgrade`].
+    pub fn weak_handle(&self) -> WeakConnectionHandle {
+        WeakConnectionHandle {
             data: self.data.clone(),
             inner: self.inner.weak_handle(),
-            side: self.side(),
         }
     }
 }
@@ -1204,61 +1222,50 @@ impl Connection<OutgoingZeroRtt> {
     }
 }
 
-/// Information about a connection.
+/// A weak handle to a [`Connection`].
 ///
-/// A [`ConnectionInfo`] is a weak handle to a connection that exposes some information about the connection,
-/// but does not keep the connection alive.
+/// A [`WeakConnectionHandle`] does not keep the connection alive: holding one will not
+/// prevent the connection from being closed when the last [`Connection`] handle is dropped.
+///
+/// Use [`upgrade`] to obtain a strong [`Connection`], and [`closed`] to wait for the
+/// connection to be closed without keeping it alive.
+///
+/// [`upgrade`]: WeakConnectionHandle::upgrade
+/// [`closed`]: WeakConnectionHandle::closed
 #[derive(Debug, Clone)]
-pub struct ConnectionInfo {
-    side: Side,
+pub struct WeakConnectionHandle {
     data: HandshakeCompletedData,
-    inner: WeakConnectionHandle,
+    inner: NoqWeakConnectionHandle,
 }
 
-#[allow(missing_docs)]
-impl ConnectionInfo {
-    pub fn alpn(&self) -> &[u8] {
-        &self.data.info.alpn
-    }
-
-    pub fn remote_id(&self) -> EndpointId {
-        self.data.info.endpoint_id
-    }
-
-    pub fn is_alive(&self) -> bool {
-        self.inner.upgrade().is_some()
-    }
-
-    /// Returns a watcher for the network paths of this connection.
+impl WeakConnectionHandle {
+    /// Attempts to upgrade this weak handle to a strong [`Connection`].
     ///
-    /// See [`Connection::paths`] for details.
-    pub fn paths(&self) -> PathWatcher {
-        self.data.paths.watch()
+    /// Returns `None` if the connection has already been dropped.
+    pub fn upgrade(&self) -> Option<Connection> {
+        self.inner.upgrade().map(|inner| Connection {
+            inner,
+            data: self.data.clone(),
+        })
     }
 
-    /// Returns connection statistics.
+    /// Returns a future that resolves once the connection has been closed.
     ///
-    /// Returns `None` if the connection has been dropped.
-    pub fn stats(&self) -> Option<ConnectionStats> {
-        self.inner.upgrade().map(|conn| conn.stats())
-    }
-
-    /// Returns the side of the connection (client or server).
-    pub fn side(&self) -> Side {
-        self.side
-    }
-
-    /// Waits for the connection to be closed, and returns the close reason and final connection stats.
+    /// If no strong references to the [`Connection`] exist at the time this is called,
+    /// the future resolves to `None`. If at least one strong reference still exists at
+    /// the time of this call, the returned future is guaranteed to receive the close
+    /// event with the close reason and final connection statistics, even if all strong
+    /// references are dropped before the future is awaited.
     ///
-    /// Returns `None` if the connection has been dropped already before this call.
-    pub async fn closed(&self) -> Option<(ConnectionError, ConnectionStats)> {
-        let fut = self.inner.upgrade()?.on_closed();
-        Some(fut.await)
-    }
-
-    /// Returns the currently selected path.
-    pub fn selected_path(&self) -> Option<PathInfo> {
-        self.paths().into_iter().find(|path| path.is_selected())
+    /// The future does not keep the connection alive.
+    pub fn closed(&self) -> impl Future<Output = Option<Closed>> + Send + 'static {
+        let registered = self.inner.upgrade().map(|conn| conn.on_closed());
+        async move {
+            match registered {
+                Some(fut) => Some(fut.await),
+                None => None,
+            }
+        }
     }
 }
 
@@ -1267,18 +1274,17 @@ mod tests {
     use std::time::Duration;
 
     use iroh_base::{EndpointAddr, SecretKey};
-    use iroh_relay::tls::CaRootsConfig;
+    use iroh_relay::tls::CaTlsConfig;
     use n0_error::{Result, StackResultExt, StdResultExt};
-    use n0_future::StreamExt;
+    use n0_future::{Stream, StreamExt};
     use n0_tracing_test::traced_test;
-    use n0_watcher::Watcher;
     use rand::{RngExt, SeedableRng};
     use tracing::{Instrument, error_span, info, info_span, trace_span};
 
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, Incoming, PathInfo, PathInfoList, ZeroRttStatus, presets},
+        endpoint::{ConnectOptions, Incoming, PathList, ZeroRttStatus, presets},
         test_utils::run_relay_server,
     };
 
@@ -1497,11 +1503,11 @@ mod tests {
     async fn test_paths_watcher() -> Result {
         const ALPN: &[u8] = b"test";
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let (relay_map, _relay_map, _guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
@@ -1509,7 +1515,7 @@ mod tests {
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
 
@@ -1522,21 +1528,20 @@ mod tests {
             async { server.accept().await.unwrap().await.unwrap() }
         );
         info!("connected");
-        let mut paths_client = conn_client.paths().stream();
-        let mut paths_server = conn_server.paths().stream();
 
-        /// Advances the path stream until at least one IP and one relay paths are available.
+        let mut paths_client = conn_client.paths_stream();
+        let mut paths_server = conn_server.paths_stream();
+
+        /// Advances the path stream until at least one IP and one relay path is available.
         ///
         /// Panics if the path stream finishes before that happens.
-        async fn wait_for_paths(
-            stream: &mut n0_watcher::Stream<impl n0_watcher::Watcher<Value = PathInfoList> + Unpin>,
-        ) {
+        async fn wait_for_paths(mut stream: impl Send + Unpin + Stream<Item = PathList<'_>>) {
             loop {
                 let paths = stream.next().await.expect("paths stream ended");
                 info!(?paths, "paths");
                 if paths.len() >= 2
-                    && paths.iter().any(PathInfo::is_relay)
-                    && paths.iter().any(PathInfo::is_ip)
+                    && paths.iter().any(|p| p.is_relay())
+                    && paths.iter().any(|p| p.is_ip())
                 {
                     info!("break");
                     return;
@@ -1573,7 +1578,7 @@ mod tests {
         .await
         .expect("client paths watcher did not close within 1s of connection close");
         tokio::time::timeout(Duration::from_nanos(1), async {
-            while paths_client.next().await.is_some() {}
+            while paths_server.next().await.is_some() {}
         })
         .await
         .expect("server paths watcher did not close within 1s of connection close");

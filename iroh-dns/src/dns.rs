@@ -1,8 +1,8 @@
-//! Configurable DNS resolver for `iroh-relay` and `iroh`.
+//! Configurable DNS resolver.
 //!
 //! The main export is the [`DnsResolver`] struct. It provides methods to resolve domain names
-//! to IPv4 and IPv6 addresses. Additionally, the resolver features methods to resolve the
-//! [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
+//! to IPv4 and IPv6 addresses, and to look up TXT records. Additionally, the resolver features
+//! methods to resolve the [`EndpointInfo`] for an iroh [`EndpointId`] from `_iroh` TXT records.
 //! See the [`crate::endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
@@ -18,28 +18,32 @@ mod system_config;
 mod transport;
 
 use std::{
+    collections::VecDeque,
     fmt,
     future::Future,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    pin::Pin,
     sync::Arc,
 };
 
+use arc_swap::ArcSwap;
 use iroh_base::EndpointId;
 use n0_error::{StackError, e, stack_error};
 use n0_future::{
-    StreamExt,
+    Either, MaybeFuture, Stream, StreamExt,
     boxed::BoxFuture,
+    stream,
     time::{self, Duration},
 };
-use tokio::sync::RwLock;
+use tokio::sync::Notify;
 use url::Url;
 
 #[cfg(not(wasm_browser))]
 use self::resolver::SimpleDnsResolver;
-use crate::{
-    defaults::timeouts::DNS_TIMEOUT,
-    endpoint_info::{EndpointInfo, ParseError},
-};
+use crate::{ParseError, endpoint_info::EndpointInfo};
+
+/// Default timeout for DNS requests
+pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The n0 address lookup DNS origin, for production.
 pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link.";
@@ -63,11 +67,14 @@ pub trait Resolver: fmt::Debug + Send + Sync + 'static {
     /// Clears the internal cache.
     fn clear_cache(&self);
 
-    /// Completely resets the DNS resolver.
+    /// Returns a freshly-built resolver to replace `self` after a network change.
     ///
-    /// This is called when the host's network changes majorly. Implementations should rebind all sockets
-    /// and refresh the nameserver configuration if read from the host system.
-    fn reset(&mut self);
+    /// The returned resolver replaces the previous one inside [`DnsResolver`] via an
+    /// atomic swap. Build a new instance with re-bound sockets and re-read nameserver
+    /// configuration rather than mutating in place. Must not perform IO: defer DNS
+    /// queries and socket binds until the new resolver is first used. May be called
+    /// concurrently, in which case all but one allocated replacement is dropped unused.
+    fn reset(&self) -> Box<dyn Resolver>;
 }
 
 /// Boxed iterator alias.
@@ -80,16 +87,16 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 #[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum DnsError {
-    #[error(transparent)]
-    Timeout { source: tokio::time::error::Elapsed },
+    #[error("Request timed out")]
+    Timeout {},
     #[error("No response")]
     NoResponse {},
-    #[error("Resolve failed IPv4: {ipv4}, IPv6: {ipv6}")]
+    #[error("Resolve failed, IPv4: {ipv4}, IPv6: {ipv6}")]
     ResolveBoth {
         ipv4: Box<DnsError>,
         ipv6: Box<DnsError>,
     },
-    #[error("missing host")]
+    #[error("Missing host")]
     MissingHost {},
     #[cfg(not(wasm_browser))]
     #[error("invalid DNS packet")]
@@ -214,8 +221,7 @@ impl Builder {
 
     /// Builds the DNS resolver.
     pub fn build(self) -> DnsResolver {
-        let resolver = SimpleDnsResolver::new(self);
-        DnsResolver(DnsResolverInner::Simple(Arc::new(RwLock::new(resolver))))
+        DnsResolver::custom(Arc::new(SimpleDnsResolver::new(self)))
     }
 }
 
@@ -225,8 +231,107 @@ impl Builder {
 /// The nameservers can be customized by constructing the resolver with [`Self::builder`].
 /// Alternatively, you can create a fully custom DNS resolver by implementing the [`Resolver`]
 /// trait and creating the resolver with [`Self::custom`].
+///
+/// # Usage on Android
+///
+/// The system-defaults reader uses JNI through [`ndk_context`], which must be
+/// initialized with a `JavaVM` and `Application` context before the resolver
+/// is constructed. Glue crates like ndk-glue and android-activity do this
+/// before `main`. Apps that don't use either can call
+/// `iroh_dns::install_android_jni_context` once at startup. Without an
+/// initialized `ndk_context` the JNI lookup panics in release builds. In
+/// debug builds the panic is caught and the resolver falls back to Google's
+/// public DNS.
+///
+/// [`ndk_context`]: https://docs.rs/ndk-context
 #[derive(Debug, Clone)]
-pub struct DnsResolver(DnsResolverInner);
+pub struct DnsResolver {
+    inner: Arc<Inner>,
+}
+
+/// Shared state behind [`DnsResolver`].
+#[derive(Debug)]
+struct Inner {
+    /// Wakes in-flight [`Self::op`] calls when the resolver is swapped.
+    notify_reset: Notify,
+    resolver: ArcSwap<Box<dyn Resolver>>,
+}
+
+impl Inner {
+    fn new(inner: Box<dyn Resolver>) -> Self {
+        Self {
+            notify_reset: Notify::new(),
+            resolver: ArcSwap::from_pointee(inner),
+        }
+    }
+
+    /// Atomically swaps the resolver and wakes in-flight [`Self::op`] calls.
+    ///
+    /// The swap happens before the wake. An op that observes or misses the wake is
+    /// then guaranteed to load the new resolver. Non-blocking.
+    ///
+    /// Under contention only the first concurrent caller's swap lands; the others
+    /// drop their freshly-built resolver. The winner's notification is enough since
+    /// every in-flight op will pick up the new resolver on its next iteration.
+    fn reset(&self) {
+        let current = self.resolver.load();
+        let new = Arc::new(current.reset());
+        let prev = self.resolver.compare_and_swap(&current, new);
+        if Arc::ptr_eq(&current, &prev) {
+            self.notify_reset.notify_waiters();
+        }
+    }
+
+    fn clear_cache(&self) {
+        self.resolver.load().clear_cache();
+    }
+
+    /// Runs `f(resolver)` with a timeout, restarting against the new resolver if
+    /// [`Self::reset`] fires.
+    ///
+    /// Three things race in `biased` order: the lookup completes (returned even if a
+    /// reset happened concurrently, since a successful result is still valid), a reset
+    /// is observed (drop the in-flight future and re-run `f`), or the timeout elapses.
+    ///
+    /// `timeout` is per-attempt. Each retry starts a fresh sleep, so the wall-clock
+    /// total can exceed it if many resets fire. This is intentional: a fresh attempt
+    /// against a just-changed network should not inherit the previous attempt's
+    /// remaining budget.
+    ///
+    /// `f` may be invoked more than once and so must be `Fn`. Captured state must be
+    /// reusable across calls, typically by cloning inside the closure body.
+    ///
+    /// `notified` is enabled before `load_full`. Combined with [`Self::reset`]'s
+    /// swap-then-notify ordering: a wake missed before `enable()` had already been
+    /// preceded by the swap, so the following `load_full` returns the new resolver.
+    async fn op<F, Fut, R, E>(&self, timeout: Duration, f: F) -> Result<R, DnsError>
+    where
+        E: 'static + Send + Into<DnsError>,
+        R: 'static + Send,
+        F: 'static + Send + Fn(Arc<Box<dyn Resolver>>) -> Fut,
+        Fut: 'static + Send + Future<Output = Result<R, E>>,
+    {
+        loop {
+            let notified = self.notify_reset.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
+            let timeout = n0_future::time::sleep(timeout);
+            tokio::pin!(timeout);
+
+            let resolver = self.resolver.load_full();
+            let fut = f(resolver);
+            tokio::pin!(fut);
+
+            tokio::select! {
+                biased;
+                res = fut => return res.map_err(Into::into),
+                _ = notified => continue,
+                _ = timeout => return Err(e!(DnsError::Timeout)),
+            }
+        }
+    }
+}
 
 impl DnsResolver {
     /// Creates a new DNS resolver with sensible cross-platform defaults.
@@ -256,17 +361,23 @@ impl DnsResolver {
     /// implement the [`Resolver`] trait on a struct and implement DNS resolution
     /// however you see fit.
     pub fn custom(resolver: impl Resolver) -> Self {
-        Self(DnsResolverInner::Custom(Arc::new(RwLock::new(resolver))))
+        Self {
+            inner: Arc::new(Inner::new(Box::new(resolver))),
+        }
     }
 
     /// Removes all entries from the cache.
-    pub async fn clear_cache(&self) {
-        self.0.clear_cache().await
+    pub fn clear_cache(&self) {
+        self.inner.clear_cache();
     }
 
-    /// Recreates the inner resolver.
-    pub async fn reset(&self) {
-        self.0.reset().await
+    /// Replaces the inner resolver with a freshly-built one.
+    ///
+    /// Call this on a major host network change to pick up the new system DNS
+    /// configuration and rebind sockets. The swap is atomic and non-blocking;
+    /// in-flight lookups retry against the new resolver. See [`Resolver::reset`].
+    pub fn reset(&self) {
+        self.inner.reset();
     }
 
     /// Looks up a TXT record.
@@ -276,8 +387,10 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = TxtRecordData>, DnsError> {
         let host = host.to_string();
-        let fut = self.0.lookup_txt(host);
-        let res = time::timeout(timeout, fut).await??;
+        let res = self
+            .inner
+            .op(timeout, move |resolver| resolver.lookup_txt(host.clone()))
+            .await?;
         Ok(res)
     }
 
@@ -288,8 +401,10 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let fut = self.0.lookup_ipv4(host);
-        let addrs = time::timeout(timeout, fut).await??;
+        let addrs = self
+            .inner
+            .op(timeout, move |resolver| resolver.lookup_ipv4(host.clone()))
+            .await?;
         Ok(addrs.into_iter().map(IpAddr::V4))
     }
 
@@ -300,8 +415,10 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let fut = self.0.lookup_ipv6(host);
-        let addrs = time::timeout(timeout, fut).await??;
+        let addrs = self
+            .inner
+            .op(timeout, move |resolver| resolver.lookup_ipv6(host.clone()))
+            .await?;
         Ok(addrs.into_iter().map(IpAddr::V6))
     }
 
@@ -367,6 +484,110 @@ impl DnsResolver {
             url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
             url::Host::Ipv6(ip) => Ok(IpAddr::V6(ip)),
         }
+    }
+
+    /// Resolves a hostname from a URL to its IP addresses, streamed as they resolve.
+    ///
+    /// IPv4 and IPv6 are looked up concurrently and each address is yielded as
+    /// soon as its lookup completes, so a caller can start dialing without
+    /// waiting for both families.
+    ///
+    /// A lookup failure is swallowed as long as the other family yields an address.
+    /// Only if both lookups fail does the stream yield a single [`DnsError`].
+    ///
+    /// The stream ends once both lookups have finished and every address or the error
+    /// have been yielded.
+    pub fn resolve_host_all<'a>(
+        &'a self,
+        url: &Url,
+        timeout: Duration,
+    ) -> impl Stream<Item = Result<IpAddr, DnsError>> + Send + 'a {
+        let host = match url.host() {
+            None => {
+                return Either::Left(stream::once(Err(e!(DnsError::MissingHost))));
+            }
+            Some(url::Host::Ipv4(ip)) => {
+                return Either::Left(stream::once(Ok(IpAddr::V4(ip))));
+            }
+            Some(url::Host::Ipv6(ip)) => {
+                return Either::Left(stream::once(Ok(IpAddr::V6(ip))));
+            }
+            Some(url::Host::Domain(domain)) => domain.to_string(),
+        };
+
+        type Lookup<'a, A> =
+            Pin<Box<dyn Future<Output = Result<BoxIter<A>, DnsError>> + Send + 'a>>;
+
+        struct State<'a> {
+            v4_fut: MaybeFuture<Lookup<'a, Ipv4Addr>>,
+            v6_fut: MaybeFuture<Lookup<'a, Ipv6Addr>>,
+            v4_err: Option<DnsError>,
+            v6_err: Option<DnsError>,
+            queue: VecDeque<IpAddr>,
+            closed: bool,
+            yielded: bool,
+        }
+
+        let state = State {
+            v4_fut: MaybeFuture::Some(Box::pin({
+                let host = host.clone();
+                self.inner.op(timeout, move |r| r.lookup_ipv4(host.clone()))
+            })),
+            v6_fut: MaybeFuture::Some(Box::pin({
+                let host = host.clone();
+                self.inner.op(timeout, move |r| r.lookup_ipv6(host.clone()))
+            })),
+            v4_err: None,
+            v6_err: None,
+            queue: VecDeque::new(),
+            closed: false,
+            yielded: false,
+        };
+
+        Either::Right(stream::unfold(state, async |mut state| {
+            loop {
+                if state.closed {
+                    return None;
+                }
+
+                if let Some(item) = state.queue.pop_front() {
+                    state.yielded = true;
+                    return Some((Ok(item), state));
+                }
+
+                // Return final error item once both futures completed, or None if items were yielded.
+                if state.v4_fut.is_none() && state.v6_fut.is_none() {
+                    state.closed = true;
+                    if let (Some(v4), Some(v6)) = (state.v4_err.take(), state.v6_err.take()) {
+                        let error = e!(DnsError::ResolveBoth {
+                            ipv4: Box::new(v4),
+                            ipv6: Box::new(v6),
+                        });
+                        return Some((Err(error), state));
+                    } else if !state.yielded {
+                        return Some((Err(e!(DnsError::NoResponse)), state));
+                    } else {
+                        return None;
+                    }
+                }
+                tokio::select! {
+                    // We don't actually care about polling order, but `biased` saves the randomization cost.
+                    biased;
+                    res = &mut state.v4_fut => {
+                        match res {
+                            Ok(items) => state.queue.extend(items.map(IpAddr::V4)),
+                            Err(err) => state.v4_err = Some(err),
+                        }
+                    }
+                    res = &mut state.v6_fut => {
+                        match res {
+                            Ok(items) => state.queue.extend(items.map(IpAddr::V6)),
+                            Err(err) => state.v6_err = Some(err),
+                        }
+                    }
+                }
+            }
+        }))
     }
 
     /// Performs an IPv4 lookup with a timeout in a staggered fashion.
@@ -489,83 +710,6 @@ impl Default for DnsResolver {
     }
 }
 
-impl reqwest::dns::Resolve for DnsResolver {
-    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        let this = self.clone();
-        let name = name.as_str().to_string();
-        Box::pin(async move {
-            let res = this.lookup_ipv4_ipv6(name, DNS_TIMEOUT).await;
-            match res {
-                Ok(addrs) => {
-                    let addrs: reqwest::dns::Addrs =
-                        Box::new(addrs.map(|addr| SocketAddr::new(addr, 0)));
-                    Ok(addrs)
-                }
-                Err(err) => {
-                    let err: Box<dyn std::error::Error + Send + Sync> = Box::new(err);
-                    Err(err)
-                }
-            }
-        })
-    }
-}
-
-/// Wrapper enum that contains either the built-in simple-dns resolver or a custom resolver.
-///
-/// We do this to save the cost of boxing the futures and iterators when using
-/// the built-in resolver.
-#[derive(Debug, Clone)]
-enum DnsResolverInner {
-    Simple(Arc<RwLock<SimpleDnsResolver>>),
-    Custom(Arc<RwLock<dyn Resolver>>),
-}
-
-impl DnsResolverInner {
-    async fn lookup_ipv4(
-        &self,
-        host: String,
-    ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
-        Ok(match self {
-            Self::Simple(resolver) => Either::Left(resolver.read().await.lookup_ipv4(host).await?),
-            Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_ipv4(host).await?),
-        })
-    }
-
-    async fn lookup_ipv6(
-        &self,
-        host: String,
-    ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
-        Ok(match self {
-            Self::Simple(resolver) => Either::Left(resolver.read().await.lookup_ipv6(host).await?),
-            Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_ipv6(host).await?),
-        })
-    }
-
-    async fn lookup_txt(
-        &self,
-        host: String,
-    ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
-        Ok(match self {
-            Self::Simple(resolver) => Either::Left(resolver.read().await.lookup_txt(host).await?),
-            Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_txt(host).await?),
-        })
-    }
-
-    async fn clear_cache(&self) {
-        match self {
-            Self::Simple(resolver) => resolver.read().await.clear_cache(),
-            Self::Custom(resolver) => resolver.read().await.clear_cache(),
-        }
-    }
-
-    async fn reset(&self) {
-        match self {
-            Self::Simple(resolver) => resolver.write().await.reset(),
-            Self::Custom(resolver) => resolver.write().await.reset(),
-        }
-    }
-}
-
 /// Record data for a TXT record.
 ///
 /// This contains a list of character strings, as defined in [RFC 1035 Section 3.3.14].
@@ -616,23 +760,6 @@ impl From<Vec<String>> for TxtRecordData {
                 .map(|s| s.into_bytes().into_boxed_slice())
                 .collect(),
         )
-    }
-}
-
-/// Helper enum to give a unified type to either of two iterators
-enum Either<A, B> {
-    Left(A),
-    Right(B),
-}
-
-impl<T, A: Iterator<Item = T>, B: Iterator<Item = T>> Iterator for Either<A, B> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Either::Left(iter) => iter.next(),
-            Either::Right(iter) => iter.next(),
-        }
     }
 }
 
@@ -790,7 +917,7 @@ pub(crate) mod tests {
                 todo!()
             }
 
-            fn reset(&mut self) {
+            fn reset(&self) -> Box<dyn Resolver> {
                 todo!()
             }
         }

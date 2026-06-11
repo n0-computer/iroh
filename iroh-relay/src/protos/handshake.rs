@@ -24,6 +24,9 @@
 //!
 //! [Concealed HTTP Auth RFC]: https://datatracker.ietf.org/doc/rfc9729/
 //! [RFC 5705]: https://datatracker.ietf.org/doc/html/rfc5705
+#[cfg(feature = "server")]
+use std::sync::Arc;
+
 use bytes::{BufMut, Bytes, BytesMut};
 use data_encoding::BASE32HEX_NOPAD as HEX;
 #[cfg(not(wasm_browser))]
@@ -31,7 +34,7 @@ use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
 use iroh_base::{PublicKey, SecretKey};
-use n0_error::{e, ensure, stack_error};
+use n0_error::{AnyError, anyerr, e, ensure, stack_error};
 use n0_future::{SinkExt, TryStreamExt};
 #[cfg(feature = "server")]
 use rand::CryptoRng;
@@ -42,6 +45,8 @@ use super::{
     streams::BytesStreamSink,
 };
 use crate::ExportKeyingMaterial;
+#[cfg(feature = "server")]
+use crate::server::{Access, ClientRequest, DynAccessControl, OnDisconnectGuard};
 
 /// Domain separation string for the [`ServerChallenge`] signature
 const DOMAIN_SEP_CHALLENGE: &str = "iroh-relay handshake v1 challenge signature";
@@ -136,15 +141,14 @@ impl Frame for ServerDeniesAuth {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum Error {
-    #[error(transparent)]
-    Websocket {
-        #[cfg(not(wasm_browser))]
-        #[error(from, std_err)]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        #[error(from, std_err)]
-        source: ws_stream_wasm::WsErr,
-    },
+    /// Error returned from the underlying WebSocket stream during the handshake.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
+    #[error("WebSocket error")]
+    Websocket { source: AnyError },
     #[error("Handshake stream ended prematurely")]
     UnexpectedEnd {},
     #[error(transparent)]
@@ -162,8 +166,7 @@ pub enum Error {
     #[error("Handshake failed while deserializing {frame_type:?} frame")]
     DeserializationError {
         frame_type: FrameType,
-        #[error(std_err)]
-        source: postcard::Error,
+        source: AnyError,
     },
     #[cfg(feature = "server")]
     /// Failed to deserialize client auth header
@@ -172,6 +175,7 @@ pub enum Error {
 
 #[cfg(feature = "server")]
 #[stack_error(derive, add_meta)]
+#[non_exhaustive]
 pub(crate) enum VerificationError {
     #[error("Couldn't export TLS keying material on our end")]
     NoKeyingMaterial,
@@ -337,7 +341,15 @@ pub(crate) async fn clientside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     secret_key: &SecretKey,
 ) -> Result<ServerConfirmsAuth, Error> {
-    let (tag, frame) = read_frame(io, &[ServerChallenge::TAG, ServerConfirmsAuth::TAG]).await?;
+    let (tag, frame) = read_frame(
+        io,
+        &[
+            ServerChallenge::TAG,
+            ServerConfirmsAuth::TAG,
+            ServerDeniesAuth::TAG,
+        ],
+    )
+    .await?;
 
     let (tag, frame) = if tag == ServerChallenge::TAG {
         let challenge: ServerChallenge = deserialize_frame(frame)?;
@@ -387,6 +399,7 @@ pub struct SuccessfulAuthentication {
 /// The mechanism that was used for authentication.
 #[cfg(feature = "server")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Mechanism {
     /// Authentication was performed by verifying a signature of a challenge we sent
     SignedChallenge,
@@ -466,6 +479,32 @@ pub async fn serverside(
 
 #[cfg(feature = "server")]
 impl SuccessfulAuthentication {
+    /// Authorizes a [`ClientRequest`] and completes the authorization protocol.
+    ///
+    /// This invokes [`AccessControl::on_connect`] with the [`ClientRequest`] and informs the client about the
+    /// authorization decision.
+    ///
+    /// Returns [`OnDisconnectGuard`] in case the authorization was successful and the confirmation
+    /// message was sent to the client. The handshake protocol is now complete.
+    ///
+    /// Returns an error if the authorization failed or if the confirmation message could not be sent.
+    ///
+    /// [`AccessControl::on_connect`]: crate::server::AccessControl::on_connect
+    pub async fn authorize_with(
+        self,
+        request: &ClientRequest,
+        access_control: &Arc<dyn DynAccessControl>,
+        io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
+    ) -> Result<OnDisconnectGuard, Error> {
+        match access_control.on_connect(request).await {
+            Access::Allow => {
+                let guard = OnDisconnectGuard::for_access_control(access_control.clone(), request);
+                self.accept(io).await?;
+                Ok(guard)
+            }
+            Access::Deny { reason } => Err(self.deny(reason, io).await),
+        }
+    }
     /// Completes the authorization protocol by notifying the client of success or failure.
     ///
     /// After a client has been successfully authenticated via [`serverside`], the server must
@@ -473,7 +512,7 @@ impl SuccessfulAuthentication {
     /// the authorization decision to the client and completes the handshake protocol.
     ///
     /// # Arguments
-    /// * `is_authorized` - Whether to grant access to the authenticated client
+    /// * `access` - Whether to grant access to the authenticated client
     /// * `io` - The WebSocket stream to send the authorization response on
     ///
     /// # Returns
@@ -481,22 +520,37 @@ impl SuccessfulAuthentication {
     /// * `Err(Error)` - If authorization was denied or communication failed
     pub async fn authorize_if(
         self,
-        is_authorized: bool,
+        access: Access,
         io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     ) -> Result<PublicKey, Error> {
-        if is_authorized {
-            trace!("authorizing client");
-            write_frame(io, ServerConfirmsAuth).await?;
-            Ok(self.client_key)
-        } else {
-            trace!("denying client auth");
-            let denial = ServerDeniesAuth {
-                reason: "not authorized".into(),
-            };
-            write_frame(io, denial.clone()).await?;
-            Err(e!(Error::ServerDeniedAuth {
+        match access {
+            Access::Allow => self.accept(io).await,
+            Access::Deny { reason } => Err(self.deny(reason, io).await),
+        }
+    }
+
+    async fn accept(
+        self,
+        io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
+    ) -> Result<PublicKey, Error> {
+        trace!("authorizing client");
+        write_frame(io, ServerConfirmsAuth).await?;
+        Ok(self.client_key)
+    }
+
+    async fn deny(
+        self,
+        reason: Option<String>,
+        io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
+    ) -> Error {
+        trace!("denying client auth");
+        let reason = reason.unwrap_or_else(|| "not authorized".into());
+        let denial = ServerDeniesAuth { reason };
+        match write_frame(io, denial.clone()).await {
+            Err(err) => err,
+            Ok(()) => e!(Error::ServerDeniedAuth {
                 reason: denial.reason
-            }))
+            }),
         }
     }
 }
@@ -512,8 +566,12 @@ async fn write_frame<F: serde::Serialize + Frame>(
         .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
         .into_inner()
         .freeze();
-    io.send(bytes).await?;
-    io.flush().await?;
+    io.send(bytes)
+        .await
+        .map_err(|err| e!(Error::Websocket, anyerr!(err)))?;
+    io.flush()
+        .await
+        .map_err(|err| e!(Error::Websocket, anyerr!(err)))?;
     Ok(())
 }
 
@@ -523,7 +581,8 @@ async fn read_frame(
 ) -> Result<(FrameType, Bytes), Error> {
     let mut payload = io
         .try_next()
-        .await?
+        .await
+        .map_err(|err| e!(Error::Websocket, anyerr!(err)))?
         .ok_or_else(|| e!(Error::UnexpectedEnd))?;
 
     let frame_type = FrameType::from_bytes(&mut payload)?;
@@ -543,7 +602,7 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
     postcard::from_bytes(&frame).map_err(|err| {
         e!(Error::DeserializationError {
             frame_type: F::TAG,
-            source: err
+            source: anyerr!(err)
         })
     })
 }
@@ -552,7 +611,7 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
 mod tests {
     use bytes::BytesMut;
     use iroh_base::{PublicKey, SecretKey};
-    use n0_error::{Result, StackResultExt, StdResultExt};
+    use n0_error::{AnyError, Result, StackResultExt, StdResultExt};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use n0_tracing_test::traced_test;
     use rand::{RngExt, SeedableRng};
@@ -562,7 +621,7 @@ mod tests {
     use super::{
         ClientAuth, KeyMaterialClientAuth, Mechanism, ServerChallenge, ServerConfirmsAuth,
     };
-    use crate::ExportKeyingMaterial;
+    use crate::{ExportKeyingMaterial, server::Access};
 
     struct TestKeyingMaterial<IO> {
         shared_secret: Option<u64>,
@@ -651,13 +710,13 @@ mod tests {
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(tokio_websockets::Error::Io)
-            .sink_map_err(tokio_websockets::Error::Io)
+            .map_err(AnyError::from_std)
+            .sink_map_err(AnyError::from_std)
             .with_shared_secret(client_shared_secret);
         let mut server_io = Framed::new(server, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(tokio_websockets::Error::Io)
-            .sink_map_err(tokio_websockets::Error::Io)
+            .map_err(AnyError::from_std)
+            .sink_map_err(AnyError::from_std)
             .with_shared_secret(server_shared_secret);
 
         let client_auth_header = KeyMaterialClientAuth::new(secret_key, &client_io)
@@ -675,7 +734,10 @@ mod tests {
                     .await
                     .context("serverside")?;
                 let mechanism = auth_n.mechanism;
-                let is_authorized = restricted_to.is_none_or(|key| key == auth_n.client_key);
+                let is_authorized = match restricted_to.is_none_or(|key| key == auth_n.client_key) {
+                    true => Access::Allow,
+                    false => Access::Deny { reason: None },
+                };
                 let key = auth_n.authorize_if(is_authorized, &mut server_io).await?;
                 Ok((key, mechanism))
             }

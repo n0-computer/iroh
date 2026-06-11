@@ -16,11 +16,18 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.89"
+  MSRV: "1.91"
   SCCACHE_CACHE_SIZE: "10G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
+  pick-runner:
+    uses: "./.github/workflows/pick-runner.yml"
+    with:
+      min_free_runners: 3
+    secrets:
+      RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
+
   tests:
     name: CI Test Suite
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
@@ -30,7 +37,9 @@ jobs:
     name: Cross Build Only
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_1) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTFLAGS: "-Dwarnings --cfg skip_patchbay"
     strategy:
@@ -81,28 +90,37 @@ jobs:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
-  android_build:
-    name: Android Build Only
+  android:
+    name: Android Build & Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    timeout-minutes: 30
-    # runs-on: ubuntu-latest
-    runs-on: [self-hosted, linux, X64]
+    timeout-minutes: 60
+    # runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_2) }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - aarch64-linux-android
-          - armv7-linux-androideabi
+        include:
+          - target: aarch64-linux-android
+          - target: armv7-linux-androideabi
+          - target: x86_64-linux-android
+            api-level: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Enable KVM for nested virtualization
+        if: matrix.target == 'x86_64-linux-android'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           target: ${{ matrix.target }}
-      - name: Install rustup target
-        run: rustup target add ${{ matrix.target }}
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -113,25 +131,103 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
+      # Pinned to a release tag (rather than @main) for supply-chain hygiene.
       - name: Setup Android NDK
-        uses: arqu/setup-ndk@main
+        uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r23
+          ndk-version: r25c
           add-to-path: true
 
+      - name: Install cargo-ndk
+        run: cargo install --version 4.1.2 cargo-ndk
+
+      # Replace cargo-ndk-runner with a wrapper that forwards RUST_LOG
+      # and RUST_BACKTRACE into the emulator shell. The upstream binary
+      # does `adb shell <bin>` without inheriting any host env.
+      - name: Wrap cargo-ndk-runner to forward logging env
+        if: matrix.target == 'x86_64-linux-android'
+        run: |
+          cat > "$(which cargo-ndk-runner)" <<'WRAPPER'
+          #!/bin/sh
+          set -e
+          dev=/data/local/tmp/$(basename "$1")
+          adb push "$1" "$dev" >/dev/null
+          adb shell chmod 755 "$dev"
+          shift
+          adb shell "RUST_LOG=$RUST_LOG RUST_BACKTRACE=$RUST_BACKTRACE $dev $*"
+          WRAPPER
+          chmod +x "$(which cargo-ndk-runner)"
+
       - name: Build
+        if: matrix.target != 'x86_64-linux-android'
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cargo ndk --target ${{ matrix.target }} build
+
+      # Build all the test binaries up front so the emulator boot can
+      # overlap with compilation. cargo-ndk runs `cargo test --no-run`
+      # against each crate; the binaries land in
+      # target/$CARGO_NDK_TARGET/debug/deps/.
+      - name: Build workspace test binaries
+        if: matrix.target == 'x86_64-linux-android'
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CARGO_NDK_TARGET: ${{ matrix.target }}
         run: |
-          cargo install --version 3.5.4 cargo-ndk
-          cargo ndk --target ${{ matrix.target }} build
+          cargo ndk test --no-run -p iroh-base --all-features
+          cargo ndk test --no-run -p iroh-dns --features tls-ring
+          cargo ndk test --no-run -p iroh-relay --features tls-ring,metrics
+          cargo ndk test --no-run -p iroh --features tls-ring,metrics,portmapper,test-utils
+
+      - name: Run workspace tests on Android emulator
+        if: matrix.target == 'x86_64-linux-android'
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          # Forwarded into the emulator by the cargo-ndk-runner wrapper.
+          RUST_LOG: trace
+          RUST_BACKTRACE: "1"
+          CARGO_NDK_TARGET: ${{ matrix.target }}
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: x86_64
+          target: google_apis
+          force-avd-creation: false
+          # `-dns-server` + `-netfast` + `-no-metrics` is the combination reported to give
+          # working public-internet connectivity on the GH-hosted runner; without them wlan0
+          # stays NO-CARRIER and every connect() to a public IP fails with ENETUNREACH.
+          # See https://github.com/ReactiveCircus/android-emulator-runner/issues/348#issuecomment-2578082030
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -dns-server 8.8.8.8 -netfast -no-metrics
+          disable-animations: true
+          script: |
+            adb wait-for-device
+            # Wait for full boot and a working outbound TCP. `sys.boot_completed=1` fires
+            # before the radio/Wi-Fi stack comes up, and `ip route get 8.8.8.8` reports
+            # success while the kernel's per-network fwmark route is still missing. Probe
+            # an actual TCP connect to 8.8.8.8:53 instead - it exercises the same path
+            # the test sockets will use.
+            adb shell 'i=0; while [ -z "$(getprop sys.boot_completed | tr -d "\r")" ]; do i=$((i+1)); if [ $i -gt 300 ]; then exit 1; fi; sleep 2; done'
+            adb shell 'i=0; while ! nc -w 2 8.8.8.8 53 </dev/null >/dev/null 2>&1; do i=$((i+1)); if [ $i -gt 30 ]; then exit 1; fi; sleep 2; done'
+            # Disable IPv6: the emulator has site-local + link-local v6 but no global v6
+            # route, so connect() to a global v6 address hangs instead of returning ENETUNREACH.
+            adb root && adb wait-for-device
+            adb shell sysctl -w net.ipv6.conf.all.disable_ipv6=1 || true
+            adb shell sysctl -w net.ipv6.conf.default.disable_ipv6=1 || true
+            adb shell sysctl -w net.ipv6.conf.lo.disable_ipv6=1 || true
+            adb shell ip addr
+            cargo ndk test -p iroh-base --all-features
+            cargo ndk test -p iroh-dns --features tls-ring
+            cargo ndk test -p iroh-relay --features tls-ring,metrics
+            cargo ndk test -p iroh --features tls-ring,metrics,portmapper,test-utils
 
   cross_test:
     name: Cross Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_3) }}
+    # runs-on: [self-hosted, linux, X64]
     strategy:
       fail-fast: false
       matrix:
@@ -173,7 +269,9 @@ jobs:
 
   wasm_test:
     name: Build & test wasm32 for browsers
-    runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_4) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
@@ -196,7 +294,7 @@ jobs:
 
       - name: Install wasm-bindgen-test-runner
         # Match the version of wasm-bindgen used in Cargo.lock
-        run: cargo binstall wasm-bindgen-cli@0.2.115 --locked --no-confirm
+        run: cargo binstall wasm-bindgen-cli@0.2.122 --locked --no-confirm
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
@@ -224,7 +322,9 @@ jobs:
         run: cargo test -p iroh --test integration --target=wasm32-unknown-unknown
 
   check_semver:
-    runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_5) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -233,7 +333,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Setup Environment (PR)
         if: ${{ github.event_name == 'pull_request' }}
@@ -253,6 +355,44 @@ jobs:
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
+  check_external_types:
+    timeout-minutes: 30
+    name: Check external types in public API
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_9) }}
+    # runs-on: [self-hosted, linux, X64]
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+      # The tool drives an internal rustdoc invocation that only emits JSON
+      # for the analyzer, so the workflow-wide `-Dwarnings` would just turn
+      # unrelated rustdoc lints (e.g. `private-intra-doc-links`) into hard
+      # failures here. Clear it for this job.
+      RUSTDOCFLAGS: ""
+      # Pin to the nightly that the pinned `cargo-check-external-types`
+      # release was last tested against. Update both together.
+      CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.5.0"
+      TOOLCHAIN: "nightly-2026-03-20"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.TOOLCHAIN }}
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.18.1
+
+      - uses: taiki-e/install-action@cargo-make
+
+      - name: Install cargo-check-external-types
+        run: cargo binstall cargo-check-external-types@${{ env.CARGO_CHECK_EXTERNAL_TYPES_VERSION }} --locked --no-confirm
+
+      - name: Check external types
+        run: cargo make check-external-types
+
   check_fmt:
     timeout-minutes: 30
     name: Checking fmt
@@ -265,14 +405,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
       - uses: taiki-e/install-action@cargo-make
       - run: cargo make format-check
 
   check_docs:
     timeout-minutes: 30
     name: Checking docs
-    runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_6) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -283,14 +427,18 @@ jobs:
         with:
           toolchain: nightly-2025-10-09
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Docs
         run: cargo doc --workspace --all-features --no-deps --document-private-items
 
   clippy_check:
     timeout-minutes: 30
-    runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_7) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -300,7 +448,9 @@ jobs:
         with:
           components: clippy
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       # TODO: We have a bunch of platform-dependent code so should
       #    probably run this job on the full platform matrix
@@ -338,7 +488,9 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Minimal Supported Rust Version
-    runs-on: [self-hosted, linux, X64]
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_8) }}
+    # runs-on: [self-hosted, linux, X64]
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -348,7 +500,9 @@ jobs:
         with:
           toolchain: ${{ env.MSRV }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Check MSRV all features
         run: |

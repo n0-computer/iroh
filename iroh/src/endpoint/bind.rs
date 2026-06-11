@@ -240,11 +240,8 @@ pub enum InvalidSocketAddr {
         #[error(std_err)]
         source: std::net::AddrParseError,
     },
-    #[error(transparent)]
-    InvalidPrefix {
-        #[error(std_err)]
-        source: ipnet::PrefixLenError,
-    },
+    #[error("Invalid IP prefix length")]
+    InvalidPrefixLength {},
     #[error(transparent)]
     Infallible {
         #[error(std_err)]

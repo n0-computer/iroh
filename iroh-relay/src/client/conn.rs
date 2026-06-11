@@ -8,7 +8,7 @@ use std::{
 };
 
 use iroh_base::SecretKey;
-use n0_error::{ensure, stack_error};
+use n0_error::{AnyError, anyerr, ensure, stack_error};
 use n0_future::{Sink, Stream};
 use tracing::trace;
 
@@ -30,13 +30,14 @@ use crate::{
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum SendError {
-    #[error(transparent)]
-    StreamError {
-        #[cfg(not(wasm_browser))]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        source: ws_stream_wasm::WsErr,
-    },
+    /// Error returned from the underlying WebSocket stream while sending.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
+    #[error("Stream error")]
+    StreamError { source: AnyError },
     #[error("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}")]
     ExceedsMaxPacketSize { size: usize },
     #[error("Attempted to send empty packet")]
@@ -50,13 +51,14 @@ pub enum SendError {
 pub enum RecvError {
     #[error(transparent)]
     Protocol { source: ProtoError },
-    #[error(transparent)]
-    StreamError {
-        #[cfg(not(wasm_browser))]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        source: ws_stream_wasm::WsErr,
-    },
+    /// Error returned from the underlying WebSocket stream while receiving.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
+    #[error("Stream error")]
+    StreamError { source: AnyError },
 }
 
 /// A connection to a relay server.
@@ -129,7 +131,7 @@ impl Stream for Conn {
                     RelayToClientMsg::from_bytes(msg, &self.key_cache, self.protocol_version);
                 Poll::Ready(Some(message.map_err(Into::into)))
             }
-            Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
+            Some(Err(e)) => Poll::Ready(Some(Err(anyerr!(e).into()))),
             None => Poll::Ready(None),
         }
     }

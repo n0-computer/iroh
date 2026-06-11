@@ -13,7 +13,7 @@ use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
 use tracing::{debug, info, trace};
 
-use super::{Addr, Transmit};
+use super::{RecvInfo, Transmit};
 use crate::metrics::{EndpointMetrics, SocketMetrics};
 
 #[derive(Debug)]
@@ -169,20 +169,16 @@ impl IpTransport {
         })?;
         let local_addr = socket.local_addr()?;
         debug!(%addr, %local_addr, "successfully bound");
-        Ok(Self::new(config, Arc::new(socket), metrics.clone()))
-    }
-
-    pub(crate) fn new(config: Config, socket: Arc<UdpSocket>, metrics: Arc<SocketMetrics>) -> Self {
         // Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
-        let local_addr = Watchable::new(socket.local_addr().expect("invalid socket"));
+        let local_addr = Watchable::new(local_addr);
 
-        Self {
+        Ok(Self {
             config,
-            socket,
+            socket: Arc::new(socket),
             local_addr,
             metrics,
-        }
+        })
     }
 
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
@@ -191,12 +187,20 @@ impl IpTransport {
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> Poll<io::Result<usize>> {
+        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        assert_eq!(
+            bufs.len(),
+            recv_infos.len(),
+            "non matching bufs & recv_infos"
+        );
         match self.socket.poll_recv_noq(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(n)) => {
-                for (source_addr, meta) in source_addrs.iter_mut().zip(metas.iter_mut()).take(n) {
+                for i in 0..n {
+                    let meta = &mut metas[i];
+                    let recv_info = &mut recv_infos[i];
                     if meta.addr.is_ipv4() {
                         // The AsyncUdpSocket is an AF_INET6 socket and needs to show this
                         // as coming from an IPv4-mapped IPv6 addresses, since Noq will
@@ -209,8 +213,9 @@ impl IpTransport {
                     }
                     // The transport addresses are internal to iroh and we always want those
                     // to remain the canonical address.
-                    *source_addr =
-                        SocketAddr::new(meta.addr.ip().to_canonical(), meta.addr.port()).into();
+                    *recv_info = RecvInfo::from_addr(
+                        SocketAddr::new(meta.addr.ip().to_canonical(), meta.addr.port()).into(),
+                    );
                 }
                 Poll::Ready(Ok(n))
             }
@@ -460,33 +465,8 @@ impl IpTransports {
         })
     }
 
-    pub(super) fn poll_recv(
-        &mut self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [noq_udp::RecvMeta],
-        source_addrs: &mut [Addr],
-    ) -> Poll<io::Result<usize>> {
-        macro_rules! poll_transport {
-            ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas, source_addrs)? {
-                    Poll::Pending | Poll::Ready(0) => {}
-                    Poll::Ready(n) => {
-                        return Poll::Ready(Ok(n));
-                    }
-                }
-            };
-        }
-
-        for transport in &mut self.v4 {
-            poll_transport!(transport);
-        }
-
-        for transport in &mut self.v6 {
-            poll_transport!(transport);
-        }
-
-        Poll::Pending
+    pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = &mut IpTransport> {
+        self.v4.iter_mut().chain(self.v6.iter_mut())
     }
 }
 

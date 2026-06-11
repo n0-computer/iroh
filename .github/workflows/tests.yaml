@@ -28,32 +28,78 @@ env:
   NEXTEST_VERSION: "0.9.80"
 
 jobs:
+  pick-runner:
+    uses: "./.github/workflows/pick-runner.yml"
+    with:
+      min_free_runners: 3
+    secrets:
+      RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
+
   build_and_test_nix:
     timeout-minutes: 30
     name: "Tests"
-    runs-on: ${{ matrix.runner }}
+    needs: pick-runner
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
     strategy:
       fail-fast: false
       matrix:
         name: [ubuntu-latest, macOS-arm-latest]
         rust: ["${{ inputs.rust-version }}"]
         features: [all, none, default]
-        include:
-          - name: ubuntu-latest
-            os: ubuntu-latest
-            release-os: linux
-            release-arch: amd64
-            runner: [self-hosted, linux, X64]
-          - name: macOS-arm-latest
-            os: macOS-latest
-            release-os: darwin
-            release-arch: aarch64
-            runner: [self-hosted, macOS, ARM64]
+        include:                                                                                                                                                         
+            # ubuntu cells route via pick-runner slots 1-3                                                                                                                 
+            - name: ubuntu-latest                                                                                   
+              features: all                                                                                                                                                
+              os: ubuntu-latest
+              release-os: linux                                                                                                                                            
+              release-arch: amd64                                                                                                                                          
+              runs_on: ${{ needs.pick-runner.outputs.overflow_1 }}
+            - name: ubuntu-latest                                                                                                                                          
+              features: none                                                                                                                                               
+              os: ubuntu-latest       
+              release-os: linux                                                                                                                                            
+              release-arch: amd64                                                                                   
+              runs_on: ${{ needs.pick-runner.outputs.overflow_2 }}
+            - name: ubuntu-latest                                                                                                                                          
+              features: default
+              os: ubuntu-latest                                                                                                                                            
+              release-os: linux                                                                                     
+              release-arch: amd64     
+              runs_on: ${{ needs.pick-runner.outputs.overflow_3 }}
+            # mac cells always stay on self-hosted mac (not in the routing pool)                                                                                           
+            - name: macOS-arm-latest                                                                                                                                       
+              features: all                                                                                                                                                
+              os: macOS-latest                                                                                                                                             
+              release-os: darwin                                                                                                                                           
+              release-arch: aarch64   
+              runs_on: '["self-hosted","macOS","ARM64"]'                                                                                                                   
+            - name: macOS-arm-latest                                                                                
+              features: none                                                                                                                                               
+              os: macOS-latest
+              release-os: darwin                                                                                                                                           
+              release-arch: aarch64                                                                                 
+              runs_on: '["self-hosted","macOS","ARM64"]'
+            - name: macOS-arm-latest                                                                                                                                       
+              features: default
+              os: macOS-latest                                                                                                                                             
+              release-os: darwin                                                                                    
+              release-arch: aarch64   
+              runs_on: '["self-hosted","macOS","ARM64"]'
     env:
       # Using self-hosted runners so use local cache for sccache and
       # not SCCACHE_GHA_ENABLED.
       RUSTC_WRAPPER: "sccache"
     steps:
+      - name: Configure sccache backend                                                                               
+        shell: bash                     
+        run: |
+            if [[ "${RUNNER_NAME:-}" == blacksmith-* ]]; then                                                                                                                  
+              echo "Runner: $RUNNER_NAME → GHA-backed sccache"
+              echo "SCCACHE_GHA_ENABLED=on" >> "$GITHUB_ENV"                                                                                                                   
+            else                                                                                                                                                               
+              echo "Runner: $RUNNER_NAME → local-disk sccache"                                                                                                                 
+              # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk                                                                                                
+            fi     
       - name: Checkout
         uses: actions/checkout@v6
         with:
@@ -70,7 +116,9 @@ jobs:
           tool: nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - name: Select features
         run: |
@@ -215,7 +263,9 @@ jobs:
           }
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -315,7 +365,9 @@ jobs:
           rustup set default-host ${{ matrix.target }}
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+      - uses: ./.github/workflows/sccache-probe
 
       - uses: msys2/setup-msys2@v2
         with:

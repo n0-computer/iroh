@@ -352,6 +352,12 @@ impl From<[u8; 32]> for SecretKey {
     }
 }
 
+impl From<&[u8; 32]> for SecretKey {
+    fn from(value: &[u8; 32]) -> Self {
+        Self::from_bytes(value)
+    }
+}
+
 impl TryFrom<&[u8]> for SecretKey {
     type Error = KeyParsingError;
 
@@ -431,6 +437,7 @@ impl Display for Signature {
     }
 }
 
+/// Error generated when failed to parse an ED25519 signature.
 #[stack_error(derive, add_meta)]
 #[error("Could not parse ed25519 signature")]
 pub struct SignatureParsingError;

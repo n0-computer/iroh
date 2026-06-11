@@ -49,11 +49,6 @@ pub enum Error {
     #[error("Frame is too large, has {frame_len} bytes")]
     FrameTooLarge { frame_len: usize },
     #[error(transparent)]
-    SerDe {
-        #[error(std_err)]
-        source: postcard::Error,
-    },
-    #[error(transparent)]
     FrameTypeError { source: FrameTypeError },
     #[error("Invalid public key")]
     InvalidPublicKey { source: KeyParsingError },

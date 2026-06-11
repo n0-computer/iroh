@@ -305,7 +305,7 @@ mod auth {
     impl EndpointHooks for IncomingAuthHook {
         async fn after_handshake<'a>(
             &'a self,
-            conn: &'a iroh::endpoint::ConnectionInfo,
+            conn: &'a iroh::endpoint::Connection,
         ) -> AfterHandshakeOutcome {
             if conn.alpn() == ALPN
                 || self

@@ -2,7 +2,6 @@
 
 use http::{HeaderName, HeaderValue};
 use n0_error::stack_error;
-use strum::VariantArray;
 
 #[cfg(feature = "server")]
 pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
@@ -17,6 +16,11 @@ pub const RELAY_PROBE_PATH: &str = "/ping";
 
 /// The HTTP header name for relay client authentication
 pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay-client-auth-v1");
+
+/// The URL query parameter name used to pass the authorization token when
+/// HTTP headers are not available (notably, in browsers).
+#[cfg(any(wasm_browser, feature = "server"))]
+pub(crate) const AUTH_TOKEN_URL_QUERY_PARAM: &str = "token";
 
 /// The relay protocol version negotiated between client and server.
 ///
@@ -34,13 +38,15 @@ pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay
     PartialOrd,
     Ord,
     Default,
-    strum::VariantArray,
     strum::EnumString,
     strum::Display,
     strum::IntoStaticStr,
 )]
+// Only used by the `all_is_exhaustive` to validate that `Self::ALL` is up to date.
+#[cfg_attr(test, derive(strum::EnumCount))]
 #[strum(parse_err_ty = UnsupportedRelayProtocolVersion, parse_err_fn = strum_err_fn)]
-// Needs to be ordered with latest version last, so that the `Ord` impl orders by latest version as max.
+#[non_exhaustive]
+// Needs to be ordered with newest version last, so that the `Ord` impl orders by latest version as max.
 pub enum ProtocolVersion {
     /// Version 1 (the only version supported until iroh 0.98.0)
     #[strum(serialize = "iroh-relay-v1")]
@@ -54,15 +60,16 @@ pub enum ProtocolVersion {
 }
 
 impl ProtocolVersion {
+    /// All supported protocol versions, in order of preference (newest first).
+    //
+    // This list needs to be maintained by hand; the `all_is_exhaustive` test in this module
+    // asserts that the length matches the actual variant count via a `cfg(test)`-only
+    // `strum::EnumCount` derive.
+    pub const ALL: &'static [Self] = &[Self::V2, Self::V1];
+
     /// Returns an iterator of all supported protocol version identifiers, in order of preference.
     pub fn all() -> impl Iterator<Item = &'static str> {
-        Self::VARIANTS
-            .iter()
-            .map(ProtocolVersion::to_str)
-            // We reverse the order so that the latest version comes first:
-            // `Self::VARIANTS` is ordered in definition order, where the latest version comes last
-            // so that the `Ord` derive correctly orders by "latest is max".
-            .rev()
+        Self::ALL.iter().map(ProtocolVersion::to_str)
     }
 
     /// Returns a comma-separated string of all supported protocol version identifiers.
@@ -100,4 +107,24 @@ pub struct UnsupportedRelayProtocolVersion;
 
 fn strum_err_fn(_item: &str) -> UnsupportedRelayProtocolVersion {
     UnsupportedRelayProtocolVersion::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use strum::EnumCount;
+
+    use super::*;
+
+    #[test]
+    fn all_is_exhaustive() {
+        // `EnumCount::COUNT` is the actual variant count, derived at compile
+        // time. If a new variant is added without being listed in `ALL`, the
+        // lengths diverge and this test fails.
+        assert_eq!(ProtocolVersion::ALL.len(), ProtocolVersion::COUNT);
+        for &v in ProtocolVersion::ALL {
+            assert_eq!(ProtocolVersion::from_str(v.to_str()).unwrap(), v);
+        }
+    }
 }

@@ -20,19 +20,19 @@ use tracing::trace;
 const ADDR_PREFIXL: u8 = 0xfd;
 
 /// The Global ID used in n0's Unique Local Addresses.
-const ADDR_GLOBAL_ID: [u8; 5] = [21, 7, 10, 81, 11];
+const ADDR_GLOBAL_ID: [u8; 5] = [0x15, 0x07, 0x0a, 0x51, 0x0b];
 
-/// The Subnet ID for [`RelayMappedAddr].
-const RELAY_MAPPED_SUBNET: [u8; 2] = [0, 1];
+/// The Subnet ID for [`RelayMappedAddr]: fd15:70a:510b:1::/64.
+const RELAY_MAPPED_SUBNET: [u8; 2] = [0x00, 0x01];
 
-/// The Subnet ID for [`CustomMappedAddr`].
-const CUSTOM_MAPPED_SUBNET: [u8; 2] = [0, 3];
+/// The Subnet ID for [`CustomMappedAddr`]: fd15:70a:510b:3::/64.
+const CUSTOM_MAPPED_SUBNET: [u8; 2] = [0x00, 0x03];
 
-/// The Subnet ID for [`EndpointIdMappedAddr`].
-const ENDPOINT_ID_SUBNET: [u8; 2] = [0; 2];
+/// The Subnet ID for [`EndpointIdMappedAddr`]: fd15:70a:510b::/64.
+const ENDPOINT_ID_SUBNET: [u8; 2] = [0x00, 0x00];
 
 /// A default fake addr, using the maximum addr that the internal fake addrs could be using.
-pub const DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
+pub(crate) const DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
     Ipv6Addr::new(
         u16::from_be_bytes([ADDR_PREFIXL, 21]),
         u16::from_be_bytes([7, 10]),
@@ -284,6 +284,17 @@ impl MappedAddr for CustomMappedAddr {
     /// addressing.  This socket address is only to be used to pass into Noq.
     fn private_socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)
+    }
+}
+
+impl TryFrom<IpAddr> for CustomMappedAddr {
+    type Error = CustomMappedAddrError;
+
+    fn try_from(value: IpAddr) -> std::result::Result<Self, Self::Error> {
+        match value {
+            IpAddr::V4(_) => Err(e!(CustomMappedAddrError)),
+            IpAddr::V6(addr) => addr.try_into(),
+        }
     }
 }
 

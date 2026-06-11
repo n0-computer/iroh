@@ -16,7 +16,10 @@ type PublicKeyBytes = [u8; PublicKey::LENGTH];
 ///
 /// The cache stores only successful parse results.
 #[derive(Debug, Clone)]
-pub enum KeyCache {
+pub struct KeyCache(Inner);
+
+#[derive(Debug, Clone)]
+enum Inner {
     /// The key cache is disabled.
     Disabled,
     /// The key cache is enabled with a fixed capacity. It is shared between
@@ -28,23 +31,25 @@ impl KeyCache {
     /// Key cache to be used in tests.
     #[cfg(all(test, feature = "server"))]
     pub fn test() -> Self {
-        Self::Disabled
+        Self(Inner::Disabled)
     }
 
     /// Create a new key cache with the given capacity.
     ///
     /// If the capacity is zero, the cache is disabled and has zero overhead.
     pub fn new(capacity: usize) -> Self {
-        let Some(capacity) = NonZeroUsize::new(capacity) else {
-            return Self::Disabled;
-        };
-        let cache = lru::LruCache::new(capacity);
-        Self::Shared(Arc::new(Mutex::new(cache)))
+        match NonZeroUsize::new(capacity) {
+            None => Self(Inner::Disabled),
+            Some(capacity) => {
+                let cache = lru::LruCache::new(capacity);
+                Self(Inner::Shared(Arc::new(Mutex::new(cache))))
+            }
+        }
     }
 
     /// Get a key from a slice of bytes.
     pub fn key_from_slice(&self, slice: &[u8]) -> Result<PublicKey, SignatureError> {
-        let Self::Shared(cache) = self else {
+        let Inner::Shared(cache) = &self.0 else {
             return PublicKey::try_from(slice);
         };
         let Ok(bytes) = PublicKeyBytes::try_from(slice) else {

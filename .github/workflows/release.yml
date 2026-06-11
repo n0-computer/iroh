@@ -40,7 +40,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.89"
+  MSRV: "1.91"
   SCCACHE_CACHE_SIZE: "10G"
   BIN_NAMES: "iroh-relay,iroh-dns-server"
   RELEASE_VERSION: ${{ github.event.inputs.release_version }}
@@ -92,7 +92,7 @@ jobs:
         strategy:
           fail-fast: false
           matrix:
-            name: [ubuntu-latest, ubuntu-arm-latest, macOS-latest, macOS-arm-latest, windows-latest]
+            name: [ubuntu-latest, ubuntu-musl-latest, ubuntu-arm-latest, ubuntu-arm-musl-latest, macOS-latest, macOS-arm-latest, windows-latest]
             rust: [stable]
             experimental: [false]
             include:
@@ -100,12 +100,28 @@ jobs:
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: aarch64
+                libc: gnu
+                cargo_targets: "aarch64-unknown-linux-gnu"
+                runner: [self-hosted, linux, ARM64]
+              - name: ubuntu-arm-musl-latest
+                os: ubuntu-latest
+                release-os: linux
+                release-arch: aarch64
+                libc: musl
                 cargo_targets: "aarch64-unknown-linux-musl"
                 runner: [self-hosted, linux, ARM64]
               - name: ubuntu-latest
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: amd64
+                libc: gnu
+                cargo_targets: "x86_64-unknown-linux-gnu"
+                runner: [self-hosted, linux, X64]
+              - name: ubuntu-musl-latest
+                os: ubuntu-latest
+                release-os: linux
+                release-arch: amd64
+                libc: musl
                 cargo_targets: "x86_64-unknown-linux-musl"
                 runner: [self-hosted, linux, X64]
               - name: macOS-latest
@@ -182,6 +198,12 @@ jobs:
               # Native build on self-hosted linux runners; use musl-gcc from musl-tools.
               export CARGO_TARGET_$(echo ${{ matrix.cargo_targets }} | tr 'a-z-' 'A-Z_')_LINKER=musl-gcc
               export CC=musl-gcc
+              # `relocation-model=static` is required so rustc selects the
+              # non-PIE musl crt1.o (not rcrt1.o) to match the ET_EXEC binary
+              # produced by `musl-gcc -static`. Without it the PIE startup
+              # code (rcrt1.o) ends up linked into a non-PIE binary and the
+              # process segfaults in `_start_c` before reaching `main`.
+              export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C relocation-model=static -C link-arg=-static"
             fi
             cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
 
@@ -198,14 +220,14 @@ jobs:
             key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
 
         - name: Download awscli (linux x86_64)
-          if: matrix.name == 'ubuntu-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
+          if: matrix.os == 'ubuntu-latest' && matrix.release-arch == 'amd64' && steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
             mkdir -p ~/awscli
             curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o ~/awscli/awscliv2.zip
             cd ~/awscli && unzip -oq awscliv2.zip
 
         - name: Download awscli (linux aarch64)
-          if: matrix.name == 'ubuntu-arm-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
+          if: matrix.os == 'ubuntu-latest' && matrix.release-arch == 'aarch64' && steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
             mkdir -p ~/awscli
             curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o ~/awscli/awscliv2.zip
@@ -218,7 +240,7 @@ jobs:
             curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o ~/awscli/AWSCLIV2.pkg
 
         - name: Install awscli (linux)
-          if: matrix.os == 'ubuntu-latest' || matrix.name == 'ubuntu-arm-latest'
+          if: matrix.os == 'ubuntu-latest'
           run: sudo ~/awscli/aws/install --update
 
         - name: Install awscli (mac)
@@ -233,16 +255,22 @@ jobs:
               echo "AWS_DEFAULT_REGION=us-west-2" >> $GITHUB_ENV
 
         - name: push release
-          if: matrix.os != 'windows-latest'
+          if: matrix.os != 'windows-latest' && matrix.libc != 'musl'
           run: |
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
 
         - name: push release latest
-          if: matrix.os != 'windows-latest' && (github.event.inputs.mark_latest == 'true' || github.event_name == 'push')
+          if: matrix.os != 'windows-latest' && matrix.libc != 'musl' && (github.event.inputs.mark_latest == 'true' || github.event_name == 'push')
           run: |
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+
+        - name: push docker release
+          if: matrix.os == 'ubuntu-latest' && matrix.libc == 'musl'
+          run: |
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-musl-${GITHUB_SHA::7} --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-musl-${GITHUB_SHA::7} --no-progress
 
         - name: Build archives
           if: matrix.os != 'windows-latest'
@@ -287,7 +315,7 @@ jobs:
           uses: actions/upload-artifact@v7
           if : matrix.os != 'windows-latest'
           with:
-            name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle
+            name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}${{ matrix.libc == 'musl' && '-musl' || '' }}-bundle
             path: iroh-*.tar.gz
             compression-level: 0
             retention-days: 1

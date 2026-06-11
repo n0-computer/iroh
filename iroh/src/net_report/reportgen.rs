@@ -25,13 +25,12 @@ use std::{
 
 use http::StatusCode;
 use iroh_base::RelayUrl;
+#[cfg(not(wasm_browser))]
+use iroh_dns::dns::{DnsError, DnsResolver, StaggeredError};
+#[cfg(not(wasm_browser))]
+use iroh_relay::quic::QuicClient;
 use iroh_relay::{
     RelayConfig, RelayMap, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH,
-};
-#[cfg(not(wasm_browser))]
-use iroh_relay::{
-    dns::{DnsError, DnsResolver, StaggeredError},
-    quic::QuicClient,
 };
 use n0_error::{e, stack_error};
 #[cfg(wasm_browser)]
@@ -115,10 +114,12 @@ impl Client {
     ///
     /// The actor starts running immediately and only generates a single report, after which
     /// it shuts down.  Dropping this handle will abort the actor.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         last_report: Option<Report>,
         relay_map: RelayMap,
         protocols: BTreeSet<Probe>,
+        captive_portal_check: bool,
         if_state: IfStateDetails,
         shutdown_token: CancellationToken,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
@@ -130,6 +131,7 @@ impl Client {
             last_report,
             relay_map,
             protocols,
+            captive_portal_check,
             #[cfg(not(wasm_browser))]
             socket_state,
             #[cfg(not(wasm_browser))]
@@ -167,6 +169,9 @@ struct Actor {
     /// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     protocols: BTreeSet<Probe>,
+
+    /// Whether to check for captive portals.
+    captive_portal_check: bool,
 
     /// Any socket-related state that doesn't exist/work in browsers
     #[cfg(not(wasm_browser))]
@@ -276,7 +281,7 @@ impl Actor {
         // delay by a bit to wait for UDP QAD to finish, to avoid the probe if
         // it's unnecessary.
         #[cfg(not(wasm_browser))]
-        if self.last_report.is_none() {
+        if self.captive_portal_check && self.last_report.is_none() {
             // Even if we're doing a non-incremental update, we may want to try our
             // preferred relay for captive portal detection.
             let preferred_relay = self
@@ -586,8 +591,8 @@ async fn check_captive_portal(
         }
     };
 
-    let mut builder =
-        reqwest_client_builder(Some(tls_config)).redirect(reqwest::redirect::Policy::none());
+    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone())
+        .redirect(reqwest::redirect::Policy::none());
 
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
@@ -819,9 +824,9 @@ async fn run_https_probe(
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
     #[cfg(not(wasm_browser))]
-    let mut builder = reqwest_client_builder(Some(tls_config));
+    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone());
     #[cfg(wasm_browser)]
-    let mut builder = reqwest_client_builder(None);
+    let mut builder = reqwest_client_builder();
 
     #[cfg(not(wasm_browser))]
     {
@@ -882,10 +887,8 @@ async fn run_https_probe(
 mod tests {
     use std::net::Ipv4Addr;
 
-    use iroh_relay::{
-        dns::DnsResolver,
-        tls::{CaRootsConfig, default_provider},
-    };
+    use iroh_dns::dns::DnsResolver;
+    use iroh_relay::tls::{CaTlsConfig, default_provider};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
 
@@ -899,7 +902,7 @@ mod tests {
         let report = run_https_probe(
             &dns_resolver,
             relay.url,
-            CaRootsConfig::insecure_skip_verify()
+            CaTlsConfig::insecure_skip_verify()
                 .client_config(default_provider())
                 .expect("infallible"),
         )

@@ -43,11 +43,12 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - [`address_lookup::MdnsAddressLookup`]: mdns::MdnsAddressLookup which uses the crate `swarm-discovery`, an
-//!   opinionated mDNS implementation, to discover endpoints on the local network.
+//! mDNS-based and Mainline-DHT-based Address Lookup services live in
+//! separate crates: [`iroh-mdns-address-lookup`] and
+//! [`iroh-mainline-address-lookup`].
 //!
-//! - The [`address_lookup::DhtAddressLookup`] also uses the [`pkarr`] system but can also publish and lookup
-//!   records to/from the Mainline DHT. It requires enabling the `address-lookup-pkarr-dht` feature.
+//! [`iroh-mdns-address-lookup`]: https://docs.rs/iroh-mdns-address-lookup
+//! [`iroh-mainline-address-lookup`]: https://docs.rs/iroh-mainline-address-lookup
 //!
 //! To use multiple Address Lookup'ssimultaneously you can call [`Builder::address_lookup`].
 //! This will use [`AddressLookupServices`] under the hood, which performs lookups to all
@@ -89,31 +90,6 @@
 //! # }
 //! ```
 //!
-//! To also enable [`address_lookup::MdnsAddressLookup`] it can be added as another service.
-//!
-//! ```no_run
-//! #[cfg(feature = "address-lookup-mdns")]
-//! # {
-//! # use iroh::{
-//! #    address_lookup::{self, AddrFilter, PkarrPublisher},
-//! #    endpoint::{presets, RelayMode},
-//! #    Endpoint, SecretKey,
-//! # };
-//! #
-//! # async fn wrapper() -> n0_error::Result<()> {
-//! let ep = Endpoint::builder(presets::Minimal)
-//!     .relay_mode(RelayMode::Default)
-//!     .addr_filter(AddrFilter::relay_only())
-//!     .address_lookup(PkarrPublisher::n0_dns())
-//!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
-//!     .address_lookup(address_lookup::MdnsAddressLookup::builder())
-//!     .bind()
-//!     .await?;
-//! # Ok(())
-//! # }
-//! # }
-//! ```
-//!
 //! [`EndpointAddr`]: iroh_base::EndpointAddr
 //! [`RelayUrl`]: crate::RelayUrl
 //! [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
@@ -122,9 +98,7 @@
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
 //! [`PkarrPublisherBuilder::addr_filter`]: pkarr::PkarrPublisherBuilder::addr_filter
-//! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
 //! [pkarr relay servers]: https://pkarr.org/#servers
-//! [`address_lookup::MdnsAddressLookup`]: crate::address_lookup::MdnsAddressLookup
 //! [`MemoryLookup`]: memory::MemoryLookup
 
 use std::{
@@ -135,28 +109,22 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId};
-pub use iroh_relay::endpoint_info::AddrFilter;
+pub use iroh_dns::{ParseError, endpoint_info::AddrFilter};
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{MergeBounded, Stream, boxed::BoxStream};
 use tracing::debug;
 
-pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData};
+pub use crate::endpoint_info::{EndpointData, EndpointInfo, UserData};
 use crate::{Endpoint, endpoint::EndpointError};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
-#[cfg(feature = "address-lookup-mdns")]
-pub mod mdns;
 pub mod memory;
 pub mod pkarr;
 
 #[cfg(not(wasm_browser))]
 pub use dns::*;
-#[cfg(feature = "address-lookup-mdns")]
-pub use mdns::*;
 pub use memory::*;
-#[cfg(feature = "address-lookup-pkarr-dht")]
-pub use pkarr::dht::*;
 pub use pkarr::*;
 
 /// Trait for structs that can be converted into [`AddressLookup`]s.
@@ -710,7 +678,7 @@ mod tests {
     }
 
     impl TestAddressLookupShared {
-        pub fn create_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
+        fn create_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
             TestAddressLookup {
                 endpoint_id,
                 shared: self.clone(),
@@ -720,7 +688,7 @@ mod tests {
             }
         }
 
-        pub fn create_lying_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
+        fn create_lying_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
             TestAddressLookup {
                 endpoint_id,
                 shared: self.clone(),
@@ -1032,6 +1000,88 @@ mod tests {
         Ok(())
     }
 
+    /// Regression test: Pending address lookup must keep the `RemoteStateActor` alive.
+    ///
+    /// Previously, this test failed with an `InternalConsistencyError` because the
+    /// `RemoteStateActor` was marked idle and shut down while there were pending
+    /// `ResolveRemote` requests still queued.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[traced_test]
+    async fn pending_resolve_survives_actor_idle_timeout() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let ep = Endpoint::builder(presets::Minimal)
+            .secret_key(SecretKey::from_bytes(&rng.random()))
+            .bind()
+            .await?;
+        ep.address_lookup()
+            .expect("endpoint is still open")
+            .add(HangingAddressLookup);
+
+        let offline_id = SecretKey::from_bytes(&rng.random()).public();
+        let connect_task = tokio::spawn(async move { ep.connect(offline_id, TEST_ALPN).await });
+
+        // `iroh::socket::remote_map::remote_state::ACTOR_MAX_IDLE_TIMEOUT`
+        // is 60s. Sleep for longer so that we are sure that the idle timeout expired.
+        let res = time::timeout(Duration::from_secs(65), connect_task).await;
+        // We expect the timeout to elapse, because the address lookup does not resolve.
+        // Before the fix, this would produce an `InternalConsistencyError` after the actor's idle timeout expired.
+        assert!(res.is_err(), "expected Elapsed, got {res:?}");
+        Ok(())
+    }
+
+    /// Concurrent `connect` calls to the same peer must both wait for the in-flight address lookup.
+    ///
+    /// Reproduces the race where the second `ResolveRemote` for the same
+    /// remote used to drain the first call's pending resolve tx with a
+    /// spurious `NoResults` while the address lookup was still in flight. In
+    /// that state the first call returned `Err(NoAddress)` immediately; the
+    /// second call waited for the lookup and succeeded.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[traced_test]
+    async fn concurrent_connects_do_not_race_on_empty_resolve() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let shared = TestAddressLookupShared::default();
+
+        let (ep_server, _guard_server) =
+            new_endpoint(&mut rng, |ep| shared.create_address_lookup(ep.id())).await;
+
+        // Client shares the same lookup, so the server's real address is
+        // discoverable; the 200ms lookup delay opens the race window.
+        let (ep_client, _guard_client) =
+            new_endpoint(&mut rng, |ep| shared.create_address_lookup(ep.id())).await;
+
+        let server_id = ep_server.id();
+        let first = tokio::spawn({
+            let ep = ep_client.clone();
+            async move { ep.connect(server_id, TEST_ALPN).await }
+        });
+
+        // Let the first call register its resolve request and trigger the
+        // address lookup before the second call arrives.
+        time::sleep(Duration::from_millis(10)).await;
+
+        let second = tokio::spawn({
+            let ep = ep_client.clone();
+            async move { ep.connect(server_id, TEST_ALPN).await }
+        });
+
+        let (first, second) = tokio::join!(first, second);
+        let first = first.unwrap();
+        let second = second.unwrap();
+
+        assert!(
+            first.is_ok(),
+            "first connect must wait for lookup, got: {:?}",
+            first.err()
+        );
+        assert!(
+            second.is_ok(),
+            "second connect must wait for lookup, got: {:?}",
+            second.err()
+        );
+        Ok(())
+    }
+
     /// This test only has the "lying" address lookup system. It is here to make sure that this actually fails.
     #[tokio::test]
     #[traced_test]
@@ -1192,10 +1242,8 @@ mod tests {
 #[cfg(test)]
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-    use iroh_relay::{
-        endpoint_info::UserData,
-        tls::{CaRootsConfig, default_provider},
-    };
+    use iroh_dns::endpoint_info::UserData;
+    use iroh_relay::tls::{CaTlsConfig, default_provider};
     use n0_error::{Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
@@ -1255,11 +1303,11 @@ mod test_dns_pkarr {
             "https://relay.example".parse().unwrap(),
         ));
 
-        let tls_config = CaRootsConfig::insecure_skip_verify()
+        let tls_config = CaTlsConfig::insecure_skip_verify()
             .client_config(default_provider())
             .expect("infallible");
-        let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
-        let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone())
+        let resolver = dns_pkarr_server.dns_resolver();
+        let publisher = PkarrPublisher::builder(dns_pkarr_server.pkarr_url().clone())
             .build(secret_key, tls_config);
         let user_data: UserData = "foobar".parse().unwrap();
         let data = EndpointData::from_iter(relay_url.clone()).with_user_data(user_data.clone());
@@ -1326,7 +1374,7 @@ mod test_dns_pkarr {
         let secret_key = SecretKey::from_bytes(&rng.random());
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .preset(dns_pkarr_server.preset())

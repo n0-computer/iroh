@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 #[derive(Debug)]
-pub struct Runtime {
+pub(crate) struct Runtime {
     id: EndpointId,
     #[cfg(not(wasm_browser))]
     tasks: TaskTracker,
@@ -20,7 +20,7 @@ pub struct Runtime {
 impl Runtime {
     /// Create a new [`Runtime`] that manages shutting down tasks properly,
     /// whether gracefully or un-gracefully.
-    pub fn new(id: EndpointId) -> Self {
+    pub(crate) fn new(id: EndpointId) -> Self {
         Self {
             id,
             #[cfg(not(wasm_browser))]
@@ -35,20 +35,19 @@ impl Runtime {
     /// Shutdown the runtime gracefully.
     ///
     /// Closes the task tracker and waits for all spawned tasks to finish naturally.
-    ///
-    /// If the tasks were already closed, it assumes the tasks have already been
-    /// awaited.
     #[cfg(not(wasm_browser))]
-    pub async fn shutdown(&self) {
-        if self.tasks.close() {
-            self.tasks.wait().await
-        }
+    pub(crate) async fn shutdown(&self) {
+        self.abort();
+        // Waits for all tasks to stop (and thus drop all of their futures).
+        // If the task tracker had already been closed and tasks have all been cleaned up,
+        // this returns immediately.
+        self.tasks.wait().await;
     }
 
     /// Shutdown the runtime ASAP, not waiting for any graceful closing of tasks.
     #[cfg(not(wasm_browser))]
-    pub fn abort(&self) {
-        // Drop the running futures.
+    pub(crate) fn abort(&self) {
+        // Signal all spawned tasks to stop immediately.
         self.cancel.cancel();
         // Signal that the runtime should be closed.
         self.tasks.close();
@@ -57,11 +56,11 @@ impl Runtime {
 
     /// No-op on wasm. There is no task tracker to close or wait on.
     #[cfg(wasm_browser)]
-    pub async fn shutdown(&self) {}
+    pub(crate) async fn shutdown(&self) {}
 
     /// No-op on wasm. There is no task tracker or cancellation to perform.
     #[cfg(wasm_browser)]
-    pub fn abort(&self) {}
+    pub(crate) fn abort(&self) {}
 }
 
 impl noq::Runtime for Runtime {

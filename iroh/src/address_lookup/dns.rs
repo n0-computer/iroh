@@ -1,8 +1,8 @@
 //! DNS endpoint discovery for iroh
 
 use iroh_base::EndpointId;
-use iroh_relay::dns::DnsResolver;
-pub use iroh_relay::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING};
+use iroh_dns::dns::DnsResolver;
+pub use iroh_dns::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
 use tracing::{Instrument, debug, debug_span, trace};
 

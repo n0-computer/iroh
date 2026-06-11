@@ -26,9 +26,8 @@ pub(crate) mod server {
 
     use super::*;
     use crate::server::Metrics;
-    pub use crate::server::QuicConfig;
 
-    pub struct QuicServer {
+    pub(crate) struct QuicServer {
         bind_addr: SocketAddr,
         cancel: CancellationToken,
         handle: AbortOnDropHandle<()>,
@@ -39,6 +38,8 @@ pub(crate) mod server {
     #[stack_error(derive, add_meta)]
     #[non_exhaustive]
     pub enum QuicSpawnError {
+        #[error("TLS not configured")]
+        TlsNotConfigured {},
         #[error(transparent)]
         NoInitialCipherSuite {
             #[error(std_err, from)]
@@ -61,7 +62,7 @@ pub(crate) mod server {
         ///
         /// The server runs in the background as several async tasks.  This allows controlling
         /// the server, in particular it allows gracefully shutting down the server.
-        pub fn handle(&self) -> ServerHandle {
+        pub(crate) fn handle(&self) -> ServerHandle {
             ServerHandle {
                 cancel_token: self.cancel.clone(),
             }
@@ -72,12 +73,12 @@ pub(crate) mod server {
         /// This is the root of all the tasks for the QUIC address discovery service.  Aborting it will abort all the
         /// other tasks for the service.  Awaiting it will complete when all the service tasks are
         /// completed.[]
-        pub fn task_handle(&mut self) -> &mut AbortOnDropHandle<()> {
+        pub(crate) fn task_handle(&mut self) -> &mut AbortOnDropHandle<()> {
             &mut self.handle
         }
 
         /// Returns the socket address for this QUIC server.
-        pub fn bind_addr(&self) -> SocketAddr {
+        pub(crate) fn bind_addr(&self) -> SocketAddr {
             self.bind_addr
         }
 
@@ -94,12 +95,12 @@ pub(crate) mod server {
         /// up here. Any other errors in a connection will be logged as a
         ///  warning.
         pub(crate) fn spawn(
-            mut quic_config: QuicConfig,
+            bind_addr: SocketAddr,
+            mut server_config: rustls::ServerConfig,
             metrics: Arc<Metrics>,
         ) -> Result<Self, QuicSpawnError> {
-            quic_config.server_config.alpn_protocols =
-                vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
-            let server_config = QuicServerConfig::try_from(quic_config.server_config)?;
+            server_config.alpn_protocols = vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
+            let server_config = QuicServerConfig::try_from(server_config)?;
             let mut server_config = noq::ServerConfig::with_crypto(Arc::new(server_config));
             let transport_config =
                 Arc::get_mut(&mut server_config.transport).expect("not used yet");
@@ -109,7 +110,7 @@ pub(crate) mod server {
                 // enable sending quic address discovery frames
                 .send_observed_address_reports(true);
 
-            let endpoint = noq::Endpoint::server(server_config, quic_config.bind_addr)
+            let endpoint = noq::Endpoint::server(server_config, bind_addr)
                 .map_err(|err| e!(QuicSpawnError::EndpointServer, err))?;
             let bind_addr = endpoint
                 .local_addr()
@@ -177,7 +178,7 @@ pub(crate) mod server {
 
         /// Closes the underlying QUIC endpoint and the tasks running the
         /// QUIC connections.
-        pub async fn shutdown(mut self) {
+        pub(crate) async fn shutdown(mut self) {
             self.cancel.cancel();
             if !self.task_handle().is_finished() {
                 // only possible error is a `JoinError`, no errors about what might
@@ -191,13 +192,13 @@ pub(crate) mod server {
     ///
     /// This does not allow access to the task but can communicate with it.
     #[derive(Debug, Clone)]
-    pub struct ServerHandle {
+    pub(crate) struct ServerHandle {
         cancel_token: CancellationToken,
     }
 
     impl ServerHandle {
         /// Gracefully shut down the quic endpoint.
-        pub fn shutdown(&self) {
+        pub(crate) fn shutdown(&self) {
             self.cancel_token.cancel()
         }
     }
@@ -382,19 +383,13 @@ mod tests {
     #[traced_test]
     #[cfg(feature = "test-utils")]
     async fn quic_endpoint_basic() -> Result {
-        use super::server::{QuicConfig, QuicServer};
+        use super::server::QuicServer;
 
         let host: Ipv4Addr = "127.0.0.1".parse().unwrap();
         // create a server config with self signed certificates
         let (_, server_config) = super::super::server::testing::self_signed_tls_certs_and_config();
         let bind_addr = SocketAddr::new(host.into(), 0);
-        let quic_server = QuicServer::spawn(
-            QuicConfig {
-                server_config,
-                bind_addr,
-            },
-            Default::default(),
-        )?;
+        let quic_server = QuicServer::spawn(bind_addr, server_config, Default::default())?;
 
         // create a client-side endpoint
         let client_endpoint =

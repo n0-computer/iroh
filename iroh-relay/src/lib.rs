@@ -27,32 +27,27 @@
 // Based on tailscale/derp/derp.go
 
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
-#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![deny(missing_docs, rustdoc::broken_intra_doc_links, unreachable_pub)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod client;
 pub mod defaults;
 pub mod http;
+mod key_cache;
+mod ping_tracker;
 pub mod protos;
 pub mod quic;
+mod relay_map;
 #[cfg(feature = "server")]
 pub mod server;
+#[cfg(test)]
+pub(crate) mod test_utils;
 pub mod tls;
 
-mod ping_tracker;
-
-mod key_cache;
-mod relay_map;
-pub use key_cache::KeyCache;
-
-#[cfg(not(wasm_browser))]
-pub mod dns;
-pub mod endpoint_info;
-
-pub use protos::relay::MAX_PACKET_SIZE;
-
-pub use self::{
+pub use crate::{
+    key_cache::KeyCache,
     ping_tracker::PingTracker,
+    protos::relay::MAX_PACKET_SIZE,
     relay_map::{RelayConfig, RelayMap, RelayQuicConfig},
 };
 
@@ -72,13 +67,12 @@ pub trait ExportKeyingMaterial {
     ///
     /// However unlike that function, this returns `Option`, in case the
     /// underlying stream might not be wrapping TLS, e.g. as in the case of
-    /// [`MaybeTlsStream`].
+    /// `MaybeTlsStream`.
     ///
     /// For more information on what this function does, see the
     /// [`export_keying_material`] documentation.
     ///
     /// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
-    /// [`MaybeTlsStream`]: crate::server::streams::MaybeTlsStream
     #[cfg_attr(wasm_browser, allow(unused))]
     fn export_keying_material<T: AsMut<[u8]>>(
         &self,

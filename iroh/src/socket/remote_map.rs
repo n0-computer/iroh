@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeSet,
+    future::poll_fn,
     hash::Hash,
-    net::{IpAddr, SocketAddr},
     sync::Arc,
     task::{Context, Poll, Waker, ready},
 };
@@ -11,14 +11,22 @@ use n0_future::task::JoinSet;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, debug, error};
+use tracing::{Span, error, trace};
 
-pub(crate) use self::remote_state::PathWatchable;
+pub(crate) use self::remote_state::PathStateReceiver;
 use self::remote_state::RemoteStateActor;
 pub(super) use self::remote_state::RemoteStateMessage;
 pub use self::remote_state::{
-    PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, TransportAddrInfo,
-    TransportAddrUsage,
+    Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream, RemoteInfo,
+    TransportAddrInfo, TransportAddrUsage,
+};
+#[cfg(feature = "unstable-custom-transports")]
+pub use self::remote_state::{
+    PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
+};
+#[cfg(not(feature = "unstable-custom-transports"))]
+pub(crate) use self::remote_state::{
+    PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
 };
 use super::{
     DirectAddr, Metrics as SocketMetrics,
@@ -29,11 +37,7 @@ use super::{
 };
 use crate::{
     address_lookup::{self, AddressLookupFailed},
-    socket::{
-        RemoteStateActorStoppedError,
-        concurrent_read_map::{ConcurrentReadMap, ReadOnlyMap},
-        transports::TransportBiasMap,
-    },
+    socket::concurrent_read_map::{ConcurrentReadMap, ReadOnlyMap},
 };
 
 mod remote_state;
@@ -52,7 +56,7 @@ mod remote_state;
 #[derive(Debug)]
 pub(crate) struct RemoteMap {
     /// Maps for converting between mapped and IP/relay addrs.
-    pub(crate) mapped_addrs: MappedAddrs,
+    pub(super) mapped_addrs: MappedAddrs,
 
     /// The senders for the inbox of each `RemoteStateActor` that runs.
     ///
@@ -141,8 +145,8 @@ struct Tasks {
     tasks: JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
     /// The waker that notifies `poll_cleanup` when the join set is populated with another task.
     poll_cleanup_waker: Option<Waker>,
-    /// Biases for different transport kinds.
-    transport_bias: TransportBiasMap,
+    /// The path selector used by all [`RemoteStateActor`]s spawned by this map.
+    path_selector: Arc<dyn PathSelector>,
     /// The tracing span for this endpoint, to be used as parent span for `RemoteStateActor` tasks.
     span: Span,
 }
@@ -154,7 +158,7 @@ impl RemoteMap {
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         address_lookup: address_lookup::AddressLookupServices,
         shutdown_token: CancellationToken,
-        transport_bias: TransportBiasMap,
+        path_selector: Arc<dyn PathSelector>,
         span: Span,
     ) -> Self {
         Self {
@@ -167,37 +171,45 @@ impl RemoteMap {
                 shutdown_token,
                 tasks: Default::default(),
                 poll_cleanup_waker: None,
-                transport_bias,
+                path_selector,
                 span,
             },
         }
     }
 
-    /// Potentially removes terminated [`RemoteStateActor`]s from the remote map.
+    /// Cleans up terminated `RemoteStateActor` tasks.
     ///
-    /// Resolves to the endpoint ID that of the remote state actor that got cleaned up.
+    /// This polls for terminated actor tasks, and removes the corresponding actor sender
+    /// from our sender map, or restarts the actor if it has pending messages.
+    ///
+    /// Resolves to the actor's remote endpoint ID whenever a `RemoteStateActor` task joined,
+    /// independent of whether the task was restarted or not.
     ///
     /// Returns pending if there was no actor to be cleaned up right now, and registers
     /// for moments where this could become the case.
     ///
+    /// This function should be called in a loop to clean up expired tasks.
     /// Only one task is allowed to poll this function concurrently.
-    pub(super) fn poll_cleanup(&mut self, cx: &mut Context<'_>) -> Poll<EndpointId> {
+    pub(super) async fn cleanup(&mut self) -> EndpointId {
+        loop {
+            let (remote_id, leftover_messages) = poll_fn(|cx| self.poll_join_next(cx)).await;
+            if self.remove_or_restart_actor(remote_id, leftover_messages) {
+                return remote_id;
+            }
+        }
+    }
+
+    /// Polls for the next joined actor task.
+    ///
+    /// Returns [`Poll::Pending`] if no tasks are running, and is woken when the task set changes.
+    fn poll_join_next(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<(EndpointId, Vec<RemoteStateMessage>)> {
         while let Some(result) = ready!(self.tasks.tasks.poll_join_next(cx)) {
             match result {
-                Ok((eid, leftover_msgs)) => {
-                    if leftover_msgs.is_empty() {
-                        // the actor shut down cleanly
-                        self.senders.remove(&eid);
-                        return Poll::Ready(eid);
-                    }
-
-                    // The remote actor got messages while it was closing, so we're restarting
-                    debug!(%eid, "restarting terminated remote state actor: messages received during shutdown");
-                    let sender =
-                        self.tasks
-                            .start_remote_state_actor(eid, leftover_msgs, &self.mapped_addrs);
-                    // We don't have to be careful about guards - only one thread is modifying this hashmap at a time.
-                    self.senders.insert(eid, sender);
+                Ok((remote_id, leftover_msgs)) => {
+                    return Poll::Ready((remote_id, leftover_msgs));
                 }
                 Err(err) => {
                     if let Ok(panic) = err.try_into_panic() {
@@ -215,6 +227,29 @@ impl RemoteMap {
         Poll::Pending
     }
 
+    /// Removes an actor sender if `leftover_msgs` is empty, or restarts the actor otherwise.
+    fn remove_or_restart_actor(
+        &mut self,
+        remote_id: iroh_base::PublicKey,
+        leftover_msgs: Vec<RemoteStateMessage>,
+    ) -> bool {
+        if leftover_msgs.is_empty() {
+            // the actor shut down cleanly
+            self.senders.remove(&remote_id);
+            trace!(%remote_id, "cleaned up RemoteStateActor");
+            true
+        } else {
+            // The remote actor got messages while it was closing, so we're restarting
+            trace!(%remote_id, "restarting terminated RemoteStateActor: messages received during shutdown");
+            let sender =
+                self.tasks
+                    .start_remote_state_actor(remote_id, leftover_msgs, &self.mapped_addrs);
+            // We don't have to be careful about guards - only one thread is modifying this hashmap at a time.
+            self.senders.insert(remote_id, sender);
+            false
+        }
+    }
+
     pub(super) fn on_network_change(&mut self, is_major: bool) {
         let read = self.senders.read_only();
         let guard = read.guard();
@@ -229,66 +264,50 @@ impl RemoteMap {
         &mut self,
         addr: EndpointAddr,
         tx: oneshot::Sender<Result<(), AddressLookupFailed>>,
-    ) -> Result<(), RemoteStateActorStoppedError> {
+    ) {
         let EndpointAddr { id, addrs } = addr;
-        let actor = self.remote_state_actor(id);
-        actor
-            .send(RemoteStateMessage::ResolveRemote(addrs, tx))
-            .await?;
-        Ok(())
-    }
-
-    pub(super) async fn remote_info(&mut self, id: EndpointId) -> Option<RemoteInfo> {
-        let actor = self.remote_state_actor_if_exists(id)?;
-        let (tx, rx) = oneshot::channel();
-        actor.send(RemoteStateMessage::RemoteInfo(tx)).await.ok()?;
-        rx.await.ok()
+        self.send_to_actor(id, RemoteStateMessage::ResolveRemote(addrs, tx))
+            .await
     }
 
     pub(super) async fn add_connection(
         &mut self,
         remote: EndpointId,
-        conn: noq::WeakConnectionHandle,
-    ) -> Option<PathWatchable> {
-        let actor = self.remote_state_actor(remote);
-        let (tx, rx) = oneshot::channel();
-        actor
-            .send(RemoteStateMessage::AddConnection(conn, tx))
+        conn: noq::Connection,
+        tx: oneshot::Sender<PathStateReceiver>,
+    ) {
+        self.send_to_actor(remote, RemoteStateMessage::AddConnection(conn, tx))
             .await
-            .ok()?;
-        rx.await.ok()
     }
 
-    /// Returns the sender for the [`RemoteStateActor`].
+    /// Sends a message to a `RemoteStateActor`, starting it if not running already.
     ///
-    /// If needed a new actor is started on demand.
-    ///
-    /// [`RemoteStateActor`]: remote_state::RemoteStateActor
-    pub(super) fn remote_state_actor(
-        &mut self,
-        eid: EndpointId,
-    ) -> mpsc::Sender<RemoteStateMessage> {
-        let sender = self.senders.get_or_insert_with(eid, || {
+    /// When sending fails, the actor must be terminating, in which case we wait for its task to
+    /// join and then restart the sender.
+    async fn send_to_actor(&mut self, remote_id: EndpointId, message: RemoteStateMessage) {
+        let sender = self.senders.get_or_insert_with(remote_id, || {
             self.tasks
-                .start_remote_state_actor(eid, vec![], &self.mapped_addrs)
+                .start_remote_state_actor(remote_id, vec![], &self.mapped_addrs)
         });
-        if sender.is_closed() {
-            // The actor is dead: Start a new actor.
-            let sender = self
-                .tasks
-                .start_remote_state_actor(eid, vec![], &self.mapped_addrs);
-            self.senders.insert(eid, sender.clone());
-            sender
-        } else {
-            sender.clone()
-        }
-    }
 
-    pub(super) fn remote_state_actor_if_exists(
-        &self,
-        eid: EndpointId,
-    ) -> Option<mpsc::Sender<RemoteStateMessage>> {
-        self.senders.get(&eid)
+        if let Err(mpsc::error::SendError(message)) = sender.send(message).await {
+            // The send failed, which means the RemoteStateActor is terminating. We call the cleanup
+            // function so that its task is processed. This ensures that the leftover messages are
+            // properly enqueued into a new actor, and that a later cleanup does not reap a newly
+            // created sender again.  We can be sure that the task has not been cleaned up yet
+            // because we take a `&mut self` reference.
+            loop {
+                let (id, leftover_messages) = poll_fn(|cx| self.poll_join_next(cx)).await;
+                if id != remote_id {
+                    self.remove_or_restart_actor(id, leftover_messages);
+                } else {
+                    let mut messages = leftover_messages;
+                    messages.push(message);
+                    self.remove_or_restart_actor(id, messages);
+                    break;
+                }
+            }
+        }
     }
 
     pub(super) fn senders(&self) -> ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>> {
@@ -315,7 +334,7 @@ impl Tasks {
             mapped_addrs.custom_addrs.clone(),
             self.metrics.clone(),
             self.address_lookup.clone(),
-            self.transport_bias.clone(),
+            self.path_selector.clone(),
         )
         .start(
             initial_msgs,
@@ -343,11 +362,8 @@ impl Tasks {
 #[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = "kebab-case")]
 #[allow(private_interfaces)]
-pub enum Source {
-    /// An endpoint communicated with us first via UDP.
-    Udp,
-    /// An endpoint communicated with us first via relay.
-    Relay,
+#[non_exhaustive]
+pub(crate) enum Source {
     /// Application layer added the address directly.
     App,
     /// The address was discovered by an Address Lookup system
@@ -356,69 +372,97 @@ pub enum Source {
         /// The name of the Address Lookup that discovered the address.
         name: String,
     },
-    /// Application layer with a specific name added the endpoint directly.
-    #[strum(serialize = "{name}")]
-    NamedApp {
-        /// The name of the application that added the endpoint
-        name: String,
-    },
-    /// The address was advertised by a call-me-maybe DISCO message.
-    #[strum(serialize = "CallMeMaybe")]
-    CallMeMaybe {
-        /// private marker
-        _0: Private,
-    },
-    /// We received a ping on the path.
-    #[strum(serialize = "Ping")]
-    Ping {
-        /// private marker
-        _0: Private,
-    },
-    /// We established a connection on this address.
-    #[strum(serialize = "Connection")]
-    Connection {
-        /// private marker
-        _0: Private,
-    },
+    /// The address was added as a path within a connection.
+    Connection,
 }
 
-/// Helper to ensure certain `Source` variants can not be constructed externally.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
-struct Private;
+#[cfg(test)]
+mod tests {
+    use std::{net::SocketAddr, time::Duration};
 
-/// An (Ip, Port) pair.
-///
-/// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
-/// addresses include fields that can't be assumed consistent even within a single connection.
-#[derive(Debug, derive_more::Display, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[display("{}", SocketAddr::from(*self))]
-pub struct IpPort {
-    ip: IpAddr,
-    port: u16,
-}
+    use iroh_base::{SecretKey, TransportAddr};
+    use n0_future::future::now_or_never;
+    use n0_tracing_test::traced_test;
+    use n0_watcher::Watchable;
+    use tokio::sync::oneshot;
+    use tracing::Span;
 
-impl From<SocketAddr> for IpPort {
-    fn from(socket_addr: SocketAddr) -> Self {
-        Self {
-            ip: socket_addr.ip(),
-            port: socket_addr.port(),
-        }
-    }
-}
+    use super::*;
+    use crate::socket::biased_rtt_path_selector::BiasedRttPathSelector;
 
-impl From<IpPort> for SocketAddr {
-    fn from(ip_port: IpPort) -> Self {
-        let IpPort { ip, port } = ip_port;
-        (ip, port).into()
-    }
-}
-
-impl IpPort {
-    pub fn ip(&self) -> &IpAddr {
-        &self.ip
+    fn make_remote_map() -> (RemoteMap, CancellationToken, impl Sized) {
+        let metrics = Arc::new(SocketMetrics::default());
+        let watchable: Watchable<BTreeSet<DirectAddr>> = Watchable::new(BTreeSet::new());
+        let local_direct_addrs = watchable.watch();
+        let shutdown_token = CancellationToken::new();
+        let remote_map = RemoteMap::new(
+            metrics,
+            local_direct_addrs,
+            address_lookup::AddressLookupServices::default(),
+            shutdown_token.clone(),
+            Arc::new(BiasedRttPathSelector::default()),
+            Span::none(),
+        );
+        let guards = (watchable, shutdown_token.clone().drop_guard());
+        (remote_map, shutdown_token, guards)
     }
 
-    pub fn port(&self) -> u16 {
-        self.port
+    /// Regression test: No new RemoteStateActors may be started before
+    /// the task of its previous incarnation was processed.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[traced_test]
+    async fn poll_cleanup_preserves_restarted_sender() {
+        let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
+        let eid = SecretKey::from_bytes(&[0u8; 32]).public();
+
+        // Non-empty addrs so each `resolve_remote` resolves its tx
+        // immediately and does not park in `paths.pending_resolve_requests`;
+        // the actor would never idle out otherwise.
+        let addr_with_ip = |port: u16| {
+            EndpointAddr::from_parts(
+                eid,
+                [TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], port)))],
+            )
+        };
+
+        // 1. Spawn A1 and let it process a real `ResolveRemote`.
+        let (tx1, rx1) = oneshot::channel();
+        remote_map.resolve_remote(addr_with_ip(1234), tx1).await;
+        assert!(
+            matches!(rx1.await, Ok(Ok(()))),
+            "First resolve completes Ok"
+        );
+
+        // 2. Advance past idle timeout.
+        tokio::time::sleep(Duration::from_secs(65)).await;
+
+        // 3. Call `resolve_remote` again. The actor A1 has terminated but its task
+        //    has not yet been cleaned up. A1's sender is still in the sender map
+        //    but is closed. This will spawn a new actor A2.
+        //    Before our fixes, `resolve_remote` would spawn a new actor, and when
+        //    `cleanup` was then called, the sender to this new actor would be
+        //    removed again. We fixed this by first processing the joined task for the
+        //    terminated actor, so that it is removed from our task list *before*
+        //    starting a new actor.
+        //    We also resume time here so that we don't immediately idle-out again.
+        tokio::time::resume();
+        let (tx2, rx2) = oneshot::channel();
+        remote_map.resolve_remote(addr_with_ip(5678), tx2).await;
+
+        // 4. Drive `cleanup`, like the socket actor does.
+        //    Before our fixes, this would remove the sender to the just-started A2 from the sender map.
+        now_or_never(remote_map.cleanup());
+
+        // 5. A third `resolve_remote`, this time with no addrs.
+        //    With our fix, this reaches the actor spawned above (A2); without
+        //    the fix this would start a new actor because A2 was falsely removed from
+        //    the senders map.
+        let (tx3, rx3) = oneshot::channel();
+        remote_map.resolve_remote(EndpointAddr::new(eid), tx3).await;
+
+        let outcome2 = rx2.await.expect("the resolve tx must be sent");
+        let outcome3 = rx3.await.expect("the resolve tx must be sent");
+        assert!(outcome2.is_ok(), "expected Ok, but got {outcome2:?}");
+        assert!(outcome3.is_ok(), "expected Ok, but got {outcome3:?}");
     }
 }

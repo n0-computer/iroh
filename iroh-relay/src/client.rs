@@ -11,18 +11,20 @@ use std::{
 
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
-use n0_error::{e, stack_error};
+#[cfg(not(wasm_browser))]
+use iroh_dns::dns::{DnsError, DnsResolver};
+#[cfg(wasm_browser)]
+use n0_error::StdResultExt;
+use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     Sink, Stream,
     split::{SplitSink, SplitStream, split},
     time,
 };
-use tracing::{Level, debug, event, trace};
+use tracing::{debug, trace};
 use url::Url;
 
 pub use self::conn::{RecvError, SendError};
-#[cfg(not(wasm_browser))]
-use crate::dns::{DnsError, DnsResolver};
 use crate::{
     KeyCache,
     http::{ProtocolVersion, RELAY_PATH},
@@ -52,20 +54,21 @@ pub enum ConnectError {
     InvalidWebsocketUrl { url: Url },
     #[error("Invalid relay URL: {url}")]
     InvalidRelayUrl { url: Url },
+    /// Error returned from the underlying WebSocket stream while establishing the connection.
+    ///
+    /// The concrete error type is `tokio_websockets::Error` on native targets and
+    /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to
+    /// recover it. Note that the concrete downcast type is not covered by any semver
+    /// guarantees and may change between releases.
     #[error(transparent)]
-    Websocket {
-        #[cfg(not(wasm_browser))]
-        #[error(std_err)]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        #[error(std_err)]
-        source: ws_stream_wasm::WsErr,
-    },
+    Websocket { source: AnyError },
     #[error(
         "Server replied with invalid iroh-relay version header: {}",
         server_version.as_deref().unwrap_or("<empty>")
     )]
     BadVersionHeader { server_version: Option<String> },
+    #[error("Authorization token set to a string that is not a valid HTTP header value")]
+    InvalidAuthToken,
     #[error(transparent)]
     Handshake {
         #[error(std_err)]
@@ -149,7 +152,11 @@ pub struct ClientBuilder {
     proxy_url: Option<Url>,
     /// The secret key of this client.
     secret_key: SecretKey,
-    /// The DNS resolver to use.
+    /// Optional authorization token.
+    ///
+    /// Sent as an `Authorization: Bearer` header on native targets and as
+    /// a `?token=` query parameter under Wasm. See [`ClientBuilder::auth_token`].
+    auth_token: Option<String>,
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
     /// Cache for public keys of remote endpoints.
@@ -172,6 +179,7 @@ impl ClientBuilder {
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
+            auth_token: None,
         }
     }
 
@@ -180,34 +188,35 @@ impl ClientBuilder {
     /// This is a required option.
     ///
     /// You can construct a [`rustls::ClientConfig`] by combining a [`rustls::crypto::CryptoProvider`]
-    /// with a [`tls::CaRootsConfig`] using [`tls::CaRootsConfig::client_config`], for example:
+    /// with a [`tls::CaTlsConfig`] using [`tls::CaTlsConfig::client_config`], for example:
     ///
     /// ```no_run
     /// use std::sync::Arc;
     ///
-    /// use iroh_relay::tls::CaRootsConfig;
+    /// use iroh_relay::tls::CaTlsConfig;
     ///
     /// let crypto_provider: rustls::crypto::CryptoProvider = todo!();
-    /// let client_config = CaRootsConfig::default().client_config(Arc::new(crypto_provider));
+    /// let client_config = CaTlsConfig::default().client_config(Arc::new(crypto_provider));
     /// ```
     ///
     /// If you enable the tls-ring or tls-aws-lc-rs feature, you can use the enabled crypto provider
     /// by using [`tls::default_provider`].
     ///
-    /// [`tls::CaRootsConfig`]: crate::tls::CaRootsConfig
-    /// [`tls::CaRootsConfig::client_config`]: crate::tls::CaRootsConfig::client_config
+    /// [`tls::CaTlsConfig`]: crate::tls::CaTlsConfig
+    /// [`tls::CaTlsConfig::client_config`]: crate::tls::CaTlsConfig::client_config
     /// [`tls::default_provider`]: crate::tls::default_provider
     pub fn tls_client_config(mut self, tls_config: rustls::ClientConfig) -> Self {
         self.tls_config = Some(tls_config);
         self
     }
 
-    /// Returns if we should prefer ipv6
-    /// it replaces the relayhttp.AddressFamilySelector we pass
-    /// It provides the hint as to whether in an IPv4-vs-IPv6 race that
-    /// IPv4 should be held back a bit to give IPv6 a better-than-50/50
-    /// chance of winning. We only return true when we believe IPv6 will
-    /// work anyway, so we don't artificially delay the connection speed.
+    /// Sets a callback hinting whether to prefer IPv6 when dialing the relay.
+    ///
+    /// The callback runs on each dial. When it returns `true`, IPv6 addresses
+    /// are tried first and IPv4 dials are held back slightly, biasing the
+    /// happy-eyeballs race towards IPv6; when it returns `false`, IPv4 is
+    /// preferred. Only return `true` when IPv6 is expected to work, since
+    /// otherwise the bias just delays the connection.
     pub fn address_family_selector<S>(mut self, selector: S) -> Self
     where
         S: Fn() -> bool + Send + Sync + 'static,
@@ -222,6 +231,21 @@ impl ClientBuilder {
         self
     }
 
+    /// Sets an authorization token.
+    ///
+    /// On native targets, the token is sent as an `Authorization: Bearer TOKEN`
+    /// header on the WebSocket upgrade request that establishes the relay
+    /// connection. The token must be a valid HTTP header field value, if not
+    /// [`Self::connect`] will return [`ConnectError::InvalidAuthToken`].
+    ///
+    /// When compiled to WebAssembly the token is sent as a `?token=TOKEN`
+    /// query parameter on the upgrade URL, since browsers don't allow setting
+    /// headers on WebSocket requests.
+    pub fn auth_token(mut self, token: impl Into<String>) -> Self {
+        self.auth_token = Some(token.into());
+        self
+    }
+
     /// Set the capacity of the cache for public keys.
     pub fn key_cache_capacity(mut self, capacity: usize) -> Self {
         self.key_cache = KeyCache::new(capacity);
@@ -231,7 +255,8 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     #[cfg(not(wasm_browser))]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
-        use http::header::SEC_WEBSOCKET_PROTOCOL;
+        use http::header::{AUTHORIZATION, HeaderValue, SEC_WEBSOCKET_PROTOCOL};
+        use n0_error::StdResultExt;
         use tls::MaybeTlsStreamBuilder;
 
         use crate::{
@@ -273,6 +298,7 @@ impl ClientBuilder {
             .as_ref()
             .local_addr()
             .map_err(|_| e!(ConnectError::NoLocalAddr))?;
+
         let mut builder = tokio_websockets::ClientBuilder::new()
             .uri(dial_url.as_str())
             .map_err(|_| {
@@ -290,6 +316,15 @@ impl ClientBuilder {
             // This means we need to flush manually, which we do by calling `Sink::send_all` or
             // `Sink::send` (which calls `Sink::flush`) in the `ActiveRelayActor`.
             .config(tokio_websockets::Config::default().flush_threshold(usize::MAX));
+
+        if let Some(token) = self.auth_token.as_ref() {
+            let value = HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| e!(ConnectError::InvalidAuthToken))?;
+            builder = builder
+                .add_header(AUTHORIZATION, value)
+                .expect("valid header name");
+        }
+
         if let Some(client_auth) = KeyMaterialClientAuth::new(&self.secret_key, &stream) {
             debug!("Using TLS key export for relay client authentication");
             builder = builder
@@ -298,7 +333,7 @@ impl ClientBuilder {
                     "impossible: CLIENT_AUTH_HEADER isn't a disallowed header value for websockets",
                 );
         }
-        let (conn, response) = builder.connect_on(stream).await?;
+        let (conn, response) = builder.connect_on(stream).await.anyerr()?;
 
         n0_error::ensure!(
             response.status() == hyper::StatusCode::SWITCHING_PROTOCOLS,
@@ -327,12 +362,6 @@ impl ClientBuilder {
         )
         .await?;
 
-        event!(
-            target: "iroh::_events::net::relay::connected",
-            Level::DEBUG,
-            url = %self.url,
-        );
-
         trace!("connect done");
 
         Ok(Client {
@@ -357,6 +386,8 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     #[cfg(wasm_browser)]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
+        use crate::http::AUTH_TOKEN_URL_QUERY_PARAM;
+
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -373,13 +404,20 @@ impl ClientBuilder {
                 })
             })?;
 
+        if let Some(token) = self.auth_token.as_ref() {
+            dial_url
+                .query_pairs_mut()
+                .append_pair(AUTH_TOKEN_URL_QUERY_PARAM, token);
+        }
+
         debug!(%dial_url, "Dialing relay by websocket");
 
         let (ws_meta, ws_stream) = ws_stream_wasm::WsMeta::connect(
             dial_url.as_str(),
             Some(ProtocolVersion::all().collect()),
         )
-        .await?;
+        .await
+        .anyerr()?;
 
         let protocol_version =
             ProtocolVersion::match_from_str(&ws_meta.protocol()).ok_or_else(|| {
@@ -395,12 +433,6 @@ impl ClientBuilder {
             protocol_version,
         )
         .await?;
-
-        event!(
-            target: "iroh::_events::net::relay::connected",
-            Level::DEBUG,
-            url = %self.url,
-        );
 
         trace!("connect done");
 

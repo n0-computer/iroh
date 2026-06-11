@@ -1,18 +1,39 @@
-//! A DNS server and pkarr relay
+//! A DNS server and [pkarr] relay.
+//!
+//! [`Server`] combines a DNS server (UDP and TCP) with an HTTP/HTTPS server
+//! into a single process. Clients publish self-signed DNS records as [pkarr]
+//! signed packets at `PUT /pkarr`; the server persists them and answers DNS
+//! queries for the published names, including DNS-over-HTTPS at `/dns-query`.
+//!
+//! With the mainline fallback enabled, keys missing from the local store are
+//! looked up on the BitTorrent mainline DHT.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use iroh_dns_server::{Server, config::Config};
+//! # async fn run() -> n0_error::Result<()> {
+//! let config = Config::load("config.toml").await?;
+//! let server = Server::bind(config).await?;
+//! server.join().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [pkarr]: https://github.com/Nuhvi/pkarr/
 
-#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![deny(missing_docs, rustdoc::broken_intra_doc_links, unreachable_pub)]
 
 pub mod config;
-pub mod dns;
-pub mod http;
-pub mod metrics;
-pub mod server;
-pub mod state;
+mod dns;
+mod http;
+mod metrics;
+mod server;
+mod state;
 mod store;
 mod util;
 
-// Re-export to be able to construct your own dns-server
-pub use store::ZoneStore;
+pub use crate::{metrics::Metrics, server::Server};
 
 #[cfg(test)]
 mod tests {
@@ -26,7 +47,7 @@ mod tests {
         address_lookup::PkarrRelayClient,
         dns::DnsResolver,
         endpoint_info::EndpointInfo,
-        tls::{CaRootsConfig, default_provider},
+        tls::{CaTlsConfig, default_provider},
     };
     use iroh_dns::pkarr::SignedPacket;
     use mainline::{DhtBuilder, MutableItem, Testnet};
@@ -35,10 +56,9 @@ mod tests {
     use rand::{CryptoRng, RngExt, SeedableRng};
 
     use crate::{
-        ZoneStore,
         config::BootstrapOption,
         server::Server,
-        store::{PacketSource, ZoneStoreOptions},
+        store::{Options, PacketSource, ZoneStore},
         util::PublicKeyBytes,
     };
 
@@ -131,10 +151,11 @@ mod tests {
         let signed_packet = SignedPacket::from_bytes(&raw).anyerr()?;
 
         // Publish via relay
-        let tls_config = CaRootsConfig::default()
+        let tls_config = CaTlsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
-        let pkarr_client = PkarrRelayClient::new(pkarr_relay_url, tls_config);
+        let pkarr_client =
+            PkarrRelayClient::new(pkarr_relay_url, tls_config, DnsResolver::default());
         pkarr_client.publish(&signed_packet).await?;
 
         use hickory_server::proto::rr::Name;
@@ -199,10 +220,10 @@ mod tests {
 
         let secret_key = SecretKey::from_bytes(&rng.random());
         let endpoint_id = secret_key.public();
-        let tls_config = CaRootsConfig::default()
+        let tls_config = CaTlsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
-        let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config);
+        let pkarr = PkarrRelayClient::new(pkarr_relay, tls_config, DnsResolver::default());
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(relay_url.clone());
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
@@ -224,7 +245,7 @@ mod tests {
     async fn store_eviction() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let options = ZoneStoreOptions {
+        let options = Options {
             eviction: Duration::from_millis(100),
             eviction_interval: Duration::from_millis(100),
             max_batch_time: Duration::from_millis(100),

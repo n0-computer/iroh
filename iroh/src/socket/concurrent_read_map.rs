@@ -41,13 +41,6 @@ impl<K: Hash + Eq, V> ConcurrentReadMap<K, V> {
         self.0.remove(key, &self.0.guard());
     }
 
-    pub(crate) fn get(&self, key: &K) -> Option<V>
-    where
-        V: Clone,
-    {
-        self.0.get(key, &self.0.guard()).cloned()
-    }
-
     pub(crate) fn read_only(&self) -> ReadOnlyMap<K, V> {
         ReadOnlyMap(self.0.clone())
     }
