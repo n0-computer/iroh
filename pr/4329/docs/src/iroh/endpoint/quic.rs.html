@@ -487,7 +487,7 @@
 <a href=#487 id=487 data-nosnippet>487</a>    /// interact with the [`QuicTransportConfigBuilder::max_idle_timeout`], if the last path is
 <a href=#488 id=488 data-nosnippet>488</a>    /// abandoned the entire connection will be closed.
 <a href=#489 id=489 data-nosnippet>489</a>    ///
-<a href=#490 id=490 data-nosnippet>490</a>    /// Note: values higher than [`PATH_MAX_IDLE_TIMEOUT`] are clamped and a warning is logged.
+<a href=#490 id=490 data-nosnippet>490</a>    /// Note: values higher than `PATH_MAX_IDLE_TIMEOUT` (15 seconds) are clamped and a warning is logged.
 <a href=#491 id=491 data-nosnippet>491</a>    </span><span class="kw">pub fn </span>default_path_max_idle_timeout(<span class="kw-2">mut </span><span class="self">self</span>, timeout: Duration) -&gt; <span class="self">Self </span>{
 <a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">if </span>timeout &gt; PATH_MAX_IDLE_TIMEOUT {
 <a href=#493 id=493 data-nosnippet>493</a>            <span class="macro">warn!</span>(

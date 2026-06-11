@@ -17,7 +17,7 @@
 <a href=#17 id=17 data-nosnippet>17</a>
 <a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">use </span><span class="kw">crate</span>::endpoint::Builder;
 <a href=#19 id=19 data-nosnippet>19</a>
-<a href=#20 id=20 data-nosnippet>20</a><span class="doccomment">/// Defines a preset
+<a href=#20 id=20 data-nosnippet>20</a><span class="doccomment">/// A reusable bundle of endpoint [`Builder`] configuration.
 <a href=#21 id=21 data-nosnippet>21</a></span><span class="kw">pub trait </span>Preset {
 <a href=#22 id=22 data-nosnippet>22</a>    <span class="doccomment">/// Applies the configuration to the passed in [`Builder`].
 <a href=#23 id=23 data-nosnippet>23</a>    </span><span class="kw">fn </span>apply(<span class="self">self</span>, builder: Builder) -&gt; Builder;
@@ -86,8 +86,8 @@
 <a href=#86 id=86 data-nosnippet>86</a>/// - setting the [`rustls::crypto::CryptoProvider`] to [ring] or [aws-lc-rs], depending
 <a href=#87 id=87 data-nosnippet>87</a>///   on which feature is enabled in iroh (preferring ring if both are enabled).
 <a href=#88 id=88 data-nosnippet>88</a>///
-<a href=#89 id=89 data-nosnippet>89</a>/// Due to the last point, this preset is only available with the `ring` or
-<a href=#90 id=90 data-nosnippet>90</a>/// `aws-lc-rs` preset installed.
+<a href=#89 id=89 data-nosnippet>89</a>/// Due to the last point, this preset is only available with the `tls-ring` or
+<a href=#90 id=90 data-nosnippet>90</a>/// `tls-aws-lc-rs` feature enabled.
 <a href=#91 id=91 data-nosnippet>91</a>/// If you want to set your own crypto provider, we recommend copying the
 <a href=#92 id=92 data-nosnippet>92</a>/// implementation of this preset into your own and setting the appropriate crypto
 <a href=#93 id=93 data-nosnippet>93</a>/// provider there.
@@ -148,8 +148,8 @@
 <a href=#148 id=148 data-nosnippet>148</a>/// - setting the [`rustls::crypto::CryptoProvider`] to [ring] or [aws-lc-rs], depending
 <a href=#149 id=149 data-nosnippet>149</a>///   on which feature is enabled in iroh (preferring ring if both are enabled).
 <a href=#150 id=150 data-nosnippet>150</a>///
-<a href=#151 id=151 data-nosnippet>151</a>/// Due to the last point, this preset is only available with the `ring` or
-<a href=#152 id=152 data-nosnippet>152</a>/// `aws-lc-rs` preset installed.
+<a href=#151 id=151 data-nosnippet>151</a>/// Due to the last point, this preset is only available with the `tls-ring` or
+<a href=#152 id=152 data-nosnippet>152</a>/// `tls-aws-lc-rs` feature enabled.
 <a href=#153 id=153 data-nosnippet>153</a>/// If you want to set your own crypto provider, we recommend copying the
 <a href=#154 id=154 data-nosnippet>154</a>/// implementation of this preset into your own and setting the appropriate crypto
 <a href=#155 id=155 data-nosnippet>155</a>/// provider there.

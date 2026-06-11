@@ -3,10 +3,10 @@
 <a href=#3 id=3 data-nosnippet>3</a>//! To connect to an iroh endpoint a [`EndpointAddr`] is needed, which may contain a
 <a href=#4 id=4 data-nosnippet>4</a>//! [`RelayUrl`] or one or more *direct addresses* in addition to the [`EndpointId`].
 <a href=#5 id=5 data-nosnippet>5</a>//!
-<a href=#6 id=6 data-nosnippet>6</a>//! Since there is a conversion from [`EndpointId`] to [`EndpointAddr`], you can also use
+<a href=#6 id=6 data-nosnippet>6</a>//! Since there is a conversion from [`EndpointId`] to [`EndpointAddr`], you can also
 <a href=#7 id=7 data-nosnippet>7</a>//! connect directly with a [`EndpointId`].
 <a href=#8 id=8 data-nosnippet>8</a>//!
-<a href=#9 id=9 data-nosnippet>9</a>//! For this to work however, the endpoint has to get the addressing  information by
+<a href=#9 id=9 data-nosnippet>9</a>//! For this to work however, the endpoint has to get the addressing information by
 <a href=#10 id=10 data-nosnippet>10</a>//! other means.
 <a href=#11 id=11 data-nosnippet>11</a>//!
 <a href=#12 id=12 data-nosnippet>12</a>//! [`AddressLookup`] is an automated system for an [`Endpoint`] to retrieve this addressing
@@ -50,9 +50,9 @@
 <a href=#50 id=50 data-nosnippet>50</a>//! [`iroh-mdns-address-lookup`]: https://docs.rs/iroh-mdns-address-lookup
 <a href=#51 id=51 data-nosnippet>51</a>//! [`iroh-mainline-address-lookup`]: https://docs.rs/iroh-mainline-address-lookup
 <a href=#52 id=52 data-nosnippet>52</a>//!
-<a href=#53 id=53 data-nosnippet>53</a>//! To use multiple Address Lookup'ssimultaneously you can call [`Builder::address_lookup`].
+<a href=#53 id=53 data-nosnippet>53</a>//! To use multiple Address Lookups simultaneously you can call [`Builder::address_lookup`].
 <a href=#54 id=54 data-nosnippet>54</a>//! This will use [`AddressLookupServices`] under the hood, which performs lookups to all
-<a href=#55 id=55 data-nosnippet>55</a>//! Address Lookupsystems at the same time.
+<a href=#55 id=55 data-nosnippet>55</a>//! Address Lookup systems at the same time.
 <a href=#56 id=56 data-nosnippet>56</a>//!
 <a href=#57 id=57 data-nosnippet>57</a>//! [`Builder::address_lookup`] takes any type that implements [`AddressLookupBuilder`]. You can
 <a href=#58 id=58 data-nosnippet>58</a>//! implement that trait on a builder struct if your Address Lookup needs information
@@ -60,8 +60,8 @@
 <a href=#60 id=60 data-nosnippet>60</a>//! is built by calling [`AddressLookupBuilder::into_address_lookup`], passing the finished [`Endpoint`] to your
 <a href=#61 id=61 data-nosnippet>61</a>//! builder.
 <a href=#62 id=62 data-nosnippet>62</a>//!
-<a href=#63 id=63 data-nosnippet>63</a>//! If your Address Lookupdoes not need any information from its endpoint, you can
-<a href=#64 id=64 data-nosnippet>64</a>//! pass the Address Lookupservice directly to [`Builder::address_lookup`]: All types that
+<a href=#63 id=63 data-nosnippet>63</a>//! If your Address Lookup does not need any information from its endpoint, you can
+<a href=#64 id=64 data-nosnippet>64</a>//! pass the Address Lookup service directly to [`Builder::address_lookup`]: All types that
 <a href=#65 id=65 data-nosnippet>65</a>//! implement [`AddressLookup`] also have a blanket implementation of [`AddressLookupBuilder`].
 <a href=#66 id=66 data-nosnippet>66</a>//!
 <a href=#67 id=67 data-nosnippet>67</a>//! # Examples
@@ -334,7 +334,7 @@
 <a href=#334 id=334 data-nosnippet>334</a>    <span class="doccomment">/// Publishes the given [`EndpointData`] to the Address Lookup mechanism.
 <a href=#335 id=335 data-nosnippet>335</a>    ///
 <a href=#336 id=336 data-nosnippet>336</a>    /// This is fire and forget, since the [`Endpoint`] can not wait for successful
-<a href=#337 id=337 data-nosnippet>337</a>    /// publishing. If publishing is async, the implementation should start it's own task.
+<a href=#337 id=337 data-nosnippet>337</a>    /// publishing. If publishing is async, the implementation should start its own task.
 <a href=#338 id=338 data-nosnippet>338</a>    ///
 <a href=#339 id=339 data-nosnippet>339</a>    /// This will be called from a tokio task, so it is safe to spawn new tasks.
 <a href=#340 id=340 data-nosnippet>340</a>    /// These tasks will be run on the runtime of the [`super::Endpoint`].
@@ -369,7 +369,7 @@
 <a href=#369 id=369 data-nosnippet>369</a>/// directly from [`Item`].
 <a href=#370 id=370 data-nosnippet>370</a></span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq)]
 <a href=#371 id=371 data-nosnippet>371</a></span><span class="kw">pub struct </span>Item {
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="doccomment">/// The endpoint info for the endpoint, as discovered by the the Address Lookup.
+<a href=#372 id=372 data-nosnippet>372</a>    <span class="doccomment">/// The endpoint info for the endpoint, as discovered by the Address Lookup.
 <a href=#373 id=373 data-nosnippet>373</a>    </span>endpoint_info: EndpointInfo,
 <a href=#374 id=374 data-nosnippet>374</a>    <span class="doccomment">/// A static string to identify the Address Lookup source.
 <a href=#375 id=375 data-nosnippet>375</a>    ///
@@ -421,12 +421,12 @@
 <a href=#421 id=421 data-nosnippet>421</a>        <span class="self">self</span>.last_updated
 <a href=#422 id=422 data-nosnippet>422</a>    }
 <a href=#423 id=423 data-nosnippet>423</a>
-<a href=#424 id=424 data-nosnippet>424</a>    <span class="doccomment">/// Converts into a [`EndpointAddr`] by cloning the needed fields.
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="doccomment">/// Returns an [`EndpointAddr`] by cloning the needed fields.
 <a href=#425 id=425 data-nosnippet>425</a>    </span><span class="kw">pub fn </span>to_endpoint_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; EndpointAddr {
 <a href=#426 id=426 data-nosnippet>426</a>        <span class="self">self</span>.endpoint_info.to_endpoint_addr()
 <a href=#427 id=427 data-nosnippet>427</a>    }
 <a href=#428 id=428 data-nosnippet>428</a>
-<a href=#429 id=429 data-nosnippet>429</a>    <span class="doccomment">/// Converts into a [`EndpointAddr`] without cloning.
+<a href=#429 id=429 data-nosnippet>429</a>    <span class="doccomment">/// Converts into an [`EndpointAddr`] without cloning.
 <a href=#430 id=430 data-nosnippet>430</a>    </span><span class="kw">pub fn </span>into_endpoint_addr(<span class="self">self</span>) -&gt; EndpointAddr {
 <a href=#431 id=431 data-nosnippet>431</a>        <span class="self">self</span>.endpoint_info.into_endpoint_addr()
 <a href=#432 id=432 data-nosnippet>432</a>    }
@@ -457,7 +457,7 @@
 <a href=#457 id=457 data-nosnippet>457</a>///
 <a href=#458 id=458 data-nosnippet>458</a>/// See [`AddressLookup`] and [`Self::resolve`] for details.
 <a href=#459 id=459 data-nosnippet>459</a>///
-<a href=#460 id=460 data-nosnippet>460</a>/// [`Endpoint]: crate::Endpoint
+<a href=#460 id=460 data-nosnippet>460</a>/// [`Endpoint`]: crate::Endpoint
 <a href=#461 id=461 data-nosnippet>461</a></span><span class="attr">#[derive(Debug, Default, Clone)]
 <a href=#462 id=462 data-nosnippet>462</a></span><span class="kw">pub struct </span>AddressLookupServices {
 <a href=#463 id=463 data-nosnippet>463</a>    services: Arc&lt;RwLock&lt;Vec&lt;Box&lt;<span class="kw">dyn </span>AddressLookup&gt;&gt;&gt;&gt;,
