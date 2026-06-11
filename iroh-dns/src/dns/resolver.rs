@@ -298,11 +298,11 @@ impl SimpleDnsResolver {
         host: &str,
         qtype: QueryType,
         dns_type: TYPE,
-        from_cache: fn(&CachedRecord) -> Option<Vec<T>>,
+        from_cache: fn(CachedRecord) -> Option<Vec<T>>,
         parse: fn(&[u8], u16) -> Result<(Vec<T>, u32), DnsError>,
         to_cache: fn(Vec<T>) -> CachedRecord,
     ) -> Result<Vec<T>, DnsError> {
-        if let Some(cached) = self.cache.get(host, qtype).and_then(|r| from_cache(&r)) {
+        if let Some(cached) = self.cache.get(host, qtype).and_then(from_cache) {
             trace!(%host, records = cached.len(), ?qtype, "cache hit");
             return Ok(cached);
         }
@@ -357,10 +357,7 @@ impl SimpleDnsResolver {
                 &host,
                 QueryType::A,
                 TYPE::A,
-                |r| match r {
-                    CachedRecord::A(v) => Some(v.clone()),
-                    _ => None,
-                },
+                CachedRecord::into_a,
                 query::parse_a_response,
                 CachedRecord::A,
             )
@@ -381,10 +378,7 @@ impl SimpleDnsResolver {
                 &host,
                 QueryType::AAAA,
                 TYPE::AAAA,
-                |r| match r {
-                    CachedRecord::Aaaa(v) => Some(v.clone()),
-                    _ => None,
-                },
+                CachedRecord::into_aaaa,
                 query::parse_aaaa_response,
                 CachedRecord::Aaaa,
             )
@@ -401,10 +395,7 @@ impl SimpleDnsResolver {
                 &host,
                 QueryType::TXT,
                 TYPE::TXT,
-                |r| match r {
-                    CachedRecord::Txt(v) => Some(v.clone()),
-                    _ => None,
-                },
+                CachedRecord::into_txt,
                 query::parse_txt_response,
                 CachedRecord::Txt,
             )

@@ -52,6 +52,29 @@ pub(super) enum CachedRecord {
     Txt(Vec<TxtRecordData>),
 }
 
+impl CachedRecord {
+    pub(super) fn into_a(self) -> Option<Vec<Ipv4Addr>> {
+        match self {
+            CachedRecord::A(addrs) => Some(addrs),
+            _ => None,
+        }
+    }
+
+    pub(super) fn into_aaaa(self) -> Option<Vec<Ipv6Addr>> {
+        match self {
+            CachedRecord::Aaaa(addrs) => Some(addrs),
+            _ => None,
+        }
+    }
+
+    pub(super) fn into_txt(self) -> Option<Vec<TxtRecordData>> {
+        match self {
+            CachedRecord::Txt(records) => Some(records),
+            _ => None,
+        }
+    }
+}
+
 /// A cache entry with TTL expiry tracking.
 #[derive(Debug, Clone)]
 struct CacheEntry {
