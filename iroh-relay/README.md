@@ -34,23 +34,23 @@ The relay server supports several access control modes, configured via the
 access = "everyone"
 ```
 
-### Allowlist / Denylist by node ID
+### Allowlist / Denylist by endpoint ID
 
 ```toml
-# Allow only specific nodes
-access.allowlist = ["<node-id>", "<node-id>"]
+# Allow only specific endpoints
+access.allowlist = ["<endpoint-id>", "<endpoint-id>"]
 
-# Or block specific nodes and allow everyone else
-access.denylist = ["<node-id>"]
+# Or block specific endpoints and allow everyone else
+access.denylist = ["<endpoint-id>"]
 ```
 
-### Bearer token (local, no external service)
+### Shared token (local, no external service)
 
 Requires connecting clients to present one of the configured shared secrets via an
 `Authorization: Bearer <token>` header, or a `?token=` URL query parameter.
 
 ```toml
-access.token = ["token-a", "token-b"]
+access.shared_token = ["token-a", "token-b"]
 ```
 
 The token list can also be overridden by the `IROH_RELAY_ACCESS_TOKEN` environment
@@ -66,17 +66,12 @@ On the client side, set the token using
 or
 [`RelayMap::with_auth_token`](https://docs.rs/iroh-relay/latest/iroh_relay/struct.RelayMap.html#method.with_auth_token).
 
-> **Note:** a static token has no expiry or revocation. For production
-> deployments that need token lifecycle management, use `AccessConfig::Http`
-> with a dedicated auth service instead. The `AccessControl` trait also
-> supports runtime revocation via `on_connect`/`on_disconnect` and
-> `Clients::disconnect` — see [`tests/runtime_auth.rs`](tests/runtime_auth.rs)
-> for a worked example.
+> **Note:** this shared token does not support revocation other than updating the config and restarting the service.
 
 ### HTTP callout (external auth service)
 
 The relay calls an external HTTP endpoint for each incoming connection,
-passing the connecting node's ID. The token below authenticates the relay
+passing the connecting endpoint's ID. The token below authenticates the relay
 to your auth service (machine-to-machine), not the connecting client.
 
 ```toml

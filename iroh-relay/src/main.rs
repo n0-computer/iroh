@@ -168,6 +168,7 @@ enum AccessConfig {
     /// To grant access, the HTTP endpoint must return a `200` response with `true` as the response text.
     /// In all other cases, the endpoint will be denied access.
     Http(HttpAccessConfig),
+    #[serde(rename = "shared_token")]
     /// Allows only clients that present one of the configured bearer tokens.
     ///
     /// The token is read from the `Authorization: Bearer <token>` request header,
@@ -185,9 +186,9 @@ enum AccessConfig {
     /// # Example
     ///
     /// ```toml
-    /// access.token = ["token-a", "token-b"]
+    /// access.shared_token = ["token-a", "token-b"]
     /// ```
-    Token(Vec<String>),
+    SharedToken(Vec<String>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -222,16 +223,16 @@ impl TryFrom<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
                 }
                 Ok(Arc::new(HttpAccess { client, config }))
             }
-            AccessConfig::Token(mut tokens) => {
+            AccessConfig::SharedToken(mut tokens) => {
                 // A single env var token replaces the entire list. A comma-separated list
                 // is intentionally not supported to avoid restricting the token character set.
                 if let Ok(env_token) = std::env::var(ENV_RELAY_ACCESS_TOKEN) {
                     tokens = vec![env_token];
                 }
                 if tokens.is_empty() || tokens.iter().any(|t| t.is_empty()) {
-                    bail_any!("access.token must not be empty or contain empty strings");
+                    bail_any!("access.shared_token must not be empty or contain empty strings");
                 }
-                Ok(Arc::new(TokenAccess(tokens)))
+                Ok(Arc::new(SharedTokenAccess(tokens)))
             }
         }
     }
@@ -267,9 +268,9 @@ impl AccessControl for DenylistAccess {
 
 /// An [`AccessControl`] admitting only clients that present one of the configured bearer tokens.
 #[derive(Debug)]
-struct TokenAccess(Vec<String>);
+struct SharedTokenAccess(Vec<String>);
 
-impl AccessControl for TokenAccess {
+impl AccessControl for SharedTokenAccess {
     async fn on_connect(&self, request: &ClientRequest) -> Access {
         match request.auth_token() {
             Some(token) if self.0.contains(&token) => Access::Allow,
@@ -859,13 +860,13 @@ mod tests {
         );
 
         let config = r#"
-            access.token = ["token-a", "token-b"]
+            access.shared_token = ["token-a", "token-b"]
         "#
         .to_string();
         let config = Config::from_str(dbg!(&config))?;
         assert_eq!(
             config.access,
-            AccessConfig::Token(vec!["token-a".to_string(), "token-b".to_string()])
+            AccessConfig::SharedToken(vec!["token-a".to_string(), "token-b".to_string()])
         );
 
         Ok(())
@@ -874,7 +875,7 @@ mod tests {
     #[tokio::test]
     async fn test_access_token_empty_is_rejected() -> Result {
         let config = r#"
-            access.token = []
+            access.shared_token = []
         "#;
         let config = Config::from_str(config)?;
         assert!(
@@ -883,7 +884,7 @@ mod tests {
         );
 
         let config = r#"
-            access.token = [""]
+            access.shared_token = [""]
         "#;
         let config = Config::from_str(config)?;
         assert!(
