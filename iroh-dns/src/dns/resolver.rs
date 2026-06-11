@@ -448,11 +448,11 @@ impl Resolver for Arc<SimpleDnsResolver> {
     }
 
     fn clear_cache(&self) {
-        SimpleDnsResolver::clear_cache(&self);
+        SimpleDnsResolver::clear_cache(self);
     }
 
     fn reset(&self) -> Box<dyn Resolver> {
-        Box::new(Arc::new(SimpleDnsResolver::reset(&self)))
+        Box::new(Arc::new(SimpleDnsResolver::reset(self)))
     }
 }
 
