@@ -372,8 +372,8 @@ jobs:
       RUSTDOCFLAGS: ""
       # Pin to the nightly that the pinned `cargo-check-external-types`
       # release was last tested against. Update both together.
-      CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.4.0"
-      TOOLCHAIN: "nightly-2025-10-18"
+      CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.5.0"
+      TOOLCHAIN: "nightly-2026-03-20"
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master
