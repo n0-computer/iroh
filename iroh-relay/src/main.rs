@@ -158,6 +158,8 @@ enum AccessConfig {
     Allowlist(Vec<EndpointId>),
     /// Allows everyone, except these endpoints.
     Denylist(Vec<EndpointId>),
+    /// Auth user based on API keys
+    Apikeylist(Vec<String>),
     /// Performs a HTTP POST request to determine access for each endpoint that connects to the relay.
     ///
     /// The request will have a header `X-Iroh-Endpoint-Id` set to the hex-encoded endpoint id attempting
@@ -187,6 +189,7 @@ impl From<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
             AccessConfig::Everyone => Arc::new(iroh_relay::server::AllowAll),
             AccessConfig::Allowlist(allow_list) => Arc::new(AllowlistAccess(allow_list)),
             AccessConfig::Denylist(deny_list) => Arc::new(DenylistAccess(deny_list)),
+            AccessConfig::Apikeylist(apikeylist) => Arc::new(ApikeylistAccess(apikeylist)),
             AccessConfig::Http(mut config) => {
                 let client = reqwest::Client::builder()
                     .use_rustls_tls()
@@ -226,6 +229,20 @@ impl AccessControl for DenylistAccess {
             Access::Deny { reason: None }
         } else {
             Access::Allow
+        }
+    }
+}
+
+/// An [`AccessControl`] admitting endpoints based on API keys.
+#[derive(Debug)]
+struct ApikeylistAccess(Vec<String>);
+
+impl AccessControl for ApikeylistAccess {
+    async fn on_connect(&self, request: &ClientRequest) -> Access {
+        if self.0.contains(&request.auth_token().unwrap()) {
+            Access::Allow
+        } else {
+            Access::Deny { reason: None }
         }
     }
 }
@@ -757,6 +774,19 @@ mod tests {
         );
         let config = Config::from_str(dbg!(&config))?;
         assert_eq!(config.access, AccessConfig::Allowlist(vec![endpoint_id]));
+
+        let config = format!(
+            "
+            access.apikeylist = [
+              \"{endpoint_id}\",
+            ]
+        "
+        );
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Apikeylist(vec![endpoint_id.to_string()])
+        );
 
         let config = r#"
             access.http.url = "https://example.com/foo/bar?boo=baz"
