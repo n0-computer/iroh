@@ -189,7 +189,6 @@ pub(crate) struct Options {
     pub(crate) hooks: EndpointHooksList,
     pub(crate) path_selector: Arc<dyn PathSelector>,
     pub(crate) portmapper_config: portmapper::PortmapperConfig,
-    pub(crate) net_report_config: crate::net_report::Config,
 
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
@@ -886,7 +885,6 @@ impl EndpointInner {
             hooks,
             path_selector,
             portmapper_config,
-            net_report_config,
             static_config,
             configured_addrs,
         } = opts;
@@ -1046,13 +1044,11 @@ impl EndpointInner {
                 ipv4: true,
                 ipv6: has_ipv6_transport,
             });
-            net_report::Options::new(tls_config.clone())
-                .quic_config(qad_config)
-                .net_report_config(net_report_config)
+            net_report::Options::new(tls_config.clone()).quic_config(qad_config)
         };
 
         #[cfg(wasm_browser)]
-        let net_report_config = net_report::Options::default().net_report_config(net_report_config);
+        let net_report_config = net_report::Options::default();
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
@@ -2176,7 +2172,6 @@ mod tests {
             hooks: Default::default(),
             path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
-            net_report_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
         }
@@ -2591,7 +2586,6 @@ mod tests {
             hooks: Default::default(),
             path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
-            net_report_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
         };
