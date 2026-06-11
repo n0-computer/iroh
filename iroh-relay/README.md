@@ -46,17 +46,20 @@ access.denylist = ["<node-id>"]
 
 ### Bearer token (local, no external service)
 
-Requires connecting clients to present a shared secret via an
+Requires connecting clients to present one of the configured shared secrets via an
 `Authorization: Bearer <token>` header, or a `?token=` URL query parameter.
 
 ```toml
-access.token = "my-static-token"
+access.token = ["token-a", "token-b"]
 ```
 
-The token can also be supplied via the `IROH_RELAY_ACCESS_TOKEN` environment
-variable, which takes precedence over the config file value.
+The token list can also be overridden by the `IROH_RELAY_ACCESS_TOKEN` environment
+variable, which sets a single allowed token and takes precedence over the config file
+value. A single value is used (rather than a comma-separated list) to avoid restricting
+the character set of tokens.
 
-The token must not be an empty string; the server will fail to start if it is.
+The token list must not be empty, and no token may be an empty string; the server will
+fail to start if either condition is violated.
 
 On the client side, set the token using
 [`RelayConfig::with_auth_token`](https://docs.rs/iroh-relay/latest/iroh_relay/struct.RelayConfig.html#method.with_auth_token)

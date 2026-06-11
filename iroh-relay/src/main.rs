@@ -22,7 +22,7 @@ use iroh_relay::{
         DEFAULT_CERT_RELOAD_INTERVAL, QuicConfig, reloading_resolver,
     },
 };
-use n0_error::{Result, StdResultExt, bail_any};
+use n0_error::{AnyError, Result, StdResultExt, bail_any};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use tracing_subscriber::{EnvFilter, prelude::*};
@@ -168,23 +168,26 @@ enum AccessConfig {
     /// To grant access, the HTTP endpoint must return a `200` response with `true` as the response text.
     /// In all other cases, the endpoint will be denied access.
     Http(HttpAccessConfig),
-    /// Allows only clients that present the configured bearer token.
+    /// Allows only clients that present one of the configured bearer tokens.
     ///
     /// The token is read from the `Authorization: Bearer <token>` request header,
     /// or from the `?token=` URL query parameter as a fallback.
     /// All other connections are denied.
     ///
-    /// The token can also be set via the `IROH_RELAY_ACCESS_TOKEN` environment
-    /// variable, which takes precedence over the config file value.
+    /// The token list can also be overridden by the `IROH_RELAY_ACCESS_TOKEN` environment
+    /// variable, which sets a single allowed token and takes precedence over the config
+    /// file value. A single value is used (rather than a comma-separated list) to avoid
+    /// restricting the character set of tokens.
     ///
-    /// The token must not be an empty string; the server will fail to start if it is.
+    /// The token list must not be empty, and no token may be an empty string;
+    /// the server will fail to start if either condition is violated.
     ///
     /// # Example
     ///
     /// ```toml
-    /// access.token = "my-static-token"
+    /// access.token = ["token-a", "token-b"]
     /// ```
-    Token(String),
+    Token(Vec<String>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -200,12 +203,14 @@ struct HttpAccessConfig {
     bearer_token: Option<String>,
 }
 
-impl From<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
-    fn from(cfg: AccessConfig) -> Self {
+impl TryFrom<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
+    type Error = AnyError;
+
+    fn try_from(cfg: AccessConfig) -> Result<Self> {
         match cfg {
-            AccessConfig::Everyone => Arc::new(iroh_relay::server::AllowAll),
-            AccessConfig::Allowlist(allow_list) => Arc::new(AllowlistAccess(allow_list)),
-            AccessConfig::Denylist(deny_list) => Arc::new(DenylistAccess(deny_list)),
+            AccessConfig::Everyone => Ok(Arc::new(iroh_relay::server::AllowAll)),
+            AccessConfig::Allowlist(allow_list) => Ok(Arc::new(AllowlistAccess(allow_list))),
+            AccessConfig::Denylist(deny_list) => Ok(Arc::new(DenylistAccess(deny_list))),
             AccessConfig::Http(mut config) => {
                 let client = reqwest::Client::builder()
                     .use_rustls_tls()
@@ -215,13 +220,18 @@ impl From<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
                 if let Ok(token) = std::env::var(ENV_HTTP_BEARER_TOKEN) {
                     config.bearer_token = Some(token);
                 }
-                Arc::new(HttpAccess { client, config })
+                Ok(Arc::new(HttpAccess { client, config }))
             }
-            AccessConfig::Token(mut token) => {
+            AccessConfig::Token(mut tokens) => {
+                // A single env var token replaces the entire list. A comma-separated list
+                // is intentionally not supported to avoid restricting the token character set.
                 if let Ok(env_token) = std::env::var(ENV_RELAY_ACCESS_TOKEN) {
-                    token = env_token;
+                    tokens = vec![env_token];
                 }
-                Arc::new(TokenAccess(token))
+                if tokens.is_empty() || tokens.iter().any(|t| t.is_empty()) {
+                    bail_any!("access.token must not be empty or contain empty strings");
+                }
+                Ok(Arc::new(TokenAccess(tokens)))
             }
         }
     }
@@ -255,16 +265,15 @@ impl AccessControl for DenylistAccess {
     }
 }
 
-/// An [`AccessControl`] admitting only presenting a valid configured access token.
+/// An [`AccessControl`] admitting only clients that present one of the configured bearer tokens.
 #[derive(Debug)]
-struct TokenAccess(String);
+struct TokenAccess(Vec<String>);
 
 impl AccessControl for TokenAccess {
     async fn on_connect(&self, request: &ClientRequest) -> Access {
-        if request.auth_token().as_deref() == Some(self.0.as_str()) {
-            Access::Allow
-        } else {
-            Access::Deny { reason: None }
+        match request.auth_token() {
+            Some(token) if self.0.contains(&token) => Access::Allow,
+            _ => Access::Deny { reason: None },
         }
     }
 }
@@ -715,13 +724,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
         relay_config.tls = tls_config;
         relay_config.limits = limits;
         relay_config.key_cache_capacity = cfg.key_cache_capacity;
-        if let AccessConfig::Token(ref token) = cfg.access {
-            let effective = std::env::var(ENV_RELAY_ACCESS_TOKEN).unwrap_or_else(|_| token.clone());
-            if effective.is_empty() {
-                bail_any!("Access token must not be an empty string");
-            }
-        }
-        relay_config.access = cfg.access.clone().into();
+        relay_config.access = cfg.access.clone().try_into()?;
         Some(relay_config)
     } else {
         None
@@ -856,13 +859,13 @@ mod tests {
         );
 
         let config = r#"
-            access.token = "my-static-token"
+            access.token = ["token-a", "token-b"]
         "#
         .to_string();
         let config = Config::from_str(dbg!(&config))?;
         assert_eq!(
             config.access,
-            AccessConfig::Token("my-static-token".to_string())
+            AccessConfig::Token(vec!["token-a".to_string(), "token-b".to_string()])
         );
 
         Ok(())
@@ -871,12 +874,21 @@ mod tests {
     #[tokio::test]
     async fn test_access_token_empty_is_rejected() -> Result {
         let config = r#"
-            access.token = ""
+            access.token = []
         "#;
         let config = Config::from_str(config)?;
         assert!(
             build_relay_config(config).await.is_err(),
-            "empty access token should be rejected at startup"
+            "empty token list should be rejected at startup"
+        );
+
+        let config = r#"
+            access.token = [""]
+        "#;
+        let config = Config::from_str(config)?;
+        assert!(
+            build_relay_config(config).await.is_err(),
+            "empty string token should be rejected at startup"
         );
         Ok(())
     }
