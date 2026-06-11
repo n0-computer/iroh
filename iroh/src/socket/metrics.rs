@@ -1,32 +1,41 @@
 use iroh_metrics::{Counter, MetricsGroup};
 use serde::{Deserialize, Serialize};
 
-/// Enum of metrics for the module
-// TODO(frando): Add description doc strings for each metric.
-#[allow(missing_docs)]
+/// Metrics collected by the iroh socket.
 #[derive(Debug, Serialize, Deserialize, MetricsGroup)]
 #[non_exhaustive]
 #[metrics(name = "socket", default)]
 pub struct Metrics {
+    /// Intended to count updates to the local direct address set, but currently unused
+    /// (never incremented).
     pub update_direct_addrs: Counter,
 
-    // Sends (data or disco)
+    /// Number of bytes sent over IPv4.
     pub send_ipv4: Counter,
+    /// Number of bytes sent over IPv6.
     pub send_ipv6: Counter,
+    /// Number of bytes sent over the relay transport.
     pub send_relay: Counter,
 
-    // Data packets (non-disco)
+    /// Number of data bytes received over the relay transport.
     pub recv_data_relay: Counter,
-    // Number of bytes received on any custom transport.
+    /// Number of data bytes received over any custom transport.
     pub recv_data_custom: Counter,
+    /// Number of data bytes received over IPv4.
     pub recv_data_ipv4: Counter,
+    /// Number of data bytes received over IPv6.
     pub recv_data_ipv6: Counter,
     /// Number of QUIC datagrams received.
     pub recv_datagrams: Counter,
-    /// Number of datagrams received using GRO
+    /// Number of receive events that used GRO (coalesced datagram batches).
+    ///
+    /// This counts batches, not the individual datagrams within them. See
+    /// [`Self::recv_datagrams`] for the datagram count.
     pub recv_gro_datagrams: Counter,
 
-    // How many times our relay home endpoint DI has changed from non-zero to a different non-zero.
+    /// Number of times the home relay changed to a different relay.
+    ///
+    /// This includes the initial assignment from no home relay to a home relay.
     pub relay_home_change: Counter,
 
     /*
@@ -79,11 +88,18 @@ pub struct Metrics {
     /// Number of custom transport paths closed.
     pub transport_custom_paths_removed: Counter,
 
+    /// Number of iterations of the main socket actor loop.
     pub actor_tick_main: Counter,
+    /// Number of actor messages processed by the socket actor loop.
     pub actor_tick_msg: Counter,
+    /// Number of periodic re-STUN timer ticks handled by the socket actor loop.
     pub actor_tick_re_stun: Counter,
+    /// Number of port-mapping change events handled by the socket actor loop.
     pub actor_tick_portmap_changed: Counter,
+    /// Intended to count direct address heartbeat ticks, but currently unused (never incremented).
     pub actor_tick_direct_addr_heartbeat: Counter,
+    /// Number of local network interface (link) change events handled by the socket actor loop.
     pub actor_link_change: Counter,
+    /// Number of times an input watcher or receiver closed in the socket actor loop.
     pub actor_tick_other: Counter,
 }

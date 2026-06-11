@@ -77,7 +77,7 @@ impl ProtocolVersion {
         Self::all().collect::<Vec<_>>().join(", ")
     }
 
-    /// Returns all supported protocol versions in a comma-seperated string as an HTTP header value.
+    /// Returns all supported protocol versions in a comma-separated string as an HTTP header value.
     pub fn all_as_header_value() -> HeaderValue {
         HeaderValue::from_bytes(Self::all_joined().as_bytes()).expect("valid header name")
     }

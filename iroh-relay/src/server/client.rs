@@ -42,7 +42,7 @@ pub(super) struct Packet {
     data: Datagrams,
 }
 
-/// Configuration for a [`Client`].
+/// Configuration for a client connection.
 ///
 /// Generic over the stream type to support different WebSocket implementations.
 #[derive(Debug)]

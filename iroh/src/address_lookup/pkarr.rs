@@ -259,7 +259,9 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
 /// that it only publishes address lookup information, for the corresponding resolver use
 /// the [`PkarrResolver`] together with [`AddressLookupServices`].
 ///
-/// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
+/// By default this publisher only publishes the [`RelayUrl`], to avoid leaking IP addresses to
+/// the public pkarr server.  Which addresses are published is controlled by the [`AddrFilter`]
+/// set via [`PkarrPublisherBuilder::addr_filter`].
 ///
 /// [pkarr]: https://pkarr.org
 /// [module docs]: crate::address_lookup::pkarr
@@ -276,7 +278,7 @@ pub struct PkarrPublisher {
 impl PkarrPublisher {
     /// Returns a [`PkarrPublisherBuilder`] that publishes endpoint info to a [pkarr] relay at `pkarr_relay`.
     ///
-    /// If no further options are set, the pkarr publisher  will use [`DEFAULT_PKARR_TTL`] as the
+    /// If no further options are set, the pkarr publisher will use [`DEFAULT_PKARR_TTL`] as the
     /// time-to-live value for the published packets, and it will republish Address Lookup information
     /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
     ///
