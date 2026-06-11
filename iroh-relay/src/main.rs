@@ -35,6 +35,8 @@ const DEV_MODE_HTTP_PORT: u16 = 3340;
 const X_IROH_ENDPOINT_ID: &str = "X-Iroh-NodeId";
 /// Environment variable to read a bearer token for HTTP auth requests from.
 const ENV_HTTP_BEARER_TOKEN: &str = "IROH_RELAY_HTTP_BEARER_TOKEN";
+/// Environment variable to verify relay access (without an external auth service)
+const ENV_RELAY_ACCESS_TOKEN: &str = "IROH_RELAY_ACCESS_TOKEN";
 
 /// A relay server for iroh.
 #[derive(Parser, Debug, Clone)]
@@ -166,6 +168,23 @@ enum AccessConfig {
     /// To grant access, the HTTP endpoint must return a `200` response with `true` as the response text.
     /// In all other cases, the endpoint will be denied access.
     Http(HttpAccessConfig),
+    /// Allows only clients that present the configured bearer token.
+    ///
+    /// The token is read from the `Authorization: Bearer <token>` request header,
+    /// or from the `?token=` URL query parameter as a fallback.
+    /// All other connections are denied.
+    ///
+    /// The token can also be set via the `IROH_RELAY_ACCESS_TOKEN` environment
+    /// variable, which takes precedence over the config file value.
+    ///
+    /// The token must not be an empty string; the server will fail to start if it is.
+    ///
+    /// # Example
+    ///
+    /// ```toml
+    /// access.token = "my-secret"
+    /// ```
+    Token(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -197,7 +216,15 @@ impl From<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
                     config.bearer_token = Some(token);
                 }
                 Arc::new(HttpAccess { client, config })
-            }
+            },
+           AccessConfig::Token(mut token) => {
+                if let Ok(env_token) = std::env::var(ENV_RELAY_ACCESS_TOKEN) {
+                    token = env_token;
+                }
+                if token.is_empty() {
+                    bail_any!("Access token must not be empty");
+                }
+                Arc::new(TokenAccess(token))
         }
     }
 }
@@ -226,6 +253,20 @@ impl AccessControl for DenylistAccess {
             Access::Deny { reason: None }
         } else {
             Access::Allow
+        }
+    }
+}
+
+/// An [`AccessControl`] admitting only presenting a valid configured access token.
+#[derive(Debug)]
+struct TokenAccess(String);
+
+impl AccessControl for TokenAccess {
+    async fn on_connect(&self, request: &ClientRequest) -> Access {
+        if request.auth_token().as_deref() == Some(self.0.as_str()) {
+            Access::Allow
+        } else {
+            Access::Deny { reason: None }
         }
     }
 }
