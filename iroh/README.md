@@ -63,11 +63,11 @@ endpoint is directly reachable at one of its addresses.
 
 To discover addressing information for an endpoint, iroh uses
 [address lookup services]. With address lookup, you can connect to other
-endpoints directly with their [`EndpointId`]. Addressing information will then
+endpoints with only their [`EndpointId`]. Addressing information will then
 be resolved on-demand.
 
 The [`N0` preset] installs the DNS/Pkarr address lookup service, which uses
-servers hosted by N0 to provide global lookup for endpoints.
+servers hosted by [n0] to provide global lookup for endpoints.
 
 ## Example
 
@@ -180,3 +180,4 @@ shall be dual licensed as above, without any additional terms or conditions.
 [iroh-blobs]: https://github.com/n0-computer/iroh-blobs
 [iroh-gossip]: https://github.com/n0-computer/iroh-gossip
 [iroh-ffi]: https://github.com/n0-computer/iroh-ffi
+[n0]: https://n0.computer
