@@ -28,7 +28,7 @@ use std::{
 
 use arc_swap::ArcSwap;
 use iroh_base::EndpointId;
-use n0_error::{StackError, e, stack_error};
+use n0_error::{AnyError, StackError, e, stack_error};
 use n0_future::{
     Either, MaybeFuture, Stream, StreamExt,
     boxed::BoxFuture,
@@ -98,6 +98,11 @@ pub enum DnsError {
     },
     #[error("Missing host")]
     MissingHost {},
+
+    /// DEPRECATED: replaced with more specific errors (see below)
+    #[error("Failed to resolve")]
+    Resolve { source: AnyError },
+
     #[cfg(not(wasm_browser))]
     #[error("invalid DNS packet")]
     InvalidPacket {
