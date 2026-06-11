@@ -11,13 +11,13 @@
 //!
 //! In one terminal, run
 //!
-//!     cargo run --example search --features=examples  -- listen "hello-world" "foo-bar" "hello-moon"
+//!     cargo run --example search -- listen "hello-world" "foo-bar" "hello-moon"
 //!
 //! This spawns an iroh endpoint with three blobs. It will print the endpoint's endpoint id.
 //!
 //! In another terminal, run
 //!
-//!     cargo run --example search --features=examples  -- query <endpoint-id> hello
+//!     cargo run --example search -- query <endpoint-id> hello
 //!
 //! Replace <endpoint-id> with the endpoint id from above. This will connect to the listening endpoint with our
 //! protocol and query for the string `hello`. The listening endpoint will return a number of how many

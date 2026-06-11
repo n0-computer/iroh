@@ -5,7 +5,7 @@
 //!
 //! ## Running the Example
 //!
-//!     cargo run --example echo-no-router --features=examples
+//!     cargo run --example echo-no-router
 
 use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 use n0_error::{AnyError as Error, Result, StdResultExt};
