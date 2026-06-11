@@ -42,7 +42,7 @@ use netwatch::{
     ip::LocalAddresses,
 };
 use noq::{
-    NetworkChangeHint,
+    NetworkChangeHint, TokenStore,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use rand::RngExt;
@@ -238,6 +238,8 @@ pub(crate) struct StaticConfig {
     pub(crate) client_config: QuicClientConfig,
     #[debug("Arc<RustlsTokenKey>")]
     pub(crate) token_key: Arc<RustlsTokenKey>,
+    #[debug("Arc<dyn TokenStore>")]
+    pub(crate) token_store: Arc<dyn TokenStore>,
     pub(crate) transport_config: QuicTransportConfig,
 }
 
@@ -265,6 +267,7 @@ impl StaticConfig {
         quic_client_config.set_alpn_protocols(alpn_protocols);
         let mut inner = noq::ClientConfig::new(Arc::new(quic_client_config));
         inner.transport_config(transport_config);
+        inner.token_store(self.token_store.clone());
         inner
     }
 }
@@ -800,7 +803,7 @@ impl DirectAddrUpdateState {
         self.sock.metrics.net_report.portmap_attempts.inc();
         self.port_mapper.procure_mapping();
 
-        debug!("requesting net_report report");
+        trace!("requesting net_report report");
         let sock = self.sock.clone();
 
         let run_done = self.run_done.clone();
@@ -2113,7 +2116,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
-    use iroh_relay::tls::{CaRootsConfig, default_provider};
+    use iroh_relay::tls::{CaTlsConfig, default_provider};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_tracing_test::traced_test;
@@ -2151,6 +2154,7 @@ mod tests {
             client_config: tls_config.make_client_config(false).unwrap(),
             tls_config,
             token_key: Arc::new(RustlsTokenKey::new(rng, &crypto_provider).unwrap()),
+            token_store: Arc::new(noq::TokenMemoryCache::default()),
             transport_config: QuicTransportConfig::default(),
         };
         let server_config = static_config.create_server_config(vec![]);
@@ -2163,7 +2167,7 @@ mod tests {
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
             server_config,
-            tls_config: CaRootsConfig::default()
+            tls_config: CaTlsConfig::default()
                 .client_config(crypto_provider.clone())
                 .unwrap(),
             #[cfg(any(test, feature = "test-utils"))]
@@ -2564,6 +2568,7 @@ mod tests {
             client_config: tls_config.make_client_config(keylog).unwrap(),
             tls_config,
             token_key: Arc::new(RustlsTokenKey::new(&mut rand::rng(), &crypto_provider).unwrap()),
+            token_store: Arc::new(noq::TokenMemoryCache::default()),
             transport_config: QuicTransportConfig::default(),
         };
         let server_config = static_config.create_server_config(vec![ALPN.to_vec()]);
@@ -2579,7 +2584,7 @@ mod tests {
             dns_resolver,
             proxy_url: None,
             server_config,
-            tls_config: CaRootsConfig::default()
+            tls_config: CaTlsConfig::default()
                 .client_config(crypto_provider.clone())
                 .unwrap(),
             metrics: Default::default(),

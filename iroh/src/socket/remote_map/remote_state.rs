@@ -9,7 +9,7 @@ use std::{
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_error::StackResultExt;
 use n0_future::{
-    FuturesUnordered, MergeUnbounded, Stream, StreamExt,
+    FuturesUnordered, MaybeFuture, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
     task::JoinSet,
     time::{self, Duration, Instant},
@@ -38,7 +38,6 @@ use crate::{
         remote_map::remote_state::path_watcher::PathStateSender,
         transports::{self, OwnedTransmit, TransportsSender},
     },
-    util::MaybeFuture,
 };
 
 mod path_state;
@@ -618,9 +617,9 @@ impl RemoteStateActor {
                     target: "iroh::_events::path::abandoned",
                     Level::DEBUG,
                     remote = %self.state.endpoint_id.fmt_short(),
-                    %network_path,
                     %conn_id,
-                    path_id = ?id,
+                    path_id = %id,
+                    %network_path,
                     ?reason
                 );
 
@@ -664,12 +663,13 @@ impl RemoteStateActor {
                 Level::DEBUG,
                 remote = %self.state.endpoint_id.fmt_short(),
                 network_path = %addr,
-                prev_network_path = prev_remote.map(|p| format!("{p}")).unwrap_or("None".to_string()),
+                prev_network_path = %prev_remote.map(|p| format!("{p}")).unwrap_or("None".to_string()),
             );
-            self.apply_selected_change(&addr);
         } else {
             trace!(?current_path, "keeping current path");
         }
+
+        self.apply_selected_path();
     }
 
     /// Propagates a change of [`State::selected_path`] to noq.
@@ -679,7 +679,13 @@ impl RemoteStateActor {
     /// - Sets all non-selected paths to [`PathStatus::Backup`]
     /// - Opens the selected path if it does not exist on the connection
     /// - Sets the selected path to [`PathStatus::Available`]
-    fn apply_selected_change(&mut self, selected: &transports::FourTuple) {
+    fn apply_selected_path(&mut self) {
+        let Some(selected) = self.state.selected_path.clone() else {
+            // We can't open the selected path on all paths if we don't have one yet.
+            // And we can't close all "unselected" paths either, because we don't know which one is selected.
+            return;
+        };
+
         for (conn_id, conn_state) in self.connections.iter() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
@@ -687,7 +693,7 @@ impl RemoteStateActor {
 
             // Open path if it doesn't exist yet.
             self.state
-                .open_path_on_conn(*conn_id, conn_state, &conn, selected);
+                .open_path_on_conn(*conn_id, conn_state, &conn, &selected);
 
             for (path_id, path_remote) in conn_state.paths.iter() {
                 let Some(path) = conn.path(*path_id) else {
@@ -701,7 +707,7 @@ impl RemoteStateActor {
                 // and racing to abandon the last one.
                 if conn.side().is_client()
                     && path_remote.is_ip()
-                    && path_remote != selected
+                    && path_remote != &selected
                     && conn_state.paths.values().filter(|a| a.is_ip()).count() > 1
                 {
                     trace!(?path_remote, %conn_id, %path_id, "closing direct path");
@@ -725,7 +731,7 @@ impl RemoteStateActor {
             }
 
             // Record the new selected path in the path watcher.
-            conn_state.path_state.record_selected(selected);
+            conn_state.path_state.record_selected(&selected);
         }
     }
 
@@ -887,7 +893,11 @@ impl State {
                 self.address_lookup_stream = None;
             }
             Some(Err(err)) => {
-                warn!("Address Lookup failed: {err:#}");
+                if let AddressLookupFailed::NoServiceConfigured { .. } = err {
+                    trace!("Address Lookup not configured");
+                } else {
+                    debug!("Address Lookup failed: {err:#}");
+                }
                 self.paths.address_lookup_finished(Err(err));
                 self.address_lookup_stream = None;
             }
@@ -974,9 +984,9 @@ impl State {
             target: "iroh::_events::path::open",
             Level::DEBUG,
             remote = %self.endpoint_id.fmt_short(),
-            ?network_path,
             %conn_id,
             path_id=%path.id(),
+            %network_path,
         );
         conn_state.add_open_path(network_path.clone(), path.id(), &self.metrics);
         if network_path.is_relay()
@@ -1005,10 +1015,10 @@ impl State {
                     target: "iroh::_events::path::set_status",
                     Level::DEBUG,
                     remote = %self.endpoint_id.fmt_short(),
-                    path_remote = ?network_path,
-                    ?status,
                     %conn_id,
                     path_id=%path.id(),
+                    %network_path,
+                    ?status,
                     ?prev_status,
                 );
             }
@@ -1045,11 +1055,12 @@ impl State {
             None => {
                 let ret = now_or_never(fut);
                 match ret {
-                    Some(Err(PathError::RemoteCidsExhausted)) => {
+                    Some(Err(PathError::RemoteCidsExhausted))
+                    | Some(Err(PathError::MaxPathIdReached)) => {
                         self.scheduled_open_path =
                             Some(Instant::now() + Duration::from_millis(333));
                         self.pending_open_paths.push_back(open_addr.clone());
-                        trace!(?open_addr, "scheduling open_path");
+                        trace!(?open_addr, ?ret, "scheduling open_path");
                     }
                     _ => warn!(?ret, "Opening path failed"),
                 }
@@ -1152,7 +1163,7 @@ pub(crate) enum RemoteStateMessage {
     /// but only update to a strong [`noq::Connection`] for brief moments.
     ///
     /// The actor will actively manage paths on the connection and start holepunching as needed.
-    #[debug("AddConnection(..)")]
+    #[debug("AddConnection({})", _0.stable_id())]
     AddConnection(noq::Connection, oneshot::Sender<PathStateReceiver>),
     /// Asks if there is any possible path that could be used.
     ///

@@ -1274,7 +1274,7 @@ mod tests {
     use std::time::Duration;
 
     use iroh_base::{EndpointAddr, SecretKey};
-    use iroh_relay::tls::CaRootsConfig;
+    use iroh_relay::tls::CaTlsConfig;
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{Stream, StreamExt};
     use n0_tracing_test::traced_test;
@@ -1503,11 +1503,11 @@ mod tests {
     async fn test_paths_watcher() -> Result {
         const ALPN: &[u8] = b"test";
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let (relay_map, _relay_map, _guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
@@ -1515,7 +1515,7 @@ mod tests {
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
 
@@ -1532,7 +1532,7 @@ mod tests {
         let mut paths_client = conn_client.paths_stream();
         let mut paths_server = conn_server.paths_stream();
 
-        /// Advances the path stream until at least one IP and one relay paths are available.
+        /// Advances the path stream until at least one IP and one relay path is available.
         ///
         /// Panics if the path stream finishes before that happens.
         async fn wait_for_paths(mut stream: impl Send + Unpin + Stream<Item = PathList<'_>>) {

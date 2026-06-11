@@ -46,7 +46,7 @@ use iroh_relay::{
 };
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
-    FuturesUnorderedBounded, SinkExt, StreamExt,
+    FuturesUnorderedBounded, MaybeFuture, SinkExt, StreamExt,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
 };
@@ -59,9 +59,7 @@ use url::Url;
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-use crate::{
-    endpoint::RelayStatus, net_report::Report, socket::Metrics as SocketMetrics, util::MaybeFuture,
-};
+use crate::{endpoint::RelayStatus, net_report::Report, socket::Metrics as SocketMetrics};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -507,7 +505,7 @@ impl ActiveRelayActor {
         &mut self,
         client: iroh_relay::client::Client,
     ) -> Result<(), RelayConnectionError> {
-        debug!("Actor loop: connected to relay");
+        trace!("Actor loop: connected to relay");
         event!(
             target: "iroh::_events::relay::connected",
             Level::DEBUG,
@@ -1019,7 +1017,7 @@ impl RelayActor {
     ) {
         // When this future is present, it is sending pending datagrams to an
         // ActiveRelayActor.  We can not process further datagrams during this time.
-        let mut datagram_send_fut = std::pin::pin!(MaybeFuture::none());
+        let mut datagram_send_fut = std::pin::pin!(MaybeFuture::None);
 
         loop {
             tokio::select! {
@@ -1397,7 +1395,7 @@ mod tests {
     use iroh_relay::{
         PingTracker,
         protos::relay::Datagrams,
-        tls::{CaRootsConfig, default_provider},
+        tls::{CaTlsConfig, default_provider},
     };
     use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use n0_tracing_test::traced_test;
@@ -1435,7 +1433,7 @@ mod tests {
                 dns_resolver: DnsResolver::new(),
                 proxy_url: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
-                tls_config: CaRootsConfig::insecure_skip_verify()
+                tls_config: CaTlsConfig::insecure_skip_verify()
                     .client_config(default_provider())
                     .expect("infallible"),
                 auth_token: None,

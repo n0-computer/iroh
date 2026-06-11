@@ -294,7 +294,7 @@ jobs:
 
       - name: Install wasm-bindgen-test-runner
         # Match the version of wasm-bindgen used in Cargo.lock
-        run: cargo binstall wasm-bindgen-cli@0.2.121 --locked --no-confirm
+        run: cargo binstall wasm-bindgen-cli@0.2.122 --locked --no-confirm
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
@@ -372,8 +372,8 @@ jobs:
       RUSTDOCFLAGS: ""
       # Pin to the nightly that the pinned `cargo-check-external-types`
       # release was last tested against. Update both together.
-      CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.4.0"
-      TOOLCHAIN: "nightly-2025-10-18"
+      CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.5.0"
+      TOOLCHAIN: "nightly-2026-03-20"
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master

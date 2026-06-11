@@ -437,6 +437,7 @@ impl Display for Signature {
     }
 }
 
+/// Error generated when failed to parse an ED25519 signature.
 #[stack_error(derive, add_meta)]
 #[error("Could not parse ed25519 signature")]
 pub struct SignatureParsingError;

@@ -53,7 +53,7 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
+use tracing::{Instrument, debug, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
@@ -563,8 +563,8 @@ impl RouterBuilder {
                             match filter(&incoming) {
                                 IncomingFilterOutcome::Accept => {}
                                 IncomingFilterOutcome::Retry => {
-                                    if !incoming.remote_addr_validated() {
-                                        warn!(
+                                    if incoming.remote_addr_validated() {
+                                        debug!(
                                             "filter returned Retry for an already validated connection",
                                         );
                                     }
@@ -854,7 +854,7 @@ mod tests {
 
             let e1 = Endpoint::builder(presets::Minimal)
                 .relay_mode(relay_mode.clone())
-                .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(crate::tls::CaTlsConfig::insecure_skip_verify())
                 .bind()
                 .await?;
             let r1 = Router::builder(e1.clone())
@@ -864,7 +864,7 @@ mod tests {
             let addr = EndpointAddr::new(e1.id()).with_relay_url(relay_url);
             let e2 = Endpoint::builder(presets::Minimal)
                 .relay_mode(relay_mode)
-                .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(crate::tls::CaTlsConfig::insecure_skip_verify())
                 .bind()
                 .await?;
             Ok((r1, e2, addr, guard))

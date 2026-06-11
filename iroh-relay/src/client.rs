@@ -21,7 +21,7 @@ use n0_future::{
     split::{SplitSink, SplitStream, split},
     time,
 };
-use tracing::{Level, debug, event, trace};
+use tracing::{debug, trace};
 use url::Url;
 
 pub use self::conn::{RecvError, SendError};
@@ -188,34 +188,35 @@ impl ClientBuilder {
     /// This is a required option.
     ///
     /// You can construct a [`rustls::ClientConfig`] by combining a [`rustls::crypto::CryptoProvider`]
-    /// with a [`tls::CaRootsConfig`] using [`tls::CaRootsConfig::client_config`], for example:
+    /// with a [`tls::CaTlsConfig`] using [`tls::CaTlsConfig::client_config`], for example:
     ///
     /// ```no_run
     /// use std::sync::Arc;
     ///
-    /// use iroh_relay::tls::CaRootsConfig;
+    /// use iroh_relay::tls::CaTlsConfig;
     ///
     /// let crypto_provider: rustls::crypto::CryptoProvider = todo!();
-    /// let client_config = CaRootsConfig::default().client_config(Arc::new(crypto_provider));
+    /// let client_config = CaTlsConfig::default().client_config(Arc::new(crypto_provider));
     /// ```
     ///
     /// If you enable the tls-ring or tls-aws-lc-rs feature, you can use the enabled crypto provider
     /// by using [`tls::default_provider`].
     ///
-    /// [`tls::CaRootsConfig`]: crate::tls::CaRootsConfig
-    /// [`tls::CaRootsConfig::client_config`]: crate::tls::CaRootsConfig::client_config
+    /// [`tls::CaTlsConfig`]: crate::tls::CaTlsConfig
+    /// [`tls::CaTlsConfig::client_config`]: crate::tls::CaTlsConfig::client_config
     /// [`tls::default_provider`]: crate::tls::default_provider
     pub fn tls_client_config(mut self, tls_config: rustls::ClientConfig) -> Self {
         self.tls_config = Some(tls_config);
         self
     }
 
-    /// Returns if we should prefer ipv6
-    /// it replaces the relayhttp.AddressFamilySelector we pass
-    /// It provides the hint as to whether in an IPv4-vs-IPv6 race that
-    /// IPv4 should be held back a bit to give IPv6 a better-than-50/50
-    /// chance of winning. We only return true when we believe IPv6 will
-    /// work anyway, so we don't artificially delay the connection speed.
+    /// Sets a callback hinting whether to prefer IPv6 when dialing the relay.
+    ///
+    /// The callback runs on each dial. When it returns `true`, IPv6 addresses
+    /// are tried first and IPv4 dials are held back slightly, biasing the
+    /// happy-eyeballs race towards IPv6; when it returns `false`, IPv4 is
+    /// preferred. Only return `true` when IPv6 is expected to work, since
+    /// otherwise the bias just delays the connection.
     pub fn address_family_selector<S>(mut self, selector: S) -> Self
     where
         S: Fn() -> bool + Send + Sync + 'static,
@@ -361,12 +362,6 @@ impl ClientBuilder {
         )
         .await?;
 
-        event!(
-            target: "iroh::_events::net::relay::connected",
-            Level::DEBUG,
-            url = %self.url,
-        );
-
         trace!("connect done");
 
         Ok(Client {
@@ -438,12 +433,6 @@ impl ClientBuilder {
             protocol_version,
         )
         .await?;
-
-        event!(
-            target: "iroh::_events::net::relay::connected",
-            Level::DEBUG,
-            url = %self.url,
-        );
 
         trace!("connect done");
 

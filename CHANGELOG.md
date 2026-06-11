@@ -2,6 +2,49 @@
 
 All notable changes to iroh will be documented in this file.
 
+## [1.0.0-rc.1](https://github.com/n0-computer/iroh/compare/v1.0.0-rc.0..1.0.0-rc.1) - 2026-05-27
+
+### ⛰️  Features
+
+- *(iroh)* [**breaking**] Configurable path selection ([#4232](https://github.com/n0-computer/iroh/issues/4232)) - ([70751de](https://github.com/n0-computer/iroh/commit/70751de3206210bae06222fc14776fd156d7b681))
+- *(iroh)* Noq patch to support holepunching when server is behind a hard NAT ([#4254](https://github.com/n0-computer/iroh/issues/4254)) - ([b8a5968](https://github.com/n0-computer/iroh/commit/b8a596844ab7a88e88e9d013479f791ec52729a5))
+- *(iroh-relay)* Expose Bucket rate-limit primitive ([#4242](https://github.com/n0-computer/iroh/issues/4242)) - ([f8cd43c](https://github.com/n0-computer/iroh/commit/f8cd43c22a303b7cf8f629733d303db1625de1ff))
+- [**breaking**] Update to noq@1.0.0-rc.1 ([#4287](https://github.com/n0-computer/iroh/issues/4287)) - ([502b579](https://github.com/n0-computer/iroh/commit/502b57935dc4ef5f8e3a1d9cd860108b4c916d09))
+
+### 🐛 Bug Fixes
+
+- *(ci)* Force non-PIE crt1.o for static musl release builds ([#4258](https://github.com/n0-computer/iroh/issues/4258)) - ([ec7b9e3](https://github.com/n0-computer/iroh/commit/ec7b9e3fd805f17e1df4b6a91632a51d05757630))
+- *(iroh)* Don't stop the RemoteStateActor if there are pending ResolveRemote requests ([#4271](https://github.com/n0-computer/iroh/issues/4271)) - ([b229f57](https://github.com/n0-computer/iroh/commit/b229f57a7033ece0f822527db3041e94c45c7727))
+- *(iroh)* Fix race condition in the remote map that can lead to double-spawned RemoteStateActors ([#4272](https://github.com/n0-computer/iroh/issues/4272)) - ([720829e](https://github.com/n0-computer/iroh/commit/720829eae50508632ffa878aa52b28f99f24292f))
+- *(iroh)* Shut down faster by skipping the draining period on `Endpoint::close` ([#4270](https://github.com/n0-computer/iroh/issues/4270)) - ([c617573](https://github.com/n0-computer/iroh/commit/c61757322ca557aa90e253f6662945f039ce3f14))
+- *(iroh)* Do not close abandoned paths on all connections ([#4284](https://github.com/n0-computer/iroh/issues/4284)) - ([4eea244](https://github.com/n0-computer/iroh/commit/4eea2440473df31378484313bbd08d83daca5412))
+
+### 🚜 Refactor
+
+- *(base)* Expose SignatureParsingError ([#4285](https://github.com/n0-computer/iroh/issues/4285)) - ([f8b066c](https://github.com/n0-computer/iroh/commit/f8b066cc3474a3c8e59548c44849d40354e145c4))
+- *(iroh)* Pass strong connection to RemoteStateActor ([#4267](https://github.com/n0-computer/iroh/issues/4267)) - ([d5e4395](https://github.com/n0-computer/iroh/commit/d5e439546368706ca6d340718eb722ec84bb92a8))
+- *(iroh)* Split RemoteStateActor struct into connections and state ([#4268](https://github.com/n0-computer/iroh/issues/4268)) - ([86123dd](https://github.com/n0-computer/iroh/commit/86123dd850581f97de056ea2ad1e10b57b942b6a))
+- *(iroh)* [**breaking**] Use FourTuple for selected path ([#4273](https://github.com/n0-computer/iroh/issues/4273)) - ([14bae03](https://github.com/n0-computer/iroh/commit/14bae032bd88cd039a6b969d3d9ed2778c606760))
+- *(iroh)* [**breaking**] Use `FourTuple` in send paths ([#4281](https://github.com/n0-computer/iroh/issues/4281)) - ([77e6c31](https://github.com/n0-computer/iroh/commit/77e6c31acf3222328a4b39bf8c72630e63476639))
+- *(iroh-relay)* [**breaking**] Replace AccessConfig enum with AccessControl trait and allow to track connections ([#4276](https://github.com/n0-computer/iroh/issues/4276)) - ([107e37e](https://github.com/n0-computer/iroh/commit/107e37e27e3d0db072f7aa4f31454d5b74afd2ee))
+
+### 📚 Documentation
+
+- *(iroh)* Update tls- feature names ([#4263](https://github.com/n0-computer/iroh/issues/4263)) - ([9246b7f](https://github.com/n0-computer/iroh/commit/9246b7f0a63f1bdefaa77ba3248075461564096e))
+
+### 🧪 Testing
+
+- *(iroh)* Fix racy connection shutdown ([#4243](https://github.com/n0-computer/iroh/issues/4243)) - ([a470146](https://github.com/n0-computer/iroh/commit/a4701461328b1fb07984cfa5678a3523387e5ae9))
+
+### ⚙️ Miscellaneous Tasks
+
+- Improve check-external-types setup ([#4250](https://github.com/n0-computer/iroh/issues/4250)) - ([a7d896b](https://github.com/n0-computer/iroh/commit/a7d896b634965de9efbf43bc3749a1135f32605b))
+
+### Deps
+
+- *(noq)* Update noq and adjust for api change ([#4283](https://github.com/n0-computer/iroh/issues/4283)) - ([49c5d54](https://github.com/n0-computer/iroh/commit/49c5d54a21498646c74933fb0a7ea5424f3d695e))
+- Update to noq main for PathEvent::Established ([#4248](https://github.com/n0-computer/iroh/issues/4248)) - ([54ea953](https://github.com/n0-computer/iroh/commit/54ea953c8628111451d333b30543becbcf0be4aa))
+
 ## [1.0.0-rc.0](https://github.com/n0-computer/iroh/compare/v0.98.2..1.0.0-rc.0) - 2026-05-07
 
 ### ⛰️  Features
