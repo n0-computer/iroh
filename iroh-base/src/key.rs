@@ -23,7 +23,7 @@ const Z_BASE_32: Encoding = new_encoding! {
 
 /// A public key.
 ///
-/// The key itself is stored as the compressed Edwards y-coordinate of the public key.
+/// The key itself is stored as the `CompressedEdwards` y-coordinate of the public key.
 /// It is verified to decompress into a valid key when created.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]

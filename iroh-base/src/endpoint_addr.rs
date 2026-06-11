@@ -133,7 +133,7 @@ impl EndpointAddr {
         self.addrs.is_empty()
     }
 
-    /// Returns an iterator over the IP addresses of this endpoint.
+    /// Returns an iterator over the IP addresses of this endpoint address.
     pub fn ip_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
         self.addrs.iter().filter_map(|addr| match addr {
             TransportAddr::Ip(addr) => Some(addr),
@@ -141,7 +141,7 @@ impl EndpointAddr {
         })
     }
 
-    /// Returns an iterator over the relay URLs of this endpoint.
+    /// Returns an iterator over the relay URLs of this endpoint address.
     ///
     ///  In practice this is expected to be zero or one home relay for all known cases currently.
     pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl> {

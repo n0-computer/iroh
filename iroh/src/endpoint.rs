@@ -1287,10 +1287,8 @@ impl Endpoint {
     /// ```no_run
     /// # #[cfg(with_crypto_provider)]
     /// # {
-    /// use iroh::{Endpoint, endpoint::presets};
-    ///
-    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    /// # rt.block_on(async move {
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_error::Result<()> {
     /// // After this await returns, the endpoint is bound to a local socket.
     /// // It can be dialed, but almost certainly hasn't finished picking a
     /// // relay.
