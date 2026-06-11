@@ -182,7 +182,7 @@ enum AccessConfig {
     /// # Example
     ///
     /// ```toml
-    /// access.token = "my-secret"
+    /// access.token = "my-static-token"
     /// ```
     Token(String),
 }
@@ -216,7 +216,7 @@ impl From<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
                     config.bearer_token = Some(token);
                 }
                 Arc::new(HttpAccess { client, config })
-            },
+            }
             AccessConfig::Token(mut token) => {
                 if let Ok(env_token) = std::env::var(ENV_RELAY_ACCESS_TOKEN) {
                     token = env_token;
@@ -860,7 +860,10 @@ mod tests {
         "#
         .to_string();
         let config = Config::from_str(dbg!(&config))?;
-        assert_eq!(config.access, AccessConfig::Token("my-static-token".to_string()));
+        assert_eq!(
+            config.access,
+            AccessConfig::Token("my-static-token".to_string())
+        );
 
         Ok(())
     }

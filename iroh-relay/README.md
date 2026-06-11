@@ -23,6 +23,68 @@ relays, including:
 
 Used in [iroh], created with love by the [n0 team](https://n0.computer/).
 
+## Access control
+
+The relay server supports several access control modes, configured via the
+`access` field in the TOML config file.
+
+### Allow everyone (default)
+
+```toml
+access = "everyone"
+```
+
+### Allowlist / Denylist by node ID
+
+```toml
+# Allow only specific nodes
+access.allowlist = ["<node-id>", "<node-id>"]
+
+# Or block specific nodes and allow everyone else
+access.denylist = ["<node-id>"]
+```
+
+### Bearer token (local, no external service)
+
+Requires connecting clients to present a shared secret via an
+`Authorization: Bearer <token>` header, or a `?token=` URL query parameter.
+
+```toml
+access.token = "my-static-token"
+```
+
+The token can also be supplied via the `IROH_RELAY_ACCESS_TOKEN` environment
+variable, which takes precedence over the config file value.
+
+The token must not be an empty string; the server will fail to start if it is.
+
+On the client side, set the token using
+[`RelayConfig::with_auth_token`](https://docs.rs/iroh-relay/latest/iroh_relay/struct.RelayConfig.html#method.with_auth_token)
+or
+[`RelayMap::with_auth_token`](https://docs.rs/iroh-relay/latest/iroh_relay/struct.RelayMap.html#method.with_auth_token).
+
+> **Note:** a static token has no expiry or revocation. For production
+> deployments that need token lifecycle management, use `AccessConfig::Http`
+> with a dedicated auth service instead. The `AccessControl` trait also
+> supports runtime revocation via `on_connect`/`on_disconnect` and
+> `Clients::disconnect` — see [`tests/runtime_auth.rs`](tests/runtime_auth.rs)
+> for a worked example.
+
+### HTTP callout (external auth service)
+
+The relay calls an external HTTP endpoint for each incoming connection,
+passing the connecting node's ID. The token below authenticates the relay
+to your auth service (machine-to-machine), not the connecting client.
+
+```toml
+access.http.url = "https://your-auth-service.example.com/relay-auth"
+# Optional: authenticate the relay's outbound request to your service
+access.http.bearer_token = "service-to-service-secret"
+```
+
+The bearer token can also be set via the `IROH_RELAY_HTTP_BEARER_TOKEN`
+environment variable.
+
 ## Local testing
 
 Advice for testing your application that uses `iroh` with a locally running `iroh-relay` server
