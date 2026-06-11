@@ -319,7 +319,7 @@ mod tests {
         RelayUrl, SecretKey,
         address_lookup::{EndpointInfo, PkarrRelayClient},
         dns::DnsResolver,
-        tls::{CaRootsConfig, default_provider},
+        tls::{CaTlsConfig, default_provider},
     };
     use n0_error::StdResultExt;
     use n0_tracing_test::traced_test;
@@ -357,7 +357,7 @@ mod tests {
         };
 
         let http_url = server.http_url().expect("http is bound");
-        let tls_config = CaRootsConfig::default()
+        let tls_config = CaTlsConfig::default()
             .client_config(default_provider())
             .expect("infallible");
         let pkarr = PkarrRelayClient::new(

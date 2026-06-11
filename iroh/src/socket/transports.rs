@@ -6,21 +6,26 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
 
 use bytes::Bytes;
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
-use noq_proto::PathStatus;
 use relay::{RelayNetworkChangeSender, RelaySender};
-use rustc_hash::FxHashMap;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
 use super::{Socket, mapped_addrs::MultipathMappedAddr};
-use crate::{endpoint::RelayStatus, metrics::EndpointMetrics, net_report::Report};
+use crate::{
+    endpoint::RelayStatus,
+    metrics::EndpointMetrics,
+    net_report::Report,
+    socket::{
+        mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
+        remote_map::to_transport_addr,
+    },
+};
 
 pub(crate) mod custom;
 #[cfg(not(wasm_browser))]
@@ -37,6 +42,12 @@ pub(crate) use self::relay::{
     HomeRelayWatch, RelayActorConfig, RelayConnectionState, RelayTransport,
 };
 
+/// How many times all transports may error on `poll_recv` before we give up.
+///
+/// Once all transports errored for this many times in a row, we give up and forward
+/// the error to noq, which will kill the endpoint driver then.
+const MAX_CONSECUTIVE_RECV_ERRORS: usize = 8;
+
 /// Manages the different underlying data transports that the socket can support.
 #[derive(Debug)]
 pub(crate) struct Transports {
@@ -48,6 +59,7 @@ pub(crate) struct Transports {
     poll_recv_counter: usize,
     /// Cache for per-packet recv info, to speed up access
     recv_infos: [RecvInfo; noq_udp::BATCH_SIZE],
+    consecutive_total_recv_failures: usize,
 }
 
 /// Combined watcher type for all ip transports
@@ -238,6 +250,7 @@ impl Transports {
             custom,
             poll_recv_counter: Default::default(),
             recv_infos: Default::default(),
+            consecutive_total_recv_failures: 0,
         })
     }
 
@@ -250,12 +263,13 @@ impl Transports {
     ) -> Poll<io::Result<usize>> {
         assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
-        if sock.is_closing() {
+        if sock.is_closed() {
             return Poll::Pending;
         }
 
         match self.inner_poll_recv(cx, bufs, metas)? {
-            Poll::Pending | Poll::Ready(0) => Poll::Pending,
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(0) => Poll::Ready(Ok(0)),
             Poll::Ready(n) => {
                 sock.process_datagrams(&mut bufs[..n], &mut metas[..n], &self.recv_infos[..n]);
                 Poll::Ready(Ok(n))
@@ -272,43 +286,81 @@ impl Transports {
     ) -> Poll<io::Result<usize>> {
         assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
+        let mut total_polled = 0;
+        let mut total_errors = 0;
+        let mut return_ready = false;
+
         macro_rules! poll_transport {
-            ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas, &mut self.recv_infos)? {
-                    Poll::Pending | Poll::Ready(0) => {}
-                    Poll::Ready(n) => {
+            ($debug_label:expr, $socket:expr) => {
+                total_polled += 1;
+                match $socket.poll_recv(cx, bufs, metas, &mut self.recv_infos) {
+                    Poll::Pending => {}
+                    Poll::Ready(Ok(0)) => {
+                        return_ready = true;
+                    }
+                    Poll::Ready(Ok(n)) => {
+                        // Once a transport has data ready, we return directly.
+                        self.consecutive_total_recv_failures = 0;
                         return Poll::Ready(Ok(n));
+                    }
+                    Poll::Ready(Err(err)) => {
+                        // We don't set `has_poll_ready` to `true` here, because if we did,
+                        // a single always-failing transport would put us into a hot loop
+                        // where `poll_recv` would be called right away again and again even if
+                        // the non-failing transports are all pending.
+                        total_errors += 1;
+                        warn!(transport = $debug_label, "recv error: {err:#}");
                     }
                 }
             };
         }
 
         // To improve fairness, every other call reverses the ordering of polling.
-
         let counter = self.poll_recv_counter.wrapping_add(1);
-
         if counter.is_multiple_of(2) {
             #[cfg(not(wasm_browser))]
-            poll_transport!(&mut self.ip);
-
+            for transport in self.ip.iter_mut() {
+                poll_transport!("IP", transport);
+            }
             for transport in self.relay.iter_mut() {
-                poll_transport!(transport);
+                poll_transport!("relay", transport);
             }
             for transport in self.custom.iter_mut() {
-                poll_transport!(transport);
+                poll_transport!("custom", transport);
             }
         } else {
             for transport in self.custom.iter_mut().rev() {
-                poll_transport!(transport);
+                poll_transport!("custom", transport);
             }
             for transport in self.relay.iter_mut().rev() {
-                poll_transport!(transport);
+                poll_transport!("relay", transport);
             }
             #[cfg(not(wasm_browser))]
-            poll_transport!(&mut self.ip);
+            for transport in self.ip.iter_mut() {
+                poll_transport!("IP", transport);
+            }
         }
 
-        Poll::Pending
+        if total_polled == total_errors {
+            // All transports errored.
+            self.consecutive_total_recv_failures += 1;
+            if self.consecutive_total_recv_failures >= MAX_CONSECUTIVE_RECV_ERRORS {
+                Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::NetworkDown,
+                    "All transports failed to receive",
+                )))
+            } else {
+                Poll::Ready(Ok(0))
+            }
+        } else {
+            // At least one transport is pending or returned Ok(0).
+            self.consecutive_total_recv_failures = 0;
+            if return_ready {
+                Poll::Ready(Ok(0))
+            } else {
+                Poll::Pending
+            }
+        }
     }
 
     /// Returns a list of all currently known local addresses.
@@ -494,6 +546,7 @@ impl NetworkChangeSender {
 
 /// An outgoing packet
 #[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub struct Transmit<'a> {
     pub(crate) ecn: Option<noq_udp::EcnCodepoint>,
     /// Packet contents
@@ -662,10 +715,6 @@ impl Addr {
         matches!(self, Self::Relay(..))
     }
 
-    pub(crate) fn is_ip(&self) -> bool {
-        matches!(self, Self::Ip(_))
-    }
-
     /// Returns `None` if not an `Ip`.
     pub(crate) fn into_socket_addr(self) -> Option<SocketAddr> {
         match self {
@@ -674,22 +723,61 @@ impl Addr {
             Self::Custom(_) => None,
         }
     }
+}
 
-    /// Returns the kind of address, for configuring bias.
-    pub(crate) fn addr_kind(&self) -> AddrKind {
-        match self {
-            Self::Ip(addr) => match addr {
-                SocketAddr::V4(_) => AddrKind::IpV4,
-                SocketAddr::V6(_) => AddrKind::IpV6,
-            },
-            Self::Relay(_, _) => AddrKind::Relay,
-            Self::Custom(addr) => AddrKind::Custom(addr.id()),
+/// The local address of a network path.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum LocalTransportAddr {
+    /// The local IP, if the OS surfaced it.
+    Ip(Option<IpAddr>),
+    /// The relay over which this network path is connected.
+    Relay(RelayUrl),
+    /// The local custom address, if the transport reports one.
+    Custom(Option<iroh_base::CustomAddr>),
+}
+
+impl LocalTransportAddr {
+    /// Converts a local address from noq into a [`LocalTransportAddr`].
+    ///
+    /// This also needs the `remote_addr`, because currently the meaning of the local_ip as returned
+    /// from noq depends on the kind of network path, which we can gather from the remote address.
+    ///
+    /// The meaning of the local IP is a bit particular:
+    ///
+    /// * For IP transports, it is the address of the local socket.
+    /// * For relay transports, we never set the local_ip in the recv meta.
+    ///   We take the relay URL of the remote address here instead.
+    /// * For custom transports, the custom transport implementation can set a [`CustomAddr`]
+    ///   through [`RecvInfo`], which is passed as a mapped address to noq. So we convert it
+    ///   back into the [`CustomAddr`] here.
+    pub(super) fn from_noq_local_ip(
+        noq_local_ip: Option<IpAddr>,
+        remote_addr: &Addr,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> Self {
+        match &remote_addr {
+            // If the remote is a relay, noq_local_ip will be unset because we never set it for relay transports.
+            // We return a [`LocalTransportAddr`] with the relay URL.
+            Addr::Relay(url, _endpoint_id) => LocalTransportAddr::Relay(url.clone()),
+            // For IP transports, the local_ip as reported from noq is the interface IP (umapped), if known.
+            Addr::Ip(_) => LocalTransportAddr::Ip(noq_local_ip),
+            // For custom transports, the custom transport implementation can set a `CustomAddr` in `RecvInfo`.
+            // The custom addr is converted to a mapped address in `super::Socket::process_datagrams`.
+            // We convert back to a `CustomAddr` here.
+            Addr::Custom(_) => {
+                let addr = noq_local_ip
+                    .and_then(|ip_addr| CustomMappedAddr::try_from(ip_addr).ok())
+                    .and_then(|custom_mapped_addr| custom_mapped_addrs.lookup(&custom_mapped_addr));
+                LocalTransportAddr::Custom(addr)
+            }
         }
     }
 }
 
 /// The kind of a transport address, used for configuring bias.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub enum AddrKind {
     /// An IPv4 address.
     IpV4,
@@ -699,182 +787,6 @@ pub enum AddrKind {
     Relay,
     /// A custom transport address with the given id.
     Custom(u64),
-}
-
-/// The type of transport, either primary or backup.
-///
-/// Primary transports compete with each other based on biased RTT measurements.
-/// Backup transports are only used when no primary transport is available.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum TransportType {
-    /// A transport that has the potential to be the primary transport.
-    ///
-    /// It will compete with other Primary transports such as IP based
-    /// transports based on biased RTT measurements.
-    Primary,
-    /// A transport that is only used as a backup transport.
-    ///
-    /// It will only compete with other backup transports such as the relay
-    /// transport based on biased RTT measurements.
-    Backup,
-}
-
-impl TransportType {
-    /// Converts to the corresponding QUIC path status.
-    pub(super) fn to_path_status(self) -> PathStatus {
-        match self {
-            Self::Primary => PathStatus::Available,
-            Self::Backup => PathStatus::Backup,
-        }
-    }
-}
-
-/// Bias configuration for a transport type.
-///
-/// This controls how a transport is prioritized during path selection.
-///
-/// # Examples
-///
-/// ```
-/// use std::time::Duration;
-///
-/// use iroh::endpoint::transports::TransportBias;
-///
-/// // A primary transport with 100ms RTT advantage (will be preferred)
-/// let bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
-///
-/// // A primary transport with 50ms RTT disadvantage (will be less preferred)
-/// let bias = TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(50));
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TransportBias {
-    /// Whether this is a primary or backup transport.
-    pub(crate) transport_type: TransportType,
-    /// RTT bias in nanoseconds. Negative values make this transport more preferred.
-    pub(crate) rtt_bias: i128,
-}
-
-impl TransportBias {
-    /// Creates a primary transport bias with no RTT advantage.
-    ///
-    /// Primary transports compete with each other based on biased RTT measurements.
-    pub fn primary() -> Self {
-        Self {
-            transport_type: TransportType::Primary,
-            rtt_bias: 0,
-        }
-    }
-
-    /// Creates a backup transport bias with no RTT advantage.
-    ///
-    /// Backup transports are only used when no primary transport is available.
-    pub(crate) fn backup() -> Self {
-        Self {
-            transport_type: TransportType::Backup,
-            rtt_bias: 0,
-        }
-    }
-
-    /// Adds an RTT advantage to this transport, making it more preferred.
-    ///
-    /// The advantage is subtracted from the measured RTT during path selection,
-    /// so a transport with a 100ms advantage will be preferred over one with
-    /// the same measured RTT but no advantage.
-    pub fn with_rtt_advantage(mut self, advantage: Duration) -> Self {
-        self.rtt_bias -= advantage.as_nanos() as i128;
-        self
-    }
-
-    /// Adds an RTT disadvantage to this transport, making it less preferred.
-    ///
-    /// The disadvantage is added to the measured RTT during path selection,
-    /// so a transport with a 100ms disadvantage will be avoided in favor of
-    /// one with the same measured RTT but no disadvantage.
-    pub fn with_rtt_disadvantage(mut self, disadvantage: Duration) -> Self {
-        self.rtt_bias += disadvantage.as_nanos() as i128;
-        self
-    }
-}
-
-/// A map from address kinds to their transport bias configuration.
-///
-/// This controls how different transport types are prioritized during path selection.
-/// By default:
-/// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
-/// - Relay is a backup transport (only used when no primary transport is available)
-#[derive(Debug, Clone)]
-pub(crate) struct TransportBiasMap {
-    map: Arc<FxHashMap<AddrKind, TransportBias>>,
-}
-
-/// How much do we prefer IPv6 over IPv4.
-pub(super) const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
-
-impl Default for TransportBiasMap {
-    fn default() -> Self {
-        let mut map = FxHashMap::default();
-        map.insert(AddrKind::IpV4, TransportBias::primary());
-        map.insert(
-            AddrKind::IpV6,
-            TransportBias::primary().with_rtt_advantage(IPV6_RTT_ADVANTAGE),
-        );
-        map.insert(AddrKind::Relay, TransportBias::backup());
-        Self { map: Arc::new(map) }
-    }
-}
-
-impl TransportBiasMap {
-    /// Returns a new map with the given bias added or updated.
-    pub(crate) fn with_bias(self, kind: AddrKind, bias: TransportBias) -> Self {
-        let mut map = (*self.map).clone();
-        map.insert(kind, bias);
-        Self { map: Arc::new(map) }
-    }
-
-    /// Gets the bias for the given address.
-    ///
-    /// Returns a primary transport with no RTT bias if no specific bias is configured.
-    pub(crate) fn get(&self, addr: &Addr) -> TransportBias {
-        self.map
-            .get(&addr.addr_kind())
-            .cloned()
-            .unwrap_or_else(TransportBias::primary)
-    }
-
-    /// Computes path selection data for a given address and RTT.
-    pub(crate) fn path_selection_data(&self, addr: &Addr, rtt: Duration) -> PathSelectionData {
-        let bias = self.get(addr);
-        let tpe = bias.transport_type;
-        let biased_rtt = rtt.as_nanos() as i128 + bias.rtt_bias;
-        PathSelectionData {
-            transport_type: tpe,
-            rtt,
-            biased_rtt,
-        }
-    }
-}
-
-/// Data used during path selection.
-#[derive(Debug)]
-pub(crate) struct PathSelectionData {
-    /// Type of the transport.
-    pub(crate) transport_type: TransportType,
-    /// Measured RTT for path selection.
-    pub(crate) rtt: Duration,
-    /// Biased RTT for path selection.
-    ///
-    /// This is an i128 so we can subtract an advantage for e.g. IPv6 without underflowing.
-    pub(crate) biased_rtt: i128,
-}
-
-impl PathSelectionData {
-    /// Key for sorting paths. Lower is better.
-    ///
-    /// First part is the status, 0 for Available, 1 for Backup.
-    /// Second part is the biased RTT.
-    pub(crate) fn sort_key(&self) -> (u8, i128) {
-        (self.transport_type as u8, self.biased_rtt)
-    }
 }
 
 impl PartialEq<TransportAddr> for Addr {
@@ -888,6 +800,194 @@ impl PartialEq<TransportAddr> for Addr {
             }
             Addr::Custom(custom_addr) => {
                 matches!(other, TransportAddr::Custom(a) if a == custom_addr)
+            }
+        }
+    }
+}
+
+/// Identifies a network path by the combination of remote and local addresses.
+///
+/// Mirrors [`noq::FourTuple`] but uses transport-specific addresses.
+///
+/// The meaning of the local address is a bit particular:
+/// * For IP transports it is the interface IP, if known.
+/// * For custom transports it is a custom transport address, if the transport reports one.
+/// * For relay transports there is no separate local address; the relay URL identifies the path.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
+pub enum FourTuple {
+    /// A path over an IP transport.
+    Ip {
+        /// The remote socket address.
+        remote: SocketAddr,
+        /// The local interface IP, if the OS reported one.
+        local: Option<IpAddr>,
+    },
+    /// A path over a relay transport.
+    Relay {
+        /// The URL of the relay server carrying this path.
+        url: RelayUrl,
+        /// The remote endpoint reached through the relay.
+        endpoint_id: EndpointId,
+    },
+    /// A path over a custom transport.
+    Custom {
+        /// The remote custom transport address.
+        remote: CustomAddr,
+        /// The local custom transport address, if the transport reports one.
+        local: Option<CustomAddr>,
+    },
+}
+
+#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
+impl FourTuple {
+    /// Creates a four-tuple from a remote address, with no known local address.
+    pub(super) fn from_remote(remote: Addr) -> Self {
+        match remote {
+            Addr::Ip(remote) => Self::Ip {
+                remote,
+                local: None,
+            },
+            Addr::Relay(url, endpoint_id) => Self::Relay { url, endpoint_id },
+            Addr::Custom(remote) => Self::Custom {
+                remote,
+                local: None,
+            },
+        }
+    }
+
+    /// Creates a four-tuple from a remote and a local transport address.
+    ///
+    /// The variant is determined by `remote`. The `local` address is retained only when
+    /// it matches that variant. A mismatched `local` is dropped, which cannot happen for
+    /// values derived together from the same network path.
+    pub(super) fn new(remote: Addr, local: LocalTransportAddr) -> Self {
+        match remote {
+            Addr::Ip(remote) => Self::Ip {
+                remote,
+                local: match local {
+                    LocalTransportAddr::Ip(local) => local,
+                    _ => None,
+                },
+            },
+            Addr::Relay(url, endpoint_id) => Self::Relay { url, endpoint_id },
+            Addr::Custom(remote) => Self::Custom {
+                remote,
+                local: match local {
+                    LocalTransportAddr::Custom(local) => local,
+                    _ => None,
+                },
+            },
+        }
+    }
+
+    /// Returns the [`FourTuple] for a noq network path by looking up QUIC-mapped addresses.
+    pub(super) fn from_noq(
+        noq_four_tuple: noq::FourTuple,
+        relay_mapped_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> Option<Self> {
+        let remote = to_transport_addr(
+            noq_four_tuple.remote(),
+            relay_mapped_addrs,
+            custom_mapped_addrs,
+        )?;
+        let local = LocalTransportAddr::from_noq_local_ip(
+            noq_four_tuple.local_ip(),
+            &remote,
+            custom_mapped_addrs,
+        );
+        Some(Self::new(remote, local))
+    }
+
+    /// Returns the remote transport address.
+    pub fn remote(&self) -> Addr {
+        match self {
+            Self::Ip { remote, .. } => Addr::Ip(*remote),
+            Self::Relay { url, endpoint_id } => Addr::Relay(url.clone(), *endpoint_id),
+            Self::Custom { remote, .. } => Addr::Custom(remote.clone()),
+        }
+    }
+
+    /// Returns the local transport address.
+    pub fn local(&self) -> LocalTransportAddr {
+        match self {
+            Self::Ip { local, .. } => LocalTransportAddr::Ip(*local),
+            Self::Relay { url, .. } => LocalTransportAddr::Relay(url.clone()),
+            Self::Custom { local, .. } => LocalTransportAddr::Custom(local.clone()),
+        }
+    }
+
+    /// Returns `true` if the remote is an IP address.
+    pub fn is_ip(&self) -> bool {
+        matches!(self, Self::Ip { .. })
+    }
+
+    /// Returns `true` if the remote is a relay address.
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::Relay { .. })
+    }
+
+    /// Returns the QUIC-mapped [`noq::FourTuple`] for this [`FourTuple`].
+    pub(super) fn to_noq_four_tuple(
+        &self,
+        relay_mapped_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+        custom_mapped_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+    ) -> noq::FourTuple {
+        let (remote, local) = match self {
+            FourTuple::Ip { remote, local } => (*remote, *local),
+            FourTuple::Relay { url, endpoint_id } => (
+                relay_mapped_addrs
+                    .get(&(url.clone(), *endpoint_id))
+                    .private_socket_addr(),
+                None,
+            ),
+            FourTuple::Custom { remote, local } => {
+                let remote = custom_mapped_addrs.get(remote).private_socket_addr();
+                let local = local.as_ref().map(|custom_addr| {
+                    custom_mapped_addrs
+                        .get(custom_addr)
+                        .private_socket_addr()
+                        .ip()
+                });
+                (remote, local)
+            }
+        };
+        noq::FourTuple::new(remote, local)
+    }
+
+    /// Returns the kind of address, for configuring bias.
+    pub fn addr_kind(&self) -> AddrKind {
+        match self {
+            Self::Ip { remote, .. } => match remote {
+                SocketAddr::V4(_) => AddrKind::IpV4,
+                SocketAddr::V6(_) => AddrKind::IpV6,
+            },
+            Self::Relay { .. } => AddrKind::Relay,
+            Self::Custom { remote, .. } => AddrKind::Custom(remote.id()),
+        }
+    }
+}
+
+impl fmt::Display for FourTuple {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FourTuple::Ip { remote, local } => {
+                if let Some(local) = local {
+                    write!(f, "Ip({local}->{remote})")
+                } else {
+                    write!(f, "Ip({remote})")
+                }
+            }
+            FourTuple::Relay { url, endpoint_id } => {
+                write!(f, "Relay({url}, {})", endpoint_id.fmt_short())
+            }
+            FourTuple::Custom { remote, local } => {
+                if let Some(local) = local {
+                    write!(f, "Custom({local}->{remote})")
+                } else {
+                    write!(f, "Custom({remote})")
+                }
             }
         }
     }
@@ -908,47 +1008,49 @@ impl TransportsSender {
     pub(crate) fn poll_send(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
-        dst: &Addr,
-        src: Option<IpAddr>,
+        network_path: &FourTuple,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
-        match dst {
+        match network_path {
             #[cfg(wasm_browser)]
-            Addr::Ip(..) => {
+            FourTuple::Ip { .. } => {
                 return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
             }
             #[cfg(not(wasm_browser))]
-            Addr::Ip(dst_addr) => match dst_addr {
+            FourTuple::Ip {
+                remote: dst_addr,
+                local: src,
+            } => match dst_addr {
                 SocketAddr::V4(_) => {
                     if let Some(sender) = self
                         .ip
                         .v4_iter_mut()
-                        .find(|s| s.is_valid_send_addr(src, dst_addr))
+                        .find(|s| s.is_valid_send_addr(*src, dst_addr))
                     {
-                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
+                        return Pin::new(sender).poll_send(cx, *dst_addr, *src, transmit);
                     }
                     if let Some(sender) = self.ip.v4_default_mut()
-                        && sender.is_valid_default_addr(src, dst_addr)
+                        && sender.is_valid_default_addr(*src, dst_addr)
                     {
-                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
+                        return Pin::new(sender).poll_send(cx, *dst_addr, *src, transmit);
                     }
                 }
                 SocketAddr::V6(_) => {
                     if let Some(sender) = self
                         .ip
                         .v6_iter_mut()
-                        .find(|s| s.is_valid_send_addr(src, dst_addr))
+                        .find(|s| s.is_valid_send_addr(*src, dst_addr))
                     {
-                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
+                        return Pin::new(sender).poll_send(cx, *dst_addr, *src, transmit);
                     }
                     if let Some(sender) = self.ip.v6_default_mut()
-                        && sender.is_valid_default_addr(src, dst_addr)
+                        && sender.is_valid_default_addr(*src, dst_addr)
                     {
-                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
+                        return Pin::new(sender).poll_send(cx, *dst_addr, *src, transmit);
                     }
                 }
             },
-            Addr::Relay(url, endpoint_id) => {
+            FourTuple::Relay { url, endpoint_id } => {
                 let mut has_valid_sender = false;
                 for sender in self
                     .relay
@@ -965,10 +1067,10 @@ impl TransportsSender {
                     return Poll::Pending;
                 }
             }
-            Addr::Custom(addr) => {
+            FourTuple::Custom { remote, local } => {
                 for sender in &mut self.custom {
-                    if sender.is_valid_send_addr(addr) {
-                        match sender.poll_send(cx, addr, transmit) {
+                    if sender.is_valid_send_addr(remote) {
+                        match sender.poll_send(cx, remote, local.as_ref(), transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
@@ -979,7 +1081,7 @@ impl TransportsSender {
 
         // We "blackhole" data that we have not found any usable transport for on
         // to make sure the QUIC stack picks up that currently this data does not arrive.
-        trace!(?src, ?dst, "no valid transport available");
+        trace!(%network_path, "no valid transport available");
         Poll::Ready(Ok(()))
     }
 }
@@ -1118,7 +1220,7 @@ impl noq::UdpSender for Sender {
         // and re-send them.
         let mapped_addr = self.mapped_addr(noq_transmit)?;
 
-        let transport_addr = match mapped_addr {
+        let network_path = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
                 let Some(endpoint_id) = self.sock.mapped_addrs.endpoint_addrs.lookup(&mapped_addr)
                 else {
@@ -1167,7 +1269,7 @@ impl noq::UdpSender for Sender {
                     .relay_addrs
                     .lookup(&relay_mapped_addr)
                 {
-                    Some((relay_url, endpoint_id)) => Addr::Relay(relay_url, endpoint_id),
+                    Some((url, endpoint_id)) => FourTuple::Relay { url, endpoint_id },
                     None => {
                         error!("unknown RelayMappedAddr, dropped transmit");
                         return Poll::Ready(Ok(()));
@@ -1181,7 +1283,16 @@ impl noq::UdpSender for Sender {
                     .custom_addrs
                     .lookup(&custom_mapped_addr)
                 {
-                    Some(addr) => Addr::Custom(addr),
+                    Some(addr) => {
+                        let local = noq_transmit
+                            .src_ip
+                            .and_then(|ip_addr| CustomMappedAddr::try_from(ip_addr).ok())
+                            .and_then(|addr| self.sock.mapped_addrs.custom_addrs.lookup(&addr));
+                        FourTuple::Custom {
+                            remote: addr,
+                            local,
+                        }
+                    }
                     None => {
                         error!("unknown CustomMappedAddr, dropped transmit");
                         return Poll::Ready(Ok(()));
@@ -1192,7 +1303,10 @@ impl noq::UdpSender for Sender {
                 // Ensure IPv6 mapped addresses are converted back
                 let socket_addr =
                     SocketAddr::new(socket_addr.ip().to_canonical(), socket_addr.port());
-                Addr::Ip(socket_addr)
+                FourTuple::Ip {
+                    remote: socket_addr,
+                    local: noq_transmit.src_ip,
+                }
             }
         };
 
@@ -1203,13 +1317,10 @@ impl noq::UdpSender for Sender {
         };
         let this = self.project();
 
-        match this
-            .sender
-            .poll_send(cx, &transport_addr, noq_transmit.src_ip, &transmit)
-        {
+        match this.sender.poll_send(cx, &network_path, &transmit) {
             Poll::Ready(Ok(())) => {
                 trace!(
-                    dst = ?transport_addr,
+                    dst = %network_path,
                     len = transmit.contents.len(),
                     datagram_count = transmit.datagram_count(),
                     "sent transmit"
@@ -1217,7 +1328,7 @@ impl noq::UdpSender for Sender {
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(ref err)) => {
-                warn!(dst=?transport_addr, "dropped transmit: {err:#}");
+                warn!(dst=%network_path, "dropped transmit: {err:#}");
                 Poll::Ready(Ok(()))
             }
             Poll::Pending => {
@@ -1225,7 +1336,7 @@ impl noq::UdpSender for Sender {
                 // different transport.  Instead we let Noq handle this as a lost
                 // datagram.
                 // TODO: Revisit this: we might want to do something better.
-                trace!(dst=?transport_addr, "transport pending, dropped transmit");
+                trace!(dst=%network_path, "transport pending, dropped transmit");
                 Poll::Ready(Ok(()))
             }
         }
@@ -1233,87 +1344,5 @@ impl noq::UdpSender for Sender {
 
     fn max_transmit_segments(&self) -> NonZeroUsize {
         self.sender.max_transmit_segments
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
-
-    use iroh_base::{EndpointId, RelayUrl};
-
-    use super::*;
-
-    fn v4(port: u16) -> Addr {
-        Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
-    }
-
-    fn v6(port: u16) -> Addr {
-        Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
-            Ipv6Addr::LOCALHOST,
-            port,
-            0,
-            0,
-        )))
-    }
-
-    fn relay(port: u16) -> Addr {
-        let url = format!("https://relay{port}.iroh.computer")
-            .parse::<RelayUrl>()
-            .unwrap();
-        Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap())
-    }
-
-    #[test]
-    fn test_transport_bias_map_default() {
-        let bias_map = TransportBiasMap::default();
-
-        // IPv4 should be Primary with no bias
-        let v4_bias = bias_map.get(&v4(1));
-        assert_eq!(v4_bias.transport_type, TransportType::Primary);
-        assert_eq!(v4_bias.rtt_bias, 0);
-
-        // IPv6 should be Primary with negative bias (preferred)
-        let v6_bias = bias_map.get(&v6(1));
-        assert_eq!(v6_bias.transport_type, TransportType::Primary);
-        assert_eq!(v6_bias.rtt_bias, -(IPV6_RTT_ADVANTAGE.as_nanos() as i128));
-
-        // Relay should be Backup with no bias
-        let relay_bias = bias_map.get(&relay(1));
-        assert_eq!(relay_bias.transport_type, TransportType::Backup);
-        assert_eq!(relay_bias.rtt_bias, 0);
-    }
-
-    #[test]
-    fn test_ipv6_bias_gives_advantage() {
-        let bias_map = TransportBiasMap::default();
-
-        // With equal RTTs, IPv6 should have a lower biased_rtt
-        let rtt = Duration::from_millis(50);
-        let v4_bias = bias_map.get(&v4(1));
-        let v6_bias = bias_map.get(&v6(1));
-
-        let v4_biased_rtt = rtt.as_nanos() as i128 + v4_bias.rtt_bias;
-        let v6_biased_rtt = rtt.as_nanos() as i128 + v6_bias.rtt_bias;
-
-        // IPv6 should have lower biased RTT (more preferred)
-        assert!(v6_biased_rtt < v4_biased_rtt);
-        assert_eq!(
-            v4_biased_rtt - v6_biased_rtt,
-            IPV6_RTT_ADVANTAGE.as_nanos() as i128
-        );
-    }
-
-    #[test]
-    fn test_relay_is_backup() {
-        let bias_map = TransportBiasMap::default();
-
-        // Relay should be Backup, which means it won't compete with Primary transports
-        let relay_bias = bias_map.get(&relay(1));
-        assert_eq!(relay_bias.transport_type, TransportType::Backup);
-
-        // Primary transports (IPv4/IPv6) should be preferred over Backup
-        let v4_bias = bias_map.get(&v4(1));
-        assert!(v4_bias.transport_type < relay_bias.transport_type);
     }
 }

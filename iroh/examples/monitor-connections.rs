@@ -1,8 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
 use iroh::{
-    Endpoint, Watcher,
-    endpoint::{AfterHandshakeOutcome, Connection, EndpointHooks, WeakConnectionHandle, presets},
+    Endpoint,
+    endpoint::{
+        AfterHandshakeOutcome, Closed, Connection, EndpointHooks, WeakConnectionHandle, presets,
+    },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_future::task::AbortOnDropHandle;
@@ -131,13 +133,13 @@ impl Monitor {
                 Some(MonitoredConnection { alpn, remote_id, handle }) = rx.recv() => {
                     let alpn = String::from_utf8_lossy(&alpn).to_string();
                     let remote = remote_id.fmt_short();
-                    let rtt = handle.upgrade().and_then(|c| c.paths().peek().iter().map(|p| p.stats().expect("conn is not dropped").rtt).min());
+                    let rtt = handle.upgrade().and_then(|c| c.paths().iter().map(|p| p.rtt()).min());
                     info!(%remote, %alpn, ?rtt, "new connection");
                     tasks.spawn(async move {
                         match handle.closed().await {
-                            Some((close_reason, stats)) => {
+                            Some(Closed { reason, stats, .. }) => {
                                 // We have access to the final stats of the connection!
-                                info!(%remote, %alpn, ?close_reason, udp_rx=stats.udp_rx.bytes, udp_tx=stats.udp_tx.bytes, "connection closed");
+                                info!(%remote, %alpn, ?reason, udp_rx=stats.udp_rx.bytes, udp_tx=stats.udp_tx.bytes, "connection closed");
                             }
                             None => {
                                 // The connection was closed before we could register our stats-on-close listener.

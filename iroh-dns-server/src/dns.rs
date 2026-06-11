@@ -42,6 +42,7 @@ const DEFAULT_A_TTL: u32 = 60 * 60; // 1h
 
 /// Configuration for the DNS listener.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DnsConfig {
     /// Port to bind the DNS listener to, for both UDP and TCP.
     pub port: u16,
@@ -63,6 +64,25 @@ pub struct DnsConfig {
     pub rr_aaaa: Option<Ipv6Addr>,
     /// Optional `NS` record to serve at each origin apex.
     pub rr_ns: Option<String>,
+}
+
+impl DnsConfig {
+    /// Creates a new [`DnsConfig`] with the given required fields.
+    ///
+    /// The optional `bind_addr` and apex resource records (`rr_a`, `rr_aaaa`, `rr_ns`)
+    /// default to `None`. Assign them after construction to override.
+    pub fn new(port: u16, default_soa: String, default_ttl: u32, origins: Vec<String>) -> Self {
+        Self {
+            port,
+            bind_addr: None,
+            default_soa,
+            default_ttl,
+            origins,
+            rr_a: None,
+            rr_aaaa: None,
+            rr_ns: None,
+        }
+    }
 }
 
 /// A DNS server that serves pkarr signed packets.

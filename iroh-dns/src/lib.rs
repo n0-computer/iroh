@@ -5,10 +5,14 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links, unreachable_pub)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
+#[cfg(target_os = "android")]
+mod android;
 mod attrs;
 #[cfg(not(wasm_browser))]
 pub mod dns;
 pub mod endpoint_info;
 pub mod pkarr;
 
+#[cfg(target_os = "android")]
+pub use android::install_android_jni_context;
 pub use attrs::{EncodingError, IROH_TXT_NAME, ParseError};

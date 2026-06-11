@@ -1,16 +1,11 @@
 //! Portmapper integration.
 //!
-//! Re-exports the real [`portmapper`] crate when the `portmapper` feature is enabled,
+//! Wraps the real [`portmapper`] crate when the `portmapper` feature is enabled,
 //! or provides a no-op stub otherwise.
 
 use std::net::SocketAddrV4;
 
-#[cfg(all(not(wasm_browser), feature = "portmapper"))]
-pub use ::portmapper::Metrics;
 use tokio::sync::watch;
-
-#[cfg(not(all(not(wasm_browser), feature = "portmapper")))]
-pub use self::stub::Metrics;
 
 /// Configuration for the portmapper service (UPnP, PCP, NAT-PMP).
 ///
@@ -33,18 +28,11 @@ impl Default for PortmapperConfig {
     }
 }
 
-pub(crate) fn create_client(
-    metrics: &crate::metrics::EndpointMetrics,
-    config: &PortmapperConfig,
-) -> Client {
+pub(crate) fn create_client(config: &PortmapperConfig) -> Client {
     match config {
         #[cfg(all(not(wasm_browser), feature = "portmapper"))]
-        PortmapperConfig::Enabled {} => Client::Enabled(::portmapper::Client::with_metrics(
-            Default::default(),
-            metrics.portmapper.clone(),
-        )),
+        PortmapperConfig::Enabled {} => Client::Enabled(::portmapper::Client::default()),
         _ => {
-            let _ = metrics;
             let (tx, rx) = watch::channel(None);
             Client::Disabled { _tx: tx, rx }
         }
@@ -98,39 +86,5 @@ impl Client {
             Client::Enabled(c) => c.watch_external_address(),
             Client::Disabled { rx, .. } => rx.clone(),
         }
-    }
-}
-
-#[cfg(not(all(not(wasm_browser), feature = "portmapper")))]
-mod stub {
-    use iroh_metrics::{Counter, MetricsGroup};
-    use serde::{Deserialize, Serialize};
-
-    /// Stub portmapper metrics used when the `portmapper` feature is disabled.
-    #[derive(Debug, Default, MetricsGroup, Serialize, Deserialize)]
-    #[metrics(name = "portmap")]
-    pub struct Metrics {
-        /// Number of probing tasks started.
-        pub probes_started: Counter,
-        /// Number of updates to the local port.
-        pub local_port_updates: Counter,
-        /// Number of mapping tasks started.
-        pub mapping_attempts: Counter,
-        /// Number of failed mapping tasks.
-        pub mapping_failures: Counter,
-        /// Number of times the external address obtained via port mapping was updated.
-        pub external_address_updated: Counter,
-        /// Number of UPnP probes executed.
-        pub upnp_probes: Counter,
-        /// Number of failed UPnP probes.
-        pub upnp_probes_failed: Counter,
-        /// Number of UPnP probes that found it available.
-        pub upnp_available: Counter,
-        /// Number of UPnP probes that resulted in a gateway different to the previous one.
-        pub upnp_gateway_updated: Counter,
-        /// Number of PCP probes executed.
-        pub pcp_probes: Counter,
-        /// Number of PCP probes that found it available.
-        pub pcp_available: Counter,
     }
 }

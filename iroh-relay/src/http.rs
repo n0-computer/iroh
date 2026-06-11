@@ -17,6 +17,11 @@ pub const RELAY_PROBE_PATH: &str = "/ping";
 /// The HTTP header name for relay client authentication
 pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay-client-auth-v1");
 
+/// The URL query parameter name used to pass the authorization token when
+/// HTTP headers are not available (notably, in browsers).
+#[cfg(any(wasm_browser, feature = "server"))]
+pub(crate) const AUTH_TOKEN_URL_QUERY_PARAM: &str = "token";
+
 /// The relay protocol version negotiated between client and server.
 ///
 /// Sent as the websocket sub-protocol header `Sec-Websocket-Protocol` from
@@ -40,6 +45,7 @@ pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay
 // Only used by the `all_is_exhaustive` to validate that `Self::ALL` is up to date.
 #[cfg_attr(test, derive(strum::EnumCount))]
 #[strum(parse_err_ty = UnsupportedRelayProtocolVersion, parse_err_fn = strum_err_fn)]
+#[non_exhaustive]
 // Needs to be ordered with newest version last, so that the `Ord` impl orders by latest version as max.
 pub enum ProtocolVersion {
     /// Version 1 (the only version supported until iroh 0.98.0)

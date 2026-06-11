@@ -17,7 +17,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
-    future::poll_fn,
     io,
     net::{IpAddr, SocketAddr},
     sync::{
@@ -26,7 +25,7 @@ use std::{
     },
 };
 
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use mapped_addrs::MultipathMappedAddr;
 use n0_error::{AnyError, anyerr, bail, e, stack_error};
@@ -43,7 +42,7 @@ use netwatch::{
     ip::LocalAddresses,
 };
 use noq::{
-    NetworkChangeHint, WeakConnectionHandle,
+    NetworkChangeHint, TokenStore,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use rand::RngExt;
@@ -69,15 +68,17 @@ use crate::net_report::QuicConfig;
 use crate::{
     address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    endpoint::{RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig},
+    endpoint::{
+        LocalTransportAddr, RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig,
+    },
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
     portmapper,
     runtime::Runtime,
     socket::{
         concurrent_read_map::ReadOnlyMap,
-        remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
-        transports::{HomeRelayWatch, HomeRelayWatcher, TransportBiasMap},
+        remote_map::{MappedAddrs, PathSelector, PathStateReceiver, RemoteInfo},
+        transports::{HomeRelayWatch, HomeRelayWatcher},
     },
     tls::{
         self,
@@ -87,6 +88,7 @@ use crate::{
 
 mod metrics;
 
+pub(crate) mod biased_rtt_path_selector;
 pub(crate) mod concurrent_read_map;
 pub(crate) mod mapped_addrs;
 pub(crate) mod remote_map;
@@ -128,8 +130,19 @@ pub(crate) const RELAY_PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(30)
 
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
-/// Pretty arbitrary and high right now.
-pub(crate) const MAX_MULTIPATH_PATHS: u32 = 12;
+/// We expect 1 relay path, and then leave space for ~3 IP and custom transport paths.
+/// On top of that, when we expect a network change, we might be closing these paths
+/// (except for the relay path) and open new ones, and give us 3 more paths to spare.
+/// And finally we round that up to 8 for good measure.
+pub(crate) const MAX_MULTIPATH_PATHS: u32 = 8;
+
+/// Maximum number of n0 QUIC NAT Traversal addresses that the QUIC stack should allow.
+///
+/// This needs to be big enough to accommodate for machines which have lots of network
+/// interfaces enabled. We've seen MacOS machines with >25 interfaces in the wild
+/// (mostly due to VPN TUN and docket interfaces), so this seems like a reasonable
+/// value.
+pub(crate) const MAX_QNT_ADDRESSES: u8 = 32;
 
 /// Error returned when the endpoint state actor stopped while waiting for a reply.
 #[stack_error(add_meta, derive)]
@@ -174,7 +187,7 @@ pub(crate) struct Options {
 
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
-    pub(crate) transport_bias: TransportBiasMap,
+    pub(crate) path_selector: Arc<dyn PathSelector>,
     pub(crate) portmapper_config: portmapper::PortmapperConfig,
     pub(crate) net_report_config: crate::net_report::NetReportConfig,
 
@@ -226,6 +239,8 @@ pub(crate) struct StaticConfig {
     pub(crate) client_config: QuicClientConfig,
     #[debug("Arc<RustlsTokenKey>")]
     pub(crate) token_key: Arc<RustlsTokenKey>,
+    #[debug("Arc<dyn TokenStore>")]
+    pub(crate) token_store: Arc<dyn TokenStore>,
     pub(crate) transport_config: QuicTransportConfig,
 }
 
@@ -253,6 +268,7 @@ impl StaticConfig {
         quic_client_config.set_alpn_protocols(alpn_protocols);
         let mut inner = noq::ClientConfig::new(Arc::new(quic_client_config));
         inner.transport_config(transport_config);
+        inner.token_store(self.token_store.clone());
         inner
     }
 }
@@ -326,9 +342,6 @@ pub(crate) struct Socket {
     /// A missing entry means no actor is running for that remote. Spawning new
     /// `RemoteStateActor`s must go through the socket actor channel.
     remote_actors: ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
-
-    /// EndpointId of this endpoint.
-    public_key: PublicKey,
 
     // - Shutdown Management
     shutdown: ShutdownState,
@@ -527,14 +540,17 @@ impl Socket {
         .unwrap_or(transports::Addr::Ip(addr))
     }
 
-    /// Reverse-resolves a custom mapped address back to its [`iroh_base::CustomAddr`].
-    pub(crate) fn lookup_custom_addr(&self, addr: SocketAddr) -> Option<iroh_base::CustomAddr> {
-        match MultipathMappedAddr::from(addr) {
-            MultipathMappedAddr::Custom(custom_mapped) => {
-                self.mapped_addrs.custom_addrs.lookup(&custom_mapped)
-            }
-            _ => None,
-        }
+    pub(crate) fn to_local_transport_addr(
+        &self,
+        local_ip: Option<IpAddr>,
+        remote_addr: SocketAddr,
+    ) -> LocalTransportAddr {
+        let remote_addr = self.to_transport_addr(remote_addr);
+        LocalTransportAddr::from_noq_local_ip(
+            local_ip,
+            &remote_addr,
+            &self.mapped_addrs.custom_addrs,
+        )
     }
 
     /// Reference to the internal Address Lookup
@@ -785,9 +801,10 @@ impl DirectAddrUpdateState {
             return;
         }
 
+        self.sock.metrics.net_report.portmap_attempts.inc();
         self.port_mapper.procure_mapping();
 
-        debug!("requesting net_report report");
+        trace!("requesting net_report report");
         let sock = self.sock.clone();
 
         let run_done = self.run_done.clone();
@@ -870,7 +887,7 @@ impl EndpointInner {
             tls_config,
             metrics,
             hooks,
-            transport_bias,
+            path_selector,
             portmapper_config,
             net_report_config,
             static_config,
@@ -878,7 +895,7 @@ impl EndpointInner {
         } = opts;
 
         let address_lookup = address_lookup::AddressLookupServices::default();
-        let port_mapper = portmapper::create_client(&metrics, &portmapper_config);
+        let port_mapper = portmapper::create_client(&portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs
             .iter()
@@ -913,6 +930,7 @@ impl EndpointInner {
             ipv6_reported: ipv6_reported.clone(),
             tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
+            relay_map: relay_map.clone(),
         };
 
         let shutdown_state = ShutdownState::default();
@@ -961,7 +979,7 @@ impl EndpointInner {
                 direct_addrs.addrs.watch(),
                 address_lookup.clone(),
                 shutdown_token.child_token(),
-                transport_bias,
+                path_selector,
                 span.clone(),
             )
         };
@@ -969,7 +987,6 @@ impl EndpointInner {
         let home_relay_watch = transports.home_relay_watch();
 
         let sock = Arc::new(Socket {
-            public_key: secret_key.public(),
             remote_actors: remote_map.senders(),
             shutdown: shutdown_state,
             ipv6_reported,
@@ -1116,7 +1133,7 @@ impl EndpointInner {
         if self.sock.is_closed() || self.sock.is_closing() {
             return;
         }
-        trace!(me = ?self.public_key, "socket closing...");
+        trace!("socket closing...");
 
         // Cancel at_close_start token, which cancels running netreports.
         self.sock.shutdown.at_close_start.cancel();
@@ -1142,9 +1159,9 @@ impl EndpointInner {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
-        trace!("wait_idle start");
-        self.noq_endpoint().wait_idle().await;
-        trace!("wait_idle done");
+        trace!("wait_all_draining start");
+        self.noq_endpoint().wait_all_draining().await;
+        trace!("wait_all_draining done");
 
         // Start cancellation of all actors.
         self.sock.shutdown.at_endpoint_closed.cancel();
@@ -1191,12 +1208,12 @@ impl EndpointInner {
     ///
     /// This should only be called in the `iroh::Endpoint` `Drop` impl when the
     /// `iroh::Endpoint` is dropped without first calling `Endpoint::close`.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, parent = self.sock.span.clone())]
     pub(crate) fn abort(&self) {
         if self.sock.is_closed() || self.sock.is_closing() {
             return;
         }
-        trace!(me = ?self.public_key, "aborting socket...");
+        trace!("socket aborting...");
 
         // Cancel at_close_start token, which cancels running netreports.
         self.sock.shutdown.at_close_start.cancel();
@@ -1335,14 +1352,14 @@ impl EndpointInner {
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
     ///
-    /// Returns a future that resolves to [`PathWatchable`].
+    /// Returns a future that resolves to a [`PathStateReceiver`] for the new connection.
     ///
-    /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
+    /// The returned future is `'static`, so it can be stored without being lifetime-bound to `&self`.
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
-        conn: WeakConnectionHandle,
-    ) -> impl Future<Output = Result<PathWatchable, RemoteStateActorStoppedError>> + Send + 'static
+        conn: noq::Connection,
+    ) -> impl Future<Output = Result<PathStateReceiver, RemoteStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
         let sender = self.actor_sender.clone();
@@ -1369,8 +1386,8 @@ enum ActorMessage {
     #[debug("AddConnection(..)")]
     AddConnection(
         EndpointId,
-        WeakConnectionHandle,
-        oneshot::Sender<PathWatchable>,
+        noq::Connection,
+        oneshot::Sender<PathStateReceiver>,
     ),
     /// Re-evaluate direct addresses, e.g. after configured external addresses changed.
     DirectAddrRefresh,
@@ -1571,6 +1588,9 @@ impl Actor {
                     trace!("tick: portmap changed");
                     self.sock.metrics.socket.actor_tick_portmap_changed.inc();
                     let new_external_address = *portmap_watcher.borrow();
+                    if new_external_address.is_some() {
+                        self.sock.metrics.net_report.portmap_external_address_updated.inc();
+                    }
                     debug!("external address updated: {new_external_address:?}");
                     self.re_stun(UpdateReason::PortmapUpdated);
                 },
@@ -1591,9 +1611,7 @@ impl Actor {
                     self.sock.metrics.socket.actor_link_change.inc();
                     self.handle_network_change(is_major);
                 }
-                remote_id = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
-                    trace!(%remote_id, "cleaned up RemoteStateActor");
-                }
+                _remote_id = self.remote_map.cleanup() => {},
                 _ = &mut notify_quic_network_change => {
                     let has_network = self.has_usable_network();
                     let Some(pending) = self.call_notify_quic_network_change.as_mut() else {
@@ -1763,16 +1781,10 @@ impl Actor {
                 self.handle_relay_map_change();
             }
             ActorMessage::ResolveRemote(addr, tx) => {
-                // Swallowing the error is fine here; if a send on the channel to the
-                // remote state actor ever fails (which it shouldn't), `tx` will be
-                // dropped and thus the failure will be propagated to the caller.
-                self.remote_map.resolve_remote(addr, tx).await.ok();
+                self.remote_map.resolve_remote(addr, tx).await;
             }
             ActorMessage::AddConnection(remote, conn, tx) => {
-                // Swallowing the error is fine here; if a send on the channel to the
-                // remote state actor ever fails (which it shouldn't), `tx` will be
-                // dropped and thus the failure will be propagated to the caller.
-                self.remote_map.add_connection(remote, conn, tx).await.ok();
+                self.remote_map.add_connection(remote, conn, tx).await;
             }
             ActorMessage::DirectAddrRefresh => {
                 #[cfg(not(wasm_browser))]
@@ -2108,7 +2120,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
-    use iroh_relay::tls::{CaRootsConfig, default_provider};
+    use iroh_relay::tls::{CaTlsConfig, default_provider};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_tracing_test::traced_test;
@@ -2125,6 +2137,7 @@ mod tests {
         endpoint::{QuicTransportConfig, presets},
         socket::{
             EndpointInner, StaticConfig, TransportConfig,
+            biased_rtt_path_selector::BiasedRttPathSelector,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
         },
         tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
@@ -2145,6 +2158,7 @@ mod tests {
             client_config: tls_config.make_client_config(false).unwrap(),
             tls_config,
             token_key: Arc::new(RustlsTokenKey::new(rng, &crypto_provider).unwrap()),
+            token_store: Arc::new(noq::TokenMemoryCache::default()),
             transport_config: QuicTransportConfig::default(),
         };
         let server_config = static_config.create_server_config(vec![]);
@@ -2157,14 +2171,14 @@ mod tests {
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
             server_config,
-            tls_config: CaRootsConfig::default()
+            tls_config: CaTlsConfig::default()
                 .client_config(crypto_provider.clone())
                 .unwrap(),
             #[cfg(any(test, feature = "test-utils"))]
             address_lookup_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
-            transport_bias: Default::default(),
+            path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             net_report_config: Default::default(),
             static_config,
@@ -2195,14 +2209,13 @@ mod tests {
 
         info!("finishing");
         send_bi.finish().std_context("finish")?;
-        send_bi.stopped().await.std_context("stopped")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            for info in conn.paths().get().iter() {
+            for info in conn.paths().iter() {
                 assert!(
-                    info.stats().unwrap().lost_packets < 10,
+                    info.stats().lost_packets < 10,
                     "[receiver] path {:?} should not loose many packets",
                     info.remote_addr()
                 );
@@ -2236,7 +2249,6 @@ mod tests {
 
         info!("finishing");
         send_bi.finish().std_context("finish")?;
-        send_bi.stopped().await.std_context("stopped")?;
 
         info!("reading_to_end");
         let val = recv_bi
@@ -2254,9 +2266,9 @@ mod tests {
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            for info in conn.paths().get().iter() {
+            for info in conn.paths().iter() {
                 assert!(
-                    info.stats().unwrap().lost_packets < 10,
+                    info.stats().lost_packets < 10,
                     "[sender] path {:?} should not loose many packets",
                     info.remote_addr()
                 );
@@ -2390,6 +2402,13 @@ mod tests {
         Ok(())
     }
 
+    // EADDRINUSE on the GitHub Android emulator persists past
+    // `force_network_change()`, so the rebind fails and connect() never
+    // wakes the connection driver. Passes locally.
+    #[cfg_attr(
+        target_os = "android",
+        ignore = "rebind flakes against the GitHub Android emulator"
+    )]
     #[tokio::test]
     #[traced_test]
     async fn test_regression_network_change_rebind_wakes_connection_driver() -> Result {
@@ -2554,6 +2573,7 @@ mod tests {
             client_config: tls_config.make_client_config(keylog).unwrap(),
             tls_config,
             token_key: Arc::new(RustlsTokenKey::new(&mut rand::rng(), &crypto_provider).unwrap()),
+            token_store: Arc::new(noq::TokenMemoryCache::default()),
             transport_config: QuicTransportConfig::default(),
         };
         let server_config = static_config.create_server_config(vec![ALPN.to_vec()]);
@@ -2569,12 +2589,12 @@ mod tests {
             dns_resolver,
             proxy_url: None,
             server_config,
-            tls_config: CaRootsConfig::default()
+            tls_config: CaTlsConfig::default()
                 .client_config(crypto_provider.clone())
                 .unwrap(),
             metrics: Default::default(),
             hooks: Default::default(),
-            transport_bias: Default::default(),
+            path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             net_report_config: Default::default(),
             static_config,
@@ -2596,6 +2616,7 @@ mod tests {
     ) -> Result<noq::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = noq::TransportConfig::default();
+        transport_config.server_handshake_migration(true);
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
         socket_connect_with_transport_config(
@@ -2793,6 +2814,7 @@ mod tests {
         // with the next handshake, closing it during the handshake.  This makes the test a
         // little slower though.
         let mut transport_config = noq::TransportConfig::default();
+        transport_config.server_handshake_migration(true);
         transport_config.max_idle_timeout(Some(Duration::from_millis(200).try_into().unwrap()));
         let res = socket_connect_with_transport_config(
             sock_1.noq_endpoint().clone(),

@@ -40,13 +40,13 @@ use std::{
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
-    self as relay, PingTracker,
+    self as relay, PingTracker, RelayMap,
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, Status},
 };
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
-    FuturesUnorderedBounded, SinkExt, StreamExt,
+    FuturesUnorderedBounded, MaybeFuture, SinkExt, StreamExt,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
 };
@@ -59,9 +59,7 @@ use url::Url;
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-use crate::{
-    endpoint::RelayStatus, net_report::Report, socket::Metrics as SocketMetrics, util::MaybeFuture,
-};
+use crate::{endpoint::RelayStatus, net_report::Report, socket::Metrics as SocketMetrics};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -209,6 +207,7 @@ struct RelayConnectionOptions {
     proxy_url: Option<Url>,
     prefer_ipv6: Arc<AtomicBool>,
     tls_config: rustls::ClientConfig,
+    auth_token: Option<String>,
 }
 
 /// Possible reasons for a failed relay connection.
@@ -297,6 +296,7 @@ impl ActiveRelayActor {
             proxy_url,
             prefer_ipv6,
             tls_config,
+            auth_token,
         } = opts;
 
         let mut builder = relay::client::ClientBuilder::new(
@@ -309,6 +309,10 @@ impl ActiveRelayActor {
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
+        }
+
+        if let Some(token) = auth_token {
+            builder = builder.auth_token(token);
         }
         builder
     }
@@ -501,7 +505,7 @@ impl ActiveRelayActor {
         &mut self,
         client: iroh_relay::client::Client,
     ) -> Result<(), RelayConnectionError> {
-        debug!("Actor loop: connected to relay");
+        trace!("Actor loop: connected to relay");
         event!(
             target: "iroh::_events::relay::connected",
             Level::DEBUG,
@@ -872,6 +876,9 @@ pub(crate) struct Config {
     pub ipv6_reported: Arc<AtomicBool>,
     pub tls_config: rustls::ClientConfig,
     pub metrics: Arc<SocketMetrics>,
+    /// Per-relay configuration. Consulted when starting a connection to
+    /// look up the auth token and any future per-relay options.
+    pub relay_map: RelayMap,
 }
 
 /// Connection state of the home relay.
@@ -1010,7 +1017,7 @@ impl RelayActor {
     ) {
         // When this future is present, it is sending pending datagrams to an
         // ActiveRelayActor.  We can not process further datagrams during this time.
-        let mut datagram_send_fut = std::pin::pin!(MaybeFuture::none());
+        let mut datagram_send_fut = std::pin::pin!(MaybeFuture::None);
 
         loop {
             tokio::select! {
@@ -1226,6 +1233,11 @@ impl RelayActor {
     fn start_active_relay(&mut self, url: RelayUrl) -> ActiveRelayHandle {
         debug!(?url, "Adding relay connection");
 
+        let auth_token = self
+            .config
+            .relay_map
+            .get(&url)
+            .and_then(|cfg| cfg.auth_token.clone());
         let connection_opts = RelayConnectionOptions {
             secret_key: self.config.secret_key.clone(),
             #[cfg(not(wasm_browser))]
@@ -1233,6 +1245,7 @@ impl RelayActor {
             proxy_url: self.config.proxy_url.clone(),
             prefer_ipv6: self.config.ipv6_reported.clone(),
             tls_config: self.config.tls_config.clone(),
+            auth_token,
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -1382,7 +1395,7 @@ mod tests {
     use iroh_relay::{
         PingTracker,
         protos::relay::Datagrams,
-        tls::{CaRootsConfig, default_provider},
+        tls::{CaTlsConfig, default_provider},
     };
     use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use n0_tracing_test::traced_test;
@@ -1420,9 +1433,10 @@ mod tests {
                 dns_resolver: DnsResolver::new(),
                 proxy_url: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
-                tls_config: CaRootsConfig::insecure_skip_verify()
+                tls_config: CaTlsConfig::insecure_skip_verify()
                     .client_config(default_provider())
                     .expect("infallible"),
+                auth_token: None,
             },
             stop_token,
             metrics: Default::default(),

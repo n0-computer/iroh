@@ -16,7 +16,7 @@ use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-use iroh_relay::{RelayConfig, RelayMap, tls::CaRootsConfig};
+use iroh_relay::{RelayConfig, RelayMap, tls::CaTlsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
 use n0_error::{AnyError, e, ensure, stack_error};
@@ -27,21 +27,25 @@ use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
 use url::Url;
 
 /// Types for defining custom transports
+#[cfg(feature = "unstable-custom-transports")]
 pub mod transports {
-    #[cfg(feature = "unstable-custom-transports")]
-    pub use super::socket::transports::RecvInfo;
-    #[cfg(feature = "unstable-custom-transports")]
-    pub use super::socket::transports::custom::{CustomEndpoint, CustomSender, CustomTransport};
-    pub use super::socket::transports::{Addr, AddrKind, Transmit, TransportBias};
+    pub use super::socket::{
+        remote_map::{PathSelection, PathSelectionContext, PathSelectionData, PathSelector},
+        transports::{
+            Addr, AddrKind, RecvInfo, Transmit,
+            custom::{CustomEndpoint, CustomSender, CustomTransport},
+        },
+    };
 }
 
 use self::hooks::EndpointHooksList;
 pub use super::socket::{
     BindError, DirectAddr, DirectAddrType,
     remote_map::{
-        PathInfo, PathInfoList, PathInfoListIter, PathWatcher, RemoteInfo, Source,
+        Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream, RemoteInfo,
         TransportAddrInfo, TransportAddrUsage,
     },
+    transports::LocalTransportAddr,
 };
 #[cfg(wasm_browser)]
 use crate::address_lookup::PkarrResolver;
@@ -59,8 +63,9 @@ use crate::{
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
     socket::{
-        self, EndpointInner, RemoteStateActorStoppedError, StaticConfig, mapped_addrs::MappedAddr,
-        transports::RelayConnectionState,
+        self, EndpointInner, RemoteStateActorStoppedError, StaticConfig,
+        biased_rtt_path_selector::BiasedRttPathSelector, mapped_addrs::MappedAddr,
+        remote_map::PathSelector, transports::RelayConnectionState,
     },
     tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
@@ -81,12 +86,12 @@ pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
     connection::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-        ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingLocalAddr,
-        IncomingZeroRtt, IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
+        ConnectionState, HandshakeCompleted, Incoming, IncomingAddr, IncomingZeroRtt,
+        IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
         RemoteEndpointIdError, RetryError, WeakConnectionHandle, ZeroRttStatus,
     },
     quic::{
-        AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
+        AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, Closed, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
         ControllerMetrics, CryptoError, DecryptedInitial, Dir, ExportKeyingMaterialError,
         FrameStats, FrameType, HandshakeTokenKey, HeaderKey, IdleTimeout, IncomingAlpns, Keys,
@@ -96,7 +101,7 @@ pub use self::{
         SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError, StreamId, TimeSource,
         TokenLog, TokenReuseError, TransportError, TransportErrorCode, TransportParameters,
         UdpStats, UnorderedRecvStream, UnsupportedVersion, ValidationTokenConfig, VarInt,
-        VarIntBoundsExceeded, WriteError, Written,
+        VarIntBoundsExceeded, WriteError,
     },
 };
 #[cfg(not(wasm_browser))]
@@ -122,13 +127,13 @@ pub struct Builder {
     /// [`Builder::address_lookup`].
     addr_filter: Option<AddrFilter>,
     proxy_url: Option<Url>,
-    ca_roots_config: Option<CaRootsConfig>,
+    ca_tls_config: Option<CaTlsConfig>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
-    transport_bias: socket::transports::TransportBiasMap,
+    path_selector: Arc<dyn PathSelector>,
     portmapper_config: PortmapperConfig,
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
@@ -190,13 +195,13 @@ impl Builder {
             address_lookup_user_data: Default::default(),
             addr_filter: None,
             proxy_url: None,
-            ca_roots_config: None,
+            ca_tls_config: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
-            transport_bias: Default::default(),
+            path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             net_report_config: Default::default(),
             crypto_provider: None,
@@ -233,6 +238,7 @@ impl Builder {
             tls_config,
             transport_config: self.transport_config.clone(),
             token_key,
+            token_store: Arc::new(noq::TokenMemoryCache::default()),
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
@@ -242,7 +248,7 @@ impl Builder {
         let metrics = EndpointMetrics::default();
 
         let tls_config = self
-            .ca_roots_config
+            .ca_tls_config
             .unwrap_or_default()
             .client_config(crypto_provider)
             .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
@@ -258,7 +264,7 @@ impl Builder {
             tls_config,
             metrics,
             hooks: self.hooks,
-            transport_bias: self.transport_bias,
+            path_selector: self.path_selector,
             portmapper_config: self.portmapper_config,
             net_report_config: self.net_report_config,
             static_config,
@@ -694,9 +700,15 @@ impl Builder {
     /// iroh relays, pkarr servers, or DNS-over-HTTPS resolvers.
     /// They don't need to be trusted for the integrity or authenticity of native
     /// iroh connections, which rely on iroh's own cryptographic authentication mechanisms.
-    pub fn ca_roots_config(mut self, ca_roots_config: CaRootsConfig) -> Self {
-        self.ca_roots_config = Some(ca_roots_config);
+    pub fn ca_tls_config(mut self, ca_tls_config: CaTlsConfig) -> Self {
+        self.ca_tls_config = Some(ca_tls_config);
         self
+    }
+
+    /// Renamed to [`Builder::ca_tls_config`].
+    #[deprecated(since = "1.0.0", note = "Renamed to `ca_tls_config`")]
+    pub fn ca_roots_config(self, ca_roots_config: CaTlsConfig) -> Self {
+        self.ca_tls_config(ca_roots_config)
     }
 
     /// Enables saving the TLS pre-master key for connections.
@@ -732,7 +744,8 @@ impl Builder {
     ///
     /// The two most common crypto providers in use today are `ring` as well as `aws-lc-rs`.
     ///
-    /// If either the `ring` or `aws-lc-rs` feature is set in iroh, this function doesn't need to be called.
+    /// If either the `tls-ring` or `tls-aws-lc-rs` feature is set in iroh, this function doesn't
+    /// need to be called.
     ///
     /// If none of these features are set, then calling this function in the builder is mandatory.
     pub fn crypto_provider(mut self, crypto_provider: Arc<rustls::crypto::CryptoProvider>) -> Self {
@@ -782,32 +795,22 @@ impl Builder {
         self
     }
 
-    /// Sets the transport bias for a specific address kind.
+    /// Sets a custom [`PathSelector`] for this endpoint.
     ///
-    /// Transport bias controls how different transport types are prioritized during
-    /// path selection. By default:
-    /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
-    /// - Relay is a backup transport (only used when no primary transport is available)
+    /// The path selector decides which path to use among the candidate paths to a
+    /// remote endpoint.  By default iroh uses a built-in selector that sorts paths by
+    /// biased RTT (with IPv6 preferred over IPv4 and relay treated as backup) and is
+    /// sticky to avoid flapping.  Pass a custom [`PathSelector`] here to override that
+    /// policy — for example, to make a custom transport always win over IP.
     ///
-    /// Use this to customize the behavior, for example to add bias for custom transports.
+    /// Takes an `Arc<dyn PathSelector>` so the same selector instance can be shared
+    /// across multiple endpoints if desired.  See `examples/custom-transport.rs` for
+    /// an example implementation.
     ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use std::time::Duration;
-    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias}};
-    ///
-    /// let endpoint = Builder::new(SomePreset)
-    ///     .transport_bias(AddrKind::Custom(42), TransportBias::primary().with_rtt_advantage(Duration::from_millis(10)))
-    ///     .bind()
-    ///     .await?;
-    /// ```
-    pub fn transport_bias(
-        mut self,
-        kind: transports::AddrKind,
-        bias: transports::TransportBias,
-    ) -> Self {
-        self.transport_bias = self.transport_bias.with_bias(kind, bias);
+    /// [`PathSelector`]: socket::remote_map::PathSelector
+    #[cfg(feature = "unstable-custom-transports")]
+    pub fn path_selector(mut self, selector: Arc<dyn PathSelector>) -> Self {
+        self.path_selector = selector;
         self
     }
 }
@@ -844,7 +847,17 @@ pub enum EndpointError {
 /// Note that due to the light-weight properties of streams a stream will only be accepted
 /// once the initiating peer has sent some data on it.
 ///
+/// # Usage on Android
+///
+/// The endpoint's default [`DnsResolver`] reads the system DNS configuration
+/// through JNI, which needs a JVM context published to [`ndk_context`]. Apps
+/// must initialize that context before constructing the endpoint, or the
+/// resolver build panics. See [`DnsResolver`] for the supported
+/// initialization paths.
+///
 /// [QUIC]: https://quicwg.org
+/// [`DnsResolver`]: crate::dns::DnsResolver
+/// [`ndk_context`]: https://docs.rs/ndk-context
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     inner: Arc<EndpointInner>,
@@ -1426,7 +1439,7 @@ impl Endpoint {
     /// Note that this TLS config is unrelated to how iroh validates the authenticity
     /// of iroh connections itself.
     ///
-    /// The config is based on the trust anchors set via [`Builder::ca_roots_config`].
+    /// The config is based on the trust anchors set via [`Builder::ca_tls_config`].
     pub fn tls_config(&self) -> &rustls::ClientConfig {
         &self.inner.tls_config
     }
@@ -1515,7 +1528,7 @@ impl Endpoint {
     /// For example, the following snippet launches an HTTP server that serves the metrics in the
     /// OpenMetrics text format:
     /// ```no_run
-    /// # use std::{sync::{Arc, RwLock}, time::Duration};
+    /// # use std::sync::{Arc, RwLock};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::{Endpoint, presets};
     /// # use n0_error::{StackResultExt, StdResultExt};
@@ -1523,21 +1536,17 @@ impl Endpoint {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
     /// let registry = Arc::new(RwLock::new(Registry::default()));
-    /// // Spawn a task to serve the metrics on an OpenMetrics HTTP endpoint.
-    /// let metrics_task = tokio::task::spawn({
-    ///     let registry = registry.clone();
-    ///     async move {
-    ///         let addr = "0.0.0.0:9100".parse().unwrap();
-    ///         iroh_metrics::service::start_metrics_server(addr, registry).await
-    ///     }
-    /// });
+    /// // Spawn an OpenMetrics HTTP server backed by the registry.
+    /// let addr = "0.0.0.0:9100".parse().unwrap();
+    /// let metrics_server = iroh_metrics::service::MetricsServer::spawn(addr, registry.clone())
+    ///     .await
+    ///     .std_context("spawn metrics server")?;
     ///
     /// // Spawn an endpoint and add the metrics to the registry.
     /// let endpoint = Endpoint::bind(presets::N0).await?;
     /// registry.write().unwrap().register_all(endpoint.metrics());
     ///
-    /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
-    /// tokio::time::sleep(Duration::from_millis(500));
+    /// // Fetch the metrics via HTTP.
     /// let res = reqwest::get("http://localhost:9100/metrics")
     ///     .await
     ///     .std_context("get")?
@@ -1547,7 +1556,7 @@ impl Endpoint {
     ///
     /// assert!(res.contains(r#"TYPE socket_recv_datagrams counter"#));
     /// assert!(res.contains(r#"socket_recv_datagrams_total 0"#));
-    /// # metrics_task.abort();
+    /// # metrics_server.shutdown().await;
     /// # Ok(())
     /// # }
     /// ```
@@ -1705,11 +1714,6 @@ impl Endpoint {
     /// a transport address.
     pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> crate::socket::transports::Addr {
         self.inner.to_transport_addr(addr)
-    }
-
-    /// Reverse-resolves a custom mapped address back to its [`iroh_base::CustomAddr`].
-    pub(crate) fn lookup_custom_addr(&self, addr: SocketAddr) -> Option<iroh_base::CustomAddr> {
-        self.inner.lookup_custom_addr(addr)
     }
 
     #[cfg(all(test, with_crypto_provider))]
@@ -1964,7 +1968,7 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
-    use iroh_relay::tls::CaRootsConfig;
+    use iroh_relay::{RelayConfig, server::Access, tls::CaTlsConfig};
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
@@ -1981,10 +1985,12 @@ mod tests {
         address_lookup::memory::MemoryLookup,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectError, ConnectOptions,
-            ConnectWithOptsError, Connection, ConnectionError, PathWatcher, presets,
+            ConnectWithOptsError, Connection, ConnectionError, PathEvent, PathEventStream, presets,
         },
         protocol::{AcceptError, ProtocolHandler, Router},
-        test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
+        test_utils::{
+            QlogFileGroup, run_relay_server, run_relay_server_with, run_relay_server_with_access,
+        },
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -2022,7 +2028,7 @@ mod tests {
             .secret_key(server_secret_key)
             .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
         // Wait for the endpoint to be reachable via relay
@@ -2063,7 +2069,7 @@ mod tests {
                 let ep = Endpoint::builder(presets::Minimal)
                     .relay_mode(RelayMode::Custom(relay_map))
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                    .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                     .transport_config(qlog.create("client")?)
                     .bind()
                     .await?;
@@ -2124,7 +2130,7 @@ mod tests {
         // Make sure the server is bound before having clients connect to it:
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .secret_key(server_secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2190,7 +2196,7 @@ mod tests {
                 let ep = Endpoint::builder(presets::Minimal)
                     .relay_mode(RelayMode::Custom(relay_map.clone()))
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                    .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                     .secret_key(client_secret_key)
                     .bind()
                     .await?;
@@ -2243,12 +2249,12 @@ mod tests {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2369,7 +2375,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .transport_config(qlog.create("client")?)
                 .bind()
@@ -2381,7 +2387,7 @@ mod tests {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.anyerr()?;
             send.write_all(b"hello").await.anyerr()?;
-            let mut paths = conn.paths().stream();
+            let mut paths = conn.paths_stream();
             info!("Waiting for direct connection");
             while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
@@ -2416,7 +2422,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .transport_config(qlog.create("server")?)
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
@@ -2474,7 +2480,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .clear_ip_transports() // disable direct
                 .bind()
@@ -2486,7 +2492,7 @@ mod tests {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.anyerr()?;
             send.write_all(b"hello").await.anyerr()?;
-            let mut paths = conn.paths().stream();
+            let mut paths = conn.paths_stream();
             info!("Waiting for connection");
             'outer: while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
@@ -2500,6 +2506,7 @@ mod tests {
                 }
             }
             info!("Have relay connection");
+
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
             let res = conn.closed().await;
@@ -2517,7 +2524,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .clear_ip_transports()
                 .bind()
@@ -2573,7 +2580,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
@@ -2586,11 +2593,12 @@ mod tests {
 
             // We should be connected via IP, because it is faster than the relay server.
             // TODO: Maybe not panic if this is not true?
-            let path_info = conn.paths().get();
+
+            let path_info = conn.paths();
             assert_eq!(path_info.len(), 1);
             assert!(path_info.iter().next().unwrap().is_ip());
 
-            let mut paths = conn.paths().stream();
+            let mut paths = conn.paths_stream();
             time::timeout(Duration::from_secs(5), async move {
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");
@@ -2622,7 +2630,7 @@ mod tests {
             let ep = Endpoint::builder(presets::N0)
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
-                .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
@@ -2637,7 +2645,7 @@ mod tests {
             // Wait for a relay connection to be added.  Client does all the asserting here,
             // we just want to wait so we get to see all the mechanics of the connection
             // being added on this side too.
-            let mut paths = conn.paths().stream();
+            let mut paths = conn.paths_stream();
             time::timeout(Duration::from_secs(5), async move {
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");
@@ -2677,12 +2685,12 @@ mod tests {
         let (relay_map, relay_url, _guard1) = run_relay_server().await?;
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2888,7 +2896,7 @@ mod tests {
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map))
             .alpns(vec![TEST_ALPN.to_vec()])
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
 
@@ -2946,7 +2954,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     #[tokio::test]
     #[traced_test]
     async fn graceful_close() -> Result {
@@ -3503,28 +3510,30 @@ mod tests {
         ));
         let transfer_size = 1_000_000;
 
-        fn collect_stats(mut watcher: PathWatcher) -> BTreeMap<TransportAddr, PathStats> {
-            watcher
-                .get()
-                .iter()
-                .map(|info| {
-                    (
-                        info.remote_addr().clone(),
-                        info.stats().expect("conn is not yet dropped"),
-                    )
-                })
-                .collect()
+        async fn collect_stats(mut events: PathEventStream) -> BTreeMap<TransportAddr, PathStats> {
+            let mut stats = BTreeMap::new();
+            while let Some(event) = events.next().await {
+                if let PathEvent::Closed {
+                    remote_addr,
+                    last_stats,
+                    ..
+                } = event
+                {
+                    stats.insert(remote_addr, *last_stats);
+                }
+            }
+            stats
         }
 
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .transport_config(qlog.create("client")?)
             .bind()
             .await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -3533,25 +3542,25 @@ mod tests {
         let server_task = tokio::spawn(async move {
             let incoming = server.accept().await.anyerr()?;
             let conn = incoming.await.anyerr()?;
-            let watcher = conn.paths();
+            let stats_task = tokio::spawn(collect_stats(conn.path_events()));
             let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
             let msg = recv.read_to_end(transfer_size).await.anyerr()?;
             send.write_all(&msg).await.anyerr()?;
             send.finish().anyerr()?;
             conn.closed().await;
-            let stats = collect_stats(watcher);
+            let stats = stats_task.await.expect("stats task panicked");
             Ok::<_, Error>(stats)
         });
 
         let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let watcher = conn.paths();
+        let client_stats_task = tokio::spawn(collect_stats(conn.path_events()));
         let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
         send.write_all(&vec![42u8; transfer_size]).await.anyerr()?;
         send.finish().anyerr()?;
         recv.read_to_end(transfer_size).await.anyerr()?;
         conn.close(0u32.into(), b"thanks, bye!");
         client.close().await;
-        let client_stats = collect_stats(watcher);
+        let client_stats = client_stats_task.await.expect("stats task panicked");
         let server_stats = server_task.await.anyerr()??;
 
         info!("client stats: {client_stats:#?}");
@@ -3602,7 +3611,7 @@ mod tests {
 
         let client = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .instrument(error_span!("ep-client"))
             .await?;
@@ -3613,7 +3622,7 @@ mod tests {
         let ep1 = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(secret_key.clone())
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .instrument(error_span!("ep1"))
@@ -3643,7 +3652,7 @@ mod tests {
         let ep2 = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map))
             .secret_key(secret_key.clone())
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .instrument(error_span!("ep2"))
@@ -3880,7 +3889,7 @@ mod tests {
     async fn test_endpoint_online_add_relay() -> Result {
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(RelayMap::empty()))
-            .ca_roots_config(CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .bind()
             .await?;
         // should not come online without relays.
@@ -3921,6 +3930,73 @@ mod tests {
         ep.close().await;
         let res = task.await.unwrap();
         assert!(res.is_err());
+        Ok(())
+    }
+
+    /// Verifies that an endpoint configured with [`RelayConfig::with_auth_token`]
+    /// is admitted to a relay whose access control checks the token only when
+    /// the token matches.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_relay_auth_token() -> Result {
+        const TOKEN: &str = "valid-token";
+
+        /// Admits a connection only if it carries the expected auth token.
+        #[derive(Debug)]
+        struct TokenAccess(&'static str);
+
+        impl iroh_relay::server::AccessControl for TokenAccess {
+            async fn on_connect(&self, request: &iroh_relay::server::ClientRequest) -> Access {
+                if request.auth_token().as_deref() == Some(self.0) {
+                    Access::Allow
+                } else {
+                    Access::Deny { reason: None }
+                }
+            }
+        }
+
+        let access = Arc::new(TokenAccess(TOKEN));
+        let (_relay_map, relay_url, _guard) = run_relay_server_with_access(false, access).await?;
+
+        // Wrong token: the connection attempt fails and last_error reports
+        // the relay-side denial.
+        let bad_map: RelayMap = RelayConfig::new(relay_url.clone(), None)
+            .with_auth_token("wrong-token")
+            .into();
+        let bad_ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(bad_map))
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        let mut stream = bad_ep.home_relay_status().stream();
+        let auth_err: String = tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(status) = stream.next().await {
+                if let Some(err) = status.iter().filter_map(|s| s.last_error()).next() {
+                    return format!("{err:#}");
+                }
+            }
+            panic!("home relay stream ended");
+        })
+        .await
+        .std_context("waiting for auth error")?;
+        assert!(
+            auth_err.contains("not authorized"),
+            "expected 'not authorized' in error, got: {auth_err}"
+        );
+
+        // Correct token: the endpoint reaches the connected state.
+        let good_map: RelayMap = RelayConfig::new(relay_url, None)
+            .with_auth_token(TOKEN)
+            .into();
+        let good_ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(good_map))
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        tokio::time::timeout(Duration::from_secs(5), good_ep.online())
+            .await
+            .std_context("waiting for endpoint to come online")?;
+
         Ok(())
     }
 }

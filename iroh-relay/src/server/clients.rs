@@ -1,13 +1,7 @@
 //! The "Server" side of the client. Uses the `ClientConnManager`.
 // Based on tailscale/derp/derp_server.go
 
-use std::{
-    collections::HashSet,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::{collections::HashSet, sync::Arc};
 
 use dashmap::DashMap;
 use iroh_base::EndpointId;
@@ -15,7 +9,10 @@ use n0_future::IterExt;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
-use super::client::{Client, Config, ForwardPacketError};
+use super::{
+    ConnectionId, OnDisconnectGuard,
+    client::{Client, Config, ForwardPacketError},
+};
 use crate::{
     protos::{
         relay::{Datagrams, Status},
@@ -25,7 +22,7 @@ use crate::{
 };
 
 /// Manages the connections to all currently connected clients.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, Default)]
 /// Registry of connected relay clients.
 ///
 /// This type manages the collection of active client connections and
@@ -38,8 +35,6 @@ struct Inner {
     clients: DashMap<EndpointId, ClientState>,
     /// Map of which client has sent where
     sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
-    /// Connection ID Counter
-    next_connection_id: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -73,15 +68,17 @@ impl Clients {
     }
 
     /// Builds the client handler and starts the read & write loops for the connection.
+    ///
+    /// Once the client disconnects, the [`OnDisconnectGuard`] set in `config` will be dropped,
+    /// allowing callers to be notified of the disconnect.
     pub fn register<S>(&self, client_config: Config<S>, metrics: Arc<Metrics>)
     where
         S: BytesStreamSink + Send + 'static,
     {
-        let endpoint_id = client_config.endpoint_id;
-        let connection_id = self.get_connection_id();
+        let endpoint_id = client_config.guard.endpoint_id;
         trace!(remote_endpoint = %endpoint_id.fmt_short(), "registering client");
 
-        let client = Client::new(client_config, connection_id, self, metrics.clone());
+        let client = Client::new(client_config, self, metrics.clone());
         match self.0.clients.entry(endpoint_id) {
             dashmap::Entry::Occupied(mut entry) => {
                 let state = entry.get_mut();
@@ -105,24 +102,17 @@ impl Clients {
         }
     }
 
-    fn get_connection_id(&self) -> u64 {
-        self.0.next_connection_id.fetch_add(1, Ordering::Relaxed)
-    }
-
     /// Removes the client from the map of clients, & sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
     ///
     /// Must be passed a matching connection_id.
-    pub(super) fn unregister(
-        &self,
-        connection_id: u64,
-        endpoint_id: EndpointId,
-        metrics: &Metrics,
-    ) {
+    pub(super) fn unregister(&self, guard: OnDisconnectGuard, metrics: &Metrics) {
+        let endpoint_id = guard.endpoint_id;
+        let connection_id = guard.connection_id;
         trace!(
             endpoint_id = %endpoint_id.fmt_short(),
-            connection_id, "unregistering client"
+            %connection_id, "unregistering client"
         );
 
         let mut notify_peers = None;
@@ -180,6 +170,33 @@ impl Clients {
         }
     }
 
+    /// Disconnects connections registered for `endpoint_id`.
+    ///
+    /// With `Some(connection_id)`, disconnects only that connection (active or
+    /// an inactive duplicate). With `None`, disconnects every connection for the
+    /// endpoint. Returns `true` if a matching connection was found, or `false`
+    /// otherwise.
+    ///
+    /// Shutdown happens asynchronously: each per-connection actor exits its run
+    /// loop and unregisters itself after this call returns.
+    pub fn disconnect(&self, endpoint_id: EndpointId, connection_id: Option<ConnectionId>) -> bool {
+        let Some(state) = self.0.clients.get(&endpoint_id) else {
+            return false;
+        };
+        let mut clients = state.inactive.iter().chain([&state.active]);
+        if let Some(id) = connection_id {
+            let Some(client) = clients.find(|c| c.connection_id() == id) else {
+                return false;
+            };
+            client.start_shutdown();
+        } else {
+            for client in clients {
+                client.start_shutdown();
+            }
+        }
+        true
+    }
+
     /// Attempt to send a packet to client with [`EndpointId`] `dst`.
     pub(super) fn send_packet(
         &self,
@@ -218,7 +235,7 @@ impl Clients {
     }
 
     #[cfg(test)]
-    fn active_connection_id(&self, endpoint_id: EndpointId) -> Option<u64> {
+    fn active_connection_id(&self, endpoint_id: EndpointId) -> Option<ConnectionId> {
         self.0
             .clients
             .get(&endpoint_id)
@@ -239,6 +256,7 @@ mod tests {
     use super::*;
     use crate::{
         client::conn::Conn,
+        http::ProtocolVersion,
         protos::{common::FrameType, relay::RelayToClientMsg, streams::WsBytesFramed},
         server::streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
     };
@@ -270,17 +288,12 @@ mod tests {
         key: EndpointId,
     ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
         let (server, client) = tokio::io::duplex(1024);
-        let protocol_version = Default::default();
-        (
-            Config {
-                endpoint_id: key,
-                stream: ServerRelayedStream::test(server),
-                write_timeout: Duration::from_secs(1),
-                channel_capacity: 10,
-                protocol_version: Default::default(),
-            },
-            Conn::test(client, protocol_version),
-        )
+        let guard = OnDisconnectGuard::empty(key);
+        let protocol_version = ProtocolVersion::default();
+        let mut config = Config::new(guard, ServerRelayedStream::test(server), protocol_version);
+        config.write_timeout = Duration::from_secs(1);
+        config.channel_capacity = 10;
+        (config, Conn::test(client, protocol_version))
     }
 
     #[tokio::test]

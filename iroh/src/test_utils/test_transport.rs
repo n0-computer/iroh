@@ -234,6 +234,7 @@ impl CustomSender for TestSender {
         &self,
         _cx: &mut std::task::Context,
         dst: &CustomAddr,
+        _src: Option<&CustomAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         let packets = self.split(transmit).collect();
@@ -324,16 +325,13 @@ mod tests {
     use iroh_relay::RelayMap;
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
-    use n0_watcher::Watcher;
 
     use super::*;
     use crate::{
         Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
-        endpoint::{
-            Builder, Connection, presets,
-            transports::{AddrKind, TransportBias},
-        },
+        endpoint::{Builder, Connection, presets, transports::AddrKind},
         protocol::{AcceptError, ProtocolHandler, Router},
+        socket::biased_rtt_path_selector::{BiasedRttPathSelector, TransportBias},
         test_utils::run_relay_server,
     };
 
@@ -390,10 +388,13 @@ mod tests {
         let mut builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
             .relay_mode(relay_mode)
-            .ca_roots_config(crate::tls::CaRootsConfig::insecure_skip_verify())
+            .ca_tls_config(crate::tls::CaTlsConfig::insecure_skip_verify())
             .add_custom_transport(transport);
         if let Some(bias) = config.custom_bias {
-            builder = builder.transport_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias);
+            builder = builder.path_selector(Arc::new(
+                BiasedRttPathSelector::default()
+                    .with_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias),
+            ));
         }
         if !config.keep_ip {
             builder = builder.clear_ip_transports();
@@ -425,7 +426,7 @@ mod tests {
 
     /// Returns true if the selected path is the custom transport.
     fn is_custom_selected(conn: &crate::endpoint::Connection) -> bool {
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         paths.iter().find(|p| p.is_selected()).is_some_and(
             |p| matches!(p.remote_addr(), TransportAddr::Custom(a) if a.id() == TEST_TRANSPORT_ID),
         )
@@ -435,7 +436,7 @@ mod tests {
     /// - we have both IP and custom paths, and the selected path is IP.
     /// - we only have one path
     fn is_ip_selected_from_ip_and_custom(conn: &crate::endpoint::Connection) -> bool {
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         let has_ip = paths.iter().any(|p| p.remote_addr().is_ip());
         let has_custom = paths.iter().any(|p| p.remote_addr().is_custom());
         if !has_ip || !has_custom {
@@ -448,7 +449,7 @@ mod tests {
 
     /// Returns true if the selected path is a relay transport.
     fn is_relay_selected(conn: &crate::endpoint::Connection) -> bool {
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         paths
             .iter()
             .find(|p| p.is_selected())
@@ -489,7 +490,7 @@ mod tests {
             .await?;
 
         // Verify exactly one path exists and it's the custom transport
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         assert_eq!(paths.len(), 1, "Expected exactly one path");
         assert!(
             is_custom_selected(&conn),
@@ -506,7 +507,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_custom_transport_local_addr() -> Result<()> {
-        use crate::endpoint::IncomingLocalAddr;
+        use crate::endpoint::LocalTransportAddr;
 
         let network = TestNetwork::new();
         let s1 = SecretKey::generate();
@@ -532,7 +533,7 @@ mod tests {
         let incoming = ep2.accept().await.expect("incoming");
         assert_eq!(
             incoming.local_addr(),
-            IncomingLocalAddr::Custom(Some(to_custom_addr(s2.public()))),
+            LocalTransportAddr::Custom(Some(to_custom_addr(s2.public()))),
         );
         let _conn = incoming.accept().anyerr()?.await.anyerr()?;
 
@@ -689,7 +690,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(200)).await;
 
             // Debug: print paths after relay-only connect
-            let paths = conn.paths().get();
+            let paths = conn.paths();
             eprintln!("Paths after relay-only connect:");
             for path in paths.iter() {
                 eprintln!(
@@ -718,7 +719,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Debug: print all paths
-        let paths = conn.paths().get();
+        let paths = conn.paths();
         eprintln!("Paths after connecting with all addresses:");
         for path in paths.iter() {
             eprintln!(

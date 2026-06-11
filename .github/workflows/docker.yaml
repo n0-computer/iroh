@@ -87,12 +87,12 @@ jobs:
 
         - name: Fetch release binaries
           run: |
-            aws s3 cp s3://vorc/iroh-relay-linux-amd64-${{ inputs.base_hash }} bins/linux/amd64/iroh-relay
-            aws s3 cp s3://vorc/iroh-dns-server-linux-amd64-${{ inputs.base_hash }} bins/linux/amd64/iroh-dns-server
+            aws s3 cp s3://vorc/iroh-relay-linux-amd64-musl-${{ inputs.base_hash }} bins/linux/amd64/iroh-relay
+            aws s3 cp s3://vorc/iroh-dns-server-linux-amd64-musl-${{ inputs.base_hash }} bins/linux/amd64/iroh-dns-server
 
-            aws s3 cp s3://vorc/iroh-relay-linux-aarch64-${{ inputs.base_hash }} bins/linux/arm64/iroh-relay
-            aws s3 cp s3://vorc/iroh-dns-server-linux-aarch64-${{ inputs.base_hash }} bins/linux/arm64/iroh-dns-server
-        
+            aws s3 cp s3://vorc/iroh-relay-linux-aarch64-musl-${{ inputs.base_hash }} bins/linux/arm64/iroh-relay
+            aws s3 cp s3://vorc/iroh-dns-server-linux-aarch64-musl-${{ inputs.base_hash }} bins/linux/arm64/iroh-dns-server
+
         - name: Build Docker image (iroh-relay)
           uses: docker/build-push-action@v7
           with:

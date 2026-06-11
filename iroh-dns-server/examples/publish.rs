@@ -10,7 +10,7 @@ use iroh::{
     },
     dns::DnsResolver,
     endpoint_info::EndpointInfo,
-    tls::{CaRootsConfig, default_provider},
+    tls::{CaTlsConfig, default_provider},
 };
 use iroh_dns::IROH_TXT_NAME;
 use n0_error::{Result, StackResultExt};
@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
     println!();
     println!("publish to {pkarr_relay_url} ...");
 
-    let tls_config = CaRootsConfig::default()
+    let tls_config = CaTlsConfig::default()
         .client_config(default_provider())
         .expect("infallible");
     let pkarr = PkarrRelayClient::new(pkarr_relay_url, tls_config, DnsResolver::default());

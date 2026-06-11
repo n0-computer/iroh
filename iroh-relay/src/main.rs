@@ -18,12 +18,11 @@ use iroh_relay::{
         DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
     },
     server::{
-        self as relay, AcmeConfig, ClientRateLimit, DEFAULT_CERT_RELOAD_INTERVAL, QuicConfig,
-        reloading_resolver,
+        self as relay, Access, AccessControl, AcmeConfig, ClientRateLimit, ClientRequest,
+        DEFAULT_CERT_RELOAD_INTERVAL, QuicConfig, reloading_resolver,
     },
 };
 use n0_error::{Result, StdResultExt, bail_any};
-use n0_future::FutureExt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use tracing_subscriber::{EnvFilter, prelude::*};
@@ -182,40 +181,12 @@ struct HttpAccessConfig {
     bearer_token: Option<String>,
 }
 
-impl From<AccessConfig> for iroh_relay::server::AccessConfig {
+impl From<AccessConfig> for Arc<dyn iroh_relay::server::DynAccessControl> {
     fn from(cfg: AccessConfig) -> Self {
         match cfg {
-            AccessConfig::Everyone => iroh_relay::server::AccessConfig::Everyone,
-            AccessConfig::Allowlist(allow_list) => {
-                let allow_list = Arc::new(allow_list);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |request| {
-                    let allow_list = allow_list.clone();
-                    let endpoint_id = request.endpoint_id();
-                    async move {
-                        if allow_list.contains(&endpoint_id) {
-                            iroh_relay::server::Access::Allow
-                        } else {
-                            iroh_relay::server::Access::Deny
-                        }
-                    }
-                    .boxed()
-                }))
-            }
-            AccessConfig::Denylist(deny_list) => {
-                let deny_list = Arc::new(deny_list);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |request| {
-                    let deny_list = deny_list.clone();
-                    let endpoint_id = request.endpoint_id();
-                    async move {
-                        if deny_list.contains(&endpoint_id) {
-                            iroh_relay::server::Access::Deny
-                        } else {
-                            iroh_relay::server::Access::Allow
-                        }
-                    }
-                    .boxed()
-                }))
-            }
+            AccessConfig::Everyone => Arc::new(iroh_relay::server::AllowAll),
+            AccessConfig::Allowlist(allow_list) => Arc::new(AllowlistAccess(allow_list)),
+            AccessConfig::Denylist(deny_list) => Arc::new(DenylistAccess(deny_list)),
             AccessConfig::Http(mut config) => {
                 let client = reqwest::Client::builder()
                     .use_rustls_tls()
@@ -225,35 +196,61 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                 if let Ok(token) = std::env::var(ENV_HTTP_BEARER_TOKEN) {
                     config.bearer_token = Some(token);
                 }
-                let config = Arc::new(config);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |request| {
-                    let client = client.clone();
-                    let config = config.clone();
-                    let endpoint_id = request.endpoint_id();
-                    async move { http_access_check(&client, &config, endpoint_id).await }.boxed()
-                }))
+                Arc::new(HttpAccess { client, config })
             }
         }
     }
 }
 
-#[tracing::instrument("http-access-check", skip_all, fields(endpoint_id=%endpoint_id.fmt_short()))]
-async fn http_access_check(
-    client: &reqwest::Client,
-    config: &HttpAccessConfig,
-    endpoint_id: EndpointId,
-) -> iroh_relay::server::Access {
-    use iroh_relay::server::Access;
-    debug!(url=%config.url, "Check relay access via HTTP POST");
+/// An [`AccessControl`] admitting only an allowlist of endpoints.
+#[derive(Debug)]
+struct AllowlistAccess(Vec<EndpointId>);
 
-    match http_access_check_inner(client, config, endpoint_id).await {
-        Ok(()) => {
-            debug!("HTTP access check OK: Allow access");
+impl AccessControl for AllowlistAccess {
+    async fn on_connect(&self, request: &ClientRequest) -> Access {
+        if self.0.contains(&request.endpoint_id()) {
+            Access::Allow
+        } else {
+            Access::Deny { reason: None }
+        }
+    }
+}
+
+/// An [`AccessControl`] admitting everyone except a denylist of endpoints.
+#[derive(Debug)]
+struct DenylistAccess(Vec<EndpointId>);
+
+impl AccessControl for DenylistAccess {
+    async fn on_connect(&self, request: &ClientRequest) -> Access {
+        if self.0.contains(&request.endpoint_id()) {
+            Access::Deny { reason: None }
+        } else {
             Access::Allow
         }
-        Err(err) => {
-            debug!("HTTP access check failed: Deny access (reason: {err:#})");
-            Access::Deny
+    }
+}
+
+/// An [`AccessControl`] that delegates the decision to an HTTP endpoint.
+#[derive(Debug)]
+struct HttpAccess {
+    client: reqwest::Client,
+    config: HttpAccessConfig,
+}
+
+impl AccessControl for HttpAccess {
+    #[tracing::instrument("http-access-check", skip_all, fields(endpoint_id=%request.endpoint_id().fmt_short()))]
+    async fn on_connect(&self, request: &ClientRequest) -> Access {
+        debug!(url=%self.config.url, "Check relay access via HTTP POST");
+
+        match http_access_check_inner(&self.client, &self.config, request.endpoint_id()).await {
+            Ok(()) => {
+                debug!("HTTP access check OK: Allow access");
+                Access::Allow
+            }
+            Err(err) => {
+                debug!("HTTP access check failed: Deny access (reason: {err:#})");
+                Access::Deny { reason: None }
+            }
         }
     }
 }
@@ -605,11 +602,10 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
     let (tls_config, quic_config) = if let Some(cfg_tls) = &cfg.tls {
         let cert = load_cert_config(cfg_tls).await?;
 
-        let quic_config = cfg.enable_quic_addr_discovery.then(|| QuicConfig {
-            bind_addr: cfg_tls.quic_bind_addr(&cfg),
-            // Use the server config from the relay::TlsConfig
-            server_config: None,
-        });
+        // Use the server config from the relay::TlsConfig
+        let quic_config = cfg
+            .enable_quic_addr_discovery
+            .then(|| QuicConfig::new(cfg_tls.quic_bind_addr(&cfg)));
 
         if cfg_tls.dangerous_http_only {
             // When `dangerous_http_only` is set through the --dev argument,
@@ -624,16 +620,14 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
                         relay::CertConfig::LetsEncrypt { .. } => {
                             bail_any!("--dev is incompatible with cert_mode LetsEncrypt")
                         }
+                        _ => bail_any!("--dev is incompatible with this cert_mode"),
                     };
                     Some(quic_config)
                 }
             };
             (None, quic_config)
         } else {
-            let tls_config = relay::TlsConfig {
-                https_bind_addr: cfg_tls.https_bind_addr(&cfg),
-                cert,
-            };
+            let tls_config = relay::TlsConfig::new(cfg_tls.https_bind_addr(&cfg), cert);
             (Some(tls_config), quic_config)
         }
     } else if cfg.enable_quic_addr_discovery {
@@ -650,49 +644,52 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
                         bail_any!("bytes_per_seconds must be specified to enable the rate-limiter");
                     }
                     match rx.bytes_per_second {
-                        Some(bps) => Some(ClientRateLimit {
-                            bytes_per_second: TryInto::<NonZeroU32>::try_into(bps)
-                                .std_context("bytes_per_second must be non-zero u32")?,
-                            max_burst_bytes: rx
+                        Some(bps) => {
+                            let bps = TryInto::<NonZeroU32>::try_into(bps)
+                                .std_context("bytes_per_second must be non-zero u32")?;
+                            let mut limit = ClientRateLimit::new(bps);
+                            limit.max_burst_bytes = rx
                                 .max_burst_bytes
                                 .map(|v| {
                                     TryInto::<NonZeroU32>::try_into(v)
                                         .std_context("max_burst_bytes must be non-zero u32")
                                 })
-                                .transpose()?,
-                        }),
+                                .transpose()?;
+                            Some(limit)
+                        }
                         None => None,
                     }
                 }
                 Some(PerClientRateLimitConfig { rx: None }) | None => None,
             };
-            relay::Limits {
-                accept_conn_limit: limits.accept_conn_limit,
-                accept_conn_burst: limits.accept_conn_burst,
-                client_rx,
-            }
+            let mut out = relay::Limits::default();
+            out.accept_conn_limit = limits.accept_conn_limit;
+            out.accept_conn_burst = limits.accept_conn_burst;
+            out.client_rx = client_rx;
+            out
         }
         None => Default::default(),
     };
 
     let relay_config = if cfg.enable_relay {
-        Some(relay::RelayConfig {
-            http_bind_addr: cfg.http_bind_addr(),
-            tls: tls_config,
-            limits,
-            key_cache_capacity: cfg.key_cache_capacity,
-            access: cfg.access.clone().into(),
-        })
+        let mut relay_config = relay::RelayConfig::new(cfg.http_bind_addr());
+        relay_config.tls = tls_config;
+        relay_config.limits = limits;
+        relay_config.key_cache_capacity = cfg.key_cache_capacity;
+        relay_config.access = cfg.access.clone().into();
+        Some(relay_config)
     } else {
         None
     };
 
-    Ok(relay::ServerConfig {
-        relay: relay_config,
-        quic: quic_config,
-        #[cfg(feature = "metrics")]
-        metrics_addr: Some(cfg.metrics_bind_addr()).filter(|_| cfg.enable_metrics),
-    })
+    let mut server_config = relay::ServerConfig::default();
+    server_config.relay = relay_config;
+    server_config.quic = quic_config;
+    #[cfg(feature = "metrics")]
+    {
+        server_config.metrics_addr = Some(cfg.metrics_bind_addr()).filter(|_| cfg.enable_metrics);
+    }
+    Ok(server_config)
 }
 
 #[cfg(test)]
