@@ -206,7 +206,7 @@ pub(crate) mod dns_server {
         ) -> impl Future<Output = std::io::Result<()>> + Send;
     }
 
-    pub type QueryHandlerFunction = Box<
+    pub(crate) type QueryHandlerFunction = Box<
         dyn Fn(&Packet<'_>, &mut Packet<'static>) -> BoxFuture<std::io::Result<()>>
             + Send
             + Sync

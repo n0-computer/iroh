@@ -4,6 +4,8 @@ use std::net::SocketAddr;
 #[cfg(with_crypto_provider)]
 use std::sync::Arc;
 
+#[cfg(with_crypto_provider)]
+use n0_error::{AnyError, StdResultExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::DnsError;
@@ -25,7 +27,7 @@ use super::DnsError;
 /// Each query uses a fresh socket with a random ephemeral source port to
 /// prevent cache poisoning. The response source address is validated against
 /// the target nameserver.
-pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, DnsError> {
+pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let unspecified: std::net::IpAddr = if addr.is_ipv6() {
         std::net::Ipv6Addr::UNSPECIFIED.into()
     } else {
@@ -47,7 +49,7 @@ pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
 }
 
 /// Send a DNS query over TCP (RFC 1035 Section 4.2.2: 2-byte length prefix).
-pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, DnsError> {
+pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let mut stream = tokio::net::TcpStream::connect(addr).await?;
 
     // Write length-prefixed query
@@ -77,7 +79,7 @@ pub(super) async fn tls_query(
     addr: SocketAddr,
     query: &[u8],
     tls_config: &Arc<rustls::ClientConfig>,
-) -> Result<Vec<u8>, DnsError> {
+) -> Result<Vec<u8>, std::io::Error> {
     let connector = tokio_rustls::TlsConnector::from(tls_config.clone());
     let tcp_stream = tokio::net::TcpStream::connect(addr).await?;
 
@@ -109,7 +111,7 @@ pub(super) fn build_https_client(
     if let Some(config) = tls_config {
         builder = builder.use_preconfigured_tls(config.clone());
     }
-    Ok(builder.build()?)
+    Ok(builder.build().anyerr()?)
 }
 
 /// Send a DNS query over HTTPS (DNS-over-HTTPS, RFC 8484).
@@ -124,7 +126,7 @@ pub(super) async fn https_query(
     addr: SocketAddr,
     query: &[u8],
     client: &reqwest::Client,
-) -> Result<Vec<u8>, DnsError> {
+) -> Result<Vec<u8>, AnyError> {
     let url = format!("https://{}/dns-query", addr);
     let response = client
         .post(&url)
@@ -132,9 +134,15 @@ pub(super) async fn https_query(
         .header("accept", "application/dns-message")
         .body(query.to_vec())
         .send()
-        .await?;
+        .await
+        .anyerr()?;
 
-    let bytes = response.error_for_status()?.bytes().await?;
+    let bytes = response
+        .error_for_status()
+        .anyerr()?
+        .bytes()
+        .await
+        .anyerr()?;
     Ok(bytes.to_vec())
 }
 

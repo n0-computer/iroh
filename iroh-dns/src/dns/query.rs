@@ -2,7 +2,7 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use n0_error::e;
+use n0_error::{StdResultExt, e};
 use simple_dns::{
     CLASS, Name, Packet, PacketFlag, QCLASS, QTYPE, Question, RCODE, TYPE,
     rdata::{A, AAAA, RData},
@@ -29,7 +29,7 @@ pub(super) fn build_query(host: &str, qtype: TYPE) -> Result<(u16, Vec<u8>), Dns
     let mut packet = Packet::new_query(id);
     packet.set_flags(PacketFlag::RECURSION_DESIRED);
 
-    let name = Name::new(host)?;
+    let name = Name::new(host).anyerr()?;
     let question = Question::new(name, QTYPE::TYPE(qtype), QCLASS::CLASS(CLASS::IN), false);
     packet.questions.push(question);
 
@@ -40,7 +40,7 @@ pub(super) fn build_query(host: &str, qtype: TYPE) -> Result<(u16, Vec<u8>), Dns
         opt_codes: vec![],
     });
 
-    let bytes = packet.build_bytes_vec()?;
+    let bytes = packet.build_bytes_vec().anyerr()?;
     Ok((id, bytes))
 }
 
@@ -121,7 +121,7 @@ fn parse_response<T>(
     expected_id: u16,
     extract: impl Fn(&RData<'_>) -> Option<T>,
 ) -> Result<(Vec<T>, u32), DnsError> {
-    let packet = Packet::parse(data)?;
+    let packet = Packet::parse(data).anyerr()?;
     check_response(&packet, expected_id)?;
 
     let qname = packet.questions.first().map(|q| q.qname.clone());

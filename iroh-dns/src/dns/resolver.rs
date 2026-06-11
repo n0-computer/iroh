@@ -1,14 +1,13 @@
 //! Built-in DNS resolver using `simple-dns` for packet construction/parsing
 //! and tokio for transport.
 
-use std::sync::Arc;
 use std::{
     future::Future,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
-use n0_error::e;
+use n0_error::{AnyError, e};
 use n0_future::{
     FuturesUnorderedBounded, StreamExt,
     boxed::BoxFuture,
@@ -17,14 +16,13 @@ use n0_future::{
 use simple_dns::TYPE;
 use tracing::{debug, trace};
 
-use crate::dns::Resolver;
-
 use super::{
     BoxIter, Builder, DnsError, DnsProtocol, TxtRecordData,
     cache::{CachedRecord, DnsCache, QueryType},
     query::{self, MAX_CNAME_DEPTH},
     system_config, transport,
 };
+use crate::dns::Resolver;
 
 /// Per-nameserver timeout for a single attempt.
 const NAMESERVER_TIMEOUT: Duration = Duration::from_secs(2);
@@ -168,11 +166,12 @@ impl SimpleDnsResolver {
     }
 
     /// Run a future with [`NAMESERVER_TIMEOUT`].
-    async fn with_timeout<T>(
-        fut: impl Future<Output = Result<T, DnsError>>,
+    async fn with_timeout<T, E: Into<AnyError>>(
+        fut: impl Future<Output = Result<T, E>>,
     ) -> Result<T, DnsError> {
         time::timeout(NAMESERVER_TIMEOUT, fut)
             .await
+            .map(|r| r.map_err(|e| e!(DnsError::Resolve, e.into())))
             .map_err(|_| e!(DnsError::Timeout))?
     }
 
@@ -207,8 +206,9 @@ impl SimpleDnsResolver {
             #[cfg(with_crypto_provider)]
             DnsProtocol::Tls => {
                 let tls_config = self.tls_config.as_ref().ok_or_else(|| {
-                    e!(DnsError::Transport {
-                        source: std::io::Error::other("TLS config required for DNS-over-TLS"),
+                    e!(DnsError::Resolve {
+                        source: std::io::Error::other("TLS config required for DNS-over-TLS")
+                            .into(),
                     })
                 })?;
                 Self::with_timeout(transport::tls_query(addr, query_bytes, tls_config)).await
@@ -265,7 +265,8 @@ impl SimpleDnsResolver {
         for _ in 0..MAX_CNAME_DEPTH {
             let (id, query_bytes) = query::build_query(&current_host, qtype)?;
             let response = self.send_query(&query_bytes).await?;
-            let packet = simple_dns::Packet::parse(&response)?;
+            let packet = simple_dns::Packet::parse(&response)
+                .map_err(|err| e!(DnsError::Resolve, AnyError::from_std(err)))?;
 
             let has_answer = packet
                 .answers

@@ -99,23 +99,9 @@ pub enum DnsError {
     #[error("Missing host")]
     MissingHost {},
 
-    /// DEPRECATED: replaced with more specific errors (see below)
     #[error("Failed to resolve")]
     Resolve { source: AnyError },
 
-    #[cfg(not(wasm_browser))]
-    #[error("invalid DNS packet")]
-    InvalidPacket {
-        #[error(std_err)]
-        source: simple_dns::SimpleDnsError,
-    },
-    #[error("DNS transport error")]
-    Transport { source: std::io::Error },
-    #[error("DNS-over-HTTPS transport error")]
-    HttpTransport {
-        #[error(std_err)]
-        source: reqwest::Error,
-    },
     #[error("DNS server returned error: {rcode}")]
     ServerError { rcode: String },
     #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
