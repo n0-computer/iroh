@@ -486,16 +486,16 @@
 <a href=#486 id=486 data-nosnippet>486</a></span><span class="attr">#[derive(Debug, Default)]
 <a href=#487 id=487 data-nosnippet>487</a>#[non_exhaustive]
 <a href=#488 id=488 data-nosnippet>488</a></span><span class="kw">pub struct </span>Limits {
-<a href=#489 id=489 data-nosnippet>489</a>    <span class="doccomment">/// Rate limit for accepting new connections. Unlimited if not set.
-<a href=#490 id=490 data-nosnippet>490</a>    ///
-<a href=#491 id=491 data-nosnippet>491</a>    /// Not currently implemented; setting this has no effect.
-<a href=#492 id=492 data-nosnippet>492</a>    </span><span class="kw">pub </span>accept_conn_limit: <span class="prelude-ty">Option</span>&lt;f64&gt;,
-<a href=#493 id=493 data-nosnippet>493</a>    <span class="doccomment">/// Burst limit for accepting new connections. Unlimited if not set.
-<a href=#494 id=494 data-nosnippet>494</a>    ///
-<a href=#495 id=495 data-nosnippet>495</a>    /// Not currently implemented; setting this has no effect.
-<a href=#496 id=496 data-nosnippet>496</a>    </span><span class="kw">pub </span>accept_conn_burst: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#497 id=497 data-nosnippet>497</a>    <span class="doccomment">/// Rate limits for incoming traffic from a client connection.
-<a href=#498 id=498 data-nosnippet>498</a>    </span><span class="kw">pub </span>client_rx: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
+<a href=#489 id=489 data-nosnippet>489</a>    <span class="doccomment">/// Rate limits for incoming traffic from a client connection.
+<a href=#490 id=490 data-nosnippet>490</a>    </span><span class="kw">pub </span>client_rx: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
+<a href=#491 id=491 data-nosnippet>491</a>    <span class="doccomment">/// Rate limit for accepting new connections. Unlimited if not set.
+<a href=#492 id=492 data-nosnippet>492</a>    ///
+<a href=#493 id=493 data-nosnippet>493</a>    /// Not currently implemented, setting this has no effect.
+<a href=#494 id=494 data-nosnippet>494</a>    </span><span class="kw">pub </span>accept_conn_limit: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+<a href=#495 id=495 data-nosnippet>495</a>    <span class="doccomment">/// Burst limit for accepting new connections. Unlimited if not set.
+<a href=#496 id=496 data-nosnippet>496</a>    ///
+<a href=#497 id=497 data-nosnippet>497</a>    /// Not currently implemented, setting this has no effect.
+<a href=#498 id=498 data-nosnippet>498</a>    </span><span class="kw">pub </span>accept_conn_burst: <span class="prelude-ty">Option</span>&lt;usize&gt;,
 <a href=#499 id=499 data-nosnippet>499</a>}
 <a href=#500 id=500 data-nosnippet>500</a>
 <a href=#501 id=501 data-nosnippet>501</a><span class="doccomment">/// Per-client rate limit configuration.
