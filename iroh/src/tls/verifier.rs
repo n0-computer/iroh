@@ -114,7 +114,7 @@ impl ServerCertVerifier for ServerCertificateVerifier {
 #[derive(Default, Debug)]
 pub(super) struct ClientCertificateVerifier;
 
-/// We requires either following of X.509 client certificate chains:
+/// We require one of the following client certificate configurations:
 ///
 /// - a valid raw public key configuration
 impl ClientCertVerifier for ClientCertificateVerifier {

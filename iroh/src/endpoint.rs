@@ -400,7 +400,7 @@ impl Builder {
     /// socket should be bound or the routing will be non-deterministic.
     ///
     /// To use a subnet with a non-zero prefix length as the default route in addition to
-    /// being routed when its prefix matches, use [`BindOpts::set_is_default_route].
+    /// being routed when its prefix matches, use [`BindOpts::set_is_default_route`].
     /// Subnets with a prefix length of zero are always marked as default routes.
     ///
     /// Finally note that most outgoing datagrams are part of an existing network flow. That
@@ -601,7 +601,7 @@ impl Builder {
     ///
     /// This filter is applied once, at the [`AddressLookupServices`] level, before
     /// distributing data to any individual address lookup service. This ensures
-    /// consistent filtering regardless of how the services configured.
+    /// consistent filtering regardless of how the services are configured.
     ///
     /// [`AddressLookupServices`]: crate::address_lookup::AddressLookupServices
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
@@ -842,7 +842,7 @@ pub enum EndpointError {
 /// [`Endpoint::connect`] and [`Endpoint::accept`] methods.  Once established, the
 /// [`Connection`] gives access to most [QUIC] features.  Individual streams to send data to
 /// the peer are created using the [`Connection::open_bi`], [`Connection::accept_bi`],
-/// [`Connection::open_uni`] and [`Connection::open_bi`] functions.
+/// [`Connection::open_uni`] and [`Connection::accept_uni`] functions.
 ///
 /// Note that due to the light-weight properties of streams a stream will only be accepted
 /// once the initiating peer has sent some data on it.
@@ -1186,8 +1186,8 @@ impl Endpoint {
     /// understand if the endpoint has ever been considered "online". But after
     /// that initial call to [`Endpoint::online`], to understand if your
     /// endpoint is no longer able to be connected to by endpoints outside
-    /// of the private or local network, watch for changes in it's [`EndpointAddr`].
-    /// If there are no `addrs`in the [`EndpointAddr`], you may not be dialable by other endpoints
+    /// of the private or local network, watch for changes in its [`EndpointAddr`].
+    /// If there are no `addrs` in the [`EndpointAddr`], you may not be dialable by other endpoints
     /// on the internet.
     ///
     /// The `EndpointAddr` will change as:
@@ -1299,20 +1299,22 @@ impl Endpoint {
     ///
     /// # Examples
     ///
-    /// ```no run
-    /// use iroh::Endpoint;
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
+    /// ```no_run
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_error::Result<()> {
+    /// # use iroh::{Endpoint, endpoint::presets};
     /// // After this await returns, the endpoint is bound to a local socket.
     /// // It can be dialed, but almost certainly hasn't finished picking a
     /// // relay.
-    /// let endpoint = Endpoint::bind().await;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     ///
     /// // After this await returns we have a connection to at least one relay
     /// // and holepunching should work as expected.
     /// endpoint.online().await;
-    /// }
+    /// # Ok(()) }
+    /// # }
     /// ```
     pub async fn online(&self) {
         let mut watcher = self.inner.home_relay_status();
@@ -1335,7 +1337,7 @@ impl Endpoint {
     ///
     /// The watched value has one entry per home relay whose URL is known,
     /// and is empty when no relays are configured or before the endpoint has
-    /// selected one the home relay from the list of configured relays.
+    /// selected a home relay from the list of configured relays.
     /// The watcher updates whenever any home relay's connection status changes.
     /// See [`RelayStatus`] for the information available on each entry.
     ///
@@ -1663,7 +1665,7 @@ impl Endpoint {
     /// kernel during the "Time-Wait" period of the TCP socket.
     ///
     /// Be aware however that the underlying UDP sockets are only closed once all clones of
-    /// the the respective [`Endpoint`] are dropped.
+    /// the respective [`Endpoint`] are dropped.
     pub async fn close(&self) {
         self.inner.close().await;
     }

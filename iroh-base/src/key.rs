@@ -23,7 +23,7 @@ const Z_BASE_32: Encoding = new_encoding! {
 
 /// A public key.
 ///
-/// The key itself is stored as the `CompressedEdwards` y coordinate of the public key
+/// The key itself is stored as the `CompressedEdwards` y-coordinate of the public key.
 /// It is verified to decompress into a valid key when created.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
@@ -126,7 +126,7 @@ impl PublicKey {
         Ok(Self(y))
     }
 
-    /// Verify a signature on a message with this secret key's public key.
+    /// Verify a signature on a message with this public key.
     ///
     /// # Return
     ///
@@ -224,7 +224,7 @@ impl Display for PublicKey {
     }
 }
 
-/// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
+/// Error returned when parsing a [`PublicKey`] or a [`SecretKey`].
 #[stack_error(derive, add_meta, from_sources, std_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
@@ -238,14 +238,14 @@ pub enum KeyParsingError {
     /// The input has invalid length.
     #[error("invalid length")]
     InvalidLength,
-    /// The decoded data is not a valid Ed25591 public key.
+    /// The decoded data is not a valid Ed25519 public key.
     #[error("data is not a valid public key")]
     InvalidKeyData,
 }
 
-/// Deserialises the [`PublicKey`] from it's base32 encoding.
+/// Parses a [`PublicKey`] from its hex or base32 encoding.
 ///
-/// [`Display`] is capable of serialising this format.
+/// [`Display`] produces the hex encoding.
 impl FromStr for PublicKey {
     type Err = KeyParsingError;
 

@@ -48,7 +48,6 @@ Use pre-existing protocols built on iroh instead of writing your own:
 - [iroh-blobs] for [BLAKE3]-based content-addressed blob transfer scaling from kilobytes to terabytes
 - [iroh-gossip] for establishing publish-subscribe overlay networks that scale, requiring only resources that your average phone can handle
 - [iroh-docs] for an eventually-consistent key-value store of [iroh-blobs] blobs
-- [iroh-willow] for an (in-construction) implementation of the [willow protocol]
 
 ## Getting Started
 
@@ -130,10 +129,9 @@ If you want to use iroh from other languages, make sure to check out [iroh-ffi],
 
 This repository contains a workspace of crates:
 - `iroh`: The core library for hole-punching & communicating with relays.
-- `iroh-relay`: The relay server implementation. This is the code we run in production (and you can, too!).
-- `iroh-base`: Common types like `Hash`, key types or `RelayUrl`.
-- `iroh-dns-server`: DNS server implementation powering the `n0_discovery` for EndpointIds, running at dns.iroh.link.
-- `iroh-net-report`: Analyzes your host's networking ability & NAT.
+- `iroh-relay`: The relay client and server implementation. This is the code we run in production for the public relays (and you can, too!).
+- `iroh-base`: Common types like `EndpointId` or `RelayUrl`.
+- `iroh-dns-server`: DNS server implementation powering the DNS/Pkarr address lookup for EndpointIds, running at dns.iroh.link.
 
 ## License
 
@@ -158,7 +156,6 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 [iroh-blobs]: https://github.com/n0-computer/iroh-blobs
 [iroh-gossip]: https://github.com/n0-computer/iroh-gossip
 [iroh-docs]: https://github.com/n0-computer/iroh-docs
-[iroh-willow]: https://github.com/n0-computer/iroh-willow
 [iroh-doctor]: https://github.com/n0-computer/iroh-doctor
 [willow protocol]: https://willowprotocol.org
 [iroh-ffi]: https://github.com/n0-computer/iroh-ffi
@@ -167,4 +164,4 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 [Iroh Experiments]: https://github.com/n0-computer/iroh-experiments
 [echo-rs]: /iroh/examples/echo.rs
 [iroh-perf]: https://perf.iroh.computer
-[docs]: https://iroh.computer/docs
+[docs]: https://docs.iroh.computer

@@ -324,8 +324,8 @@ impl AsyncWrite for MaybeTlsStream {
 ///
 /// The writes to the sink are not rate limited.
 ///
-/// This potentially buffers one frame if the rate limiter does not allows this frame.
-/// While the frame is buffered the undernlying stream is no longer polled.
+/// This potentially buffers one frame if the rate limiter does not allow this frame.
+/// While the frame is buffered the underlying stream is no longer polled.
 #[derive(Debug)]
 pub(crate) struct RateLimited<S> {
     inner: S,

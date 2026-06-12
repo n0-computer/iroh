@@ -22,14 +22,13 @@ pub struct Report {
     pub mapping_varies_by_dest_ipv4: Option<bool>,
     /// Whether the reported public address differs when probing different servers (on IPv6).
     pub mapping_varies_by_dest_ipv6: Option<bool>,
-    /// Probe indicating the presence of port mapping protocols on the LAN.
-    /// `None` for unknown
+    /// The relay server with the lowest latency, if any.
     pub preferred_relay: Option<RelayUrl>,
-    /// keyed by relay Url
+    /// The measured latency to each relay, keyed by relay URL.
     pub relay_latency: RelayLatencies,
-    /// ip:port of global IPv4
+    /// The discovered global IPv4 address and port, if any.
     pub global_v4: Option<SocketAddrV4>,
-    /// `[ip]:port` of global IPv6
+    /// The discovered global IPv6 address and port, if any.
     pub global_v6: Option<SocketAddrV6>,
     /// CaptivePortal is set when we think there's a captive portal that is
     /// intercepting HTTP traffic.

@@ -6,7 +6,7 @@
 //!
 //! ## Usage
 //!
-//!     cargo run --example screening-connection --features=examples
+//!     cargo run --example screening-connection
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},

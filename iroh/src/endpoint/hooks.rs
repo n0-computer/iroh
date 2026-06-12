@@ -55,7 +55,7 @@ impl AfterHandshakeOutcome {
 /// For each hook, all installed hooks are invoked in the order they were installed on
 /// the endpoint builder. If a hook returns `Accept`, processing continues with the next
 /// hook. If a hook returns `Reject`, processing is aborted and further hooks
-/// are not invoked for this hook.
+/// are not invoked for this hook point.
 ///
 /// ## Notes to implementers
 ///

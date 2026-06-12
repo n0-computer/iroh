@@ -4,7 +4,7 @@
 //!
 //! ## Usage
 //!
-//!     cargo run --example echo --features=examples
+//!     cargo run --example echo
 
 use iroh::{
     Endpoint, EndpointAddr,
