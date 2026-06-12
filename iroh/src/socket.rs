@@ -476,6 +476,7 @@ impl Socket {
     ///
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
+    #[cfg(feature = "unstable-net-report")]
     pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
         self.net_report.watch().map(|(r, _)| r)
     }
@@ -695,7 +696,7 @@ impl Socket {
     }
 }
 
-/// Manages currently running [`crate::NetReport`] to learn this endpoint's IP addresses.
+/// Manages currently running net reports to learn this endpoint's IP addresses.
 ///
 /// Invariants:
 /// - only one direct addr update must be running at a time

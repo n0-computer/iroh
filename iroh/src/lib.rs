@@ -289,7 +289,16 @@ pub use iroh_dns::dns;
 pub use iroh_dns::endpoint_info;
 pub use iroh_relay::{RelayConfig, RelayMap};
 pub use n0_watcher::Watcher;
-pub use net_report::{NetReportConfig, Report as NetReport, TIMEOUT as NET_REPORT_TIMEOUT};
+pub use net_report::{NetReportConfig, TIMEOUT as NET_REPORT_TIMEOUT};
+
+#[cfg(feature = "unstable-net-report")]
+pub mod unstable_net_report {
+    //! Exports of net report types reachable via [`crate::endpoint::Endpoint::net_report`].
+    //!
+    //! These items are exempt from API stability.
+
+    pub use crate::net_report::{Probe, RelayLatencies, Report as NetReport};
+}
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

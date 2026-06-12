@@ -53,9 +53,10 @@ use crate::address_lookup::PkarrResolver;
 use crate::dns::DnsResolver;
 #[cfg(feature = "unstable-custom-transports")]
 use crate::endpoint::transports::CustomTransport;
+#[cfg(feature = "unstable-net-report")]
+use crate::net_report::Report as NetReport;
 pub use crate::tls::TlsConfigError;
 use crate::{
-    NetReport,
     address_lookup::{
         AddrFilter, AddressLookupBuilder, AddressLookupFailed, AddressLookupServices,
         DynAddressLookupBuilder, UserData,
@@ -1280,7 +1281,7 @@ impl Endpoint {
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
     /// [`crate::NET_REPORT_TIMEOUT`]s, so you can be sure that at least one
-    /// [`crate::NetReport`] has been attempted.
+    /// net report has been attempted.
     ///
     /// To understand if the endpoint has gone back "offline",
     /// you must use the [`Endpoint::watch_addr`] method, to
@@ -1385,7 +1386,7 @@ impl Endpoint {
     /// # });
     /// # }
     /// ```
-    #[doc(hidden)]
+    #[cfg(feature = "unstable-net-report")]
     pub fn net_report(&self) -> impl Watcher<Value = Option<NetReport>> + use<> {
         self.inner.net_report()
     }
@@ -1395,7 +1396,7 @@ impl Endpoint {
     /// Returns `None` if no net report was ever generated.
     ///
     /// This method is hidden in the docs because it is not part of the public api
-    #[doc(hidden)]
+    #[cfg(feature = "unstable-net-report")]
     pub fn last_net_report(&self) -> Option<NetReport> {
         self.inner.net_report().get()
     }
@@ -3153,6 +3154,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    #[cfg(feature = "unstable-net-report")]
     async fn watch_net_report() -> Result {
         let endpoint = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Staging)
@@ -3785,11 +3787,16 @@ mod tests {
 
         // create watchers to verify they terminate after the endpoint is dropped.
         let mut addrs = ep.watch_addr().stream();
-        let mut net_reports = ep.net_report().stream();
 
-        // returns None
-        let net_report = ep.last_net_report();
-        info!("last Net report {net_report:?}");
+        #[cfg(feature = "unstable-net-report")]
+        let mut net_reports = {
+            let net_reports = ep.net_report().stream();
+
+            // returns None
+            let net_report = ep.last_net_report();
+            info!("last Net report {net_report:?}");
+            net_reports
+        };
 
         // this should work
         let sockets = ep.bound_sockets();
@@ -3822,6 +3829,8 @@ mod tests {
             while let Some(addr) = addrs.next().await {
                 info!("Addrs stream: {addr:?}");
             }
+
+            #[cfg(feature = "unstable-net-report")]
             while let Some(net_report) = net_reports.next().await {
                 info!("Net report stream: {net_report:?}");
             }
