@@ -21,7 +21,7 @@ use super::{
     BoxIter, Builder, DnsError, DnsProtocol, TxtRecordData,
     cache::{CachedRecord, DnsCache, QueryType},
     query::{self, MAX_CNAME_DEPTH},
-    system_config, transport,
+    transport,
 };
 use crate::dns::{Resolver, system_config::DnsConfig};
 
@@ -130,11 +130,11 @@ pub(super) struct SimpleDnsResolver {
 
 impl SimpleDnsResolver {
     pub(super) fn new(builder: Builder) -> Self {
-        let (nameservers, search_domains, ndots) = Self::build_config(&builder);
+        let config = Self::build_config(&builder);
         debug!(
-            ?nameservers,
-            ?search_domains,
-            ndots,
+            nameservers = ?config.nameservers,
+            search_domains = ?config.search_domains,
+            ndots = ?config.ndots,
             "configured DNS resolver"
         );
         #[cfg(with_crypto_provider)]
@@ -142,11 +142,11 @@ impl SimpleDnsResolver {
             .tls_client_config
             .as_ref()
             .map(|c| Arc::new(c.clone()));
-        let health = Mutex::new((0..nameservers.len()).map(|_| Srtt::new()).collect());
+        let health = Mutex::new((0..config.nameservers.len()).map(|_| Srtt::new()).collect());
         Self {
-            nameservers,
-            search_domains,
-            ndots,
+            nameservers: config.nameservers,
+            search_domains: config.search_domains,
+            ndots: config.ndots.unwrap_or(DEFAULT_NDOTS),
             #[cfg(with_crypto_provider)]
             tls_config,
             #[cfg(with_crypto_provider)]
@@ -157,25 +157,20 @@ impl SimpleDnsResolver {
         }
     }
 
-    fn build_config(builder: &Builder) -> (Vec<(SocketAddr, DnsProtocol)>, Vec<String>, usize) {
-        let mut nameservers = Vec::new();
-        let mut search_domains = Vec::new();
-        let mut ndots = None;
-
-        if builder.use_system_defaults {
-            let config = DnsConfig::system_with_fallback();
-            nameservers.extend(config.nameservers);
-            search_domains = config.search_domains;
-            ndots = config.ndots;
+    /// Builds the effective DNS config: system defaults (when requested) plus
+    /// any explicitly configured nameservers, falling back to public resolvers
+    /// only when neither provides any.
+    fn build_config(builder: &Builder) -> DnsConfig {
+        let mut config = if builder.use_system_defaults {
+            DnsConfig::system_with_fallback()
+        } else {
+            DnsConfig::default()
+        };
+        config.nameservers.extend(builder.nameservers.iter().copied());
+        if config.nameservers.is_empty() {
+            config.nameservers = DnsConfig::fallback().nameservers;
         }
-
-        nameservers.extend(builder.nameservers.iter().copied());
-
-        if nameservers.is_empty() {
-            nameservers.extend(DnsConfig::fallback().nameservers);
-        }
-
-        (nameservers, search_domains, ndots.unwrap_or(DEFAULT_NDOTS))
+        config
     }
 
     /// Returns the list of candidate names to try for a given hostname,
