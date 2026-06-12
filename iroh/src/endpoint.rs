@@ -32,7 +32,7 @@ pub mod transports {
     pub use super::socket::{
         remote_map::{PathSelection, PathSelectionContext, PathSelectionData, PathSelector},
         transports::{
-            Addr, AddrKind, RecvInfo, Transmit,
+            Addr, AddrKind, FourTuple, RecvInfo, Transmit,
             custom::{CustomEndpoint, CustomSender, CustomTransport},
         },
     };
