@@ -11,6 +11,6 @@ pub mod dns;
 pub mod endpoint_info;
 pub mod pkarr;
 
+pub use attrs::{EncodingError, IROH_TXT_NAME, ParseError};
 #[cfg(target_os = "android")]
 pub use dns::install_android_jni_context;
-pub use attrs::{EncodingError, IROH_TXT_NAME, ParseError};

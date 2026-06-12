@@ -2,10 +2,10 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use super::{DNS_PORT, DnsProtocol, SystemDnsConfig};
+use super::{DNS_PORT, DnsConfig, DnsProtocol};
 
 /// Read `/etc/resolv.conf` and extract nameserver addresses and search domains.
-pub(super) fn read_system_dns() -> Result<SystemDnsConfig, std::io::Error> {
+pub(super) fn read_system_dns() -> Result<DnsConfig, std::io::Error> {
     let content = std::fs::read_to_string("/etc/resolv.conf")?;
     Ok(parse_resolv_conf(&content))
 }
@@ -19,7 +19,7 @@ pub(super) fn read_system_dns() -> Result<SystemDnsConfig, std::io::Error> {
 ///
 /// The `search` and `domain` directives are mutually exclusive per resolv.conf(5);
 /// the last one seen wins, matching standard resolver behavior.
-fn parse_resolv_conf(content: &str) -> SystemDnsConfig {
+fn parse_resolv_conf(content: &str) -> DnsConfig {
     let mut servers = Vec::new();
     let mut search_domains = Vec::new();
     let mut ndots = None;
@@ -69,7 +69,7 @@ fn parse_resolv_conf(content: &str) -> SystemDnsConfig {
         }
     }
 
-    SystemDnsConfig {
+    DnsConfig {
         nameservers: servers,
         search_domains,
         ndots,
@@ -82,7 +82,7 @@ mod tests {
 
     use super::*;
 
-    fn ips(config: &SystemDnsConfig) -> Vec<IpAddr> {
+    fn ips(config: &DnsConfig) -> Vec<IpAddr> {
         config.nameservers.iter().map(|(a, _)| a.ip()).collect()
     }
 

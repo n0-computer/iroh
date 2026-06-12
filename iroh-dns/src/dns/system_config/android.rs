@@ -28,10 +28,10 @@ use jni::objects::{IntoAuto as _, JByteArray, JList, JObject, JValue};
 use jni::{jni_sig, jni_str};
 use tracing::{trace, warn};
 
-use super::{DNS_PORT, DnsProtocol, SystemDnsConfig};
+use super::{DNS_PORT, DnsConfig, DnsProtocol};
 
 /// Read the active network's DNS configuration via JNI.
-pub(super) fn read_system_dns() -> Result<SystemDnsConfig, std::io::Error> {
+pub(super) fn read_system_dns() -> Result<DnsConfig, std::io::Error> {
     #[cfg(debug_assertions)]
     {
         use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -47,7 +47,7 @@ pub(super) fn read_system_dns() -> Result<SystemDnsConfig, std::io::Error> {
 }
 
 /// Reads the active network's DNS servers through JNI.
-fn read_system_dns_jni() -> Result<SystemDnsConfig, std::io::Error> {
+fn read_system_dns_jni() -> Result<DnsConfig, std::io::Error> {
     let ctx = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) };
     let nameservers = vm
@@ -132,7 +132,7 @@ fn read_system_dns_jni() -> Result<SystemDnsConfig, std::io::Error> {
         })
         .map_err(|e: jni::errors::Error| std::io::Error::other(e.to_string()))?;
 
-    Ok(SystemDnsConfig {
+    Ok(DnsConfig {
         nameservers,
         search_domains: Vec::new(),
         ndots: None,

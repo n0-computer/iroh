@@ -1,17 +1,16 @@
 //! Built-in DNS resolver using `simple-dns` for packet construction/parsing
 //! and tokio for transport.
 
-#[cfg(with_crypto_provider)]
-use std::sync::Mutex;
 use std::{
     future::Future,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use n0_error::{AnyError, e};
 use n0_future::{
-    FuturesUnorderedBounded, StreamExt,
+    FuturesUnordered, MaybeFuture, StreamExt,
     boxed::BoxFuture,
     time::{self, Duration},
 };
@@ -24,18 +23,80 @@ use super::{
     query::{self, MAX_CNAME_DEPTH},
     system_config, transport,
 };
-use crate::dns::Resolver;
+use crate::dns::{Resolver, system_config::DnsConfig};
 
 /// Per-nameserver timeout for a single attempt.
 const NAMESERVER_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Delay between launching queries to successive nameservers.
-/// Gives the preferred nameserver a head start before trying alternates.
-const NAMESERVER_STAGGER: Duration = Duration::from_millis(100);
+/// Maximum number of nameserver queries in flight at once.
+///
+/// Bounds how many servers we race so that growing the nameserver list does
+/// not turn every lookup into an N-way fan-out.
+const MAX_CONCURRENT_QUERIES: usize = 3;
+
+/// Delay before starting the next nameserver attempt, unless the in-flight
+/// attempt fails first. Gives faster servers a head start without blasting
+/// the whole list at once (happy-eyeballs style).
+const QUERY_ATTEMPT_DELAY: Duration = Duration::from_millis(100);
 
 /// Number of UDP retry attempts per nameserver before giving up.
 /// UDP is unreliable, so a single dropped packet shouldn't be fatal.
 const UDP_ATTEMPTS: usize = 2;
+
+/// EWMA weight for folding a new RTT sample into a nameserver's smoothed RTT.
+const SRTT_ALPHA: f64 = 0.3;
+/// Penalty added to a nameserver's smoothed RTT on a failed attempt, in
+/// microseconds. Large enough to demote it below currently-healthy servers.
+const SRTT_FAILURE_PENALTY_MICROS: f64 = 150_000.0;
+/// Upper bound on a nameserver's smoothed RTT, in microseconds.
+const SRTT_MAX_MICROS: f64 = 5_000_000.0;
+/// Time constant (seconds) of the read-time decay of the smoothed RTT toward
+/// zero, so demoted servers recover and get re-probed.
+const SRTT_DECAY_SECS: f64 = 180.0;
+
+/// Smoothed round-trip time estimate for one nameserver.
+///
+/// Used to order nameservers fastest-first and to demote ones that fail. A
+/// read-time exponential decay pulls the estimate back toward zero so that a
+/// demoted server eventually gets re-probed, and a once-fast server that has
+/// gone away does not stay preferred forever.
+#[derive(Debug)]
+struct Srtt {
+    /// Smoothed estimate in microseconds, as of `updated`.
+    micros: f64,
+    /// When `micros` was last written.
+    updated: Instant,
+}
+
+impl Srtt {
+    fn new() -> Self {
+        Self {
+            micros: 0.0,
+            updated: Instant::now(),
+        }
+    }
+
+    /// The decayed estimate at `now`, used for ordering.
+    fn decayed(&self, now: Instant) -> f64 {
+        let dt = now.saturating_duration_since(self.updated).as_secs_f64();
+        self.micros * (-dt / SRTT_DECAY_SECS).exp()
+    }
+
+    /// Folds a successful round-trip time into the estimate.
+    fn record_success(&mut self, rtt: Duration, now: Instant) {
+        let sample = rtt.as_micros() as f64;
+        let base = self.decayed(now);
+        self.micros = (SRTT_ALPHA * sample + (1.0 - SRTT_ALPHA) * base).min(SRTT_MAX_MICROS);
+        self.updated = now;
+    }
+
+    /// Penalizes the estimate after a failed attempt.
+    fn record_failure(&mut self, now: Instant) {
+        let base = self.decayed(now);
+        self.micros = (base + SRTT_FAILURE_PENALTY_MICROS).min(SRTT_MAX_MICROS);
+        self.updated = now;
+    }
+}
 
 /// Default value for `ndots` per resolv.conf(5).
 ///
@@ -60,6 +121,9 @@ pub(super) struct SimpleDnsResolver {
     /// Lazily initialized, cached reqwest client for DNS-over-HTTPS queries.
     #[cfg(with_crypto_provider)]
     https_client: Mutex<Option<reqwest::Client>>,
+    /// Smoothed RTT per nameserver (parallel to `nameservers`), used to order
+    /// servers and re-probe demoted ones.
+    health: Mutex<Vec<Srtt>>,
     cache: DnsCache,
     builder: Builder,
 }
@@ -78,6 +142,7 @@ impl SimpleDnsResolver {
             .tls_client_config
             .as_ref()
             .map(|c| Arc::new(c.clone()));
+        let health = Mutex::new((0..nameservers.len()).map(|_| Srtt::new()).collect());
         Self {
             nameservers,
             search_domains,
@@ -86,6 +151,7 @@ impl SimpleDnsResolver {
             tls_config,
             #[cfg(with_crypto_provider)]
             https_client: Mutex::new(None),
+            health,
             cache: DnsCache::new(),
             builder,
         }
@@ -97,7 +163,7 @@ impl SimpleDnsResolver {
         let mut ndots = None;
 
         if builder.use_system_defaults {
-            let config = system_config::system_config();
+            let config = DnsConfig::system_with_fallback();
             nameservers.extend(config.nameservers);
             search_domains = config.search_domains;
             ndots = config.ndots;
@@ -106,7 +172,7 @@ impl SimpleDnsResolver {
         nameservers.extend(builder.nameservers.iter().copied());
 
         if nameservers.is_empty() {
-            nameservers.extend(system_config::fallback_nameservers());
+            nameservers.extend(DnsConfig::fallback().nameservers);
         }
 
         (nameservers, search_domains, ndots.unwrap_or(DEFAULT_NDOTS))
@@ -225,37 +291,97 @@ impl SimpleDnsResolver {
         }
     }
 
-    /// Send a query to all nameservers in parallel with staggered starts.
+    /// Returns nameserver indices ordered fastest-first by smoothed RTT.
+    fn nameserver_order(&self) -> Vec<usize> {
+        let now = Instant::now();
+        let health = self.health.lock().expect("poisoned");
+        let mut order: Vec<usize> = (0..self.nameservers.len()).collect();
+        order.sort_by(|&a, &b| health[a].decayed(now).total_cmp(&health[b].decayed(now)));
+        order
+    }
+
+    /// Records a successful query against nameserver `idx`.
+    fn record_success(&self, idx: usize, rtt: Duration) {
+        self.health.lock().expect("poisoned")[idx].record_success(rtt, Instant::now());
+    }
+
+    /// Records a failed query against nameserver `idx`.
+    fn record_failure(&self, idx: usize) {
+        self.health.lock().expect("poisoned")[idx].record_failure(Instant::now());
+    }
+
+    /// Sends a query to the configured nameservers, racing them happy-eyeballs
+    /// style: tries the historically fastest first, starts the next either
+    /// [`QUERY_ATTEMPT_DELAY`] later or as soon as the in-flight attempt fails
+    /// (fail-fast), and caps in-flight attempts at [`MAX_CONCURRENT_QUERIES`].
     ///
-    /// Each nameserver gets a staggered start delay to give the preferred
-    /// (first) nameserver a head start. The first successful response wins.
-    /// UDP queries are retried once per nameserver on failure.
+    /// The first successful response wins; UDP queries are retried per
+    /// nameserver on failure. Per-server success and failure update the
+    /// smoothed RTT used for ordering, so the server list is self-healing.
     async fn send_query(&self, query_bytes: &[u8]) -> Result<Vec<u8>, DnsError> {
         if self.nameservers.is_empty() {
             return Err(e!(DnsError::NoResponse));
         }
 
-        let count = self.nameservers.len();
-        let mut futures = FuturesUnorderedBounded::new(count);
-
-        for (i, (addr, proto)) in self.nameservers.iter().copied().enumerate() {
-            let stagger = NAMESERVER_STAGGER * i as u32;
-            futures.push(async move {
-                if !stagger.is_zero() {
-                    time::sleep(stagger).await;
-                }
-                self.query_nameserver(addr, proto, query_bytes).await
-            });
-        }
-
+        let order = self.nameserver_order();
+        // Index into `order` of the next nameserver to try.
+        let mut next = 0;
+        // In-flight attempts, each yielding (nameserver index, start, result).
+        let mut dials = FuturesUnordered::new();
         let mut last_err = None;
-        while let Some(result) = futures.next().await {
-            match result {
-                Ok(resp) => return Ok(resp),
-                Err(e) => last_err = Some(e),
+        // Timer after which to start the next attempt, or `None` for immediately.
+        let next_attempt = MaybeFuture::None;
+        tokio::pin!(next_attempt);
+
+        loop {
+            // Start the next attempt if one is due (no pending delay), we are
+            // under the concurrency cap, and a nameserver remains.
+            if next_attempt.is_none() && dials.len() < MAX_CONCURRENT_QUERIES && next < order.len()
+            {
+                let idx = order[next];
+                next += 1;
+                let (addr, proto) = self.nameservers[idx];
+                let start = Instant::now();
+                dials.push(async move {
+                    (
+                        idx,
+                        start,
+                        self.query_nameserver(addr, proto, query_bytes).await,
+                    )
+                });
+                // Pace the following attempt, unless this was the last server.
+                if next < order.len() {
+                    next_attempt
+                        .as_mut()
+                        .set_future(time::sleep(QUERY_ATTEMPT_DELAY));
+                }
+            }
+
+            if dials.is_empty() && next >= order.len() {
+                return Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)));
+            }
+
+            tokio::select! {
+                biased;
+                // A dial attempt completed.
+                Some((idx, start, res)) = dials.next(), if !dials.is_empty() => match res {
+                    Ok(resp) => {
+                        self.record_success(idx, start.elapsed());
+                        return Ok(resp);
+                    }
+                    Err(e) => {
+                        self.record_failure(idx);
+                        last_err = Some(e);
+                        // Fail fast: start the next attempt now rather than waiting.
+                        next_attempt.as_mut().set_none();
+                    }
+                },
+                // The next attempt is due.
+                () = &mut next_attempt, if next_attempt.is_some() => {
+                    next_attempt.as_mut().set_none();
+                }
             }
         }
-        Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
     }
 
     /// Send a query and follow CNAME chains recursively if the response contains
