@@ -217,7 +217,7 @@
 <a href=#217 id=217 data-nosnippet>217</a>
 <a href=#218 id=218 data-nosnippet>218</a><span class="doccomment">/// Function to build a [`ServerCertVerifier`] from a [`CryptoProvider`].
 <a href=#219 id=219 data-nosnippet>219</a>///
-<a href=#220 id=220 data-nosnippet>220</a>/// See [`CaTlsConfig::custom_server_cert_verifier].
+<a href=#220 id=220 data-nosnippet>220</a>/// See [`CaTlsConfig::custom_server_cert_verifier`].
 <a href=#221 id=221 data-nosnippet>221</a></span><span class="kw">pub type </span>ServerCertVerifierBuilder = Arc&lt;
 <a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">dyn </span>Fn(Arc&lt;CryptoProvider&gt;) -&gt; io::Result&lt;Arc&lt;<span class="kw">dyn </span>ServerCertVerifier&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>,
 <a href=#223 id=223 data-nosnippet>223</a>&gt;;

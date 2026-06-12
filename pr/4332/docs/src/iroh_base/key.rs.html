@@ -23,7 +23,7 @@
 <a href=#23 id=23 data-nosnippet>23</a>
 <a href=#24 id=24 data-nosnippet>24</a><span class="doccomment">/// A public key.
 <a href=#25 id=25 data-nosnippet>25</a>///
-<a href=#26 id=26 data-nosnippet>26</a>/// The key itself is stored as the `CompressedEdwards` y coordinate of the public key
+<a href=#26 id=26 data-nosnippet>26</a>/// The key itself is stored as the `CompressedEdwards` y-coordinate of the public key.
 <a href=#27 id=27 data-nosnippet>27</a>/// It is verified to decompress into a valid key when created.
 <a href=#28 id=28 data-nosnippet>28</a></span><span class="attr">#[derive(Clone, Copy, PartialEq, Eq)]
 <a href=#29 id=29 data-nosnippet>29</a>#[repr(transparent)]
@@ -126,7 +126,7 @@
 <a href=#126 id=126 data-nosnippet>126</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(y))
 <a href=#127 id=127 data-nosnippet>127</a>    }
 <a href=#128 id=128 data-nosnippet>128</a>
-<a href=#129 id=129 data-nosnippet>129</a>    <span class="doccomment">/// Verify a signature on a message with this secret key's public key.
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="doccomment">/// Verify a signature on a message with this public key.
 <a href=#130 id=130 data-nosnippet>130</a>    ///
 <a href=#131 id=131 data-nosnippet>131</a>    /// # Return
 <a href=#132 id=132 data-nosnippet>132</a>    ///
@@ -224,7 +224,7 @@
 <a href=#224 id=224 data-nosnippet>224</a>    }
 <a href=#225 id=225 data-nosnippet>225</a>}
 <a href=#226 id=226 data-nosnippet>226</a>
-<a href=#227 id=227 data-nosnippet>227</a><span class="doccomment">/// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
+<a href=#227 id=227 data-nosnippet>227</a><span class="doccomment">/// Error returned when parsing a [`PublicKey`] or a [`SecretKey`].
 <a href=#228 id=228 data-nosnippet>228</a></span><span class="attr">#[stack_error(derive, add_meta, from_sources, std_sources)]
 <a href=#229 id=229 data-nosnippet>229</a>#[allow(missing_docs)]
 <a href=#230 id=230 data-nosnippet>230</a>#[non_exhaustive]
@@ -238,14 +238,14 @@
 <a href=#238 id=238 data-nosnippet>238</a>    <span class="doccomment">/// The input has invalid length.
 <a href=#239 id=239 data-nosnippet>239</a>    </span><span class="attr">#[error(<span class="string">"invalid length"</span>)]
 <a href=#240 id=240 data-nosnippet>240</a>    </span>InvalidLength,
-<a href=#241 id=241 data-nosnippet>241</a>    <span class="doccomment">/// The decoded data is not a valid Ed25591 public key.
+<a href=#241 id=241 data-nosnippet>241</a>    <span class="doccomment">/// The decoded data is not a valid Ed25519 public key.
 <a href=#242 id=242 data-nosnippet>242</a>    </span><span class="attr">#[error(<span class="string">"data is not a valid public key"</span>)]
 <a href=#243 id=243 data-nosnippet>243</a>    </span>InvalidKeyData,
 <a href=#244 id=244 data-nosnippet>244</a>}
 <a href=#245 id=245 data-nosnippet>245</a>
-<a href=#246 id=246 data-nosnippet>246</a><span class="doccomment">/// Deserialises the [`PublicKey`] from it's base32 encoding.
+<a href=#246 id=246 data-nosnippet>246</a><span class="doccomment">/// Parses a [`PublicKey`] from its hex or base32 encoding.
 <a href=#247 id=247 data-nosnippet>247</a>///
-<a href=#248 id=248 data-nosnippet>248</a>/// [`Display`] is capable of serialising this format.
+<a href=#248 id=248 data-nosnippet>248</a>/// [`Display`] produces the hex encoding.
 <a href=#249 id=249 data-nosnippet>249</a></span><span class="kw">impl </span>FromStr <span class="kw">for </span>PublicKey {
 <a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= KeyParsingError;
 <a href=#251 id=251 data-nosnippet>251</a>

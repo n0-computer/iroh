@@ -20,7 +20,7 @@
 <a href=#20 id=20 data-nosnippet>20</a>/// contact the endpoint.
 <a href=#21 id=21 data-nosnippet>21</a>///
 <a href=#22 id=22 data-nosnippet>22</a>/// To establish a network connection to an endpoint both the [`EndpointId`] and one or more network
-<a href=#23 id=23 data-nosnippet>23</a>/// paths are needed.  The network paths can come from various sources, current sources can come from
+<a href=#23 id=23 data-nosnippet>23</a>/// paths are needed.  The network paths can come from various sources:
 <a href=#24 id=24 data-nosnippet>24</a>///
 <a href=#25 id=25 data-nosnippet>25</a>/// - An [Address Lookup] service which can provide routing information for a given [`EndpointId`].
 <a href=#26 id=26 data-nosnippet>26</a>///
@@ -42,7 +42,7 @@
 <a href=#42 id=42 data-nosnippet>42</a></span><span class="kw">pub struct </span>EndpointAddr {
 <a href=#43 id=43 data-nosnippet>43</a>    <span class="doccomment">/// The endpoint's identifier.
 <a href=#44 id=44 data-nosnippet>44</a>    </span><span class="kw">pub </span>id: EndpointId,
-<a href=#45 id=45 data-nosnippet>45</a>    <span class="doccomment">/// The endpoint's addresses
+<a href=#45 id=45 data-nosnippet>45</a>    <span class="doccomment">/// The endpoint's addresses.
 <a href=#46 id=46 data-nosnippet>46</a>    </span><span class="kw">pub </span>addrs: BTreeSet&lt;TransportAddr&gt;,
 <a href=#47 id=47 data-nosnippet>47</a>}
 <a href=#48 id=48 data-nosnippet>48</a>
@@ -52,10 +52,10 @@
 <a href=#52 id=52 data-nosnippet>52</a>)]
 <a href=#53 id=53 data-nosnippet>53</a>#[non_exhaustive]
 <a href=#54 id=54 data-nosnippet>54</a></span><span class="kw">pub enum </span>TransportAddr {
-<a href=#55 id=55 data-nosnippet>55</a>    <span class="doccomment">/// Relays
+<a href=#55 id=55 data-nosnippet>55</a>    <span class="doccomment">/// A relay server address.
 <a href=#56 id=56 data-nosnippet>56</a>    </span><span class="attr">#[debug(<span class="string">"Relay({_0})"</span>)]
 <a href=#57 id=57 data-nosnippet>57</a>    </span>Relay(RelayUrl),
-<a href=#58 id=58 data-nosnippet>58</a>    <span class="doccomment">/// IP based addresses
+<a href=#58 id=58 data-nosnippet>58</a>    <span class="doccomment">/// An IP based address.
 <a href=#59 id=59 data-nosnippet>59</a>    </span>Ip(SocketAddr),
 <a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// Custom transport address
 <a href=#61 id=61 data-nosnippet>61</a>    </span>Custom(CustomAddr),
@@ -128,12 +128,12 @@
 <a href=#128 id=128 data-nosnippet>128</a>        <span class="self">self
 <a href=#129 id=129 data-nosnippet>129</a>    </span>}
 <a href=#130 id=130 data-nosnippet>130</a>
-<a href=#131 id=131 data-nosnippet>131</a>    <span class="doccomment">/// Returns true, if only a [`EndpointId`] is present.
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="doccomment">/// Returns true if only an [`EndpointId`] is present.
 <a href=#132 id=132 data-nosnippet>132</a>    </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
 <a href=#133 id=133 data-nosnippet>133</a>        <span class="self">self</span>.addrs.is_empty()
 <a href=#134 id=134 data-nosnippet>134</a>    }
 <a href=#135 id=135 data-nosnippet>135</a>
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// Returns a list of IP addresses of this peer.
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// Returns an iterator over the IP addresses of this endpoint address.
 <a href=#137 id=137 data-nosnippet>137</a>    </span><span class="kw">pub fn </span>ip_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>SocketAddr&gt; {
 <a href=#138 id=138 data-nosnippet>138</a>        <span class="self">self</span>.addrs.iter().filter_map(|addr| <span class="kw">match </span>addr {
 <a href=#139 id=139 data-nosnippet>139</a>            TransportAddr::Ip(addr) =&gt; <span class="prelude-val">Some</span>(addr),
@@ -141,7 +141,7 @@
 <a href=#141 id=141 data-nosnippet>141</a>        })
 <a href=#142 id=142 data-nosnippet>142</a>    }
 <a href=#143 id=143 data-nosnippet>143</a>
-<a href=#144 id=144 data-nosnippet>144</a>    <span class="doccomment">/// Returns a list of relay urls of this peer.
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="doccomment">/// Returns an iterator over the relay URLs of this endpoint address.
 <a href=#145 id=145 data-nosnippet>145</a>    ///
 <a href=#146 id=146 data-nosnippet>146</a>    ///  In practice this is expected to be zero or one home relay for all known cases currently.
 <a href=#147 id=147 data-nosnippet>147</a>    </span><span class="kw">pub fn </span>relay_urls(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>RelayUrl&gt; {

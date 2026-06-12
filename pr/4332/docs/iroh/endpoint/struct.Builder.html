@@ -92,7 +92,7 @@ is set to <code>false</code> explicitly.</p>
 destination addresses. It is valid to configure this, but no more than one such
 socket should be bound or the routing will be non-deterministic.</p>
 <p>To use a subnet with a non-zero prefix length as the default route in addition to
-being routed when its prefix matches, use <a href="struct.BindOpts.html#method.set_is_default_route" title="method iroh::endpoint::BindOpts::set_is_default_route">`BindOpts::set_is_default_route</a>.
+being routed when its prefix matches, use <a href="struct.BindOpts.html#method.set_is_default_route" title="method iroh::endpoint::BindOpts::set_is_default_route"><code>BindOpts::set_is_default_route</code></a>.
 Subnets with a prefix length of zero are always marked as default routes.</p>
 <p>Finally note that most outgoing datagrams are part of an existing network flow. That
 is, they are in response to an incoming datagram. In this case the outgoing datagram
@@ -142,7 +142,7 @@ direct addresses or relay URLs will fail.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.addr_filter" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#607-610">Source</a><h4 class="code-header">pub fn <a href="#method.addr_filter" class="fn">addr_filter</a>(self, filter: <a class="struct" href="../address_lookup/struct.AddrFilter.html" title="struct iroh::address_lookup::AddrFilter">AddrFilter</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Sets the address filter applied to all address data before publishing.</p>
 <p>This filter is applied once, at the <a href="../address_lookup/struct.AddressLookupServices.html" title="struct iroh::address_lookup::AddressLookupServices"><code>AddressLookupServices</code></a> level, before
 distributing data to any individual address lookup service. This ensures
-consistent filtering regardless of how the services configured.</p>
+consistent filtering regardless of how the services are configured.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.clear_addr_filter" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#616-619">Source</a><h4 class="code-header">pub fn <a href="#method.clear_addr_filter" class="fn">clear_addr_filter</a>(self) -&gt; Self</h4></section></summary><div class="docblock"><p>Clears the address filter, allowing all addresses to be published.</p>
 <p>This removes any filter previously set via <a href="struct.Builder.html#method.addr_filter" title="method iroh::endpoint::Builder::addr_filter"><code>Self::addr_filter</code></a>, including
 filters set by presets.</p>
