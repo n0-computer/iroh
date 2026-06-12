@@ -13,6 +13,7 @@ use super::{ProbeReport, probes::Probe};
 
 /// A net_report report.
 #[derive(Default, Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Report {
     /// A QAD IPv4 round trip completed.
     pub udp_v4: bool,
