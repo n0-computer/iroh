@@ -58,6 +58,7 @@ use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::{AUTH_TOKEN_URL_QUERY_PARAM, ProtocolVersion, RELAY_PROBE_PATH},
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
+    tls::CaTlsConfig,
 };
 
 pub mod client;
@@ -549,6 +550,7 @@ pub struct AcmeConfig {
     pub(crate) domains: Vec<String>,
     pub(crate) contact: Vec<String>,
     pub(crate) cache_path: Option<PathBuf>,
+    pub(crate) tls_config: CaTlsConfig,
 }
 
 impl AcmeConfig {
@@ -559,6 +561,7 @@ impl AcmeConfig {
             domains: Vec::new(),
             contact: Vec::new(),
             cache_path: None,
+            tls_config: CaTlsConfig::default(),
         }
     }
 
@@ -591,6 +594,16 @@ impl AcmeConfig {
     /// If not called certificates will not be cached.
     pub fn cache_path(mut self, path: PathBuf) -> Self {
         self.cache_path = Some(path);
+        self
+    }
+
+    /// Sets the [`CaTlsConfig`] used to verify the ACME server's TLS certificate.
+    ///
+    /// Defaults to [`CaTlsConfig::embedded`]. Set a config with extra roots when targeting
+    /// an ACME server whose certificate is not signed by a publicly trusted CA, such as a
+    /// local test server.
+    pub fn tls_config(mut self, tls_config: CaTlsConfig) -> Self {
+        self.tls_config = tls_config;
         self
     }
 }
@@ -636,6 +649,11 @@ pub enum SpawnError {
     TlsHeaderParse { source: InvalidHeaderValue },
     #[error("Failed to bind TcpListener")]
     BindTlsListener { source: std::io::Error },
+    #[error("Failed to build ACME client TLS config")]
+    AcmeClientTlsConfig {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[error("No local address")]
     NoLocalAddr { source: std::io::Error },
     #[error("Failed to bind server socket to {addr}")]
@@ -731,11 +749,20 @@ impl Server {
                                 server_config_builder,
                             } => {
                                 let cache = acme_config.cache_path.map(DirCache::new);
+                                let crypto_provider =
+                                    server_config_builder.crypto_provider().clone();
+                                let client_tls_config = acme_config
+                                    .tls_config
+                                    .client_config(crypto_provider)
+                                    .map_err(|err| e!(SpawnError::AcmeClientTlsConfig, err))?;
                                 let config =
-                                    tokio_rustls_acme::AcmeConfig::new(acme_config.domains)
-                                        .contact(acme_config.contact)
-                                        .directory(acme_config.directory_url)
-                                        .cache_option(cache);
+                                    tokio_rustls_acme::AcmeConfig::new_with_client_tls_config(
+                                        acme_config.domains,
+                                        Arc::new(client_tls_config),
+                                    )
+                                    .contact(acme_config.contact)
+                                    .directory(acme_config.directory_url)
+                                    .cache_option(cache);
                                 let mut state = config.state();
                                 let resolver = state.resolver().clone();
                                 let server_config =

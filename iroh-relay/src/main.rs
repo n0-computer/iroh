@@ -21,6 +21,7 @@ use iroh_relay::{
         self as relay, Access, AccessControl, AcmeConfig, ClientRateLimit, ClientRequest,
         DEFAULT_CERT_RELOAD_INTERVAL, QuicConfig, reloading_resolver,
     },
+    tls::CaTlsConfig,
 };
 use n0_error::{AnyError, Result, StdResultExt, bail_any};
 use serde::{Deserialize, Serialize};
@@ -645,10 +646,21 @@ async fn load_cert_config(tls: &TlsConfig) -> Result<relay::CertConfig> {
             } else {
                 AcmeConfig::letsencrypt(tls.prod_tls)
             };
-            let acme_config = acme_config
+            let mut acme_config = acme_config
                 .domains(domains)
                 .contact(vec![format!("mailto:{contact}")])
                 .cache_path(tls.cert_dir());
+            // Trust an additional CA for the ACME server's TLS certificate. Useful for testing
+            // against a local ACME server such as pebble, whose certificate is not signed by a
+            // publicly trusted CA.
+            if let Ok(ca_path) = std::env::var("IROH_RELAY_ACME_CA") {
+                let extra_roots = CertificateDer::pem_file_iter(&ca_path)
+                    .std_context("failed to read IROH_RELAY_ACME_CA")?
+                    .collect::<Result<Vec<_>, _>>()
+                    .std_context("failed to parse IROH_RELAY_ACME_CA")?;
+                acme_config =
+                    acme_config.tls_config(CaTlsConfig::default().with_extra_roots(extra_roots));
+            }
             relay::CertConfig::LetsEncrypt {
                 acme_config,
                 server_config_builder: server_config,
