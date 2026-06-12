@@ -1,6 +1,5 @@
 // The items in this module are exported from [`crate::endpoint::transports`] only if
-// the "unstable-custom-transports" feature is enabled
-#![cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
+// the "unstable-custom-transports" feature is enabled.
 
 use std::{
     io,
@@ -21,7 +20,8 @@ use super::{RecvInfo, Transmit};
 /// A transport is a factory for custom endpoints. Whenever an iroh endpoint is
 /// created using [crate::endpoint::Builder::bind], a new custom endpoint will
 /// be created using [CustomTransport::bind].
-pub trait CustomTransport: std::fmt::Debug + Send + Sync + 'static {
+#[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+pub(crate) trait CustomTransport: std::fmt::Debug + Send + Sync + 'static {
     /// Create a custom endpoint
     ///
     /// Analogously to [std::net::UdpSocket::bind], this is where the actual
@@ -33,7 +33,8 @@ pub trait CustomTransport: std::fmt::Debug + Send + Sync + 'static {
 ///
 /// An endpoint has a local address (or multiple local addresses), can receive
 /// packets, and can create senders to send packets.
-pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
+#[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+pub(crate) trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
     /// A watcher for local addresses for this custom endpoint.
     fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<CustomAddr>>;
     /// Create a custom sender for this custom endpoint.
@@ -81,7 +82,8 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
 /// This is not enforced at type level, but [CustomSender::poll_send] should
 /// only be called with addresses for which [CustomSender::is_valid_send_addr]
 /// returns true.
-pub trait CustomSender: std::fmt::Debug + Send + Sync + 'static {
+#[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+pub(crate) trait CustomSender: std::fmt::Debug + Send + Sync + 'static {
     /// True if this sender can send to the given address.
     fn is_valid_send_addr(&self, addr: &CustomAddr) -> bool;
     /// poll sending a packet on this sender.

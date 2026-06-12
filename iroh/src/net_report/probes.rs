@@ -20,9 +20,9 @@ const HTTPS_OFFSET: Duration = Duration::from_millis(200);
 /// The protocol used to time an endpoint's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
-#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
+#[cfg_attr(feature = "unstable-net-report", visibility::make(pub))]
 #[non_exhaustive]
-pub enum Probe {
+pub(crate) enum Probe {
     /// HTTPS
     Https,
     /// QUIC Address Discovery Ipv4

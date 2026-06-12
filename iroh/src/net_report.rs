@@ -42,17 +42,18 @@ use tracing::{debug, trace, warn};
 use self::reportgen::{ProbeFinished, ProbeReport};
 #[cfg(not(wasm_browser))]
 use self::reportgen::{QadProbeReport, SocketState};
-#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
-pub use self::{
-    // exported primarily for use in documentation
-    defaults::timeouts::TIMEOUT,
-    metrics::Metrics,
-    probes::Probe,
-    report::{RelayLatencies, Report},
-};
+// Always public: `TIMEOUT` is re-exported as `NET_REPORT_TIMEOUT` (for documentation) and
+// `Metrics` is reachable via `EndpointMetrics`.
+pub use self::{defaults::timeouts::TIMEOUT, metrics::Metrics};
 pub(crate) use self::{
     options::Options,
     reportgen::{IfStateDetails, QuicConfig},
+};
+// Reachable as public API only with the `unstable-net-report` feature.
+#[cfg_attr(feature = "unstable-net-report", visibility::make(pub))]
+pub(crate) use self::{
+    probes::Probe,
+    report::{RelayLatencies, Report},
 };
 
 mod defaults;
