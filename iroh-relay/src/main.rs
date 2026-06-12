@@ -38,6 +38,10 @@ const X_IROH_ENDPOINT_ID: &str = "X-Iroh-NodeId";
 const ENV_HTTP_BEARER_TOKEN: &str = "IROH_RELAY_HTTP_BEARER_TOKEN";
 /// Environment variable to verify relay access (without an external auth service)
 const ENV_RELAY_ACCESS_TOKEN: &str = "IROH_RELAY_ACCESS_TOKEN";
+/// Environment variable to override the ACME directory URL.
+const ENV_ACME_URL: &str = "IROH_RELAY_ACME_URL";
+/// Environment variable to trust an additional CA for the ACME server's TLS certificate.
+const ENV_ACME_CA: &str = "IROH_RELAY_ACME_CA";
 
 /// A relay server for iroh.
 #[derive(Parser, Debug, Clone)]
@@ -641,7 +645,7 @@ async fn load_cert_config(tls: &TlsConfig) -> Result<relay::CertConfig> {
                 .contact
                 .clone()
                 .std_context("LetsEncrypt needs a contact email")?;
-            let acme_config = if let Ok(url) = std::env::var("IROH_RELAY_ACME_URL") {
+            let acme_config = if let Ok(url) = std::env::var(ENV_ACME_URL) {
                 AcmeConfig::new(url)
             } else {
                 AcmeConfig::letsencrypt(tls.prod_tls)
@@ -653,7 +657,7 @@ async fn load_cert_config(tls: &TlsConfig) -> Result<relay::CertConfig> {
             // Trust an additional CA for the ACME server's TLS certificate. Useful for testing
             // against a local ACME server such as pebble, whose certificate is not signed by a
             // publicly trusted CA.
-            if let Ok(ca_path) = std::env::var("IROH_RELAY_ACME_CA") {
+            if let Ok(ca_path) = std::env::var(ENV_ACME_CA) {
                 let extra_roots = CertificateDer::pem_file_iter(&ca_path)
                     .std_context("failed to read IROH_RELAY_ACME_CA")?
                     .collect::<Result<Vec<_>, _>>()
