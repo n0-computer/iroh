@@ -400,7 +400,8 @@ struct TlsConfig {
     /// port set to [`iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT`]
     quic_bind_addr: Option<SocketAddr>,
     /// Certificate hostname when using LetsEncrypt.
-    hostname: Option<String>,
+    #[serde(default, deserialize_with = "string_or_seq")]
+    hostname: Vec<String>,
     /// Mode for getting a cert.
     ///
     /// Possible options: 'Manual', 'LetsEncrypt'.
@@ -477,6 +478,23 @@ impl TlsConfig {
             .clone()
             .unwrap_or_else(|| self.cert_dir().join("default.key"))
     }
+}
+
+fn string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        One(String),
+        Many(Vec<String>),
+    }
+
+    Ok(match StringOrVec::deserialize(deserializer)? {
+        StringOrVec::One(s) => vec![s],
+        StringOrVec::Many(v) => v,
+    })
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -614,16 +632,16 @@ async fn load_cert_config(tls: &TlsConfig) -> Result<relay::CertConfig> {
             relay::CertConfig::Manual { server_config }
         }
         CertMode::LetsEncrypt => {
-            let hostname = tls
-                .hostname
-                .clone()
-                .std_context("LetsEncrypt needs a hostname")?;
+            let domains = tls.hostname.clone();
+            if domains.is_empty() {
+                bail_any!("LetsEncrypt needs at least one hostname");
+            }
             let contact = tls
                 .contact
                 .clone()
                 .std_context("LetsEncrypt needs a contact email")?;
             let acme_config = AcmeConfig::letsencrypt(tls.prod_tls)
-                .domains(vec![hostname])
+                .domains(domains)
                 .contact(vec![format!("mailto:{contact}")])
                 .cache_path(tls.cert_dir());
             relay::CertConfig::LetsEncrypt {
