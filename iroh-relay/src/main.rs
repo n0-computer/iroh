@@ -640,7 +640,12 @@ async fn load_cert_config(tls: &TlsConfig) -> Result<relay::CertConfig> {
                 .contact
                 .clone()
                 .std_context("LetsEncrypt needs a contact email")?;
-            let acme_config = AcmeConfig::letsencrypt(tls.prod_tls)
+            let acme_config = if let Ok(url) = std::env::var("IROH_RELAY_ACME_URL") {
+                AcmeConfig::new(url)
+            } else {
+                AcmeConfig::letsencrypt(tls.prod_tls)
+            };
+            let acme_config = acme_config
                 .domains(domains)
                 .contact(vec![format!("mailto:{contact}")])
                 .cache_path(tls.cert_dir());
