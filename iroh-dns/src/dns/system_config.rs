@@ -95,15 +95,33 @@ impl DnsConfig {
 ///
 /// Spans multiple providers (Cloudflare, Google, Quad9) and transports so that
 /// resolution still works when one provider is down or plain DNS is blocked.
-/// The DNS-over-HTTPS entries (when a crypto provider is available) traverse
-/// networks that filter port 53. The resolver tracks per-server RTT, so the
-/// servers that actually work on the current network float to the front.
+///
+/// The order matters: the resolver races the first few entries together (see
+/// `MAX_CONCURRENT_QUERIES`), so the DNS-over-HTTPS entries sit within that
+/// first wave rather than behind every UDP server. On a network that filters
+/// port 53 the UDP entries hang and DoH gets raced right away instead of
+/// waiting out a dozen UDP timeouts; on a working network the UDP entries
+/// answer first, before the staggered DoH attempts are even started. The
+/// resolver also tracks per-server RTT, so the servers that work on the current
+/// network float to the front over time.
 fn fallback_nameservers() -> Vec<Nameserver> {
     let udp = |ip: IpAddr| Nameserver::new(SocketAddr::new(ip, DNS_PORT), DnsProtocol::Udp);
-    #[cfg_attr(not(with_crypto_provider), allow(unused_mut))]
     let mut servers = vec![
         udp(IpAddr::V4(CLOUDFLARE_V4_PRIMARY)),
         udp(IpAddr::V4(GOOGLE_V4_PRIMARY)),
+    ];
+    // DoH right after the two fastest UDP primaries, so it lands in the first
+    // raced wave when plain DNS is blocked.
+    #[cfg(with_crypto_provider)]
+    {
+        let doh = |ip: IpAddr| Nameserver::new(SocketAddr::new(ip, HTTPS_PORT), DnsProtocol::Https);
+        servers.extend([
+            doh(IpAddr::V4(CLOUDFLARE_V4_PRIMARY)),
+            doh(IpAddr::V4(GOOGLE_V4_PRIMARY)),
+            doh(IpAddr::V4(QUAD9_V4_PRIMARY)),
+        ]);
+    }
+    servers.extend([
         udp(IpAddr::V4(QUAD9_V4_PRIMARY)),
         udp(IpAddr::V6(CLOUDFLARE_V6_PRIMARY)),
         udp(IpAddr::V6(GOOGLE_V6_PRIMARY)),
@@ -114,16 +132,7 @@ fn fallback_nameservers() -> Vec<Nameserver> {
         udp(IpAddr::V6(CLOUDFLARE_V6_SECONDARY)),
         udp(IpAddr::V6(GOOGLE_V6_SECONDARY)),
         udp(IpAddr::V6(QUAD9_V6_SECONDARY)),
-    ];
-    #[cfg(with_crypto_provider)]
-    {
-        let doh = |ip: IpAddr| Nameserver::new(SocketAddr::new(ip, HTTPS_PORT), DnsProtocol::Https);
-        servers.extend([
-            doh(IpAddr::V4(CLOUDFLARE_V4_PRIMARY)),
-            doh(IpAddr::V4(GOOGLE_V4_PRIMARY)),
-            doh(IpAddr::V4(QUAD9_V4_PRIMARY)),
-        ]);
-    }
+    ]);
     servers
 }
 
@@ -150,5 +159,21 @@ mod tests {
         assert!(ips.contains(&IpAddr::V4(CLOUDFLARE_V4_PRIMARY)));
         assert!(ips.contains(&IpAddr::V4(GOOGLE_V4_PRIMARY)));
         assert!(ips.contains(&IpAddr::V4(QUAD9_V4_PRIMARY)));
+    }
+
+    /// DoH must land in the first raced wave (see `MAX_CONCURRENT_QUERIES`, 3),
+    /// otherwise it would never be tried before the lookup times out on a
+    /// network that silently drops UDP/53.
+    #[cfg(with_crypto_provider)]
+    #[test]
+    fn fallback_races_doh_in_first_wave() {
+        let servers = fallback_nameservers();
+        assert!(
+            servers[..3]
+                .iter()
+                .any(|ns| ns.protocol == DnsProtocol::Https),
+            "expected a DoH entry within the first 3 fallback servers, got {:?}",
+            &servers[..3],
+        );
     }
 }
