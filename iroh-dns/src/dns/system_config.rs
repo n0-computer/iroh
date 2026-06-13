@@ -8,7 +8,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use super::DnsProtocol;
+use super::{DnsProtocol, Nameserver};
 
 #[cfg(target_os = "android")]
 mod android;
@@ -54,7 +54,7 @@ const QUAD9_V6_SECONDARY: Ipv6Addr = Ipv6Addr::new(0x2620, 0x00fe, 0, 0, 0, 0, 0
 /// Parsed DNS configuration: the nameservers to query and resolv.conf options.
 #[derive(Debug, Clone, Default)]
 pub(super) struct DnsConfig {
-    pub(super) nameservers: Vec<(SocketAddr, DnsProtocol)>,
+    pub(super) nameservers: Vec<Nameserver>,
     /// Search domains from resolv.conf `search` or `domain` directives.
     ///
     /// When resolving a short hostname (one with fewer dots than `ndots`,
@@ -82,7 +82,7 @@ impl DnsConfig {
 
     /// Builds a config from an explicit nameserver list, with no search domains
     /// and the default `ndots`.
-    pub(super) fn from_nameservers(nameservers: Vec<(SocketAddr, DnsProtocol)>) -> Self {
+    pub(super) fn from_nameservers(nameservers: Vec<Nameserver>) -> Self {
         Self {
             nameservers,
             search_domains: Vec::new(),
@@ -98,8 +98,8 @@ impl DnsConfig {
 /// The DNS-over-HTTPS entries (when a crypto provider is available) traverse
 /// networks that filter port 53. The resolver tracks per-server RTT, so the
 /// servers that actually work on the current network float to the front.
-fn fallback_nameservers() -> Vec<(SocketAddr, DnsProtocol)> {
-    let udp = |ip: IpAddr| (SocketAddr::new(ip, DNS_PORT), DnsProtocol::Udp);
+fn fallback_nameservers() -> Vec<Nameserver> {
+    let udp = |ip: IpAddr| Nameserver::new(SocketAddr::new(ip, DNS_PORT), DnsProtocol::Udp);
     #[cfg_attr(not(with_crypto_provider), allow(unused_mut))]
     let mut servers = vec![
         udp(IpAddr::V4(CLOUDFLARE_V4_PRIMARY)),
@@ -117,7 +117,7 @@ fn fallback_nameservers() -> Vec<(SocketAddr, DnsProtocol)> {
     ];
     #[cfg(with_crypto_provider)]
     {
-        let doh = |ip: IpAddr| (SocketAddr::new(ip, HTTPS_PORT), DnsProtocol::Https);
+        let doh = |ip: IpAddr| Nameserver::new(SocketAddr::new(ip, HTTPS_PORT), DnsProtocol::Https);
         servers.extend([
             doh(IpAddr::V4(CLOUDFLARE_V4_PRIMARY)),
             doh(IpAddr::V4(GOOGLE_V4_PRIMARY)),
@@ -136,17 +136,17 @@ mod tests {
         let servers = fallback_nameservers();
         assert!(servers.len() >= 6);
         // Both address families are represented.
-        assert!(servers.iter().any(|(a, _)| a.ip().is_ipv4()));
-        assert!(servers.iter().any(|(a, _)| a.ip().is_ipv6()));
+        assert!(servers.iter().any(|ns| ns.addr.ip().is_ipv4()));
+        assert!(servers.iter().any(|ns| ns.addr.ip().is_ipv6()));
         // UDP entries use the standard DNS port.
         assert!(
             servers
                 .iter()
-                .filter(|(_, p)| *p == DnsProtocol::Udp)
-                .all(|(a, _)| a.port() == DNS_PORT)
+                .filter(|ns| ns.protocol == DnsProtocol::Udp)
+                .all(|ns| ns.addr.port() == DNS_PORT)
         );
         // Cloudflare, Google and Quad9 are all present.
-        let ips: Vec<IpAddr> = servers.iter().map(|(a, _)| a.ip()).collect();
+        let ips: Vec<IpAddr> = servers.iter().map(|ns| ns.addr.ip()).collect();
         assert!(ips.contains(&IpAddr::V4(CLOUDFLARE_V4_PRIMARY)));
         assert!(ips.contains(&IpAddr::V4(GOOGLE_V4_PRIMARY)));
         assert!(ips.contains(&IpAddr::V4(QUAD9_V4_PRIMARY)));

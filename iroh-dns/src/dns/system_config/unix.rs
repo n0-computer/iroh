@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use super::{DNS_PORT, DnsConfig, DnsProtocol};
+use super::{DNS_PORT, DnsConfig, DnsProtocol, Nameserver};
 
 /// Read `/etc/resolv.conf` and extract nameserver addresses and search domains.
 pub(super) fn read_system_dns() -> Result<DnsConfig, std::io::Error> {
@@ -44,7 +44,7 @@ fn parse_resolv_conf(content: &str) -> DnsConfig {
                             .map(|ip| SocketAddr::new(ip, DNS_PORT))
                     });
                     if let Some(addr) = addr {
-                        servers.push((addr, DnsProtocol::Udp));
+                        servers.push(Nameserver::new(addr, DnsProtocol::Udp));
                     }
                 }
             }
@@ -83,7 +83,7 @@ mod tests {
     use super::*;
 
     fn ips(config: &DnsConfig) -> Vec<IpAddr> {
-        config.nameservers.iter().map(|(a, _)| a.ip()).collect()
+        config.nameservers.iter().map(|ns| ns.addr.ip()).collect()
     }
 
     fn ipv4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
@@ -98,7 +98,7 @@ mod tests {
             config
                 .nameservers
                 .iter()
-                .all(|(_, p)| *p == DnsProtocol::Udp)
+                .all(|ns| ns.protocol == DnsProtocol::Udp)
         );
     }
 
@@ -106,7 +106,7 @@ mod tests {
     fn parse_ipv6() {
         let config = parse_resolv_conf("nameserver 8.8.8.8\nnameserver 2001:4860:4860::8888\n");
         assert_eq!(config.nameservers.len(), 2);
-        assert!(config.nameservers[1].0.ip().is_ipv6());
+        assert!(config.nameservers[1].addr.ip().is_ipv6());
     }
 
     #[test]
@@ -190,10 +190,10 @@ mod tests {
         let config = parse_resolv_conf("nameserver 8.8.8.8:5353\nnameserver 1.1.1.1\n");
         assert_eq!(config.nameservers.len(), 2);
         assert_eq!(
-            config.nameservers[0].0,
+            config.nameservers[0].addr,
             "8.8.8.8:5353".parse::<SocketAddr>().unwrap()
         );
-        assert_eq!(config.nameservers[1].0.port(), DNS_PORT);
+        assert_eq!(config.nameservers[1].addr.port(), DNS_PORT);
     }
 
     #[test]

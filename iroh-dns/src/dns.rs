@@ -143,9 +143,35 @@ impl<E: StackError + 'static> StaggeredError<E> {
 #[derive(Debug, Clone, Default)]
 pub struct Builder {
     use_system_defaults: bool,
-    nameservers: Vec<(SocketAddr, DnsProtocol)>,
+    nameservers: Vec<Nameserver>,
     #[cfg(with_crypto_provider)]
     tls_client_config: Option<rustls::ClientConfig>,
+}
+
+/// A configured nameserver: its address, transport, and an optional TLS server
+/// name for DNS-over-TLS / DNS-over-HTTPS.
+///
+/// The connection is always made to `addr`. When `server_name` is set it is
+/// used for the TLS SNI and certificate validation (and as the DoH URL
+/// authority, with the address pinned); otherwise DoT/DoH are addressed by IP.
+#[derive(Debug, Clone)]
+pub(crate) struct Nameserver {
+    pub(crate) addr: SocketAddr,
+    pub(crate) protocol: DnsProtocol,
+    /// Only used for DoT/DoH, which require a crypto provider.
+    #[cfg_attr(not(with_crypto_provider), allow(dead_code))]
+    pub(crate) server_name: Option<String>,
+}
+
+impl Nameserver {
+    /// A nameserver addressed by IP, with no TLS server name.
+    pub(crate) fn new(addr: SocketAddr, protocol: DnsProtocol) -> Self {
+        Self {
+            addr,
+            protocol,
+            server_name: None,
+        }
+    }
 }
 
 /// Protocols over which DNS records can be resolved.
@@ -188,18 +214,60 @@ impl Builder {
         self
     }
 
-    /// Adds a single nameserver.
+    /// Adds a single nameserver, addressed by IP.
+    ///
+    /// For DNS-over-TLS or DNS-over-HTTPS against a server whose certificate
+    /// only covers a hostname, use [`Self::with_tls_nameserver`] or
+    /// [`Self::with_https_nameserver`] instead.
     pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
-        self.nameservers.push((addr, protocol));
+        self.nameservers.push(Nameserver::new(addr, protocol));
         self
     }
 
-    /// Adds a list of nameservers.
+    /// Adds a list of nameservers, each addressed by IP.
     pub fn with_nameservers(
         mut self,
         nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
     ) -> Self {
-        self.nameservers.extend(nameservers);
+        self.nameservers.extend(
+            nameservers
+                .into_iter()
+                .map(|(addr, protocol)| Nameserver::new(addr, protocol)),
+        );
+        self
+    }
+
+    /// Adds a DNS-over-TLS nameserver with an explicit TLS server name.
+    ///
+    /// The connection is made to `addr`, but `server_name` is used for the SNI
+    /// and certificate validation. Use this for providers whose certificates
+    /// cover a hostname rather than the IP.
+    #[cfg(with_crypto_provider)]
+    pub fn with_tls_nameserver(mut self, addr: SocketAddr, server_name: impl Into<String>) -> Self {
+        self.nameservers.push(Nameserver {
+            addr,
+            protocol: DnsProtocol::Tls,
+            server_name: Some(server_name.into()),
+        });
+        self
+    }
+
+    /// Adds a DNS-over-HTTPS nameserver with an explicit server name.
+    ///
+    /// The request is sent to `https://<server_name>/dns-query` with the
+    /// connection pinned to `addr`. Use this for providers whose certificates
+    /// cover a hostname rather than the IP.
+    #[cfg(with_crypto_provider)]
+    pub fn with_https_nameserver(
+        mut self,
+        addr: SocketAddr,
+        server_name: impl Into<String>,
+    ) -> Self {
+        self.nameservers.push(Nameserver {
+            addr,
+            protocol: DnsProtocol::Https,
+            server_name: Some(server_name.into()),
+        });
         self
     }
 
@@ -833,6 +901,22 @@ pub(crate) mod tests {
     use n0_tracing_test::traced_test;
 
     use super::*;
+
+    #[cfg(with_crypto_provider)]
+    #[test]
+    fn builder_named_nameservers_carry_server_name() {
+        let addr = SocketAddr::new(std::net::Ipv4Addr::new(1, 1, 1, 1).into(), 443);
+        let builder = Builder::default()
+            .with_nameserver(addr, DnsProtocol::Https)
+            .with_https_nameserver(addr, "cloudflare-dns.com")
+            .with_tls_nameserver(addr, "cloudflare-dns.com");
+        let ns = &builder.nameservers;
+        assert_eq!(ns[0].server_name, None);
+        assert_eq!(ns[1].protocol, DnsProtocol::Https);
+        assert_eq!(ns[1].server_name.as_deref(), Some("cloudflare-dns.com"));
+        assert_eq!(ns[2].protocol, DnsProtocol::Tls);
+        assert_eq!(ns[2].server_name.as_deref(), Some("cloudflare-dns.com"));
+    }
 
     #[tokio::test]
     #[traced_test]

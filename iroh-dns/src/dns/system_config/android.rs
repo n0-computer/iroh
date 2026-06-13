@@ -28,7 +28,7 @@ use jni::objects::{IntoAuto as _, JByteArray, JList, JObject, JValue};
 use jni::{jni_sig, jni_str};
 use tracing::{trace, warn};
 
-use super::{DNS_PORT, DnsConfig, DnsProtocol};
+use super::{DNS_PORT, DnsConfig, DnsProtocol, Nameserver};
 
 /// Read the active network's DNS configuration via JNI.
 pub(super) fn read_system_dns() -> Result<DnsConfig, std::io::Error> {
@@ -97,7 +97,7 @@ fn read_system_dns_jni() -> Result<DnsConfig, std::io::Error> {
             let dns_servers = env.cast_local::<JList<'_>>(dns_servers)?;
             let dns_servers = dns_servers.iter(env)?;
 
-            let mut nameservers = Vec::<(SocketAddr, DnsProtocol)>::new();
+            let mut nameservers = Vec::<Nameserver>::new();
             while let Some(server) = dns_servers.next(env)? {
                 let server = server.auto();
 
@@ -124,7 +124,10 @@ fn read_system_dns_jni() -> Result<DnsConfig, std::io::Error> {
                         continue;
                     }
                 };
-                nameservers.push((SocketAddr::new(ip, DNS_PORT), DnsProtocol::Udp));
+                nameservers.push(Nameserver::new(
+                    SocketAddr::new(ip, DNS_PORT),
+                    DnsProtocol::Udp,
+                ));
             }
 
             trace!("Got DNS servers: {:?}", nameservers);

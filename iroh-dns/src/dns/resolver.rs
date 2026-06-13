@@ -3,7 +3,7 @@
 
 use std::{
     future::Future,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr},
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -18,7 +18,7 @@ use simple_dns::TYPE;
 use tracing::{debug, trace};
 
 use super::{
-    BoxIter, Builder, DnsError, DnsProtocol, TxtRecordData,
+    BoxIter, Builder, DnsError, DnsProtocol, Nameserver, TxtRecordData,
     cache::{CachedRecord, DnsCache, QueryType},
     query::{self, MAX_CNAME_DEPTH},
     transport,
@@ -120,7 +120,7 @@ fn is_localhost(host: &str) -> bool {
 
 #[derive(Debug)]
 pub(super) struct SimpleDnsResolver {
-    nameservers: Vec<(SocketAddr, DnsProtocol)>,
+    nameservers: Vec<Nameserver>,
     search_domains: Vec<String>,
     ndots: usize,
     #[cfg(with_crypto_provider)]
@@ -175,7 +175,7 @@ impl SimpleDnsResolver {
         };
         config
             .nameservers
-            .extend(builder.nameservers.iter().copied());
+            .extend(builder.nameservers.iter().cloned());
         if config.nameservers.is_empty() {
             config.nameservers = DnsConfig::fallback().nameservers;
         }
@@ -232,7 +232,15 @@ impl SimpleDnsResolver {
         match guard.as_ref() {
             Some(client) => Ok(client.clone()),
             None => {
-                let client = transport::build_https_client(self.tls_config.as_ref())?;
+                // Pin each named DoH server to its address so reqwest does not
+                // recursively resolve the hostname.
+                let resolves: Vec<(String, std::net::SocketAddr)> = self
+                    .nameservers
+                    .iter()
+                    .filter(|ns| ns.protocol == DnsProtocol::Https)
+                    .filter_map(|ns| ns.server_name.clone().map(|name| (name, ns.addr)))
+                    .collect();
+                let client = transport::build_https_client(self.tls_config.as_ref(), &resolves)?;
                 *guard = Some(client.clone());
                 Ok(client)
             }
@@ -252,11 +260,11 @@ impl SimpleDnsResolver {
     /// Query a single nameserver, with UDP retry and truncation fallback.
     async fn query_nameserver(
         &self,
-        addr: SocketAddr,
-        proto: DnsProtocol,
+        ns: &Nameserver,
         query_bytes: &[u8],
     ) -> Result<Vec<u8>, DnsError> {
-        match proto {
+        let addr = ns.addr;
+        match ns.protocol {
             DnsProtocol::Udp => {
                 let mut last_err = None;
                 for attempt in 0..UDP_ATTEMPTS {
@@ -285,12 +293,24 @@ impl SimpleDnsResolver {
                             .into(),
                     })
                 })?;
-                Self::with_timeout(transport::tls_query(addr, query_bytes, tls_config)).await
+                Self::with_timeout(transport::tls_query(
+                    addr,
+                    query_bytes,
+                    tls_config,
+                    ns.server_name.as_deref(),
+                ))
+                .await
             }
             #[cfg(with_crypto_provider)]
             DnsProtocol::Https => {
                 let client = self.get_or_init_https_client()?;
-                Self::with_timeout(transport::https_query(addr, query_bytes, &client)).await
+                Self::with_timeout(transport::https_query(
+                    addr,
+                    ns.server_name.as_deref(),
+                    query_bytes,
+                    &client,
+                ))
+                .await
             }
         }
     }
@@ -344,14 +364,10 @@ impl SimpleDnsResolver {
             {
                 let idx = order[next];
                 next += 1;
-                let (addr, proto) = self.nameservers[idx];
                 let start = Instant::now();
                 dials.push(async move {
-                    (
-                        idx,
-                        start,
-                        self.query_nameserver(addr, proto, query_bytes).await,
-                    )
+                    let ns = &self.nameservers[idx];
+                    (idx, start, self.query_nameserver(ns, query_bytes).await)
                 });
                 // Pace the following attempt, unless this was the last server.
                 if next < order.len() {

@@ -70,22 +70,27 @@ pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
 
 /// Send a DNS query over TLS (DNS-over-TLS, RFC 7858).
 ///
-/// **Limitation:** The server name for TLS SNI is derived from the IP address.
-/// This works for public DNS providers that include IP SANs in their certificates
-/// (e.g. Google 8.8.8.8, Cloudflare 1.1.1.1), but will fail TLS validation for
-/// servers whose certificates only cover hostnames. A future improvement could
-/// accept an optional hostname for SNI.
+/// With `server_name`, that name is used for SNI and certificate validation;
+/// without it the certificate is validated against the IP address, which works
+/// for providers that include IP SANs (e.g. Google `8.8.8.8`, Cloudflare
+/// `1.1.1.1`) but not for those whose certificates only cover a hostname.
 #[cfg(with_crypto_provider)]
 pub(super) async fn tls_query(
     addr: SocketAddr,
     query: &[u8],
     tls_config: &Arc<rustls::ClientConfig>,
+    server_name: Option<&str>,
 ) -> Result<Vec<u8>, std::io::Error> {
     let connector = tokio_rustls::TlsConnector::from(tls_config.clone());
     let tcp_stream = tokio::net::TcpStream::connect(addr).await?;
 
-    // Use the IP address as the server name for SNI.
-    let server_name = rustls::pki_types::ServerName::IpAddress(addr.ip().into());
+    // Use the explicit server name for SNI and validation if given, otherwise
+    // validate against the IP the connection was made to.
+    let server_name = match server_name {
+        Some(name) => rustls::pki_types::ServerName::try_from(name.to_string())
+            .map_err(std::io::Error::other)?,
+        None => rustls::pki_types::ServerName::IpAddress(addr.ip().into()),
+    };
     let mut stream = connector.connect(server_name, tcp_stream).await?;
 
     // Write length-prefixed query (same framing as TCP)
@@ -104,31 +109,43 @@ pub(super) async fn tls_query(
 }
 
 /// Build a [`reqwest::Client`] for DNS-over-HTTPS queries.
+///
+/// `resolves` pins each named DoH host to a fixed address, so a hostname-based
+/// DoH URL connects to that IP instead of being resolved recursively.
 #[cfg(with_crypto_provider)]
 pub(super) fn build_https_client(
     tls_config: Option<&Arc<rustls::ClientConfig>>,
+    resolves: &[(String, SocketAddr)],
 ) -> Result<reqwest::Client, DnsError> {
     let mut builder = reqwest::Client::builder();
     if let Some(config) = tls_config {
         builder = builder.use_preconfigured_tls(config.clone());
+    }
+    for (host, addr) in resolves {
+        builder = builder.resolve(host, *addr);
     }
     Ok(builder.build().anyerr()?)
 }
 
 /// Send a DNS query over HTTPS (DNS-over-HTTPS, RFC 8484).
 ///
-/// **Limitation:** The URL is constructed from the IP address (e.g.
-/// `https://1.1.1.1/dns-query`). This works for providers whose TLS
-/// certificates include the IP address as a SAN, but will fail for servers
-/// that only have hostname-based certificates. A future improvement could
-/// accept an optional hostname for URL construction and TLS SNI.
+/// With `server_name`, the URL is addressed by hostname (the client pins it to
+/// `addr`); without it the URL is addressed by IP (e.g.
+/// `https://1.1.1.1/dns-query`), which works only for providers whose
+/// certificates include the IP as a SAN.
 #[cfg(with_crypto_provider)]
 pub(super) async fn https_query(
     addr: SocketAddr,
+    server_name: Option<&str>,
     query: &[u8],
     client: &reqwest::Client,
 ) -> Result<Vec<u8>, AnyError> {
-    let url = format!("https://{}/dns-query", addr);
+    // With a server name, address the URL by hostname (the client pins it to
+    // `addr`); otherwise address it by IP.
+    let url = match server_name {
+        Some(name) => format!("https://{name}:{}/dns-query", addr.port()),
+        None => format!("https://{addr}/dns-query"),
+    };
     let response = client
         .post(&url)
         .header("content-type", "application/dns-message")

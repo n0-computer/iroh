@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
-use super::{DNS_PORT, DnsConfig, DnsProtocol};
+use super::{DNS_PORT, DnsConfig, DnsProtocol, Nameserver};
 
 /// Deprecated IPv6 site-local anycast addresses still configured by Windows.
 ///
@@ -32,7 +32,10 @@ pub(super) fn read_system_dns() -> Result<DnsConfig, std::io::Error> {
         for dns_server in adapter.dns_servers() {
             let ip = IpAddr::from(*dns_server);
             if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&ip) {
-                servers.push((SocketAddr::new(ip, DNS_PORT), DnsProtocol::Udp));
+                servers.push(Nameserver::new(
+                    SocketAddr::new(ip, DNS_PORT),
+                    DnsProtocol::Udp,
+                ));
             }
         }
     }
@@ -40,7 +43,7 @@ pub(super) fn read_system_dns() -> Result<DnsConfig, std::io::Error> {
     // Deduplicate -- multiple adapters may report the same DNS server.
     // Use a HashSet since dedup_by_key only removes consecutive duplicates.
     let mut seen = std::collections::HashSet::new();
-    servers.retain(|(addr, _)| seen.insert(*addr));
+    servers.retain(|ns| seen.insert(ns.addr));
 
     // Read search domains from the Windows registry (comma-separated SearchList key).
     // Falls back to the primary domain if no search list is configured.
