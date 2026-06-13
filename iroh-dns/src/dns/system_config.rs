@@ -32,9 +32,14 @@ const DNS_PORT: u16 = 53;
 #[cfg(with_crypto_provider)]
 const HTTPS_PORT: u16 = 443;
 
-// Public DNS providers used for the last-resort fallback. Each provider's
-// certificate covers its anycast IPs, so the same IPs work for DNS-over-HTTPS
-// addressed by IP (see transport::https_query).
+// Public DNS providers used for the last-resort fallback.
+//
+// The DNS-over-HTTPS entries below are addressed by IP (see
+// transport::https_query), which only works when the provider's certificate
+// lists that IP as a SAN. Cloudflare's does; Google's and Quad9's IP coverage
+// is less certain, and a DoH entry that fails TLS is simply demoted by the
+// resolver's health tracking. A cleaner fix would carry a per-server SNI/Host
+// hostname for DoT/DoH instead of dialing by IP.
 const CLOUDFLARE_V4_PRIMARY: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 const CLOUDFLARE_V4_SECONDARY: Ipv4Addr = Ipv4Addr::new(1, 0, 0, 1);
 const CLOUDFLARE_V6_PRIMARY: Ipv6Addr = Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111);
@@ -84,15 +89,6 @@ impl DnsConfig {
             nameservers,
             search_domains: Vec::new(),
             ndots: None,
-        }
-    }
-
-    /// Reads the system configuration, falling back to public resolvers if it
-    /// fails or yields no nameservers.
-    pub(super) fn system_with_fallback() -> Self {
-        match Self::system() {
-            Ok(config) if !config.nameservers.is_empty() => config,
-            _ => Self::fallback(),
         }
     }
 }

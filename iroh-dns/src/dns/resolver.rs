@@ -45,13 +45,19 @@ const UDP_ATTEMPTS: usize = 2;
 
 /// EWMA weight for folding a new RTT sample into a nameserver's smoothed RTT.
 const SRTT_ALPHA: f64 = 0.3;
+/// Neutral smoothed-RTT baseline (microseconds) for a never-probed nameserver,
+/// and the value the estimate decays toward. Measured-fast servers sit below it
+/// and are preferred; failed servers sit above it and are demoted. Decaying
+/// toward this (rather than toward zero) keeps a measured-fast server ahead of
+/// an idle or recovering one instead of the other way round.
+const SRTT_BASELINE_MICROS: f64 = 50_000.0;
 /// Penalty added to a nameserver's smoothed RTT on a failed attempt, in
 /// microseconds. Large enough to demote it below currently-healthy servers.
 const SRTT_FAILURE_PENALTY_MICROS: f64 = 150_000.0;
 /// Upper bound on a nameserver's smoothed RTT, in microseconds.
 const SRTT_MAX_MICROS: f64 = 5_000_000.0;
 /// Time constant (seconds) of the read-time decay of the smoothed RTT toward
-/// zero, so demoted servers recover and get re-probed.
+/// the baseline, so demoted servers recover and idle estimates lapse to neutral.
 const SRTT_DECAY_SECS: f64 = 180.0;
 
 /// Smoothed round-trip time estimate for one nameserver.
@@ -71,15 +77,16 @@ struct Srtt {
 impl Srtt {
     fn new() -> Self {
         Self {
-            micros: 0.0,
+            micros: SRTT_BASELINE_MICROS,
             updated: Instant::now(),
         }
     }
 
-    /// The decayed estimate at `now`, used for ordering.
+    /// The decayed estimate at `now`, used for ordering. Relaxes toward
+    /// [`SRTT_BASELINE_MICROS`] as the estimate ages.
     fn decayed(&self, now: Instant) -> f64 {
         let dt = now.saturating_duration_since(self.updated).as_secs_f64();
-        self.micros * (-dt / SRTT_DECAY_SECS).exp()
+        SRTT_BASELINE_MICROS + (self.micros - SRTT_BASELINE_MICROS) * (-dt / SRTT_DECAY_SECS).exp()
     }
 
     /// Folds a successful round-trip time into the estimate.
@@ -162,11 +169,13 @@ impl SimpleDnsResolver {
     /// only when neither provides any.
     fn build_config(builder: &Builder) -> DnsConfig {
         let mut config = if builder.use_system_defaults {
-            DnsConfig::system_with_fallback()
+            DnsConfig::system().unwrap_or_default()
         } else {
             DnsConfig::default()
         };
-        config.nameservers.extend(builder.nameservers.iter().copied());
+        config
+            .nameservers
+            .extend(builder.nameservers.iter().copied());
         if config.nameservers.is_empty() {
             config.nameservers = DnsConfig::fallback().nameservers;
         }

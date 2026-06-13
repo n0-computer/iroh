@@ -78,6 +78,10 @@ impl CachedRecord {
 /// A cache entry with TTL expiry tracking.
 #[derive(Debug, Clone)]
 struct CacheEntry {
+    /// The host and query type this entry is for. Verified on lookup so a
+    /// `u64` key collision returns a miss rather than another name's records.
+    host: String,
+    qtype: QueryType,
     record: CachedRecord,
     inserted_at: Instant,
     ttl: Duration,
@@ -113,6 +117,10 @@ impl DnsCache {
         let key = cache_key(host, qtype);
         let mut inner = self.inner.lock().expect("poisoned");
         let entry = inner.get(&key)?;
+        // Reject `u64` key collisions: only serve an exact host+qtype match.
+        if entry.host != host || entry.qtype != qtype {
+            return None;
+        }
         if entry.is_expired() {
             inner.pop(&key);
             return None;
@@ -136,6 +144,8 @@ impl DnsCache {
             return;
         }
         let entry = CacheEntry {
+            host: host.to_string(),
+            qtype,
             record,
             inserted_at: Instant::now(),
             ttl: Duration::from_secs(ttl.min(MAX_TTL_SECS) as u64),
