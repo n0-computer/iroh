@@ -82,7 +82,7 @@ impl DnsConfig {
 
     /// Builds a config from an explicit nameserver list, with no search domains
     /// and the default `ndots`.
-    pub(super) fn from_nameservers(nameservers: Vec<Nameserver>) -> Self {
+    fn from_nameservers(nameservers: Vec<Nameserver>) -> Self {
         Self {
             nameservers,
             search_domains: Vec::new(),

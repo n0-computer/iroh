@@ -155,17 +155,17 @@ pub struct Builder {
 /// used for the TLS SNI and certificate validation (and as the DoH URL
 /// authority, with the address pinned); otherwise DoT/DoH are addressed by IP.
 #[derive(Debug, Clone)]
-pub(crate) struct Nameserver {
-    pub(crate) addr: SocketAddr,
-    pub(crate) protocol: DnsProtocol,
+struct Nameserver {
+    addr: SocketAddr,
+    protocol: DnsProtocol,
     /// Only used for DoT/DoH, which require a crypto provider.
     #[cfg_attr(not(with_crypto_provider), allow(dead_code))]
-    pub(crate) server_name: Option<String>,
+    server_name: Option<String>,
 }
 
 impl Nameserver {
     /// A nameserver addressed by IP, with no TLS server name.
-    pub(crate) fn new(addr: SocketAddr, protocol: DnsProtocol) -> Self {
+    fn new(addr: SocketAddr, protocol: DnsProtocol) -> Self {
         Self {
             addr,
             protocol,
