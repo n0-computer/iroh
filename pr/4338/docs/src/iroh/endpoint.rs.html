@@ -1919,8 +1919,8 @@
 <a href=#1919 id=1919 data-nosnippet>1919</a>    /// # fn main() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#1920 id=1920 data-nosnippet>1920</a>    /// # use iroh::RelayMode;
 <a href=#1921 id=1921 data-nosnippet>1921</a>    /// RelayMode::custom([
-<a href=#1922 id=1922 data-nosnippet>1922</a>    ///     "https://use1-1.relay.n0.iroh-canary.iroh.link.".parse()?,
-<a href=#1923 id=1923 data-nosnippet>1923</a>    ///     "https://euw-1.relay.n0.iroh-canary.iroh.link.".parse()?,
+<a href=#1922 id=1922 data-nosnippet>1922</a>    ///     "https://use1-1.relay.n0.iroh.link.".parse()?,
+<a href=#1923 id=1923 data-nosnippet>1923</a>    ///     "https://euw-1.relay.n0.iroh.link.".parse()?,
 <a href=#1924 id=1924 data-nosnippet>1924</a>    /// ]);
 <a href=#1925 id=1925 data-nosnippet>1925</a>    /// # Ok(()) }
 <a href=#1926 id=1926 data-nosnippet>1926</a>    /// ```
@@ -3241,14 +3241,14 @@
 <a href=#3241 id=3241 data-nosnippet>3241</a>    </span><span class="kw">async fn </span>test_custom_relay() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#3242 id=3242 data-nosnippet>3242</a>        <span class="kw">let </span>_ep = Endpoint::builder(presets::Minimal)
 <a href=#3243 id=3243 data-nosnippet>3243</a>            .relay_mode(RelayMode::custom([RelayUrl::from_str(
-<a href=#3244 id=3244 data-nosnippet>3244</a>                <span class="string">"https://use1-1.relay.n0.iroh-canary.iroh.link."</span>,
+<a href=#3244 id=3244 data-nosnippet>3244</a>                <span class="string">"https://use1-1.relay.n0.iroh.link."</span>,
 <a href=#3245 id=3245 data-nosnippet>3245</a>            )<span class="question-mark">?</span>]))
 <a href=#3246 id=3246 data-nosnippet>3246</a>            .bind()
 <a href=#3247 id=3247 data-nosnippet>3247</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3248 id=3248 data-nosnippet>3248</a>
 <a href=#3249 id=3249 data-nosnippet>3249</a>        <span class="kw">let </span>relays = RelayMap::try_from_iter([
-<a href=#3250 id=3250 data-nosnippet>3250</a>            <span class="string">"https://use1-1.relay.n0.iroh.iroh.link/"</span>,
-<a href=#3251 id=3251 data-nosnippet>3251</a>            <span class="string">"https://euc1-1.relay.n0.iroh.iroh.link/"</span>,
+<a href=#3250 id=3250 data-nosnippet>3250</a>            <span class="string">"https://use1-1.relay.n0.iroh.link/"</span>,
+<a href=#3251 id=3251 data-nosnippet>3251</a>            <span class="string">"https://euc1-1.relay.n0.iroh.link/"</span>,
 <a href=#3252 id=3252 data-nosnippet>3252</a>        ])<span class="question-mark">?</span>;
 <a href=#3253 id=3253 data-nosnippet>3253</a>        <span class="kw">let </span>_ep = Endpoint::builder(presets::Minimal)
 <a href=#3254 id=3254 data-nosnippet>3254</a>            .relay_mode(RelayMode::Custom(relays))
