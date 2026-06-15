@@ -13,6 +13,8 @@ use super::{ProbeReport, probes::Probe};
 
 /// A net_report report.
 #[derive(Default, Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
+#[non_exhaustive]
 pub struct Report {
     /// A QAD IPv4 round trip completed.
     pub udp_v4: bool,
@@ -43,11 +45,13 @@ impl fmt::Display for Report {
 
 impl Report {
     /// Do we have any indication that UDP is working?
+    #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
     pub fn has_udp(&self) -> bool {
         self.udp_v4 || self.udp_v6
     }
 
     /// Whether the reported public address differs when probing different servers.
+    #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
     pub fn mapping_varies_by_dest(&self) -> Option<bool> {
         match (
             self.mapping_varies_by_dest_ipv4,
@@ -128,6 +132,7 @@ impl Report {
 
 /// Latencies per relay endpoint.
 #[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 pub struct RelayLatencies {
     #[cfg(not(wasm_browser))]
     ipv4: BTreeMap<RelayUrl, Duration>,
@@ -171,6 +176,7 @@ impl RelayLatencies {
 
     /// Returns an iterator over all the relays and their latencies.
     #[cfg(not(wasm_browser))]
+    #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
     pub fn iter(&self) -> impl Iterator<Item = (Probe, &'_ RelayUrl, Duration)> + '_ {
         self.https
             .iter()
@@ -181,6 +187,7 @@ impl RelayLatencies {
 
     /// Returns an iterator over all the relays and their latencies.
     #[cfg(wasm_browser)]
+    #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
     pub fn iter(&self) -> impl Iterator<Item = (Probe, &'_ RelayUrl, Duration)> + '_ {
         self.https.iter().map(|(k, v)| (Probe::Https, k, *v))
     }

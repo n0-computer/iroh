@@ -5,9 +5,6 @@
 //! etc and reachability to the configured relays.
 // Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
-#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
-#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
-#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(wasm_browser, allow(unused))]
 
 use std::{
@@ -18,15 +15,11 @@ use std::{
 };
 
 use defaults::timeouts::PROBES_TIMEOUT;
-// exported primarily for use in documentation
-pub use defaults::timeouts::TIMEOUT;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
 use iroh_dns::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
-use iroh_relay::RelayConfig;
-#[cfg(not(wasm_browser))]
-use iroh_relay::quic::QuicClient;
+use iroh_relay::{RelayConfig, quic::QuicClient};
 use iroh_relay::{
     RelayMap,
     quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON},
@@ -46,19 +39,29 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
-#[cfg(not(wasm_browser))]
-use self::reportgen::QadProbeReport;
 use self::reportgen::{ProbeFinished, ProbeReport};
+#[cfg(not(wasm_browser))]
+use self::reportgen::{QadProbeReport, SocketState};
+#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
+pub use self::{
+    // exported primarily for use in documentation
+    defaults::timeouts::TIMEOUT,
+    metrics::Metrics,
+    probes::Probe,
+    report::{RelayLatencies, Report},
+};
+pub(crate) use self::{
+    options::Options,
+    reportgen::{IfStateDetails, QuicConfig},
+};
 
 mod defaults;
 mod metrics;
+mod options;
 mod probes;
 mod report;
 mod reportgen;
 
-mod options;
-
-pub(crate) use self::reportgen::IfStateDetails;
 #[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
@@ -75,13 +78,6 @@ enum QadProbeError {
     #[error("Receiver dropped")]
     ReceiverDropped,
 }
-
-#[cfg(not(wasm_browser))]
-use self::reportgen::SocketState;
-pub use self::{metrics::Metrics, report::Report};
-pub(crate) use self::{
-    options::Options, probes::Probe, report::RelayLatencies, reportgen::QuicConfig,
-};
 
 /// Configuration for the net report component.
 ///
