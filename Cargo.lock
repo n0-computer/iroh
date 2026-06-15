@@ -2343,7 +2343,6 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "rustls-pki-types",
- "rustls-webpki",
  "serde",
  "serde_json",
  "smallvec",
@@ -2359,7 +2358,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "wasm-tracing",
- "webpki-roots",
 ]
 
 [[package]]
@@ -2370,7 +2368,6 @@ dependencies = [
  "data-encoding",
  "data-encoding-macro",
  "derive_more",
- "digest 0.11.3",
  "ed25519-dalek",
  "getrandom 0.4.2",
  "n0-error",
@@ -2381,8 +2378,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
- "sha1 0.11.0",
- "sha2",
  "url",
  "zeroize",
 ]
