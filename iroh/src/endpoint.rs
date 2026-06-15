@@ -26,13 +26,22 @@ use tokio_util::sync::WaitForCancellationFutureOwned;
 use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
 use url::Url;
 
-/// Types for defining custom transports
 #[cfg(feature = "unstable-custom-transports")]
 pub mod transports {
+    //! Types for defining custom transports and path selectors.
+    //!
+    //! <div class="warning">
+    //!
+    //! These items are unstable and gated behind the `unstable-custom-transport` feature.
+    //! They are not covered by semantic versioning guarantees and may change in any release
+    //! without a major version bump.
+    //!
+    //! </div>
+
     pub use super::socket::{
         remote_map::{PathSelection, PathSelectionContext, PathSelectionData, PathSelector},
         transports::{
-            Addr, AddrKind, RecvInfo, Transmit,
+            Addr, AddrKind, FourTuple, RecvInfo, Transmit,
             custom::{CustomEndpoint, CustomSender, CustomTransport},
         },
     };
@@ -789,7 +798,15 @@ impl Builder {
         self
     }
 
-    /// Adds a custom transport
+    /// Adds a custom transport to the endpoint.
+    ///
+    /// <div class="warning">
+    ///
+    /// This API is unstable and gated behind the `unstable-custom-transport` feature.
+    /// It is not covered by semantic versioning guarantees and may change in any release
+    /// without a major version bump.
+    ///
+    /// </div>
     #[cfg(feature = "unstable-custom-transports")]
     pub fn add_custom_transport(mut self, factory: Arc<dyn CustomTransport>) -> Self {
         self.transports.push(TransportConfig::Custom(factory));
@@ -807,6 +824,14 @@ impl Builder {
     /// Takes an `Arc<dyn PathSelector>` so the same selector instance can be shared
     /// across multiple endpoints if desired.  See `examples/custom-transport.rs` for
     /// an example implementation.
+    ///
+    /// <div class="warning">
+    ///
+    /// This API is unstable and gated behind the `unstable-custom-transport` feature.
+    /// It is not covered by semantic versioning guarantees and may change in any release
+    /// without a major version bump.
+    ///
+    /// </div>
     ///
     /// [`PathSelector`]: socket::remote_map::PathSelector
     #[cfg(feature = "unstable-custom-transports")]

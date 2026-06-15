@@ -807,12 +807,10 @@ impl PartialEq<TransportAddr> for Addr {
 
 /// Identifies a network path by the combination of remote and local addresses.
 ///
-/// Mirrors [`noq::FourTuple`] but uses transport-specific addresses.
-///
 /// The meaning of the local address is a bit particular:
 /// * For IP transports it is the interface IP, if known.
-/// * For custom transports it is a custom transport address, if the transport reports one.
-/// * For relay transports there is no separate local address; the relay URL identifies the path.
+/// * For custom transports it is a custom transport address, if the transport implementation reports one.
+/// * For relay transports there is no separate local address.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 pub enum FourTuple {
@@ -842,7 +840,7 @@ pub enum FourTuple {
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 impl FourTuple {
     /// Creates a four-tuple from a remote address, with no known local address.
-    pub(super) fn from_remote(remote: Addr) -> Self {
+    pub fn from_remote(remote: Addr) -> Self {
         match remote {
             Addr::Ip(remote) => Self::Ip {
                 remote,
@@ -861,7 +859,7 @@ impl FourTuple {
     /// The variant is determined by `remote`. The `local` address is retained only when
     /// it matches that variant. A mismatched `local` is dropped, which cannot happen for
     /// values derived together from the same network path.
-    pub(super) fn new(remote: Addr, local: LocalTransportAddr) -> Self {
+    pub fn new(remote: Addr, local: LocalTransportAddr) -> Self {
         match remote {
             Addr::Ip(remote) => Self::Ip {
                 remote,
