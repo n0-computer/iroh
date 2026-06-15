@@ -584,7 +584,6 @@ impl From<&noq_udp::Transmit<'_>> for OwnedTransmit {
 
 /// Transports address.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
 pub enum Addr {
     /// An IP address, should always be stored in its canonical form.
     Ip(SocketAddr),
@@ -779,7 +778,6 @@ impl LocalTransportAddr {
 /// The kind of a transport address, used for configuring bias.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
-#[non_exhaustive]
 pub enum AddrKind {
     /// An IPv4 address.
     IpV4,
