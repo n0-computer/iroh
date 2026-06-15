@@ -546,8 +546,8 @@ impl NetworkChangeSender {
 
 /// An outgoing packet
 #[derive(Debug, Clone)]
-#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
-pub struct Transmit<'a> {
+#[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+pub(crate) struct Transmit<'a> {
     pub(crate) ecn: Option<noq_udp::EcnCodepoint>,
     /// Packet contents
     pub contents: &'a [u8],
@@ -584,7 +584,8 @@ impl From<&noq_udp::Transmit<'_>> for OwnedTransmit {
 
 /// Transports address.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Addr {
+#[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+pub(crate) enum Addr {
     /// An IP address, should always be stored in its canonical form.
     Ip(SocketAddr),
     /// A relay address.
@@ -614,9 +615,9 @@ impl fmt::Debug for Addr {
 ///
 /// Custom transport authors construct values via [`RecvInfo::new`], which
 /// only accepts [`CustomAddr`].
-#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
+#[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
 #[derive(Clone, Debug, Default)]
-pub struct RecvInfo {
+pub(crate) struct RecvInfo {
     remote: Addr,
     local: Option<CustomAddr>,
 }
@@ -777,8 +778,8 @@ impl LocalTransportAddr {
 
 /// The kind of a transport address, used for configuring bias.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
-pub enum AddrKind {
+#[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+pub(crate) enum AddrKind {
     /// An IPv4 address.
     IpV4,
     /// An IPv6 address.
@@ -814,8 +815,8 @@ impl PartialEq<TransportAddr> for Addr {
 /// * For custom transports it is a custom transport address, if the transport reports one.
 /// * For relay transports there is no separate local address; the relay URL identifies the path.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
-pub enum FourTuple {
+#[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+pub(crate) enum FourTuple {
     /// A path over an IP transport.
     Ip {
         /// The remote socket address.
@@ -839,7 +840,6 @@ pub enum FourTuple {
     },
 }
 
-#[cfg_attr(not(feature = "unstable-custom-transports"), allow(unreachable_pub))]
 impl FourTuple {
     /// Creates a four-tuple from a remote address, with no known local address.
     pub(super) fn from_remote(remote: Addr) -> Self {
@@ -901,7 +901,8 @@ impl FourTuple {
     }
 
     /// Returns the remote transport address.
-    pub fn remote(&self) -> Addr {
+    #[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+    pub(crate) fn remote(&self) -> Addr {
         match self {
             Self::Ip { remote, .. } => Addr::Ip(*remote),
             Self::Relay { url, endpoint_id } => Addr::Relay(url.clone(), *endpoint_id),
@@ -910,7 +911,8 @@ impl FourTuple {
     }
 
     /// Returns the local transport address.
-    pub fn local(&self) -> LocalTransportAddr {
+    #[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+    pub(crate) fn local(&self) -> LocalTransportAddr {
         match self {
             Self::Ip { local, .. } => LocalTransportAddr::Ip(*local),
             Self::Relay { url, .. } => LocalTransportAddr::Relay(url.clone()),
@@ -919,12 +921,14 @@ impl FourTuple {
     }
 
     /// Returns `true` if the remote is an IP address.
-    pub fn is_ip(&self) -> bool {
+    #[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+    pub(crate) fn is_ip(&self) -> bool {
         matches!(self, Self::Ip { .. })
     }
 
     /// Returns `true` if the remote is a relay address.
-    pub fn is_relay(&self) -> bool {
+    #[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+    pub(crate) fn is_relay(&self) -> bool {
         matches!(self, Self::Relay { .. })
     }
 
@@ -957,7 +961,8 @@ impl FourTuple {
     }
 
     /// Returns the kind of address, for configuring bias.
-    pub fn addr_kind(&self) -> AddrKind {
+    #[cfg_attr(feature = "unstable-custom-transports", visibility::make(pub))]
+    pub(crate) fn addr_kind(&self) -> AddrKind {
         match self {
             Self::Ip { remote, .. } => match remote {
                 SocketAddr::V4(_) => AddrKind::IpV4,
