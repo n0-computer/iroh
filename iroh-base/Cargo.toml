@@ -28,8 +28,7 @@ url = { version = "2.5.3", features = ["serde"], optional = true }
 rand = { version = "0.10", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 n0-error = "1.0.0"
-zeroize = { version = "1.8.2", optional = true, features = ["derive"] }
-zeroize_derive = { version = "1.4.2", optional = true } # needed for minimal versions
+zeroize = { version = "1.9", optional = true, features = ["derive"] }
 
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
@@ -57,7 +56,6 @@ key = [
   "dep:rand",
   "dep:getrandom",
   "dep:zeroize",
-  "dep:zeroize_derive",
   "relay",
 ]
 relay = [
