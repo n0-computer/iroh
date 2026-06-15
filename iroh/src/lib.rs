@@ -294,7 +294,6 @@ pub use net_report::{NetReportConfig, TIMEOUT as NET_REPORT_TIMEOUT};
 #[cfg(feature = "unstable-net-report")]
 pub mod unstable_net_report {
     //! Exports of net report types reachable via [`crate::endpoint::Endpoint::net_report`].
-    //!
     /// This API is unstable and gated behind the `unstable-net-report` feature.
     /// It is not covered by semantic versioning guarantees and may change in any release
     /// without a major version bump.
