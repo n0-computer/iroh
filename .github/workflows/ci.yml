@@ -289,12 +289,11 @@ jobs:
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.18.1
-
       - name: Install wasm-bindgen-test-runner
-        # Match the version of wasm-bindgen used in Cargo.lock
-        run: cargo binstall wasm-bindgen-cli@0.2.122 --locked --no-confirm
+        uses: taiki-e/install-action@v2
+        with:
+          # Match the version of wasm-bindgen used in Cargo.lock
+          tool: wasm-bindgen-cli@0.2.122
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
@@ -382,13 +381,12 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.18.1
-
-      - uses: taiki-e/install-action@cargo-make
-
       - name: Install cargo-check-external-types
-        run: cargo binstall cargo-check-external-types@${{ env.CARGO_CHECK_EXTERNAL_TYPES_VERSION }} --locked --no-confirm
+        uses: taiki-e/install-action@v2
+        with:
+          tool: |
+            cargo-make
+            cargo-check-external-types@${{ env.CARGO_CHECK_EXTERNAL_TYPES_VERSION }}
 
       - name: Check external types
         run: cargo make check-external-types
