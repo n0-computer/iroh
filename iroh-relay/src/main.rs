@@ -21,6 +21,7 @@ use iroh_relay::{
         self as relay, Access, AccessControl, AcmeConfig, ClientRateLimit, ClientRequest,
         DEFAULT_CERT_RELOAD_INTERVAL, QuicConfig, reloading_resolver,
     },
+    tls::CaTlsConfig,
 };
 use n0_error::{AnyError, Result, StdResultExt, bail_any};
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,10 @@ const X_IROH_ENDPOINT_ID: &str = "X-Iroh-NodeId";
 const ENV_HTTP_BEARER_TOKEN: &str = "IROH_RELAY_HTTP_BEARER_TOKEN";
 /// Environment variable to verify relay access (without an external auth service)
 const ENV_RELAY_ACCESS_TOKEN: &str = "IROH_RELAY_ACCESS_TOKEN";
+/// Environment variable to override the ACME directory URL.
+const ENV_ACME_URL: &str = "IROH_RELAY_ACME_URL";
+/// Environment variable to trust an additional CA for the ACME server's TLS certificate.
+const ENV_ACME_CA: &str = "IROH_RELAY_ACME_CA";
 
 /// A relay server for iroh.
 #[derive(Parser, Debug, Clone)]
@@ -400,7 +405,8 @@ struct TlsConfig {
     /// port set to [`iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT`]
     quic_bind_addr: Option<SocketAddr>,
     /// Certificate hostname when using LetsEncrypt.
-    hostname: Option<String>,
+    #[serde(default, deserialize_with = "string_or_seq")]
+    hostname: Vec<String>,
     /// Mode for getting a cert.
     ///
     /// Possible options: 'Manual', 'LetsEncrypt'.
@@ -477,6 +483,23 @@ impl TlsConfig {
             .clone()
             .unwrap_or_else(|| self.cert_dir().join("default.key"))
     }
+}
+
+fn string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        One(String),
+        Many(Vec<String>),
+    }
+
+    Ok(match StringOrVec::deserialize(deserializer)? {
+        StringOrVec::One(s) => vec![s],
+        StringOrVec::Many(v) => v,
+    })
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -614,18 +637,34 @@ async fn load_cert_config(tls: &TlsConfig) -> Result<relay::CertConfig> {
             relay::CertConfig::Manual { server_config }
         }
         CertMode::LetsEncrypt => {
-            let hostname = tls
-                .hostname
-                .clone()
-                .std_context("LetsEncrypt needs a hostname")?;
+            let domains = tls.hostname.clone();
+            if domains.is_empty() {
+                bail_any!("LetsEncrypt needs at least one hostname");
+            }
             let contact = tls
                 .contact
                 .clone()
                 .std_context("LetsEncrypt needs a contact email")?;
-            let acme_config = AcmeConfig::letsencrypt(tls.prod_tls)
-                .domains(vec![hostname])
+            let acme_config = if let Ok(url) = std::env::var(ENV_ACME_URL) {
+                AcmeConfig::new(url)
+            } else {
+                AcmeConfig::letsencrypt(tls.prod_tls)
+            };
+            let mut acme_config = acme_config
+                .domains(domains)
                 .contact(vec![format!("mailto:{contact}")])
                 .cache_path(tls.cert_dir());
+            // Trust an additional CA for the ACME server's TLS certificate. Useful for testing
+            // against a local ACME server such as pebble, whose certificate is not signed by a
+            // publicly trusted CA.
+            if let Ok(ca_path) = std::env::var(ENV_ACME_CA) {
+                let extra_roots = CertificateDer::pem_file_iter(&ca_path)
+                    .std_context("failed to read IROH_RELAY_ACME_CA")?
+                    .collect::<Result<Vec<_>, _>>()
+                    .std_context("failed to parse IROH_RELAY_ACME_CA")?;
+                acme_config =
+                    acme_config.tls_config(CaTlsConfig::default().with_extra_roots(extra_roots));
+            }
             relay::CertConfig::LetsEncrypt {
                 acme_config,
                 server_config_builder: server_config,

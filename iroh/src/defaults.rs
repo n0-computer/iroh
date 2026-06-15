@@ -24,13 +24,13 @@ pub mod prod {
     use crate::RelayUrl;
 
     /// Hostname of the default NA east relay.
-    pub const NA_EAST_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const NA_EAST_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh.link.";
     /// Hostname of the default NA west relay.
-    pub const NA_WEST_RELAY_HOSTNAME: &str = "usw1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const NA_WEST_RELAY_HOSTNAME: &str = "usw1-1.relay.n0.iroh.link.";
     /// Hostname of the default EU relay.
-    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh.link.";
     /// Hostname of the default Asia-Pacific relay.
-    pub const AP_RELAY_HOSTNAME: &str = "aps1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const AP_RELAY_HOSTNAME: &str = "aps1-1.relay.n0.iroh.link.";
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
