@@ -1918,8 +1918,8 @@ impl RelayMode {
     /// # fn main() -> n0_error::Result<()> {
     /// # use iroh::RelayMode;
     /// RelayMode::custom([
-    ///     "https://use1-1.relay.n0.iroh-canary.iroh.link.".parse()?,
-    ///     "https://euw-1.relay.n0.iroh-canary.iroh.link.".parse()?,
+    ///     "https://use1-1.relay.n0.iroh.link.".parse()?,
+    ///     "https://euw-1.relay.n0.iroh.link.".parse()?,
     /// ]);
     /// # Ok(()) }
     /// ```
@@ -3239,14 +3239,14 @@ mod tests {
     async fn test_custom_relay() -> Result {
         let _ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::custom([RelayUrl::from_str(
-                "https://use1-1.relay.n0.iroh-canary.iroh.link.",
+                "https://use1-1.relay.n0.iroh.link.",
             )?]))
             .bind()
             .await?;
 
         let relays = RelayMap::try_from_iter([
-            "https://use1-1.relay.n0.iroh.iroh.link/",
-            "https://euc1-1.relay.n0.iroh.iroh.link/",
+            "https://use1-1.relay.n0.iroh.link/",
+            "https://euc1-1.relay.n0.iroh.link/",
         ])?;
         let _ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relays))
