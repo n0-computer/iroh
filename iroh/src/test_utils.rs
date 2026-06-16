@@ -373,6 +373,10 @@ pub(crate) mod pkarr_dns_state {
 
     use iroh_base::EndpointId;
     use iroh_dns::{IROH_TXT_NAME, endpoint_info::EndpointInfo, pkarr::SignedPacket};
+    use simple_dns::{
+        CLASS, Name, Packet, ResourceRecord,
+        rdata::{RData, TXT},
+    };
     use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;
@@ -458,8 +462,8 @@ pub(crate) mod pkarr_dns_state {
 
         pub(crate) fn resolve_dns(
             &self,
-            query: &simple_dns::Packet<'_>,
-            reply: &mut simple_dns::Packet<'static>,
+            query: &Packet<'_>,
+            reply: &mut Packet<'static>,
             ttl: u32,
         ) -> std::io::Result<()> {
             for question in &query.questions {
@@ -488,8 +492,8 @@ pub(crate) mod pkarr_dns_state {
     impl QueryHandler for State {
         fn resolve(
             &self,
-            query: &simple_dns::Packet<'_>,
-            reply: &mut simple_dns::Packet<'static>,
+            query: &Packet<'_>,
+            reply: &mut Packet<'static>,
         ) -> impl Future<Output = std::io::Result<()>> + Send {
             const TTL: u32 = 30;
             let res = self.resolve_dns(query, reply, TTL);
@@ -520,7 +524,7 @@ pub(crate) mod pkarr_dns_state {
         endpoint_info: &EndpointInfo,
         origin: &str,
         ttl: u32,
-    ) -> Vec<simple_dns::ResourceRecord<'static>> {
+    ) -> Vec<ResourceRecord<'static>> {
         let txt_strings = endpoint_info.to_txt_strings();
         to_dns_records(txt_strings, endpoint_info.endpoint_id, origin, ttl)
     }
@@ -531,11 +535,7 @@ pub(crate) mod pkarr_dns_state {
         endpoint_id: EndpointId,
         origin: &str,
         ttl: u32,
-    ) -> Vec<simple_dns::ResourceRecord<'static>> {
-        use simple_dns::{
-            CLASS, Name, ResourceRecord,
-            rdata::{RData, TXT},
-        };
+    ) -> Vec<ResourceRecord<'static>> {
         let name = format!("{IROH_TXT_NAME}.{}.{origin}", endpoint_id.to_z32());
         let name = Name::new(&name).expect("invalid name").into_owned();
         txt_strings
