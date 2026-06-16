@@ -26,13 +26,22 @@ use tokio_util::sync::WaitForCancellationFutureOwned;
 use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
 use url::Url;
 
-/// Types for defining custom transports
 #[cfg(feature = "unstable-custom-transports")]
 pub mod transports {
+    //! Types for defining custom transports and path selectors.
+    //!
+    //! <div class="warning">
+    //!
+    //! These items are unstable and gated behind the `unstable-custom-transport` feature.
+    //! They are not covered by semantic versioning guarantees and may change in any release
+    //! without a major version bump.
+    //!
+    //! </div>
+
     pub use super::socket::{
         remote_map::{PathSelection, PathSelectionContext, PathSelectionData, PathSelector},
         transports::{
-            Addr, AddrKind, RecvInfo, Transmit,
+            Addr, AddrKind, FourTuple, RecvInfo, Transmit,
             custom::{CustomEndpoint, CustomSender, CustomTransport},
         },
     };
@@ -53,9 +62,10 @@ use crate::address_lookup::PkarrResolver;
 use crate::dns::DnsResolver;
 #[cfg(feature = "unstable-custom-transports")]
 use crate::endpoint::transports::CustomTransport;
+#[cfg(feature = "unstable-net-report")]
+use crate::net_report::Report as NetReport;
 pub use crate::tls::TlsConfigError;
 use crate::{
-    NetReport,
     address_lookup::{
         AddrFilter, AddressLookupBuilder, AddressLookupFailed, AddressLookupServices,
         DynAddressLookupBuilder, UserData,
@@ -400,7 +410,7 @@ impl Builder {
     /// socket should be bound or the routing will be non-deterministic.
     ///
     /// To use a subnet with a non-zero prefix length as the default route in addition to
-    /// being routed when its prefix matches, use [`BindOpts::set_is_default_route].
+    /// being routed when its prefix matches, use [`BindOpts::set_is_default_route`].
     /// Subnets with a prefix length of zero are always marked as default routes.
     ///
     /// Finally note that most outgoing datagrams are part of an existing network flow. That
@@ -601,7 +611,7 @@ impl Builder {
     ///
     /// This filter is applied once, at the [`AddressLookupServices`] level, before
     /// distributing data to any individual address lookup service. This ensures
-    /// consistent filtering regardless of how the services configured.
+    /// consistent filtering regardless of how the services are configured.
     ///
     /// [`AddressLookupServices`]: crate::address_lookup::AddressLookupServices
     pub fn addr_filter(mut self, filter: AddrFilter) -> Self {
@@ -788,7 +798,15 @@ impl Builder {
         self
     }
 
-    /// Adds a custom transport
+    /// Adds a custom transport to the endpoint.
+    ///
+    /// <div class="warning">
+    ///
+    /// This API is unstable and gated behind the `unstable-custom-transport` feature.
+    /// It is not covered by semantic versioning guarantees and may change in any release
+    /// without a major version bump.
+    ///
+    /// </div>
     #[cfg(feature = "unstable-custom-transports")]
     pub fn add_custom_transport(mut self, factory: Arc<dyn CustomTransport>) -> Self {
         self.transports.push(TransportConfig::Custom(factory));
@@ -806,6 +824,14 @@ impl Builder {
     /// Takes an `Arc<dyn PathSelector>` so the same selector instance can be shared
     /// across multiple endpoints if desired.  See `examples/custom-transport.rs` for
     /// an example implementation.
+    ///
+    /// <div class="warning">
+    ///
+    /// This API is unstable and gated behind the `unstable-custom-transport` feature.
+    /// It is not covered by semantic versioning guarantees and may change in any release
+    /// without a major version bump.
+    ///
+    /// </div>
     ///
     /// [`PathSelector`]: socket::remote_map::PathSelector
     #[cfg(feature = "unstable-custom-transports")]
@@ -842,7 +868,7 @@ pub enum EndpointError {
 /// [`Endpoint::connect`] and [`Endpoint::accept`] methods.  Once established, the
 /// [`Connection`] gives access to most [QUIC] features.  Individual streams to send data to
 /// the peer are created using the [`Connection::open_bi`], [`Connection::accept_bi`],
-/// [`Connection::open_uni`] and [`Connection::open_bi`] functions.
+/// [`Connection::open_uni`] and [`Connection::accept_uni`] functions.
 ///
 /// Note that due to the light-weight properties of streams a stream will only be accepted
 /// once the initiating peer has sent some data on it.
@@ -1186,8 +1212,8 @@ impl Endpoint {
     /// understand if the endpoint has ever been considered "online". But after
     /// that initial call to [`Endpoint::online`], to understand if your
     /// endpoint is no longer able to be connected to by endpoints outside
-    /// of the private or local network, watch for changes in it's [`EndpointAddr`].
-    /// If there are no `addrs`in the [`EndpointAddr`], you may not be dialable by other endpoints
+    /// of the private or local network, watch for changes in its [`EndpointAddr`].
+    /// If there are no `addrs` in the [`EndpointAddr`], you may not be dialable by other endpoints
     /// on the internet.
     ///
     /// The `EndpointAddr` will change as:
@@ -1280,7 +1306,7 @@ impl Endpoint {
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
     /// [`crate::NET_REPORT_TIMEOUT`]s, so you can be sure that at least one
-    /// [`crate::NetReport`] has been attempted.
+    /// net report has been attempted.
     ///
     /// To understand if the endpoint has gone back "offline",
     /// you must use the [`Endpoint::watch_addr`] method, to
@@ -1299,20 +1325,22 @@ impl Endpoint {
     ///
     /// # Examples
     ///
-    /// ```no run
-    /// use iroh::Endpoint;
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
+    /// ```no_run
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_error::Result<()> {
+    /// # use iroh::{Endpoint, endpoint::presets};
     /// // After this await returns, the endpoint is bound to a local socket.
     /// // It can be dialed, but almost certainly hasn't finished picking a
     /// // relay.
-    /// let endpoint = Endpoint::bind().await;
+    /// let endpoint = Endpoint::bind(presets::N0).await?;
     ///
     /// // After this await returns we have a connection to at least one relay
     /// // and holepunching should work as expected.
     /// endpoint.online().await;
-    /// }
+    /// # Ok(()) }
+    /// # }
     /// ```
     pub async fn online(&self) {
         let mut watcher = self.inner.home_relay_status();
@@ -1335,7 +1363,7 @@ impl Endpoint {
     ///
     /// The watched value has one entry per home relay whose URL is known,
     /// and is empty when no relays are configured or before the endpoint has
-    /// selected one the home relay from the list of configured relays.
+    /// selected a home relay from the list of configured relays.
     /// The watcher updates whenever any home relay's connection status changes.
     /// See [`RelayStatus`] for the information available on each entry.
     ///
@@ -1347,21 +1375,29 @@ impl Endpoint {
         self.inner.home_relay_status()
     }
 
-    /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
+    /// Returns a [`Watcher`] for any net report runs from this [`Endpoint`].
     ///
-    /// A `net-report` checks the network conditions of the [`Endpoint`], such as
-    /// whether it is connected to the internet via Ipv4 and/or Ipv6, its NAT
+    /// <div class="warning">
+    ///
+    /// This API is unstable and gated behind the `unstable-net-report` feature.
+    /// It is not covered by semantic versioning guarantees and may change in any release
+    /// without a major version bump.
+    ///
+    /// </div>
+    ///
+    /// A net report checks the network conditions of the [`Endpoint`], such as
+    /// whether it is connected to the internet via IPv4 and/or IPv6, its NAT
     /// status, its latency to the relay servers, and its public addresses.
     ///
-    /// The [`Endpoint`] continuously runs `net-reports` to monitor if network
-    /// conditions have changed. This [`Watcher`] will return the latest result
-    /// of the `net-report`.
+    /// The [`Endpoint`] continuously runs net reports to monitor if network
+    /// conditions have changed. This [`Watcher`] will return the latest
+    /// net report.
     ///
     /// When issuing the first call to this method the first report might
     /// still be underway, in this case the [`Watcher`] might not be initialized
-    /// with [`Some`] value yet.  Once the net-report has been successfully
-    /// run, the [`Watcher`] will always return [`Some`] report immediately, which
-    /// is the most recently run `net-report`.
+    /// with [`Some`] value yet.  Once the net report has been successfully
+    /// run, the [`Watcher`] will always return [`Some`] immediately, which
+    /// is the most recently run net report.
     ///
     /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
     /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
@@ -1383,19 +1419,9 @@ impl Endpoint {
     /// # });
     /// # }
     /// ```
-    #[doc(hidden)]
+    #[cfg(feature = "unstable-net-report")]
     pub fn net_report(&self) -> impl Watcher<Value = Option<NetReport>> + use<> {
         self.inner.net_report()
-    }
-
-    /// Returns the last [`NetReport`] generated by this endpoint.
-    ///
-    /// Returns `None` if no net report was ever generated.
-    ///
-    /// This method is hidden in the docs because it is not part of the public api
-    #[doc(hidden)]
-    pub fn last_net_report(&self) -> Option<NetReport> {
-        self.inner.net_report().get()
     }
 
     /// Returns the local socket addresses on which the underlying sockets are bound.
@@ -1663,7 +1689,7 @@ impl Endpoint {
     /// kernel during the "Time-Wait" period of the TCP socket.
     ///
     /// Be aware however that the underlying UDP sockets are only closed once all clones of
-    /// the the respective [`Endpoint`] are dropped.
+    /// the respective [`Endpoint`] are dropped.
     pub async fn close(&self) {
         self.inner.close().await;
     }
@@ -1916,8 +1942,8 @@ impl RelayMode {
     /// # fn main() -> n0_error::Result<()> {
     /// # use iroh::RelayMode;
     /// RelayMode::custom([
-    ///     "https://use1-1.relay.n0.iroh-canary.iroh.link.".parse()?,
-    ///     "https://euw-1.relay.n0.iroh-canary.iroh.link.".parse()?,
+    ///     "https://use1-1.relay.n0.iroh.link.".parse()?,
+    ///     "https://euw-1.relay.n0.iroh.link.".parse()?,
     /// ]);
     /// # Ok(()) }
     /// ```
@@ -3151,6 +3177,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    #[cfg(feature = "unstable-net-report")]
     async fn watch_net_report() -> Result {
         let endpoint = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Staging)
@@ -3237,14 +3264,14 @@ mod tests {
     async fn test_custom_relay() -> Result {
         let _ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::custom([RelayUrl::from_str(
-                "https://use1-1.relay.n0.iroh-canary.iroh.link.",
+                "https://use1-1.relay.n0.iroh.link.",
             )?]))
             .bind()
             .await?;
 
         let relays = RelayMap::try_from_iter([
-            "https://use1-1.relay.n0.iroh.iroh.link/",
-            "https://euc1-1.relay.n0.iroh.iroh.link/",
+            "https://use1-1.relay.n0.iroh.link/",
+            "https://euc1-1.relay.n0.iroh.link/",
         ])?;
         let _ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relays))
@@ -3783,11 +3810,16 @@ mod tests {
 
         // create watchers to verify they terminate after the endpoint is dropped.
         let mut addrs = ep.watch_addr().stream();
-        let mut net_reports = ep.net_report().stream();
 
-        // returns None
-        let net_report = ep.last_net_report();
-        info!("last Net report {net_report:?}");
+        #[cfg(feature = "unstable-net-report")]
+        let mut net_reports = {
+            let net_reports = ep.net_report().stream();
+
+            // returns None
+            let net_report = ep.net_report().get();
+            info!("last Net report {net_report:?}");
+            net_reports
+        };
 
         // this should work
         let sockets = ep.bound_sockets();
@@ -3820,6 +3852,8 @@ mod tests {
             while let Some(addr) = addrs.next().await {
                 info!("Addrs stream: {addr:?}");
             }
+
+            #[cfg(feature = "unstable-net-report")]
             while let Some(net_report) = net_reports.next().await {
                 info!("Net report stream: {net_report:?}");
             }

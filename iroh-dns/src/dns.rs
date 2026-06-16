@@ -394,7 +394,7 @@ impl DnsResolver {
     ///
     /// We first try to read the system's resolver from `/etc/resolv.conf`.
     /// This does not work at least on some Androids, therefore we fallback
-    /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
+    /// to the default `ResolverConfig` which uses e.g. Google's `8.8.8.8` or `8.8.4.4`.
     pub fn new() -> Self {
         Builder::default().with_system_defaults().build()
     }

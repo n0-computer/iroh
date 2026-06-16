@@ -24,13 +24,13 @@ pub mod prod {
     use crate::RelayUrl;
 
     /// Hostname of the default NA east relay.
-    pub const NA_EAST_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const NA_EAST_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh.link.";
     /// Hostname of the default NA west relay.
-    pub const NA_WEST_RELAY_HOSTNAME: &str = "usw1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const NA_WEST_RELAY_HOSTNAME: &str = "usw1-1.relay.n0.iroh.link.";
     /// Hostname of the default EU relay.
-    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh.link.";
     /// Hostname of the default Asia-Pacific relay.
-    pub const AP_RELAY_HOSTNAME: &str = "aps1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const AP_RELAY_HOSTNAME: &str = "aps1-1.relay.n0.iroh.link.";
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
@@ -69,7 +69,7 @@ pub mod prod {
         RelayConfig::from(RelayUrl::from(url))
     }
 
-    /// Get the default [`RelayConfig`] for Asia-Pacific
+    /// Get the default [`RelayConfig`] for Asia-Pacific.
     pub fn default_ap_relay() -> RelayConfig {
         // The default Asia-Pacific relay server run by number0.
         let url: Url = format!("https://{AP_RELAY_HOSTNAME}")
@@ -91,9 +91,9 @@ pub mod staging {
     use crate::RelayUrl;
 
     /// Hostname of the default NA relay.
-    pub const NA_EAST_RELAY_HOSTNAME: &str = "staging-use1-1.relay.iroh.network.";
+    pub const NA_EAST_RELAY_HOSTNAME: &str = "use1-1.staging-relay.n0.iroh.link.";
     /// Hostname of the default EU relay.
-    pub const EU_RELAY_HOSTNAME: &str = "staging-euw1-1.relay.iroh.network.";
+    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.staging-relay.n0.iroh.link.";
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {

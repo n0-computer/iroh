@@ -377,16 +377,12 @@ pub(crate) async fn clientside(
     }
 }
 
-/// This represents successful authentication for the client with the `client_key` public key
-/// via the authentication [`Mechanism`] `mechanism`.
-///
-/// You must call [`SuccessfulAuthentication::authorize_if`] to finish the protocol.
-#[cfg(feature = "server")]
 /// Result of a successful authentication handshake.
 ///
 /// This struct represents a client that has successfully authenticated itself to the relay
 /// server. The authorization must still be confirmed by calling [`Self::authorize_if`] to
 /// complete the protocol and notify the client of success or failure.
+#[cfg(feature = "server")]
 #[derive(Debug)]
 #[must_use = "the protocol is not finished unless `authorize_if` is called"]
 pub struct SuccessfulAuthentication {

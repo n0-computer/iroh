@@ -21,12 +21,11 @@ use crate::{
     server::{client::SendError, metrics::Metrics},
 };
 
-/// Manages the connections to all currently connected clients.
-#[derive(Debug, Clone, Default)]
 /// Registry of connected relay clients.
 ///
 /// This type manages the collection of active client connections and
 /// handles routing messages between them.
+#[derive(Debug, Clone, Default)]
 pub struct Clients(Arc<Inner>);
 
 #[derive(Debug, Default)]

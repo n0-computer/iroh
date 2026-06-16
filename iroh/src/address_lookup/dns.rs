@@ -82,15 +82,13 @@ impl DnsAddressLookup {
         }
     }
 
-    /// Creates a new DNS discovery using the `iroh.link` domain.
+    /// Creates a new DNS address lookup using the `iroh.link` domain.
     ///
     /// This uses the [`N0_DNS_ENDPOINT_ORIGIN_PROD`] domain.
     ///
-    /// # Usage during tests
-    ///
-    /// For testing it is possible to use the [`N0_DNS_ENDPOINT_ORIGIN_STAGING`] domain
-    /// with [`DnsAddressLookup::builder`].  This would then use a hosted staging discovery
-    /// service for testing purposes.
+    /// When running with the environment variable `IROH_FORCE_STAGING_RELAYS`
+    /// set to any non empty value the [`N0_DNS_ENDPOINT_ORIGIN_STAGING`] domain
+    /// is used instead.
     pub fn n0_dns() -> DnsAddressLookupBuilder {
         if force_staging_infra() {
             Self::builder(N0_DNS_ENDPOINT_ORIGIN_STAGING.to_string())

@@ -1,6 +1,6 @@
 //! Peer-to-peer QUIC connections.
 //!
-//! iroh is a library to establish direct connectivity between peers.  It exposes an
+//! iroh is a library to establish direct connectivity between peers. It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
 //! connectivity using [hole punching] complemented by relay servers under the hood.
 //!
@@ -73,7 +73,7 @@
 //!
 //! If one of the iroh endpoints can be reached directly, connectivity can also be
 //! established without involving a Relay server.  This is done by using the endpoint's
-//! listening addresses in the connection establishement instead of the [`RelayUrl`] which
+//! listening addresses in the connection establishment instead of the [`RelayUrl`] which
 //! is used to identify a Relay server.  Of course it is also possible to use both a
 //! [`RelayUrl`] and direct addresses at the same time to connect.
 //!
@@ -289,7 +289,16 @@ pub use iroh_dns::dns;
 pub use iroh_dns::endpoint_info;
 pub use iroh_relay::{RelayConfig, RelayMap};
 pub use n0_watcher::Watcher;
-pub use net_report::{NetReportConfig, Report as NetReport, TIMEOUT as NET_REPORT_TIMEOUT};
+pub use net_report::{NetReportConfig, TIMEOUT as NET_REPORT_TIMEOUT};
+
+#[cfg(feature = "unstable-net-report")]
+pub mod unstable_net_report {
+    //! Exports of net report types reachable via [`crate::endpoint::Endpoint::net_report`].
+    /// This API is unstable and gated behind the `unstable-net-report` feature.
+    /// It is not covered by semantic versioning guarantees and may change in any release
+    /// without a major version bump.
+    pub use crate::net_report::{Probe, RelayLatencies, Report as NetReport};
+}
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
