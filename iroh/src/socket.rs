@@ -633,24 +633,15 @@ impl SharedEndpointState {
     ///
     /// Called whenever our addresses or home relay endpoint changes.
     fn publish_my_addr(&self) {
-        let relay_url = self.my_relay();
-        let mut addrs: Vec<_> = self
-            .direct_addrs_watchable
-            .get()
-            .into_iter()
-            .map(|da| TransportAddr::Ip(da.addr))
-            .collect();
+        let addrs = self.watch_all_addrs().get();
         let user_data = self
             .address_lookup_user_data
             .read()
             .expect("lock poisened")
             .clone();
-        if relay_url.is_none() && addrs.is_empty() && user_data.is_none() {
+        if addrs.is_empty() && user_data.is_none() {
             // do not bother publishing if we don't have any information
             return;
-        }
-        if let Some(url) = relay_url {
-            addrs.push(TransportAddr::Relay(url));
         }
         let mut data = EndpointData::new(addrs);
         data.set_user_data(user_data);
