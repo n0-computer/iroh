@@ -204,7 +204,7 @@ pub(crate) struct Options {
 #[derive(Debug, derive_more::Deref)]
 pub(crate) struct EndpointInner {
     #[deref(forward)]
-    sock: Arc<Socket>,
+    sock: Arc<SharedEndpointState>,
     // empty when shutdown
     actor_task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Channel to send to the internal actor.
@@ -333,7 +333,7 @@ impl ShutdownState {
 /// means any QUIC endpoints on top will be sharing as much information about endpoints as
 /// possible.
 #[derive(Debug)]
-pub(crate) struct Socket {
+pub(crate) struct SharedEndpointState {
     /// Read-only view of the per-remote `RemoteStateActor` inboxes.
     ///
     /// Lets callers send to an existing `RemoteStateActor` without going through
@@ -383,7 +383,7 @@ pub(crate) struct Socket {
     pub(crate) span: Span,
 }
 
-impl Socket {
+impl SharedEndpointState {
     /// Returns the relay endpoint we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay endpoints.
@@ -706,7 +706,7 @@ impl Socket {
 struct DirectAddrUpdateState {
     /// If set, start a new update as soon as the current one is finished.
     want_update: Option<UpdateReason>,
-    sock: Arc<Socket>,
+    sock: Arc<SharedEndpointState>,
     port_mapper: portmapper::Client,
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     net_reporter: Arc<AsyncMutex<net_report::Client>>,
@@ -735,7 +735,7 @@ impl UpdateReason {
 
 impl DirectAddrUpdateState {
     fn new(
-        sock: Arc<Socket>,
+        sock: Arc<SharedEndpointState>,
         port_mapper: portmapper::Client,
         net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
@@ -987,7 +987,7 @@ impl EndpointInner {
 
         let home_relay_watch = transports.home_relay_watch();
 
-        let sock = Arc::new(Socket {
+        let sock = Arc::new(SharedEndpointState {
             remote_actors: remote_map.senders(),
             shutdown: shutdown_state,
             ipv6_reported,
@@ -1457,7 +1457,7 @@ struct Actor {
     ///
     /// In particular both the [`EndpointInner`] as well as this actor itself have a
     /// copy. But also other subsystems that consequently have access to way to much state.
-    sock: Arc<Socket>,
+    sock: Arc<SharedEndpointState>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
     remote_map: RemoteMap,
     /// When set, is an AfterFunc timer that will call Socket::do_periodic_stun.

@@ -16,7 +16,7 @@ use relay::{RelayNetworkChangeSender, RelaySender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
-use super::{Socket, mapped_addrs::MultipathMappedAddr};
+use super::{SharedEndpointState, mapped_addrs::MultipathMappedAddr};
 use crate::{
     endpoint::RelayStatus,
     metrics::EndpointMetrics,
@@ -259,7 +259,7 @@ impl Transports {
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [noq_udp::RecvMeta],
-        sock: &Socket,
+        sock: &SharedEndpointState,
     ) -> Poll<io::Result<usize>> {
         assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
@@ -1091,12 +1091,12 @@ impl TransportsSender {
 /// [`Transports`].
 #[derive(Debug)]
 pub(crate) struct Transport {
-    sock: Arc<Socket>,
+    sock: Arc<SharedEndpointState>,
     transports: Transports,
 }
 
 impl Transport {
-    pub(crate) fn new(sock: Arc<Socket>, transports: Transports) -> Self {
+    pub(crate) fn new(sock: Arc<SharedEndpointState>, transports: Transports) -> Self {
         Self { sock, transports }
     }
 }
@@ -1181,7 +1181,7 @@ impl noq::AsyncUdpSocket for Transport {
 #[derive(Debug)]
 #[pin_project::pin_project]
 pub(crate) struct Sender {
-    sock: Arc<Socket>,
+    sock: Arc<SharedEndpointState>,
     #[pin]
     sender: TransportsSender,
 }
