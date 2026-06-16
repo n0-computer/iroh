@@ -8,7 +8,7 @@ use simple_dns::{
     rdata::{A, AAAA, RData},
 };
 
-use super::{DnsError, TxtRecordData};
+use crate::dns::{DnsError, TxtRecordData};
 
 /// EDNS(0) advertised UDP payload size.
 ///

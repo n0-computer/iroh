@@ -7,15 +7,9 @@
 //! are structured.
 
 #[cfg(not(wasm_browser))]
-mod cache;
-#[cfg(not(wasm_browser))]
-mod query;
-#[cfg(not(wasm_browser))]
 mod resolver;
 #[cfg(not(wasm_browser))]
 mod system_config;
-#[cfg(not(wasm_browser))]
-mod transport;
 
 #[cfg(target_os = "android")]
 pub use system_config::install_android_jni_context;

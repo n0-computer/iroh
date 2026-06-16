@@ -9,7 +9,7 @@ use std::{
 
 use lru::LruCache;
 
-use super::TxtRecordData;
+use crate::dns::TxtRecordData;
 
 /// Maximum number of entries in the DNS cache.
 const MAX_CACHE_ENTRIES: usize = 512;
