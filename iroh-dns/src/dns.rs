@@ -160,7 +160,7 @@ struct Nameserver {
     addr: SocketAddr,
     protocol: DnsProtocol,
     /// Only used for DoT/DoH, which require a crypto provider.
-    #[cfg_attr(not(with_crypto_provider), allow(dead_code))]
+    #[cfg(with_crypto_provider)]
     server_name: Option<String>,
 }
 
@@ -170,6 +170,7 @@ impl Nameserver {
         Self {
             addr,
             protocol,
+            #[cfg(with_crypto_provider)]
             server_name: None,
         }
     }
