@@ -16,16 +16,18 @@
 //!   once and never again does not pin a socket open forever.
 //!
 //! The task is spawned lazily on the first check-in (always inside an async
-//! query, hence inside a runtime) and aborted when the pool is dropped.
+//! query, hence inside a runtime). It holds only a [`Weak`] reference, so it
+//! self-terminates once the pool is dropped (and dropping the pool closes its
+//! idle sockets right away rather than waiting on the task).
 
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 use n0_future::{
-    task::{AbortOnDropHandle, spawn},
+    task::spawn,
     time::{self, Duration, Instant},
 };
 use tokio::net::TcpStream;
@@ -85,8 +87,8 @@ impl Inner {
 /// A pool of idle TCP and DoT connections, keyed by nameserver.
 pub(super) struct ConnPool {
     inner: Arc<Inner>,
-    /// The idle-connection reaper, spawned on first check-in and aborted on drop.
-    reaper: OnceLock<AbortOnDropHandle<()>>,
+    /// Set once the idle-connection reaper has been spawned.
+    reaper_spawned: OnceLock<()>,
 }
 
 impl std::fmt::Debug for ConnPool {
@@ -99,7 +101,7 @@ impl ConnPool {
     pub(super) fn new() -> Self {
         Self {
             inner: Arc::new(Inner::default()),
-            reaper: OnceLock::new(),
+            reaper_spawned: OnceLock::new(),
         }
     }
 
@@ -146,18 +148,19 @@ impl ConnPool {
     /// Spawns the reaper task on first use. Check-in always runs inside an async
     /// query, so a runtime is guaranteed to be present.
     fn ensure_reaper(&self) {
-        self.reaper.get_or_init(|| {
-            let inner = Arc::clone(&self.inner);
-            AbortOnDropHandle::new(spawn(reap_loop(inner)))
+        self.reaper_spawned.get_or_init(|| {
+            spawn(reap_loop(Arc::downgrade(&self.inner)));
         });
     }
 }
 
-/// Periodically drops idle connections until the pool is dropped (which aborts
-/// this task via its [`AbortOnDropHandle`]).
-async fn reap_loop(inner: Arc<Inner>) {
+/// Periodically drops idle connections, exiting once the pool is gone.
+async fn reap_loop(inner: Weak<Inner>) {
     loop {
         time::sleep(REAP_INTERVAL).await;
+        let Some(inner) = inner.upgrade() else {
+            return;
+        };
         inner.reap();
     }
 }
