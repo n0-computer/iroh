@@ -2335,7 +2335,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
- "simple-dns 0.9.3",
+ "simple-dns",
  "smallvec",
  "strum",
  "testdir",
@@ -2411,7 +2411,7 @@ dependencies = [
  "rand 0.10.1",
  "reqwest",
  "rustls",
- "simple-dns 0.11.3",
+ "simple-dns",
  "strum",
  "tokio",
  "tokio-rustls",
@@ -2459,7 +2459,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "simple-dns 0.11.3",
+ "simple-dns",
  "strum",
  "tempfile",
  "tokio",
@@ -2529,7 +2529,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "ipconfig",
  "iroh-base",
  "iroh-dns",
  "iroh-metrics",
@@ -4661,15 +4660,6 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
-
-[[package]]
-name = "simple-dns"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dee851d0e5e7af3721faea1843e8015e820a234f81fda3dea9247e15bac9a86a"
-dependencies = [
- "bitflags",
-]
 
 [[package]]
 name = "simple-dns"

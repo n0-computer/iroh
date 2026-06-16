@@ -97,10 +97,6 @@ tokio = { version = "1", features = [
 ] }
 tokio-websockets = { version = "0.13", features = ["rustls-bring-your-own-connector", "getrandom", "rand", "client", "sha1_smol"] }
 
-# Windows-only dependencies
-[target.'cfg(windows)'.dependencies]
-ipconfig = "0.3"
-
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 ws_stream_wasm = { version = "0.7.4", default-features = false }
