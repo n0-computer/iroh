@@ -1678,7 +1678,6 @@ impl Actor {
             if let Err(err) = self.transports_network_change.rebind() {
                 warn!("failed to rebind transports: {err:?}");
             }
-            self.transports_network_change.check_relay_connection();
 
             #[cfg(not(wasm_browser))]
             self.shared.dns_resolver.reset();
