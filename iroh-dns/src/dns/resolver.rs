@@ -105,6 +105,15 @@ pub(super) struct SimpleDnsResolver {
 
 impl SimpleDnsResolver {
     pub(super) fn new(builder: Builder) -> Self {
+        Self::with_cache(builder, DnsCache::new())
+    }
+
+    /// Builds a resolver from `builder`, reusing an existing [`DnsCache`].
+    ///
+    /// Used by [`Self::reset`] to rebuild the resolver on a network change while
+    /// carrying the cache across, so lookups keep hitting cached records while
+    /// the new nameservers settle (see issue #4037).
+    fn with_cache(builder: Builder, cache: DnsCache) -> Self {
         let config = Self::build_config(&builder);
         debug!(
             nameservers = ?config.nameservers,
@@ -127,7 +136,7 @@ impl SimpleDnsResolver {
             #[cfg(with_crypto_provider)]
             https_client: Mutex::new(None),
             rtt_map: health,
-            cache: DnsCache::new(),
+            cache,
             builder,
         }
     }
@@ -514,7 +523,9 @@ impl SimpleDnsResolver {
     }
 
     pub(super) fn reset(&self) -> Self {
-        Self::new(self.builder.clone())
+        // Carry the cache across so a network change does not start DNS cold,
+        // which would strand reconnects while the new nameservers settle (#4037).
+        Self::with_cache(self.builder.clone(), self.cache.clone())
     }
 }
 
@@ -562,6 +573,7 @@ mod tests {
     use n0_future::time::Duration;
 
     use super::super::{DnsProtocol, DnsResolver};
+    use super::{Builder, CachedRecord, QueryType, SimpleDnsResolver};
 
     const TIMEOUT: Duration = Duration::from_secs(5);
     const GOOGLE_DNS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 53);
@@ -753,5 +765,25 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// A major network change rebuilds the resolver via [`SimpleDnsResolver::reset`];
+    /// the DNS cache must carry across so reconnects keep resolving while the new
+    /// nameservers settle (issue #4037).
+    #[test]
+    fn cache_survives_reset() {
+        let r = SimpleDnsResolver::new(Builder::default());
+        r.cache.insert(
+            "example.com",
+            QueryType::A,
+            CachedRecord::A(vec![Ipv4Addr::LOCALHOST]),
+            300,
+        );
+
+        let reset = r.reset();
+
+        let cached = reset.cache.get("example.com", QueryType::A);
+        let survived = matches!(&cached, Some(CachedRecord::A(addrs)) if addrs.as_slice() == [Ipv4Addr::LOCALHOST]);
+        assert!(survived, "cache entry should survive reset, got {cached:?}");
     }
 }

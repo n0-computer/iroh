@@ -3,7 +3,7 @@
 use std::{
     hash::{Hash, Hasher},
     net::{Ipv4Addr, Ipv6Addr},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -98,17 +98,23 @@ impl CacheEntry {
 /// Uses pre-hashed u64 keys to avoid allocating a `String` on every lookup.
 /// The only remaining per-hit allocation is the `record.clone()` on cache hit,
 /// necessary because the result must outlive the lock guard.
-#[derive(Debug)]
+///
+/// Cloning shares the same underlying cache, so a resolver rebuilt on a network
+/// change (see [`SimpleDnsResolver::reset`]) can carry its cache across rather
+/// than starting cold while DNS is still in flux.
+///
+/// [`SimpleDnsResolver::reset`]: super::SimpleDnsResolver::reset
+#[derive(Debug, Clone)]
 pub(super) struct DnsCache {
-    inner: Mutex<LruCache<u64, CacheEntry>>,
+    inner: Arc<Mutex<LruCache<u64, CacheEntry>>>,
 }
 
 impl DnsCache {
     pub(super) fn new() -> Self {
         Self {
-            inner: Mutex::new(LruCache::new(
+            inner: Arc::new(Mutex::new(LruCache::new(
                 std::num::NonZeroUsize::new(MAX_CACHE_ENTRIES).expect("non-zero"),
-            )),
+            ))),
         }
     }
 
