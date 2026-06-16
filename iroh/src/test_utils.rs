@@ -462,8 +462,8 @@ pub(crate) mod pkarr_dns_state {
             reply: &mut simple_dns::Packet<'static>,
             ttl: u32,
         ) -> std::io::Result<()> {
-            for query in &query.answers {
-                let domain_name = query.name.to_string();
+            for question in &query.questions {
+                let domain_name = question.qname.to_string();
                 let Some(endpoint_id) = endpoint_id_from_domain_name(&domain_name) else {
                     continue;
                 };
