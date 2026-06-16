@@ -462,8 +462,8 @@
 <a href=#462 id=462 data-nosnippet>462</a>            reply: <span class="kw-2">&amp;mut </span>simple_dns::Packet&lt;<span class="lifetime">'static</span>&gt;,
 <a href=#463 id=463 data-nosnippet>463</a>            ttl: u32,
 <a href=#464 id=464 data-nosnippet>464</a>        ) -&gt; std::io::Result&lt;()&gt; {
-<a href=#465 id=465 data-nosnippet>465</a>            <span class="kw">for </span>query <span class="kw">in </span><span class="kw-2">&amp;</span>query.answers {
-<a href=#466 id=466 data-nosnippet>466</a>                <span class="kw">let </span>domain_name = query.name.to_string();
+<a href=#465 id=465 data-nosnippet>465</a>            <span class="kw">for </span>question <span class="kw">in </span><span class="kw-2">&amp;</span>query.questions {
+<a href=#466 id=466 data-nosnippet>466</a>                <span class="kw">let </span>domain_name = question.qname.to_string();
 <a href=#467 id=467 data-nosnippet>467</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(endpoint_id) = endpoint_id_from_domain_name(<span class="kw-2">&amp;</span>domain_name) <span class="kw">else </span>{
 <a href=#468 id=468 data-nosnippet>468</a>                    <span class="kw">continue</span>;
 <a href=#469 id=469 data-nosnippet>469</a>                };
