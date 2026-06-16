@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>std::{
 <a href=#4 id=4 data-nosnippet>4</a>    hash::{Hash, Hasher},
 <a href=#5 id=5 data-nosnippet>5</a>    net::{Ipv4Addr, Ipv6Addr},
-<a href=#6 id=6 data-nosnippet>6</a>    sync::Mutex,
+<a href=#6 id=6 data-nosnippet>6</a>    sync::{Arc, Mutex},
 <a href=#7 id=7 data-nosnippet>7</a>    time::{Duration, Instant},
 <a href=#8 id=8 data-nosnippet>8</a>};
 <a href=#9 id=9 data-nosnippet>9</a>
@@ -98,66 +98,72 @@
 <a href=#98 id=98 data-nosnippet>98</a>/// Uses pre-hashed u64 keys to avoid allocating a `String` on every lookup.
 <a href=#99 id=99 data-nosnippet>99</a>/// The only remaining per-hit allocation is the `record.clone()` on cache hit,
 <a href=#100 id=100 data-nosnippet>100</a>/// necessary because the result must outlive the lock guard.
-<a href=#101 id=101 data-nosnippet>101</a></span><span class="attr">#[derive(Debug)]
-<a href=#102 id=102 data-nosnippet>102</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DnsCache {
-<a href=#103 id=103 data-nosnippet>103</a>    inner: Mutex&lt;LruCache&lt;u64, CacheEntry&gt;&gt;,
-<a href=#104 id=104 data-nosnippet>104</a>}
-<a href=#105 id=105 data-nosnippet>105</a>
-<a href=#106 id=106 data-nosnippet>106</a><span class="kw">impl </span>DnsCache {
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="self">Self </span>{
-<a href=#109 id=109 data-nosnippet>109</a>            inner: Mutex::new(LruCache::new(
-<a href=#110 id=110 data-nosnippet>110</a>                std::num::NonZeroUsize::new(MAX_CACHE_ENTRIES).expect(<span class="string">"non-zero"</span>),
-<a href=#111 id=111 data-nosnippet>111</a>            )),
-<a href=#112 id=112 data-nosnippet>112</a>        }
-<a href=#113 id=113 data-nosnippet>113</a>    }
-<a href=#114 id=114 data-nosnippet>114</a>
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Look up a cached record. Returns `None` if not found or expired.
-<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, host: <span class="kw-2">&amp;</span>str, qtype: QueryType) -&gt; <span class="prelude-ty">Option</span>&lt;CachedRecord&gt; {
-<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span>key = cache_key(host, qtype);
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span>entry = inner.get(<span class="kw-2">&amp;</span>key)<span class="question-mark">?</span>;
-<a href=#120 id=120 data-nosnippet>120</a>        <span class="comment">// Reject `u64` key collisions: only serve an exact host+qtype match.
-<a href=#121 id=121 data-nosnippet>121</a>        </span><span class="kw">if </span>entry.host != host || entry.qtype != qtype {
-<a href=#122 id=122 data-nosnippet>122</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#123 id=123 data-nosnippet>123</a>        }
-<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">if </span>entry.is_expired() {
-<a href=#125 id=125 data-nosnippet>125</a>            inner.pop(<span class="kw-2">&amp;</span>key);
-<a href=#126 id=126 data-nosnippet>126</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#127 id=127 data-nosnippet>127</a>        }
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="prelude-val">Some</span>(entry.record.clone())
-<a href=#129 id=129 data-nosnippet>129</a>    }
-<a href=#130 id=130 data-nosnippet>130</a>
-<a href=#131 id=131 data-nosnippet>131</a>    <span class="doccomment">/// Insert a record into the cache with the given TTL.
-<a href=#132 id=132 data-nosnippet>132</a>    ///
-<a href=#133 id=133 data-nosnippet>133</a>    /// A TTL of 0 means don't cache. This also means that negative responses
-<a href=#134 id=134 data-nosnippet>134</a>    /// (NXDOMAIN, NODATA) are never cached, since empty results have TTL 0.
-<a href=#135 id=135 data-nosnippet>135</a>    /// This matches the old hickory-resolver configuration which set
-<a href=#136 id=136 data-nosnippet>136</a>    /// `negative_max_ttl = Some(Duration::ZERO)`.
-<a href=#137 id=137 data-nosnippet>137</a>    ///
-<a href=#138 id=138 data-nosnippet>138</a>    /// **Known limitation:** Without negative caching, repeated queries for
-<a href=#139 id=139 data-nosnippet>139</a>    /// non-existent domains always hit the network. Under high concurrency
-<a href=#140 id=140 data-nosnippet>140</a>    /// this can become a thundering herd. A future improvement could cache
-<a href=#141 id=141 data-nosnippet>141</a>    /// negative results for a short duration (e.g. 5-10 seconds).
-<a href=#142 id=142 data-nosnippet>142</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, host: <span class="kw-2">&amp;</span>str, qtype: QueryType, record: CachedRecord, ttl: u32) {
-<a href=#143 id=143 data-nosnippet>143</a>        <span class="kw">if </span>ttl == <span class="number">0 </span>{
-<a href=#144 id=144 data-nosnippet>144</a>            <span class="kw">return</span>;
-<a href=#145 id=145 data-nosnippet>145</a>        }
-<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">let </span>entry = CacheEntry {
-<a href=#147 id=147 data-nosnippet>147</a>            host: host.to_string(),
-<a href=#148 id=148 data-nosnippet>148</a>            qtype,
-<a href=#149 id=149 data-nosnippet>149</a>            record,
-<a href=#150 id=150 data-nosnippet>150</a>            inserted_at: Instant::now(),
-<a href=#151 id=151 data-nosnippet>151</a>            ttl: Duration::from_secs(ttl.min(MAX_TTL_SECS) <span class="kw">as </span>u64),
-<a href=#152 id=152 data-nosnippet>152</a>        };
-<a href=#153 id=153 data-nosnippet>153</a>        <span class="self">self</span>.inner
-<a href=#154 id=154 data-nosnippet>154</a>            .lock()
-<a href=#155 id=155 data-nosnippet>155</a>            .expect(<span class="string">"poisoned"</span>)
-<a href=#156 id=156 data-nosnippet>156</a>            .put(cache_key(host, qtype), entry);
-<a href=#157 id=157 data-nosnippet>157</a>    }
-<a href=#158 id=158 data-nosnippet>158</a>
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="doccomment">/// Clear all cache entries.
-<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>clear(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).clear();
-<a href=#162 id=162 data-nosnippet>162</a>    }
-<a href=#163 id=163 data-nosnippet>163</a>}</code></pre></div></section></main></body></html>
+<a href=#101 id=101 data-nosnippet>101</a>///
+<a href=#102 id=102 data-nosnippet>102</a>/// Cloning shares the same underlying cache, so a resolver rebuilt on a network
+<a href=#103 id=103 data-nosnippet>103</a>/// change (see [`SimpleDnsResolver::reset`]) can carry its cache across rather
+<a href=#104 id=104 data-nosnippet>104</a>/// than starting cold while DNS is still in flux.
+<a href=#105 id=105 data-nosnippet>105</a>///
+<a href=#106 id=106 data-nosnippet>106</a>/// [`SimpleDnsResolver::reset`]: super::SimpleDnsResolver::reset
+<a href=#107 id=107 data-nosnippet>107</a></span><span class="attr">#[derive(Debug, Clone)]
+<a href=#108 id=108 data-nosnippet>108</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DnsCache {
+<a href=#109 id=109 data-nosnippet>109</a>    inner: Arc&lt;Mutex&lt;LruCache&lt;u64, CacheEntry&gt;&gt;&gt;,
+<a href=#110 id=110 data-nosnippet>110</a>}
+<a href=#111 id=111 data-nosnippet>111</a>
+<a href=#112 id=112 data-nosnippet>112</a><span class="kw">impl </span>DnsCache {
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
+<a href=#114 id=114 data-nosnippet>114</a>        <span class="self">Self </span>{
+<a href=#115 id=115 data-nosnippet>115</a>            inner: Arc::new(Mutex::new(LruCache::new(
+<a href=#116 id=116 data-nosnippet>116</a>                std::num::NonZeroUsize::new(MAX_CACHE_ENTRIES).expect(<span class="string">"non-zero"</span>),
+<a href=#117 id=117 data-nosnippet>117</a>            ))),
+<a href=#118 id=118 data-nosnippet>118</a>        }
+<a href=#119 id=119 data-nosnippet>119</a>    }
+<a href=#120 id=120 data-nosnippet>120</a>
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// Look up a cached record. Returns `None` if not found or expired.
+<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, host: <span class="kw-2">&amp;</span>str, qtype: QueryType) -&gt; <span class="prelude-ty">Option</span>&lt;CachedRecord&gt; {
+<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">let </span>key = cache_key(host, qtype);
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
+<a href=#125 id=125 data-nosnippet>125</a>        <span class="kw">let </span>entry = inner.get(<span class="kw-2">&amp;</span>key)<span class="question-mark">?</span>;
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="comment">// Reject `u64` key collisions: only serve an exact host+qtype match.
+<a href=#127 id=127 data-nosnippet>127</a>        </span><span class="kw">if </span>entry.host != host || entry.qtype != qtype {
+<a href=#128 id=128 data-nosnippet>128</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#129 id=129 data-nosnippet>129</a>        }
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="kw">if </span>entry.is_expired() {
+<a href=#131 id=131 data-nosnippet>131</a>            inner.pop(<span class="kw-2">&amp;</span>key);
+<a href=#132 id=132 data-nosnippet>132</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#133 id=133 data-nosnippet>133</a>        }
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="prelude-val">Some</span>(entry.record.clone())
+<a href=#135 id=135 data-nosnippet>135</a>    }
+<a href=#136 id=136 data-nosnippet>136</a>
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="doccomment">/// Insert a record into the cache with the given TTL.
+<a href=#138 id=138 data-nosnippet>138</a>    ///
+<a href=#139 id=139 data-nosnippet>139</a>    /// A TTL of 0 means don't cache. This also means that negative responses
+<a href=#140 id=140 data-nosnippet>140</a>    /// (NXDOMAIN, NODATA) are never cached, since empty results have TTL 0.
+<a href=#141 id=141 data-nosnippet>141</a>    /// This matches the old hickory-resolver configuration which set
+<a href=#142 id=142 data-nosnippet>142</a>    /// `negative_max_ttl = Some(Duration::ZERO)`.
+<a href=#143 id=143 data-nosnippet>143</a>    ///
+<a href=#144 id=144 data-nosnippet>144</a>    /// **Known limitation:** Without negative caching, repeated queries for
+<a href=#145 id=145 data-nosnippet>145</a>    /// non-existent domains always hit the network. Under high concurrency
+<a href=#146 id=146 data-nosnippet>146</a>    /// this can become a thundering herd. A future improvement could cache
+<a href=#147 id=147 data-nosnippet>147</a>    /// negative results for a short duration (e.g. 5-10 seconds).
+<a href=#148 id=148 data-nosnippet>148</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, host: <span class="kw-2">&amp;</span>str, qtype: QueryType, record: CachedRecord, ttl: u32) {
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">if </span>ttl == <span class="number">0 </span>{
+<a href=#150 id=150 data-nosnippet>150</a>            <span class="kw">return</span>;
+<a href=#151 id=151 data-nosnippet>151</a>        }
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">let </span>entry = CacheEntry {
+<a href=#153 id=153 data-nosnippet>153</a>            host: host.to_string(),
+<a href=#154 id=154 data-nosnippet>154</a>            qtype,
+<a href=#155 id=155 data-nosnippet>155</a>            record,
+<a href=#156 id=156 data-nosnippet>156</a>            inserted_at: Instant::now(),
+<a href=#157 id=157 data-nosnippet>157</a>            ttl: Duration::from_secs(ttl.min(MAX_TTL_SECS) <span class="kw">as </span>u64),
+<a href=#158 id=158 data-nosnippet>158</a>        };
+<a href=#159 id=159 data-nosnippet>159</a>        <span class="self">self</span>.inner
+<a href=#160 id=160 data-nosnippet>160</a>            .lock()
+<a href=#161 id=161 data-nosnippet>161</a>            .expect(<span class="string">"poisoned"</span>)
+<a href=#162 id=162 data-nosnippet>162</a>            .put(cache_key(host, qtype), entry);
+<a href=#163 id=163 data-nosnippet>163</a>    }
+<a href=#164 id=164 data-nosnippet>164</a>
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="doccomment">/// Clear all cache entries.
+<a href=#166 id=166 data-nosnippet>166</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>clear(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).clear();
+<a href=#168 id=168 data-nosnippet>168</a>    }
+<a href=#169 id=169 data-nosnippet>169</a>}</code></pre></div></section></main></body></html>
