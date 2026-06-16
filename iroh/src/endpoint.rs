@@ -15,7 +15,7 @@ use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{RelayConfig, RelayMap, tls::CaTlsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
@@ -1232,6 +1232,12 @@ impl Endpoint {
     /// - the endpoint changes its preferred relay server
     /// - more addresses are discovered for this endpoint
     ///
+    /// ## Platform-specific behavior
+    ///
+    /// When compiled to Wasm, this function returns a watcher that initializes
+    /// with an [`EndpointAddr`] that only contains a relay URL, but no direct addresses,
+    /// as there are no APIs for directly using sockets in browsers.
+    ///
     /// ## Closing behavior
     ///
     /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
@@ -1266,43 +1272,12 @@ impl Endpoint {
     /// ```
     ///
     /// [`RelayUrl`]: crate::RelayUrl
-    #[cfg(not(wasm_browser))]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
-        let watch_addrs = self.inner.ip_addrs();
-        let watch_relay = self.inner.home_relay();
-        let endpoint_id = self.id();
-
-        watch_addrs.or(watch_relay).map(move |(addrs, relays)| {
-            EndpointAddr::from_parts(
-                endpoint_id,
-                relays
-                    .into_iter()
-                    .map(TransportAddr::Relay)
-                    .chain(addrs.into_iter().map(|x| TransportAddr::Ip(x.addr))),
-            )
-        })
-    }
-
-    /// Returns a [`Watcher`] for the current [`EndpointAddr`] for this endpoint.
-    ///
-    /// When compiled to Wasm, this function returns a watcher that initializes
-    /// with an [`EndpointAddr`] that only contains a relay URL, but no direct addresses,
-    /// as there are no APIs for directly using sockets in browsers.
-    ///
-    /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
-    /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
-    /// via [`Watcher::stream`] only terminates once the endpoint stops. If you want to stop a
-    /// task once the endpoint stops combine with [`Self::closed`].
-    #[cfg(wasm_browser)]
-    pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
-        // In browsers, there will never be any direct addresses, so we wait
-        // for the home relay instead. This makes the `EndpointAddr` have *some* way
-        // of connecting to us.
-        let watch_relay = self.inner.home_relay();
-        let endpoint_id = self.id();
-        watch_relay.map(move |mut relays| {
-            EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
-        })
+        let id = self.id();
+        self.inner
+            .shared
+            .watch_all_addrs()
+            .map(move |addrs| EndpointAddr::from_parts(id, addrs))
     }
 
     /// A convenience method that waits for the endpoint to be considered "online".
@@ -1353,7 +1328,7 @@ impl Endpoint {
     /// # }
     /// ```
     pub async fn online(&self) {
-        let mut watcher = self.inner.home_relay_status();
+        let mut watcher = self.inner.home_relay_status.clone();
         let mut value = watcher.get();
         loop {
             if value.into_iter().any(|status| status.is_connected()) {
@@ -1382,7 +1357,7 @@ impl Endpoint {
     /// the watcher. To stop a task once the endpoint stops, combine with
     /// [`Self::closed`].
     pub fn home_relay_status(&self) -> impl Watcher<Value = Vec<RelayStatus>> + use<> {
-        self.inner.home_relay_status()
+        self.inner.home_relay_status.clone()
     }
 
     /// Returns a [`Watcher`] for any net report runs from this [`Endpoint`].
@@ -1441,6 +1416,7 @@ impl Endpoint {
     #[cfg(not(wasm_browser))]
     pub fn bound_sockets(&self) -> Vec<SocketAddr> {
         self.inner
+            .shared
             .local_addr()
             .into_iter()
             .filter_map(|addr| addr.into_socket_addr())
@@ -1463,7 +1439,7 @@ impl Endpoint {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
-        Ok(self.inner.dns_resolver())
+        Ok(self.inner.shared.dns_resolver())
     }
 
     /// Returns the [`rustls::ClientConfig`] used by the endpoint for connecting to external services.
@@ -1491,7 +1467,7 @@ impl Endpoint {
         if self.is_closed() {
             return Err(e!(EndpointError::Closed));
         }
-        Ok(self.inner.address_lookup())
+        Ok(self.inner.shared.address_lookup())
     }
 
     /// Returns metrics collected for this endpoint.
@@ -1606,7 +1582,7 @@ impl Endpoint {
     /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
     #[cfg(feature = "metrics")]
     pub fn metrics(&self) -> &EndpointMetrics {
-        &self.inner.metrics
+        &self.inner.shared.metrics
     }
 
     /// Returns addressing information about a recently used remote endpoint.
@@ -1663,7 +1639,9 @@ impl Endpoint {
             warn!("Attempting to set user data for a closed endpoint. Ignoring.");
             return;
         }
-        self.inner.set_user_data_for_address_lookup(user_data);
+        self.inner
+            .shared
+            .set_user_data_for_address_lookup(user_data);
     }
 
     // # Methods for terminating the endpoint.
@@ -1749,7 +1727,7 @@ impl Endpoint {
     /// Translates a raw [`SocketAddr`] (which may be a synthetic mapped address) into
     /// a transport address.
     pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> crate::socket::transports::Addr {
-        self.inner.to_transport_addr(addr)
+        self.inner.shared.to_transport_addr(addr)
     }
 
     #[cfg(all(test, with_crypto_provider))]

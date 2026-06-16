@@ -196,7 +196,10 @@ impl Incoming {
     pub fn local_addr(&self) -> LocalTransportAddr {
         let remote_addr = self.inner.remote_address();
         let local_ip = self.inner.local_ip();
-        self.ep.inner.to_local_transport_addr(local_ip, remote_addr)
+        self.ep
+            .inner
+            .shared
+            .to_local_transport_addr(local_ip, remote_addr)
     }
 
     /// Returns the remote address of this incoming connection.
