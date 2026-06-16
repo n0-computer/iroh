@@ -11,9 +11,6 @@ mod resolver;
 #[cfg(not(wasm_browser))]
 mod system_config;
 
-#[cfg(target_os = "android")]
-pub use system_config::install_android_jni_context;
-
 use std::{
     collections::VecDeque,
     fmt,
@@ -32,6 +29,8 @@ use n0_future::{
     stream,
     time::{self, Duration},
 };
+#[cfg(target_os = "android")]
+pub use system_config::install_android_jni_context;
 use tokio::sync::Notify;
 use url::Url;
 
@@ -81,7 +80,7 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to DNS operations.
 #[allow(missing_docs)]
-#[stack_error(derive, add_meta, from_sources, std_sources)]
+#[stack_error(derive, add_meta, std_sources)]
 #[non_exhaustive]
 pub enum DnsError {
     #[error("Request timed out")]
@@ -97,7 +96,15 @@ pub enum DnsError {
     MissingHost {},
 
     #[error("Failed to resolve")]
-    Resolve { source: AnyError },
+    Resolve {
+        #[error(from)]
+        source: AnyError,
+    },
+
+    #[error("Failed to reach nameserver")]
+    Transport { source: AnyError },
+    #[error("Failed to build query")]
+    InvalidQuery { source: AnyError },
 
     #[error("DNS server returned error: {rcode}")]
     ServerError { rcode: String },

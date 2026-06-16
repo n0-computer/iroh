@@ -27,9 +27,33 @@ mod query;
 mod rtt_map;
 mod transport;
 
-use self::cache::{CachedRecord, DnsCache, QueryType};
-use self::query::MAX_CNAME_DEPTH;
-use self::rtt_map::RttMap;
+use self::{
+    cache::{CachedRecord, DnsCache, QueryType},
+    query::{MAX_CNAME_DEPTH, QueryError},
+    rtt_map::RttMap,
+    transport::TransportError,
+};
+
+/// Maps a transport-layer failure onto the public [`DnsError`].
+impl From<TransportError> for DnsError {
+    fn from(err: TransportError) -> Self {
+        e!(DnsError::Transport, AnyError::from_stack(err))
+    }
+}
+
+/// Maps a query build or response-parse failure onto the public [`DnsError`].
+impl From<QueryError> for DnsError {
+    fn from(err: QueryError) -> Self {
+        match err {
+            QueryError::BuildQuery { source, .. } => e!(DnsError::InvalidQuery, source),
+            QueryError::Malformed { .. } | QueryError::Unexpected { .. } => {
+                e!(DnsError::InvalidResponse)
+            }
+            QueryError::NxDomain { .. } => e!(DnsError::NxDomain),
+            QueryError::ServerFailure { rcode, .. } => e!(DnsError::ServerError { rcode }),
+        }
+    }
+}
 
 /// Per-nameserver timeout for a single attempt.
 const NAMESERVER_TIMEOUT: Duration = Duration::from_secs(2);
@@ -197,7 +221,7 @@ impl SimpleDnsResolver {
     ) -> Result<T, DnsError> {
         time::timeout(NAMESERVER_TIMEOUT, fut)
             .await
-            .map(|r| r.map_err(|e| e!(DnsError::Resolve, e.into())))
+            .map(|r| r.map_err(|e| e!(DnsError::Transport, e.into())))
             .map_err(|_| e!(DnsError::Timeout))?
     }
 
@@ -351,8 +375,8 @@ impl SimpleDnsResolver {
         for _ in 0..MAX_CNAME_DEPTH {
             let (id, query_bytes) = query::build_query(&current_host, qtype)?;
             let response = self.send_query(&query_bytes).await?;
-            let packet = simple_dns::Packet::parse(&response)
-                .map_err(|err| e!(DnsError::Resolve, AnyError::from_std(err)))?;
+            let packet =
+                simple_dns::Packet::parse(&response).map_err(|_| e!(DnsError::InvalidResponse))?;
 
             let has_answer = packet
                 .answers
@@ -381,7 +405,7 @@ impl SimpleDnsResolver {
         qtype: QueryType,
         dns_type: TYPE,
         from_cache: fn(CachedRecord) -> Option<Vec<T>>,
-        parse: fn(&[u8], u16) -> Result<(Vec<T>, u32), DnsError>,
+        parse: fn(&[u8], u16) -> Result<(Vec<T>, u32), QueryError>,
         to_cache: fn(Vec<T>) -> CachedRecord,
     ) -> Result<Vec<T>, DnsError> {
         if let Some(cached) = self.cache.get(host, qtype).and_then(from_cache) {
@@ -398,7 +422,7 @@ impl SimpleDnsResolver {
                 .send_query_following_cnames(name.clone(), dns_type)
                 .await
             {
-                Ok((response, id)) => parse(&response, id),
+                Ok((response, id)) => parse(&response, id).map_err(DnsError::from),
                 Err(e) => Err(e),
             };
             match res {

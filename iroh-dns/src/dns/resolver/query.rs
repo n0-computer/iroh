@@ -2,13 +2,31 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use n0_error::{StdResultExt, e};
+use n0_error::{AnyError, e, stack_error};
 use simple_dns::{
     CLASS, Name, Packet, PacketFlag, QCLASS, QTYPE, Question, RCODE, TYPE,
     rdata::{A, AAAA, RData},
 };
 
-use crate::dns::{DnsError, TxtRecordData};
+use crate::dns::TxtRecordData;
+
+/// Errors that can occur while building a query packet or parsing a response.
+///
+/// Mapped to [`crate::dns::DnsError`] by the resolver layer.
+#[allow(missing_docs)]
+#[stack_error(derive, add_meta, std_sources)]
+pub(super) enum QueryError {
+    #[error("failed to build query packet")]
+    BuildQuery { source: AnyError },
+    #[error("malformed DNS response")]
+    Malformed { source: AnyError },
+    #[error("response did not match query")]
+    Unexpected {},
+    #[error("domain name does not exist (NXDOMAIN)")]
+    NxDomain {},
+    #[error("server returned error: {rcode}")]
+    ServerFailure { rcode: String },
+}
 
 /// EDNS(0) advertised UDP payload size.
 ///
@@ -24,12 +42,12 @@ const EDNS_UDP_PAYLOAD_SIZE: u16 = 1232;
 /// responses up to [`EDNS_UDP_PAYLOAD_SIZE`] bytes over UDP.
 ///
 /// Returns `(query_id, wire_bytes)`.
-pub(super) fn build_query(host: &str, qtype: TYPE) -> Result<(u16, Vec<u8>), DnsError> {
+pub(super) fn build_query(host: &str, qtype: TYPE) -> Result<(u16, Vec<u8>), QueryError> {
     let id: u16 = rand::random();
     let mut packet = Packet::new_query(id);
     packet.set_flags(PacketFlag::RECURSION_DESIRED);
 
-    let name = Name::new(host).anyerr()?;
+    let name = Name::new(host).map_err(|e| e!(QueryError::BuildQuery, AnyError::from_std(e)))?;
     let question = Question::new(name, QTYPE::TYPE(qtype), QCLASS::CLASS(CLASS::IN), false);
     packet.questions.push(question);
 
@@ -40,7 +58,9 @@ pub(super) fn build_query(host: &str, qtype: TYPE) -> Result<(u16, Vec<u8>), Dns
         opt_codes: vec![],
     });
 
-    let bytes = packet.build_bytes_vec().anyerr()?;
+    let bytes = packet
+        .build_bytes_vec()
+        .map_err(|e| e!(QueryError::BuildQuery, AnyError::from_std(e)))?;
     Ok((id, bytes))
 }
 
@@ -82,17 +102,17 @@ pub(super) fn cname_target(packet: &Packet<'_>, qname: &str) -> Option<String> {
 ///
 /// Validates per RFC 5452: transaction ID, QR flag, and question section must match
 /// the original query to prevent spoofed responses.
-fn check_response(packet: &Packet, expected_id: u16) -> Result<(), DnsError> {
+fn check_response(packet: &Packet, expected_id: u16) -> Result<(), QueryError> {
     if !packet.has_flags(PacketFlag::RESPONSE) {
-        return Err(e!(DnsError::InvalidResponse));
+        return Err(e!(QueryError::Unexpected));
     }
     if packet.id() != expected_id {
-        return Err(e!(DnsError::InvalidResponse));
+        return Err(e!(QueryError::Unexpected));
     }
     match packet.rcode() {
         RCODE::NoError => Ok(()),
-        RCODE::NameError => Err(e!(DnsError::NxDomain)),
-        rcode => Err(e!(DnsError::ServerError {
+        RCODE::NameError => Err(e!(QueryError::NxDomain)),
+        rcode => Err(e!(QueryError::ServerFailure {
             rcode: format!("{rcode:?}"),
         })),
     }
@@ -120,8 +140,9 @@ fn parse_response<T>(
     data: &[u8],
     expected_id: u16,
     extract: impl Fn(&RData<'_>) -> Option<T>,
-) -> Result<(Vec<T>, u32), DnsError> {
-    let packet = Packet::parse(data).anyerr()?;
+) -> Result<(Vec<T>, u32), QueryError> {
+    let packet =
+        Packet::parse(data).map_err(|e| e!(QueryError::Malformed, AnyError::from_std(e)))?;
     check_response(&packet, expected_id)?;
 
     let qname = packet.questions.first().map(|q| q.qname.clone());
@@ -147,7 +168,7 @@ fn parse_response<T>(
 pub(super) fn parse_a_response(
     data: &[u8],
     expected_id: u16,
-) -> Result<(Vec<Ipv4Addr>, u32), DnsError> {
+) -> Result<(Vec<Ipv4Addr>, u32), QueryError> {
     parse_response(data, expected_id, |rdata| match rdata {
         RData::A(A { address }) => Some(Ipv4Addr::from(*address)),
         _ => None,
@@ -158,7 +179,7 @@ pub(super) fn parse_a_response(
 pub(super) fn parse_aaaa_response(
     data: &[u8],
     expected_id: u16,
-) -> Result<(Vec<Ipv6Addr>, u32), DnsError> {
+) -> Result<(Vec<Ipv6Addr>, u32), QueryError> {
     parse_response(data, expected_id, |rdata| match rdata {
         RData::AAAA(AAAA { address }) => Some(Ipv6Addr::from(*address)),
         _ => None,
@@ -169,7 +190,7 @@ pub(super) fn parse_aaaa_response(
 pub(super) fn parse_txt_response(
     data: &[u8],
     expected_id: u16,
-) -> Result<(Vec<TxtRecordData>, u32), DnsError> {
+) -> Result<(Vec<TxtRecordData>, u32), QueryError> {
     parse_response(data, expected_id, |rdata| match rdata {
         RData::TXT(txt) => Some(extract_txt_record_data(txt)),
         _ => None,

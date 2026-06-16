@@ -24,8 +24,10 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use jni::objects::{IntoAuto as _, JByteArray, JList, JObject, JValue};
-use jni::{jni_sig, jni_str};
+use jni::{
+    jni_sig, jni_str,
+    objects::{IntoAuto as _, JByteArray, JList, JObject, JValue},
+};
 use tracing::{trace, warn};
 
 use super::{DNS_PORT, DnsConfig, DnsProtocol, Nameserver};

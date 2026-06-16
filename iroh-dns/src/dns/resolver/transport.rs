@@ -1,15 +1,46 @@
 //! DNS transport implementations: UDP, TCP, TLS, and HTTPS.
 
-use std::net::SocketAddr;
 #[cfg(with_crypto_provider)]
 use std::sync::Arc;
+use std::{io, net::SocketAddr};
 
 #[cfg(with_crypto_provider)]
-use n0_error::{AnyError, StdResultExt};
+use n0_error::AnyError;
+use n0_error::{e, stack_error};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[cfg(with_crypto_provider)]
-use crate::dns::DnsError;
+/// Errors that can occur while sending a query to a single nameserver and
+/// reading its response.
+///
+/// Mapped to [`crate::dns::DnsError::Transport`] by the resolver layer.
+#[allow(missing_docs)]
+#[stack_error(derive, add_meta, std_sources)]
+pub(super) enum TransportError {
+    #[error("transport I/O failed")]
+    Io {
+        #[error(from)]
+        source: io::Error,
+    },
+    #[error("response from unexpected source {actual}, expected {expected}")]
+    UnexpectedSource {
+        expected: SocketAddr,
+        actual: SocketAddr,
+    },
+    #[error("query too large for TCP framing")]
+    QueryTooLarge {},
+    #[cfg(with_crypto_provider)]
+    #[error("invalid TLS server name")]
+    InvalidServerName { source: AnyError },
+    #[cfg(with_crypto_provider)]
+    #[error("DNS-over-HTTPS request failed")]
+    Http {
+        #[error(from)]
+        source: reqwest::Error,
+    },
+    #[cfg(with_crypto_provider)]
+    #[error("failed to build HTTPS client")]
+    BuildClient { source: AnyError },
+}
 
 // Known limitation: TCP and TLS connections are not reused across queries.
 // Each query opens a fresh connection, which means a full TLS handshake per
@@ -28,7 +59,7 @@ use crate::dns::DnsError;
 /// Each query uses a fresh socket with a random ephemeral source port to
 /// prevent cache poisoning. The response source address is validated against
 /// the target nameserver.
-pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, TransportError> {
     let unspecified: std::net::IpAddr = if addr.is_ipv6() {
         std::net::Ipv6Addr::UNSPECIFIED.into()
     } else {
@@ -41,21 +72,22 @@ pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
     let mut buf = vec![0u8; 4096];
     let (len, src) = socket.recv_from(&mut buf).await?;
     if src != addr {
-        return Err(std::io::Error::other(format!(
-            "DNS response from unexpected source {src}, expected {addr}"
-        )))?;
+        return Err(e!(TransportError::UnexpectedSource {
+            expected: addr,
+            actual: src,
+        }));
     }
     buf.truncate(len);
     Ok(buf)
 }
 
 /// Send a DNS query over TCP (RFC 1035 Section 4.2.2: 2-byte length prefix).
-pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, TransportError> {
     let mut stream = tokio::net::TcpStream::connect(addr).await?;
 
     // Write length-prefixed query
     let len = u16::try_from(query.len())
-        .map_err(|_| std::io::Error::other("DNS query too large for TCP framing"))?
+        .map_err(|_| e!(TransportError::QueryTooLarge))?
         .to_be_bytes();
     stream.write_all(&len).await?;
     stream.write_all(query).await?;
@@ -80,7 +112,7 @@ pub(super) async fn tls_query(
     query: &[u8],
     tls_config: &Arc<rustls::ClientConfig>,
     server_name: Option<&str>,
-) -> Result<Vec<u8>, std::io::Error> {
+) -> Result<Vec<u8>, TransportError> {
     let connector = tokio_rustls::TlsConnector::from(tls_config.clone());
     let tcp_stream = tokio::net::TcpStream::connect(addr).await?;
 
@@ -88,14 +120,14 @@ pub(super) async fn tls_query(
     // validate against the IP the connection was made to.
     let server_name = match server_name {
         Some(name) => rustls::pki_types::ServerName::try_from(name.to_string())
-            .map_err(std::io::Error::other)?,
+            .map_err(|e| e!(TransportError::InvalidServerName, AnyError::from_std(e)))?,
         None => rustls::pki_types::ServerName::IpAddress(addr.ip().into()),
     };
     let mut stream = connector.connect(server_name, tcp_stream).await?;
 
     // Write length-prefixed query (same framing as TCP)
     let len = u16::try_from(query.len())
-        .map_err(|_| std::io::Error::other("DNS query too large for TCP framing"))?
+        .map_err(|_| e!(TransportError::QueryTooLarge))?
         .to_be_bytes();
     stream.write_all(&len).await?;
     stream.write_all(query).await?;
@@ -116,7 +148,7 @@ pub(super) async fn tls_query(
 pub(super) fn build_https_client(
     tls_config: Option<&Arc<rustls::ClientConfig>>,
     resolves: &[(String, SocketAddr)],
-) -> Result<reqwest::Client, DnsError> {
+) -> Result<reqwest::Client, TransportError> {
     let mut builder = reqwest::Client::builder();
     if let Some(config) = tls_config {
         builder = builder.use_preconfigured_tls(config.clone());
@@ -124,7 +156,9 @@ pub(super) fn build_https_client(
     for (host, addr) in resolves {
         builder = builder.resolve(host, *addr);
     }
-    Ok(builder.build().anyerr()?)
+    builder
+        .build()
+        .map_err(|e| e!(TransportError::BuildClient, AnyError::from_std(e)))
 }
 
 /// Send a DNS query over HTTPS (DNS-over-HTTPS, RFC 8484).
@@ -139,7 +173,7 @@ pub(super) async fn https_query(
     server_name: Option<&str>,
     query: &[u8],
     client: &reqwest::Client,
-) -> Result<Vec<u8>, AnyError> {
+) -> Result<Vec<u8>, TransportError> {
     // With a server name, address the URL by hostname (the client pins it to
     // `addr`); otherwise address it by IP.
     let url = match server_name {
@@ -152,15 +186,9 @@ pub(super) async fn https_query(
         .header("accept", "application/dns-message")
         .body(query.to_vec())
         .send()
-        .await
-        .anyerr()?;
+        .await?;
 
-    let bytes = response
-        .error_for_status()
-        .anyerr()?
-        .bytes()
-        .await
-        .anyerr()?;
+    let bytes = response.error_for_status()?.bytes().await?;
     Ok(bytes.to_vec())
 }
 
