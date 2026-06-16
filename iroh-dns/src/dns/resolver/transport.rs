@@ -7,7 +7,9 @@ use std::{io, net::SocketAddr};
 #[cfg(with_crypto_provider)]
 use n0_error::AnyError;
 use n0_error::{e, stack_error};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+use super::pool::ConnPool;
 
 /// Errors that can occur while sending a query to a single nameserver and
 /// reading its response.
@@ -42,17 +44,12 @@ pub(super) enum TransportError {
     BuildClient { source: AnyError },
 }
 
-// Known limitation: TCP and TLS connections are not reused across queries.
-// Each query opens a fresh connection, which means a full TLS handshake per
-// DNS-over-TLS query. This adds significant latency for DoT/DoH workloads.
-// The default UDP-only configuration is not affected.
+// TCP and DoT connections are pooled (see the `pool` module) and reused across
+// queries, so a DNS-over-TLS handshake is paid once and amortized over repeated
+// lookups to the same nameserver.
 //
-// A future improvement could maintain a per-nameserver connection pool for
-// TCP/TLS, similar to how hickory-resolver multiplexes queries over
-// persistent connections.
-//
-// UDP sockets are intentionally not reused (new random source port per query
-// prevents cache poisoning).
+// UDP sockets are intentionally not reused (a new random source port per query
+// helps prevent cache poisoning).
 
 /// Send a DNS query over UDP and receive the response.
 ///
@@ -81,11 +78,12 @@ pub(super) async fn udp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
     Ok(buf)
 }
 
-/// Send a DNS query over TCP (RFC 1035 Section 4.2.2: 2-byte length prefix).
-pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>, TransportError> {
-    let mut stream = tokio::net::TcpStream::connect(addr).await?;
-
-    // Write length-prefixed query
+/// Send a length-prefixed DNS query on an established stream and read the reply
+/// (RFC 1035 Section 4.2.2: 2-byte length prefix). Shared by TCP and DoT.
+async fn framed_query<S>(stream: &mut S, query: &[u8]) -> Result<Vec<u8>, TransportError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let len = u16::try_from(query.len())
         .map_err(|_| e!(TransportError::QueryTooLarge))?
         .to_be_bytes();
@@ -93,11 +91,32 @@ pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
     stream.write_all(query).await?;
     stream.flush().await?;
 
-    // Read length-prefixed response
     let resp_len = stream.read_u16().await? as usize;
     let mut buf = vec![0u8; resp_len];
     stream.read_exact(&mut buf).await?;
     Ok(buf)
+}
+
+/// Send a DNS query over TCP, reusing a pooled connection when one is available.
+///
+/// A pooled connection may have been closed by the server while idle; that only
+/// surfaces on the first read/write, so on failure we dial a fresh connection
+/// and retry the query once.
+pub(super) async fn tcp_query(
+    pool: &ConnPool,
+    addr: SocketAddr,
+    query: &[u8],
+) -> Result<Vec<u8>, TransportError> {
+    if let Some(mut stream) = pool.checkout_tcp(addr)
+        && let Ok(resp) = framed_query(&mut stream, query).await
+    {
+        pool.checkin_tcp(addr, stream);
+        return Ok(resp);
+    }
+    let mut stream = tokio::net::TcpStream::connect(addr).await?;
+    let resp = framed_query(&mut stream, query).await?;
+    pool.checkin_tcp(addr, stream);
+    Ok(resp)
 }
 
 /// Send a DNS query over TLS (DNS-over-TLS, RFC 7858).
@@ -106,38 +125,38 @@ pub(super) async fn tcp_query(addr: SocketAddr, query: &[u8]) -> Result<Vec<u8>,
 /// without it the certificate is validated against the IP address, which works
 /// for providers that include IP SANs (e.g. Google `8.8.8.8`, Cloudflare
 /// `1.1.1.1`) but not for those whose certificates only cover a hostname.
+///
+/// Reuses a pooled connection when one is available, retrying once on a fresh
+/// connection if a pooled one turns out to have been closed while idle.
 #[cfg(with_crypto_provider)]
 pub(super) async fn tls_query(
+    pool: &ConnPool,
     addr: SocketAddr,
     query: &[u8],
     tls_config: &Arc<rustls::ClientConfig>,
     server_name: Option<&str>,
 ) -> Result<Vec<u8>, TransportError> {
+    let key = (addr, server_name.map(str::to_string));
+    if let Some(mut stream) = pool.checkout_tls(&key)
+        && let Ok(resp) = framed_query(&mut stream, query).await
+    {
+        pool.checkin_tls(key, stream);
+        return Ok(resp);
+    }
+
     let connector = tokio_rustls::TlsConnector::from(tls_config.clone());
     let tcp_stream = tokio::net::TcpStream::connect(addr).await?;
-
     // Use the explicit server name for SNI and validation if given, otherwise
     // validate against the IP the connection was made to.
-    let server_name = match server_name {
+    let sni = match server_name {
         Some(name) => rustls::pki_types::ServerName::try_from(name.to_string())
             .map_err(|e| e!(TransportError::InvalidServerName, AnyError::from_std(e)))?,
         None => rustls::pki_types::ServerName::IpAddress(addr.ip().into()),
     };
-    let mut stream = connector.connect(server_name, tcp_stream).await?;
-
-    // Write length-prefixed query (same framing as TCP)
-    let len = u16::try_from(query.len())
-        .map_err(|_| e!(TransportError::QueryTooLarge))?
-        .to_be_bytes();
-    stream.write_all(&len).await?;
-    stream.write_all(query).await?;
-    stream.flush().await?;
-
-    // Read length-prefixed response
-    let resp_len = stream.read_u16().await? as usize;
-    let mut buf = vec![0u8; resp_len];
-    stream.read_exact(&mut buf).await?;
-    Ok(buf)
+    let mut stream = connector.connect(sni, tcp_stream).await?;
+    let resp = framed_query(&mut stream, query).await?;
+    pool.checkin_tls(key, stream);
+    Ok(resp)
 }
 
 /// Build a [`reqwest::Client`] for DNS-over-HTTPS queries.
@@ -279,9 +298,12 @@ mod tests {
     async fn test_tcp_query() {
         let (addr, handle) = mock_tcp_server(&[Ipv4Addr::new(93, 184, 216, 34)]).await;
         let (id, query) = build_query();
-        let (addrs, _) =
-            super::super::query::parse_a_response(&tcp_query(addr, &query).await.unwrap(), id)
-                .unwrap();
+        let pool = ConnPool::new();
+        let (addrs, _) = super::super::query::parse_a_response(
+            &tcp_query(&pool, addr, &query).await.unwrap(),
+            id,
+        )
+        .unwrap();
         assert_eq!(addrs, [Ipv4Addr::new(93, 184, 216, 34)]);
         handle.await.unwrap();
     }
@@ -308,9 +330,12 @@ mod tests {
         let expected: Vec<Ipv4Addr> = (0..50).map(|i| Ipv4Addr::new(10, 0, 0, i)).collect();
         let (addr, handle) = mock_tcp_server(&expected).await;
         let (id, query) = build_query();
-        let (addrs, _) =
-            super::super::query::parse_a_response(&tcp_query(addr, &query).await.unwrap(), id)
-                .unwrap();
+        let pool = ConnPool::new();
+        let (addrs, _) = super::super::query::parse_a_response(
+            &tcp_query(&pool, addr, &query).await.unwrap(),
+            id,
+        )
+        .unwrap();
         assert_eq!(addrs, expected);
         handle.await.unwrap();
     }

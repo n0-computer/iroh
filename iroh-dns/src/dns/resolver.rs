@@ -23,12 +23,14 @@ use super::{BoxIter, Builder, DnsError, DnsProtocol, Nameserver, TxtRecordData};
 use crate::dns::{Resolver, system_config::DnsConfig};
 
 mod cache;
+mod pool;
 mod query;
 mod rtt_map;
 mod transport;
 
 use self::{
     cache::{CachedRecord, DnsCache, QueryType},
+    pool::ConnPool,
     query::{MAX_CNAME_DEPTH, QueryError},
     rtt_map::RttMap,
     transport::TransportError,
@@ -99,6 +101,8 @@ pub(super) struct SimpleDnsResolver {
     /// Smoothed RTT per nameserver (parallel to `nameservers`), used to order
     /// servers and re-probe demoted ones.
     rtt_map: RttMap,
+    /// Pooled TCP/DoT connections, reused across queries.
+    conn_pool: ConnPool,
     cache: DnsCache,
     builder: Builder,
 }
@@ -136,6 +140,7 @@ impl SimpleDnsResolver {
             #[cfg(with_crypto_provider)]
             https_client: Mutex::new(None),
             rtt_map: health,
+            conn_pool: ConnPool::new(),
             cache,
             builder,
         }
@@ -249,8 +254,12 @@ impl SimpleDnsResolver {
                     match Self::with_timeout(transport::udp_query(addr, query_bytes)).await {
                         Ok(resp) if query::is_truncated(&resp) => {
                             debug!(%addr, "UDP response truncated, retrying over TCP");
-                            return Self::with_timeout(transport::tcp_query(addr, query_bytes))
-                                .await;
+                            return Self::with_timeout(transport::tcp_query(
+                                &self.conn_pool,
+                                addr,
+                                query_bytes,
+                            ))
+                            .await;
                         }
                         Ok(resp) => return Ok(resp),
                         Err(e) => {
@@ -261,7 +270,9 @@ impl SimpleDnsResolver {
                 }
                 Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse)))
             }
-            DnsProtocol::Tcp => Self::with_timeout(transport::tcp_query(addr, query_bytes)).await,
+            DnsProtocol::Tcp => {
+                Self::with_timeout(transport::tcp_query(&self.conn_pool, addr, query_bytes)).await
+            }
             #[cfg(with_crypto_provider)]
             DnsProtocol::Tls => {
                 let tls_config = self.tls_config.as_ref().ok_or_else(|| {
@@ -271,6 +282,7 @@ impl SimpleDnsResolver {
                     })
                 })?;
                 Self::with_timeout(transport::tls_query(
+                    &self.conn_pool,
                     addr,
                     query_bytes,
                     tls_config,
