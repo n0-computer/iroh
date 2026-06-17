@@ -205,6 +205,8 @@ pub(crate) struct Options {
 pub(crate) struct EndpointInner {
     #[deref(forward)]
     sock: Arc<SharedEndpointState>,
+    /// Shutdown management.
+    shutdown_state: ShutdownState,
     // empty when shutdown
     actor_task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Channel to send to the internal actor.
@@ -215,6 +217,14 @@ pub(crate) struct EndpointInner {
     runtime: Arc<Runtime>,
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
+    /// The relay servers this endpoint may use.
+    relay_map: RelayMap,
+    /// Watcher for the status of the home relay connections.
+    home_relay_watch: HomeRelayWatcher,
+    pub(crate) tls_config: rustls::ClientConfig,
+    pub(crate) hooks: EndpointHooksList,
+    /// Tracing span for this endpoint.
+    pub(crate) span: Span,
 }
 
 impl Drop for EndpointInner {
@@ -292,7 +302,9 @@ struct ShutdownState {
     ///
     /// This is only set once both [`Self::at_close_start`] and [`Self::at_endpoint_closed`]
     /// are cancelled **and** the [`Actor`] task is no longer running.
-    closed: AtomicBool,
+    ///
+    /// Shared with [`SharedEndpointState::is_closed`] so the transports can observe it.
+    closed: Arc<AtomicBool>,
 }
 
 impl Default for ShutdownState {
@@ -300,7 +312,7 @@ impl Default for ShutdownState {
         Self {
             at_close_start: CancellationToken::new(),
             at_endpoint_closed: CancellationToken::new(),
-            closed: AtomicBool::new(false),
+            closed: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -344,7 +356,8 @@ pub(crate) struct SharedEndpointState {
     remote_actors: ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
 
     // - Shutdown Management
-    shutdown: ShutdownState,
+    /// Set once the endpoint is closed and all tasks are stopped.
+    is_closed: Arc<AtomicBool>,
 
     // - Networking Info
     /// Our discovered direct addresses.
@@ -358,14 +371,12 @@ pub(crate) struct SharedEndpointState {
 
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
-    home_relay_watch: HomeRelayWatcher,
     /// Currently bound IP addresses of all sockets
     #[cfg(not(wasm_browser))]
     ip_bind_addrs: Vec<SocketAddr>,
     /// The DNS resolver to be used in this socket.
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
-    relay_map: RelayMap,
 
     /// Optional Address Lookup
     address_lookup: address_lookup::AddressLookupServices,
@@ -374,13 +385,8 @@ pub(crate) struct SharedEndpointState {
     /// Explicitly configured external addresses to advertise.
     configured_addrs: RwLock<BTreeSet<SocketAddr>>,
 
-    pub(crate) tls_config: rustls::ClientConfig,
-
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
-    pub(crate) hooks: EndpointHooksList,
-    /// Tracing span for this endpoint.
-    pub(crate) span: Span,
 }
 
 impl SharedEndpointState {
@@ -399,17 +405,7 @@ impl SharedEndpointState {
 
     /// Whether the iroh endpoint is closed and all its actors stopped.
     pub(crate) fn is_closed(&self) -> bool {
-        self.shutdown.is_closed()
-    }
-
-    /// Whether [`crate::Endpoint::close`] has been called.
-    fn is_closing(&self) -> bool {
-        self.shutdown.is_closing()
-    }
-
-    /// Returns a future that resolves once endpoint shutdown has started.
-    pub(crate) fn closed(&self) -> WaitForCancellationFutureOwned {
-        self.shutdown.at_close_start.clone().cancelled_owned()
+        self.is_closed.load(Ordering::Relaxed)
     }
 
     /// Get the cached version of addresses.
@@ -498,10 +494,6 @@ impl SharedEndpointState {
                 })
                 .collect()
         })
-    }
-
-    pub(crate) fn home_relay_status(&self) -> impl Watcher<Value = Vec<RelayStatus>> + use<> {
-        self.home_relay_watch.clone()
     }
 
     /// Stores a new set of direct addresses.
@@ -989,11 +981,10 @@ impl EndpointInner {
 
         let sock = Arc::new(SharedEndpointState {
             remote_actors: remote_map.senders(),
-            shutdown: shutdown_state,
+            is_closed: shutdown_state.closed.clone(),
             ipv6_reported,
             mapped_addrs: remote_map.mapped_addrs.clone(),
             address_lookup,
-            relay_map: relay_map.clone(),
             address_lookup_user_data: RwLock::new(address_lookup_user_data),
             configured_addrs: RwLock::new(configured_addrs),
             direct_addrs,
@@ -1002,12 +993,8 @@ impl EndpointInner {
             dns_resolver: dns_resolver.clone(),
             metrics: metrics.clone(),
             local_addrs_watch: transports.local_addrs_watch(),
-            home_relay_watch,
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
-            tls_config: tls_config.clone(),
-            hooks,
-            span: span.clone(),
         });
 
         let mut endpoint_config =
@@ -1071,9 +1058,9 @@ impl EndpointInner {
             sock.clone(),
             port_mapper,
             Arc::new(AsyncMutex::new(net_reporter)),
-            relay_map,
+            relay_map.clone(),
             direct_addr_done_tx,
-            sock.shutdown.at_close_start.child_token(),
+            shutdown_state.at_close_start.child_token(),
         );
 
         let local_interfaces_watcher = network_monitor.interface_state();
@@ -1102,24 +1089,50 @@ impl EndpointInner {
                     shutdown_token.child_token(),
                     local_addrs_watch,
                 )
-                .instrument(info_span!(parent: span, "actor")),
+                .instrument(info_span!(parent: span.clone(), "actor")),
         );
 
         let actor_task = Mutex::new(Some(AbortOnDropHandle::new(actor_task)));
 
         Ok(EndpointInner {
             sock,
+            shutdown_state,
             actor_sender,
             actor_task,
             endpoint,
             runtime,
             static_config,
+            relay_map,
+            home_relay_watch,
+            tls_config,
+            hooks,
+            span,
         })
     }
 
     /// Returns a reference to the underlying [`noq::Endpoint`].
     pub(crate) fn noq_endpoint(&self) -> &noq::Endpoint {
         &self.endpoint
+    }
+
+    /// Whether the iroh endpoint is closed and all its actors stopped.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.shutdown_state.is_closed()
+    }
+
+    /// Whether [`crate::Endpoint::close`] has been called.
+    fn is_closing(&self) -> bool {
+        self.shutdown_state.is_closing()
+    }
+
+    /// Returns a future that resolves once endpoint shutdown has started.
+    pub(crate) fn closed(&self) -> WaitForCancellationFutureOwned {
+        self.shutdown_state.at_close_start.clone().cancelled_owned()
+    }
+
+    /// Watch for changes to the status of the home relay connections.
+    pub(crate) fn home_relay_status(&self) -> impl Watcher<Value = Vec<RelayStatus>> + use<> {
+        self.home_relay_watch.clone()
     }
 
     /// Closes the iroh endpoint.
@@ -1129,15 +1142,15 @@ impl EndpointInner {
     /// after this call.
     ///
     /// [`Poll::Pending`]: std::task::Poll::Pending
-    #[instrument(skip_all, parent = self.sock.span.clone())]
+    #[instrument(skip_all, parent = self.span.clone())]
     pub(crate) async fn close(&self) {
-        if self.sock.is_closed() || self.sock.is_closing() {
+        if self.is_closed() || self.is_closing() {
             return;
         }
         trace!("socket closing...");
 
         // Cancel at_close_start token, which cancels running netreports.
-        self.sock.shutdown.at_close_start.cancel();
+        self.shutdown_state.at_close_start.cancel();
 
         // Remove address lookup services
         self.sock.address_lookup().clear();
@@ -1165,7 +1178,7 @@ impl EndpointInner {
         trace!("wait_all_draining done");
 
         // Start cancellation of all actors.
-        self.sock.shutdown.at_endpoint_closed.cancel();
+        self.shutdown_state.at_endpoint_closed.cancel();
 
         // MutexGuard is not held across await points
         let task = self.actor_task.lock().expect("poisoned").take();
@@ -1191,7 +1204,7 @@ impl EndpointInner {
         // otherwise, the runtime will never shutdown.
         self.runtime.shutdown().await;
 
-        self.sock.shutdown.closed.store(true, Ordering::SeqCst);
+        self.shutdown_state.closed.store(true, Ordering::SeqCst);
 
         trace!("socket closed");
     }
@@ -1209,27 +1222,27 @@ impl EndpointInner {
     ///
     /// This should only be called in the `iroh::Endpoint` `Drop` impl when the
     /// `iroh::Endpoint` is dropped without first calling `Endpoint::close`.
-    #[instrument(skip_all, parent = self.sock.span.clone())]
+    #[instrument(skip_all, parent = self.span.clone())]
     pub(crate) fn abort(&self) {
-        if self.sock.is_closed() || self.sock.is_closing() {
+        if self.is_closed() || self.is_closing() {
             return;
         }
         trace!("socket aborting...");
 
         // Cancel at_close_start token, which cancels running netreports.
-        self.sock.shutdown.at_close_start.cancel();
+        self.shutdown_state.at_close_start.cancel();
 
         self.sock.address_lookup().clear();
 
         // Cancel all actors.
-        self.sock.shutdown.at_endpoint_closed.cancel();
+        self.shutdown_state.at_endpoint_closed.cancel();
 
         // Aborts all tasks, not waiting for any to close gracefully.
         self.runtime.abort();
 
         self.actor_task.lock().expect("poisoned").take();
 
-        self.sock.shutdown.closed.store(true, Ordering::SeqCst);
+        self.shutdown_state.closed.store(true, Ordering::SeqCst);
         trace!("socket closed");
     }
 
