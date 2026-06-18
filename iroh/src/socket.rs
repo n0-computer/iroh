@@ -1700,63 +1700,6 @@ impl Actor {
     /// This is decoupled from receiving the network change, because we try to debounce
     /// network changes as they often arrive in groups.
     fn notify_quic_network_change(&mut self, is_major: bool) {
-        #[derive(Debug)]
-        struct Hint {
-            local_addrs: FxHashSet<IpAddr>,
-        }
-
-        impl NetworkChangeHint for Hint {
-            fn is_path_recoverable(
-                &self,
-                _path_id: noq::PathId,
-                network_path: noq_proto::FourTuple,
-            ) -> bool {
-                match MultipathMappedAddr::from(network_path.remote()) {
-                    MultipathMappedAddr::Mixed(_) => {
-                        // This address is only ever used to send an Initial packet to, it
-                        // should never appear as an established path.
-                        error!("A mixed address can not be used for network changes");
-                        false
-                    }
-                    MultipathMappedAddr::Relay(_) => {
-                        // We pretend the relay path is never affected by link changes. The
-                        // relay actor transparently reconnects and the addresses never
-                        // change.
-                        true
-                    }
-                    MultipathMappedAddr::Ip(_) => {
-                        // If we no longer have a valid interface to send from for a local
-                        // IP then it can not be recovered.
-                        match network_path.local_ip() {
-                            Some(local_ip) => self.local_addrs.contains(&local_ip),
-                            None => true,
-                        }
-                    }
-                    MultipathMappedAddr::Custom(_) => {
-                        // Assume it is unrecoverable for now
-                        false
-                    }
-                }
-            }
-        }
-
-        let hint = Hint {
-            #[cfg(not(wasm_browser))]
-            local_addrs: {
-                let interfaces = self.local_interfaces_watcher.get();
-                interfaces
-                    .local_addresses
-                    .regular
-                    .iter()
-                    .chain(interfaces.local_addresses.loopback.iter())
-                    .copied()
-                    .collect()
-            },
-            #[cfg(wasm_browser)]
-            local_addrs: Default::default(),
-        };
-
-        self.endpoint.handle_network_change(Some(Arc::new(hint)));
         self.remote_map.on_network_change(is_major);
     }
 
