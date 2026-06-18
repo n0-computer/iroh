@@ -1326,7 +1326,15 @@ impl noq::UdpSender for Sender {
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(ref err)) => {
-                warn!(dst=%network_path, "dropped transmit: {err:#}");
+                let kind = err.kind();
+                if kind == std::io::ErrorKind::HostUnreachable
+                    || kind == std::io::ErrorKind::NetworkUnreachable
+                    || kind == std::io::ErrorKind::NetworkDown
+                {
+                    trace!(dst=%network_path, "dropped transmit: {err:#}");
+                } else {
+                    warn!(dst=%network_path, "dropped transmit: {err:#}");
+                }
                 Poll::Ready(Ok(()))
             }
             Poll::Pending => {
