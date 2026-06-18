@@ -77,6 +77,8 @@ enum QadProbeError {
     Quic { source: iroh_relay::quic::Error },
     #[error("Receiver dropped")]
     ReceiverDropped,
+    #[error("No route to host")]
+    NoRoute,
 }
 
 /// Configuration for the net report component.
@@ -835,6 +837,13 @@ async fn run_probe_v4(
         .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
 
     trace!(?relay_addr, "resolved relay server address");
+
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if let Err(err) = socket.connect(relay_addr) {
+            debug!(?relay_addr, ?err, "no IPv4 route to host, skipping QAD v4 probe");
+            return Err(e!(QadProbeError::NoRoute));
+        }
+    }
     let host = relay
         .url
         .host_str()
@@ -904,6 +913,13 @@ async fn run_probe_v6(
         .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
 
     trace!(?relay_addr, "resolved relay server address");
+
+    if let Ok(socket) = std::net::UdpSocket::bind("[::]:0") {
+        if let Err(err) = socket.connect(relay_addr) {
+            debug!(?relay_addr, ?err, "no IPv6 route to host, skipping QAD v6 probe");
+            return Err(e!(QadProbeError::NoRoute));
+        }
+    }
     let host = relay
         .url
         .host_str()
