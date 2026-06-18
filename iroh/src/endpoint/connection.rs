@@ -813,7 +813,9 @@ impl<T: ConnectionState> Connection<T> {
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
     /// consequence, the peer won’t be notified that a stream has been opened until the
-    /// stream is actually used.
+    /// stream is actually used. Each call opens a distinct stream on this connection, so
+    /// it is normal to call this repeatedly when your protocol uses multiple streams.
+    /// Only streams that are still open count against the concurrent stream limit.
     #[inline]
     pub fn open_uni(&self) -> OpenUni<'_> {
         self.inner.open_uni()
@@ -823,8 +825,11 @@ impl<T: ConnectionState> Connection<T> {
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
     /// consequence, the peer won't be notified that a stream has been opened until the
-    /// stream is actually used. Calling [`open_bi`] then waiting on the [`RecvStream`]
-    /// without writing anything to [`SendStream`] will never succeed.
+    /// stream is actually used. Each call opens a distinct stream on this connection, so
+    /// it is normal to call this repeatedly when your protocol uses multiple streams.
+    /// Only streams that are still open count against the concurrent stream limit.
+    /// Calling [`open_bi`] then waiting on the [`RecvStream`] without writing anything to
+    /// [`SendStream`] will never succeed.
     ///
     /// [`open_bi`]: Connection::open_bi
     /// [`SendStream`]: crate::endpoint::SendStream
