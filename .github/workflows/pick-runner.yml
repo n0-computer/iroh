@@ -75,20 +75,17 @@ on:
         type: number
         default: 3
       core_runner:
-        description: JSON array for the `core` class (always this)
+        description: >
+          JSON array for the `core` class (always this). Also the label set
+          used to count idle self-hosted capacity for this platform
+          (case-insensitive). Pass e.g. '["self-hosted","windows","x64"]' to
+          route a Windows batch.
         type: string
         default: '["self-hosted","linux","X64"]'
       overflow_runner:
         description: JSON array for overflow slots that land on Blacksmith
         type: string
         default: '["blacksmith-4vcpu-ubuntu-2204"]'
-      idle_labels:
-        description: >
-          JSON array of runner labels used to count idle self-hosted capacity
-          for this platform. Case-insensitive. Defaults to linux X64; pass e.g.
-          '["self-hosted","windows","x64"]' to route a Windows batch.
-        type: string
-        default: '["self-hosted","linux","x64"]'
       blacksmith_busy_match:
         description: >
           Substring a busy Blacksmith runner's labels must contain to count
@@ -201,7 +198,6 @@ jobs:
           MAX_BLACKSMITH_CONCURRENT: ${{ inputs.max_blacksmith_concurrent }}
           CORE_RUNNER: ${{ inputs.core_runner }}
           OVERFLOW_RUNNER: ${{ inputs.overflow_runner }}
-          IDLE_LABELS: ${{ inputs.idle_labels }}
           BS_MATCH: ${{ inputs.blacksmith_busy_match }}
           ORG: ${{ inputs.org }}
           GH_TOKEN: ${{ secrets.RUNNER_READ_TOKEN || github.token }}
@@ -213,7 +209,7 @@ jobs:
           # One paginated fetch, counted twice. Avoid a second round-trip.
           RUNNERS_JSON="$(gh api "/orgs/${ORG}/actions/runners" --paginate 2>/dev/null || echo '')"
 
-          IDLE="$(echo "$RUNNERS_JSON" | jq -s --argjson want "$IDLE_LABELS" '[.[] | .runners[]?]
+          IDLE="$(echo "$RUNNERS_JSON" | jq -s --argjson want "$CORE_RUNNER" '[.[] | .runners[]?]
                  | [.[] | select(.status=="online" and .busy==false
                                  and ([.labels[].name | ascii_downcase]
                                       | contains($want | map(ascii_downcase))))]

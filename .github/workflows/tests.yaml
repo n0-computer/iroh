@@ -40,7 +40,6 @@ jobs:
   pick-runner-windows:
     uses: "./.github/workflows/pick-runner.yml"
     with:
-      idle_labels: '["self-hosted","windows","x64"]'
       core_runner: '["self-hosted","windows","x64"]'
       overflow_runner: '["blacksmith-4vcpu-windows-2025"]'
       blacksmith_busy_match: windows
