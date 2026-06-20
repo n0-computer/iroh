@@ -303,7 +303,9 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          release: false
+          # Blacksmith's Windows image ships no pre-installed MSYS2 (C:\msys64),
+          # so install it there. Self-hosted keeps the pre-installed one (faster).
+          release: ${{ startsWith(runner.name, 'blacksmith-') }}
 
       - name: Install aws-lc-sys build dependencies
         shell: powershell
@@ -417,7 +419,9 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          release: false
+          # Blacksmith's Windows image ships no pre-installed MSYS2 (C:\msys64),
+          # so install it there. Self-hosted keeps the pre-installed one (faster).
+          release: ${{ startsWith(runner.name, 'blacksmith-') }}
 
       - name: Install aws-lc-sys build dependencies
         shell: powershell
