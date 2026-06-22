@@ -216,7 +216,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use simple_dns::{
-        CLASS, Name, Packet, PacketFlag, ResourceRecord, TYPE,
+        CLASS, Name, Packet, PacketFlag, QCLASS, QTYPE, Question, ResourceRecord, TYPE,
         rdata::{A, RData},
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -226,6 +226,13 @@ mod tests {
     fn build_a_response(id: u16, addrs: &[Ipv4Addr]) -> Vec<u8> {
         let mut packet = Packet::new_reply(id);
         packet.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
+        // Echo the question section, as a real server does.
+        packet.questions.push(Question::new(
+            Name::new_unchecked("example.com"),
+            QTYPE::TYPE(TYPE::A),
+            QCLASS::CLASS(CLASS::IN),
+            false,
+        ));
         for addr in addrs {
             let rdata = RData::A(A {
                 address: u32::from(*addr),
