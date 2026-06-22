@@ -382,6 +382,17 @@ impl SimpleDnsResolver {
                 biased;
                 // A dial attempt completed.
                 Some((idx, start, res)) = dials.next(), if !dials.is_empty() => match res {
+                    // A SERVFAIL or REFUSED response means this server cannot
+                    // answer for the name (overloaded, not authoritative, policy
+                    // block). Treat it like a transport failure and race the next
+                    // server rather than making it the final answer; another
+                    // nameserver may still resolve the name.
+                    Ok(resp) if let Some(rcode) = query::server_failure_rcode(&resp) => {
+                        self.rtt_map.record_failure(idx);
+                        last_err = Some(e!(DnsError::ServerError { rcode: rcode.to_string() }));
+                        // Fail fast: start the next attempt now rather than waiting.
+                        next_attempt.as_mut().set_none();
+                    }
                     Ok(resp) => {
                         self.rtt_map.record_success(idx, start.elapsed());
                         return Ok(resp);
@@ -826,6 +837,72 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// Spawns a mock UDP nameserver that answers one query with `rcode`,
+    /// echoing the question and adding `answer` as an A record when given.
+    async fn spawn_mock_ns(
+        rcode: simple_dns::RCODE,
+        answer: Option<Ipv4Addr>,
+    ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+        use simple_dns::{
+            CLASS, Packet, PacketFlag, ResourceRecord,
+            rdata::{A, RData},
+        };
+
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = socket.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let mut buf = vec![0u8; 512];
+            let (len, peer) = socket.recv_from(&mut buf).await.unwrap();
+            let query = Packet::parse(&buf[..len]).unwrap();
+            let question = query.questions[0].clone();
+            let mut reply = Packet::new_reply(query.id());
+            reply.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
+            *reply.rcode_mut() = rcode;
+            if let Some(ip) = answer {
+                reply.answers.push(ResourceRecord::new(
+                    question.qname.clone(),
+                    CLASS::IN,
+                    300,
+                    RData::A(A {
+                        address: u32::from(ip),
+                    }),
+                ));
+            }
+            reply.questions.push(question);
+            socket
+                .send_to(&reply.build_bytes_vec().unwrap(), peer)
+                .await
+                .unwrap();
+        });
+        (addr, handle)
+    }
+
+    /// A SERVFAIL or REFUSED response from the fastest nameserver must not be
+    /// the final answer: the resolver races on to a nameserver that can answer.
+    #[tokio::test]
+    async fn servfail_winner_falls_through_to_next_nameserver() {
+        let (bad, bad_handle) = spawn_mock_ns(simple_dns::RCODE::ServerFailure, None).await;
+        let (good, good_handle) =
+            spawn_mock_ns(simple_dns::RCODE::NoError, Some(Ipv4Addr::new(10, 1, 2, 3))).await;
+
+        // `bad` is listed first, so it is the fastest by default ordering and
+        // wins the race with a SERVFAIL; the lookup must fall through to `good`.
+        let resolver = DnsResolver::builder()
+            .with_nameserver(bad, DnsProtocol::Udp)
+            .with_nameserver(good, DnsProtocol::Udp)
+            .build();
+
+        let addrs: Vec<_> = resolver
+            .lookup_ipv4("test.example", TIMEOUT)
+            .await
+            .unwrap()
+            .collect();
+        assert_eq!(addrs, [IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3))]);
+
+        bad_handle.await.unwrap();
+        good_handle.await.unwrap();
     }
 
     /// A hosts-file entry must override DNS and resolve without any network
