@@ -16,9 +16,16 @@ pub(super) fn read_system_dns() -> Result<DnsConfig, std::io::Error> {
 /// - `nameserver <ip>` -- adds a DNS nameserver
 /// - `search <domain> [<domain> ...]` -- sets the search domain list
 /// - `domain <domain>` -- equivalent to a single-entry search list
+/// - `options ndots:<n>` -- sets the `ndots` search threshold
 ///
 /// The `search` and `domain` directives are mutually exclusive per resolv.conf(5);
 /// the last one seen wins, matching standard resolver behavior.
+///
+/// `options timeout:`, `options attempts:`, `options rotate`, and `sortlist`
+/// are deliberately ignored. iroh wraps every lookup in its own timeout and
+/// per-nameserver attempt budget, orders nameservers by measured RTT (which
+/// subsumes `rotate`), and selects addresses itself (which subsumes
+/// `sortlist`), so honoring these would have no observable effect.
 fn parse_resolv_conf(content: &str) -> DnsConfig {
     let mut servers = Vec::new();
     let mut search_domains = Vec::new();
