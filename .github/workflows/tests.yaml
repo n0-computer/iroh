@@ -114,7 +114,7 @@ jobs:
               # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk                                                                                                
             fi     
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.git-ref }}
 
@@ -251,7 +251,7 @@ jobs:
               # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk
             fi
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.git-ref }}
 
@@ -362,7 +362,7 @@ jobs:
             release-arch: aarch64
             runner: [self-hosted, macOS, ARM64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - name: cargo check
         run: |
@@ -402,7 +402,7 @@ jobs:
               # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk
             fi
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.git-ref }}
 
