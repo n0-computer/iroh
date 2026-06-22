@@ -54,4 +54,4 @@ Smartphone<!-- (please complete the following information) -->:
       the issue being reported and wrote this as concisely and clearly
       as they could. Taking full responsibility for the issue being
       accurate.
-- [ ] This issue isn't slop.
+- [ ] This issue isn't slop, and is backed up by evidence.
