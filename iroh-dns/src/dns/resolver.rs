@@ -584,8 +584,10 @@ mod tests {
 
     use n0_future::time::Duration;
 
-    use super::super::{DnsProtocol, DnsResolver};
-    use super::{Builder, CachedRecord, QueryType, SimpleDnsResolver};
+    use super::{
+        super::{DnsProtocol, DnsResolver},
+        Builder, CachedRecord, QueryType, SimpleDnsResolver,
+    };
 
     const TIMEOUT: Duration = Duration::from_secs(5);
     const GOOGLE_DNS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 53);
