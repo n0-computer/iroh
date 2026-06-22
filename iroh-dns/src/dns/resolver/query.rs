@@ -243,11 +243,11 @@ fn extract_txt_record_data(txt: &simple_dns::rdata::TXT<'_>) -> TxtRecordData {
 
 /// Returns true if the response has the TC (truncation) flag set.
 ///
-/// Checks the raw header byte directly instead of parsing the full packet,
-/// since a truncated packet may fail to parse entirely.
+/// Reads only the header flags, so it works even on a truncated packet whose
+/// body fails to parse. A buffer too short to hold a header is treated as not
+/// truncated; it will fail to parse downstream.
 pub(super) fn is_truncated(data: &[u8]) -> bool {
-    // TC bit is bit 1 of the third byte in the DNS header (RFC 1035 Section 4.1.1).
-    data.len() >= 3 && (data[2] & 0x02) != 0
+    header_buffer::has_flags(data, PacketFlag::TRUNCATION).unwrap_or(false)
 }
 
 #[cfg(test)]
