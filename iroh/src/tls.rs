@@ -47,6 +47,7 @@ pub(crate) struct TlsConfig {
     client_verifier: Arc<verifier::ClientCertificateVerifier>,
     session_store: Arc<dyn rustls::client::ClientSessionStore>,
     crypto_provider: Arc<rustls::crypto::CryptoProvider>,
+    max_tls_tickets: usize,
 }
 
 impl TlsConfig {
@@ -64,6 +65,7 @@ impl TlsConfig {
             )),
             crypto_provider,
             secret_key,
+            max_tls_tickets,
         }
     }
 
@@ -108,6 +110,12 @@ impl TlsConfig {
             .with_protocol_versions(verifier::PROTOCOL_VERSIONS)?
             .with_client_cert_verifier(self.client_verifier.clone())
             .with_cert_resolver(self.cert_resolver.clone());
+        if self.max_tls_tickets == 0 {
+            crypto.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
+        } else {
+            crypto.session_storage =
+                rustls::server::ServerSessionMemoryCache::new(self.max_tls_tickets);
+        }
         if keylog {
             warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
             crypto.key_log = Arc::new(rustls::KeyLogFile::new());

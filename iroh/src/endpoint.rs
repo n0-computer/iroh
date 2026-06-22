@@ -257,11 +257,16 @@ impl Builder {
 
         let metrics = EndpointMetrics::default();
 
-        let tls_config = self
+        let mut tls_config = self
             .ca_tls_config
             .unwrap_or_default()
             .client_config(crypto_provider)
             .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
+        tls_config.resumption = if self.max_tls_tickets == 0 {
+            rustls::client::Resumption::disabled()
+        } else {
+            rustls::client::Resumption::in_memory_sessions(self.max_tls_tickets)
+        };
 
         let sock_opts = socket::Options {
             transports: self.transports,
