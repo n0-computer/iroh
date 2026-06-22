@@ -109,6 +109,13 @@ fn check_response(packet: &Packet, expected_id: u16) -> Result<(), QueryError> {
     if packet.id() != expected_id {
         return Err(e!(QueryError::Unexpected));
     }
+    // A well-formed response echoes the query's question section (RFC 1035
+    // Section 4.1.2). Reject a question-less response: without a question,
+    // `name_matches` would accept answers for any name, so a spoofed reply that
+    // guessed the transaction ID could inject records for an arbitrary host.
+    if packet.questions.is_empty() {
+        return Err(e!(QueryError::Unexpected));
+    }
     match packet.rcode() {
         RCODE::NoError => Ok(()),
         RCODE::NameError => Err(e!(QueryError::NxDomain)),
@@ -119,8 +126,11 @@ fn check_response(packet: &Packet, expected_id: u16) -> Result<(), QueryError> {
 }
 
 /// Check whether a resource record's name matches the queried name or its
-/// CNAME-resolved canonical name. If no question section is present
-/// (shouldn't happen in practice), accept all records.
+/// CNAME-resolved canonical name.
+///
+/// `qname` is `None` only for a response with no question section, which
+/// [`check_response`] already rejects, so the `None` arm is unreachable for
+/// validated responses and conservatively matches nothing.
 fn name_matches(
     rr_name: &Name<'_>,
     qname: Option<&Name<'_>>,
@@ -128,7 +138,7 @@ fn name_matches(
 ) -> bool {
     match qname {
         Some(q) => rr_name == q || canonical.is_some_and(|c| rr_name == c),
-        None => true, // No question section -- accept all matching record types.
+        None => false,
     }
 }
 
@@ -393,6 +403,29 @@ mod tests {
         let packet = Packet::parse(&resp).unwrap();
         let target = cname_target(&packet, "alias.example.com");
         assert_eq!(target.as_deref(), Some("real.example.com"));
+    }
+
+    #[test]
+    fn reject_response_without_question_section() {
+        // A response carrying answers but no question section must be rejected,
+        // even with the correct transaction ID, so it cannot inject records for
+        // an arbitrary name.
+        let (id, _) = make_query("example.com");
+        let mut packet = Packet::new_reply(id);
+        packet.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
+        packet.answers.push(ResourceRecord::new(
+            Name::new_unchecked("attacker.example"),
+            CLASS::IN,
+            300,
+            RData::A(A {
+                address: u32::from(Ipv4Addr::new(6, 6, 6, 6)),
+            }),
+        ));
+        let resp = packet.build_bytes_vec().unwrap();
+        assert!(matches!(
+            parse_a_response(&resp, id),
+            Err(QueryError::Unexpected { .. })
+        ));
     }
 
     #[test]
