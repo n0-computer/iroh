@@ -382,20 +382,21 @@ impl SimpleDnsResolver {
                 biased;
                 // A dial attempt completed.
                 Some((idx, start, res)) = dials.next(), if !dials.is_empty() => match res {
-                    // A SERVFAIL or REFUSED response means this server cannot
-                    // answer for the name (overloaded, not authoritative, policy
-                    // block). Treat it like a transport failure and race the next
-                    // server rather than making it the final answer; another
-                    // nameserver may still resolve the name.
-                    Ok(resp) if let Some(rcode) = query::server_failure_rcode(&resp) => {
-                        self.rtt_map.record_failure(idx);
-                        last_err = Some(e!(DnsError::ServerError { rcode: rcode.to_string() }));
-                        // Fail fast: start the next attempt now rather than waiting.
-                        next_attempt.as_mut().set_none();
-                    }
                     Ok(resp) => {
-                        self.rtt_map.record_success(idx, start.elapsed());
-                        return Ok(resp);
+                        // A SERVFAIL or REFUSED response means this server cannot
+                        // answer for the name (overloaded, not authoritative, policy
+                        // block). Treat it like a transport failure and race the next
+                        // server rather than making it the final answer; another
+                        // nameserver may still resolve the name.
+                        if let Some(rcode) = query::server_failure_rcode(&resp) {
+                            self.rtt_map.record_failure(idx);
+                            last_err = Some(e!(DnsError::ServerError { rcode: rcode.to_string() }));
+                            // Fail fast: start the next attempt now rather than waiting.
+                            next_attempt.as_mut().set_none();
+                        } else {
+                            self.rtt_map.record_success(idx, start.elapsed());
+                            return Ok(resp);
+                        }
                     }
                     Err(e) => {
                         self.rtt_map.record_failure(idx);

@@ -40,7 +40,7 @@ impl Hosts {
     /// Parses hosts-file content into a name-to-address mapping.
     ///
     /// Each non-comment line has the form `address host [host ...]`. Names are
-    /// lowercased; comments (`#` to end of line) and unparseable addresses are
+    /// lowercased; comments (`#` to end of line) and unparsable addresses are
     /// skipped.
     fn parse(content: &str) -> Self {
         let mut by_name: HashMap<String, Entry> = HashMap::new();
@@ -58,7 +58,7 @@ impl Hosts {
                 continue;
             };
             let Ok(addr) = addr.parse::<IpAddr>() else {
-                warn!(%addr, "ignoring unparseable address in hosts file");
+                warn!(%addr, "ignoring unparsable address in hosts file");
                 continue;
             };
             for name in fields {

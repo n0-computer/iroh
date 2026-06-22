@@ -20,14 +20,13 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 
-pub(crate) use hosts::Hosts;
-
 #[cfg(target_os = "android")]
 pub use android::install_android_jni_context;
 #[cfg(target_os = "android")]
 use android::read_system_dns;
 #[cfg(target_vendor = "apple")]
 use apple::read_system_dns;
+pub(crate) use hosts::Hosts;
 #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 use unix::read_system_dns;
 #[cfg(windows)]

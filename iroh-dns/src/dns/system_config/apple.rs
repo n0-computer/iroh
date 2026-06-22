@@ -49,7 +49,7 @@ pub(super) fn read_system_dns() -> Result<DnsConfig, std::io::Error> {
                 DnsProtocol::Udp,
             )),
             Err(err) => {
-                warn!(nameserver = %s, %err, "ignoring unparseable nameserver from SystemConfiguration");
+                warn!(nameserver = %s, %err, "ignoring unparsable nameserver from SystemConfiguration");
                 None
             }
         })
