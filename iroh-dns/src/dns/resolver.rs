@@ -590,12 +590,16 @@ mod tests {
     const TIMEOUT: Duration = Duration::from_secs(5);
     const GOOGLE_DNS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 53);
     const CLOUDFLARE_DNS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 53);
+    #[cfg(with_crypto_provider)]
     const GOOGLE_DNS_TLS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 853);
+    #[cfg(with_crypto_provider)]
     const CLOUDFLARE_DNS_HTTPS: SocketAddr =
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 443);
 
     fn with_proto(addr: SocketAddr, proto: DnsProtocol) -> DnsResolver {
+        #[cfg_attr(not(with_crypto_provider), allow(unused_mut))]
         let mut builder = DnsResolver::builder().with_nameserver(addr, proto);
+        #[cfg(with_crypto_provider)]
         if proto == DnsProtocol::Tls {
             let root_store =
                 rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -637,12 +641,14 @@ mod tests {
         assert_resolves_ipv4(&with_proto(CLOUDFLARE_DNS, DnsProtocol::Tcp), "google.com").await;
     }
 
+    #[cfg(with_crypto_provider)]
     #[tokio::test]
     #[ignore = "requires network access"]
     async fn resolve_ipv4_tls() {
         assert_resolves_ipv4(&with_proto(GOOGLE_DNS_TLS, DnsProtocol::Tls), "google.com").await;
     }
 
+    #[cfg(with_crypto_provider)]
     #[tokio::test]
     #[ignore = "requires network access"]
     async fn resolve_ipv4_https() {
