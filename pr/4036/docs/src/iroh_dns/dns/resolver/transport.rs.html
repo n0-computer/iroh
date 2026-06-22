@@ -216,7 +216,7 @@
 <a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">use </span>std::net::Ipv4Addr;
 <a href=#217 id=217 data-nosnippet>217</a>
 <a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">use </span>simple_dns::{
-<a href=#219 id=219 data-nosnippet>219</a>        CLASS, Name, Packet, PacketFlag, ResourceRecord, TYPE,
+<a href=#219 id=219 data-nosnippet>219</a>        CLASS, Name, Packet, PacketFlag, QCLASS, QTYPE, Question, ResourceRecord, TYPE,
 <a href=#220 id=220 data-nosnippet>220</a>        rdata::{A, RData},
 <a href=#221 id=221 data-nosnippet>221</a>    };
 <a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">use </span>tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -226,117 +226,118 @@
 <a href=#226 id=226 data-nosnippet>226</a>    <span class="kw">fn </span>build_a_response(id: u16, addrs: <span class="kw-2">&amp;</span>[Ipv4Addr]) -&gt; Vec&lt;u8&gt; {
 <a href=#227 id=227 data-nosnippet>227</a>        <span class="kw">let </span><span class="kw-2">mut </span>packet = Packet::new_reply(id);
 <a href=#228 id=228 data-nosnippet>228</a>        packet.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
-<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
-<a href=#230 id=230 data-nosnippet>230</a>            <span class="kw">let </span>rdata = RData::A(A {
-<a href=#231 id=231 data-nosnippet>231</a>                address: u32::from(<span class="kw-2">*</span>addr),
-<a href=#232 id=232 data-nosnippet>232</a>            });
-<a href=#233 id=233 data-nosnippet>233</a>            packet.answers.push(ResourceRecord::new(
-<a href=#234 id=234 data-nosnippet>234</a>                Name::new_unchecked(<span class="string">"example.com"</span>),
-<a href=#235 id=235 data-nosnippet>235</a>                CLASS::IN,
-<a href=#236 id=236 data-nosnippet>236</a>                <span class="number">300</span>,
-<a href=#237 id=237 data-nosnippet>237</a>                rdata,
-<a href=#238 id=238 data-nosnippet>238</a>            ));
-<a href=#239 id=239 data-nosnippet>239</a>        }
-<a href=#240 id=240 data-nosnippet>240</a>        packet.build_bytes_vec().unwrap()
-<a href=#241 id=241 data-nosnippet>241</a>    }
-<a href=#242 id=242 data-nosnippet>242</a>
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="doccomment">/// Spawn a mock UDP server that echoes back an A response for any query.
-<a href=#244 id=244 data-nosnippet>244</a>    </span><span class="kw">async fn </span>mock_udp_server(addrs: <span class="kw-2">&amp;</span>[Ipv4Addr]) -&gt; (SocketAddr, tokio::task::JoinHandle&lt;()&gt;) {
-<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">let </span>server = tokio::net::UdpSocket::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span>.unwrap();
-<a href=#246 id=246 data-nosnippet>246</a>        <span class="kw">let </span>server_addr = server.local_addr().unwrap();
-<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span>addrs = addrs.to_vec();
-<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
-<a href=#249 id=249 data-nosnippet>249</a>            <span class="kw">let </span><span class="kw-2">mut </span>buf = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="number">4096</span>];
-<a href=#250 id=250 data-nosnippet>250</a>            <span class="kw">let </span>(len, client_addr) = server.recv_from(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
-<a href=#251 id=251 data-nosnippet>251</a>            <span class="kw">let </span>id = Packet::parse(<span class="kw-2">&amp;</span>buf[..len]).unwrap().id();
-<a href=#252 id=252 data-nosnippet>252</a>            server
-<a href=#253 id=253 data-nosnippet>253</a>                .send_to(<span class="kw-2">&amp;</span>build_a_response(id, <span class="kw-2">&amp;</span>addrs), client_addr)
-<a href=#254 id=254 data-nosnippet>254</a>                .<span class="kw">await
-<a href=#255 id=255 data-nosnippet>255</a>                </span>.unwrap();
-<a href=#256 id=256 data-nosnippet>256</a>        });
-<a href=#257 id=257 data-nosnippet>257</a>        (server_addr, handle)
-<a href=#258 id=258 data-nosnippet>258</a>    }
-<a href=#259 id=259 data-nosnippet>259</a>
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="doccomment">/// Spawn a mock TCP server that echoes back an A response for any query.
-<a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">async fn </span>mock_tcp_server(addrs: <span class="kw-2">&amp;</span>[Ipv4Addr]) -&gt; (SocketAddr, tokio::task::JoinHandle&lt;()&gt;) {
-<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">let </span>listener = tokio::net::TcpListener::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span>.unwrap();
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">let </span>server_addr = listener.local_addr().unwrap();
-<a href=#264 id=264 data-nosnippet>264</a>        <span class="kw">let </span>addrs = addrs.to_vec();
-<a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
-<a href=#266 id=266 data-nosnippet>266</a>            <span class="kw">let </span>(<span class="kw-2">mut </span>stream, <span class="kw">_</span>) = listener.accept().<span class="kw">await</span>.unwrap();
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw">let </span>query_len = stream.read_u16().<span class="kw">await</span>.unwrap() <span class="kw">as </span>usize;
-<a href=#268 id=268 data-nosnippet>268</a>            <span class="kw">let </span><span class="kw-2">mut </span>query_buf = <span class="macro">vec!</span>[<span class="number">0u8</span>; query_len];
-<a href=#269 id=269 data-nosnippet>269</a>            stream.read_exact(<span class="kw-2">&amp;mut </span>query_buf).<span class="kw">await</span>.unwrap();
-<a href=#270 id=270 data-nosnippet>270</a>            <span class="kw">let </span>id = Packet::parse(<span class="kw-2">&amp;</span>query_buf).unwrap().id();
-<a href=#271 id=271 data-nosnippet>271</a>            <span class="kw">let </span>resp = build_a_response(id, <span class="kw-2">&amp;</span>addrs);
-<a href=#272 id=272 data-nosnippet>272</a>            stream
-<a href=#273 id=273 data-nosnippet>273</a>                .write_all(<span class="kw-2">&amp;</span>(resp.len() <span class="kw">as </span>u16).to_be_bytes())
-<a href=#274 id=274 data-nosnippet>274</a>                .<span class="kw">await
-<a href=#275 id=275 data-nosnippet>275</a>                </span>.unwrap();
-<a href=#276 id=276 data-nosnippet>276</a>            stream.write_all(<span class="kw-2">&amp;</span>resp).<span class="kw">await</span>.unwrap();
-<a href=#277 id=277 data-nosnippet>277</a>            stream.flush().<span class="kw">await</span>.unwrap();
-<a href=#278 id=278 data-nosnippet>278</a>        });
-<a href=#279 id=279 data-nosnippet>279</a>        (server_addr, handle)
-<a href=#280 id=280 data-nosnippet>280</a>    }
-<a href=#281 id=281 data-nosnippet>281</a>
-<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">fn </span>build_query() -&gt; (u16, Vec&lt;u8&gt;) {
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">super</span>::<span class="kw">super</span>::query::build_query(<span class="string">"example.com"</span>, TYPE::A).unwrap()
-<a href=#284 id=284 data-nosnippet>284</a>    }
-<a href=#285 id=285 data-nosnippet>285</a>
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="attr">#[tokio::test]
-<a href=#287 id=287 data-nosnippet>287</a>    </span><span class="kw">async fn </span>test_udp_query() {
-<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>(addr, handle) = mock_udp_server(<span class="kw-2">&amp;</span>[Ipv4Addr::new(<span class="number">93</span>, <span class="number">184</span>, <span class="number">216</span>, <span class="number">34</span>)]).<span class="kw">await</span>;
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">let </span>(id, query) = build_query();
-<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">let </span>(addrs, <span class="kw">_</span>) =
-<a href=#291 id=291 data-nosnippet>291</a>            <span class="kw">super</span>::<span class="kw">super</span>::query::parse_a_response(<span class="kw-2">&amp;</span>udp_query(addr, <span class="kw-2">&amp;</span>query).<span class="kw">await</span>.unwrap(), id)
-<a href=#292 id=292 data-nosnippet>292</a>                .unwrap();
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="macro">assert_eq!</span>(addrs, [Ipv4Addr::new(<span class="number">93</span>, <span class="number">184</span>, <span class="number">216</span>, <span class="number">34</span>)]);
-<a href=#294 id=294 data-nosnippet>294</a>        handle.<span class="kw">await</span>.unwrap();
-<a href=#295 id=295 data-nosnippet>295</a>    }
-<a href=#296 id=296 data-nosnippet>296</a>
-<a href=#297 id=297 data-nosnippet>297</a>    <span class="attr">#[tokio::test]
-<a href=#298 id=298 data-nosnippet>298</a>    </span><span class="kw">async fn </span>test_tcp_query() {
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">let </span>(addr, handle) = mock_tcp_server(<span class="kw-2">&amp;</span>[Ipv4Addr::new(<span class="number">93</span>, <span class="number">184</span>, <span class="number">216</span>, <span class="number">34</span>)]).<span class="kw">await</span>;
-<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span>(id, query) = build_query();
-<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">let </span>pool = ConnPool::new();
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>(addrs, <span class="kw">_</span>) = <span class="kw">super</span>::<span class="kw">super</span>::query::parse_a_response(
-<a href=#303 id=303 data-nosnippet>303</a>            <span class="kw-2">&amp;</span>tcp_query(<span class="kw-2">&amp;</span>pool, addr, <span class="kw-2">&amp;</span>query).<span class="kw">await</span>.unwrap(),
-<a href=#304 id=304 data-nosnippet>304</a>            id,
-<a href=#305 id=305 data-nosnippet>305</a>        )
-<a href=#306 id=306 data-nosnippet>306</a>        .unwrap();
-<a href=#307 id=307 data-nosnippet>307</a>        <span class="macro">assert_eq!</span>(addrs, [Ipv4Addr::new(<span class="number">93</span>, <span class="number">184</span>, <span class="number">216</span>, <span class="number">34</span>)]);
-<a href=#308 id=308 data-nosnippet>308</a>        handle.<span class="kw">await</span>.unwrap();
-<a href=#309 id=309 data-nosnippet>309</a>    }
-<a href=#310 id=310 data-nosnippet>310</a>
-<a href=#311 id=311 data-nosnippet>311</a>    <span class="attr">#[tokio::test]
-<a href=#312 id=312 data-nosnippet>312</a>    </span><span class="kw">async fn </span>test_udp_multiple_records() {
-<a href=#313 id=313 data-nosnippet>313</a>        <span class="kw">let </span>expected = [
-<a href=#314 id=314 data-nosnippet>314</a>            Ipv4Addr::new(<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>),
-<a href=#315 id=315 data-nosnippet>315</a>            Ipv4Addr::new(<span class="number">5</span>, <span class="number">6</span>, <span class="number">7</span>, <span class="number">8</span>),
-<a href=#316 id=316 data-nosnippet>316</a>            Ipv4Addr::new(<span class="number">9</span>, <span class="number">10</span>, <span class="number">11</span>, <span class="number">12</span>),
-<a href=#317 id=317 data-nosnippet>317</a>        ];
-<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">let </span>(addr, handle) = mock_udp_server(<span class="kw-2">&amp;</span>expected).<span class="kw">await</span>;
-<a href=#319 id=319 data-nosnippet>319</a>        <span class="kw">let </span>(id, query) = build_query();
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span>(addrs, ttl) =
-<a href=#321 id=321 data-nosnippet>321</a>            <span class="kw">super</span>::<span class="kw">super</span>::query::parse_a_response(<span class="kw-2">&amp;</span>udp_query(addr, <span class="kw-2">&amp;</span>query).<span class="kw">await</span>.unwrap(), id)
-<a href=#322 id=322 data-nosnippet>322</a>                .unwrap();
-<a href=#323 id=323 data-nosnippet>323</a>        <span class="macro">assert_eq!</span>(addrs, expected);
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="macro">assert_eq!</span>(ttl, <span class="number">300</span>);
-<a href=#325 id=325 data-nosnippet>325</a>        handle.<span class="kw">await</span>.unwrap();
-<a href=#326 id=326 data-nosnippet>326</a>    }
-<a href=#327 id=327 data-nosnippet>327</a>
-<a href=#328 id=328 data-nosnippet>328</a>    <span class="attr">#[tokio::test]
-<a href=#329 id=329 data-nosnippet>329</a>    </span><span class="kw">async fn </span>test_tcp_large_response() {
-<a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">let </span>expected: Vec&lt;Ipv4Addr&gt; = (<span class="number">0</span>..<span class="number">50</span>).map(|i| Ipv4Addr::new(<span class="number">10</span>, <span class="number">0</span>, <span class="number">0</span>, i)).collect();
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>(addr, handle) = mock_tcp_server(<span class="kw-2">&amp;</span>expected).<span class="kw">await</span>;
-<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span>(id, query) = build_query();
-<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">let </span>pool = ConnPool::new();
-<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span>(addrs, <span class="kw">_</span>) = <span class="kw">super</span>::<span class="kw">super</span>::query::parse_a_response(
-<a href=#335 id=335 data-nosnippet>335</a>            <span class="kw-2">&amp;</span>tcp_query(<span class="kw-2">&amp;</span>pool, addr, <span class="kw-2">&amp;</span>query).<span class="kw">await</span>.unwrap(),
-<a href=#336 id=336 data-nosnippet>336</a>            id,
-<a href=#337 id=337 data-nosnippet>337</a>        )
-<a href=#338 id=338 data-nosnippet>338</a>        .unwrap();
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="macro">assert_eq!</span>(addrs, expected);
-<a href=#340 id=340 data-nosnippet>340</a>        handle.<span class="kw">await</span>.unwrap();
-<a href=#341 id=341 data-nosnippet>341</a>    }
-<a href=#342 id=342 data-nosnippet>342</a>}</code></pre></div></section></main></body></html>
+<a href=#229 id=229 data-nosnippet>229</a>        <span class="comment">// Echo the question section, as a real server does.
+<a href=#230 id=230 data-nosnippet>230</a>        </span>packet.questions.push(Question::new(
+<a href=#231 id=231 data-nosnippet>231</a>            Name::new_unchecked(<span class="string">"example.com"</span>),
+<a href=#232 id=232 data-nosnippet>232</a>            QTYPE::TYPE(TYPE::A),
+<a href=#233 id=233 data-nosnippet>233</a>            QCLASS::CLASS(CLASS::IN),
+<a href=#234 id=234 data-nosnippet>234</a>            <span class="bool-val">false</span>,
+<a href=#235 id=235 data-nosnippet>235</a>        ));
+<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
+<a href=#237 id=237 data-nosnippet>237</a>            <span class="kw">let </span>rdata = RData::A(A {
+<a href=#238 id=238 data-nosnippet>238</a>                address: u32::from(<span class="kw-2">*</span>addr),
+<a href=#239 id=239 data-nosnippet>239</a>            });
+<a href=#240 id=240 data-nosnippet>240</a>            packet.answers.push(ResourceRecord::new(
+<a href=#241 id=241 data-nosnippet>241</a>                Name::new_unchecked(<span class="string">"example.com"</span>),
+<a href=#242 id=242 data-nosnippet>242</a>                CLASS::IN,
+<a href=#243 id=243 data-nosnippet>243</a>                <span class="number">300</span>,
+<a href=#244 id=244 data-nosnippet>244</a>                rdata,
+<a href=#245 id=245 data-nosnippet>245</a>            ));
+<a href=#246 id=246 data-nosnippet>246</a>        }
+<a href=#247 id=247 data-nosnippet>247</a>        packet.build_bytes_vec().unwrap()
+<a href=#248 id=248 data-nosnippet>248</a>    }
+<a href=#249 id=249 data-nosnippet>249</a>
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="doccomment">/// Spawn a mock UDP server that echoes back an A response for any query.
+<a href=#251 id=251 data-nosnippet>251</a>    </span><span class="kw">async fn </span>mock_udp_server(addrs: <span class="kw-2">&amp;</span>[Ipv4Addr]) -&gt; (SocketAddr, tokio::task::JoinHandle&lt;()&gt;) {
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>server = tokio::net::UdpSocket::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span>.unwrap();
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>server_addr = server.local_addr().unwrap();
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">let </span>addrs = addrs.to_vec();
+<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
+<a href=#256 id=256 data-nosnippet>256</a>            <span class="kw">let </span><span class="kw-2">mut </span>buf = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="number">4096</span>];
+<a href=#257 id=257 data-nosnippet>257</a>            <span class="kw">let </span>(len, client_addr) = server.recv_from(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
+<a href=#258 id=258 data-nosnippet>258</a>            <span class="kw">let </span>id = Packet::parse(<span class="kw-2">&amp;</span>buf[..len]).unwrap().id();
+<a href=#259 id=259 data-nosnippet>259</a>            server
+<a href=#260 id=260 data-nosnippet>260</a>                .send_to(<span class="kw-2">&amp;</span>build_a_response(id, <span class="kw-2">&amp;</span>addrs), client_addr)
+<a href=#261 id=261 data-nosnippet>261</a>                .<span class="kw">await
+<a href=#262 id=262 data-nosnippet>262</a>                </span>.unwrap();
+<a href=#263 id=263 data-nosnippet>263</a>        });
+<a href=#264 id=264 data-nosnippet>264</a>        (server_addr, handle)
+<a href=#265 id=265 data-nosnippet>265</a>    }
+<a href=#266 id=266 data-nosnippet>266</a>
+<a href=#267 id=267 data-nosnippet>267</a>    <span class="doccomment">/// Spawn a mock TCP server that echoes back an A response for any query.
+<a href=#268 id=268 data-nosnippet>268</a>    </span><span class="kw">async fn </span>mock_tcp_server(addrs: <span class="kw-2">&amp;</span>[Ipv4Addr]) -&gt; (SocketAddr, tokio::task::JoinHandle&lt;()&gt;) {
+<a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">let </span>listener = tokio::net::TcpListener::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span>.unwrap();
+<a href=#270 id=270 data-nosnippet>270</a>        <span class="kw">let </span>server_addr = listener.local_addr().unwrap();
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">let </span>addrs = addrs.to_vec();
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
+<a href=#273 id=273 data-nosnippet>273</a>            <span class="kw">let </span>(<span class="kw-2">mut </span>stream, <span class="kw">_</span>) = listener.accept().<span class="kw">await</span>.unwrap();
+<a href=#274 id=274 data-nosnippet>274</a>            <span class="kw">let </span>query_len = stream.read_u16().<span class="kw">await</span>.unwrap() <span class="kw">as </span>usize;
+<a href=#275 id=275 data-nosnippet>275</a>            <span class="kw">let </span><span class="kw-2">mut </span>query_buf = <span class="macro">vec!</span>[<span class="number">0u8</span>; query_len];
+<a href=#276 id=276 data-nosnippet>276</a>            stream.read_exact(<span class="kw-2">&amp;mut </span>query_buf).<span class="kw">await</span>.unwrap();
+<a href=#277 id=277 data-nosnippet>277</a>            <span class="kw">let </span>id = Packet::parse(<span class="kw-2">&amp;</span>query_buf).unwrap().id();
+<a href=#278 id=278 data-nosnippet>278</a>            <span class="kw">let </span>resp = build_a_response(id, <span class="kw-2">&amp;</span>addrs);
+<a href=#279 id=279 data-nosnippet>279</a>            stream
+<a href=#280 id=280 data-nosnippet>280</a>                .write_all(<span class="kw-2">&amp;</span>(resp.len() <span class="kw">as </span>u16).to_be_bytes())
+<a href=#281 id=281 data-nosnippet>281</a>                .<span class="kw">await
+<a href=#282 id=282 data-nosnippet>282</a>                </span>.unwrap();
+<a href=#283 id=283 data-nosnippet>283</a>            stream.write_all(<span class="kw-2">&amp;</span>resp).<span class="kw">await</span>.unwrap();
+<a href=#284 id=284 data-nosnippet>284</a>            stream.flush().<span class="kw">await</span>.unwrap();
+<a href=#285 id=285 data-nosnippet>285</a>        });
+<a href=#286 id=286 data-nosnippet>286</a>        (server_addr, handle)
+<a href=#287 id=287 data-nosnippet>287</a>    }
+<a href=#288 id=288 data-nosnippet>288</a>
+<a href=#289 id=289 data-nosnippet>289</a>    <span class="kw">fn </span>build_query() -&gt; (u16, Vec&lt;u8&gt;) {
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">super</span>::<span class="kw">super</span>::query::build_query(<span class="string">"example.com"</span>, TYPE::A).unwrap()
+<a href=#291 id=291 data-nosnippet>291</a>    }
+<a href=#292 id=292 data-nosnippet>292</a>
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="attr">#[tokio::test]
+<a href=#294 id=294 data-nosnippet>294</a>    </span><span class="kw">async fn </span>test_udp_query() {
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">let </span>(addr, handle) = mock_udp_server(<span class="kw-2">&amp;</span>[Ipv4Addr::new(<span class="number">93</span>, <span class="number">184</span>, <span class="number">216</span>, <span class="number">34</span>)]).<span class="kw">await</span>;
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">let </span>(<span class="kw">_</span>, query) = build_query();
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span>(addrs, <span class="kw">_</span>) =
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="kw">super</span>::<span class="kw">super</span>::query::parse_a_response(<span class="kw-2">&amp;</span>udp_query(addr, <span class="kw-2">&amp;</span>query).<span class="kw">await</span>.unwrap()).unwrap();
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="macro">assert_eq!</span>(addrs, [Ipv4Addr::new(<span class="number">93</span>, <span class="number">184</span>, <span class="number">216</span>, <span class="number">34</span>)]);
+<a href=#300 id=300 data-nosnippet>300</a>        handle.<span class="kw">await</span>.unwrap();
+<a href=#301 id=301 data-nosnippet>301</a>    }
+<a href=#302 id=302 data-nosnippet>302</a>
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="attr">#[tokio::test]
+<a href=#304 id=304 data-nosnippet>304</a>    </span><span class="kw">async fn </span>test_tcp_query() {
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>(addr, handle) = mock_tcp_server(<span class="kw-2">&amp;</span>[Ipv4Addr::new(<span class="number">93</span>, <span class="number">184</span>, <span class="number">216</span>, <span class="number">34</span>)]).<span class="kw">await</span>;
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span>(<span class="kw">_</span>, query) = build_query();
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>pool = ConnPool::new();
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">let </span>(addrs, <span class="kw">_</span>) =
+<a href=#309 id=309 data-nosnippet>309</a>            <span class="kw">super</span>::<span class="kw">super</span>::query::parse_a_response(<span class="kw-2">&amp;</span>tcp_query(<span class="kw-2">&amp;</span>pool, addr, <span class="kw-2">&amp;</span>query).<span class="kw">await</span>.unwrap())
+<a href=#310 id=310 data-nosnippet>310</a>                .unwrap();
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="macro">assert_eq!</span>(addrs, [Ipv4Addr::new(<span class="number">93</span>, <span class="number">184</span>, <span class="number">216</span>, <span class="number">34</span>)]);
+<a href=#312 id=312 data-nosnippet>312</a>        handle.<span class="kw">await</span>.unwrap();
+<a href=#313 id=313 data-nosnippet>313</a>    }
+<a href=#314 id=314 data-nosnippet>314</a>
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="attr">#[tokio::test]
+<a href=#316 id=316 data-nosnippet>316</a>    </span><span class="kw">async fn </span>test_udp_multiple_records() {
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">let </span>expected = [
+<a href=#318 id=318 data-nosnippet>318</a>            Ipv4Addr::new(<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>),
+<a href=#319 id=319 data-nosnippet>319</a>            Ipv4Addr::new(<span class="number">5</span>, <span class="number">6</span>, <span class="number">7</span>, <span class="number">8</span>),
+<a href=#320 id=320 data-nosnippet>320</a>            Ipv4Addr::new(<span class="number">9</span>, <span class="number">10</span>, <span class="number">11</span>, <span class="number">12</span>),
+<a href=#321 id=321 data-nosnippet>321</a>        ];
+<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">let </span>(addr, handle) = mock_udp_server(<span class="kw-2">&amp;</span>expected).<span class="kw">await</span>;
+<a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">let </span>(<span class="kw">_</span>, query) = build_query();
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>(addrs, ttl) =
+<a href=#325 id=325 data-nosnippet>325</a>            <span class="kw">super</span>::<span class="kw">super</span>::query::parse_a_response(<span class="kw-2">&amp;</span>udp_query(addr, <span class="kw-2">&amp;</span>query).<span class="kw">await</span>.unwrap()).unwrap();
+<a href=#326 id=326 data-nosnippet>326</a>        <span class="macro">assert_eq!</span>(addrs, expected);
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="macro">assert_eq!</span>(ttl, <span class="number">300</span>);
+<a href=#328 id=328 data-nosnippet>328</a>        handle.<span class="kw">await</span>.unwrap();
+<a href=#329 id=329 data-nosnippet>329</a>    }
+<a href=#330 id=330 data-nosnippet>330</a>
+<a href=#331 id=331 data-nosnippet>331</a>    <span class="attr">#[tokio::test]
+<a href=#332 id=332 data-nosnippet>332</a>    </span><span class="kw">async fn </span>test_tcp_large_response() {
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">let </span>expected: Vec&lt;Ipv4Addr&gt; = (<span class="number">0</span>..<span class="number">50</span>).map(|i| Ipv4Addr::new(<span class="number">10</span>, <span class="number">0</span>, <span class="number">0</span>, i)).collect();
+<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span>(addr, handle) = mock_tcp_server(<span class="kw-2">&amp;</span>expected).<span class="kw">await</span>;
+<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span>(<span class="kw">_</span>, query) = build_query();
+<a href=#336 id=336 data-nosnippet>336</a>        <span class="kw">let </span>pool = ConnPool::new();
+<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw">let </span>(addrs, <span class="kw">_</span>) =
+<a href=#338 id=338 data-nosnippet>338</a>            <span class="kw">super</span>::<span class="kw">super</span>::query::parse_a_response(<span class="kw-2">&amp;</span>tcp_query(<span class="kw-2">&amp;</span>pool, addr, <span class="kw-2">&amp;</span>query).<span class="kw">await</span>.unwrap())
+<a href=#339 id=339 data-nosnippet>339</a>                .unwrap();
+<a href=#340 id=340 data-nosnippet>340</a>        <span class="macro">assert_eq!</span>(addrs, expected);
+<a href=#341 id=341 data-nosnippet>341</a>        handle.<span class="kw">await</span>.unwrap();
+<a href=#342 id=342 data-nosnippet>342</a>    }
+<a href=#343 id=343 data-nosnippet>343</a>}</code></pre></div></section></main></body></html>
