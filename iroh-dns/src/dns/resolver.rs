@@ -407,13 +407,20 @@ impl SimpleDnsResolver {
         &self,
         host: String,
         qtype: TYPE,
-    ) -> Result<(Vec<u8>, u16), DnsError> {
+    ) -> Result<Vec<u8>, DnsError> {
         let mut current_host = host;
         for _ in 0..MAX_CNAME_DEPTH {
+            let name = simple_dns::Name::new(&current_host)
+                .map_err(|e| e!(DnsError::InvalidQuery, AnyError::from_std(e)))?;
             let (id, query_bytes) = query::build_query(&current_host, qtype)?;
             let response = self.send_query(&query_bytes).await?;
             let packet =
                 simple_dns::Packet::parse(&response).map_err(|_| e!(DnsError::InvalidResponse))?;
+
+            // Validate the id, QR bit, question, and RCODE before trusting the
+            // packet to decide the answer or the next CNAME target. This is the
+            // only check of the response against the name we actually asked for.
+            query::check_response(&packet, id, &name, qtype)?;
 
             let has_answer = packet
                 .answers
@@ -421,12 +428,12 @@ impl SimpleDnsResolver {
                 .any(|rr| rr.rdata.type_code() == qtype);
 
             if has_answer {
-                return Ok((response, id));
+                return Ok(response);
             }
 
             // No records of the requested type -- follow CNAME if present.
             let Some(target) = query::cname_target(&packet, &current_host) else {
-                return Ok((response, id));
+                return Ok(response);
             };
             debug!(from = %current_host, to = %target, "following CNAME");
             current_host = target;
@@ -442,7 +449,7 @@ impl SimpleDnsResolver {
         qtype: QueryType,
         dns_type: TYPE,
         from_cache: fn(CachedRecord) -> Option<Vec<T>>,
-        parse: fn(&[u8], u16) -> Result<(Vec<T>, u32), QueryError>,
+        parse: fn(&[u8]) -> Result<(Vec<T>, u32), QueryError>,
         to_cache: fn(Vec<T>) -> CachedRecord,
     ) -> Result<Vec<T>, DnsError> {
         if let Some(cached) = self.cache.get(host, qtype).and_then(from_cache) {
@@ -459,7 +466,7 @@ impl SimpleDnsResolver {
                 .send_query_following_cnames(name.clone(), dns_type)
                 .await
             {
-                Ok((response, id)) => parse(&response, id).map_err(DnsError::from),
+                Ok(response) => parse(&response).map_err(DnsError::from),
                 Err(e) => Err(e),
             };
             match res {

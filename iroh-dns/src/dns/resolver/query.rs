@@ -98,23 +98,34 @@ pub(super) fn cname_target(packet: &Packet<'_>, qname: &str) -> Option<String> {
     (canonical != name).then(|| canonical.to_string())
 }
 
-/// Check response packet for errors (QR bit, ID mismatch, question section, RCODE).
+/// Validate a response against the query that produced it, then surface its RCODE.
 ///
-/// Validates per RFC 5452: transaction ID, QR flag, and question section must match
-/// the original query to prevent spoofed responses.
-fn check_response(packet: &Packet, expected_id: u16) -> Result<(), QueryError> {
+/// Per RFC 5452 a response is only trustworthy if it echoes the query: the QR
+/// flag must be set, the transaction ID must match, and the response must carry
+/// exactly the one question we asked, by name, type, and class. Without the
+/// question check an off-path attacker who guesses the 16-bit ID could supply
+/// its own question and have its answers accepted for an arbitrary name. A
+/// `NameError` RCODE maps to [`QueryError::NxDomain`] and any other non-`NoError`
+/// RCODE to [`QueryError::ServerFailure`].
+pub(super) fn check_response(
+    packet: &Packet,
+    expected_id: u16,
+    expected_name: &Name<'_>,
+    expected_type: TYPE,
+) -> Result<(), QueryError> {
     if !packet.has_flags(PacketFlag::RESPONSE) {
         return Err(e!(QueryError::Unexpected));
     }
     if packet.id() != expected_id {
         return Err(e!(QueryError::Unexpected));
     }
-    // A well-formed response echoes the query's question section (RFC 1035
-    // Section 4.1.2). Reject a question-less response: without a question,
-    // `name_matches` would accept answers for any name, so a spoofed reply that
-    // guessed the transaction ID could inject records for an arbitrary host.
-    if packet.questions.is_empty() {
-        return Err(e!(QueryError::Unexpected));
+    // The response must echo exactly the question we sent (RFC 1035 4.1.2).
+    match packet.questions.as_slice() {
+        [question]
+            if &question.qname == expected_name
+                && question.qtype == QTYPE::TYPE(expected_type)
+                && question.qclass == QCLASS::CLASS(CLASS::IN) => {}
+        _ => return Err(e!(QueryError::Unexpected)),
     }
     match packet.rcode() {
         RCODE::NoError => Ok(()),
@@ -142,18 +153,18 @@ fn name_matches(
     }
 }
 
-/// Parse matching records from a DNS response, following CNAME chains.
+/// Extract matching records from a validated DNS response, following CNAME chains.
 ///
-/// Validates the response, resolves CNAME chains, then extracts records using
-/// the provided closure. Returns the extracted records and the minimum TTL.
+/// The caller must already have validated the response with [`check_response`];
+/// this resolves the CNAME chain anchored on the question and extracts records
+/// of the requested type using `extract`. Returns the records and the minimum
+/// TTL across them.
 fn parse_response<T>(
     data: &[u8],
-    expected_id: u16,
     extract: impl Fn(&RData<'_>) -> Option<T>,
 ) -> Result<(Vec<T>, u32), QueryError> {
     let packet =
         Packet::parse(data).map_err(|e| e!(QueryError::Malformed, AnyError::from_std(e)))?;
-    check_response(&packet, expected_id)?;
 
     let qname = packet.questions.first().map(|q| q.qname.clone());
     let canonical = qname.as_ref().map(|q| resolve_cname_chain(&packet, q));
@@ -175,33 +186,24 @@ fn parse_response<T>(
 }
 
 /// Parse A (IPv4) records from a DNS response, following CNAME chains.
-pub(super) fn parse_a_response(
-    data: &[u8],
-    expected_id: u16,
-) -> Result<(Vec<Ipv4Addr>, u32), QueryError> {
-    parse_response(data, expected_id, |rdata| match rdata {
+pub(super) fn parse_a_response(data: &[u8]) -> Result<(Vec<Ipv4Addr>, u32), QueryError> {
+    parse_response(data, |rdata| match rdata {
         RData::A(A { address }) => Some(Ipv4Addr::from(*address)),
         _ => None,
     })
 }
 
 /// Parse AAAA (IPv6) records from a DNS response, following CNAME chains.
-pub(super) fn parse_aaaa_response(
-    data: &[u8],
-    expected_id: u16,
-) -> Result<(Vec<Ipv6Addr>, u32), QueryError> {
-    parse_response(data, expected_id, |rdata| match rdata {
+pub(super) fn parse_aaaa_response(data: &[u8]) -> Result<(Vec<Ipv6Addr>, u32), QueryError> {
+    parse_response(data, |rdata| match rdata {
         RData::AAAA(AAAA { address }) => Some(Ipv6Addr::from(*address)),
         _ => None,
     })
 }
 
 /// Parse TXT records from a DNS response, following CNAME chains.
-pub(super) fn parse_txt_response(
-    data: &[u8],
-    expected_id: u16,
-) -> Result<(Vec<TxtRecordData>, u32), QueryError> {
-    parse_response(data, expected_id, |rdata| match rdata {
+pub(super) fn parse_txt_response(data: &[u8]) -> Result<(Vec<TxtRecordData>, u32), QueryError> {
+    parse_response(data, |rdata| match rdata {
         RData::TXT(txt) => Some(extract_txt_record_data(txt)),
         _ => None,
     })
@@ -338,7 +340,7 @@ mod tests {
     fn parse_a_no_cname() {
         let (id, _) = make_query("example.com");
         let resp = a_response(id, "example.com", &[Ipv4Addr::new(1, 2, 3, 4)]);
-        let (addrs, ttl) = parse_a_response(&resp, id).unwrap();
+        let (addrs, ttl) = parse_a_response(&resp).unwrap();
         assert_eq!(addrs, [Ipv4Addr::new(1, 2, 3, 4)]);
         assert_eq!(ttl, 300);
     }
@@ -352,7 +354,7 @@ mod tests {
             "real.example.com",
             &[Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)],
         );
-        let (addrs, _) = parse_a_response(&resp, id).unwrap();
+        let (addrs, _) = parse_a_response(&resp).unwrap();
         assert_eq!(
             addrs,
             [Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)]
@@ -392,7 +394,7 @@ mod tests {
             }),
         ));
         let resp = packet.build_bytes_vec().unwrap();
-        let (addrs, _) = parse_a_response(&resp, id).unwrap();
+        let (addrs, _) = parse_a_response(&resp).unwrap();
         assert_eq!(addrs, [Ipv4Addr::new(5, 6, 7, 8)]);
     }
 
@@ -405,25 +407,57 @@ mod tests {
         assert_eq!(target.as_deref(), Some("real.example.com"));
     }
 
-    #[test]
-    fn reject_response_without_question_section() {
-        // A response carrying answers but no question section must be rejected,
-        // even with the correct transaction ID, so it cannot inject records for
-        // an arbitrary name.
-        let (id, _) = make_query("example.com");
+    /// Builds a reply packet echoing one question for `name`/`qtype`, plus an A
+    /// answer, so `check_response` has something to validate.
+    fn reply_with_question(id: u16, name: &str, qtype: TYPE) -> Packet<'static> {
         let mut packet = Packet::new_reply(id);
         packet.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
-        packet.answers.push(ResourceRecord::new(
-            Name::new_unchecked("attacker.example"),
-            CLASS::IN,
-            300,
-            RData::A(A {
-                address: u32::from(Ipv4Addr::new(6, 6, 6, 6)),
-            }),
+        packet.questions.push(Question::new(
+            Name::new_unchecked(name).into_owned(),
+            QTYPE::TYPE(qtype),
+            QCLASS::CLASS(CLASS::IN),
+            false,
         ));
-        let resp = packet.build_bytes_vec().unwrap();
+        packet
+    }
+
+    #[test]
+    fn check_response_accepts_a_matching_reply() {
+        let name = Name::new_unchecked("example.com");
+        let packet = reply_with_question(42, "example.com", TYPE::A);
+        assert!(check_response(&packet, 42, &name, TYPE::A).is_ok());
+    }
+
+    #[test]
+    fn check_response_rejects_mismatches() {
+        let name = Name::new_unchecked("example.com");
+
+        // Wrong transaction id.
+        let packet = reply_with_question(42, "example.com", TYPE::A);
         assert!(matches!(
-            parse_a_response(&resp, id),
+            check_response(&packet, 7, &name, TYPE::A),
+            Err(QueryError::Unexpected { .. })
+        ));
+
+        // Question name does not echo the query.
+        let packet = reply_with_question(42, "attacker.example", TYPE::A);
+        assert!(matches!(
+            check_response(&packet, 42, &name, TYPE::A),
+            Err(QueryError::Unexpected { .. })
+        ));
+
+        // Question type does not match.
+        let packet = reply_with_question(42, "example.com", TYPE::AAAA);
+        assert!(matches!(
+            check_response(&packet, 42, &name, TYPE::A),
+            Err(QueryError::Unexpected { .. })
+        ));
+
+        // No question section at all.
+        let mut packet = reply_with_question(42, "example.com", TYPE::A);
+        packet.questions.clear();
+        assert!(matches!(
+            check_response(&packet, 42, &name, TYPE::A),
             Err(QueryError::Unexpected { .. })
         ));
     }

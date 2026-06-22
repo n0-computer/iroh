@@ -293,10 +293,9 @@ mod tests {
     #[tokio::test]
     async fn test_udp_query() {
         let (addr, handle) = mock_udp_server(&[Ipv4Addr::new(93, 184, 216, 34)]).await;
-        let (id, query) = build_query();
+        let (_, query) = build_query();
         let (addrs, _) =
-            super::super::query::parse_a_response(&udp_query(addr, &query).await.unwrap(), id)
-                .unwrap();
+            super::super::query::parse_a_response(&udp_query(addr, &query).await.unwrap()).unwrap();
         assert_eq!(addrs, [Ipv4Addr::new(93, 184, 216, 34)]);
         handle.await.unwrap();
     }
@@ -304,13 +303,11 @@ mod tests {
     #[tokio::test]
     async fn test_tcp_query() {
         let (addr, handle) = mock_tcp_server(&[Ipv4Addr::new(93, 184, 216, 34)]).await;
-        let (id, query) = build_query();
+        let (_, query) = build_query();
         let pool = ConnPool::new();
-        let (addrs, _) = super::super::query::parse_a_response(
-            &tcp_query(&pool, addr, &query).await.unwrap(),
-            id,
-        )
-        .unwrap();
+        let (addrs, _) =
+            super::super::query::parse_a_response(&tcp_query(&pool, addr, &query).await.unwrap())
+                .unwrap();
         assert_eq!(addrs, [Ipv4Addr::new(93, 184, 216, 34)]);
         handle.await.unwrap();
     }
@@ -323,10 +320,9 @@ mod tests {
             Ipv4Addr::new(9, 10, 11, 12),
         ];
         let (addr, handle) = mock_udp_server(&expected).await;
-        let (id, query) = build_query();
+        let (_, query) = build_query();
         let (addrs, ttl) =
-            super::super::query::parse_a_response(&udp_query(addr, &query).await.unwrap(), id)
-                .unwrap();
+            super::super::query::parse_a_response(&udp_query(addr, &query).await.unwrap()).unwrap();
         assert_eq!(addrs, expected);
         assert_eq!(ttl, 300);
         handle.await.unwrap();
@@ -336,13 +332,11 @@ mod tests {
     async fn test_tcp_large_response() {
         let expected: Vec<Ipv4Addr> = (0..50).map(|i| Ipv4Addr::new(10, 0, 0, i)).collect();
         let (addr, handle) = mock_tcp_server(&expected).await;
-        let (id, query) = build_query();
+        let (_, query) = build_query();
         let pool = ConnPool::new();
-        let (addrs, _) = super::super::query::parse_a_response(
-            &tcp_query(&pool, addr, &query).await.unwrap(),
-            id,
-        )
-        .unwrap();
+        let (addrs, _) =
+            super::super::query::parse_a_response(&tcp_query(&pool, addr, &query).await.unwrap())
+                .unwrap();
         assert_eq!(addrs, expected);
         handle.await.unwrap();
     }
