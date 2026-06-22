@@ -20,7 +20,10 @@ use simple_dns::TYPE;
 use tracing::{debug, trace};
 
 use super::{BoxIter, Builder, DnsError, DnsProtocol, Nameserver, TxtRecordData};
-use crate::dns::{Resolver, system_config::DnsConfig};
+use crate::dns::{
+    Resolver,
+    system_config::{DnsConfig, Hosts},
+};
 
 mod cache;
 mod pool;
@@ -104,6 +107,10 @@ pub(super) struct SimpleDnsResolver {
     /// Pooled TCP/DoT connections, reused across queries.
     conn_pool: ConnPool,
     cache: DnsCache,
+    /// Static name-to-address mappings from the system hosts file, consulted
+    /// ahead of the cache for A/AAAA lookups. Empty unless system defaults are
+    /// in use.
+    hosts: Hosts,
     builder: Builder,
 }
 
@@ -131,6 +138,14 @@ impl SimpleDnsResolver {
             .as_ref()
             .map(|c| Arc::new(c.clone()));
         let health = RttMap::new(config.nameservers.len());
+        // The hosts file is part of the system resolver configuration, so we
+        // only consult it when the caller opted into system defaults. Reading
+        // it here mirrors reading /etc/resolv.conf in `build_config`.
+        let hosts = if builder.use_system_defaults {
+            Hosts::from_system()
+        } else {
+            Hosts::default()
+        };
         Self {
             nameservers: config.nameservers,
             search_domains: config.search_domains,
@@ -142,6 +157,7 @@ impl SimpleDnsResolver {
             rtt_map: health,
             conn_pool: ConnPool::new(),
             cache,
+            hosts,
             builder,
         }
     }
@@ -479,6 +495,15 @@ impl SimpleDnsResolver {
         if is_localhost(&host) {
             return Ok(vec![Ipv4Addr::LOCALHOST].into_iter());
         }
+        // A hosts-file entry overrides DNS, so check it ahead of the cache.
+        if let Some(addrs) = self
+            .search_names(&host)
+            .iter()
+            .find_map(|name| self.hosts.lookup_ipv4(name))
+        {
+            trace!(%host, ?addrs, "resolved from hosts file");
+            return Ok(addrs.into_iter());
+        }
         let addrs = self
             .lookup(
                 &host,
@@ -499,6 +524,15 @@ impl SimpleDnsResolver {
         // RFC 6761: localhost always resolves to loopback.
         if is_localhost(&host) {
             return Ok(vec![Ipv6Addr::LOCALHOST].into_iter());
+        }
+        // A hosts-file entry overrides DNS, so check it ahead of the cache.
+        if let Some(addrs) = self
+            .search_names(&host)
+            .iter()
+            .find_map(|name| self.hosts.lookup_ipv6(name))
+        {
+            trace!(%host, ?addrs, "resolved from hosts file");
+            return Ok(addrs.into_iter());
         }
         let addrs = self
             .lookup(
@@ -580,13 +614,13 @@ impl Resolver for Arc<SimpleDnsResolver> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
     use n0_future::time::Duration;
 
     use super::{
         super::{DnsProtocol, DnsResolver},
-        Builder, CachedRecord, QueryType, SimpleDnsResolver,
+        Builder, CachedRecord, Hosts, QueryType, SimpleDnsResolver,
     };
 
     const TIMEOUT: Duration = Duration::from_secs(5);
@@ -785,6 +819,29 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// A hosts-file entry must override DNS and resolve without any network
+    /// query, the way the old hickory-backed resolver honored `/etc/hosts`.
+    #[tokio::test]
+    async fn hosts_file_overrides_dns() {
+        let mut resolver = SimpleDnsResolver::new(Builder::default());
+        resolver.hosts = Hosts::from_content("10.0.1.10 myrelay.test\n::1 myrelay.test\n");
+
+        let v4: Vec<_> = resolver
+            .lookup_ipv4("myrelay.test".to_string())
+            .await
+            .unwrap()
+            .collect();
+        assert_eq!(v4, [Ipv4Addr::new(10, 0, 1, 10)]);
+
+        // A trailing dot (FQDN form) still matches the hosts entry.
+        let v6: Vec<_> = resolver
+            .lookup_ipv6("myrelay.test.".to_string())
+            .await
+            .unwrap()
+            .collect();
+        assert_eq!(v6, [Ipv6Addr::LOCALHOST]);
     }
 
     /// A major network change rebuilds the resolver via [`SimpleDnsResolver::reset`];

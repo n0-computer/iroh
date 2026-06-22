@@ -12,10 +12,13 @@ use super::{DnsProtocol, Nameserver};
 
 #[cfg(target_os = "android")]
 mod android;
+mod hosts;
 #[cfg(not(any(windows, target_os = "android")))]
 mod unix;
 #[cfg(windows)]
 mod windows;
+
+pub(crate) use hosts::Hosts;
 
 #[cfg(target_os = "android")]
 pub use android::install_android_jni_context;
