@@ -12,8 +12,10 @@ use super::{DnsProtocol, Nameserver};
 
 #[cfg(target_os = "android")]
 mod android;
+#[cfg(target_os = "macos")]
+mod apple;
 mod hosts;
-#[cfg(not(any(windows, target_os = "android")))]
+#[cfg(all(unix, not(any(target_os = "android", target_os = "macos"))))]
 mod unix;
 #[cfg(windows)]
 mod windows;
@@ -24,7 +26,9 @@ pub(crate) use hosts::Hosts;
 pub use android::install_android_jni_context;
 #[cfg(target_os = "android")]
 use android::read_system_dns;
-#[cfg(not(any(windows, target_os = "android")))]
+#[cfg(target_os = "macos")]
+use apple::read_system_dns;
+#[cfg(all(unix, not(any(target_os = "android", target_os = "macos"))))]
 use unix::read_system_dns;
 #[cfg(windows)]
 use windows::read_system_dns;

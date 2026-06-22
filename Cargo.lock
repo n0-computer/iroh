@@ -2413,6 +2413,7 @@ dependencies = [
  "rustls",
  "simple-dns",
  "strum",
+ "system-configuration",
  "tokio",
  "tokio-rustls",
  "tracing",

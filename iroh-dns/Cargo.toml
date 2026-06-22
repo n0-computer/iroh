@@ -34,6 +34,9 @@ url = "2.5.3"
 ndk-context = "0.1"
 jni = "0.22"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+system-configuration = "0.7"
+
 [target.'cfg(windows)'.dependencies]
 ipconfig = "0.3"
 
