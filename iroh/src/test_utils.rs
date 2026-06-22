@@ -275,6 +275,13 @@ pub(crate) mod dns_server {
             debug!(questions = ?packet.questions, %from, "received query");
             let mut reply = Packet::new_reply(packet.id());
             reply.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
+            // Echo the question section, as a real resolver does. The client
+            // validates that the response question matches its query.
+            reply.questions = packet
+                .questions
+                .iter()
+                .map(|q| q.clone().into_owned())
+                .collect();
             self.resolver.resolve(&packet, &mut reply).await?;
             debug!(?reply, %from, "send reply");
             let buf = reply.build_bytes_vec().map_err(std::io::Error::other)?;
