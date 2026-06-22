@@ -4,7 +4,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use n0_error::{AnyError, e, stack_error};
 use simple_dns::{
-    CLASS, Name, Packet, PacketFlag, QCLASS, QTYPE, Question, RCODE, TYPE,
+    CLASS, Name, Packet, PacketFlag, QCLASS, QTYPE, Question, RCODE, TYPE, header_buffer,
     rdata::{A, AAAA, RData},
 };
 
@@ -64,17 +64,16 @@ pub(super) fn build_query(host: &str, qtype: TYPE) -> Result<(u16, Vec<u8>), Que
     Ok((id, bytes))
 }
 
-/// Returns the RCODE name if `data` is a server failure that warrants trying
-/// another nameserver (SERVFAIL or REFUSED), otherwise `None`.
+/// Returns the RCODE if `data` is a server failure that warrants trying another
+/// nameserver (SERVFAIL or REFUSED), otherwise `None`.
 ///
-/// Reads the RCODE nibble straight from the header (RFC 1035 Section 4.1.1) so
-/// it works on the raw response before the packet is fully parsed or validated.
-/// A spoofed RCODE here is harmless: at worst it makes the race try another
-/// server, and the eventual response is still validated by [`check_response`].
-pub(super) fn server_failure_rcode(data: &[u8]) -> Option<&'static str> {
-    match data.get(3).map(|byte| byte & 0x0f) {
-        Some(2) => Some("ServerFailure"),
-        Some(5) => Some("Refused"),
+/// Reads just the RCODE from the header so it works on the raw response before
+/// the packet is fully parsed or validated. A spoofed RCODE here is harmless:
+/// at worst it makes the race try another server, and the eventual response is
+/// still validated by [`check_response`].
+pub(super) fn server_failure_rcode(data: &[u8]) -> Option<RCODE> {
+    match header_buffer::rcode(data) {
+        Ok(rcode @ (RCODE::ServerFailure | RCODE::Refused)) => Some(rcode),
         _ => None,
     }
 }

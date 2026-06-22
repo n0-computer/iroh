@@ -390,7 +390,8 @@ impl SimpleDnsResolver {
                         // nameserver may still resolve the name.
                         if let Some(rcode) = query::server_failure_rcode(&resp) {
                             self.rtt_map.record_failure(idx);
-                            last_err = Some(e!(DnsError::ServerError { rcode: rcode.to_string() }));
+                            last_err =
+                                Some(e!(DnsError::ServerError { rcode: format!("{rcode:?}") }));
                             // Fail fast: start the next attempt now rather than waiting.
                             next_attempt.as_mut().set_none();
                         } else {
