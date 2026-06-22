@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "1.0.0-rc.1"
+version = "1.0.0"
 edition = "2024"
 readme = "README.md"
 description = "p2p quic connections dialed by public key"
@@ -31,19 +31,19 @@ derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_
 ed25519-dalek = { version = "=3.0.0-rc.0", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
 ipnet = "2"
-iroh-base = { version = "1.0.0-rc.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
-iroh-dns = { version = "1.0.0-rc.1", path = "../iroh-dns" }
-iroh-relay = { version = "1.0.0-rc.1", path = "../iroh-relay", default-features = false }
+iroh-base = { version = "1.0.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-dns = { version = "1.0.0", path = "../iroh-dns" }
+iroh-relay = { version = "1.0.0", path = "../iroh-relay", default-features = false }
 n0-future = "0.3"
-n0-error = "=1.0.0-rc.0"
-n0-watcher = "=1.0.0-rc.0"
-netwatch = "0.18"
+n0-error = "1.0.0"
+n0-watcher = "1.0.0"
+netwatch = "0.19"
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-noq = { version = "=1.0.0-rc.1", default-features = false, features = ["rustls"] }
-noq-proto = { version = "=1.0.0-rc.1", default-features = false }
-noq-udp = { version = "=1.0.0-rc.1", default-features = false }
+noq = { version = "1.0.0", default-features = false, features = ["rustls"] }
+noq-proto = { version = "1.0.0", default-features = false }
+noq-udp = { version = "1.0.0", default-features = false }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustc-hash = "2"
@@ -61,12 +61,10 @@ tokio-stream = { version = "0.1.15", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
 tracing = "0.1"
 url = { version = "2.5", features = ["serde"] }
-webpki = { package = "rustls-webpki", version = "0.103.7", default-features = false, features = ["std"] }
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
-webpki-roots = "1.0.3"
 
 # metrics
-iroh-metrics = { version = "=1.0.0-rc.0", default-features = false }
+iroh-metrics = { version = "1.0.1", default-features = false }
 
 futures-util = "0.3"
 
@@ -77,8 +75,8 @@ axum = { version = "0.8", optional = true }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 
 hickory-resolver = { version = "0.26.0", default-features = false }
-portmapper = { version = "0.18", optional = true, default-features = false }
-noq = { version = "=1.0.0-rc.1", default-features = false, features = ["runtime-tokio", "rustls"] }
+portmapper = { version = "0.19", optional = true, default-features = false }
+noq = { version = "1.0.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -99,7 +97,7 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 # target-common test/dev dependencies
 [dev-dependencies]
 console_error_panic_hook = "0.1"
-n0-error = { version = "=1.0.0-rc.0", features = ["anyhow"] }
+n0-error = { version = "1.0.0", features = ["anyhow"] }
 postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand_chacha = "0.10"
@@ -121,7 +119,7 @@ tokio = { version = "1", features = [
     "test-util",
 ] }
 serde_json = "1"
-iroh-relay = { version = "1.0.0-rc.1", path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
+iroh-relay = { version = "1.0.0", path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
 n0-tracing-test = "0.3"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = [
@@ -129,7 +127,7 @@ tracing-subscriber = { version = "0.3", features = [
 ] }
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
-iroh-base = { version = "1.0.0-rc.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-base = { version = "1.0.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 console = { version = "0.16" }
 
 # wasm-in-browser test/dev dependencies
@@ -140,7 +138,7 @@ wasm-bindgen-test = "0.3.62"
 # patchbay netsim test dependencies (linux only)
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 ctor = "1.0"
-patchbay = { version = "0.5", features = ["iroh-metrics"] }
+patchbay = { version = "0.6", features = ["iroh-metrics"] }
 testdir = "0.10"
 
 [build-dependencies]
@@ -157,9 +155,9 @@ qlog = ["noq/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["noq/fast-apple-datapath"]
 # Use ring as the crypto backend.
-tls-ring = ["noq/ring", "iroh-relay/tls-ring", "iroh-dns/tls-ring", "webpki/ring"]
+tls-ring = ["noq/ring", "iroh-relay/tls-ring", "iroh-dns/tls-ring"]
 # Use aws-lc-rs as the crypto backend, unless `ring` is also enabled.
-tls-aws-lc-rs = ["noq/aws-lc-rs", "iroh-relay/tls-aws-lc-rs", "iroh-dns/tls-aws-lc-rs", "webpki/aws-lc-rs"]
+tls-aws-lc-rs = ["noq/aws-lc-rs", "iroh-relay/tls-aws-lc-rs", "iroh-dns/tls-aws-lc-rs"]
 # Unstable: Custom transport API (may change without notice)
 unstable-custom-transports = []
 # Unstable: API to access an endpoint's NetReport (may change without notice)

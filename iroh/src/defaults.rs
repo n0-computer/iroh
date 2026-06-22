@@ -91,9 +91,9 @@ pub mod staging {
     use crate::RelayUrl;
 
     /// Hostname of the default NA relay.
-    pub const NA_EAST_RELAY_HOSTNAME: &str = "staging-use1-1.relay.iroh.network.";
+    pub const NA_EAST_RELAY_HOSTNAME: &str = "use1-1.staging-relay.n0.iroh.link.";
     /// Hostname of the default EU relay.
-    pub const EU_RELAY_HOSTNAME: &str = "staging-euw1-1.relay.iroh.network.";
+    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.staging-relay.n0.iroh.link.";
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {

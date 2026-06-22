@@ -1,9 +1,11 @@
 ---
 name: Bug report
 about: Create a report to help us improve
-title: 'bug: [description]'
+title: '[description]'
 labels: bug
+projects: ["n0-computer/1"]
 assignees: ''
+type: bug
 
 ---
 
@@ -11,7 +13,7 @@ assignees: ''
 <!-- A clear and concise description of what the bug is. -->
 
 **Relevant Logs**
-<!-- Setup `tracing_subscriber` in your application and use the `RUST_LOG = debug` env variable to turn on debug logs. Please see: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/fmt/fn.init.html -->
+<!-- Setup `tracing_subscriber` in your application and use the `RUST_LOG = trace` env variable to turn on debug logs. Please see: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/fmt/fn.init.html -->
 
 **Expected behavior**
 <!-- A clear and concise description of what you expected to happen. -->
@@ -44,3 +46,12 @@ Smartphone<!-- (please complete the following information) -->:
 
 **Additional Context / Screenshots / GIFs**
 <!-- Add any other context about the problem here. -->
+
+**lolwut**
+<!-- You made it to the bottom! Nice, now just prove you're human: -->
+
+- [ ] This issue was created by a human that thought critically about
+      the issue being reported and wrote this as concisely and clearly
+      as they could. Taking full responsibility for the issue being
+      accurate.
+- [ ] This issue isn't slop.

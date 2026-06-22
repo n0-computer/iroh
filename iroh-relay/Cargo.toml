@@ -1,6 +1,6 @@
 [package]
 name = "iroh-relay"
-version = "1.0.0-rc.1"
+version = "1.0.0"
 edition = "2024"
 readme = "README.md"
 description = "Iroh's relay server and client"
@@ -33,11 +33,11 @@ http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
-iroh-base = { version = "1.0.0-rc.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
-iroh-dns = { version = "1.0.0-rc.1", path = "../iroh-dns" }
-iroh-metrics = { version = "=1.0.0-rc.0", default-features = false }
+iroh-base = { version = "1.0.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
+iroh-dns = { version = "1.0.0", path = "../iroh-dns" }
+iroh-metrics = { version = "1.0.1", default-features = false }
 lru = "0.18.0"
-n0-error = "=1.0.0-rc.0"
+n0-error = "1.0.0"
 n0-future = "0.3"
 num_enum = "0.7"
 pin-project = "1"
@@ -46,8 +46,8 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
-noq = { version = "=1.0.0-rc.1", default-features = false, features = ["rustls"] }
-noq-proto = { version = "=1.0.0-rc.1", default-features = false }
+noq = { version = "1.0.0", default-features = false, features = ["rustls"] }
+noq-proto = { version = "1.0.0", default-features = false }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
 rustls = { version = "0.23.33", default-features = false }
@@ -71,7 +71,6 @@ webpki_types = { package = "rustls-pki-types", version = "1.12" }
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }
 dashmap = { version = "6.1.0", optional = true }
-ahash = { version = "0.8.11", optional = true } # minimal version fix
 rcgen = { version = "0.14", optional = true }
 reloadable-state = { version = "0.1", optional = true }
 rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
@@ -137,7 +136,6 @@ server = [
     "tokio/signal",
     "dep:clap",
     "dep:dashmap",
-    "dep:ahash",
     "dep:rcgen",
     "dep:reloadable-state",
     "dep:rustls-cert-file-reader",
