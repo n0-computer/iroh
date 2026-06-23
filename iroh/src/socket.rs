@@ -27,7 +27,6 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use mapped_addrs::MultipathMappedAddr;
 use n0_error::{AnyError, anyerr, bail, e, stack_error};
 use n0_future::{
     MaybeFuture,
@@ -42,18 +41,17 @@ use netwatch::{
     ip::LocalAddresses,
 };
 use noq::{
-    NetworkChangeHint, TokenStore,
+    TokenStore,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use rand::RngExt;
-use rustc_hash::FxHashSet;
 use tokio::sync::{
     Mutex as AsyncMutex,
     mpsc::{self},
     oneshot,
 };
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
-use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, Span, debug, event, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, Transport, TransportConfig};
 use url::Url;
 
@@ -1080,7 +1078,6 @@ impl EndpointInner {
 
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
-            endpoint: endpoint.clone(),
             sock: sock.clone(),
             remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
@@ -1440,19 +1437,6 @@ impl PendingNetworkChangeNotify {
 }
 
 struct Actor {
-    /// A clone of the quinn Endpoint.
-    ///
-    /// The task of this actor is currently owned by the [`crate::Endpoint`] and wrapped in
-    /// an [`AbortOnDropHandle`]. When [`crate::Endpoint::close`] is called various
-    /// subsystems are being stopped. Then, when [`ShutdownState::at_endpoint_closed`] is
-    /// called by [`crate::Endpoint::close`], this actor itself is stopped via it's
-    /// [`CancellationToken`] and we will drop this clone of the endpoint. The endpoint is
-    /// then finally dropped when the [`crate::Endpoint`] itself is dropped.
-    ///
-    /// All of this to say: keeping the quinn endpoint alive here does not impact the
-    /// lifetime of it since it's lifetime is shorter than that one that's stored in the
-    /// [`crate::Endpoint`].
-    endpoint: noq::Endpoint,
     /// Shared state between an awful lot of iroh subsystems.
     ///
     /// In particular both the [`EndpointInner`] as well as this actor itself have a
