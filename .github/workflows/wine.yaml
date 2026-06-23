@@ -29,7 +29,7 @@ jobs:
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_1) }}
     # runs-on: [self-hosted, linux, X64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Wine
         run: |

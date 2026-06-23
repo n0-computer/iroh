@@ -149,7 +149,7 @@ impl QuicTransportConfig {
 }
 
 impl QuicTransportConfigBuilder {
-    /// Create a default [`QuicTransportConfigBuilder`].
+    /// Creates a default [`QuicTransportConfigBuilder`].
     fn new() -> Self {
         let mut cfg = noq::TransportConfig::default();
         // Override some transport config settings.
@@ -162,7 +162,7 @@ impl QuicTransportConfigBuilder {
         Self(cfg)
     }
 
-    /// Build a [`QuicTransportConfig`] from the builder.
+    /// Builds a [`QuicTransportConfig`] from the builder.
     pub fn build(self) -> QuicTransportConfig {
         QuicTransportConfig(Arc::new(self.0))
     }
@@ -357,11 +357,11 @@ impl QuicTransportConfigBuilder {
 
     /// Period of inactivity before sending a keep-alive packet.
     ///
-    /// Keep-alive packets prevent an inactive but otherwise healthy connection from timing out.
+    /// Keep-alive packets prevent an inactive but otherwise healthy connection from timing
+    /// out. They are important to keep NAT bindings alive and firewalls open.
     ///
-    /// `None` to disable, which is the default. Only one side of any given connection needs keep-alive
-    /// enabled for the connection to be preserved. Must be set lower than the idle_timeout of both
-    /// peers to be effective.
+    /// The default is 5s, please be careful when modifying this as it may affect connection
+    /// stability. Must be set lower than the idle_timeout of both peers to be effective.
     pub fn keep_alive_interval(mut self, value: Duration) -> Self {
         self.0.keep_alive_interval(Some(value));
         self
