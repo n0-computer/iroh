@@ -64,7 +64,13 @@ impl MaybeTlsStreamBuilder {
 
     pub(super) async fn connect(self) -> Result<MaybeTlsStream<ProxyStream>, ConnectError> {
         let mut config = self.tls_config.clone();
-        config.resumption = Resumption::default();
+        // Disable TLS session resumption. The default (`Resumption::default()` ==
+        // `in_memory_sessions(256)`) allocates a ~9 KB hashbrown cache for 256
+        // sessions, but a relay client only ever reconnects to a single relay, so
+        // at most one ticket would ever be cached. On memory-constrained targets
+        // (e.g. ESP32 without SPIRAM) that 9 KB is far more valuable than skipping
+        // the handshake on the occasional reconnect.
+        config.resumption = Resumption::disabled();
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 
         let tcp_stream = self.dial_url(&tls_connector).await?;
