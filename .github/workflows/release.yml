@@ -214,7 +214,7 @@ jobs:
         - name: Cache AWS CLI
           if: matrix.os != 'windows-latest'
           id: cache-awscli
-          uses: actions/cache@v5
+          uses: actions/cache@v6
           with:
             path: ~/awscli
             key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
