@@ -90,11 +90,37 @@ impl IfStateDetails {
 
 impl From<netwatch::netmon::State> for IfStateDetails {
     fn from(value: netwatch::netmon::State) -> Self {
+        let have_v6 = if let Some(ref default_if) = value.default_route_interface {
+            if let Some(iface) = value.interfaces.get(default_if) {
+                iface.addrs().any(|ip_net| match ip_net {
+                    netwatch::interfaces::IpNet::V6 { net, .. } => is_usable_v6(net.addr()),
+                    _ => false,
+                })
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         IfStateDetails {
             have_v4: value.have_v4,
-            have_v6: value.have_v6,
+            have_v6: value.have_v6 && have_v6,
         }
     }
+}
+
+fn is_usable_v6(ip: std::net::Ipv6Addr) -> bool {
+    // V6 Global1 2000::/3
+    let mask: u16 = 0b1110_0000_0000_0000;
+    let base: u16 = 0x2000;
+    let segment1 = ip.segments()[0];
+    if (base & mask) == (segment1 & mask) {
+        return true;
+    }
+    // Unique Local Address fc00::/7
+    let ula_mask: u16 = 0xfe00;
+    (segment1 & ula_mask) == 0xfc00
 }
 
 /// Any state that depends on sockets being available in the current environment.
