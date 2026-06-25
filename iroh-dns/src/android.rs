@@ -7,17 +7,22 @@
 //! (both do this before `main`) or by an explicit
 //! [`install_android_jni_context`] call.
 //!
-//! Without an initialized [`ndk_context`], the JNI lookup panics. Debug
-//! builds wrap the call in `std::panic::catch_unwind` so unit tests on
-//! Android (where no JVM is in scope) fall back to the resolver's
-//! default servers instead of aborting the test binary. Release builds
-//! let the panic propagate; uninitialized [`ndk_context`] in production
-//! is a programming error and should surface loudly.
+//! Without an initialized [`ndk_context`], the JNI lookup panics internally.
+//! We catch the panic via [`catch_unwind`] and convert the panic into a regular
+//! error, which will then make the [`DnsResolver`] use fallback nameservers.
+//!
+//! This depends on panic unwinding though, so if you set `panic = abort` in
+//! your compilation profile, and don't install the JNI context, your app
+//! would panic and abort on the first DNS lookup.
 //!
 //! [`DnsResolver`]: crate::dns::DnsResolver
 //! [`ndk_context`]: https://docs.rs/ndk-context
+//! [`catch_unwind`]: std::panic::catch_unwind
 
-use std::ffi::c_void;
+use std::{
+    ffi::c_void,
+    panic::{AssertUnwindSafe, catch_unwind},
+};
 
 use hickory_resolver::{
     config::{ResolverConfig, ResolverOpts},
@@ -26,21 +31,15 @@ use hickory_resolver::{
 
 /// Reads the active network's DNS configuration via JNI.
 pub(crate) fn read_system_conf() -> Result<(ResolverConfig, ResolverOpts), NetError> {
-    #[cfg(debug_assertions)]
-    {
-        use std::panic::{AssertUnwindSafe, catch_unwind};
-        match catch_unwind(AssertUnwindSafe(
-            hickory_resolver::system_conf::read_system_conf,
-        )) {
-            Ok(Ok(conf)) => Ok(conf),
-            Ok(Err(err)) => Err(NetError::from(err)),
-            Err(_) => Err(NetError::Msg(
-                "ndk_context not initialized; call install_android_jni_context".to_string(),
-            )),
-        }
+    match catch_unwind(AssertUnwindSafe(
+        hickory_resolver::system_conf::read_system_conf,
+    )) {
+        Ok(Ok(conf)) => Ok(conf),
+        Ok(Err(err)) => Err(NetError::from(err)),
+        Err(_) => Err(NetError::Msg(
+            "ndk_context not initialized; call install_android_jni_context".to_string(),
+        )),
     }
-    #[cfg(not(debug_assertions))]
-    Ok(hickory_resolver::system_conf::read_system_conf()?)
 }
 
 /// Publishes a `JavaVM` and `Application` `Context` to [`ndk_context`] so
