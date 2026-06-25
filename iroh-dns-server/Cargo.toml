@@ -87,7 +87,7 @@ name = "publish"
 required-features = ["ring"]
 
 [build-dependencies]
-vergen-gitcl = "9.1"
+vergen-gitcl = "10.0"
 
 [package.metadata.docs.rs]
 all-features = true
