@@ -34,6 +34,8 @@ use tokio::sync::Notify;
 use tracing::warn;
 use url::Url;
 
+#[cfg(any(target_os = "android", doc))]
+pub use crate::android::install_android_jni_context;
 use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
 
 /// Default DNS query timeout.
@@ -182,9 +184,9 @@ impl DnsProtocol {
 impl Builder {
     /// Makes the builder respect the host system's DNS configuration.
     ///
-    /// We first try to read the system's resolver from `/etc/resolv.conf`.
-    /// This does not work at least on some Androids, therefore we fallback
-    /// to a default config which uses Google's `8.8.8.8` or `8.8.4.4`.
+    /// We will try to read the system's DNS configuration in a platform-specific
+    /// way. If that fails for whatever reason, the resolver will be configured
+    /// to use Google's DNS servers instead.
     pub fn with_system_defaults(mut self) -> Self {
         self.use_system_defaults = true;
         self
@@ -233,12 +235,18 @@ impl Builder {
 /// The system-defaults reader uses JNI through [`ndk_context`], which must be
 /// initialized with a `JavaVM` and `Application` context before the resolver
 /// is constructed. Glue crates like ndk-glue and android-activity do this
-/// before `main`. Apps that don't use either can call
-/// `iroh_dns::install_android_jni_context` once at startup. Without an
-/// initialized `ndk_context` the JNI lookup panics in release builds. In
-/// debug builds the panic is caught and the resolver falls back to Google's
-/// public DNS.
+/// before `main`. Apps that don't use either should call [`install_android_jni_context`]
+/// once at startup, see docs there for details.
 ///
+/// If `ndk_context` is not initialized, fetching the system config on Android will fail
+/// and the resolver will use Google's fallback DNS servers. Due to how things are
+/// implemented in `ndk_context`, detecting the failure relies on unwinding a panic.
+/// If your app uses `panic = "abort"` in its compilation profile, this doesn't work,
+/// so in that case your app will panic if no JNI context is initialized.
+/// Therefore, either make sure that the JNI context is installed, or don't use
+/// `panic = "abort"`.
+///
+/// [`install_android_jni_context`]: crate::install_android_jni_context
 /// [`ndk_context`]: https://docs.rs/ndk-context
 #[derive(Debug, Clone)]
 pub struct DnsResolver {
@@ -722,8 +730,8 @@ impl HickoryResolver {
         let (mut config, mut options) = if builder.use_system_defaults {
             match Self::system_config() {
                 Ok((config, options)) => (config, options),
-                Err(error) => {
-                    warn!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
+                Err(reason) => {
+                    warn!(%reason, "Failed to read the system's DNS config, using Google DNS servers as fallback.");
                     (
                         ResolverConfig::udp_and_tcp(&hickory_resolver::config::GOOGLE),
                         ResolverOpts::default(),
