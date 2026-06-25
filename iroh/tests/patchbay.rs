@@ -384,14 +384,26 @@ async fn holepunch_many_addrs_server_8() -> Result {
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing"]
 async fn holepunch_many_addrs_client_16() -> Result {
     run_holepunch_many_addrs(Side::Client, 16).await
 }
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing"]
 async fn holepunch_many_addrs_server_16() -> Result {
     run_holepunch_many_addrs(Side::Server, 16).await
+}
+
+#[tokio::test]
+#[traced_test]
+#[ignore = "not yet passing"]
+async fn holepunch_many_addrs_client_32() -> Result {
+    run_holepunch_many_addrs(Side::Client, 32).await
+}
+
+#[tokio::test]
+#[traced_test]
+#[ignore = "not yet passing"]
+async fn holepunch_many_addrs_server_32() -> Result {
+    run_holepunch_many_addrs(Side::Server, 32).await
 }

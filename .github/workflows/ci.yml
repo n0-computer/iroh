@@ -57,7 +57,7 @@ jobs:
           # - x86_64-unknown-netbsd
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -107,7 +107,7 @@ jobs:
             api-level: 35
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Enable KVM for nested virtualization
         if: matrix.target == 'x86_64-linux-android'
@@ -237,7 +237,7 @@ jobs:
       RUSTFLAGS: "-Dwarnings --cfg skip_patchbay"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -276,7 +276,7 @@ jobs:
       RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup node.js version 22.5 # needed for browser-like websocket API support in node.js
         uses: actions/setup-node@v6
@@ -328,7 +328,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install sccache
@@ -350,7 +350,7 @@ jobs:
         # uses: obi1kenobi/cargo-semver-checks-action@v2
         uses: n0-computer/cargo-semver-checks-action@feat-baseline
         with:
-          package: iroh, iroh-base, iroh-dns-server, iroh-relay, iroh-net-report
+          package: iroh, iroh-base, iroh-dns, iroh-dns-server, iroh-relay
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
@@ -374,12 +374,12 @@ jobs:
       CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.5.0"
       TOOLCHAIN: "nightly-2026-03-20"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.TOOLCHAIN }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Install cargo-check-external-types
         uses: taiki-e/install-action@v2
@@ -399,7 +399,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -420,7 +420,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
       RUSTDOCFLAGS: --cfg docsrs
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2025-10-09
@@ -441,7 +441,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -466,7 +466,7 @@ jobs:
     name: Check optional deps are absent without features
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify optional deps are absent without features
         run: |
@@ -493,7 +493,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.MSRV }}
@@ -511,7 +511,7 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           arguments: --workspace --all-features
@@ -535,7 +535,7 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Cache pip
         uses: actions/cache@v5
         with:
