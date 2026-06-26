@@ -43,7 +43,7 @@ use n0_future::{
 use rand::seq::IteratorRandom;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, error, trace, warn, warn_span};
+use tracing::{Instrument, debug, error, info_span, trace, warn};
 use url::Host;
 
 #[cfg(not(wasm_browser))]
@@ -141,7 +141,7 @@ impl Client {
         let task = task::spawn(
             actor
                 .run(shutdown_token)
-                .instrument(warn_span!("reportgen-actor")),
+                .instrument(info_span!("reportgen-actor")),
         );
         (
             Self {
@@ -337,7 +337,7 @@ impl Actor {
                     };
                     ProbeFinished::CaptivePortal(res)
                 }
-                .instrument(warn_span!("captive-portal")),
+                .instrument(info_span!("captive-portal")),
             );
         }
         token
@@ -408,7 +408,7 @@ impl Actor {
                         };
                         ProbeFinished::Regular(res)
                     }
-                    .instrument(warn_span!(
+                    .instrument(info_span!(
                         "run-probe",
                         ?proto,
                         ?delay,

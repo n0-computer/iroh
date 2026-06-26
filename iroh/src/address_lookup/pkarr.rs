@@ -69,7 +69,7 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Disconnected, Watchable, Watcher as _};
-use tracing::{Instrument, debug, error_span, trace, warn};
+use tracing::{Instrument, debug, info_span, trace, warn};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -321,7 +321,7 @@ impl PkarrPublisher {
             pkarr_client,
             republish_interval,
         };
-        let join_handle = task::spawn(service.run().instrument(error_span!("pkarr_publish")));
+        let join_handle = task::spawn(service.run().instrument(info_span!("pkarr_publish")));
         Self {
             watchable,
             endpoint_id,
