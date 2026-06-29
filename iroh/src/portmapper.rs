@@ -9,6 +9,11 @@ use tokio::sync::watch;
 
 /// Configuration for the portmapper service (UPnP, PCP, NAT-PMP).
 ///
+/// Port mapping asks the local router to open an external port so peers can
+/// reach this endpoint directly, improving connectivity behind NATs. The
+/// discovery step (UPnP uses SSDP multicast) can, however, trigger firewall
+/// prompts on some networks — see [`PortmapperConfig::Disabled`].
+///
 /// Used with [`crate::endpoint::Builder::portmapper_config`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -19,6 +24,11 @@ pub enum PortmapperConfig {
     #[non_exhaustive]
     Enabled {},
     /// Disable portmapping.
+    ///
+    /// Skips the UPnP/PCP/NAT-PMP gateway probing. Use this to avoid the
+    /// SSDP multicast discovery that can raise firewall dialogs (notably on
+    /// macOS), at the cost of potentially worse direct connectivity behind
+    /// some NATs.
     Disabled,
 }
 

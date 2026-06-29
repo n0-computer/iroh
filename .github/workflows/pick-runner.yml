@@ -75,13 +75,24 @@ on:
         type: number
         default: 3
       core_runner:
-        description: JSON array for the `core` class (always this)
+        description: >
+          JSON array for the `core` class (always this). Also the label set
+          used to count idle self-hosted capacity for this platform
+          (case-insensitive). Pass e.g. '["self-hosted","windows","x64"]' to
+          route a Windows batch.
         type: string
         default: '["self-hosted","linux","X64"]'
       overflow_runner:
         description: JSON array for overflow slots that land on Blacksmith
         type: string
         default: '["blacksmith-4vcpu-ubuntu-2204"]'
+      blacksmith_busy_match:
+        description: >
+          Substring a busy Blacksmith runner's labels must contain to count
+          toward THIS platform's cap (e.g. `ubuntu` or `windows`). Keeps the
+          per-platform `max_blacksmith_concurrent` caps independent.
+        type: string
+        default: ubuntu
       max_blacksmith_concurrent:
         description: >
           Soft cap on total Blacksmith runners busy across the org. If the
@@ -187,6 +198,7 @@ jobs:
           MAX_BLACKSMITH_CONCURRENT: ${{ inputs.max_blacksmith_concurrent }}
           CORE_RUNNER: ${{ inputs.core_runner }}
           OVERFLOW_RUNNER: ${{ inputs.overflow_runner }}
+          BS_MATCH: ${{ inputs.blacksmith_busy_match }}
           ORG: ${{ inputs.org }}
           GH_TOKEN: ${{ secrets.RUNNER_READ_TOKEN || github.token }}
         shell: bash
@@ -197,19 +209,21 @@ jobs:
           # One paginated fetch, counted twice. Avoid a second round-trip.
           RUNNERS_JSON="$(gh api "/orgs/${ORG}/actions/runners" --paginate 2>/dev/null || echo '')"
 
-          IDLE="$(echo "$RUNNERS_JSON" | jq -s '[.[] | .runners[]?]
+          IDLE="$(echo "$RUNNERS_JSON" | jq -s --argjson want "$CORE_RUNNER" '[.[] | .runners[]?]
                  | [.[] | select(.status=="online" and .busy==false
                                  and ([.labels[].name | ascii_downcase]
-                                      | contains(["self-hosted","linux","x64"])))]
+                                      | contains($want | map(ascii_downcase))))]
                  | length' 2>/dev/null || echo "")"
 
-          # Count busy runners whose labels include any "blacksmith-" prefixed
-          # label. Blacksmith runners are ephemeral — they only exist while
-          # executing a job, so busy==true is always the relevant state.
-          BS_BUSY="$(echo "$RUNNERS_JSON" | jq -s '[.[] | .runners[]?]
+          # Count busy runners whose labels include a "blacksmith-" prefixed
+          # label AND a label containing $BS_MATCH (e.g. "ubuntu"/"windows"), so
+          # each platform's cap counts only its own Blacksmith runners.
+          # Blacksmith runners are ephemeral — they only exist while executing a
+          # job, so busy==true is always the relevant state.
+          BS_BUSY="$(echo "$RUNNERS_JSON" | jq -s --arg os "$BS_MATCH" '[.[] | .runners[]?]
                     | [.[] | select(.busy==true
-                                    and ([.labels[].name | ascii_downcase]
-                                         | any(startswith("blacksmith-"))))]
+                                    and ([.labels[].name | ascii_downcase] | any(startswith("blacksmith-")))
+                                    and ([.labels[].name | ascii_downcase] | any(contains($os | ascii_downcase)))) ]
                     | length' 2>/dev/null || echo "")"
 
           # Decide how many slots get self-hosted.

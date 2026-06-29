@@ -29,13 +29,13 @@ use n0_future::{
     stream,
     time::{self, Duration},
 };
-#[cfg(target_os = "android")]
-pub use system_config::install_android_jni_context;
 use tokio::sync::Notify;
 use url::Url;
 
 #[cfg(not(wasm_browser))]
 use self::resolver::SimpleDnsResolver;
+#[cfg(any(target_os = "android", doc))]
+pub use self::system_config::install_android_jni_context;
 use crate::{ParseError, endpoint_info::EndpointInfo};
 
 /// Default timeout for DNS requests
@@ -208,9 +208,9 @@ pub enum DnsProtocol {
 impl Builder {
     /// Makes the builder respect the host system's DNS configuration.
     ///
-    /// We first try to read the system's resolver from `/etc/resolv.conf`.
-    /// This does not work at least on some Androids, therefore we fallback
-    /// to a default config which uses Google's `8.8.8.8` or `8.8.4.4`.
+    /// We will try to read the system's DNS configuration in a platform-specific
+    /// way. If that fails for whatever reason, the resolver will be configured
+    /// to use Google's DNS servers instead.
     pub fn with_system_defaults(mut self) -> Self {
         self.use_system_defaults = true;
         self
@@ -244,7 +244,7 @@ impl Builder {
     /// The connection is made to `addr`, but `server_name` is used for the SNI
     /// and certificate validation. Use this for providers whose certificates
     /// cover a hostname rather than the IP.
-    #[cfg(with_crypto_provider)]
+    #[cfg(any(with_crypto_provider, doc))]
     pub fn with_tls_nameserver(mut self, addr: SocketAddr, server_name: impl Into<String>) -> Self {
         self.nameservers.push(Nameserver {
             addr,
@@ -259,7 +259,7 @@ impl Builder {
     /// The request is sent to `https://<server_name>/dns-query` with the
     /// connection pinned to `addr`. Use this for providers whose certificates
     /// cover a hostname rather than the IP.
-    #[cfg(with_crypto_provider)]
+    #[cfg(any(with_crypto_provider, doc))]
     pub fn with_https_nameserver(
         mut self,
         addr: SocketAddr,
@@ -277,7 +277,7 @@ impl Builder {
     ///
     /// This is only used with DNS-over-TLS and DNS-over-HTTPS, and requires
     /// enabling either the ring or aws-lc-rs feature.
-    #[cfg(with_crypto_provider)]
+    #[cfg(any(with_crypto_provider, doc))]
     pub fn tls_client_config(mut self, client_config: rustls::ClientConfig) -> Self {
         self.tls_client_config = Some(client_config);
         self
@@ -301,12 +301,18 @@ impl Builder {
 /// The system-defaults reader uses JNI through [`ndk_context`], which must be
 /// initialized with a `JavaVM` and `Application` context before the resolver
 /// is constructed. Glue crates like ndk-glue and android-activity do this
-/// before `main`. Apps that don't use either can call
-/// `iroh_dns::install_android_jni_context` once at startup. Without an
-/// initialized `ndk_context` the JNI lookup panics in release builds. In
-/// debug builds the panic is caught and the resolver falls back to Google's
-/// public DNS.
+/// before `main`. Apps that don't use either should call [`install_android_jni_context`]
+/// once at startup, see docs there for details.
 ///
+/// If `ndk_context` is not initialized, fetching the system config on Android will fail
+/// and the resolver will use Google's fallback DNS servers. Due to how things are
+/// implemented in `ndk_context`, detecting the failure relies on unwinding a panic.
+/// If your app uses `panic = "abort"` in its compilation profile, this doesn't work,
+/// so in that case your app will panic if no JNI context is initialized.
+/// Therefore, either make sure that the JNI context is installed, or don't use
+/// `panic = "abort"`.
+///
+/// [`install_android_jni_context`]: crate::install_android_jni_context
 /// [`ndk_context`]: https://docs.rs/ndk-context
 #[derive(Debug, Clone)]
 pub struct DnsResolver {

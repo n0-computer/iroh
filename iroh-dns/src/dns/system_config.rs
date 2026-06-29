@@ -10,7 +10,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use super::{DnsProtocol, Nameserver};
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", doc))]
 mod android;
 #[cfg(target_vendor = "apple")]
 mod apple;
@@ -20,7 +20,7 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", doc))]
 pub use android::install_android_jni_context;
 #[cfg(target_os = "android")]
 use android::read_system_dns;
