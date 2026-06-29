@@ -811,8 +811,9 @@ pub struct RemoteEndpointIdError;
 impl<T: ConnectionState> Connection<T> {
     /// Initiates a new outgoing unidirectional stream.
     ///
-    /// A unidirectional stream can only transmit data from the stream initiator to the peer
-    /// and not in the return direction.
+    /// A unidirectional stream can only transmit data from the endpoint which opens the
+    /// stream, the endpoint accepting the stream can not send any data back on the same
+    /// stream.
     ///
     /// # QUIC streams
     ///
