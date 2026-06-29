@@ -879,13 +879,21 @@ pub enum EndpointError {
 ///
 /// The endpoint's default [`DnsResolver`] reads the system DNS configuration
 /// through JNI, which needs a JVM context published to [`ndk_context`]. Apps
-/// must initialize that context before constructing the endpoint, or the
-/// resolver build panics. See [`DnsResolver`] for the supported
-/// initialization paths.
+/// should initialize that context before constructing the endpoint. See
+/// [`iroh_dns::install_android_jni_context`] for details (the function is also
+/// exported as `iroh::dns::install_android_jni_context`).
+///
+/// If no JNI context is installed, iroh relies on panic unwinding to detect
+/// the error, and will then use Google's fallback DNS servers. Note that if
+/// your compilation profile sets `panic = "abort"`, this can't work, and thus
+/// your app will panic if using a default `DnsResolver` without first initializing
+/// the JNI context.
 ///
 /// [QUIC]: https://quicwg.org
 /// [`DnsResolver`]: crate::dns::DnsResolver
 /// [`ndk_context`]: https://docs.rs/ndk-context
+/// [`iroh_dns::install_android_jni_context`]: https://docs.rs/iroh-dns/latest/iroh_dns/fn.install_android_jni_context.html
+// The last link can't be a normal doclink, because #[cfg(doc)] can't cross crate boundaries unfortunately.
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     inner: Arc<EndpointInner>,

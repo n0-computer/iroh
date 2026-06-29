@@ -7,7 +7,7 @@ This server compiles to a binary `iroh-dns-server`. It needs a config file, of
 which there are two examples included:
 
 - [`config.dev.toml`](./config.dev.toml) - suitable for local development
-- [`config.prod.toml`](./config.dev.toml) - suitable for production, after
+- [`config.prod.toml`](./config.prod.toml) - suitable for production, after
   adjusting the domain names and IP addresses
 
 The server will expose the following services:
@@ -26,8 +26,8 @@ packet origin will be appended with the origin as configured by this server.
 This project is licensed under either of
 
 - Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
-  http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+  https://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or https://opensource.org/licenses/MIT)
 
 at your option.
 

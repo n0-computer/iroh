@@ -446,7 +446,7 @@ impl Client {
         do_full: bool,
         shutdown_token: CancellationToken,
     ) -> Vec<ProbeReport> {
-        use tracing::{Instrument, warn_span};
+        use tracing::{Instrument, info_span};
 
         let Some(ref quic_client) = self.socket_state.quic_client else {
             return Vec::new();
@@ -516,7 +516,7 @@ impl Client {
                             PROBES_TIMEOUT,
                             run_probe_v4(relay, quic_client, dns_resolver, inner_token),
                         ))
-                        .instrument(warn_span!("QADv4", %relay_url)),
+                        .instrument(info_span!("QADv4", %relay_url)),
                 );
             }
             if if_state.have_v6 && needs_v6_probe {
@@ -533,7 +533,7 @@ impl Client {
                             PROBES_TIMEOUT,
                             run_probe_v6(relay, quic_client, dns_resolver, inner_token),
                         ))
-                        .instrument(warn_span!("QADv6", %relay_url)),
+                        .instrument(info_span!("QADv6", %relay_url)),
                 );
             }
         }
@@ -566,7 +566,7 @@ impl Client {
                 }
 
                 val = v4_buf.join_next(), if !v4_buf.is_empty() => {
-                    let span = warn_span!("QADv4");
+                    let span = info_span!("QADv4");
                     let _guard = span.enter();
                     ipv4_pending = false;
                     match val {
@@ -605,7 +605,7 @@ impl Client {
                     }
                 }
                 val = v6_buf.join_next(), if !v6_buf.is_empty() => {
-                    let span = warn_span!("QADv6");
+                    let span = info_span!("QADv6");
                     let _guard = span.enter();
                     ipv6_pending = false;
                     match val {

@@ -23,3 +23,8 @@
     - [ ] [`iroh-blobs`](https://github.com/n0-computer/iroh-blobs)
     - [ ] [`dumbpipe`](https://github.com/n0-computer/dumbpipe)
     - [ ] [`sendme`](https://github.com/n0-computer/sendme)
+- [ ] This PR was created by a human that thought critically about the
+      proposed change and wrote an as clear and concise description as
+      they could.
+- [ ] This PR isn't slop, and is carefully crafted to do have the
+      intented effect.

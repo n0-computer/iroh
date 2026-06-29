@@ -37,13 +37,13 @@ iroh-relay = { version = "1.0.0", path = "../iroh-relay", default-features = fal
 n0-future = "0.3"
 n0-error = "1.0.0"
 n0-watcher = "1.0.0"
-netwatch = "0.19"
+netwatch = "0.19.1"
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-noq = { version = "1.0.0", default-features = false, features = ["rustls"] }
-noq-proto = { version = "1.0.0", default-features = false }
-noq-udp = { version = "1.0.0", default-features = false }
+noq = { version = "1.0.1", default-features = false, features = ["rustls"] }
+noq-proto = { version = "1.0.1", default-features = false }
+noq-udp = { version = "1.0.1", default-features = false }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustc-hash = "2"
@@ -75,8 +75,8 @@ axum = { version = "0.8", optional = true }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 
 hickory-resolver = { version = "0.26.0", default-features = false }
-portmapper = { version = "0.19", optional = true, default-features = false }
-noq = { version = "1.0.0", default-features = false, features = ["runtime-tokio", "rustls"] }
+portmapper = { version = "0.19.1", optional = true, default-features = false }
+noq = { version = "1.0.1", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",

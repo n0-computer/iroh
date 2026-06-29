@@ -29,7 +29,7 @@ use tokio::{
 };
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
+use tracing::{Instrument, debug, error, info, info_span, trace, warn};
 
 use super::{
     AllowAll, ClientRequest, DynAccessControl, SpawnError, clients::Clients,
@@ -652,7 +652,7 @@ impl RelayServiceWithNotify {
                     Err(err) => warn!("upgrade error: {err:#}"),
                 }
             }
-            .instrument(warn_span!("handler"))
+            .instrument(info_span!("handler"))
         });
 
         // Now return a 101 Response saying we agree to the upgrade to the
