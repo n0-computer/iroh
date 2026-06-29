@@ -2296,7 +2296,7 @@
 <a href=#2296 id=2296 data-nosnippet>2296</a>        payload: <span class="kw-2">&amp;</span>[u8],
 <a href=#2297 id=2297 data-nosnippet>2297</a>        loss: ExpectedLoss,
 <a href=#2298 id=2298 data-nosnippet>2298</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#2299 id=2299 data-nosnippet>2299</a>        tokio::time::timeout(Duration::from_secs(<span class="number">4</span>), <span class="kw">async move </span>{
+<a href=#2299 id=2299 data-nosnippet>2299</a>        tokio::time::timeout(Duration::from_secs(<span class="number">20</span>), <span class="kw">async move </span>{
 <a href=#2300 id=2300 data-nosnippet>2300</a>            <span class="kw">let </span>send_endpoint_id = sender.id();
 <a href=#2301 id=2301 data-nosnippet>2301</a>            <span class="kw">let </span>recv_endpoint_id = receiver.id();
 <a href=#2302 id=2302 data-nosnippet>2302</a>            <span class="macro">info!</span>(<span class="string">"\nroundtrip: {send_endpoint_id:#} -&gt; {recv_endpoint_id:#}"</span>);
