@@ -6,6 +6,11 @@
 //! See the [`crate::endpoint_info`] module documentation for details on how iroh endpoint records
 //! are structured.
 
+#[cfg(not(wasm_browser))]
+mod resolver;
+#[cfg(not(wasm_browser))]
+mod system_config;
+
 use std::{
     collections::VecDeque,
     fmt,
@@ -16,14 +21,8 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use hickory_resolver::{
-    TokioResolver,
-    config::{ConnectionConfig, ResolverConfig, ResolverOpts},
-    net::runtime::TokioRuntimeProvider,
-    proto::rr::RData,
-};
 use iroh_base::EndpointId;
-use n0_error::{AnyError, StackError, StdResultExt, e, stack_error};
+use n0_error::{AnyError, StackError, e, stack_error};
 use n0_future::{
     Either, MaybeFuture, Stream, StreamExt,
     boxed::BoxFuture,
@@ -31,14 +30,15 @@ use n0_future::{
     time::{self, Duration},
 };
 use tokio::sync::Notify;
-use tracing::warn;
 use url::Url;
 
+#[cfg(not(wasm_browser))]
+use self::resolver::SimpleDnsResolver;
 #[cfg(any(target_os = "android", doc))]
-pub use crate::android::install_android_jni_context;
-use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
+pub use self::system_config::install_android_jni_context;
+use crate::{ParseError, endpoint_info::EndpointInfo};
 
-/// Default DNS query timeout.
+/// Default timeout for DNS requests
 pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The n0 address lookup DNS origin, for production.
@@ -80,7 +80,7 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to DNS operations.
 #[allow(missing_docs)]
-#[stack_error(derive, add_meta, from_sources, std_sources)]
+#[stack_error(derive, add_meta, std_sources)]
 #[non_exhaustive]
 pub enum DnsError {
     #[error("Request timed out")]
@@ -94,10 +94,24 @@ pub enum DnsError {
     },
     #[error("Missing host")]
     MissingHost {},
+
     #[error("Failed to resolve")]
-    Resolve { source: AnyError },
-    #[error("Invalid DNS response: not a query for _iroh.z32encodedpubkey")]
+    Resolve {
+        #[error(from)]
+        source: AnyError,
+    },
+
+    #[error("Failed to reach nameserver")]
+    Transport { source: AnyError },
+    #[error("Failed to build query")]
+    InvalidQuery { source: AnyError },
+
+    #[error("DNS server returned error: {rcode}")]
+    ServerError { rcode: String },
+    #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
+    #[error("domain name does not exist (NXDOMAIN)")]
+    NxDomain {},
 }
 
 /// Potential errors related to DNS endpoint address lookups.
@@ -130,9 +144,36 @@ impl<E: StackError + 'static> StaggeredError<E> {
 #[derive(Debug, Clone, Default)]
 pub struct Builder {
     use_system_defaults: bool,
-    nameservers: Vec<(SocketAddr, DnsProtocol)>,
+    nameservers: Vec<Nameserver>,
     #[cfg(with_crypto_provider)]
     tls_client_config: Option<rustls::ClientConfig>,
+}
+
+/// A configured nameserver: its address, transport, and an optional TLS server
+/// name for DNS-over-TLS / DNS-over-HTTPS.
+///
+/// The connection is always made to `addr`. When `server_name` is set it is
+/// used for the TLS SNI and certificate validation (and as the DoH URL
+/// authority, with the address pinned); otherwise DoT/DoH are addressed by IP.
+#[derive(Debug, Clone)]
+struct Nameserver {
+    addr: SocketAddr,
+    protocol: DnsProtocol,
+    /// Only used for DoT/DoH, which require a crypto provider.
+    #[cfg(with_crypto_provider)]
+    server_name: Option<String>,
+}
+
+impl Nameserver {
+    /// A nameserver addressed by IP, with no TLS server name.
+    fn new(addr: SocketAddr, protocol: DnsProtocol) -> Self {
+        Self {
+            addr,
+            protocol,
+            #[cfg(with_crypto_provider)]
+            server_name: None,
+        }
+    }
 }
 
 /// Protocols over which DNS records can be resolved.
@@ -164,23 +205,6 @@ pub enum DnsProtocol {
     Https,
 }
 
-impl DnsProtocol {
-    #[cfg_attr(
-        not(with_crypto_provider),
-        expect(unused_variables, reason = "unused when TLS is disabled in DNS")
-    )]
-    fn to_hickory(self, ip: IpAddr) -> ConnectionConfig {
-        match self {
-            DnsProtocol::Udp => ConnectionConfig::udp(),
-            DnsProtocol::Tcp => ConnectionConfig::tcp(),
-            #[cfg(with_crypto_provider)]
-            DnsProtocol::Tls => ConnectionConfig::tls(Arc::from(ip.to_string())),
-            #[cfg(with_crypto_provider)]
-            DnsProtocol::Https => ConnectionConfig::https(Arc::from(ip.to_string()), None),
-        }
-    }
-}
-
 impl Builder {
     /// Makes the builder respect the host system's DNS configuration.
     ///
@@ -192,18 +216,60 @@ impl Builder {
         self
     }
 
-    /// Adds a single nameserver.
+    /// Adds a single nameserver, addressed by IP.
+    ///
+    /// For DNS-over-TLS or DNS-over-HTTPS against a server whose certificate
+    /// only covers a hostname, use [`Self::with_tls_nameserver`] or
+    /// [`Self::with_https_nameserver`] instead.
     pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
-        self.nameservers.push((addr, protocol));
+        self.nameservers.push(Nameserver::new(addr, protocol));
         self
     }
 
-    /// Adds a list of nameservers.
+    /// Adds a list of nameservers, each addressed by IP.
     pub fn with_nameservers(
         mut self,
         nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
     ) -> Self {
-        self.nameservers.extend(nameservers);
+        self.nameservers.extend(
+            nameservers
+                .into_iter()
+                .map(|(addr, protocol)| Nameserver::new(addr, protocol)),
+        );
+        self
+    }
+
+    /// Adds a DNS-over-TLS nameserver with an explicit TLS server name.
+    ///
+    /// The connection is made to `addr`, but `server_name` is used for the SNI
+    /// and certificate validation. Use this for providers whose certificates
+    /// cover a hostname rather than the IP.
+    #[cfg(any(with_crypto_provider, doc))]
+    pub fn with_tls_nameserver(mut self, addr: SocketAddr, server_name: impl Into<String>) -> Self {
+        self.nameservers.push(Nameserver {
+            addr,
+            protocol: DnsProtocol::Tls,
+            server_name: Some(server_name.into()),
+        });
+        self
+    }
+
+    /// Adds a DNS-over-HTTPS nameserver with an explicit server name.
+    ///
+    /// The request is sent to `https://<server_name>/dns-query` with the
+    /// connection pinned to `addr`. Use this for providers whose certificates
+    /// cover a hostname rather than the IP.
+    #[cfg(any(with_crypto_provider, doc))]
+    pub fn with_https_nameserver(
+        mut self,
+        addr: SocketAddr,
+        server_name: impl Into<String>,
+    ) -> Self {
+        self.nameservers.push(Nameserver {
+            addr,
+            protocol: DnsProtocol::Https,
+            server_name: Some(server_name.into()),
+        });
         self
     }
 
@@ -211,7 +277,7 @@ impl Builder {
     ///
     /// This is only used with DNS-over-TLS and DNS-over-HTTPS, and requires
     /// enabling either the ring or aws-lc-rs feature.
-    #[cfg(with_crypto_provider)]
+    #[cfg(any(with_crypto_provider, doc))]
     pub fn tls_client_config(mut self, client_config: rustls::ClientConfig) -> Self {
         self.tls_client_config = Some(client_config);
         self
@@ -219,7 +285,7 @@ impl Builder {
 
     /// Builds the DNS resolver.
     pub fn build(self) -> DnsResolver {
-        DnsResolver::custom(HickoryResolver::new(self))
+        DnsResolver::custom(Arc::new(SimpleDnsResolver::new(self)))
     }
 }
 
@@ -714,147 +780,6 @@ impl Default for DnsResolver {
     }
 }
 
-#[derive(Debug)]
-struct HickoryResolver {
-    resolver: TokioResolver,
-    builder: Builder,
-}
-
-impl HickoryResolver {
-    fn new(builder: Builder) -> Self {
-        let resolver = Self::build_resolver(&builder);
-        Self { resolver, builder }
-    }
-
-    fn build_resolver(builder: &Builder) -> TokioResolver {
-        let (mut config, mut options) = if builder.use_system_defaults {
-            match Self::system_config() {
-                Ok((config, options)) => (config, options),
-                Err(reason) => {
-                    warn!(%reason, "Failed to read the system's DNS config, using Google DNS servers as fallback.");
-                    (
-                        ResolverConfig::udp_and_tcp(&hickory_resolver::config::GOOGLE),
-                        ResolverOpts::default(),
-                    )
-                }
-            }
-        } else {
-            (ResolverConfig::default(), ResolverOpts::default())
-        };
-
-        for (addr, proto) in builder.nameservers.iter() {
-            let mut transport = proto.to_hickory(addr.ip());
-            transport.port = addr.port();
-            let nameserver =
-                hickory_resolver::config::NameServerConfig::new(addr.ip(), false, vec![transport]);
-
-            config.add_name_server(nameserver);
-        }
-
-        // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
-        options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
-        options.negative_max_ttl = Some(Duration::ZERO);
-
-        let mut hickory_builder =
-            TokioResolver::builder_with_config(config, TokioRuntimeProvider::default());
-        *hickory_builder.options_mut() = options;
-
-        #[cfg(with_crypto_provider)]
-        if let Some(client_config) = builder.tls_client_config.clone() {
-            hickory_builder = hickory_builder.with_tls_config(client_config);
-        }
-
-        hickory_builder.build().expect("config works")
-    }
-
-    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::net::NetError> {
-        #[cfg(target_os = "android")]
-        let (system_config, options) = crate::android::read_system_conf()?;
-        #[cfg(not(target_os = "android"))]
-        let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
-
-        // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
-        // there is no easy way to do this.
-        let mut config = hickory_resolver::config::ResolverConfig::default();
-        if let Some(name) = system_config.domain() {
-            config.set_domain(name.clone());
-        }
-        for name in system_config.search() {
-            config.add_search(name.clone());
-        }
-        for nameserver_cfg in system_config.name_servers() {
-            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.ip) {
-                config.add_name_server(nameserver_cfg.clone());
-            }
-        }
-        Ok((config, options))
-    }
-}
-
-impl Resolver for HickoryResolver {
-    fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
-        let resolver = self.resolver.clone();
-        Box::pin(async move {
-            let lookup = resolver.ipv4_lookup(host).await.anyerr()?;
-            let iter: BoxIter<Ipv4Addr> =
-                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match &record.data {
-                        RData::A(addr) => Some(addr.0),
-                        _ => None,
-                    }
-                }));
-            Ok(iter)
-        })
-    }
-
-    fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
-        let resolver = self.resolver.clone();
-        Box::pin(async move {
-            let lookup = resolver.ipv6_lookup(host).await.anyerr()?;
-            let iter: BoxIter<Ipv6Addr> =
-                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match &record.data {
-                        RData::AAAA(addr) => Some(addr.0),
-                        _ => None,
-                    }
-                }));
-            Ok(iter)
-        })
-    }
-
-    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
-        let resolver = self.resolver.clone();
-        Box::pin(async move {
-            let lookup = resolver.txt_lookup(host).await.anyerr()?;
-            let iter: BoxIter<TxtRecordData> =
-                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match &record.data {
-                        RData::TXT(txt) => {
-                            // I don't know a way of avoiding this deep copy, even if it's agonizing.
-                            // The representation of `TxtRecrodData` and `hickory_proto::rr::rdata::TXT`
-                            // is identical.
-                            Some(TxtRecordData::from(txt.txt_data.to_vec()))
-                        }
-                        _ => None,
-                    }
-                }));
-            Ok(iter)
-        })
-    }
-
-    fn clear_cache(&self) {
-        self.resolver.clear_cache()
-    }
-
-    fn reset(&self) -> Box<dyn Resolver> {
-        let resolver = Self::build_resolver(&self.builder);
-        Box::new(Self {
-            resolver,
-            builder: self.builder.clone(),
-        })
-    }
-}
-
 /// Record data for a TXT record.
 ///
 /// This contains a list of character strings, as defined in [RFC 1035 Section 3.3.14].
@@ -897,19 +822,16 @@ impl From<Vec<Box<[u8]>>> for TxtRecordData {
     }
 }
 
-/// Deprecated IPv6 site-local anycast addresses still configured by windows.
-///
-/// Windows still configures these site-local addresses as soon even as an IPv6 loopback
-/// interface is configured.  We do not want to use these DNS servers, the chances of them
-/// being usable are almost always close to zero, while the chance of DNS configuration
-/// **only** relying on these servers and not also being configured normally are also almost
-/// zero.  The chance of the DNS resolver accidentally trying one of these and taking a
-/// bunch of timeouts to figure out they're no good are on the other hand very high.
-const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
-    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 1)),
-    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 2)),
-    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 3)),
-];
+impl From<Vec<String>> for TxtRecordData {
+    fn from(value: Vec<String>) -> Self {
+        Self(
+            value
+                .into_iter()
+                .map(|s| s.into_bytes().into_boxed_slice())
+                .collect(),
+        )
+    }
+}
 
 /// Helper enum to give a unified type to the iterators of [`DnsResolver::lookup_ipv4_ipv6`].
 enum LookupIter<A, B> {
@@ -987,6 +909,22 @@ pub(crate) mod tests {
     use n0_tracing_test::traced_test;
 
     use super::*;
+
+    #[cfg(with_crypto_provider)]
+    #[test]
+    fn builder_named_nameservers_carry_server_name() {
+        let addr = SocketAddr::new(std::net::Ipv4Addr::new(1, 1, 1, 1).into(), 443);
+        let builder = Builder::default()
+            .with_nameserver(addr, DnsProtocol::Https)
+            .with_https_nameserver(addr, "cloudflare-dns.com")
+            .with_tls_nameserver(addr, "cloudflare-dns.com");
+        let ns = &builder.nameservers;
+        assert_eq!(ns[0].server_name, None);
+        assert_eq!(ns[1].protocol, DnsProtocol::Https);
+        assert_eq!(ns[1].server_name.as_deref(), Some("cloudflare-dns.com"));
+        assert_eq!(ns[2].protocol, DnsProtocol::Tls);
+        assert_eq!(ns[2].server_name.as_deref(), Some("cloudflare-dns.com"));
+    }
 
     #[tokio::test]
     #[traced_test]
