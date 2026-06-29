@@ -780,7 +780,9 @@ impl Builder {
 
     /// Configures the portmapper service (UPnP, PCP, NAT-PMP).
     ///
-    /// Defaults to [`PortmapperConfig::Enabled`].
+    /// Defaults to [`PortmapperConfig::Enabled`]. Pass
+    /// [`PortmapperConfig::Disabled`] to avoid gateway probing (e.g. if it
+    /// triggers firewall prompts).
     pub fn portmapper_config(mut self, config: PortmapperConfig) -> Self {
         self.portmapper_config = config;
         self

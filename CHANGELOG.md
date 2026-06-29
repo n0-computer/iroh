@@ -2,6 +2,37 @@
 
 All notable changes to iroh will be documented in this file.
 
+## [1.0.1](https://github.com/n0-computer/iroh/compare/v1.0.0..1.0.1) - 2026-06-29
+
+### 🐛 Bug Fixes
+
+- *(docs)* Fix keep-alive docs ([#4352](https://github.com/n0-computer/iroh/issues/4352)) - ([255a939](https://github.com/n0-computer/iroh/commit/255a939b1a301ac106a2c7d7928ee18187b165c2))
+- *(iroh)* Add missing item for backwards compatibility ([#4346](https://github.com/n0-computer/iroh/issues/4346)) - ([3b6dbd6](https://github.com/n0-computer/iroh/commit/3b6dbd609f930e991f731e1f3470761969ca39f5))
+- *(logging)* Do not use span levels higher than info ([#4375](https://github.com/n0-computer/iroh/issues/4375)) - ([fbfffe6](https://github.com/n0-computer/iroh/commit/fbfffe6d46a3066c634772e9365b9f1950e780d3))
+- *(tests)* Longer timeout to avoid flakyness ([#4376](https://github.com/n0-computer/iroh/issues/4376)) - ([e8fd487](https://github.com/n0-computer/iroh/commit/e8fd487e10a7e16b918bd21923ab0729e11146c2))
+
+### 🚜 Refactor
+
+- *(iroh-dns)* Use fallback nameservers if no JNI context is initialized ([#4371](https://github.com/n0-computer/iroh/issues/4371)) - ([4c8e1a1](https://github.com/n0-computer/iroh/commit/4c8e1a121df2ea669b6668167687b35cbe6fe846))
+
+### 📚 Documentation
+
+- *(iroh)* Improve description of QUIC streams ([#4368](https://github.com/n0-computer/iroh/issues/4368)) - ([16ce16e](https://github.com/n0-computer/iroh/commit/16ce16e8851a7015af1fc666df393ee0f0370a04))
+- *(iroh-dns-server)* Fix link to production config file ([#4353](https://github.com/n0-computer/iroh/issues/4353)) - ([777169a](https://github.com/n0-computer/iroh/commit/777169a15e0eb50fa3d43fb0d00b3154a6c7a0de))
+- *(portmapping)* Add more context around portmapping config in docs ([#4351](https://github.com/n0-computer/iroh/issues/4351)) - ([4c1194d](https://github.com/n0-computer/iroh/commit/4c1194d3a8fdb80f4a970f330f897fb45c894ef8))
+- Update license links to HTTPS ([#4365](https://github.com/n0-computer/iroh/issues/4365)) - ([80548ce](https://github.com/n0-computer/iroh/commit/80548cef7ad52eecfb744e10aa9cf94b6d55429a))
+
+### 🧪 Testing
+
+- *(iroh)* Test holepunching with 16 interfaces ([#4336](https://github.com/n0-computer/iroh/issues/4336)) - ([ff2f101](https://github.com/n0-computer/iroh/commit/ff2f101bfc1fb31b097356063c5a4a380625863e))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(ci)* Route Windows jobs to Blacksmith overflow ([#4357](https://github.com/n0-computer/iroh/issues/4357)) - ([75d1f72](https://github.com/n0-computer/iroh/commit/75d1f729605a77bb294a161de4a3fceb0fe1d754))
+- Update PR template to also ask for humans ([#4367](https://github.com/n0-computer/iroh/issues/4367)) - ([b4ec78e](https://github.com/n0-computer/iroh/commit/b4ec78e969c50ac17b5375348ee36e2df8ae4308))
+- Fix semver package list ([#4370](https://github.com/n0-computer/iroh/issues/4370)) - ([328ec77](https://github.com/n0-computer/iroh/commit/328ec775601252313bc80dde035e5fdab396e796))
+- Update deps to noq 1.0.1 and net-tools 0.19.1 ([#4379](https://github.com/n0-computer/iroh/issues/4379)) - ([3b422bb](https://github.com/n0-computer/iroh/commit/3b422bb783df21f3ede8416fe1938a133ce2905b))
+
 ## [1.0.0](https://github.com/n0-computer/iroh/compare/v1.0.0-rc.1..1.0.0) - 2026-06-15
 
 ### ⛰️  Features
