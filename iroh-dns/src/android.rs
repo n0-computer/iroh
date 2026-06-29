@@ -7,17 +7,22 @@
 //! (both do this before `main`) or by an explicit
 //! [`install_android_jni_context`] call.
 //!
-//! Without an initialized [`ndk_context`], the JNI lookup panics. Debug
-//! builds wrap the call in `std::panic::catch_unwind` so unit tests on
-//! Android (where no JVM is in scope) fall back to the resolver's
-//! default servers instead of aborting the test binary. Release builds
-//! let the panic propagate; uninitialized [`ndk_context`] in production
-//! is a programming error and should surface loudly.
+//! Without an initialized [`ndk_context`], the JNI lookup panics internally.
+//! We catch the panic via [`catch_unwind`] and convert the panic into a regular
+//! error, which will then make the [`DnsResolver`] use fallback nameservers.
+//!
+//! This depends on panic unwinding though, so if you set `panic = abort` in
+//! your compilation profile, and don't install the JNI context, your app
+//! would panic and abort on the first DNS lookup.
 //!
 //! [`DnsResolver`]: crate::dns::DnsResolver
 //! [`ndk_context`]: https://docs.rs/ndk-context
+//! [`catch_unwind`]: std::panic::catch_unwind
 
-use std::ffi::c_void;
+use std::{
+    ffi::c_void,
+    panic::{AssertUnwindSafe, catch_unwind},
+};
 
 use hickory_resolver::{
     config::{ResolverConfig, ResolverOpts},
@@ -26,45 +31,63 @@ use hickory_resolver::{
 
 /// Reads the active network's DNS configuration via JNI.
 pub(crate) fn read_system_conf() -> Result<(ResolverConfig, ResolverOpts), NetError> {
-    #[cfg(debug_assertions)]
-    {
-        use std::panic::{AssertUnwindSafe, catch_unwind};
-        match catch_unwind(AssertUnwindSafe(
-            hickory_resolver::system_conf::read_system_conf,
-        )) {
-            Ok(Ok(conf)) => Ok(conf),
-            Ok(Err(err)) => Err(NetError::from(err)),
-            Err(_) => Err(NetError::Msg(
-                "ndk_context not initialized; call install_android_jni_context".to_string(),
-            )),
-        }
+    match catch_unwind(AssertUnwindSafe(
+        hickory_resolver::system_conf::read_system_conf,
+    )) {
+        Ok(Ok(conf)) => Ok(conf),
+        Ok(Err(err)) => Err(NetError::from(err)),
+        Err(_) => Err(NetError::Msg(
+            "ndk_context not initialized; call install_android_jni_context".to_string(),
+        )),
     }
-    #[cfg(not(debug_assertions))]
-    Ok(hickory_resolver::system_conf::read_system_conf()?)
 }
 
-/// Publishes a `JavaVM` and `Application` `Context` to [`ndk_context`] so
-/// iroh's system DNS reader can use JNI.
+/// Exposes a JVM to iroh so that we can read the system's DNS configuration.
 ///
-/// The default [`DnsResolver`] reads DNS configuration through JNI and panics
-/// if [`ndk_context`] has not been initialized. Apps that already initialize
-/// the context (directly, or via ndk-glue or android-activity) do not need
-/// this. Apps that don't use either glue crate must call this once at
-/// process startup, before any `DnsResolver` or `Endpoint` is constructed.
+/// This calls [`ndk_context::initialize_android_context`] to expose a
+/// `JavaVM` and Application Context to Rust code so that we can use JNI.
+/// This is required to get the configured nameservers on Android.
 ///
-/// Pass the `JavaVM` from `JNI_OnLoad` (or `JNIEnv::GetJavaVM`) and a JNI
-/// global reference to the singleton `Application` from
-/// `ActivityThread.currentApplication()`. Both pointers must remain valid
-/// until the process exits.
+/// If this function is not called, fetching the configured nameservers will fail
+/// and the default [`DnsResolver`] will use fallback nameservers instead.
+///
+/// If you call [`ndk_context::initialize_android_context`] already somewhere
+/// up the stack in your app, or use a crate like `ndk-glue` or `android-activity`
+/// that do this for you, then there's no need to call this function.
+///
+/// If you don't use a glue crate, a typical way to initialize the context is
+/// via `JNI_OnLoad`:
+///
+/// *Note: `install_android_jni_context` is reexported from `iroh`, so you can substitute
+/// `iroh_dns` for `iroh` below.*
+///
+/// ```ignore
+/// #[cfg(target_os = "android")]
+/// #[no_mangle]
+/// pub extern "C" fn JNI_OnLoad(
+///     vm: jni::JavaVM,
+///     res: *mut std::os::raw::c_void,
+/// ) -> jni::sys::jint {
+///     use std::ffi::c_void;
+///
+///     let vm = vm.get_java_vm_pointer() as *mut c_void;
+///     unsafe {
+///         iroh_dns::install_android_jni_context(vm, res);
+///     }
+///     jni::JNIVersion::V6.into()
+/// }
+/// ```
 ///
 /// # Safety
 ///
-/// See [`ndk_context::initialize_android_context`].
+/// Both the `java_vm` and `context_jobject` pointers must remain valid until the process exits.
+/// See also [`ndk_context::initialize_android_context`].
 ///
 /// [`DnsResolver`]: crate::dns::DnsResolver
 /// [`ndk_context`]: https://docs.rs/ndk-context
-pub unsafe fn install_android_jni_context(java_vm: *mut c_void, application_context: *mut c_void) {
+/// [`ndk_context::initialize_android_context`]: https://docs.rs/ndk-context/latest/ndk_context/fn.initialize_android_context.html
+pub unsafe fn install_android_jni_context(java_vm: *mut c_void, context_jobject: *mut c_void) {
     unsafe {
-        ndk_context::initialize_android_context(java_vm, application_context);
+        ndk_context::initialize_android_context(java_vm, context_jobject);
     }
 }
