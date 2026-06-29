@@ -69,7 +69,7 @@
 <a href=#69 id=69 data-nosnippet>69</a>    time::{<span class="self">self</span>, Duration, Instant},
 <a href=#70 id=70 data-nosnippet>70</a>};
 <a href=#71 id=71 data-nosnippet>71</a><span class="kw">use </span>n0_watcher::{Disconnected, Watchable, Watcher <span class="kw">as _</span>};
-<a href=#72 id=72 data-nosnippet>72</a><span class="kw">use </span>tracing::{Instrument, debug, error_span, trace, warn};
+<a href=#72 id=72 data-nosnippet>72</a><span class="kw">use </span>tracing::{Instrument, debug, info_span, trace, warn};
 <a href=#73 id=73 data-nosnippet>73</a><span class="kw">use </span>url::Url;
 <a href=#74 id=74 data-nosnippet>74</a>
 <a href=#75 id=75 data-nosnippet>75</a><span class="attr">#[cfg(not(wasm_browser))]
@@ -321,7 +321,7 @@
 <a href=#321 id=321 data-nosnippet>321</a>            pkarr_client,
 <a href=#322 id=322 data-nosnippet>322</a>            republish_interval,
 <a href=#323 id=323 data-nosnippet>323</a>        };
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>join_handle = task::spawn(service.run().instrument(<span class="macro">error_span!</span>(<span class="string">"pkarr_publish"</span>)));
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>join_handle = task::spawn(service.run().instrument(<span class="macro">info_span!</span>(<span class="string">"pkarr_publish"</span>)));
 <a href=#325 id=325 data-nosnippet>325</a>        <span class="self">Self </span>{
 <a href=#326 id=326 data-nosnippet>326</a>            watchable,
 <a href=#327 id=327 data-nosnippet>327</a>            endpoint_id,

@@ -446,7 +446,7 @@
 <a href=#446 id=446 data-nosnippet>446</a>        do_full: bool,
 <a href=#447 id=447 data-nosnippet>447</a>        shutdown_token: CancellationToken,
 <a href=#448 id=448 data-nosnippet>448</a>    ) -&gt; Vec&lt;ProbeReport&gt; {
-<a href=#449 id=449 data-nosnippet>449</a>        <span class="kw">use </span>tracing::{Instrument, warn_span};
+<a href=#449 id=449 data-nosnippet>449</a>        <span class="kw">use </span>tracing::{Instrument, info_span};
 <a href=#450 id=450 data-nosnippet>450</a>
 <a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic_client) = <span class="self">self</span>.socket_state.quic_client <span class="kw">else </span>{
 <a href=#452 id=452 data-nosnippet>452</a>            <span class="kw">return </span>Vec::new();
@@ -516,7 +516,7 @@
 <a href=#516 id=516 data-nosnippet>516</a>                            PROBES_TIMEOUT,
 <a href=#517 id=517 data-nosnippet>517</a>                            run_probe_v4(relay, quic_client, dns_resolver, inner_token),
 <a href=#518 id=518 data-nosnippet>518</a>                        ))
-<a href=#519 id=519 data-nosnippet>519</a>                        .instrument(<span class="macro">warn_span!</span>(<span class="string">"QADv4"</span>, %relay_url)),
+<a href=#519 id=519 data-nosnippet>519</a>                        .instrument(<span class="macro">info_span!</span>(<span class="string">"QADv4"</span>, %relay_url)),
 <a href=#520 id=520 data-nosnippet>520</a>                );
 <a href=#521 id=521 data-nosnippet>521</a>            }
 <a href=#522 id=522 data-nosnippet>522</a>            <span class="kw">if </span>if_state.have_v6 &amp;&amp; needs_v6_probe {
@@ -533,7 +533,7 @@
 <a href=#533 id=533 data-nosnippet>533</a>                            PROBES_TIMEOUT,
 <a href=#534 id=534 data-nosnippet>534</a>                            run_probe_v6(relay, quic_client, dns_resolver, inner_token),
 <a href=#535 id=535 data-nosnippet>535</a>                        ))
-<a href=#536 id=536 data-nosnippet>536</a>                        .instrument(<span class="macro">warn_span!</span>(<span class="string">"QADv6"</span>, %relay_url)),
+<a href=#536 id=536 data-nosnippet>536</a>                        .instrument(<span class="macro">info_span!</span>(<span class="string">"QADv6"</span>, %relay_url)),
 <a href=#537 id=537 data-nosnippet>537</a>                );
 <a href=#538 id=538 data-nosnippet>538</a>            }
 <a href=#539 id=539 data-nosnippet>539</a>        }
@@ -566,7 +566,7 @@
 <a href=#566 id=566 data-nosnippet>566</a>                }
 <a href=#567 id=567 data-nosnippet>567</a>
 <a href=#568 id=568 data-nosnippet>568</a>                val = v4_buf.join_next(), <span class="kw">if </span>!v4_buf.is_empty() =&gt; {
-<a href=#569 id=569 data-nosnippet>569</a>                    <span class="kw">let </span>span = <span class="macro">warn_span!</span>(<span class="string">"QADv4"</span>);
+<a href=#569 id=569 data-nosnippet>569</a>                    <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"QADv4"</span>);
 <a href=#570 id=570 data-nosnippet>570</a>                    <span class="kw">let </span>_guard = span.enter();
 <a href=#571 id=571 data-nosnippet>571</a>                    ipv4_pending = <span class="bool-val">false</span>;
 <a href=#572 id=572 data-nosnippet>572</a>                    <span class="kw">match </span>val {
@@ -605,7 +605,7 @@
 <a href=#605 id=605 data-nosnippet>605</a>                    }
 <a href=#606 id=606 data-nosnippet>606</a>                }
 <a href=#607 id=607 data-nosnippet>607</a>                val = v6_buf.join_next(), <span class="kw">if </span>!v6_buf.is_empty() =&gt; {
-<a href=#608 id=608 data-nosnippet>608</a>                    <span class="kw">let </span>span = <span class="macro">warn_span!</span>(<span class="string">"QADv6"</span>);
+<a href=#608 id=608 data-nosnippet>608</a>                    <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"QADv6"</span>);
 <a href=#609 id=609 data-nosnippet>609</a>                    <span class="kw">let </span>_guard = span.enter();
 <a href=#610 id=610 data-nosnippet>610</a>                    ipv6_pending = <span class="bool-val">false</span>;
 <a href=#611 id=611 data-nosnippet>611</a>                    <span class="kw">match </span>val {
