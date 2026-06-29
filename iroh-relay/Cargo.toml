@@ -46,8 +46,8 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
-noq = { version = "1.0.0", default-features = false, features = ["rustls"] }
-noq-proto = { version = "1.0.0", default-features = false }
+noq = { version = "1.0.1", default-features = false, features = ["rustls"] }
+noq-proto = { version = "1.0.1", default-features = false }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
 rustls = { version = "0.23.33", default-features = false }
