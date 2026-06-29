@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a>};
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
 <a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>tracing::{Instrument, debug, error, info, info_span, trace, warn};
 <a href=#33 id=33 data-nosnippet>33</a>
 <a href=#34 id=34 data-nosnippet>34</a><span class="kw">use super</span>::{
 <a href=#35 id=35 data-nosnippet>35</a>    AllowAll, ClientRequest, DynAccessControl, SpawnError, clients::Clients,
@@ -652,7 +652,7 @@
 <a href=#652 id=652 data-nosnippet>652</a>                    <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">warn!</span>(<span class="string">"upgrade error: {err:#}"</span>),
 <a href=#653 id=653 data-nosnippet>653</a>                }
 <a href=#654 id=654 data-nosnippet>654</a>            }
-<a href=#655 id=655 data-nosnippet>655</a>            .instrument(<span class="macro">warn_span!</span>(<span class="string">"handler"</span>))
+<a href=#655 id=655 data-nosnippet>655</a>            .instrument(<span class="macro">info_span!</span>(<span class="string">"handler"</span>))
 <a href=#656 id=656 data-nosnippet>656</a>        });
 <a href=#657 id=657 data-nosnippet>657</a>
 <a href=#658 id=658 data-nosnippet>658</a>        <span class="comment">// Now return a 101 Response saying we agree to the upgrade to the

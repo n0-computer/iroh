@@ -149,7 +149,7 @@
 <a href=#149 id=149 data-nosnippet>149</a>}
 <a href=#150 id=150 data-nosnippet>150</a>
 <a href=#151 id=151 data-nosnippet>151</a><span class="kw">impl </span>QuicTransportConfigBuilder {
-<a href=#152 id=152 data-nosnippet>152</a>    <span class="doccomment">/// Create a default [`QuicTransportConfigBuilder`].
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="doccomment">/// Creates a default [`QuicTransportConfigBuilder`].
 <a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
 <a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">let </span><span class="kw-2">mut </span>cfg = noq::TransportConfig::default();
 <a href=#155 id=155 data-nosnippet>155</a>        <span class="comment">// Override some transport config settings.
@@ -162,7 +162,7 @@
 <a href=#162 id=162 data-nosnippet>162</a>        <span class="self">Self</span>(cfg)
 <a href=#163 id=163 data-nosnippet>163</a>    }
 <a href=#164 id=164 data-nosnippet>164</a>
-<a href=#165 id=165 data-nosnippet>165</a>    <span class="doccomment">/// Build a [`QuicTransportConfig`] from the builder.
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="doccomment">/// Builds a [`QuicTransportConfig`] from the builder.
 <a href=#166 id=166 data-nosnippet>166</a>    </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; QuicTransportConfig {
 <a href=#167 id=167 data-nosnippet>167</a>        QuicTransportConfig(Arc::new(<span class="self">self</span>.<span class="number">0</span>))
 <a href=#168 id=168 data-nosnippet>168</a>    }
@@ -357,11 +357,11 @@
 <a href=#357 id=357 data-nosnippet>357</a>
 <a href=#358 id=358 data-nosnippet>358</a>    <span class="doccomment">/// Period of inactivity before sending a keep-alive packet.
 <a href=#359 id=359 data-nosnippet>359</a>    ///
-<a href=#360 id=360 data-nosnippet>360</a>    /// Keep-alive packets prevent an inactive but otherwise healthy connection from timing out.
-<a href=#361 id=361 data-nosnippet>361</a>    ///
-<a href=#362 id=362 data-nosnippet>362</a>    /// `None` to disable, which is the default. Only one side of any given connection needs keep-alive
-<a href=#363 id=363 data-nosnippet>363</a>    /// enabled for the connection to be preserved. Must be set lower than the idle_timeout of both
-<a href=#364 id=364 data-nosnippet>364</a>    /// peers to be effective.
+<a href=#360 id=360 data-nosnippet>360</a>    /// Keep-alive packets prevent an inactive but otherwise healthy connection from timing
+<a href=#361 id=361 data-nosnippet>361</a>    /// out. They are important to keep NAT bindings alive and firewalls open.
+<a href=#362 id=362 data-nosnippet>362</a>    ///
+<a href=#363 id=363 data-nosnippet>363</a>    /// The default is 5s, please be careful when modifying this as it may affect connection
+<a href=#364 id=364 data-nosnippet>364</a>    /// stability. Must be set lower than the idle_timeout of both peers to be effective.
 <a href=#365 id=365 data-nosnippet>365</a>    </span><span class="kw">pub fn </span>keep_alive_interval(<span class="kw-2">mut </span><span class="self">self</span>, value: Duration) -&gt; <span class="self">Self </span>{
 <a href=#366 id=366 data-nosnippet>366</a>        <span class="self">self</span>.<span class="number">0</span>.keep_alive_interval(<span class="prelude-val">Some</span>(value));
 <a href=#367 id=367 data-nosnippet>367</a>        <span class="self">self
