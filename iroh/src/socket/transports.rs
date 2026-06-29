@@ -291,9 +291,9 @@ impl Transports {
         let mut return_ready = false;
 
         macro_rules! poll_transport {
-            ($debug_label:expr, $socket:expr) => {
+            ($transport:expr) => {
                 total_polled += 1;
-                match $socket.poll_recv(cx, bufs, metas, &mut self.recv_infos) {
+                match $transport.poll_recv(cx, bufs, metas, &mut self.recv_infos) {
                     Poll::Pending => {}
                     Poll::Ready(Ok(0)) => {
                         return_ready = true;
@@ -309,7 +309,7 @@ impl Transports {
                         // where `poll_recv` would be called right away again and again even if
                         // the non-failing transports are all pending.
                         total_errors += 1;
-                        warn!(transport = $debug_label, "recv error: {err:#}");
+                        debug!(transport = %$transport, "recv error: {err:#}");
                     }
                 }
             };
@@ -320,31 +320,36 @@ impl Transports {
         if counter.is_multiple_of(2) {
             #[cfg(not(wasm_browser))]
             for transport in self.ip.iter_mut() {
-                poll_transport!("IP", transport);
+                poll_transport!(transport);
             }
             for transport in self.relay.iter_mut() {
-                poll_transport!("relay", transport);
+                poll_transport!(transport);
             }
             for transport in self.custom.iter_mut() {
-                poll_transport!("custom", transport);
+                poll_transport!(transport);
             }
         } else {
             for transport in self.custom.iter_mut().rev() {
-                poll_transport!("custom", transport);
+                poll_transport!(transport);
             }
             for transport in self.relay.iter_mut().rev() {
-                poll_transport!("relay", transport);
+                poll_transport!(transport);
             }
             #[cfg(not(wasm_browser))]
             for transport in self.ip.iter_mut() {
-                poll_transport!("IP", transport);
+                poll_transport!(transport);
             }
         }
 
         if total_polled == total_errors {
             // All transports errored.
             self.consecutive_total_recv_failures += 1;
+            debug!(
+                "All transports failed to receive ({} remaining)",
+                MAX_CONSECUTIVE_RECV_ERRORS.wrapping_sub(self.consecutive_total_recv_failures)
+            );
             if self.consecutive_total_recv_failures >= MAX_CONSECUTIVE_RECV_ERRORS {
+                warn!("All transports failed to receive. QUIC endpoint will be shutdown.");
                 Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::NetworkDown,
                     "All transports failed to receive",
@@ -1326,7 +1331,7 @@ impl noq::UdpSender for Sender {
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(ref err)) => {
-                warn!(dst=%network_path, "dropped transmit: {err:#}");
+                debug!(dst=%network_path, "dropped transmit: {err:#}");
                 Poll::Ready(Ok(()))
             }
             Poll::Pending => {

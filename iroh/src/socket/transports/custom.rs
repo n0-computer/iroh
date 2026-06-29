@@ -10,6 +10,7 @@ use std::{
 };
 
 use iroh_base::CustomAddr;
+use n0_watcher::Watcher;
 
 use super::{RecvInfo, Transmit};
 
@@ -70,6 +71,15 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
     /// can override this to allow more efficient transmission.
     fn max_transmit_segments(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
+    }
+}
+
+impl std::fmt::Display for Box<dyn CustomEndpoint> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.watch_local_addrs().get().first() {
+            Some(addr) => write!(f, "CustomTransport({addr})"),
+            None => write!(f, "CustomTransport"),
+        }
     }
 }
 

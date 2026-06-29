@@ -24,6 +24,12 @@ pub(crate) struct IpTransport {
     metrics: Arc<SocketMetrics>,
 }
 
+impl std::fmt::Display for IpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "IpTransport({})", self.local_addr.get())
+    }
+}
+
 /// IP transport configuration
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Config {
