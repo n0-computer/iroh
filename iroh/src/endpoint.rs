@@ -2937,21 +2937,24 @@ mod tests {
     /// https://github.com/n0-computer/net-tools/pull/166, so this no longer fails.
     #[tokio::test]
     async fn endpoint_unreachable_relay_direct_connect_succeeds() -> Result {
-        // Both the relay url and its QADv4 probe must hit closed ports: the relay must be
-        // unreachable, and the probe must draw the ICMP port-unreachable that the Windows
-        // socket reports back on its next recv. Bind a socket to claim an ephemeral port,
-        // read its address, then close it: the port is now free, so nothing answers.
-        // There's nothing stopping the kernel from re-using a port right away, but on most
-        // machines that's unlikely. This beats hoping that a hard-coded port is unused.
-        let closed_port = || {
+        // The relay url and its QADv4 probe must both hit closed ports, so the relay is
+        // unreachable and the probe draws the ICMP port-unreachable the Windows socket
+        // reports on its next recv. Claim an ephemeral port, then close it: it's now free,
+        // so nothing answers. The url is dialed over TCP (HTTPS), the probe over UDP, so
+        // claim each with the matching socket type.
+        let closed_tcp_port = {
+            let sock = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
+            sock.local_addr().expect("local addr").port()
+        };
+        let closed_udp_port = {
             let sock = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
             sock.local_addr().expect("local addr").port()
         };
-        let dead_relay: RelayUrl = format!("https://127.0.0.1:{}", closed_port())
+        let dead_relay: RelayUrl = format!("https://127.0.0.1:{closed_tcp_port}")
             .parse()
             .expect("valid relay url");
         let dead_relay_config =
-            RelayConfig::new(dead_relay.clone(), Some(RelayQuicConfig::new(closed_port())));
+            RelayConfig::new(dead_relay.clone(), Some(RelayQuicConfig::new(closed_udp_port)));
 
         let bind_endpoint = async || {
             Endpoint::builder(presets::Minimal)
