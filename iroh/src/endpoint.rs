@@ -2004,7 +2004,7 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
-    use iroh_relay::{RelayConfig, server::Access, tls::CaTlsConfig};
+    use iroh_relay::{RelayConfig, RelayQuicConfig, server::Access, tls::CaTlsConfig};
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
@@ -2937,15 +2937,28 @@ mod tests {
     /// https://github.com/n0-computer/net-tools/pull/166, so this no longer fails.
     #[tokio::test]
     async fn endpoint_unreachable_relay_direct_connect_succeeds() -> Result {
-        // An unreachable relay Nothing listens on 127.0.0.1:1, and its QADv4 probe target
-        // at 127.0.0.1:7842 is closed too, so probing it draws the ICMP port-unreachable
-        // that is emitted from the Windows socket on recv.
+        // Nothing listens on the relay url (127.0.0.1:1), so the relay is unreachable.
         let dead_relay: RelayUrl = "https://127.0.0.1:1".parse().expect("valid relay url");
+
+        // The QADv4 probe must hit a closed UDP port so it draws the ICMP port-unreachable
+        // that the Windows socket reports back on its next recv. Bind a socket to claim an
+        // ephemeral port, read its address, then close it: the port is now free, so nothing
+        // answers the probe. There's nothing stopping the kernel from re-using the port
+        // right away, but on most machines that's unlikely. This beats hoping that a
+        // hard-coded port happens to be unused.
+        let closed_quic_port = {
+            let sock = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
+            sock.local_addr().expect("local addr").port()
+        };
+        let dead_relay_config =
+            RelayConfig::new(dead_relay.clone(), Some(RelayQuicConfig::new(closed_quic_port)));
 
         let bind_endpoint = async || {
             Endpoint::builder(presets::Minimal)
                 // Use the broken relay to trigger the ICMP errors from the QaD sends.
-                .relay_mode(RelayMode::Custom(RelayMap::from_iter([dead_relay.clone()])))
+                .relay_mode(RelayMode::Custom(RelayMap::from_iter([
+                    dead_relay_config.clone(),
+                ])))
                 .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .alpns(vec![TEST_ALPN.to_vec()])
                 // Bind on IPv4 only to ensure a single socket to not have spurious polls.
