@@ -8,10 +8,8 @@ use std::{
 
 use n0_error::{ensure, stack_error};
 use n0_future::{FutureExt, Sink, Stream, ready, time};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::watch,
-};
+use n0_watcher::Watcher;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{instrument, warn};
 
 use super::{ClientRateLimit, Metrics};
@@ -336,13 +334,11 @@ pub(crate) struct RateLimited<S> {
     bucket_refilled: Option<Pin<Box<time::Sleep>>>,
     /// Keeps track if this stream was ever rate-limited.
     limited_once: bool,
-    /// Live source of the per-client rate limit, when this stream tracks one.
+    /// Watcher for the per-client rate limit, if set.
     ///
-    /// `Some` for a connection built from [`RateLimited::from_watch`]: each poll
-    /// re-reads it and reconfigures [`Self::bucket`] when the limit changed, so a
-    /// live rate change (e.g. a spend-cap throttle) applies to this connection
-    /// without dropping it. `None` for a fixed-rate stream.
-    rate_rx: Option<watch::Receiver<Option<ClientRateLimit>>>,
+    /// If set by constructing via [`RateLimited::from_watch], we will check for
+    /// updates on each poll and reconfigure [`Self::bucket`] on changes.
+    rate_limit_watcher: Option<n0_watcher::Direct<Option<ClientRateLimit>>>,
     metrics: Arc<Metrics>,
 }
 
@@ -476,18 +472,18 @@ impl<S> RateLimited<S> {
     /// seeded from its current value and reconfigured on each poll when the value
     /// changes (see [`Self::reconfigure_if_changed`]), so a rate change applies to
     /// this connection without dropping it.
-    pub(crate) fn from_watch(
+    pub(crate) fn from_watcher(
         io: S,
-        rate_rx: watch::Receiver<Option<ClientRateLimit>>,
+        mut rate_limit_watcher: n0_watcher::Direct<Option<ClientRateLimit>>,
         metrics: Arc<Metrics>,
     ) -> Result<Self, InvalidBucketConfig> {
-        let bucket = Self::bucket_for(*rate_rx.borrow())?;
+        let bucket = Self::bucket_for(rate_limit_watcher.get())?;
         Ok(Self {
             inner: io,
             bucket,
             bucket_refilled: None,
             limited_once: false,
-            rate_rx: Some(rate_rx),
+            rate_limit_watcher: Some(rate_limit_watcher),
             metrics,
         })
     }
@@ -508,7 +504,7 @@ impl<S> RateLimited<S> {
             )?),
             bucket_refilled: None,
             limited_once: false,
-            rate_rx: None,
+            rate_limit_watcher: None,
             metrics,
         })
     }
@@ -520,38 +516,8 @@ impl<S> RateLimited<S> {
             bucket: None,
             bucket_refilled: None,
             limited_once: false,
-            rate_rx: None,
+            rate_limit_watcher: None,
             metrics,
-        }
-    }
-
-    /// Reconfigures the bucket from the live rate source when it changed since the
-    /// last poll. A new limit installs or replaces the bucket; clearing the limit
-    /// removes it. An invalid new config is ignored, keeping the current bucket
-    /// rather than failing open. A no-op for a fixed-rate stream (`rate_rx` `None`).
-    fn reconfigure_if_changed(&mut self) {
-        let Some(rate_rx) = self.rate_rx.as_mut() else {
-            return;
-        };
-        // `has_changed` errors only once every sender is gone (the service is
-        // being torn down), which we treat as no change.
-        if !rate_rx.has_changed().unwrap_or(false) {
-            return;
-        }
-        let cfg = *rate_rx.borrow_and_update();
-        match Self::bucket_for(cfg) {
-            Ok(bucket) => {
-                self.bucket = bucket;
-                // The limit changed, so drop any pending refill wait: the new
-                // bucket starts full and should be consulted immediately.
-                self.bucket_refilled = None;
-            }
-            Err(err) => {
-                warn!(
-                    ?err,
-                    "ignoring invalid live rate-limit update; keeping current limit"
-                );
-            }
         }
     }
 
@@ -585,9 +551,22 @@ impl<S: AsyncRead + Unpin> AsyncRead for RateLimited<S> {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         let this = &mut *self;
-        // Pick up a live rate change before consulting the bucket, so a throttle
-        // pushed mid-connection takes effect without dropping the connection.
-        this.reconfigure_if_changed();
+
+        // Pick up a live rate change before consulting the bucket.
+        if let Some(rate_limit_watcher) = this.rate_limit_watcher.as_mut() {
+            if rate_limit_watcher.update() {
+                match Self::bucket_for(*rate_limit_watcher.peek()) {
+                    Ok(bucket) => {
+                        this.bucket = bucket;
+                        // The limit changed, so drop any pending refill wait: the new
+                        // bucket starts full and should be consulted immediately.
+                        this.bucket_refilled = None;
+                    }
+                    Err(err) => warn!(%err, "ignoring invalid live rate-limit update"),
+                }
+            }
+        }
+
         let Some(bucket) = &mut this.bucket else {
             // If there is no rate-limiter, then directly poll the inner.
             return Pin::new(&mut this.inner).poll_read(cx, buf);
@@ -698,38 +677,59 @@ mod tests {
     }
 
     /// A rate limit installed live through the watch channel takes effect on an
-    /// existing stream without dropping it: the stream starts unlimited, a limit
-    /// is pushed before any data flows, and the throughput then matches the limit.
+    /// existing stream without dropping it: the connection first reads a chunk
+    /// unlimited at full speed, then a limit is pushed mid-connection and the
+    /// throughput of the remainder matches the limit.
     #[tokio::test(start_paused = true)]
     #[traced_test]
     async fn test_ratelimiter_live_update() -> Result {
-        use tokio::sync::watch;
-
         use crate::server::ClientRateLimit;
 
         let (read, mut write) = tokio::io::duplex(4096);
 
-        let send_total = 10 * 1024 * 1024; // 10MiB
-        let send_data = vec![42u8; send_total];
-
         let bytes_per_second = 12_345u32;
 
-        // Start unlimited, then install the limit live, as a spend-cap throttle
-        // would, before the connection has read anything.
-        let (tx, rx) = watch::channel(None);
-        let mut rate_limited = RateLimited::from_watch(read, rx, Arc::new(Metrics::default()))?;
+        // Read this much at full speed before the limit is installed, then read
+        // exactly 10MiB under the live limit and time only that second phase.
+        let unlimited_total = 1024 * 1024; // 1MiB
+        let limited_total = 10 * 1024 * 1024; // 10MiB
+        let send_data = vec![42u8; unlimited_total + limited_total];
+
+        // Start unlimited; the limit is installed mid-connection below.
+        let watchable = n0_watcher::Watchable::new(None);
+        let mut rate_limited =
+            RateLimited::from_watcher(read, watchable.watch(), Arc::new(Metrics::default()))?;
         let mut limit = ClientRateLimit::new(bytes_per_second.try_into().anyerr()?);
         limit.max_burst_bytes = Some((bytes_per_second / 10).try_into().anyerr()?);
-        tx.send_replace(Some(limit));
 
-        let before = time::Instant::now();
+        let mut unlimited_duration = time::Duration::ZERO;
+        let mut limited_duration = time::Duration::ZERO;
         n0_future::future::try_zip(
             async {
-                let mut remaining = send_total;
                 let mut buf = [0u8; 4096];
+
+                // Phase 1: no limit installed yet, pull bytes at full speed.
+                let before = time::Instant::now();
+                let mut remaining = unlimited_total;
                 while remaining > 0 {
-                    remaining -= rate_limited.read(&mut buf).await?;
+                    let len = remaining.min(buf.len());
+                    let n = rate_limited.read(&mut buf[..len]).await?;
+                    remaining -= n;
                 }
+                unlimited_duration = time::Instant::now().duration_since(before);
+
+                // Install the limit live, mid-connection, without dropping the stream.
+                watchable.set(Some(limit)).ok();
+
+                // Phase 2: the limit is now in effect, time the remainder.
+                let before = time::Instant::now();
+                let mut remaining = limited_total;
+                while remaining > 0 {
+                    let len = remaining.min(buf.len());
+                    let n = rate_limited.read(&mut buf[..len]).await?;
+                    remaining -= n;
+                }
+                limited_duration = time::Instant::now().duration_since(before);
                 Ok(())
             },
             async {
@@ -740,12 +740,18 @@ mod tests {
         .await
         .anyerr()?;
 
-        let duration = time::Instant::now().duration_since(before);
-        let actual_bytes_per_second = send_total as f64 / duration.as_secs_f64();
+        // The unlimited phase is not throttled, so no (virtual) time passes.
+        assert_eq!(
+            unlimited_duration.as_millis(),
+            0,
+            "reading before the limit is installed runs at full speed",
+        );
+
+        let actual_bytes_per_second = limited_total as f64 / limited_duration.as_secs_f64();
         assert_eq!(
             actual_bytes_per_second.round() as u32,
             bytes_per_second,
-            "the live-installed limit governs throughput",
+            "the live-installed limit governs throughput once applied mid-connection",
         );
 
         Ok(())

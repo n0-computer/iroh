@@ -25,7 +25,7 @@ use n0_error::{e, ensure, stack_error};
 use n0_future::MaybeFuture;
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::{Notify, watch},
+    sync::Notify,
 };
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -532,11 +532,7 @@ struct Inner {
     headers: HeaderMap,
     clients: Clients,
     write_timeout: Duration,
-    /// The per-client receive rate limit, behind a watch channel so it can be
-    /// changed live. Each accepted connection subscribes a receiver and applies
-    /// the current value, picking up later changes without being dropped. See
-    /// [`RelayService::set_client_rate_limit`].
-    rate_limit: watch::Sender<Option<ClientRateLimit>>,
+    rate_limit: n0_watcher::Watchable<Option<ClientRateLimit>>,
     key_cache: KeyCache,
     access: Arc<dyn DynAccessControl>,
     metrics: Arc<Metrics>,
@@ -857,7 +853,7 @@ impl Inner {
         // Set the socket to NO_DELAY.
         io.disable_nagle();
 
-        let io = RateLimited::from_watch(io, self.rate_limit.subscribe(), self.metrics.clone())
+        let io = RateLimited::from_watcher(io, self.rate_limit.watch(), self.metrics.clone())
             .map_err(|err| e!(AcceptError::RateLimitingMisconfigured, err))?;
 
         // Create a server builder with default config
@@ -928,21 +924,19 @@ impl RelayService {
             headers,
             clients: Clients::default(),
             write_timeout: SERVER_WRITE_TIMEOUT,
-            rate_limit: watch::channel(rate_limit).0,
+            rate_limit: n0_watcher::Watchable::new(rate_limit),
             key_cache,
             access,
             metrics,
         }))
     }
 
-    /// Updates the per-client receive rate limit, applied live.
+    /// Updates the per-client receive rate limit.
     ///
-    /// Every connection of this service, already established or future, picks up
-    /// the new limit on its next read without being dropped: raising it, lowering
-    /// it to throttle, or `None` to remove the limit. This is the rate-limit
-    /// counterpart of disconnect-free reconfiguration.
+    /// The new rate limit will be applied to all current and future client connections.
+    /// Passing `None` will remove rate limiting from all connections.
     pub fn set_client_rate_limit(&self, rate_limit: Option<ClientRateLimit>) {
-        self.0.rate_limit.send_replace(rate_limit);
+        self.0.rate_limit.set(rate_limit).ok();
     }
 
     /// Shuts down the relay service, disconnecting all clients.
