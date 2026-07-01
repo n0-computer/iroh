@@ -407,6 +407,21 @@ impl Bucket {
         })
     }
 
+    fn from_config(cfg: Option<ClientRateLimit>) -> Result<Option<Self>, InvalidBucketConfig> {
+        match cfg {
+            Some(cfg) => {
+                let bytes_per_second = u32::from(cfg.bytes_per_second);
+                let max_burst_bytes = cfg.max_burst_bytes.map_or(bytes_per_second / 10, u32::from);
+                Ok(Some(Bucket::new(
+                    max_burst_bytes as i64,
+                    bytes_per_second as i64,
+                    time::Duration::from_millis(100),
+                )?))
+            }
+            None => Ok(None),
+        }
+    }
+
     fn update_state(&mut self) {
         let now = time::Instant::now();
         // div safety: self.refill_period.as_millis() is checked to be non-null in constructor
@@ -452,22 +467,6 @@ impl Bucket {
 }
 
 impl<S> RateLimited<S> {
-    /// The token bucket for a rate config, or `None` for no limit.
-    fn bucket_for(cfg: Option<ClientRateLimit>) -> Result<Option<Bucket>, InvalidBucketConfig> {
-        match cfg {
-            Some(cfg) => {
-                let bytes_per_second = u32::from(cfg.bytes_per_second);
-                let max_burst_bytes = cfg.max_burst_bytes.map_or(bytes_per_second / 10, u32::from);
-                Ok(Some(Bucket::new(
-                    max_burst_bytes as i64,
-                    bytes_per_second as i64,
-                    time::Duration::from_millis(100),
-                )?))
-            }
-            None => Ok(None),
-        }
-    }
-
     /// Wraps `io` with a rate limit that tracks `rate_rx` live: the bucket is
     /// seeded from its current value and reconfigured on each poll when the value
     /// changes (see [`Self::reconfigure_if_changed`]), so a rate change applies to
@@ -477,7 +476,8 @@ impl<S> RateLimited<S> {
         mut rate_limit_watcher: n0_watcher::Direct<Option<ClientRateLimit>>,
         metrics: Arc<Metrics>,
     ) -> Result<Self, InvalidBucketConfig> {
-        let bucket = Self::bucket_for(rate_limit_watcher.get())?;
+        let initial_cfg = rate_limit_watcher.get();
+        let bucket = Bucket::from_config(initial_cfg)?;
         Ok(Self {
             inner: io,
             bucket,
@@ -553,18 +553,15 @@ impl<S: AsyncRead + Unpin> AsyncRead for RateLimited<S> {
         let this = &mut *self;
 
         // Pick up a live rate change before consulting the bucket.
-        if let Some(rate_limit_watcher) = this.rate_limit_watcher.as_mut() {
-            if rate_limit_watcher.update() {
-                match Self::bucket_for(*rate_limit_watcher.peek()) {
-                    Ok(bucket) => {
-                        this.bucket = bucket;
-                        // The limit changed, so drop any pending refill wait: the new
-                        // bucket starts full and should be consulted immediately.
-                        this.bucket_refilled = None;
-                    }
-                    Err(err) => warn!(%err, "ignoring invalid live rate-limit update"),
-                }
-            }
+        if let Some(rate_limit_watcher) = this.rate_limit_watcher.as_mut()
+            && rate_limit_watcher.update()
+            && let Ok(bucket) = Bucket::from_config(*rate_limit_watcher.peek())
+                .inspect_err(|err| warn!(%err, "ignoring invalid live rate-limit update"))
+        {
+            this.bucket = bucket;
+            // The limit changed, so drop any pending refill wait: the new
+            // bucket starts full and should be consulted immediately.
+            this.bucket_refilled = None;
         }
 
         let Some(bucket) = &mut this.bucket else {
