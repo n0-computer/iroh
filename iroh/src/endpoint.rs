@@ -2954,14 +2954,16 @@ mod tests {
         let dead_relay: RelayUrl = format!("https://127.0.0.1:{closed_tcp_port}")
             .parse()
             .expect("valid relay url");
-        let dead_relay_config =
-            RelayConfig::new(dead_relay.clone(), Some(RelayQuicConfig::new(closed_udp_port)));
+        let dead_relay_config = RelayConfig::new(
+            dead_relay.clone(),
+            Some(RelayQuicConfig::new(closed_udp_port)),
+        );
 
         let bind_endpoint = async || {
             Endpoint::builder(presets::Minimal)
                 // Use the broken relay to trigger the ICMP errors from the QaD sends.
                 .relay_mode(RelayMode::Custom(RelayMap::from_iter([
-                    dead_relay_config.clone(),
+                    dead_relay_config.clone()
                 ])))
                 .ca_tls_config(CaTlsConfig::insecure_skip_verify())
                 .alpns(vec![TEST_ALPN.to_vec()])
