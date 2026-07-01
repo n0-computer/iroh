@@ -8,8 +8,10 @@ use std::{
 
 use n0_error::{ensure, stack_error};
 use n0_future::{FutureExt, Sink, Stream, ready, time};
-use n0_watcher::Watcher;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    sync::watch,
+};
 use tracing::{instrument, warn};
 
 use super::{ClientRateLimit, Metrics};
@@ -336,9 +338,14 @@ pub(crate) struct RateLimited<S> {
     limited_once: bool,
     /// Watcher for the per-client rate limit, if set.
     ///
-    /// If set by constructing via [`RateLimited::from_watch], we will check for
+    /// If set by constructing via [`RateLimited::from_watcher`], we check for
     /// updates on each poll and reconfigure [`Self::bucket`] on changes.
-    rate_limit_watcher: Option<n0_watcher::Direct<Option<ClientRateLimit>>>,
+    ///
+    /// Uses `tokio::sync::watch` and not `n0_watcher` because in tokio's watch channel,
+    /// checking if a value changed is a cheap atomic version compare, whereas `n0_watcher`
+    /// acquires a `ReadLock` for each change check. This matters because we need to check this
+    /// on each read poll.
+    rate_limit_watcher: Option<watch::Receiver<Option<ClientRateLimit>>>,
     metrics: Arc<Metrics>,
 }
 
@@ -467,16 +474,16 @@ impl Bucket {
 }
 
 impl<S> RateLimited<S> {
-    /// Wraps `io` with a rate limit that tracks `rate_rx` live: the bucket is
-    /// seeded from its current value and reconfigured on each poll when the value
-    /// changes (see [`Self::reconfigure_if_changed`]), so a rate change applies to
-    /// this connection without dropping it.
+    /// Wraps `io` with a live rate limit driven by `rate_limit_watcher`.
+    ///
+    /// The bucket is initialized from the watcher's current value and reconfigured
+    /// whenever it changes.
     pub(crate) fn from_watcher(
         io: S,
-        mut rate_limit_watcher: n0_watcher::Direct<Option<ClientRateLimit>>,
+        mut rate_limit_watcher: watch::Receiver<Option<ClientRateLimit>>,
         metrics: Arc<Metrics>,
     ) -> Result<Self, InvalidBucketConfig> {
-        let initial_cfg = rate_limit_watcher.get();
+        let initial_cfg = *rate_limit_watcher.borrow_and_update();
         let bucket = Bucket::from_config(initial_cfg)?;
         Ok(Self {
             inner: io,
@@ -552,16 +559,22 @@ impl<S: AsyncRead + Unpin> AsyncRead for RateLimited<S> {
     ) -> Poll<std::io::Result<()>> {
         let this = &mut *self;
 
-        // Pick up a live rate change before consulting the bucket.
+        // Pick up a live rate change before consulting the bucket. `has_changed`
+        // is a cheap atomic version compare, so we only take the watch lock via
+        // `borrow_and_update` when the value actually changed.
         if let Some(rate_limit_watcher) = this.rate_limit_watcher.as_mut()
-            && rate_limit_watcher.update()
-            && let Ok(bucket) = Bucket::from_config(*rate_limit_watcher.peek())
-                .inspect_err(|err| warn!(%err, "ignoring invalid live rate-limit update"))
+            && rate_limit_watcher.has_changed().unwrap_or(false)
         {
-            this.bucket = bucket;
-            // The limit changed, so drop any pending refill wait: the new
-            // bucket starts full and should be consulted immediately.
-            this.bucket_refilled = None;
+            let cfg = rate_limit_watcher.borrow_and_update();
+            match Bucket::from_config(*cfg) {
+                Ok(bucket) => {
+                    this.bucket = bucket;
+                    // The limit changed, so drop any pending refill wait: the new
+                    // bucket starts full and should be consulted immediately.
+                    this.bucket_refilled = None;
+                }
+                Err(err) => warn!(%err, "ignoring invalid live rate-limit update"),
+            }
         }
 
         let Some(bucket) = &mut this.bucket else {
@@ -693,9 +706,9 @@ mod tests {
         let send_data = vec![42u8; unlimited_total + limited_total];
 
         // Start unlimited; the limit is installed mid-connection below.
-        let watchable = n0_watcher::Watchable::new(None);
+        let (rate_tx, rate_rx) = tokio::sync::watch::channel(None);
         let mut rate_limited =
-            RateLimited::from_watcher(read, watchable.watch(), Arc::new(Metrics::default()))?;
+            RateLimited::from_watcher(read, rate_rx, Arc::new(Metrics::default()))?;
         let mut limit = ClientRateLimit::new(bytes_per_second.try_into().anyerr()?);
         limit.max_burst_bytes = Some((bytes_per_second / 10).try_into().anyerr()?);
 
@@ -716,7 +729,7 @@ mod tests {
                 unlimited_duration = time::Instant::now().duration_since(before);
 
                 // Install the limit live, mid-connection, without dropping the stream.
-                watchable.set(Some(limit)).ok();
+                rate_tx.send_replace(Some(limit));
 
                 // Phase 2: the limit is now in effect, time the remainder.
                 let before = time::Instant::now();
