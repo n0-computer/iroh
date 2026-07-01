@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>n0_future::MaybeFuture;
 <a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>tokio::{
 <a href=#27 id=27 data-nosnippet>27</a>    net::{TcpListener, TcpStream},
-<a href=#28 id=28 data-nosnippet>28</a>    sync::Notify,
+<a href=#28 id=28 data-nosnippet>28</a>    sync::{Notify, watch},
 <a href=#29 id=29 data-nosnippet>29</a>};
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
 <a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -532,7 +532,7 @@
 <a href=#532 id=532 data-nosnippet>532</a>    headers: HeaderMap,
 <a href=#533 id=533 data-nosnippet>533</a>    clients: Clients,
 <a href=#534 id=534 data-nosnippet>534</a>    write_timeout: Duration,
-<a href=#535 id=535 data-nosnippet>535</a>    rate_limit: n0_watcher::Watchable&lt;<span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;&gt;,
+<a href=#535 id=535 data-nosnippet>535</a>    rate_limit: watch::Sender&lt;<span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;&gt;,
 <a href=#536 id=536 data-nosnippet>536</a>    key_cache: KeyCache,
 <a href=#537 id=537 data-nosnippet>537</a>    access: Arc&lt;<span class="kw">dyn </span>DynAccessControl&gt;,
 <a href=#538 id=538 data-nosnippet>538</a>    metrics: Arc&lt;Metrics&gt;,
@@ -853,7 +853,7 @@
 <a href=#853 id=853 data-nosnippet>853</a>        <span class="comment">// Set the socket to NO_DELAY.
 <a href=#854 id=854 data-nosnippet>854</a>        </span>io.disable_nagle();
 <a href=#855 id=855 data-nosnippet>855</a>
-<a href=#856 id=856 data-nosnippet>856</a>        <span class="kw">let </span>io = RateLimited::from_watcher(io, <span class="self">self</span>.rate_limit.watch(), <span class="self">self</span>.metrics.clone())
+<a href=#856 id=856 data-nosnippet>856</a>        <span class="kw">let </span>io = RateLimited::from_watcher(io, <span class="self">self</span>.rate_limit.subscribe(), <span class="self">self</span>.metrics.clone())
 <a href=#857 id=857 data-nosnippet>857</a>            .map_err(|err| <span class="macro">e!</span>(AcceptError::RateLimitingMisconfigured, err))<span class="question-mark">?</span>;
 <a href=#858 id=858 data-nosnippet>858</a>
 <a href=#859 id=859 data-nosnippet>859</a>        <span class="comment">// Create a server builder with default config
@@ -924,7 +924,7 @@
 <a href=#924 id=924 data-nosnippet>924</a>            headers,
 <a href=#925 id=925 data-nosnippet>925</a>            clients: Clients::default(),
 <a href=#926 id=926 data-nosnippet>926</a>            write_timeout: SERVER_WRITE_TIMEOUT,
-<a href=#927 id=927 data-nosnippet>927</a>            rate_limit: n0_watcher::Watchable::new(rate_limit),
+<a href=#927 id=927 data-nosnippet>927</a>            rate_limit: watch::Sender::new(rate_limit),
 <a href=#928 id=928 data-nosnippet>928</a>            key_cache,
 <a href=#929 id=929 data-nosnippet>929</a>            access,
 <a href=#930 id=930 data-nosnippet>930</a>            metrics,
@@ -936,7 +936,7 @@
 <a href=#936 id=936 data-nosnippet>936</a>    /// The new rate limit will be applied to all current and future client connections.
 <a href=#937 id=937 data-nosnippet>937</a>    /// Passing `None` will remove rate limiting from all connections.
 <a href=#938 id=938 data-nosnippet>938</a>    </span><span class="kw">pub fn </span>set_client_rate_limit(<span class="kw-2">&amp;</span><span class="self">self</span>, rate_limit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;) {
-<a href=#939 id=939 data-nosnippet>939</a>        <span class="self">self</span>.<span class="number">0</span>.rate_limit.set(rate_limit).ok();
+<a href=#939 id=939 data-nosnippet>939</a>        <span class="self">self</span>.<span class="number">0</span>.rate_limit.send_replace(rate_limit);
 <a href=#940 id=940 data-nosnippet>940</a>    }
 <a href=#941 id=941 data-nosnippet>941</a>
 <a href=#942 id=942 data-nosnippet>942</a>    <span class="doccomment">/// Shuts down the relay service, disconnecting all clients.
