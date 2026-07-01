@@ -2940,7 +2940,7 @@ mod tests {
         // The relay url and its QADv4 probe must both hit closed ports, so the relay is
         // unreachable and the probe draws the ICMP port-unreachable the Windows socket
         // reports on its next recv. Claim an ephemeral port, then close it: it's now free,
-        // so nothing answers. There's nothing stopping the kernel from re-using a port
+        // so nothing answers. There's nothing stopping the kernel from reusing a port
         // right away, but on most machines that's unlikely. The url is dialed over TCP
         // (HTTPS), the probe over UDP, so claim each with the matching socket type.
         let closed_tcp_port = {
