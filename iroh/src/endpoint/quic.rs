@@ -27,6 +27,7 @@ pub use noq::{
     OpenUni,              // iroh::endpoint::Connection
     PathStats,            // iroh::socket::remote_map::remote_state::PathInfo
     ReadDatagram,         // iroh::endpoint::Connection
+    ReadDatagrams,        // iroh::endpoint::Connection
     ReadError,            // noq::RecvStream
     ReadExactError,       // noq::RecvStream
     ReadToEndError,       // noq::RecvStream
@@ -34,6 +35,7 @@ pub use noq::{
     ResetError,           // noq::RecvStream
     SendDatagram,         // iroh::endpoint::Connection
     SendDatagramError,    // iroh::endpoint::Connection
+    SendMany,             // iroh::endpoint::Connection
     SendStream,           // noq::AcceptBi, noq::OpenUni
     Side,                 // iroh::endpoint::Connection, noq::StreamId,
     StoppedError,         // noq::SendStream

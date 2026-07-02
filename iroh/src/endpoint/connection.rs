@@ -41,8 +41,8 @@ use crate::{
         AfterHandshakeOutcome,
         quic::{
             AcceptBi, AcceptUni, Closed, ConnectionError, ConnectionStats, Controller,
-            ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
-            SendDatagramError, ServerConfig, Side, VarInt,
+            ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, ReadDatagrams, SendDatagram,
+            SendDatagramError, SendMany, ServerConfig, Side, VarInt,
         },
     },
     socket::{
@@ -908,6 +908,18 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.read_datagram()
     }
 
+    /// Receives a batch of application datagrams into `out`, appending in arrival order.
+    ///
+    /// This is the batch analogue of [`read_datagram()`](Self::read_datagram): it drains
+    /// all currently-buffered datagrams in one connection-lock hold and returns the count.
+    /// If none are buffered it parks until at least one arrives, then drains. Use this
+    /// instead of `read_datagram()` in a loop when forwarding bursts — it amortizes the
+    /// lock and the wake across a whole batch.
+    #[inline]
+    pub fn read_datagrams<'a>(&'a self, out: &'a mut Vec<bytes::Bytes>) -> ReadDatagrams<'a> {
+        self.inner.read_datagrams(out)
+    }
+
     /// Waits for the connection to be closed for any reason.
     ///
     /// Despite the return type's name, closed connections are often not an error condition
@@ -968,6 +980,22 @@ impl<T: ConnectionState> Connection<T> {
     #[inline]
     pub fn send_datagram(&self, data: bytes::Bytes) -> Result<(), SendDatagramError> {
         self.inner.send_datagram(data)
+    }
+
+    /// Transmits many unreliable, unordered application datagrams in a single call.
+    ///
+    /// This is the batch analogue of [`send_datagram()`](Self::send_datagram): it takes
+    /// the connection mutex once and queues the whole batch under one lock hold, then
+    /// wakes the driver once. For a high-rate sender (e.g. a VPN forwarding a burst of
+    /// packets to one peer) this turns N mutex acquisitions into one and N driver wakes
+    /// into one. Oversized datagrams are skipped (counted in `rejected`) rather than
+    /// aborting the batch.
+    #[inline]
+    pub fn send_datagrams<I: IntoIterator<Item = bytes::Bytes>>(
+        &self,
+        datagrams: I,
+    ) -> Result<SendMany, SendDatagramError> {
+        self.inner.send_datagrams(datagrams)
     }
 
     /// Transmits `data` as an unreliable, unordered application datagram
