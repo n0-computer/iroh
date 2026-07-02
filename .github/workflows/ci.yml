@@ -72,7 +72,7 @@ jobs:
         # See https://github.com/cross-rs/cross/issues/1222
       - name: Cache cross
         id: cache-cross
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cross
           key: cross-${{ runner.os }}-${{ runner.arch }}
@@ -252,7 +252,7 @@ jobs:
         # See https://github.com/cross-rs/cross/issues/1222
       - name: Cache cross
         id: cache-cross
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cross
           key: cross-${{ runner.os }}-${{ runner.arch }}
@@ -537,7 +537,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Cache pip
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pip
           key: pip-codespell-2.4.1
