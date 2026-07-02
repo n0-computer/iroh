@@ -2004,7 +2004,7 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
-    use iroh_relay::{RelayConfig, server::Access, tls::CaTlsConfig};
+    use iroh_relay::{RelayConfig, RelayQuicConfig, server::Access, tls::CaTlsConfig};
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
@@ -2921,6 +2921,81 @@ mod tests {
         p1_connect.await.anyerr()??;
         p2_connect.await.anyerr()??;
 
+        Ok(())
+    }
+
+    /// Regression test: Don't fail connections with dead relays on Windows.
+    ///
+    /// A single client connecting to a single server over a usable direct path
+    /// must succeed even when both are configured with an unreachable home relay
+    /// (`https://127.0.0.1:1`, nothing listening). The dead relay should be irrelevant:
+    /// the direct path works and the connection comes up in milliseconds.
+    ///
+    /// This was broken on Windows because QaD sends over the same socket to the dead
+    /// relay, and the socket would return recv errors on the next recv to report ICMP
+    /// errors for the previous send. We now skip over these errors, implemented in
+    /// https://github.com/n0-computer/net-tools/pull/166, so this no longer fails.
+    #[tokio::test]
+    async fn endpoint_unreachable_relay_direct_connect_succeeds() -> Result {
+        // The relay url and its QADv4 probe must both hit closed ports, so the relay is
+        // unreachable and the probe draws the ICMP port-unreachable the Windows socket
+        // reports on its next recv. Claim an ephemeral port, then close it: it's now free,
+        // so nothing answers. There's nothing stopping the kernel from reusing a port
+        // right away, but on most machines that's unlikely. The url is dialed over TCP
+        // (HTTPS), the probe over UDP, so claim each with the matching socket type.
+        let closed_tcp_port = {
+            let sock = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
+            sock.local_addr().expect("local addr").port()
+        };
+        let closed_udp_port = {
+            let sock = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
+            sock.local_addr().expect("local addr").port()
+        };
+        let dead_relay: RelayUrl = format!("https://127.0.0.1:{closed_tcp_port}")
+            .parse()
+            .expect("valid relay url");
+        let dead_relay_config = RelayConfig::new(
+            dead_relay.clone(),
+            Some(RelayQuicConfig::new(closed_udp_port)),
+        );
+
+        let bind_endpoint = async || {
+            Endpoint::builder(presets::Minimal)
+                // Use the broken relay to trigger the ICMP errors from the QaD sends.
+                .relay_mode(RelayMode::Custom(RelayMap::from_iter([
+                    dead_relay_config.clone()
+                ])))
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+                .alpns(vec![TEST_ALPN.to_vec()])
+                // Bind on IPv4 only to ensure a single socket to not have spurious polls.
+                .bind_addr((Ipv4Addr::LOCALHOST, 0))
+                .expect("valid addr")
+                .bind()
+                .await
+        };
+
+        let server = bind_endpoint().await?;
+        let server_addr = server.addr().with_relay_url(dead_relay.clone());
+        let client = bind_endpoint().await?;
+
+        // Server accepts the incoming connection and holds it open until the test ends.
+        let accept = tokio::spawn(async move {
+            let incoming = server.accept().await.anyerr()?;
+            let conn = incoming.await.anyerr()?;
+            conn.closed().await;
+            server.close().await;
+            n0_error::Ok(())
+        });
+
+        // The connect must complete over the direct loopback path despite the dead relay.
+        let _conn = tokio::time::timeout(
+            Duration::from_secs(10),
+            client.connect(server_addr, TEST_ALPN),
+        )
+        .await
+        .expect("connection should succeed")?;
+        client.close().await;
+        accept.await.anyerr()??;
         Ok(())
     }
 
