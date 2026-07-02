@@ -316,7 +316,8 @@ impl Transports {
         }
 
         // To improve fairness, every other call reverses the ordering of polling.
-        let counter = self.poll_recv_counter.wrapping_add(1);
+        self.poll_recv_counter = self.poll_recv_counter.wrapping_add(1);
+        let counter = self.poll_recv_counter;
         if counter.is_multiple_of(2) {
             #[cfg(not(wasm_browser))]
             for transport in self.ip.iter_mut() {
@@ -490,6 +491,161 @@ impl Transports {
                 .iter()
                 .map(|t| t.create_network_change_sender())
                 .collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use n0_watcher::Watchable;
+
+    use super::*;
+
+    const FAIRNESS_SAMPLE_POLLS: usize = 10_000;
+
+    #[test]
+    fn ready_custom_transports_are_polled_fairly() {
+        // GIVEN: two custom transport lanes that are always ready.
+        let first_polls = Arc::new(AtomicUsize::new(0));
+        let second_polls = Arc::new(AtomicUsize::new(0));
+        let mut transports = custom_only_transports(vec![
+            ready_custom_endpoint(1, first_polls.clone()),
+            ready_custom_endpoint(2, second_polls.clone()),
+        ]);
+
+        // WHEN: receive polling runs long enough to exercise both polling orders.
+        let selected =
+            sample_ready_custom_transport_selection(&mut transports, FAIRNESS_SAMPLE_POLLS);
+
+        let first_selected = selected.iter().filter(|&&id| id == 1).count();
+        let second_selected = selected.iter().filter(|&&id| id == 2).count();
+
+        // THEN: selection and actual polling are split evenly between lanes.
+        assert_eq!(first_selected, FAIRNESS_SAMPLE_POLLS / 2);
+        assert_eq!(second_selected, FAIRNESS_SAMPLE_POLLS / 2);
+        assert_eq!(
+            first_polls.load(Ordering::Relaxed),
+            FAIRNESS_SAMPLE_POLLS / 2
+        );
+        assert_eq!(
+            second_polls.load(Ordering::Relaxed),
+            FAIRNESS_SAMPLE_POLLS / 2
+        );
+
+        // And the lane order alternates from the first poll.
+        assert_eq!(
+            selected.iter().take(4).copied().collect::<Vec<_>>(),
+            vec![2, 1, 2, 1],
+        );
+    }
+
+    fn custom_only_transports(custom: Vec<Box<dyn CustomEndpoint>>) -> Transports {
+        let metrics = EndpointMetrics::default();
+        Transports {
+            #[cfg(not(wasm_browser))]
+            ip: ip::IpTransports::bind(std::iter::empty(), &metrics).unwrap(),
+            relay: Vec::new(),
+            custom,
+            poll_recv_counter: 0,
+            recv_infos: Default::default(),
+            consecutive_total_recv_failures: 0,
+        }
+    }
+
+    fn ready_custom_endpoint(id: u8, polls: Arc<AtomicUsize>) -> Box<dyn CustomEndpoint> {
+        Box::new(ReadyCustomEndpoint {
+            id,
+            polls,
+            local_addr: CustomAddr::from_parts(1, &[id]),
+            remote_addr: CustomAddr::from_parts(2, &[id]),
+            local_addr_watch: Watchable::new(vec![CustomAddr::from_parts(1, &[id])]),
+        })
+    }
+
+    fn sample_ready_custom_transport_selection(
+        transports: &mut Transports,
+        polls: usize,
+    ) -> Vec<u8> {
+        let mut selected = Vec::with_capacity(polls);
+        let waker = futures_util::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        let mut storage = [0u8; 1];
+        let mut metas = [noq_udp::RecvMeta::default()];
+
+        for _ in 0..polls {
+            let mut bufs = [IoSliceMut::new(&mut storage)];
+            let n = match transports.inner_poll_recv(&mut cx, &mut bufs, &mut metas) {
+                Poll::Ready(Ok(n)) => n,
+                Poll::Ready(Err(err)) => panic!("custom transport poll failed: {err}"),
+                Poll::Pending => panic!("ready custom transport returned pending"),
+            };
+            assert_eq!(n, 1);
+            selected.push(storage[0]);
+            storage[0] = 0;
+            metas[0] = noq_udp::RecvMeta::default();
+        }
+
+        selected
+    }
+
+    #[derive(Debug)]
+    struct ReadyCustomEndpoint {
+        id: u8,
+        polls: Arc<AtomicUsize>,
+        local_addr: CustomAddr,
+        remote_addr: CustomAddr,
+        local_addr_watch: Watchable<Vec<CustomAddr>>,
+    }
+
+    impl CustomEndpoint for ReadyCustomEndpoint {
+        fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<CustomAddr>> {
+            self.local_addr_watch.watch()
+        }
+
+        fn create_sender(&self) -> Arc<dyn CustomSender> {
+            Arc::new(NoopCustomSender)
+        }
+
+        fn poll_recv(
+            &mut self,
+            _cx: &mut Context,
+            bufs: &mut [io::IoSliceMut<'_>],
+            metas: &mut [noq_udp::RecvMeta],
+            recv_infos: &mut [RecvInfo],
+        ) -> Poll<io::Result<usize>> {
+            self.polls.fetch_add(1, Ordering::Relaxed);
+            bufs[0][0] = self.id;
+            metas[0].len = 1;
+            metas[0].stride = 1;
+            recv_infos[0] = RecvInfo {
+                remote: Addr::Custom(self.remote_addr.clone()),
+                local: Some(self.local_addr.clone()),
+            };
+            Poll::Ready(Ok(1))
+        }
+    }
+
+    #[derive(Debug)]
+    struct NoopCustomSender;
+
+    impl CustomSender for NoopCustomSender {
+        fn is_valid_send_addr(&self, _addr: &CustomAddr) -> bool {
+            false
+        }
+
+        fn poll_send(
+            &self,
+            _cx: &mut Context,
+            _dst: &CustomAddr,
+            _src: Option<&CustomAddr>,
+            _transmit: &Transmit<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
         }
     }
 }
