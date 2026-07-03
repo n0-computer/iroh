@@ -536,6 +536,8 @@ impl ClientToRelayMsg {
 
         let res = match frame_type {
             FrameType::ClientToRelayDatagram | FrameType::ClientToRelayDatagramBatch => {
+                ensure!(content.len() >= EndpointId::LENGTH, Error::InvalidFrame);
+
                 let dst_endpoint_id = cache.key_from_slice(&content[..EndpointId::LENGTH])?;
                 let datagrams = Datagrams::from_bytes(
                     content.slice(EndpointId::LENGTH..),
@@ -593,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    fn test_server_client_frames_snapshot() -> Result {
+    fn test_relay_client_frames_snapshot() -> Result {
         let client_key = SecretKey::from_bytes(&[42u8; 32]);
 
         check_expected_bytes(vec![
@@ -681,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn test_client_server_frames_snapshot() -> Result {
+    fn test_client_relay_frames_snapshot() -> Result {
         let client_key = SecretKey::from_bytes(&[42u8; 32]);
 
         check_expected_bytes(vec![
@@ -741,12 +743,33 @@ mod tests {
 
         Ok(())
     }
+
+    /// A datagram frame must contain at least an EndpointId (32 bytes) after
+    /// the frame type. A frame consisting only of the frame type byte used to
+    /// panic when slicing the destination endpoint id.
+    #[test]
+    fn regression_client_to_relay_undersized_datagram_rejected() {
+        for frame_type in [
+            FrameType::ClientToRelayDatagram,
+            FrameType::ClientToRelayDatagramBatch,
+        ] {
+            let encoded = frame_type.write_to(BytesMut::new()).freeze();
+            let result = ClientToRelayMsg::from_bytes(encoded, &KeyCache::test());
+            assert!(
+                matches!(result, Err(Error::InvalidFrame { .. })),
+                "expected InvalidFrame for {:?}, got {:?}",
+                frame_type,
+                result
+            );
+        }
+    }
 }
 
 #[cfg(all(test, feature = "server"))]
 mod proptests {
     use iroh_base::SecretKey;
-    use proptest::prelude::*;
+    use proptest::{collection::vec, prelude::*};
+    use test_strategy::proptest;
 
     use super::*;
 
@@ -773,7 +796,7 @@ mod proptests {
         (
             ecn(),
             prop::option::of(MAX_PAYLOAD_SIZE / 20..MAX_PAYLOAD_SIZE),
-            prop::collection::vec(any::<u8>(), 0..MAX_PAYLOAD_SIZE),
+            vec(any::<u8>(), 0..MAX_PAYLOAD_SIZE),
         )
             .prop_map(|(ecn, segment_size, data)| Datagrams {
                 ecn,
@@ -785,7 +808,7 @@ mod proptests {
     }
 
     /// Generates a random valid frame
-    fn server_client_frame() -> impl Strategy<Value = RelayToClientMsg> {
+    fn relay_client_frame() -> impl Strategy<Value = RelayToClientMsg> {
         let recv_packet = (key(), datagrams()).prop_map(|(remote_endpoint_id, datagrams)| {
             RelayToClientMsg::Datagrams {
                 remote_endpoint_id,
@@ -816,9 +839,10 @@ mod proptests {
             restarting,
             health
         ]
+        .boxed()
     }
 
-    fn client_server_frame() -> impl Strategy<Value = ClientToRelayMsg> {
+    fn client_relay_frame() -> impl Strategy<Value = ClientToRelayMsg> {
         let send_packet = (key(), datagrams()).prop_map(|(dst_endpoint_id, datagrams)| {
             ClientToRelayMsg::Datagrams {
                 dst_endpoint_id,
@@ -862,41 +886,100 @@ mod proptests {
         ));
     }
 
-    proptest! {
-        #[test]
-        fn server_client_frame_roundtrip(frame in server_client_frame()) {
-            let version = allowed_version(&frame);
-            let encoded = frame.to_bytes().freeze();
-            let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), version).unwrap();
-            prop_assert_eq!(frame, decoded);
+    #[proptest]
+    fn relay_client_frame_roundtrip(#[strategy(relay_client_frame())] frame: RelayToClientMsg) {
+        let version = allowed_version(&frame);
+        let encoded = frame.to_bytes().freeze();
+        let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test(), version).unwrap();
+        prop_assert_eq!(frame, decoded);
+    }
+
+    #[proptest]
+    fn client_relay_frame_roundtrip(#[strategy(client_relay_frame())] frame: ClientToRelayMsg) {
+        let encoded = frame.to_bytes().freeze();
+        let decoded = ClientToRelayMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
+        prop_assert_eq!(frame, decoded);
+    }
+
+    #[proptest]
+    fn relay_client_frame_encoded_len(#[strategy(relay_client_frame())] frame: RelayToClientMsg) {
+        let claimed_encoded_len = frame.encoded_len();
+        let actual_encoded_len = frame.to_bytes().len();
+        prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
+    }
+
+    #[proptest]
+    fn client_relay_frame_encoded_len(#[strategy(client_relay_frame())] frame: ClientToRelayMsg) {
+        let claimed_encoded_len = frame.encoded_len();
+        let actual_encoded_len = frame.to_bytes().len();
+        prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
+    }
+
+    #[proptest]
+    fn datagrams_encoded_len(#[strategy(datagrams())] datagrams: Datagrams) {
+        let claimed_encoded_len = datagrams.encoded_len();
+        let actual_encoded_len = datagrams.write_to(Vec::new()).len();
+        prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
+    }
+
+    const MAX_TEST_MSG_SIZE: usize = 100_000;
+
+    fn perturb_encoding(
+        inner: impl Strategy<Value = BytesMut> + Clone + 'static,
+    ) -> impl Strategy<Value = Bytes> + 'static {
+        #[derive(Debug, test_strategy::Arbitrary)]
+        enum GenStrategy {
+            ArbitraryBytes,
+            FlipBits,
+            Truncate,
         }
 
-        #[test]
-        fn client_server_frame_roundtrip(frame in client_server_frame()) {
-            let encoded = frame.to_bytes().freeze();
-            let decoded = ClientToRelayMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
-            prop_assert_eq!(frame, decoded);
-        }
+        any::<GenStrategy>().prop_ind_flat_map(move |strategy| match strategy {
+            GenStrategy::ArbitraryBytes => vec(any::<u8>(), 0..MAX_TEST_MSG_SIZE)
+                .prop_map(Bytes::from)
+                .boxed(),
+            GenStrategy::FlipBits => (vec(any::<u16>(), 0..20), any::<u8>(), inner.clone())
+                .prop_map(|(byte_positions, mask, mut bytes)| {
+                    let len = bytes.len();
+                    for pos in byte_positions {
+                        bytes[(pos as usize).min(len.saturating_sub(1))] ^= mask;
+                    }
+                    bytes.freeze()
+                })
+                .boxed(),
+            GenStrategy::Truncate => (vec(any::<u16>(), 0..20), inner.clone())
+                .prop_map(|(mut truncations, mut bytes)| {
+                    truncations.sort();
+                    let mut bytes_truncated = 0;
+                    for [trunc_start, trunc_end] in truncations.as_chunks::<2>().0 {
+                        let len = bytes.len();
+                        let start = usize::from(*trunc_start).saturating_sub(bytes_truncated);
+                        let end = usize::from(*trunc_end).saturating_sub(bytes_truncated);
+                        let rest = bytes.split_off(end.min(len));
+                        bytes.truncate(start.min(len));
+                        bytes.extend_from_slice(&rest);
+                        bytes_truncated += end - start;
+                    }
+                    bytes.freeze()
+                })
+                .boxed(),
+        })
+    }
 
-        #[test]
-        fn server_client_frame_encoded_len(frame in server_client_frame()) {
-            let claimed_encoded_len = frame.encoded_len();
-            let actual_encoded_len = frame.to_bytes().len();
-            prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
-        }
+    #[proptest]
+    fn client_relay_frame_decode_no_panic(
+        #[strategy(perturb_encoding(client_relay_frame().boxed().prop_map(|msg| msg.to_bytes())))]
+        bytes: Bytes,
+    ) {
+        let _ = ClientToRelayMsg::from_bytes(Bytes::from(bytes), &KeyCache::test()); // only assert no panic
+    }
 
-        #[test]
-        fn client_server_frame_encoded_len(frame in client_server_frame()) {
-            let claimed_encoded_len = frame.encoded_len();
-            let actual_encoded_len = frame.to_bytes().len();
-            prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
-        }
-
-        #[test]
-        fn datagrams_encoded_len(datagrams in datagrams()) {
-            let claimed_encoded_len = datagrams.encoded_len();
-            let actual_encoded_len = datagrams.write_to(Vec::new()).len();
-            prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
-        }
+    #[proptest]
+    fn relay_client_frame_decode_no_panic(
+        #[strategy(perturb_encoding(relay_client_frame().boxed().prop_map(|msg| msg.to_bytes())))]
+        bytes: Bytes,
+        version: ProtocolVersion,
+    ) {
+        let _ = RelayToClientMsg::from_bytes(Bytes::from(bytes), &KeyCache::test(), version); // only assert no panic
     }
 }
