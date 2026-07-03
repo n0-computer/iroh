@@ -500,7 +500,7 @@ pub struct Limits {
 }
 
 /// Per-client rate limit configuration.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ClientRateLimit {
     /// Max number of bytes per second to read from the client connection.
