@@ -971,7 +971,7 @@ mod proptests {
         #[strategy(perturb_encoding(client_relay_frame().boxed().prop_map(|msg| msg.to_bytes())))]
         bytes: Bytes,
     ) {
-        let _ = ClientToRelayMsg::from_bytes(Bytes::from(bytes), &KeyCache::test()); // only assert no panic
+        let _ = ClientToRelayMsg::from_bytes(bytes, &KeyCache::test()); // only assert no panic
     }
 
     #[proptest]
@@ -980,6 +980,6 @@ mod proptests {
         bytes: Bytes,
         version: ProtocolVersion,
     ) {
-        let _ = RelayToClientMsg::from_bytes(Bytes::from(bytes), &KeyCache::test(), version); // only assert no panic
+        let _ = RelayToClientMsg::from_bytes(bytes, &KeyCache::test(), version); // only assert no panic
     }
 }
