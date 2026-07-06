@@ -2,6 +2,20 @@
 
 All notable changes to iroh will be documented in this file.
 
+## [1.0.2](https://github.com/n0-computer/iroh/compare/v1.0.1..1.0.2) - 2026-07-06
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Receive transport lanes fairness counter issue ([#4384](https://github.com/n0-computer/iroh/issues/4384)) - ([8e7819a](https://github.com/n0-computer/iroh/commit/8e7819a909dbb0001a2c0057bac6cc4a0a5e14a6))
+
+### 🧪 Testing
+
+- *(iroh)* Regression test for transient Windows recv errors ([#4348](https://github.com/n0-computer/iroh/issues/4348)) - ([d2a075f](https://github.com/n0-computer/iroh/commit/d2a075fa5c2198b035e14c2480bae131a1200a5c))
+
+# Changelog
+
+All notable changes to iroh will be documented in this file.
+
 ## [1.0.1](https://github.com/n0-computer/iroh/compare/v1.0.0..1.0.1) - 2026-06-29
 
 ### 🐛 Bug Fixes
