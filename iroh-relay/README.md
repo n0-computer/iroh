@@ -138,7 +138,7 @@ This will start a relay server with a self-signed TLS certificate, listening on 
 
 # License
 
-This project is licensed under either of
+This crate is licensed under either of
 
  * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
    https://www.apache.org/licenses/LICENSE-2.0)
@@ -146,6 +146,9 @@ This project is licensed under either of
    https://opensource.org/licenses/MIT)
 
 at your option.
+
+Some relay source files also include derived Tailscale code, which is covered by
+the bundled `LICENSE-BSD3` file.
 
 ### Contribution
 
