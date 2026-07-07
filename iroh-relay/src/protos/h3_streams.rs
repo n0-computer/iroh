@@ -137,11 +137,9 @@ async fn send_one_message(
 ) -> Result<(), StreamError> {
     let mut stream = conn.open_uni().await.anyerr()?;
     let _ = stream.set_priority(priority);
-    stream
-        .write_chunk(encode_wt_header(session_id).freeze())
-        .await
-        .anyerr()?;
-    stream.write_chunk(payload).await.anyerr()?;
+    // Write the WT header and payload in one batched, zero-copy call.
+    let mut chunks = [encode_wt_header(session_id).freeze(), payload];
+    stream.write_all_chunks(&mut chunks).await.anyerr()?;
     stream.finish().anyerr()?;
     Ok(())
 }
