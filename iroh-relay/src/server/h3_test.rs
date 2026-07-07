@@ -89,6 +89,95 @@ mod tests {
         DnsResolver::new()
     }
 
+    /// Throughput benchmark for the H3 relay, comparing the uni-stream and
+    /// datagram framings. Run explicitly (it is `#[ignore]`d):
+    ///
+    /// ```text
+    /// # uni-stream framing (default)
+    /// cargo test -p iroh-relay --features server,h3-transport,tls-ring \
+    ///   --lib bench_throughput -- --ignored --nocapture
+    /// # datagram framing
+    /// RUSTFLAGS="--cfg h3_datagrams" cargo test -p iroh-relay \
+    ///   --features server,h3-transport,tls-ring \
+    ///   --lib bench_throughput -- --ignored --nocapture
+    /// ```
+    ///
+    /// Sends `N` messages of `SIZE` bytes from A to B through the relay and
+    /// reports how many arrive and at what rate. Datagrams are unreliable and
+    /// capped at the path MTU, so `SIZE` stays small and loss is expected.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "benchmark; run explicitly with --ignored --nocapture"]
+    async fn bench_throughput() -> Result<()> {
+        const N: usize = 50_000;
+        const SIZE: usize = 1000;
+
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
+        let server = spawn_h3_relay()?;
+        let server_addr = server.bind_addr();
+
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
+        let mut client_a = connect_h3_client(server_addr, a_secret_key).await?;
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
+        let b_key = b_secret_key.public();
+        let mut client_b = connect_h3_client(server_addr, b_secret_key).await?;
+
+        // Warm up and confirm the A -> B path works before timing.
+        try_send_recv(&mut client_a, &mut client_b, b_key, Datagrams::from("warmup")).await?;
+
+        let payload = Datagrams::from(vec![0xa5u8; SIZE]);
+        let framing = if cfg!(h3_datagrams) { "datagram" } else { "uni-stream" };
+
+        let send_start = std::time::Instant::now();
+        let send = async {
+            for _ in 0..N {
+                client_a
+                    .send(ClientToRelayMsg::Datagrams {
+                        dst_endpoint_id: b_key,
+                        datagrams: payload.clone(),
+                    })
+                    .await?;
+            }
+            Ok::<std::time::Duration, n0_error::AnyError>(send_start.elapsed())
+        };
+        // Measure the sustained forwarding rate: count received messages and the
+        // active window (first to last arrival). A relay drops for a backed-up
+        // receiver, so loss under saturation is expected and reported separately.
+        let recv = async {
+            let mut got = 0usize;
+            let (mut first, mut last) = (None, std::time::Instant::now());
+            while got < N {
+                match tokio::time::timeout(Duration::from_secs(2), client_b.next()).await {
+                    Ok(Some(Ok(_))) => {
+                        first.get_or_insert_with(std::time::Instant::now);
+                        last = std::time::Instant::now();
+                        got += 1;
+                    }
+                    _ => break,
+                }
+            }
+            (got, first.map(|f| last.duration_since(f)))
+        };
+        let (send_res, (got, _active)) = tokio::join!(send, recv);
+        let send_time = send_res?;
+
+        // Send throughput: how fast the framing can push messages into the QUIC
+        // connection (this is where the per-message stream setup cost shows up).
+        let send_msgs_s = N as f64 / send_time.as_secs_f64();
+        let send_mib_s = (N * SIZE) as f64 / (1024.0 * 1024.0) / send_time.as_secs_f64();
+        // Delivery: how many the relay actually forwarded to B. A relay drops for
+        // a backed-up receiver, so under this saturating blast loss is expected;
+        // datagrams also have no retransmission, so their loss is strictly worse.
+        let loss = 100.0 * (N - got) as f64 / N as f64;
+        println!(
+            "h3 relay throughput [{framing}] ({SIZE} B msgs): \
+             send {send_mib_s:.0} MiB/s ({send_msgs_s:.0} msg/s); \
+             delivered {got}/{N}, loss {loss:.1}%"
+        );
+
+        server.shutdown().await;
+        Ok(())
+    }
+
     /// Test with standalone H3 relay server and direct H3 clients.
     #[tokio::test]
     #[traced_test]
