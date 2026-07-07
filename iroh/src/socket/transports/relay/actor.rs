@@ -313,12 +313,16 @@ impl ActiveRelayActor {
         )
         .tls_client_config(tls_config)
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
-        #[cfg(feature = "h3-transport")]
+        #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
         {
             // Use H3/WebTransport if the relay advertises it and UDP is available.
             // Falls back to WS on failure (timeout or UDP blocked).
             builder = builder.enable_h3(h3_enabled && udp_available.load(Ordering::Relaxed));
         }
+        // WebTransport is only available off-wasm with the `h3-transport` feature; the
+        // fields are unused otherwise.
+        #[cfg(not(all(not(wasm_browser), feature = "h3-transport")))]
+        let _ = (&udp_available, &h3_enabled);
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }

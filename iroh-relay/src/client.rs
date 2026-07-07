@@ -16,8 +16,10 @@ use iroh_dns::dns::{DnsError, DnsResolver};
 #[cfg(wasm_browser)]
 use n0_error::StdResultExt;
 use n0_error::{AnyError, e, stack_error};
+#[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+use n0_future::Either;
 use n0_future::{
-    Either, Sink, Stream,
+    Sink, Stream,
     split::{SplitSink, SplitStream, split},
     time,
 };
@@ -98,7 +100,7 @@ pub enum ConnectError {
         "No rustls crypto provider configured while both ring and aws-lc-rs feature flags are disabled"
     )]
     MissingCryptoProvider,
-    #[cfg(feature = "h3-transport")]
+    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
     #[error(transparent)]
     H3 {
         #[error(std_err)]
@@ -172,7 +174,7 @@ pub struct ClientBuilder {
     /// Whether to prefer H3 (QUIC) transport over WebSocket.
     ///
     /// When true, the client tries H3 first and falls back to WebSocket on failure.
-    #[cfg(feature = "h3-transport")]
+    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
     enable_h3: bool,
 }
 
@@ -193,7 +195,7 @@ impl ClientBuilder {
             dns_resolver,
             key_cache: KeyCache::new(128),
             auth_token: None,
-            #[cfg(feature = "h3-transport")]
+            #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
             enable_h3: false,
         }
     }
@@ -272,7 +274,7 @@ impl ClientBuilder {
     /// When true, the client races WebTransport and WebSocket connections
     /// concurrently. The first transport to receive a server response wins;
     /// the other is aborted.
-    #[cfg(feature = "h3-transport")]
+    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
     pub fn enable_h3(mut self, enable: bool) -> Self {
         self.enable_h3 = enable;
         self

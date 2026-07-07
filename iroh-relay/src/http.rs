@@ -109,6 +109,15 @@ fn strum_err_fn(_item: &str) -> UnsupportedRelayProtocolVersion {
     UnsupportedRelayProtocolVersion::new()
 }
 
+/// ALPN protocol identifier for H3 relay connections.
+///
+/// Uses the standard HTTP/3 ALPN. The relay connection is established with a
+/// WebTransport `CONNECT` request (via `web-transport-proto`); the relay
+/// protocol version is carried in that request's subprotocol field, mirroring
+/// the `Sec-WebSocket-Protocol` header used on the HTTP/1.1 WebSocket path.
+#[cfg(feature = "h3-transport")]
+pub const ALPN_RELAY_H3: &[u8] = b"h3";
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -128,12 +137,3 @@ mod tests {
         }
     }
 }
-
-/// ALPN protocol identifier for H3 relay connections.
-///
-/// Uses the standard HTTP/3 ALPN. The relay connection is established with a
-/// WebTransport `CONNECT` request (via `web-transport-proto`); the relay
-/// protocol version is carried in that request's subprotocol field, mirroring
-/// the `Sec-WebSocket-Protocol` header used on the HTTP/1.1 WebSocket path.
-#[cfg(feature = "h3-transport")]
-pub const ALPN_RELAY_H3: &[u8] = b"h3";

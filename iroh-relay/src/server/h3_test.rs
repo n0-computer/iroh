@@ -9,6 +9,7 @@
 mod tests {
     use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
+    use http::HeaderMap;
     use iroh_base::{EndpointId, SecretKey};
     use iroh_dns::dns::DnsResolver;
     use n0_error::Result;
@@ -16,8 +17,6 @@ mod tests {
     use n0_tracing_test::traced_test;
     use rand::{RngExt, SeedableRng};
     use tracing::{info, instrument};
-
-    use http::HeaderMap;
 
     use crate::{
         KeyCache,

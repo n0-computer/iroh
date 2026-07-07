@@ -67,7 +67,7 @@ impl H3RelayServer {
     }
 
     /// Returns a mutable reference to the task handle.
-    pub fn task_handle(&mut self) -> &mut AbortOnDropHandle<()> {
+    pub(crate) fn task_handle(&mut self) -> &mut AbortOnDropHandle<()> {
         &mut self.handle
     }
 
