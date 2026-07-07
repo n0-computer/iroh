@@ -54,6 +54,14 @@ struct Cli {
     /// Running in dev mode will ignore any config file fields pertaining to TLS.
     #[clap(long, default_value_t = false)]
     dev: bool,
+    /// Run in localhost development mode with TLS (self-signed certs).
+    ///
+    /// This enables HTTPS and H3/QUIC transports using auto-generated self-signed
+    /// certificates for localhost/127.0.0.1. Useful for benchmarking H3 vs WS locally.
+    ///
+    /// Clients must use `--insecure` or equivalent to accept the self-signed certs.
+    #[clap(long, default_value_t = false, conflicts_with = "dev")]
+    dev_tls: bool,
     /// Path to the configuration file.
     #[clap(long, short)]
     config_path: Option<PathBuf>,
@@ -65,6 +73,7 @@ enum CertMode {
     LetsEncrypt,
     #[cfg(feature = "server")]
     Reloading,
+    SelfSigned,
 }
 
 fn load_certs(
@@ -582,7 +591,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let mut cfg = Config::load(&cli).await?;
-    if cfg.enable_quic_addr_discovery && cfg.tls.is_none() {
+    if cfg.enable_quic_addr_discovery && cfg.tls.is_none() && !cli.dev_tls {
         bail_any!("TLS must be configured in order to spawn a QUIC endpoint");
     }
     if cli.dev {
@@ -590,6 +599,29 @@ async fn main() -> Result<()> {
         if let Some(ref mut tls) = cfg.tls {
             tls.dangerous_http_only = true;
         }
+        if cfg.http_bind_addr.is_none() {
+            cfg.http_bind_addr = Some((Ipv6Addr::UNSPECIFIED, DEV_MODE_HTTP_PORT).into());
+        }
+    }
+    if cli.dev_tls {
+        warn!("Running with self-signed certificates. Do not use --dev-tls in production.");
+        cfg.tls = Some(TlsConfig {
+            https_bind_addr: Some((Ipv6Addr::UNSPECIFIED, 8443).into()),
+            // The H3 relay server binds on the HTTPS port (8443) over UDP, so QAD
+            // gets the default QUIC port to keep the two QUIC endpoints apart.
+            quic_bind_addr: Some((Ipv6Addr::UNSPECIFIED, DEFAULT_RELAY_QUIC_PORT).into()),
+            hostname: vec![],
+            cert_mode: CertMode::SelfSigned,
+            cert_dir: None,
+            manual_cert_path: None,
+            manual_key_path: None,
+            prod_tls: false,
+            contact: None,
+            dangerous_http_only: false,
+        });
+        // QAD (on DEFAULT_RELAY_QUIC_PORT) and the H3 relay server (on the HTTPS
+        // port) now bind distinct UDP ports, so both can run together.
+        cfg.enable_quic_addr_discovery = true;
         if cfg.http_bind_addr.is_none() {
             cfg.http_bind_addr = Some((Ipv6Addr::UNSPECIFIED, DEV_MODE_HTTP_PORT).into());
         }
@@ -679,6 +711,11 @@ async fn load_cert_config(tls: &TlsConfig) -> Result<relay::CertConfig> {
             )
             .await?;
             let server_config = server_config.with_cert_resolver(resolver);
+            relay::CertConfig::Manual { server_config }
+        }
+        CertMode::SelfSigned => {
+            let (_certs, server_config) =
+                iroh_relay::server::testing::self_signed_tls_certs_and_config();
             relay::CertConfig::Manual { server_config }
         }
     };

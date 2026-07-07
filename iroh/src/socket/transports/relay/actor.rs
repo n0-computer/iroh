@@ -206,6 +206,10 @@ struct RelayConnectionOptions {
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
     prefer_ipv6: Arc<AtomicBool>,
+    /// Whether UDP is available (from net_report). Used to prefer H3 over WebSocket.
+    udp_available: Arc<AtomicBool>,
+    /// Whether this relay advertises H3/WebTransport support.
+    h3_enabled: bool,
     tls_config: rustls::ClientConfig,
     auth_token: Option<String>,
 }
@@ -295,6 +299,8 @@ impl ActiveRelayActor {
             dns_resolver,
             proxy_url,
             prefer_ipv6,
+            udp_available,
+            h3_enabled,
             tls_config,
             auth_token,
         } = opts;
@@ -307,6 +313,12 @@ impl ActiveRelayActor {
         )
         .tls_client_config(tls_config)
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
+        #[cfg(feature = "h3-transport")]
+        {
+            // Use H3/WebTransport if the relay advertises it and UDP is available.
+            // Falls back to WS on failure (timeout or UDP blocked).
+            builder = builder.enable_h3(h3_enabled && udp_available.load(Ordering::Relaxed));
+        }
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
@@ -874,11 +886,13 @@ pub(crate) struct Config {
     pub proxy_url: Option<Url>,
     /// If the last net_report report, reports IPv6 to be available.
     pub ipv6_reported: Arc<AtomicBool>,
+    /// Whether the last net_report indicates UDP is available.
+    pub udp_available: Arc<AtomicBool>,
     pub tls_config: rustls::ClientConfig,
-    pub metrics: Arc<SocketMetrics>,
-    /// Per-relay configuration. Consulted when starting a connection to
-    /// look up the auth token and any future per-relay options.
+    /// The relay map. Consulted when starting a connection to look up per-relay
+    /// configuration such as the auth token and H3 support.
     pub relay_map: RelayMap,
+    pub metrics: Arc<SocketMetrics>,
 }
 
 /// Connection state of the home relay.
@@ -1238,12 +1252,22 @@ impl RelayActor {
             .relay_map
             .get(&url)
             .and_then(|cfg| cfg.auth_token.clone());
+
+        let h3_enabled = self
+            .config
+            .relay_map
+            .get(&url)
+            .map(|cfg| cfg.h3)
+            .unwrap_or(true);
+
         let connection_opts = RelayConnectionOptions {
             secret_key: self.config.secret_key.clone(),
             #[cfg(not(wasm_browser))]
             dns_resolver: self.config.dns_resolver.clone(),
             proxy_url: self.config.proxy_url.clone(),
             prefer_ipv6: self.config.ipv6_reported.clone(),
+            udp_available: self.config.udp_available.clone(),
+            h3_enabled,
             tls_config: self.config.tls_config.clone(),
             auth_token,
         };
@@ -1436,6 +1460,8 @@ mod tests {
                 tls_config: CaTlsConfig::insecure_skip_verify()
                     .client_config(default_provider())
                     .expect("infallible"),
+                udp_available: Arc::new(AtomicBool::new(false)),
+                h3_enabled: false,
                 auth_token: None,
             },
             stop_token,

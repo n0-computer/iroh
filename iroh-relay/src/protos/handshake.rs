@@ -141,7 +141,7 @@ impl Frame for ServerDeniesAuth {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum Error {
-    /// Error returned from the underlying WebSocket stream during the handshake.
+    /// Error returned from the underlying WebSocket or WebTransport stream during the handshake.
     ///
     /// The concrete error type is `tokio_websockets::Error` on native targets and
     /// `ws_stream_wasm::WsErr` on `wasm_browser` targets. Use [`AnyError::downcast_ref`] to

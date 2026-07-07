@@ -6,7 +6,11 @@
 
 // Based on tailscale/derp/derphttp/derphttp_client.go
 
-use std::{collections::VecDeque, net::IpAddr};
+use std::{
+    collections::VecDeque,
+    future::Future,
+    net::{IpAddr, SocketAddr},
+};
 
 use bytes::Bytes;
 use data_encoding::BASE64URL;
@@ -229,6 +233,31 @@ impl MaybeTlsStreamBuilder {
 /// Resolves `url` and races TCP connections across the resulting addresses,
 /// Happy Eyeballs style (RFC 8305).
 ///
+/// A thin wrapper around [`race_happy_eyeballs`] that dials each address with
+/// [`TcpStream::connect`]. The WebTransport path uses the same racer with a QUIC
+/// dial, see [`ClientBuilder::connect`](super::ClientBuilder::connect).
+async fn dial_happy_eyeballs(
+    dns_resolver: &DnsResolver,
+    url: &Url,
+    prefer_ipv6: bool,
+) -> Result<TcpStream, DialError> {
+    race_happy_eyeballs(dns_resolver, url, prefer_ipv6, |addr| async move {
+        trace!("connecting TCP stream");
+        let stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, TcpStream::connect(addr))
+            .await
+            .map_err(DialError::from)
+            .and_then(|res| res.map_err(DialError::from))
+            .inspect_err(|err| debug!("failed to connect: {err:#}"))?;
+        trace!("TCP stream connected");
+        stream.set_nodelay(true)?;
+        Ok(stream)
+    })
+    .await
+}
+
+/// Resolves `url` and races `dial` attempts across the resulting addresses,
+/// Happy Eyeballs style (RFC 8305).
+///
 /// IPv4 and IPv6 addresses stream in as their lookups resolve and are appended
 /// to a single queue. The loop dials them one at a time, [`pop_family`] taking
 /// the next address interleaved by family, the preferred one (`prefer_ipv6`)
@@ -239,15 +268,20 @@ impl MaybeTlsStreamBuilder {
 ///   once the preferred family resolves;
 /// - each later attempt starts [`CONNECTION_ATTEMPT_DELAY`] after the previous
 ///   one, or as soon as the last in-flight attempt fails, whichever comes first;
-/// - every attempt is itself capped at [`DIAL_ENDPOINT_TIMEOUT`].
+/// - `dial` is responsible for bounding each attempt with its own timeout.
 ///
 /// The first connection to succeed is returned; the rest are dropped, which
 /// cancels them.
-async fn dial_happy_eyeballs(
+pub(super) async fn race_happy_eyeballs<T, F, Fut>(
     dns_resolver: &DnsResolver,
     url: &Url,
     prefer_ipv6: bool,
-) -> Result<TcpStream, DialError> {
+    mut dial: F,
+) -> Result<T, DialError>
+where
+    F: FnMut(SocketAddr) -> Fut,
+    Fut: Future<Output = Result<T, DialError>>,
+{
     let port = url_port(url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
 
     // Stream of resolved addresses.
@@ -281,20 +315,7 @@ async fn dial_happy_eyeballs(
             && let Some(ip) = pop_family(&mut queue, &mut next_prefer_v6)
         {
             let addr = SocketAddr::new(ip, port);
-            dials.push(
-                async move {
-                    trace!("connecting TCP stream");
-                    let stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, TcpStream::connect(addr))
-                        .await
-                        .map_err(DialError::from)
-                        .and_then(|res| res.map_err(DialError::from))
-                        .inspect_err(|err| debug!("failed to connect: {err:#}"))?;
-                    trace!("TCP stream connected");
-                    stream.set_nodelay(true)?;
-                    Ok(stream)
-                }
-                .instrument(info_span!("connect", %addr)),
-            );
+            dials.push(dial(addr).instrument(info_span!("connect", %addr)));
             started = true;
             next_dial_delayed_until
                 .as_mut()

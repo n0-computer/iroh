@@ -243,6 +243,12 @@ pub struct RelayConfig {
     /// Set via [`RelayConfig::with_auth_token`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_token: Option<String>,
+    /// Whether this relay supports WebTransport (H3) connections.
+    ///
+    /// When true and UDP is available, the client prefers WebTransport over
+    /// WebSocket for lower connection latency. Defaults to true.
+    #[serde(default = "h3_default")]
+    pub h3: bool,
 }
 
 impl RelayConfig {
@@ -252,6 +258,7 @@ impl RelayConfig {
             url,
             quic,
             auth_token: None,
+            h3: h3_default(),
         }
     }
 
@@ -275,12 +282,17 @@ impl From<RelayUrl> for RelayConfig {
             url: value,
             quic: quic_config(),
             auth_token: None,
+            h3: h3_default(),
         }
     }
 }
 
 fn quic_config() -> Option<RelayQuicConfig> {
     Some(RelayQuicConfig::default())
+}
+
+fn h3_default() -> bool {
+    true
 }
 
 /// Configuration for speaking to the QUIC endpoint on the relay

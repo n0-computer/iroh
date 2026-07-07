@@ -63,12 +63,16 @@ use crate::{
 
 pub mod client;
 pub mod clients;
+#[cfg(feature = "h3-transport")]
+pub mod h3_server;
 pub mod http_server;
 mod metrics;
 pub(crate) mod resolver;
 pub mod streams;
-#[cfg(feature = "test-utils")]
 pub mod testing;
+
+#[cfg(all(test, feature = "h3-transport"))]
+mod h3_test;
 
 pub use self::{
     http_server::{Handlers, RelayService},
@@ -624,12 +628,18 @@ pub struct Server {
     https_addr: Option<SocketAddr>,
     /// The address of the QUIC server, if configured.
     quic_addr: Option<SocketAddr>,
+    /// The address of the H3 relay server, if configured.
+    #[cfg(feature = "h3-transport")]
+    h3_addr: Option<SocketAddr>,
     /// Handle to the relay server.
     relay_handle: Option<http_server::ServerHandle>,
     /// Handle to the relay service for runtime control.
     relay_service: Option<http_server::RelayService>,
     /// Handle to the quic server.
     quic_handle: Option<QuicServerHandle>,
+    /// Handle to the H3 relay server.
+    #[cfg(feature = "h3-transport")]
+    h3_handle: Option<h3_server::H3ServerHandle>,
     /// The main task running the server.
     supervisor: AbortOnDropHandle<Result<(), SupervisorError>>,
     metrics: RelayMetrics,
@@ -709,6 +719,9 @@ impl Server {
             None
         };
 
+        #[cfg(feature = "h3-transport")]
+        let mut h3_server: Option<h3_server::H3RelayServer> = None;
+
         let (relay_server, http_addr, tls_config) = match config.relay {
             Some(relay_config) => {
                 debug!("Starting Relay server");
@@ -728,11 +741,12 @@ impl Server {
                 let key_cache_capacity = relay_config
                     .key_cache_capacity
                     .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
+                let access = relay_config.access;
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
                     .metrics(metrics.server.clone())
                     .headers(headers)
                     .key_cache_capacity(key_cache_capacity)
-                    .access(relay_config.access)
+                    .access(access.clone())
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
@@ -741,8 +755,18 @@ impl Server {
                 if let Some(cfg) = relay_config.limits.client_rx {
                     builder = builder.client_rx_ratelimit(cfg);
                 }
+                // The H3 server shares the WS `RelayService`, which only exists once the
+                // builder is spawned. Capture its QUIC bind address and TLS config here and
+                // start it afterwards.
+                #[cfg(feature = "h3-transport")]
+                let mut h3_config: Option<(SocketAddr, rustls::ServerConfig)> = None;
                 let (http_addr, tls_config) = match relay_config.tls {
                     Some(tls_config) => {
+                        // H3 binds on the same port as HTTPS (UDP vs TCP), matching
+                        // standard HTTP/3 deployment (both on port 443 in production).
+                        #[cfg(feature = "h3-transport")]
+                        let h3_quic_bind_addr = tls_config.https_bind_addr;
+
                         let server_tls_config = match tls_config.cert {
                             CertConfig::LetsEncrypt {
                                 acme_config,
@@ -799,6 +823,14 @@ impl Server {
                         };
                         builder = builder.tls_config(Some(server_tls_config.clone()));
 
+                        // Defer the H3 relay server until the WS `RelayService` exists, so both
+                        // transports share one client registry and access control.
+                        #[cfg(feature = "h3-transport")]
+                        {
+                            h3_config =
+                                Some((h3_quic_bind_addr, (*server_tls_config.config).clone()));
+                        }
+
                         // Some services always need to be served over HTTP without TLS.  Run
                         // these standalone.
                         let http_listener = TcpListener::bind(&relay_config.http_bind_addr)
@@ -828,6 +860,27 @@ impl Server {
                     }
                 };
                 let relay_server = builder.spawn().await?;
+
+                // Start the H3 relay server against the same `RelayService`, so a WebSocket
+                // client and a WebTransport client share one registry and can relay to each
+                // other.
+                #[cfg(feature = "h3-transport")]
+                if let Some((bind_addr, server_config)) = h3_config {
+                    match h3_server::H3RelayServer::spawn(
+                        bind_addr,
+                        server_config,
+                        relay_server.service().clone(),
+                    ) {
+                        Ok(server) => {
+                            info!(addr = %server.bind_addr(), "H3 relay server started");
+                            h3_server = Some(server);
+                        }
+                        Err(err) => {
+                            error!("Failed to start H3 relay server: {err:#}");
+                        }
+                    }
+                }
+
                 (Some(relay_server), http_addr, tls_config)
             }
             None => (None, None, None),
@@ -857,15 +910,30 @@ impl Server {
         let quic_addr = quic_server.as_ref().map(|srv| srv.bind_addr());
         let quic_handle = quic_server.as_ref().map(|srv| srv.handle());
 
-        let task = tokio::spawn(relay_supervisor(tasks, relay_server, quic_server));
+        #[cfg(feature = "h3-transport")]
+        let h3_addr = h3_server.as_ref().map(|srv| srv.bind_addr());
+        #[cfg(feature = "h3-transport")]
+        let h3_handle = h3_server.as_ref().map(|srv| srv.handle());
+
+        let task = tokio::spawn(relay_supervisor(
+            tasks,
+            relay_server,
+            quic_server,
+            #[cfg(feature = "h3-transport")]
+            h3_server,
+        ));
 
         Ok(Self {
             http_addr: http_addr.or(relay_addr),
             https_addr: http_addr.and(relay_addr),
             quic_addr,
+            #[cfg(feature = "h3-transport")]
+            h3_addr,
             relay_handle,
             relay_service,
             quic_handle,
+            #[cfg(feature = "h3-transport")]
+            h3_handle,
             supervisor: AbortOnDropHandle::new(task),
             metrics,
             metrics_server,
@@ -876,8 +944,8 @@ impl Server {
     ///
     /// Returns once all server tasks have stopped.
     pub async fn shutdown(self) -> Result<(), SupervisorError> {
-        // Only the Relay server and QUIC server need shutting down, the supervisor will abort the tasks in
-        // the JoinSet when the server terminates.
+        // Only the Relay, QUIC and H3 servers need shutting down, the supervisor will abort the
+        // tasks in the JoinSet when the server terminates.
         if let Some(handle) = self.relay_handle {
             handle.shutdown();
         }
@@ -886,6 +954,11 @@ impl Server {
         }
         if let Some(server) = self.metrics_server {
             server.shutdown().await;
+        }
+
+        #[cfg(feature = "h3-transport")]
+        if let Some(handle) = self.h3_handle {
+            handle.shutdown();
         }
         self.supervisor.await?
     }
@@ -914,6 +987,12 @@ impl Server {
     /// The socket address the QUIC server is listening on.
     pub fn quic_addr(&self) -> Option<SocketAddr> {
         self.quic_addr
+    }
+
+    /// The socket address the H3 relay server is listening on.
+    #[cfg(feature = "h3-transport")]
+    pub fn h3_addr(&self) -> Option<SocketAddr> {
+        self.h3_addr
     }
 
     /// Get the server's https [`RelayUrl`].
@@ -960,6 +1039,7 @@ async fn relay_supervisor(
     mut tasks: JoinSet<Result<(), SupervisorError>>,
     mut relay_http_server: Option<http_server::Server>,
     mut quic_server: Option<QuicServer>,
+    #[cfg(feature = "h3-transport")] mut h3_relay_server: Option<h3_server::H3RelayServer>,
 ) -> Result<(), SupervisorError> {
     let quic_enabled = quic_server.is_some();
     let mut quic_fut = match quic_server {
@@ -971,11 +1051,24 @@ async fn relay_supervisor(
         Some(ref mut server) => n0_future::Either::Left(server.task_handle()),
         None => n0_future::Either::Right(n0_future::future::pending()),
     };
+    // H3 server future: if the feature is not enabled or no server is present, pend forever.
+    #[cfg(feature = "h3-transport")]
+    let h3_enabled = h3_relay_server.is_some();
+    #[cfg(not(feature = "h3-transport"))]
+    let h3_enabled = false;
+    #[cfg(feature = "h3-transport")]
+    let mut h3_fut = match h3_relay_server {
+        Some(ref mut server) => n0_future::Either::Left(server.task_handle()),
+        None => n0_future::Either::Right(n0_future::future::pending()),
+    };
+    #[cfg(not(feature = "h3-transport"))]
+    let mut h3_fut = n0_future::future::pending::<std::result::Result<(), ()>>();
     let res = tokio::select! {
         biased;
         Some(ret) = tasks.join_next() => ret,
         ret = &mut quic_fut, if quic_enabled => ret.map(Ok),
         ret = &mut relay_fut, if relay_enabled => ret.map(Ok),
+        ret = &mut h3_fut, if h3_enabled => ret.map(Ok),
         else => Ok(Err(e!(SupervisorError::NoRelayServicesEnabled))),
     };
     let ret = match res {
@@ -1005,6 +1098,12 @@ async fn relay_supervisor(
 
     // Ensure the QUIC server is closed
     if let Some(server) = quic_server {
+        server.shutdown().await;
+    }
+
+    // Ensure the H3 relay server is closed
+    #[cfg(feature = "h3-transport")]
+    if let Some(server) = h3_relay_server {
         server.shutdown().await;
     }
 
