@@ -14,16 +14,19 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use n0_error::{StdResultExt, anyerr};
+#[cfg(not(h3_datagrams))]
+use n0_error::anyerr;
+use n0_error::StdResultExt;
 use n0_future::{Sink, Stream, ready};
 use tokio_util::sync::ReusableBoxFuture;
 use web_transport_proto as wt;
 
 use super::streams::StreamError;
-use crate::{ExportKeyingMaterial, MAX_PACKET_SIZE};
+use crate::ExportKeyingMaterial;
 
 /// Maximum bytes to read from a single uni stream before rejecting.
-const MAX_UNI_STREAM_SIZE: usize = MAX_PACKET_SIZE + 64;
+#[cfg(not(h3_datagrams))]
+const MAX_UNI_STREAM_SIZE: usize = crate::MAX_PACKET_SIZE + 64;
 
 /// Relay transport using one unidirectional QUIC stream per message.
 ///
@@ -111,6 +114,7 @@ impl ExportKeyingMaterial for noq::Connection {
 }
 
 /// Accept a uni stream, skip the WT header, read the payload to EOF.
+#[cfg(not(h3_datagrams))]
 async fn recv_one_message(
     conn: noq::Connection,
     wt_header_len: usize,
@@ -124,6 +128,7 @@ async fn recv_one_message(
 }
 
 /// Open a uni stream, write WT header and payload, finish the stream.
+#[cfg(not(h3_datagrams))]
 async fn send_one_message(
     conn: noq::Connection,
     session_id: u64,
@@ -139,6 +144,32 @@ async fn send_one_message(
     stream.write_chunk(payload).await.anyerr()?;
     stream.finish().anyerr()?;
     Ok(())
+}
+
+/// Receive the next relay message as a QUIC datagram.
+///
+/// Experimental alternative to the uni-stream transport, built with
+/// `RUSTFLAGS="--cfg h3_datagrams"`. Datagrams avoid per-message stream setup
+/// but are capped at the QUIC path MTU, so messages larger than that are
+/// rejected by [`send_one_message`]. Used to benchmark the two framings; see
+/// `plans/h3-bench.md`.
+#[cfg(h3_datagrams)]
+async fn recv_one_message(
+    conn: noq::Connection,
+    _wt_header_len: usize,
+) -> Result<Bytes, StreamError> {
+    conn.read_datagram().await.anyerr()
+}
+
+/// Send a relay message as a QUIC datagram.
+#[cfg(h3_datagrams)]
+async fn send_one_message(
+    conn: noq::Connection,
+    _session_id: u64,
+    _priority: i32,
+    payload: Bytes,
+) -> Result<(), StreamError> {
+    conn.send_datagram(payload).anyerr()
 }
 
 // -- Stream: accept uni streams, read each to EOF -----------------------------
