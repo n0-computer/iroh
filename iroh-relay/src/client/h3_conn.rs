@@ -34,10 +34,12 @@ use std::{
     time::Duration,
 };
 
+use bytes::BytesMut;
 use iroh_base::SecretKey;
 use n0_error::{AnyError, anyerr, e, stack_error};
 use noq::crypto::rustls::QuicClientConfig;
 use tracing::{debug, trace};
+use url::Url;
 use web_transport_proto as wt;
 
 use crate::{
@@ -63,6 +65,11 @@ pub(crate) struct WtConnState {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum H3ConnectError {
+    #[error("Invalid server URL")]
+    InvalidServerUrl {
+        #[error(from, std_err)]
+        source: url::ParseError,
+    },
     #[error(transparent)]
     QuicConnect {
         #[error(from, std_err)]
@@ -115,16 +122,17 @@ pub enum H3ConnectError {
 
 /// Result of the QUIC connect phase. Passed to [`wt_handshake`] to complete
 /// the WebTransport session setup.
-pub(crate) struct QuicConnected {
-    pub conn: noq::Connection,
-    pub local_addr: SocketAddr,
+pub(super) struct QuicConnected {
+    pub(super) conn: noq::Connection,
+    pub(super) local_addr: SocketAddr,
+    pub(super) _endpoint: noq::Endpoint,
 }
 
 /// Phase 1: establish a QUIC connection (first server response).
 ///
 /// Returns as soon as the QUIC handshake completes, confirming the server
 /// speaks QUIC on this port. This is the earliest signal for the WS/WT race.
-pub(crate) async fn quic_connect(
+pub(super) async fn quic_connect(
     server_addr: SocketAddr,
     server_name: &str,
     tls_config: rustls::ClientConfig,
@@ -162,19 +170,27 @@ pub(crate) async fn quic_connect(
         .map_err(|_| e!(H3ConnectError::ConnectTimeout))??;
 
     trace!("WT: QUIC handshake complete");
-    Ok(QuicConnected { conn, local_addr })
+    Ok(QuicConnected {
+        conn,
+        local_addr,
+        _endpoint: endpoint,
+    })
 }
 
 /// Phase 2: complete the WebTransport handshake on an established QUIC connection.
 ///
 /// Sends settings + CONNECT, receives server response, sets up the data stream,
 /// and runs the relay handshake.
-pub(crate) async fn wt_handshake(
+pub(super) async fn wt_handshake(
     quic: QuicConnected,
     server_name: &str,
     secret_key: &SecretKey,
 ) -> Result<(WtBytesFramed, WtConnState, SocketAddr), H3ConnectError> {
-    let QuicConnected { conn, local_addr } = quic;
+    let QuicConnected {
+        conn,
+        local_addr,
+        _endpoint,
+    } = quic;
 
     // Per RFC 9114 section 7.2.4.2, endpoints must not wait for peer settings
     // before sending. We pipeline settings + CONNECT in the first flight and
@@ -184,9 +200,9 @@ pub(crate) async fn wt_handshake(
     client_settings.enable_webtransport(1);
 
     // Build CONNECT request with relay subprotocol and auth header.
-    let url = format!("https://{server_name}{RELAY_PATH}");
-    let mut connect_req = wt::ConnectRequest::new(url::Url::parse(&url).expect("valid URL"))
-        .with_protocol(ProtocolVersion::default().to_string());
+    let url: Url = format!("https://{server_name}{RELAY_PATH}").parse()?;
+    let mut connect_req =
+        wt::ConnectRequest::new(url).with_protocol(ProtocolVersion::default().to_string());
 
     // Attach TLS keying material auth to avoid the challenge-response RTT.
     if let Some(client_auth) = KeyMaterialClientAuth::new(secret_key, &conn) {
@@ -194,32 +210,30 @@ pub(crate) async fn wt_handshake(
         connect_req = connect_req.with_header(CLIENT_AUTH_HEADER, client_auth.into_header_value());
     }
 
-    // Pre-encode settings and CONNECT into byte buffers.
-    let mut settings_buf = bytes::BytesMut::new();
-    client_settings.encode(&mut settings_buf);
-
-    let mut connect_buf = bytes::BytesMut::new();
-    connect_req
-        .encode(&mut connect_buf)
-        .map_err(|err| e!(H3ConnectError::Connect, anyerr!(err)))?;
-
-    // Send settings and CONNECT in the same flight.
-    let send_all = async {
+    let send_settings = async {
+        let mut buf = BytesMut::new();
+        client_settings.encode(&mut buf);
         trace!("WT: opening uni stream for settings");
         let mut uni = conn.open_uni().await?;
-        uni.write_all(&settings_buf).await?;
+        uni.write_chunk(buf.freeze()).await?;
         trace!("WT: settings written");
+        Ok::<_, H3ConnectError>(())
+    };
 
+    let send_connect = async {
+        let mut buf = BytesMut::new();
+        connect_req
+            .encode(&mut buf)
+            .map_err(|err| e!(H3ConnectError::Connect, anyerr!(err)))?;
         trace!("WT: opening bidi stream for CONNECT");
         let (mut connect_send, connect_recv) = conn.open_bi().await?;
         let session_id: u64 = connect_send.id().into();
-        connect_send.write_all(&connect_buf).await?;
+        connect_send.write_chunk(buf.freeze()).await?;
         trace!("WT: CONNECT written");
-
-        Ok::<_, H3ConnectError>((connect_recv, session_id))
+        Ok((connect_recv, session_id))
     };
 
-    let settings_recv = async {
+    let recv_settings = async {
         trace!("WT: waiting for server settings");
         let uni = conn.accept_uni().await?;
         let mut uni = tokio::io::BufReader::new(uni);
@@ -230,17 +244,17 @@ pub(crate) async fn wt_handshake(
         Ok::<_, H3ConnectError>(settings)
     };
 
-    let (send_result, server_settings) = tokio::join!(send_all, settings_recv);
-    let (mut recv, session_id) = send_result?;
-    let server_settings = server_settings?;
+    // Run the 3 futures concurrently, aborting on any error.
+    let ((), (mut connect_recv, session_id), server_settings) =
+        tokio::try_join!(send_settings, send_connect, recv_settings)?;
 
     if server_settings.supports_webtransport() == 0 {
         return Err(e!(H3ConnectError::WebTransportUnsupported));
     }
 
-    trace!("WT: pipelined, waiting for CONNECT response");
+    trace!("WT: remote supports WebTransports, waiting for CONNECT response");
 
-    let resp = wt::ConnectResponse::read(&mut recv)
+    let resp = wt::ConnectResponse::read(&mut connect_recv)
         .await
         .map_err(|err| e!(H3ConnectError::Connect, anyerr!(err)))?;
 
