@@ -836,6 +836,9 @@ async fn fetch(
         error,
         duration: start.elapsed(),
     });
+    // Aggregate p2p connection stats persist after a local close, so this
+    // snapshot reflects the whole transfer.
+    output.emit(ConnStats::from_conn(&conn));
 
     stats_task.await.expect("stats task panicked");
     res
@@ -1027,6 +1030,15 @@ fn spawn_path_watcher(
                         rtt: last_stats.rtt,
                         bytes_sent: last_stats.udp_tx.bytes,
                         bytes_recv: last_stats.udp_rx.bytes,
+                        udp_tx_datagrams: last_stats.udp_tx.datagrams,
+                        udp_tx_ios: last_stats.udp_tx.ios,
+                        udp_rx_datagrams: last_stats.udp_rx.datagrams,
+                        udp_rx_ios: last_stats.udp_rx.ios,
+                        lost_packets: last_stats.lost_packets,
+                        lost_bytes: last_stats.lost_bytes,
+                        congestion_events: last_stats.congestion_events,
+                        cwnd: last_stats.cwnd,
+                        current_mtu: last_stats.current_mtu,
                     });
                 }
                 _ => {}
@@ -1205,6 +1217,58 @@ struct StartRequest {
     length: Length,
 }
 
+/// End-of-transfer summary of the iroh p2p [`Connection::stats`], aggregated
+/// across all paths. Emitted so the relay benchmark can correlate goodput with
+/// the tunneled connection's packet counts, loss, and send/receive batching
+/// (`udp_*_datagrams / udp_*_ios` is the mean GSO/GRO batch size: ~1 means every
+/// packet was its own syscall).
+#[derive(Serialize, Debug, Clone)]
+#[serde(tag = "kind")]
+struct ConnStats {
+    udp_tx_datagrams: u64,
+    udp_tx_bytes: u64,
+    udp_tx_ios: u64,
+    udp_rx_datagrams: u64,
+    udp_rx_bytes: u64,
+    udp_rx_ios: u64,
+    lost_packets: u64,
+    lost_bytes: u64,
+}
+
+impl ConnStats {
+    fn from_conn(conn: &Connection) -> Self {
+        let s = conn.stats();
+        Self {
+            udp_tx_datagrams: s.udp_tx.datagrams,
+            udp_tx_bytes: s.udp_tx.bytes,
+            udp_tx_ios: s.udp_tx.ios,
+            udp_rx_datagrams: s.udp_rx.datagrams,
+            udp_rx_bytes: s.udp_rx.bytes,
+            udp_rx_ios: s.udp_rx.ios,
+            lost_packets: s.lost_packets,
+            lost_bytes: s.lost_bytes,
+        }
+    }
+}
+
+impl fmt::Display for ConnStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let tx_batch = self.udp_tx_ios.max(1);
+        let rx_batch = self.udp_rx_ios.max(1);
+        write!(
+            f,
+            "Conn stats: tx {} pkts / {} ios ({:.1}/io), rx {} pkts / {} ios ({:.1}/io), lost {} pkts",
+            self.udp_tx_datagrams,
+            self.udp_tx_ios,
+            self.udp_tx_datagrams as f64 / tx_batch as f64,
+            self.udp_rx_datagrams,
+            self.udp_rx_ios,
+            self.udp_rx_datagrams as f64 / rx_batch as f64,
+            self.lost_packets,
+        )
+    }
+}
+
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "kind")]
 struct EndpointClosed {
@@ -1232,6 +1296,21 @@ struct PathData {
     rtt: Duration,
     bytes_sent: u64,
     bytes_recv: u64,
+    /// UDP datagrams sent on this path (one per QUIC packet unless GSO batches).
+    udp_tx_datagrams: u64,
+    /// Send I/O operations. `udp_tx_datagrams / udp_tx_ios` is the mean GSO
+    /// batch size; ~1 means no send batching (a syscall per packet).
+    udp_tx_ios: u64,
+    /// UDP datagrams received on this path.
+    udp_rx_datagrams: u64,
+    /// Receive I/O operations (GRO batches many datagrams per recvmmsg).
+    udp_rx_ios: u64,
+    lost_packets: u64,
+    lost_bytes: u64,
+    congestion_events: u64,
+    /// Congestion window at path close.
+    cwnd: u64,
+    current_mtu: u16,
 }
 
 #[derive(Serialize, Debug, Clone)]

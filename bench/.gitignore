@@ -6,4 +6,5 @@
 !README.md
 !run.sh
 !run_rundown.sh
+!run_relaybench.py
 !plot_rundown.py

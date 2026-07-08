@@ -140,6 +140,7 @@ wasm-bindgen-test = "0.3.62"
 # patchbay netsim test dependencies (linux only)
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 ctor = "1.0"
+libc = "0.2"
 patchbay = { version = "0.6", features = ["iroh-metrics"] }
 testdir = "0.10"
 
@@ -240,6 +241,10 @@ required-features = []
 [[example]]
 name = "transfer"
 required-features = []
+
+[[example]]
+name = "relay_bench"
+required-features = ["test-utils"]
 
 [[example]]
 name = "0rtt"

@@ -2299,6 +2299,7 @@ dependencies = [
  "iroh-dns",
  "iroh-metrics",
  "iroh-relay",
+ "libc",
  "n0-error",
  "n0-future",
  "n0-tracing-test",
