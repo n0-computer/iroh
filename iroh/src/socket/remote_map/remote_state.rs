@@ -64,6 +64,9 @@ const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(10);
 /// Even if we have some non-relay route that works.
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Maximum number of paths waiting for another open attempt.
+const MAX_PENDING_OPEN_PATHS: usize = 64;
+
 /// The time after which an idle [`RemoteStateActor`] stops.
 ///
 /// The actor only enters the idle state if no connections are active and no inbox senders exist
@@ -1057,10 +1060,16 @@ impl State {
                 match ret {
                     Some(Err(PathError::RemoteCidsExhausted))
                     | Some(Err(PathError::MaxPathIdReached)) => {
-                        self.scheduled_open_path =
-                            Some(Instant::now() + Duration::from_millis(333));
-                        self.pending_open_paths.push_back(open_addr.clone());
-                        trace!(?open_addr, ?ret, "scheduling open_path");
+                        if enqueue_pending_open_path(
+                            &mut self.pending_open_paths,
+                            open_addr.clone(),
+                        ) {
+                            self.scheduled_open_path =
+                                Some(Instant::now() + Duration::from_millis(333));
+                            trace!(?open_addr, ?ret, "scheduling open_path");
+                        } else {
+                            trace!(?open_addr, ?ret, "open_path already scheduled");
+                        }
                     }
                     _ => warn!(?ret, "Opening path failed"),
                 }
@@ -1478,6 +1487,22 @@ fn now_or_never<T, F: Future<Output = T>>(fut: F) -> Option<T> {
     }
 }
 
+fn enqueue_pending_open_path(
+    pending_paths: &mut VecDeque<transports::FourTuple>,
+    addr: transports::FourTuple,
+) -> bool {
+    if pending_paths.contains(&addr) {
+        return false;
+    }
+    if pending_paths.len() >= MAX_PENDING_OPEN_PATHS {
+        if let Some(dropped) = pending_paths.pop_front() {
+            trace!(?dropped, "dropping pending open_path after queue limit");
+        }
+    }
+    pending_paths.push_back(addr);
+    true
+}
+
 /// Future that resolves to the `conn_id` once a connection is closed.
 ///
 /// This uses [`noq::Connection::on_closed`], which does not keep the connection alive
@@ -1526,5 +1551,58 @@ async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<O
     match maybe_stream {
         None => None,
         Some(s) => Some(s.next().await),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ip_tuple(port: u16) -> transports::FourTuple {
+        transports::FourTuple::from_remote(transports::Addr::Ip(SocketAddr::from((
+            [127, 0, 0, 1],
+            port,
+        ))))
+    }
+
+    #[test]
+    fn pending_open_paths_are_deduplicated_and_capped() {
+        let mut pending_paths = VecDeque::new();
+        let first = ip_tuple(1000);
+
+        assert!(enqueue_pending_open_path(&mut pending_paths, first.clone()));
+        assert!(!enqueue_pending_open_path(
+            &mut pending_paths,
+            first.clone()
+        ));
+
+        assert_eq!(pending_paths.len(), 1);
+        assert_eq!(pending_paths.front(), Some(&first));
+
+        for offset in 1..=MAX_PENDING_OPEN_PATHS + 5 {
+            assert!(enqueue_pending_open_path(
+                &mut pending_paths,
+                ip_tuple(1000 + offset as u16)
+            ));
+        }
+
+        assert_eq!(pending_paths.len(), MAX_PENDING_OPEN_PATHS);
+        assert!(!pending_paths.contains(&first));
+        assert_eq!(
+            pending_paths.back(),
+            Some(&ip_tuple(1000 + MAX_PENDING_OPEN_PATHS as u16 + 5))
+        );
+
+        let duplicate = pending_paths[10].clone();
+        let before_duplicate = pending_paths.clone();
+        assert!(!enqueue_pending_open_path(&mut pending_paths, duplicate));
+
+        assert_eq!(pending_paths, before_duplicate);
+
+        pending_paths.pop_front();
+        assert!(enqueue_pending_open_path(&mut pending_paths, first.clone()));
+
+        assert_eq!(pending_paths.len(), MAX_PENDING_OPEN_PATHS);
+        assert_eq!(pending_paths.back(), Some(&first));
     }
 }
