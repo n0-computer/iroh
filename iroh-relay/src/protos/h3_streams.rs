@@ -44,6 +44,9 @@ pub struct WtBytesFramed {
     /// Precomputed WebTransport uni-stream header for this session, cloned per
     /// send. Unused in datagram mode.
     header: Bytes,
+    /// Precomputed WebTransport datagram prefix (the CONNECT stream's Quarter
+    /// Stream ID) for this session, cloned per send. Unused in uni-stream mode.
+    dgram_prefix: Bytes,
     /// Carry messages as QUIC datagrams instead of uni streams. Both ends agree
     /// on this via the CONNECT handshake, so the receiver reads the same framing.
     use_datagrams: bool,
@@ -69,6 +72,7 @@ impl WtBytesFramed {
         Self {
             conn,
             header: encode_wt_header(session_id).freeze(),
+            dgram_prefix: encode_wt_datagram_prefix(session_id),
             use_datagrams,
             pending_send: None,
             send_fut: ReusableBoxFuture::new(std::future::pending()),
@@ -83,6 +87,20 @@ impl WtBytesFramed {
     /// than unidirectional streams).
     pub fn uses_datagrams(&self) -> bool {
         self.use_datagrams
+    }
+
+    /// Switch the framing between uni streams and datagrams.
+    ///
+    /// The handshake always runs over uni streams (a peer may drop datagrams
+    /// sent before the WebTransport session is fully established), so both ends
+    /// construct the transport in uni mode and call this to switch to the
+    /// negotiated framing before the data phase. Re-arms the pending receive with
+    /// the new framing so the next message is read the same way it is sent.
+    pub fn set_use_datagrams(&mut self, use_datagrams: bool) {
+        self.use_datagrams = use_datagrams;
+        let recv_conn = self.conn.clone();
+        self.recv_fut
+            .set(recv_one_message(recv_conn, use_datagrams));
     }
 }
 
@@ -100,6 +118,31 @@ fn encode_wt_header(session_id: u64) -> BytesMut {
         .expect("session ID fits in varint")
         .encode(&mut hdr);
     hdr
+}
+
+/// Encode the WebTransport datagram prefix for the given session ID.
+///
+/// A WebTransport datagram is framed on the wire as `[Quarter-Stream-ID
+/// varint][payload]`, where the Quarter Stream ID is the session's CONNECT
+/// stream ID divided by four. A browser's QUIC stack adds and strips this prefix
+/// transparently, so raw noq datagrams (which carry no prefix) must add it
+/// explicitly to interoperate with a browser peer and to stay symmetric with
+/// another native peer that does the same.
+fn encode_wt_datagram_prefix(session_id: u64) -> Bytes {
+    let mut buf = BytesMut::with_capacity(8);
+    wt::VarInt::from_u64(session_id / 4)
+        .expect("quarter stream ID fits in varint")
+        .encode(&mut buf);
+    buf.freeze()
+}
+
+/// Strip the WebTransport datagram prefix (see [`encode_wt_datagram_prefix`]),
+/// returning the payload.
+fn decode_wt_datagram_prefix(mut dgram: Bytes) -> Result<Bytes, StreamError> {
+    // `Bytes` implements `Buf`, so decoding advances past the varint prefix and
+    // leaves `dgram` holding the payload.
+    wt::VarInt::decode(&mut dgram).anyerr()?;
+    Ok(dgram)
 }
 
 impl ExportKeyingMaterial for WtBytesFramed {
@@ -147,7 +190,8 @@ async fn recv_one_message(
     use_datagrams: bool,
 ) -> Result<Bytes, StreamError> {
     if use_datagrams {
-        return conn.read_datagram().await.anyerr();
+        let dgram = conn.read_datagram().await.anyerr()?;
+        return decode_wt_datagram_prefix(dgram);
     }
     loop {
         let recv = conn.accept_uni().await.anyerr()?;
@@ -194,9 +238,10 @@ where
 /// Send one relay message: a fresh uni stream (WT header + payload, then
 /// finished), or a single QUIC datagram when `use_datagrams` is set.
 ///
-/// `header` is the per-connection WebTransport uni-stream header, precomputed
-/// once (see [`WtBytesFramed::new`]) and cheaply cloned per message; it is
-/// unused in datagram mode.
+/// `header` is the per-connection WebTransport uni-stream header and
+/// `dgram_prefix` the per-connection datagram Quarter-Stream-ID prefix, both
+/// precomputed once (see [`WtBytesFramed::new`]) and cheaply cloned per message;
+/// each is unused in the other framing mode.
 ///
 /// Datagrams are unreliable by design, and a relayed iroh packet plus framing
 /// can exceed the WebTransport connection's max datagram size on a small-MTU
@@ -207,12 +252,18 @@ where
 async fn send_one_message(
     conn: noq::Connection,
     header: Bytes,
+    dgram_prefix: Bytes,
     priority: i32,
     payload: Bytes,
     use_datagrams: bool,
 ) -> Result<(), StreamError> {
     if use_datagrams {
-        return match conn.send_datagram(payload) {
+        // Prepend the Quarter-Stream-ID prefix so the datagram matches the
+        // WebTransport wire framing a browser peer produces and expects.
+        let mut datagram = BytesMut::with_capacity(dgram_prefix.len() + payload.len());
+        datagram.extend_from_slice(&dgram_prefix);
+        datagram.extend_from_slice(&payload);
+        return match conn.send_datagram(datagram.freeze()) {
             Ok(()) => Ok(()),
             Err(noq::SendDatagramError::TooLarge) => {
                 trace!("dropping too-large relay datagram; iroh QUIC will retransmit");
@@ -290,11 +341,18 @@ impl Sink<Bytes> for WtBytesFramed {
         if let Some(msg) = this.pending_send.take() {
             let conn = this.conn.clone();
             let header = this.header.clone();
+            let dgram_prefix = this.dgram_prefix.clone();
             let priority = this.send_priority;
             let use_datagrams = this.use_datagrams;
             this.send_priority = this.send_priority.saturating_add(1);
-            this.send_fut
-                .set(send_one_message(conn, header, priority, msg, use_datagrams));
+            this.send_fut.set(send_one_message(
+                conn,
+                header,
+                dgram_prefix,
+                priority,
+                msg,
+                use_datagrams,
+            ));
             this.send_busy = true;
             let pin = Pin::new(this);
             return pin.poll_ready(cx);

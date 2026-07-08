@@ -49,9 +49,10 @@ fn setup() {
     let _ = wasm_tracing::set_as_global_default_with_config(config);
 }
 
-async fn connect(secret_key: SecretKey) -> Client {
+async fn connect(secret_key: SecretKey, use_datagrams: bool) -> Client {
     let mut h3 = H3Opts::default();
     h3.server_cert_hashes = Some(cert_hashes());
+    h3.use_datagrams = use_datagrams;
     ClientBuilder::new(relay_url(), secret_key)
         .enable_h3(h3)
         .connect()
@@ -86,11 +87,22 @@ async fn try_send_recv(
 
 #[wasm_bindgen_test]
 async fn browser_wt_relay_roundtrip() {
+    roundtrip(false).await;
+}
+
+#[wasm_bindgen_test]
+async fn browser_wt_relay_roundtrip_datagrams() {
+    roundtrip(true).await;
+}
+
+/// Connect two clients over browser WebTransport (uni streams or datagrams per
+/// `use_datagrams`) and relay a message in each direction.
+async fn roundtrip(use_datagrams: bool) {
     setup();
 
     let a_secret_key = SecretKey::from_bytes(&[1u8; 32]);
     let a_key = a_secret_key.public();
-    let mut client_a = connect(a_secret_key).await;
+    let mut client_a = connect(a_secret_key, use_datagrams).await;
     assert_eq!(
         client_a.transport(),
         Transport::H3,
@@ -99,7 +111,7 @@ async fn browser_wt_relay_roundtrip() {
 
     let b_secret_key = SecretKey::from_bytes(&[2u8; 32]);
     let b_key = b_secret_key.public();
-    let mut client_b = connect(b_secret_key).await;
+    let mut client_b = connect(b_secret_key, use_datagrams).await;
     assert_eq!(
         client_b.transport(),
         Transport::H3,

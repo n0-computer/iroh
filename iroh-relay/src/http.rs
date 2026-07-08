@@ -17,13 +17,16 @@ pub const RELAY_PROBE_PATH: &str = "/ping";
 /// The HTTP header name for relay client authentication
 pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay-client-auth-v1");
 
-/// WebTransport CONNECT header by which a client requests QUIC-datagram framing
-/// (value `"1"`) instead of the default unidirectional-stream framing. The
-/// server mirrors the choice so both directions use the same framing. Only the
-/// native client and server use it (the browser client is uni-stream only).
-#[cfg(all(not(wasm_browser), feature = "h3-transport"))]
-pub(crate) const RELAY_DATAGRAMS_HEADER: HeaderName =
-    HeaderName::from_static("x-iroh-relay-datagrams");
+/// WebTransport CONNECT URL query parameter by which a client requests
+/// QUIC-datagram framing (value `"1"`) instead of the default
+/// unidirectional-stream framing. The server mirrors the choice so both
+/// directions use the same framing.
+///
+/// A query parameter rather than an HTTP header is used because a browser's
+/// WebTransport CONNECT cannot carry custom headers; the URL is the only channel
+/// available in both the browser and native clients, so one mechanism serves both.
+#[cfg(feature = "h3-transport")]
+pub(crate) const RELAY_DATAGRAMS_QUERY_PARAM: &str = "datagrams";
 
 /// The URL query parameter name used to pass the authorization token when
 /// HTTP headers are not available (notably, in browsers).

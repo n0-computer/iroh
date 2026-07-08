@@ -45,7 +45,7 @@ use web_transport_proto as wt;
 
 use crate::{
     http::{
-        ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_DATAGRAMS_HEADER, RELAY_PATH,
+        ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_DATAGRAMS_QUERY_PARAM, RELAY_PATH,
     },
     protos::{
         h3_streams::WtBytesFramed,
@@ -227,8 +227,15 @@ async fn wt_handshake_inner(
     let mut client_settings = wt::Settings::default();
     client_settings.enable_webtransport(1);
 
-    // Build CONNECT request with relay subprotocol and auth header.
-    let url: Url = format!("https://{server_name}{RELAY_PATH}").parse()?;
+    // Build CONNECT request with relay subprotocol and auth header. Ask the
+    // server for QUIC-datagram framing via a URL query parameter (rather than a
+    // header) so client and server share one negotiation mechanism with the
+    // browser, whose WebTransport CONNECT cannot carry custom headers.
+    let mut url: Url = format!("https://{server_name}{RELAY_PATH}").parse()?;
+    if use_datagrams {
+        url.query_pairs_mut()
+            .append_pair(RELAY_DATAGRAMS_QUERY_PARAM, "1");
+    }
     let mut connect_req =
         wt::ConnectRequest::new(url).with_protocol(ProtocolVersion::default().to_string());
 
@@ -236,12 +243,6 @@ async fn wt_handshake_inner(
     if let Some(client_auth) = KeyMaterialClientAuth::new(secret_key, &conn) {
         debug!("using TLS keying material for relay authentication");
         connect_req = connect_req.with_header(CLIENT_AUTH_HEADER, client_auth.into_header_value());
-    }
-
-    // Ask the server to use QUIC-datagram framing for this session.
-    if use_datagrams {
-        connect_req =
-            connect_req.with_header(RELAY_DATAGRAMS_HEADER, http::HeaderValue::from_static("1"));
     }
 
     let send_settings = async {
@@ -300,12 +301,16 @@ async fn wt_handshake_inner(
         }));
     }
 
-    // Carry relay messages as datagrams or uni streams per the negotiated framing.
-    let mut io = WtBytesFramed::new(conn.clone(), session_id, use_datagrams);
+    // Run the relay handshake over uni streams (a peer may drop datagrams sent
+    // before the WebTransport session is fully established, losing the server's
+    // challenge), then switch to the negotiated framing for the data phase.
+    let mut io = WtBytesFramed::new(conn.clone(), session_id, false);
 
     trace!("WT: starting relay handshake");
     handshake::clientside(&mut io, secret_key).await?;
     trace!("WT: relay handshake complete");
+
+    io.set_use_datagrams(use_datagrams);
 
     let state = WtConnState { _conn: conn };
 

@@ -1,13 +1,16 @@
 //! Browser WebTransport stream adapter for the relay protocol.
 //!
 //! The browser counterpart to [`h3_streams`](super::h3_streams). It carries each
-//! relay message on a fresh WebTransport unidirectional stream, exactly like the
+//! relay message either on a fresh WebTransport unidirectional stream (the
+//! default) or as a single WebTransport datagram, selected at runtime by the
+//! `use_datagrams` flag negotiated in the CONNECT handshake, exactly like the
 //! native path, but over the browser's native WebTransport session
 //! ([`web_transport_wasm::Session`]) instead of raw noq streams.
 //!
 //! Unlike the native adapter, this one does not write the WebTransport stream
-//! header itself: the browser's WebTransport layer adds it when a uni stream is
-//! opened and strips it on the receiving side, so we only ever see the payload.
+//! header or datagram Quarter-Stream-ID prefix itself: the browser's
+//! WebTransport layer adds it when a uni stream or datagram is sent and strips it
+//! on the receiving side, so we only ever see the payload.
 
 use std::{
     future::Future,
@@ -36,6 +39,10 @@ fn stream_err(err: web_transport_wasm::Error) -> StreamError {
 /// message.
 pub struct WtBytesFramed {
     session: Session,
+    /// Carry messages as WebTransport datagrams instead of uni streams. Both
+    /// ends agree on this via the CONNECT handshake, so the receiver reads the
+    /// same framing.
+    use_datagrams: bool,
     pending_send: Option<Bytes>,
     send_fut: Option<LocalFut<Result<(), StreamError>>>,
     recv_fut: LocalFut<Result<Bytes, StreamError>>,
@@ -50,11 +57,13 @@ impl std::fmt::Debug for WtBytesFramed {
 }
 
 impl WtBytesFramed {
-    /// Create from an established browser WebTransport session.
-    pub fn new(session: Session) -> Self {
-        let recv_fut = Box::pin(recv_one_message(session.clone()));
+    /// Create from an established browser WebTransport session and the negotiated
+    /// framing (`use_datagrams`).
+    pub fn new(session: Session, use_datagrams: bool) -> Self {
+        let recv_fut = Box::pin(recv_one_message(session.clone(), use_datagrams));
         Self {
             session,
+            use_datagrams,
             pending_send: None,
             send_fut: None,
             recv_fut,
@@ -63,9 +72,23 @@ impl WtBytesFramed {
         }
     }
 
-    /// The browser transport is uni-stream only, so it never uses datagrams.
+    /// Whether this transport carries relay messages as WebTransport datagrams
+    /// (rather than unidirectional streams).
     pub fn uses_datagrams(&self) -> bool {
-        false
+        self.use_datagrams
+    }
+
+    /// Switch the framing between uni streams and datagrams.
+    ///
+    /// The handshake always runs over uni streams (the browser drops datagrams
+    /// the server sends before the WebTransport session is fully established, so
+    /// the relay challenge would be lost), so both ends construct the transport
+    /// in uni mode and call this to switch to the negotiated framing before the
+    /// data phase. Re-arms the pending receive with the new framing so the next
+    /// message is read the same way it is sent.
+    pub fn set_use_datagrams(&mut self, use_datagrams: bool) {
+        self.use_datagrams = use_datagrams;
+        self.recv_fut = Box::pin(recv_one_message(self.session.clone(), use_datagrams));
     }
 }
 
@@ -82,9 +105,14 @@ impl ExportKeyingMaterial for WtBytesFramed {
     }
 }
 
-/// Accept a uni stream and read the payload to EOF. The browser has already
-/// stripped the WebTransport stream header.
-async fn recv_one_message(session: Session) -> Result<Bytes, StreamError> {
+/// Receive one relay message: a single WebTransport datagram when
+/// `use_datagrams` is set, otherwise a uni stream read to EOF. The browser has
+/// already stripped the WebTransport stream header or datagram prefix, so we see
+/// only the payload.
+async fn recv_one_message(session: Session, use_datagrams: bool) -> Result<Bytes, StreamError> {
+    if use_datagrams {
+        return session.recv_datagram().await.map_err(stream_err);
+    }
     let mut recv = session.accept_uni().await.map_err(stream_err)?;
     let mut out = BytesMut::new();
     while let Some(chunk) = recv.read(MAX_UNI_STREAM_SIZE).await.map_err(stream_err)? {
@@ -96,13 +124,23 @@ async fn recv_one_message(session: Session) -> Result<Bytes, StreamError> {
     Ok(out.freeze())
 }
 
-/// Open a uni stream, write the payload, and finish it. The browser adds the
-/// WebTransport stream header.
+/// Send one relay message: a single WebTransport datagram when `use_datagrams`
+/// is set, otherwise a fresh uni stream (payload, then finished). The browser
+/// adds the WebTransport stream header or datagram prefix.
+///
+/// Datagrams are unreliable and browsers silently drop an over-size one per the
+/// WebTransport spec (`web-transport-wasm`'s `Error` has no `TooLarge` variant),
+/// so any surfaced error is simply propagated; iroh's own QUIC over the relay
+/// retransmits a dropped packet.
 async fn send_one_message(
     session: Session,
     priority: i32,
     payload: Bytes,
+    use_datagrams: bool,
 ) -> Result<(), StreamError> {
+    if use_datagrams {
+        return session.send_datagram(payload).await.map_err(stream_err);
+    }
     let mut stream = session.open_uni().await.map_err(stream_err)?;
     stream.set_priority(priority);
     stream.write(&payload).await.map_err(stream_err)?;
@@ -120,7 +158,8 @@ impl Stream for WtBytesFramed {
         }
         match ready!(this.recv_fut.as_mut().poll(cx)) {
             Ok(payload) => {
-                this.recv_fut = Box::pin(recv_one_message(this.session.clone()));
+                this.recv_fut =
+                    Box::pin(recv_one_message(this.session.clone(), this.use_datagrams));
                 Poll::Ready(Some(Ok(payload)))
             }
             Err(e) => {
@@ -157,6 +196,7 @@ impl Sink<Bytes> for WtBytesFramed {
                 this.session.clone(),
                 priority,
                 msg,
+                this.use_datagrams,
             )));
             return Pin::new(this).poll_ready(cx);
         }

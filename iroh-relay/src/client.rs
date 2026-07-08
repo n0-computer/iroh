@@ -603,10 +603,14 @@ impl ClientBuilder {
     #[cfg(all(wasm_browser, feature = "h3-transport"))]
     async fn connect_h3_browser(&self, opts: &H3Opts) -> Result<Client, ConnectError> {
         debug!(url = %self.url, "Dialing relay by browser WebTransport");
-        let io =
-            h3_conn_wasm::connect_h3(&self.url, opts.server_cert_hashes.clone(), &self.secret_key)
-                .await
-                .map_err(|source| e!(ConnectError::H3 { source }))?;
+        let io = h3_conn_wasm::connect_h3(
+            &self.url,
+            opts.server_cert_hashes.clone(),
+            &self.secret_key,
+            opts.use_datagrams,
+        )
+        .await
+        .map_err(|source| e!(ConnectError::H3 { source }))?;
 
         let conn = Conn::from_wt_browser(io, self.key_cache.clone(), ProtocolVersion::default());
 
