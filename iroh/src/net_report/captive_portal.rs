@@ -1,8 +1,9 @@
-//! Captive portal detection for net_report.
+//! Captive portal detection.
 
 use std::net::SocketAddr;
 
 use iroh_base::RelayUrl;
+#[cfg(not(wasm_browser))]
 use iroh_dns::dns::{DnsError, DnsResolver, StaggeredError};
 use iroh_relay::RelayMap;
 use n0_error::{e, stack_error};
@@ -10,10 +11,13 @@ use rand::seq::IteratorRandom;
 use tracing::trace;
 use url::Host;
 
+#[cfg(not(wasm_browser))]
 use super::defaults::timeouts::DNS_TIMEOUT;
+#[cfg(not(wasm_browser))]
 use crate::address_lookup::DNS_STAGGERING_MS;
 
 #[cfg(not(wasm_browser))]
+#[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub(super) enum CaptivePortalError {
@@ -34,18 +38,19 @@ pub(super) enum CaptivePortalError {
     },
 }
 
-/// Reports whether or not we think the system is behind a
-/// captive portal, detected by making a request to a URL that we know should
-/// return a "204 No Content" response and checking if that's what we get.
+/// Checks whether the host is behind a captive portal.
 ///
-/// The boolean return is whether we think we have a captive portal.
+/// Returns `true` if we appear to be behind one. The check requests a
+/// relay's `/generate_204` endpoint: a portal intercepting HTTP answers with
+/// something other than the expected empty 204.
 #[cfg(not(wasm_browser))]
-pub(super) async fn check_captive_portal(
-    dns_resolver: &DnsResolver,
-    dm: &RelayMap,
+pub(super) async fn check(
+    dns_resolver: DnsResolver,
+    dm: RelayMap,
     preferred_relay: Option<RelayUrl>,
     tls_config: rustls::ClientConfig,
 ) -> Result<bool, CaptivePortalError> {
+    trace!("captive portal check starting");
     // If we have a preferred relay and we can use it for non-QAD requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
 

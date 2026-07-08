@@ -17,7 +17,7 @@ const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 /// The delay before starting HTTPS probes.
 const HTTPS_OFFSET: Duration = Duration::from_millis(200);
 
-/// The protocol used to time an endpoint's latency.
+/// The protocol used to time a relay's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
 #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
@@ -61,12 +61,8 @@ impl ProbeSet {
         }
     }
 
-    pub(super) fn proto(&self) -> Probe {
-        self.proto
-    }
-
-    fn push(&mut self, delay: Duration, endpoint: Arc<RelayConfig>) {
-        self.probes.push((delay, endpoint));
+    fn push(&mut self, delay: Duration, relay: Arc<RelayConfig>) {
+        self.probes.push((delay, relay));
     }
 
     fn is_empty(&self) -> bool {
@@ -84,10 +80,10 @@ impl ProbeSet {
 /// Generally the first probe of of a set which completes aborts the remaining probes of a
 /// set.  Sometimes a failing probe can also abort the remaining probes of a set.
 ///
-/// The [`reportgen`] actor will also abort all the remaining [`ProbeSet`]s once it has
+/// The [`actor`] will also abort all the remaining [`ProbeSet`]s once it has
 /// sufficient information for a report.
 ///
-/// [`reportgen`]: crate::net_report::reportgen
+/// [`actor`]: crate::net_report::actor
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct ProbePlan {
     set: BTreeSet<ProbeSet>,
@@ -146,8 +142,8 @@ impl fmt::Display for ProbePlan {
         writeln!(f, "ProbePlan {{")?;
         for probe_set in self.set.iter() {
             writeln!(f, r#"    ProbeSet("{}") {{"#, probe_set.proto)?;
-            for (delay, endpoint) in probe_set.probes.iter() {
-                writeln!(f, "        {delay:?} to {endpoint},")?;
+            for (delay, relay) in probe_set.probes.iter() {
+                writeln!(f, "        {delay:?} to {relay},")?;
             }
             writeln!(f, "    }}")?;
         }
@@ -173,13 +169,13 @@ mod tests {
     /// Shorthand which declares a new ProbeSet.
     ///
     /// `$kind`: The `Probe`.
-    /// `$endpoint`: Expression which will be an `Arc<RelayConfig>`.
+    /// `$relay`: Expression which will be an `Arc<RelayConfig>`.
     /// `$delays`: A `Vec` of the delays for this probe.
     macro_rules! probeset {
-        (proto: Probe::$kind:ident, relay: $endpoint:expr, delays: $delays:expr,) => {
+        (proto: Probe::$kind:ident, relay: $relay:expr, delays: $delays:expr,) => {
             ProbeSet {
                 proto: Probe::$kind,
-                probes: $delays.iter().map(|delay| (*delay, $endpoint)).collect(),
+                probes: $delays.iter().map(|delay| (*delay, $relay)).collect(),
             }
         };
     }
