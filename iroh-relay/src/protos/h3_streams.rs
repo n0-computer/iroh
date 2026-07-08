@@ -41,7 +41,9 @@ const MAX_UNI_STREAM_SIZE: usize = crate::MAX_PACKET_SIZE + 64;
 /// not delay delivery of later messages on other streams.
 pub struct WtBytesFramed {
     conn: noq::Connection,
-    session_id: u64,
+    /// Precomputed WebTransport uni-stream header for this session, cloned per
+    /// send. Unused in datagram mode.
+    header: Bytes,
     pending_send: Option<Bytes>,
     send_fut: ReusableBoxFuture<'static, Result<(), StreamError>>,
     recv_fut: ReusableBoxFuture<'static, Result<Bytes, StreamError>>,
@@ -62,7 +64,7 @@ impl WtBytesFramed {
         let recv_conn = conn.clone();
         Self {
             conn,
-            session_id,
+            header: encode_wt_header(session_id).freeze(),
             pending_send: None,
             send_fut: ReusableBoxFuture::new(std::future::pending()),
             recv_fut: ReusableBoxFuture::new(recv_one_message(recv_conn)),
@@ -161,8 +163,10 @@ async fn recv_one_message(conn: noq::Connection) -> Result<Bytes, StreamError> {
 
 /// Read and discard the rest of a receive stream in a detached task, holding it
 /// open until it finishes or the connection closes.
-#[cfg(not(h3_datagrams))]
-fn drain_in_background<R>(mut reader: R)
+///
+/// Shared with the H3 server, which drains the browser's HTTP/3 control and
+/// QPACK uni streams the same way.
+pub(crate) fn drain_in_background<R>(mut reader: R)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
@@ -172,17 +176,20 @@ where
 }
 
 /// Open a uni stream, write WT header and payload, finish the stream.
+///
+/// `header` is the per-connection WebTransport uni-stream header, precomputed
+/// once (see [`WtBytesFramed::new`]) and cheaply cloned per message.
 #[cfg(not(h3_datagrams))]
 async fn send_one_message(
     conn: noq::Connection,
-    session_id: u64,
+    header: Bytes,
     priority: i32,
     payload: Bytes,
 ) -> Result<(), StreamError> {
     let mut stream = conn.open_uni().await.anyerr()?;
     let _ = stream.set_priority(priority);
     // Write the WT header and payload in one batched, zero-copy call.
-    let mut chunks = [encode_wt_header(session_id).freeze(), payload];
+    let mut chunks = [header, payload];
     stream.write_all_chunks(&mut chunks).await.anyerr()?;
     stream.finish().anyerr()?;
     Ok(())
@@ -204,7 +211,7 @@ async fn recv_one_message(conn: noq::Connection) -> Result<Bytes, StreamError> {
 #[cfg(h3_datagrams)]
 async fn send_one_message(
     conn: noq::Connection,
-    _session_id: u64,
+    _header: Bytes,
     _priority: i32,
     payload: Bytes,
 ) -> Result<(), StreamError> {
@@ -269,11 +276,11 @@ impl Sink<Bytes> for WtBytesFramed {
         // Start sending a pending message.
         if let Some(msg) = this.pending_send.take() {
             let conn = this.conn.clone();
-            let session_id = this.session_id;
+            let header = this.header.clone();
             let priority = this.send_priority;
             this.send_priority = this.send_priority.saturating_add(1);
             this.send_fut
-                .set(send_one_message(conn, session_id, priority, msg));
+                .set(send_one_message(conn, header, priority, msg));
             this.send_busy = true;
             let pin = Pin::new(this);
             return pin.poll_ready(cx);

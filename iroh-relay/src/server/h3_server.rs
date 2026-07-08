@@ -19,7 +19,10 @@ use super::{
 use crate::{
     KeyCache,
     http::{ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH},
-    protos::{h3_streams::WtBytesFramed, handshake},
+    protos::{
+        h3_streams::{WtBytesFramed, drain_in_background},
+        handshake,
+    },
     server::{ClientRequest, DynAccessControl},
 };
 
@@ -253,21 +256,6 @@ enum WtConnectionError {
     },
 }
 
-/// Read and discard the rest of a receive stream in a detached task, holding it
-/// open until it finishes or the connection closes.
-///
-/// Used for the HTTP/3 control and QPACK unidirectional streams a real browser
-/// opens: their contents are irrelevant to the relay, but resetting them (by
-/// dropping the receive stream) would abort the browser's session.
-fn drain_in_background<R>(mut reader: R)
-where
-    R: tokio::io::AsyncRead + Unpin + Send + 'static,
-{
-    tokio::task::spawn(async move {
-        let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
-    });
-}
-
 /// Handle a single QUIC connection and serve WebTransport relay sessions.
 async fn handle_wt_connection(
     incoming: noq::Incoming,
@@ -276,26 +264,42 @@ async fn handle_wt_connection(
     access: Arc<dyn DynAccessControl>,
     metrics: Arc<Metrics>,
 ) -> Result<(), WtConnectionError> {
-    let conn = incoming.await?;
+    // Bound the QUIC handshake itself, mirroring the WebSocket accept path's
+    // `ESTABLISH_TIMEOUT` (which also covers TLS accept): a peer that opens a
+    // connection but never finishes the handshake must not pin a task.
+    let conn = match tokio::time::timeout(HANDSHAKE_TIMEOUT, incoming).await {
+        Ok(res) => res?,
+        Err(_) => {
+            warn!("WebTransport QUIC handshake timed out");
+            return Ok(());
+        }
+    };
 
     trace!("WT srv: QUIC connection established");
 
-    // Bound the pre-registration handshake, mirroring the WebSocket accept path
-    // (`ESTABLISH_TIMEOUT` in `http_server`): a peer that completes the QUIC
-    // handshake but then never (or slowly) sends its SETTINGS/CONNECT must not
-    // pin the connection and its drain tasks indefinitely.
+    // Bound the pre-registration relay handshake too: a peer that completes the
+    // QUIC handshake but then never (or slowly) sends its SETTINGS/CONNECT must
+    // not pin the connection and its drain tasks indefinitely. On every
+    // non-success path close the connection explicitly, so drain tasks holding
+    // receive streams cannot keep it alive until the QUIC idle timeout.
     let session_streams = match tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
         wt_relay_handshake(&conn, &clients, key_cache, access, metrics),
     )
     .await
     {
-        Ok(res) => match res? {
-            Some(streams) => streams,
-            None => return Ok(()),
-        },
+        Ok(Ok(Some(streams))) => streams,
+        Ok(Ok(None)) => {
+            conn.close(0u32.into(), b"handshake declined");
+            return Ok(());
+        }
+        Ok(Err(err)) => {
+            conn.close(1u32.into(), b"handshake error");
+            return Err(err);
+        }
         Err(_) => {
             warn!("WebTransport relay handshake timed out");
+            conn.close(1u32.into(), b"handshake timeout");
             return Ok(());
         }
     };
@@ -370,7 +374,7 @@ async fn wt_relay_handshake(
     let client_settings = recv_result?;
 
     if client_settings.supports_webtransport() == 0 {
-        warn!("client does not support WebTransport");
+        debug!("client does not support WebTransport");
         return Ok(None);
     }
 
@@ -384,7 +388,7 @@ async fn wt_relay_handshake(
     trace!(url = %connect_req.url, session_id, "WT srv: CONNECT received");
 
     if connect_req.url.path() != RELAY_PATH {
-        warn!(path = %connect_req.url.path(), "invalid path, expected {RELAY_PATH}");
+        debug!(path = %connect_req.url.path(), "invalid path, expected {RELAY_PATH}");
         let mut buf = bytes::BytesMut::new();
         let _ = wt::ConnectResponse::new(http::StatusCode::NOT_FOUND).encode(&mut buf);
         let _ = send.write_all(&buf).await;
@@ -405,7 +409,7 @@ async fn wt_relay_handshake(
         {
             Some(version) => version,
             None => {
-                warn!("unsupported relay subprotocol");
+                debug!("unsupported relay subprotocol");
                 let mut buf = bytes::BytesMut::new();
                 let _ = wt::ConnectResponse::new(http::StatusCode::BAD_REQUEST).encode(&mut buf);
                 let _ = send.write_all(&buf).await;
@@ -450,6 +454,12 @@ async fn wt_relay_handshake(
 
     trace!("verified authorization");
 
+    // NOTE: the WebSocket accept path applies the operator-configured per-client
+    // receive rate limit at the byte-socket layer (`RateLimited<MaybeTlsStream>`
+    // beneath `WsBytesFramed`). WebTransport has no equivalent byte-socket layer
+    // to wrap -- `WtBytesFramed` manages one QUIC stream per message -- so that
+    // rate limit does not apply to WebTransport clients. Enforcing it here would
+    // require a message-level limiter; tracked as a follow-up.
     let io = RelayedStream::new(io, key_cache.clone());
 
     let endpoint_id = request.endpoint_id();
