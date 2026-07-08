@@ -1,6 +1,8 @@
 [target.wasm32-unknown-unknown]
 runner = "wasm-bindgen-test-runner"
-rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+# web_sys_unstable_apis enables the WebTransport web-sys bindings used by the
+# browser relay client (web-transport-wasm).
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"', '--cfg', 'web_sys_unstable_apis']
 
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"

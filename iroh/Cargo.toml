@@ -129,6 +129,8 @@ indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
 iroh-base = { version = "1.0.2", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 console = { version = "0.16" }
+# Used by the wt_browser_peer example to hash the relay certificate.
+sha2 = "0.10"
 
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
@@ -198,6 +200,10 @@ allowed_external_types = [
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
+
+[[example]]
+name = "wt_browser_peer"
+required-features = ["test-utils"]
 
 [[example]]
 name = "listen"

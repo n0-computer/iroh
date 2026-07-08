@@ -249,6 +249,15 @@ pub struct RelayConfig {
     /// WebSocket for lower connection latency. Defaults to true.
     #[serde(default = "h3_default")]
     pub h3: bool,
+    /// SHA-256 hashes of the relay's certificate for browser WebTransport.
+    ///
+    /// When set, a browser WebTransport client validates the relay certificate
+    /// against these hashes (via `serverCertificateHashes`) instead of the
+    /// system roots. This is only used in the browser with the `h3-transport`
+    /// feature and is intended for connecting to a relay that uses a self-signed
+    /// certificate. Set via [`RelayConfig::with_server_cert_hashes`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_cert_hashes: Option<Vec<Vec<u8>>>,
 }
 
 impl RelayConfig {
@@ -259,7 +268,17 @@ impl RelayConfig {
             quic,
             auth_token: None,
             h3: h3_default(),
+            server_cert_hashes: None,
         }
+    }
+
+    /// Sets the SHA-256 hashes of the relay's certificate for browser
+    /// WebTransport.
+    ///
+    /// See [`RelayConfig::server_cert_hashes`].
+    pub fn with_server_cert_hashes(mut self, hashes: Vec<Vec<u8>>) -> Self {
+        self.server_cert_hashes = Some(hashes);
+        self
     }
 
     /// Sets an authorization token for this relay.
@@ -283,6 +302,7 @@ impl From<RelayUrl> for RelayConfig {
             quic: quic_config(),
             auth_token: None,
             h3: h3_default(),
+            server_cert_hashes: None,
         }
     }
 }

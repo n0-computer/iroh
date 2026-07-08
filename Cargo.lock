@@ -1331,7 +1331,7 @@ dependencies = [
  "ed25519",
  "rand_core 0.10.1",
  "serde",
- "sha2",
+ "sha2 0.11.0",
  "signature",
  "subtle",
  "zeroize",
@@ -2323,6 +2323,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "smallvec",
  "strum",
  "testdir",
@@ -2502,6 +2503,7 @@ dependencies = [
  "bytes",
  "cfg_aliases",
  "clap",
+ "console_error_panic_hook",
  "dashmap",
  "data-encoding",
  "derive_more",
@@ -2538,6 +2540,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha1 0.11.0",
+ "sha2 0.10.9",
  "simdutf8",
  "strum",
  "test-strategy",
@@ -2552,7 +2555,10 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "vergen-gitcl",
+ "wasm-bindgen-test",
+ "wasm-tracing",
  "web-transport-proto",
+ "web-transport-wasm",
  "webpki-roots",
  "ws_stream_wasm",
 ]
@@ -4592,6 +4598,17 @@ checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest 0.10.7",
+]
+
+[[package]]
+name = "sha2"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
@@ -5688,6 +5705,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "web-streams"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48465a648c14f53f6d8319b95bc336a44627f6aa6bd94270463777af8ed65deb"
+dependencies = [
+ "thiserror 2.0.18",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5719,6 +5748,22 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "web-transport-wasm"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "304af61705cf9212d1686fc6b2eb10110bea706a1ccaa475065947bc8562f553"
+dependencies = [
+ "bytes",
+ "js-sys",
+ "thiserror 2.0.18",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-streams",
+ "web-sys",
 ]
 
 [[package]]

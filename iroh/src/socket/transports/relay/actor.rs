@@ -68,7 +68,24 @@ const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
 ///
 /// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
 /// chance of recovering.
+///
+/// This is also used as the timeout for sending to the relay server (see [`Self::run_sending`]).
 const PING_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Interval for the relay connection health-check ping.
+///
+/// Native uses [`PING_INTERVAL`]. In the browser the interval is much shorter:
+/// Firefox's WebTransport stops delivering incoming unidirectional streams once
+/// a relay connection first goes idle in the receive direction (native
+/// WebTransport, WebSocket, and the relay server are all unaffected -- verified
+/// with an idle native WebTransport client). The only recovery is to reconnect,
+/// so we must detect the stall quickly, before a QUIC connection tunneled over
+/// the relay times out. A 1s health-check ping detects the stall within ~1.5s
+/// and reconnects, versus up to 15s with the native interval.
+#[cfg(not(wasm_browser))]
+const HEALTH_CHECK_PING_INTERVAL: Duration = PING_INTERVAL;
+#[cfg(wasm_browser)]
+const HEALTH_CHECK_PING_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Number of datagrams which can be sent to the relay server in one batch.
 ///
@@ -210,6 +227,11 @@ struct RelayConnectionOptions {
     udp_available: Arc<AtomicBool>,
     /// Whether this relay advertises H3/WebTransport support.
     h3_enabled: bool,
+    /// SHA-256 hashes of the relay's certificate for browser WebTransport.
+    ///
+    /// Only used in the browser; lets a WebTransport client validate a
+    /// self-signed relay certificate against these hashes.
+    server_cert_hashes: Option<Vec<Vec<u8>>>,
     tls_config: rustls::ClientConfig,
     auth_token: Option<String>,
 }
@@ -301,6 +323,7 @@ impl ActiveRelayActor {
             prefer_ipv6,
             udp_available,
             h3_enabled,
+            server_cert_hashes,
             tls_config,
             auth_token,
         } = opts;
@@ -318,11 +341,23 @@ impl ActiveRelayActor {
             // Use H3/WebTransport if the relay advertises it and UDP is available.
             // Falls back to WS on failure (timeout or UDP blocked).
             builder = builder.enable_h3(h3_enabled && udp_available.load(Ordering::Relaxed));
+            let _ = &server_cert_hashes;
         }
-        // WebTransport is only available off-wasm with the `h3-transport` feature; the
+        #[cfg(all(wasm_browser, feature = "h3-transport"))]
+        {
+            // In the browser, WebTransport does not depend on UDP-availability
+            // probing (a native concept): enable it whenever the relay
+            // advertises H3, and let it fall back to WebSocket on failure.
+            builder = builder.enable_h3(h3_enabled);
+            if let Some(hashes) = server_cert_hashes {
+                builder = builder.server_cert_hashes(hashes);
+            }
+            let _ = &udp_available;
+        }
+        // WebTransport is only available with the `h3-transport` feature; the
         // fields are unused otherwise.
-        #[cfg(not(all(not(wasm_browser), feature = "h3-transport")))]
-        let _ = (&udp_available, &h3_enabled);
+        #[cfg(not(feature = "h3-transport"))]
+        let _ = (&udp_available, &h3_enabled, &server_cert_hashes);
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
@@ -547,7 +582,7 @@ impl ActiveRelayActor {
 
         // Regularly send pings so we know the connection is healthy.
         // The first ping will be sent immediately.
-        let mut ping_interval = time::interval(PING_INTERVAL);
+        let mut ping_interval = time::interval(HEALTH_CHECK_PING_INTERVAL);
         ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let res = loop {
@@ -754,7 +789,9 @@ impl ActiveRelayActor {
         state: &mut ConnectedRelayState,
         client_stream: &mut iroh_relay::client::ClientStream,
     ) -> Result<(), RelayConnectionError> {
-        // we use the same time as for our ping interval
+        // Bound each send by the base ping interval. On wasm the health-check
+        // ping fires more often (`HEALTH_CHECK_PING_INTERVAL`), but the send
+        // timeout stays at `PING_INTERVAL`.
         let send_timeout = PING_INTERVAL;
 
         let mut timeout = pin!(time::sleep(send_timeout));
@@ -1264,6 +1301,12 @@ impl RelayActor {
             .map(|cfg| cfg.h3)
             .unwrap_or(true);
 
+        let server_cert_hashes = self
+            .config
+            .relay_map
+            .get(&url)
+            .and_then(|cfg| cfg.server_cert_hashes.clone());
+
         let connection_opts = RelayConnectionOptions {
             secret_key: self.config.secret_key.clone(),
             #[cfg(not(wasm_browser))]
@@ -1272,6 +1315,7 @@ impl RelayActor {
             prefer_ipv6: self.config.ipv6_reported.clone(),
             udp_available: self.config.udp_available.clone(),
             h3_enabled,
+            server_cert_hashes,
             tls_config: self.config.tls_config.clone(),
             auth_token,
         };
@@ -1467,6 +1511,7 @@ mod tests {
                 udp_available: Arc::new(AtomicBool::new(false)),
                 h3_enabled: false,
                 auth_token: None,
+                server_cert_hashes: None,
             },
             stop_token,
             metrics: Default::default(),

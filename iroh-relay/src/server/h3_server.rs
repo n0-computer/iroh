@@ -3,7 +3,7 @@
 //! Accepts relay connections over QUIC/WebTransport, complementing the existing
 //! WebSocket-over-HTTP/1.1 transport.
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use n0_error::{AnyError, anyerr, e, stack_error};
 use noq::crypto::rustls::{NoInitialCipherSuite, QuicServerConfig};
@@ -22,6 +22,26 @@ use crate::{
     protos::{h3_streams::WtBytesFramed, handshake},
     server::{ClientRequest, DynAccessControl},
 };
+
+/// Maximum time allowed for the WebTransport relay handshake, from an
+/// established QUIC connection through to client registration.
+///
+/// Mirrors the WebSocket accept path's establish timeout: a peer that completes
+/// the QUIC handshake but then never (or slowly) sends its SETTINGS or CONNECT
+/// must not pin the connection and its drain tasks indefinitely.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Streams that must stay open for the lifetime of a WebTransport relay session.
+///
+/// Dropping any of these resets the underlying QUIC stream, which a browser
+/// treats as fatal: the HTTP/3 control stream is critical, and the WebTransport
+/// session is bound to its CONNECT bidi stream, so closing either tears the
+/// session down.
+struct WtSessionStreams {
+    _control: noq::SendStream,
+    _connect_send: noq::SendStream,
+    _connect_recv: noq::RecvStream,
+}
 
 /// Errors when spawning the H3 relay server.
 #[allow(missing_docs)]
@@ -233,6 +253,21 @@ enum WtConnectionError {
     },
 }
 
+/// Read and discard the rest of a receive stream in a detached task, holding it
+/// open until it finishes or the connection closes.
+///
+/// Used for the HTTP/3 control and QPACK unidirectional streams a real browser
+/// opens: their contents are irrelevant to the relay, but resetting them (by
+/// dropping the receive stream) would abort the browser's session.
+fn drain_in_background<R>(mut reader: R)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    tokio::task::spawn(async move {
+        let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
+    });
+}
+
 /// Handle a single QUIC connection and serve WebTransport relay sessions.
 async fn handle_wt_connection(
     incoming: noq::Incoming,
@@ -245,6 +280,48 @@ async fn handle_wt_connection(
 
     trace!("WT srv: QUIC connection established");
 
+    // Bound the pre-registration handshake, mirroring the WebSocket accept path
+    // (`ESTABLISH_TIMEOUT` in `http_server`): a peer that completes the QUIC
+    // handshake but then never (or slowly) sends its SETTINGS/CONNECT must not
+    // pin the connection and its drain tasks indefinitely.
+    let session_streams = match tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        wt_relay_handshake(&conn, &clients, key_cache, access, metrics),
+    )
+    .await
+    {
+        Ok(res) => match res? {
+            Some(streams) => streams,
+            None => return Ok(()),
+        },
+        Err(_) => {
+            warn!("WebTransport relay handshake timed out");
+            return Ok(());
+        }
+    };
+
+    // Hold the session's streams (HTTP/3 control stream and the CONNECT bidi
+    // stream) open until the client disconnects; dropping them would reset the
+    // streams and tear the WebTransport session down.
+    let _session_streams = session_streams;
+    conn.closed().await;
+
+    Ok(())
+}
+
+/// Perform the WebTransport relay handshake and register the client.
+///
+/// Returns the server's HTTP/3 control send stream on success (the caller holds
+/// it open for the connection's lifetime), or `None` if the handshake was
+/// declined without error (client does not support WebTransport, wrong path, or
+/// unsupported subprotocol). Runs under [`HANDSHAKE_TIMEOUT`].
+async fn wt_relay_handshake(
+    conn: &noq::Connection,
+    clients: &Clients,
+    key_cache: KeyCache,
+    access: Arc<dyn DynAccessControl>,
+    metrics: Arc<Metrics>,
+) -> Result<Option<WtSessionStreams>, WtConnectionError> {
     let mut server_settings = wt::Settings::default();
     server_settings.enable_webtransport(1);
 
@@ -257,25 +334,44 @@ async fn handle_wt_connection(
             let mut uni = conn.open_uni().await?;
             uni.write_all(&settings_buf).await?;
             trace!("WT srv: settings sent");
-            Ok::<_, WtConnectionError>(())
+            // Return the stream so the caller keeps it open: this is our HTTP/3
+            // control stream, and a real browser aborts the connection with
+            // H3_CLOSED_CRITICAL_STREAM if we reset it (which dropping would do).
+            Ok::<_, WtConnectionError>(uni)
         },
         async {
             trace!("WT srv: waiting for client settings");
-            let uni = conn.accept_uni().await?;
-            let mut uni = tokio::io::BufReader::new(uni);
-            let s = wt::Settings::read(&mut uni)
-                .await
-                .map_err(|err| e!(WtConnectionError::Settings, anyerr!(err)))?;
-            trace!("WT srv: client settings received");
-            Ok::<_, WtConnectionError>(s)
+            // A native client opens exactly one uni stream (its H3 control
+            // stream) before the CONNECT. A real browser additionally opens
+            // QPACK encoder/decoder (and possibly GREASE) unidirectional
+            // streams, in an unspecified order. Accept uni streams until we find
+            // the control stream carrying the SETTINGS frame; drain and keep the
+            // others alive so their (critical) streams are not reset.
+            loop {
+                let uni = conn.accept_uni().await?;
+                let mut uni = tokio::io::BufReader::new(uni);
+                match wt::Settings::read(&mut uni).await {
+                    Ok(s) => {
+                        trace!("WT srv: client settings received");
+                        drain_in_background(uni);
+                        break Ok::<_, WtConnectionError>(s);
+                    }
+                    Err(wt::SettingsError::UnexpectedStreamType(stream_type)) => {
+                        trace!(?stream_type, "WT srv: ignoring non-control uni stream");
+                        drain_in_background(uni);
+                    }
+                    Err(err) => break Err(e!(WtConnectionError::Settings, anyerr!(err))),
+                }
+            }
         }
     );
-    send_result?;
+    // Keep our control stream open for the connection's lifetime.
+    let control_send = send_result?;
     let client_settings = recv_result?;
 
     if client_settings.supports_webtransport() == 0 {
         warn!("client does not support WebTransport");
-        return Ok(());
+        return Ok(None);
     }
 
     trace!("WT srv: waiting for CONNECT");
@@ -292,20 +388,30 @@ async fn handle_wt_connection(
         let mut buf = bytes::BytesMut::new();
         let _ = wt::ConnectResponse::new(http::StatusCode::NOT_FOUND).encode(&mut buf);
         let _ = send.write_all(&buf).await;
-        return Ok(());
+        return Ok(None);
     }
 
-    let protocol_version = connect_req
-        .protocols
-        .iter()
-        .filter_map(|s| ProtocolVersion::match_from_str(s.as_str()))
-        .max();
-    let Some(protocol_version) = protocol_version else {
-        warn!("unsupported or missing relay subprotocol");
-        let mut buf = bytes::BytesMut::new();
-        let _ = wt::ConnectResponse::new(http::StatusCode::BAD_REQUEST).encode(&mut buf);
-        let _ = send.write_all(&buf).await;
-        return Ok(());
+    let protocol_version = if connect_req.protocols.is_empty() {
+        // The browser's WebTransport CONNECT carries no subprotocol (the API has
+        // no equivalent of a WebSocket subprotocol), so default to the latest
+        // supported relay protocol version.
+        ProtocolVersion::default()
+    } else {
+        match connect_req
+            .protocols
+            .iter()
+            .filter_map(|s| ProtocolVersion::match_from_str(s.as_str()))
+            .max()
+        {
+            Some(version) => version,
+            None => {
+                warn!("unsupported relay subprotocol");
+                let mut buf = bytes::BytesMut::new();
+                let _ = wt::ConnectResponse::new(http::StatusCode::BAD_REQUEST).encode(&mut buf);
+                let _ = send.write_all(&buf).await;
+                return Ok(None);
+            }
+        }
     };
 
     let client_auth_header = connect_req
@@ -355,8 +461,9 @@ async fn handle_wt_connection(
 
     debug!(endpoint_id = %endpoint_id.fmt_short(), "client registered");
 
-    // Keep the connection alive until the client disconnects.
-    conn.closed().await;
-
-    Ok(())
+    Ok(Some(WtSessionStreams {
+        _control: control_send,
+        _connect_send: send,
+        _connect_recv: recv,
+    }))
 }

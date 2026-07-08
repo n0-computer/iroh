@@ -68,8 +68,8 @@ pub enum RecvError {
 pub enum Transport {
     /// WebSocket over HTTP/1.1 (or browser WebSocket).
     Ws,
-    /// WebTransport over QUIC.
-    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+    /// WebTransport over QUIC (native or browser).
+    #[cfg(feature = "h3-transport")]
     H3,
 }
 
@@ -87,6 +87,11 @@ pub(crate) enum ConnInner {
     Wt {
         stream: crate::protos::h3_streams::WtBytesFramed,
         _state: super::h3_conn::WtConnState,
+    },
+    /// WebTransport over the browser's native WebTransport stack.
+    #[cfg(all(wasm_browser, feature = "h3-transport"))]
+    WtBrowser {
+        stream: crate::protos::h3_streams_wasm::WtBytesFramed,
     },
 }
 
@@ -106,7 +111,6 @@ pub(crate) struct Conn {
 
 impl Conn {
     /// Returns which transport protocol this connection uses.
-    #[cfg(not(wasm_browser))]
     pub(crate) fn transport(&self) -> Transport {
         match &self.conn {
             #[cfg(not(wasm_browser))]
@@ -115,6 +119,8 @@ impl Conn {
             ConnInner::WsBrowser(_) => Transport::Ws,
             #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
             ConnInner::Wt { .. } => Transport::H3,
+            #[cfg(all(wasm_browser, feature = "h3-transport"))]
+            ConnInner::WtBrowser { .. } => Transport::H3,
         }
     }
 
@@ -163,6 +169,21 @@ impl Conn {
         }
     }
 
+    /// Constructs a connection from an already-handshaken browser
+    /// [`WtBytesFramed`](crate::protos::h3_streams_wasm::WtBytesFramed).
+    #[cfg(all(wasm_browser, feature = "h3-transport"))]
+    pub(crate) fn from_wt_browser(
+        stream: crate::protos::h3_streams_wasm::WtBytesFramed,
+        key_cache: KeyCache,
+        protocol_version: ProtocolVersion,
+    ) -> Self {
+        Self {
+            conn: ConnInner::WtBrowser { stream },
+            key_cache,
+            protocol_version,
+        }
+    }
+
     #[cfg(all(test, feature = "server"))]
     pub(crate) fn test(io: tokio::io::DuplexStream, protocol_version: ProtocolVersion) -> Self {
         use crate::protos::relay::MAX_FRAME_SIZE;
@@ -193,6 +214,8 @@ impl Stream for ConnInner {
             ConnInner::WsBrowser(ws) => Pin::new(ws).poll_next(cx),
             #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
             ConnInner::Wt { stream, .. } => Pin::new(stream).poll_next(cx),
+            #[cfg(all(wasm_browser, feature = "h3-transport"))]
+            ConnInner::WtBrowser { stream } => Pin::new(stream).poll_next(cx),
         }
     }
 }
@@ -208,6 +231,8 @@ impl Sink<bytes::Bytes> for ConnInner {
             ConnInner::WsBrowser(ws) => Pin::new(ws).poll_ready(cx),
             #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
             ConnInner::Wt { stream, .. } => Pin::new(stream).poll_ready(cx),
+            #[cfg(all(wasm_browser, feature = "h3-transport"))]
+            ConnInner::WtBrowser { stream } => Pin::new(stream).poll_ready(cx),
         }
     }
 
@@ -219,6 +244,8 @@ impl Sink<bytes::Bytes> for ConnInner {
             ConnInner::WsBrowser(ws) => Pin::new(ws).start_send(item),
             #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
             ConnInner::Wt { stream, .. } => Pin::new(stream).start_send(item),
+            #[cfg(all(wasm_browser, feature = "h3-transport"))]
+            ConnInner::WtBrowser { stream } => Pin::new(stream).start_send(item),
         }
     }
 
@@ -230,6 +257,8 @@ impl Sink<bytes::Bytes> for ConnInner {
             ConnInner::WsBrowser(ws) => Pin::new(ws).poll_flush(cx),
             #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
             ConnInner::Wt { stream, .. } => Pin::new(stream).poll_flush(cx),
+            #[cfg(all(wasm_browser, feature = "h3-transport"))]
+            ConnInner::WtBrowser { stream } => Pin::new(stream).poll_flush(cx),
         }
     }
 
@@ -241,6 +270,8 @@ impl Sink<bytes::Bytes> for ConnInner {
             ConnInner::WsBrowser(ws) => Pin::new(ws).poll_close(cx),
             #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
             ConnInner::Wt { stream, .. } => Pin::new(stream).poll_close(cx),
+            #[cfg(all(wasm_browser, feature = "h3-transport"))]
+            ConnInner::WtBrowser { stream } => Pin::new(stream).poll_close(cx),
         }
     }
 }

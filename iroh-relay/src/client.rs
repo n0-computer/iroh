@@ -39,6 +39,8 @@ use crate::{
 pub(crate) mod conn;
 #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
 pub(crate) mod h3_conn;
+#[cfg(all(wasm_browser, feature = "h3-transport"))]
+pub(crate) mod h3_conn_wasm;
 #[cfg(not(wasm_browser))]
 pub(crate) mod streams;
 #[cfg(not(wasm_browser))]
@@ -105,6 +107,12 @@ pub enum ConnectError {
     H3 {
         #[error(std_err)]
         source: h3_conn::H3ConnectError,
+    },
+    #[cfg(all(wasm_browser, feature = "h3-transport"))]
+    #[error(transparent)]
+    H3 {
+        #[error(std_err)]
+        source: h3_conn_wasm::H3ConnectError,
     },
     #[cfg(wasm_browser)]
     #[error("The relay protocol is not available in browsers")]
@@ -174,8 +182,15 @@ pub struct ClientBuilder {
     /// Whether to prefer H3 (QUIC) transport over WebSocket.
     ///
     /// When true, the client tries H3 first and falls back to WebSocket on failure.
-    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+    #[cfg(feature = "h3-transport")]
     enable_h3: bool,
+    /// SHA-256 hashes of the relay's certificate.
+    ///
+    /// Supplied when connecting a browser WebTransport client to a self-signed
+    /// relay (as used in tests). When set, the browser validates the relay
+    /// certificate against these hashes instead of the system roots.
+    #[cfg(all(wasm_browser, feature = "h3-transport"))]
+    server_cert_hashes: Option<Vec<Vec<u8>>>,
 }
 
 impl ClientBuilder {
@@ -195,8 +210,10 @@ impl ClientBuilder {
             dns_resolver,
             key_cache: KeyCache::new(128),
             auth_token: None,
-            #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+            #[cfg(feature = "h3-transport")]
             enable_h3: false,
+            #[cfg(all(wasm_browser, feature = "h3-transport"))]
+            server_cert_hashes: None,
         }
     }
 
@@ -271,12 +288,36 @@ impl ClientBuilder {
 
     /// Enable H3/WebTransport relay connections.
     ///
-    /// When true, the client races WebTransport and WebSocket connections
-    /// concurrently. The first transport to receive a server response wins;
-    /// the other is aborted.
-    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+    /// On native targets, the client races WebTransport and WebSocket
+    /// connections concurrently; the first transport to receive a server
+    /// response wins and the other is aborted. In the browser, the client
+    /// first attempts a WebTransport connection and falls back to WebSocket
+    /// on any failure.
+    ///
+    /// # Building for the browser
+    ///
+    /// On `wasm32-unknown-unknown` the browser WebTransport client uses web-sys's
+    /// unstable `WebTransport` bindings, so the crate must be built with
+    /// `RUSTFLAGS="--cfg=web_sys_unstable_apis"` (for example via
+    /// `.cargo/config.toml`). This rustflag is not inherited from a dependency,
+    /// so any crate that builds `iroh-relay` for a browser target with the
+    /// `h3-transport` feature (which is enabled by default) must set it itself.
+    #[cfg(feature = "h3-transport")]
     pub fn enable_h3(mut self, enable: bool) -> Self {
         self.enable_h3 = enable;
+        self
+    }
+
+    /// Sets the SHA-256 hashes of the relay's certificate for browser
+    /// WebTransport.
+    ///
+    /// Use this to connect a browser WebTransport client to a relay with a
+    /// self-signed certificate (as used in tests). The browser validates the
+    /// relay certificate against these hashes instead of the system roots.
+    /// Has no effect unless [`enable_h3`](Self::enable_h3) is set.
+    #[cfg(all(wasm_browser, feature = "h3-transport"))]
+    pub fn server_cert_hashes(mut self, hashes: Vec<Vec<u8>>) -> Self {
+        self.server_cert_hashes = Some(hashes);
         self
     }
 
@@ -556,8 +597,46 @@ impl ClientBuilder {
     }
 
     /// Establishes a new connection to the relay server.
+    ///
+    /// When H3 is enabled via [`enable_h3`](Self::enable_h3), first attempts a
+    /// browser WebTransport connection and falls back to WebSocket on any
+    /// failure. Otherwise connects over WebSocket directly.
     #[cfg(wasm_browser)]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
+        #[cfg(feature = "h3-transport")]
+        if self.enable_h3 {
+            match self.connect_h3_browser().await {
+                Ok(client) => return Ok(client),
+                Err(err) => {
+                    debug!("browser WebTransport connect failed ({err:#}), falling back to WS");
+                }
+            }
+        }
+
+        self.connect_ws().await
+    }
+
+    /// Connect over the browser's native WebTransport.
+    #[cfg(all(wasm_browser, feature = "h3-transport"))]
+    async fn connect_h3_browser(&self) -> Result<Client, ConnectError> {
+        debug!(url = %self.url, "Dialing relay by browser WebTransport");
+        let io =
+            h3_conn_wasm::connect_h3(&self.url, self.server_cert_hashes.clone(), &self.secret_key)
+                .await
+                .map_err(|source| e!(ConnectError::H3 { source }))?;
+
+        let conn = Conn::from_wt_browser(io, self.key_cache.clone(), ProtocolVersion::default());
+
+        trace!("browser WebTransport connect done");
+        Ok(Client {
+            conn,
+            local_addr: None,
+        })
+    }
+
+    /// Connect via WebSocket (browser).
+    #[cfg(wasm_browser)]
+    async fn connect_ws(&self) -> Result<Client, ConnectError> {
         use crate::http::AUTH_TOKEN_URL_QUERY_PARAM;
 
         let mut dial_url = (*self.url).clone();
@@ -630,7 +709,6 @@ impl Client {
     }
 
     /// Returns which transport protocol this connection uses.
-    #[cfg(not(wasm_browser))]
     pub fn transport(&self) -> Transport {
         self.conn.transport()
     }
