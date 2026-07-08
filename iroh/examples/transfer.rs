@@ -27,6 +27,7 @@ use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -39,7 +40,8 @@ use derive_more::{Display, From};
 use indicatif::HumanBytes;
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
+    Endpoint, EndpointAddr, EndpointId, H3Opts, RelayConfig, RelayMap, RelayMode, RelayUrl,
+    SecretKey, TransportAddr, WtTransferMode,
     address_lookup::{
         AddrFilter,
         dns::DnsAddressLookup,
@@ -214,6 +216,43 @@ enum Mode {
     Ping,
 }
 
+/// Which relay transport to use, when relaying.
+///
+/// `ws` leaves the H3/WebTransport transport disabled, so the client can only
+/// use the WebSocket relay transport. The `wt-*` values enable H3/WebTransport
+/// with the corresponding [`WtTransferMode`] framing; the client still races
+/// WebSocket against WebTransport and keeps whichever connects first, but on a
+/// relay with a working 1-RTT WebTransport handshake the WebTransport side wins.
+#[derive(Serialize, Deserialize, ValueEnum, Default, Debug, Clone, Copy, PartialEq, Eq)]
+enum RelayTransport {
+    /// WebSocket only (H3/WebTransport disabled).
+    #[default]
+    Ws,
+    /// WebTransport, one unidirectional stream per relay message.
+    WtUni,
+    /// WebTransport, one QUIC datagram per relay message.
+    WtDatagram,
+    /// WebTransport, a single ordered unidirectional stream per direction.
+    WtSinglestream,
+}
+
+impl RelayTransport {
+    /// The `RelayConfig.h3` value that selects this transport: `None` for
+    /// WebSocket, `Some` with the framing for the WebTransport modes.
+    fn h3_opts(self) -> Option<H3Opts> {
+        // H3Opts is #[non_exhaustive]; build via default + field set.
+        let mode = match self {
+            RelayTransport::Ws => return None,
+            RelayTransport::WtUni => WtTransferMode::UniPerPacket,
+            RelayTransport::WtDatagram => WtTransferMode::Datagrams,
+            RelayTransport::WtSinglestream => WtTransferMode::UniOrdered,
+        };
+        let mut opts = H3Opts::default();
+        opts.transfer_mode = mode;
+        Some(opts)
+    }
+}
+
 #[derive(Serialize, Deserialize, MaxSize, derive_more::Debug, Clone, Copy)]
 enum Length {
     #[debug("Size({})", HumanBytes(*_0))]
@@ -349,6 +388,9 @@ struct EndpointArgs {
     #[cfg(feature = "test-utils")]
     #[clap(long)]
     insecure: bool,
+    /// Which relay transport to use (WebSocket, or an H3/WebTransport framing).
+    #[clap(long, value_enum, default_value_t)]
+    relay_transport: RelayTransport,
 }
 
 #[derive(Subcommand, Debug, derive_more::Display)]
@@ -483,9 +525,16 @@ impl EndpointArgs {
         if self.no_relay {
             // nothing to do
         } else if !self.relay_url.is_empty() {
-            let token = self.relay_auth_token.clone();
-            let mut relay_map = RelayMap::from_iter(self.relay_url);
-            if let Some(ref token) = token {
+            // Build the relay map with the requested relay transport (WebSocket,
+            // or an H3/WebTransport framing) set on each relay config.
+            let h3 = self.relay_transport.h3_opts();
+            let mut relay_map = RelayMap::empty();
+            for url in &self.relay_url {
+                let mut cfg = RelayConfig::from(url.clone());
+                cfg.h3 = h3.clone();
+                relay_map.insert(url.clone(), Arc::new(cfg));
+            }
+            if let Some(ref token) = self.relay_auth_token {
                 relay_map = relay_map.with_auth_token(token);
             }
             builder = builder.relay_mode(RelayMode::Custom(relay_map));
