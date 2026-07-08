@@ -222,6 +222,65 @@ impl fmt::Display for RelayMap {
     }
 }
 
+/// How the WebTransport relay transport frames relay messages on the wire.
+///
+/// A relay message is one whole iroh QUIC packet. The framings trade off
+/// per-message overhead against head-of-line blocking and reliability.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum WtTransferMode {
+    /// One fresh unidirectional stream per relay message (the default).
+    ///
+    /// Each message is reliable and ordered within itself, but messages are
+    /// independent: a retransmission on one stream does not delay later
+    /// messages on other streams (no cross-message head-of-line blocking). The
+    /// cost is one stream open/finish per message.
+    #[default]
+    UniPerPacket,
+    /// One QUIC DATAGRAM per relay message.
+    ///
+    /// No per-message stream setup, but datagrams are unreliable and unordered
+    /// and capped at the connection's path MTU; iroh's own QUIC running over the
+    /// relay recovers any losses. Best on lossy links where head-of-line
+    /// blocking hurts most.
+    Datagrams,
+    /// A single long-lived unidirectional stream per direction, carrying all
+    /// messages length-prefixed.
+    ///
+    /// Reliable and globally ordered -- TCP-like, the same shape as the
+    /// WebSocket transport but over WebTransport/QUIC. One lost packet delays
+    /// every message behind it (head-of-line blocking), but there is no
+    /// per-message stream overhead.
+    UniOrdered,
+}
+
+impl WtTransferMode {
+    /// The URL query-parameter value that selects this mode in the WebTransport
+    /// CONNECT (a browser's CONNECT cannot carry custom headers, so the mode is
+    /// signalled in the URL). See `RELAY_WT_MODE_QUERY_PARAM`.
+    #[cfg(feature = "h3-transport")]
+    pub(crate) fn query_value(self) -> &'static str {
+        match self {
+            WtTransferMode::UniPerPacket => "uni",
+            WtTransferMode::Datagrams => "datagram",
+            WtTransferMode::UniOrdered => "singleuni",
+        }
+    }
+
+    /// Parse a mode from its [`query_value`](Self::query_value); unknown values
+    /// fall back to the default so an older/newer peer degrades gracefully.
+    #[cfg(feature = "server")]
+    pub(crate) fn from_query_value(value: &str) -> Self {
+        match value {
+            "datagram" => WtTransferMode::Datagrams,
+            "singleuni" => WtTransferMode::UniOrdered,
+            _ => WtTransferMode::UniPerPacket,
+        }
+    }
+}
+
 /// Options for the HTTP/3 (WebTransport) relay transport.
 ///
 /// Construct with [`H3Opts::default`] and set the public fields; the struct is
@@ -237,13 +296,11 @@ pub struct H3Opts {
     /// Ignored on native targets, which validate via the TLS config.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_cert_hashes: Option<Vec<Vec<u8>>>,
-    /// Carry relay messages as QUIC datagrams instead of unidirectional streams.
+    /// How relay messages are framed on the WebTransport connection.
     ///
-    /// Datagrams avoid per-message stream setup but are capped at the
-    /// WebTransport connection's path MTU, so this is only useful for small
-    /// messages or on large-MTU paths. Defaults to `false` (uni-streams).
+    /// Defaults to [`WtTransferMode::UniPerPacket`].
     #[serde(default)]
-    pub use_datagrams: bool,
+    pub transfer_mode: WtTransferMode,
 }
 
 /// Information on a specific relay server.

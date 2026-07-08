@@ -20,8 +20,8 @@
 //!    carries the relay subprotocol and, when the connection exports keying
 //!    material, an RFC 5705 auth header so the relay [`handshake`] adds no extra
 //!    RTT. Once the server accepts, relay messages flow over [`WtBytesFramed`],
-//!    one QUIC uni stream per message (or one datagram per message when the
-//!    negotiated `H3Opts::use_datagrams` is set).
+//!    framed per the negotiated `H3Opts::transfer_mode` (one uni stream per
+//!    message, one datagram per message, or a single ordered uni stream).
 //!
 //! If the server does not speak WebTransport (its settings disable it, or the
 //! `CONNECT` is rejected) the caller falls back to WebSocket.
@@ -45,12 +45,13 @@ use web_transport_proto as wt;
 
 use crate::{
     http::{
-        ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_DATAGRAMS_QUERY_PARAM, RELAY_PATH,
+        ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, RELAY_WT_MODE_QUERY_PARAM,
     },
     protos::{
         h3_streams::{H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WtBytesFramed},
         handshake::{self, KeyMaterialClientAuth},
     },
+    relay_map::WtTransferMode,
 };
 
 /// Timeout for the QUIC handshake when connecting via WebTransport.
@@ -209,11 +210,11 @@ pub(super) async fn wt_handshake(
     quic: QuicConnected,
     server_name: &str,
     secret_key: &SecretKey,
-    use_datagrams: bool,
+    transfer_mode: WtTransferMode,
 ) -> Result<(WtBytesFramed, WtConnState, SocketAddr), H3ConnectError> {
     tokio::time::timeout(
         WT_HANDSHAKE_TIMEOUT,
-        wt_handshake_inner(quic, server_name, secret_key, use_datagrams),
+        wt_handshake_inner(quic, server_name, secret_key, transfer_mode),
     )
     .await
     .map_err(|_| e!(H3ConnectError::HandshakeTimeout))?
@@ -223,7 +224,7 @@ async fn wt_handshake_inner(
     quic: QuicConnected,
     server_name: &str,
     secret_key: &SecretKey,
-    use_datagrams: bool,
+    transfer_mode: WtTransferMode,
 ) -> Result<(WtBytesFramed, WtConnState, SocketAddr), H3ConnectError> {
     let QuicConnected {
         conn,
@@ -238,15 +239,13 @@ async fn wt_handshake_inner(
     let mut client_settings = wt::Settings::default();
     client_settings.enable_webtransport(1);
 
-    // Build CONNECT request with relay subprotocol and auth header. Ask the
-    // server for QUIC-datagram framing via a URL query parameter (rather than a
-    // header) so client and server share one negotiation mechanism with the
-    // browser, whose WebTransport CONNECT cannot carry custom headers.
+    // Build CONNECT request with relay subprotocol and auth header. Select the
+    // framing mode via a URL query parameter (rather than a header) so client and
+    // server share one negotiation mechanism with the browser, whose WebTransport
+    // CONNECT cannot carry custom headers.
     let mut url: Url = format!("https://{server_name}{RELAY_PATH}").parse()?;
-    if use_datagrams {
-        url.query_pairs_mut()
-            .append_pair(RELAY_DATAGRAMS_QUERY_PARAM, "1");
-    }
+    url.query_pairs_mut()
+        .append_pair(RELAY_WT_MODE_QUERY_PARAM, transfer_mode.query_value());
     let mut connect_req =
         wt::ConnectRequest::new(url).with_protocol(ProtocolVersion::default().to_string());
 
@@ -312,16 +311,17 @@ async fn wt_handshake_inner(
         }));
     }
 
-    // Run the relay handshake over uni streams (a peer may drop datagrams sent
-    // before the WebTransport session is fully established, losing the server's
-    // challenge), then switch to the negotiated framing for the data phase.
-    let mut io = WtBytesFramed::new(conn.clone(), session_id, false);
+    // Run the relay handshake over per-message uni streams (a peer may drop
+    // datagrams sent before the WebTransport session is fully established, losing
+    // the server's challenge), then switch to the negotiated framing for the data
+    // phase.
+    let mut io = WtBytesFramed::new(conn.clone(), session_id, WtTransferMode::UniPerPacket);
 
     trace!("WT: starting relay handshake");
     handshake::clientside(&mut io, secret_key).await?;
     trace!("WT: relay handshake complete");
 
-    io.set_use_datagrams(use_datagrams);
+    io.set_transfer_mode(transfer_mode);
 
     let state = WtConnState {
         _conn: conn,
@@ -338,8 +338,8 @@ pub(crate) async fn connect_h3(
     server_name: &str,
     tls_config: rustls::ClientConfig,
     secret_key: &SecretKey,
-    use_datagrams: bool,
+    transfer_mode: WtTransferMode,
 ) -> Result<(WtBytesFramed, WtConnState, SocketAddr), H3ConnectError> {
     let quic = quic_connect(server_addr, server_name, tls_config).await?;
-    wt_handshake(quic, server_name, secret_key, use_datagrams).await
+    wt_handshake(quic, server_name, secret_key, transfer_mode).await
 }

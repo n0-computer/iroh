@@ -111,6 +111,9 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 # Browser WebTransport relay client. Wraps the browser's native WebTransport
 # API; needs `--cfg web_sys_unstable_apis` (set in .cargo/config.toml).
 web-transport-wasm = { version = "0.5.8", optional = true }
+# The QUIC-varint codec, also needed on wasm: the browser's single-ordered-stream
+# framing must length-prefix frames the same way the native relay decodes them.
+web-transport-proto = { version = "0.6.0", optional = true }
 
 # Native dev-dependencies. Scoped away from wasm so that heavy native-only crates
 # (tokio net/fs -> mio, axum, proptest) are not unified into the wasm test build.

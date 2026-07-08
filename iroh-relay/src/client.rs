@@ -29,6 +29,8 @@ use url::Url;
 pub use self::conn::{RecvError, SendError, Transport};
 #[cfg(feature = "h3-transport")]
 use crate::relay_map::H3Opts;
+#[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+use crate::relay_map::WtTransferMode;
 use crate::{
     KeyCache,
     http::{ProtocolVersion, RELAY_PATH},
@@ -356,7 +358,7 @@ impl ClientBuilder {
         match race {
             Either::Left(Ok(quic)) => {
                 debug!("QUIC handshake won the race, completing WT handshake");
-                match self.finish_wt(quic, host, opts.use_datagrams).await {
+                match self.finish_wt(quic, host, opts.transfer_mode).await {
                     Ok(client) => Ok(client),
                     Err(err) => {
                         debug!("WT handshake failed ({err:#}), falling back to WS");
@@ -376,7 +378,7 @@ impl ClientBuilder {
                 debug!("WS failed ({ws_err:#}), waiting for QUIC");
                 match quic_fut.await {
                     Ok(quic) => self
-                        .finish_wt(quic, host, opts.use_datagrams)
+                        .finish_wt(quic, host, opts.transfer_mode)
                         .await
                         .map_err(|_| ws_err),
                     Err(err) => {
@@ -395,12 +397,12 @@ impl ClientBuilder {
         &self,
         quic: h3_conn::QuicConnected,
         host: &str,
-        use_datagrams: bool,
+        transfer_mode: WtTransferMode,
     ) -> Result<Client, h3_conn::H3ConnectError> {
         use tracing::{Level, event};
 
         let (io, state, local_addr) =
-            h3_conn::wt_handshake(quic, host, &self.secret_key, use_datagrams).await?;
+            h3_conn::wt_handshake(quic, host, &self.secret_key, transfer_mode).await?;
         event!(
             target: "iroh::_events::net::relay::connected",
             Level::DEBUG,
@@ -607,7 +609,7 @@ impl ClientBuilder {
             &self.url,
             opts.server_cert_hashes.clone(),
             &self.secret_key,
-            opts.use_datagrams,
+            opts.transfer_mode,
         )
         .await
         .map_err(|source| e!(ConnectError::H3 { source }))?;

@@ -1,34 +1,52 @@
 //! WebTransport stream adapter for the relay protocol.
 //!
-//! [`WtBytesFramed`] carries each relay message either on a new unidirectional
-//! QUIC stream (the default) or as a single QUIC datagram, selected at runtime
-//! by the `use_datagrams` flag negotiated in the CONNECT handshake.
+//! [`WtBytesFramed`] carries each relay message in one of three framings,
+//! selected at runtime by the [`WtTransferMode`] negotiated in the CONNECT
+//! handshake:
 //!
-//! In uni-stream mode each stream carries the standard WebTransport uni-stream
-//! header `[StreamUni::WEBTRANSPORT][session_id]` followed by the payload and is
-//! finished, so the receiver reads to EOF; successive send streams get
-//! increasing priority so the QUIC scheduler prefers newer messages over
-//! retransmissions of older ones. In datagram mode the payload is the whole
-//! message; datagrams are unreliable and capped at the connection's path MTU, so
-//! an over-large one is dropped (iroh's own QUIC over the relay retransmits it).
+//! - [`UniPerPacket`](WtTransferMode::UniPerPacket): a fresh unidirectional
+//!   stream per message (the default). Each stream carries the standard
+//!   WebTransport uni-stream header `[StreamUni::WEBTRANSPORT][session_id]`
+//!   followed by the payload and is finished, so the receiver reads to EOF;
+//!   successive send streams get increasing priority so the QUIC scheduler
+//!   prefers newer messages over retransmissions of older ones.
+//! - [`Datagrams`](WtTransferMode::Datagrams): one QUIC datagram per message.
+//!   Datagrams are unreliable and capped at the connection's path MTU, so an
+//!   over-large one is dropped (iroh's own QUIC over the relay retransmits it).
+//! - [`UniOrdered`](WtTransferMode::UniOrdered): a single long-lived uni stream
+//!   per direction (the WT header once, then `[varint length][payload]` frames).
+//!   Reliable and globally ordered, TCP-like.
 //!
 //! [`BytesStreamSink`]: super::streams::BytesStreamSink
 
 use std::{
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
 use bytes::{Bytes, BytesMut};
 use n0_error::{StdResultExt, anyerr};
 use n0_future::{Sink, Stream, ready};
-use tokio::io::AsyncReadExt;
+use tokio::{
+    io::{AsyncReadExt, BufReader},
+    sync::Mutex,
+};
 use tokio_util::sync::ReusableBoxFuture;
 use tracing::trace;
 use web_transport_proto as wt;
 
 use super::streams::StreamError;
-use crate::ExportKeyingMaterial;
+use crate::{ExportKeyingMaterial, WtTransferMode};
+
+/// The single long-lived send stream for [`WtTransferMode::UniOrdered`], opened
+/// lazily on first send. Behind an async mutex so a fresh per-message send future
+/// can reach it; sends are serialized by the [`Sink`], so it is never contended.
+type OrderedSend = Arc<Mutex<Option<noq::SendStream>>>;
+
+/// The single long-lived receive stream for [`WtTransferMode::UniOrdered`],
+/// accepted lazily on first receive (its WebTransport header already consumed).
+type OrderedRecv = Arc<Mutex<Option<BufReader<noq::RecvStream>>>>;
 
 /// Maximum bytes to read from a single uni stream before rejecting.
 const MAX_UNI_STREAM_SIZE: usize = crate::MAX_PACKET_SIZE + 64;
@@ -99,11 +117,15 @@ pub struct WtBytesFramed {
     /// send. Unused in datagram mode.
     header: Bytes,
     /// Precomputed WebTransport datagram prefix (the CONNECT stream's Quarter
-    /// Stream ID) for this session, cloned per send. Unused in uni-stream mode.
+    /// Stream ID) for this session, cloned per send. Unused in uni-stream modes.
     dgram_prefix: Bytes,
-    /// Carry messages as QUIC datagrams instead of uni streams. Both ends agree
-    /// on this via the CONNECT handshake, so the receiver reads the same framing.
-    use_datagrams: bool,
+    /// How relay messages are framed. Both ends agree on this via the CONNECT
+    /// handshake, so the receiver reads the same framing the sender writes.
+    mode: WtTransferMode,
+    /// The single persistent send stream for [`WtTransferMode::UniOrdered`].
+    ordered_send: OrderedSend,
+    /// The single persistent receive stream for [`WtTransferMode::UniOrdered`].
+    ordered_recv: OrderedRecv,
     pending_send: Option<Bytes>,
     send_fut: ReusableBoxFuture<'static, Result<(), StreamError>>,
     recv_fut: ReusableBoxFuture<'static, Result<Bytes, StreamError>>,
@@ -120,17 +142,24 @@ impl std::fmt::Debug for WtBytesFramed {
 
 impl WtBytesFramed {
     /// Create from a QUIC connection, the WebTransport session ID, and the
-    /// negotiated framing (`use_datagrams`).
-    pub fn new(conn: noq::Connection, session_id: u64, use_datagrams: bool) -> Self {
+    /// negotiated framing (`mode`).
+    pub fn new(conn: noq::Connection, session_id: u64, mode: WtTransferMode) -> Self {
         let recv_conn = conn.clone();
+        let ordered_recv: OrderedRecv = Arc::new(Mutex::new(None));
         Self {
             conn,
             header: encode_wt_header(session_id).freeze(),
             dgram_prefix: encode_wt_datagram_prefix(session_id),
-            use_datagrams,
+            mode,
+            ordered_send: Arc::new(Mutex::new(None)),
+            recv_fut: ReusableBoxFuture::new(recv_one_message(
+                recv_conn,
+                mode,
+                ordered_recv.clone(),
+            )),
+            ordered_recv,
             pending_send: None,
             send_fut: ReusableBoxFuture::new(std::future::pending()),
-            recv_fut: ReusableBoxFuture::new(recv_one_message(recv_conn, use_datagrams)),
             recv_terminated: false,
             send_busy: false,
             send_priority: 0,
@@ -138,23 +167,25 @@ impl WtBytesFramed {
     }
 
     /// Whether this transport carries relay messages as QUIC datagrams (rather
-    /// than unidirectional streams).
+    /// than unidirectional streams). The relay actor uses this to decide whether
+    /// to split GSO batches into one datagram per packet; only datagram framing
+    /// needs it, since the stream framings carry an arbitrarily large batch whole.
     pub fn uses_datagrams(&self) -> bool {
-        self.use_datagrams
+        self.mode == WtTransferMode::Datagrams
     }
 
-    /// Switch the framing between uni streams and datagrams.
+    /// Switch to the negotiated framing before the data phase.
     ///
-    /// The handshake always runs over uni streams (a peer may drop datagrams
-    /// sent before the WebTransport session is fully established), so both ends
-    /// construct the transport in uni mode and call this to switch to the
-    /// negotiated framing before the data phase. Re-arms the pending receive with
-    /// the new framing so the next message is read the same way it is sent.
-    pub fn set_use_datagrams(&mut self, use_datagrams: bool) {
-        self.use_datagrams = use_datagrams;
+    /// The handshake always runs over per-message uni streams
+    /// ([`WtTransferMode::UniPerPacket`]; a peer may drop datagrams sent before
+    /// the WebTransport session is fully established), so both ends construct the
+    /// transport in that mode and call this to switch. Re-arms the pending receive
+    /// with the new framing so the next message is read the same way it is sent.
+    pub fn set_transfer_mode(&mut self, mode: WtTransferMode) {
+        self.mode = mode;
         let recv_conn = self.conn.clone();
         self.recv_fut
-            .set(recv_one_message(recv_conn, use_datagrams));
+            .set(recv_one_message(recv_conn, mode, self.ordered_recv.clone()));
     }
 }
 
@@ -241,21 +272,44 @@ impl ExportKeyingMaterial for noq::Connection {
 /// we keep accepting until an actual WebTransport stream arrives.
 async fn recv_one_message(
     conn: noq::Connection,
-    use_datagrams: bool,
+    mode: WtTransferMode,
+    ordered_recv: OrderedRecv,
 ) -> Result<Bytes, StreamError> {
-    if use_datagrams {
-        let dgram = conn.read_datagram().await.anyerr()?;
-        return decode_wt_datagram_prefix(dgram);
+    match mode {
+        WtTransferMode::Datagrams => {
+            let dgram = conn.read_datagram().await.anyerr()?;
+            decode_wt_datagram_prefix(dgram)
+        }
+        WtTransferMode::UniPerPacket => {
+            let recv = accept_wt_uni(&conn).await?;
+            let mut payload = Vec::new();
+            recv.take(MAX_UNI_STREAM_SIZE as u64 + 1)
+                .read_to_end(&mut payload)
+                .await
+                .anyerr()?;
+            if payload.len() > MAX_UNI_STREAM_SIZE {
+                return Err(anyerr!("uni stream exceeds max size"));
+            }
+            Ok(Bytes::from(payload))
+        }
+        WtTransferMode::UniOrdered => recv_uni_ordered(&conn, &ordered_recv).await,
     }
+}
+
+/// Accept the next WebTransport unidirectional stream on `conn`, consuming its
+/// header (`[StreamUni::WEBTRANSPORT][session_id]`) and returning the stream
+/// positioned at the payload.
+///
+/// A real browser also opens HTTP/3 control and QPACK unidirectional streams on
+/// the same connection; those are drained and kept alive in the background so
+/// their (critical) streams are not reset, and we keep accepting until an actual
+/// WebTransport stream arrives.
+async fn accept_wt_uni(conn: &noq::Connection) -> Result<BufReader<noq::RecvStream>, StreamError> {
     loop {
         let recv = conn.accept_uni().await.anyerr()?;
-        let mut recv = tokio::io::BufReader::new(recv);
+        let mut recv = BufReader::new(recv);
         let stream_type = wt::VarInt::read(&mut recv).await.anyerr()?;
         if stream_type != wt::StreamUni::WEBTRANSPORT.0 {
-            // An HTTP/3 control or QPACK unidirectional stream (a real browser
-            // opens these). Ignore its contents but keep it alive: dropping the
-            // receive stream would reset a critical H3 stream and abort the
-            // browser's session.
             trace!(stream_type = %stream_type, "ignoring non-WebTransport uni stream");
             drain_in_background(recv);
             continue;
@@ -263,16 +317,29 @@ async fn recv_one_message(
         // Skip the session ID; we serve a single WebTransport session per
         // connection, so there is nothing to demultiplex.
         let _session_id = wt::VarInt::read(&mut recv).await.anyerr()?;
-        let mut payload = Vec::new();
-        recv.take(MAX_UNI_STREAM_SIZE as u64 + 1)
-            .read_to_end(&mut payload)
-            .await
-            .anyerr()?;
-        if payload.len() > MAX_UNI_STREAM_SIZE {
-            return Err(anyerr!("uni stream exceeds max size"));
-        }
-        return Ok(Bytes::from(payload));
+        return Ok(recv);
     }
+}
+
+/// Receive one message from the single persistent [`WtTransferMode::UniOrdered`]
+/// stream: accept it (once) and then read successive `[varint length][payload]`
+/// frames from it.
+async fn recv_uni_ordered(
+    conn: &noq::Connection,
+    ordered_recv: &OrderedRecv,
+) -> Result<Bytes, StreamError> {
+    let mut guard = ordered_recv.lock().await;
+    if guard.is_none() {
+        *guard = Some(accept_wt_uni(conn).await?);
+    }
+    let recv = guard.as_mut().expect("stream just set");
+    let len = wt::VarInt::read(recv).await.anyerr()?.into_inner();
+    if len > MAX_UNI_STREAM_SIZE as u64 {
+        return Err(anyerr!("ordered stream message exceeds max size"));
+    }
+    let mut payload = vec![0u8; len as usize];
+    recv.read_exact(&mut payload).await.anyerr()?;
+    Ok(Bytes::from(payload))
 }
 
 /// Read and discard the rest of a receive stream in a detached task, holding it
@@ -289,54 +356,95 @@ where
     });
 }
 
-/// Send one relay message: a fresh uni stream (WT header + payload, then
-/// finished), or a single QUIC datagram when `use_datagrams` is set.
+/// Send one relay message in the negotiated framing.
 ///
 /// `header` is the per-connection WebTransport uni-stream header and
 /// `dgram_prefix` the per-connection datagram Quarter-Stream-ID prefix, both
 /// precomputed once (see [`WtBytesFramed::new`]) and cheaply cloned per message;
-/// each is unused in the other framing mode.
-///
-/// Datagrams are unreliable by design, and a relayed iroh packet plus framing
-/// can exceed the WebTransport connection's max datagram size on a small-MTU
-/// path. A `TooLarge` datagram is therefore dropped -- iroh's own QUIC
-/// connection running over the relay retransmits it and its PLPMTUD backs off --
-/// rather than surfaced as a fatal error that would tear the relay connection
-/// down and reconnect.
+/// each is unused in the framings that do not need it.
+#[allow(clippy::too_many_arguments)]
 async fn send_one_message(
     conn: noq::Connection,
     header: Bytes,
     dgram_prefix: Bytes,
+    mode: WtTransferMode,
+    ordered_send: OrderedSend,
     priority: i32,
     payload: Bytes,
-    use_datagrams: bool,
 ) -> Result<(), StreamError> {
-    if use_datagrams {
-        // Prepend the Quarter-Stream-ID prefix so the datagram matches the
-        // WebTransport wire framing a browser peer produces and expects.
-        let mut datagram = BytesMut::with_capacity(dgram_prefix.len() + payload.len());
-        datagram.extend_from_slice(&dgram_prefix);
-        datagram.extend_from_slice(&payload);
-        let dgram_len = datagram.len();
-        return match conn.send_datagram(datagram.freeze()) {
-            Ok(()) => Ok(()),
-            Err(noq::SendDatagramError::TooLarge) => {
-                trace!(
-                    dgram_len,
-                    max = ?conn.max_datagram_size(),
-                    "dropping too-large relay datagram; iroh QUIC will retransmit"
-                );
-                Ok(())
-            }
-            Err(err) => Err(anyerr!(err)),
-        };
+    match mode {
+        WtTransferMode::Datagrams => send_datagram(&conn, &dgram_prefix, payload),
+        WtTransferMode::UniPerPacket => {
+            let mut stream = conn.open_uni().await.anyerr()?;
+            let _ = stream.set_priority(priority);
+            // Write the WT header and payload in one batched, zero-copy call.
+            let mut chunks = [header, payload];
+            stream.write_all_chunks(&mut chunks).await.anyerr()?;
+            stream.finish().anyerr()?;
+            Ok(())
+        }
+        WtTransferMode::UniOrdered => send_uni_ordered(&conn, &header, &ordered_send, payload).await,
     }
-    let mut stream = conn.open_uni().await.anyerr()?;
-    let _ = stream.set_priority(priority);
-    // Write the WT header and payload in one batched, zero-copy call.
-    let mut chunks = [header, payload];
+}
+
+/// Send one relay message as a single QUIC datagram.
+///
+/// Datagrams are unreliable by design, and a relayed iroh packet plus framing can
+/// exceed the WebTransport connection's max datagram size on a small-MTU path. A
+/// `TooLarge` datagram is dropped -- iroh's own QUIC connection running over the
+/// relay retransmits it and its PLPMTUD backs off -- rather than surfaced as a
+/// fatal error that would tear the relay connection down and reconnect.
+fn send_datagram(
+    conn: &noq::Connection,
+    dgram_prefix: &Bytes,
+    payload: Bytes,
+) -> Result<(), StreamError> {
+    // Prepend the Quarter-Stream-ID prefix so the datagram matches the
+    // WebTransport wire framing a browser peer produces and expects.
+    let mut datagram = BytesMut::with_capacity(dgram_prefix.len() + payload.len());
+    datagram.extend_from_slice(dgram_prefix);
+    datagram.extend_from_slice(&payload);
+    let dgram_len = datagram.len();
+    match conn.send_datagram(datagram.freeze()) {
+        Ok(()) => Ok(()),
+        Err(noq::SendDatagramError::TooLarge) => {
+            trace!(
+                dgram_len,
+                max = ?conn.max_datagram_size(),
+                "dropping too-large relay datagram; iroh QUIC will retransmit"
+            );
+            Ok(())
+        }
+        Err(err) => Err(anyerr!(err)),
+    }
+}
+
+/// Send one relay message on the single persistent [`WtTransferMode::UniOrdered`]
+/// stream: open it (once, writing the WebTransport header) and then write
+/// successive `[varint length][payload]` frames on it. The stream is never
+/// finished, so all messages stay ordered and reliable on one QUIC stream.
+async fn send_uni_ordered(
+    conn: &noq::Connection,
+    header: &Bytes,
+    ordered_send: &OrderedSend,
+    payload: Bytes,
+) -> Result<(), StreamError> {
+    let mut guard = ordered_send.lock().await;
+    if guard.is_none() {
+        let mut stream = conn.open_uni().await.anyerr()?;
+        // Higher priority than per-message streams' default so the ordered data
+        // stream is scheduled ahead of any stray control streams.
+        let _ = stream.set_priority(1);
+        stream.write_all_chunks(&mut [header.clone()]).await.anyerr()?;
+        *guard = Some(stream);
+    }
+    let stream = guard.as_mut().expect("stream just set");
+    let mut len_prefix = BytesMut::with_capacity(8);
+    wt::VarInt::from_u64(payload.len() as u64)
+        .expect("relay message length fits in varint")
+        .encode(&mut len_prefix);
+    let mut chunks = [len_prefix.freeze(), payload];
     stream.write_all_chunks(&mut chunks).await.anyerr()?;
-    stream.finish().anyerr()?;
     Ok(())
 }
 
@@ -357,7 +465,7 @@ impl Stream for WtBytesFramed {
                 // Immediately set up the next recv.
                 let conn = this.conn.clone();
                 this.recv_fut
-                    .set(recv_one_message(conn, this.use_datagrams));
+                    .set(recv_one_message(conn, this.mode, this.ordered_recv.clone()));
                 // The relay protocol never frames an empty message, so an empty
                 // payload is malformed. Yield it and let the frame decoder reject
                 // it; returning `Pending` here would strand the stream, since the
@@ -402,15 +510,17 @@ impl Sink<Bytes> for WtBytesFramed {
             let header = this.header.clone();
             let dgram_prefix = this.dgram_prefix.clone();
             let priority = this.send_priority;
-            let use_datagrams = this.use_datagrams;
+            let mode = this.mode;
+            let ordered_send = this.ordered_send.clone();
             this.send_priority = this.send_priority.saturating_add(1);
             this.send_fut.set(send_one_message(
                 conn,
                 header,
                 dgram_prefix,
+                mode,
+                ordered_send,
                 priority,
                 msg,
-                use_datagrams,
             ));
             this.send_busy = true;
             let pin = Pin::new(this);

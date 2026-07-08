@@ -19,12 +19,13 @@ use super::{
 use crate::{
     KeyCache,
     http::{
-        ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_DATAGRAMS_QUERY_PARAM, RELAY_PATH,
+        ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, RELAY_WT_MODE_QUERY_PARAM,
     },
     protos::{
         h3_streams::{H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WtBytesFramed, drain_in_background},
         handshake,
     },
+    relay_map::WtTransferMode,
     server::{ClientRequest, DynAccessControl},
 };
 
@@ -433,11 +434,14 @@ async fn wt_relay_handshake(
     // Mirror the client's framing choice so both directions match. The client
     // signals it with a URL query parameter (a browser's CONNECT cannot carry
     // custom headers), which `url.path()` above excludes, so the RELAY_PATH check
-    // still passes with the parameter present.
-    let use_datagrams = connect_req
+    // still passes with the parameter present. An absent or unknown value falls
+    // back to the default framing.
+    let transfer_mode = connect_req
         .url
         .query_pairs()
-        .any(|(key, _)| key == RELAY_DATAGRAMS_QUERY_PARAM);
+        .find(|(key, _)| key == RELAY_WT_MODE_QUERY_PARAM)
+        .map(|(_, value)| WtTransferMode::from_query_value(&value))
+        .unwrap_or_default();
 
     let resp = wt::ConnectResponse::OK.with_protocol(protocol_version.to_string());
     let mut resp_buf = bytes::BytesMut::new();
@@ -450,7 +454,7 @@ async fn wt_relay_handshake(
     // drops datagrams the server sends before the WebTransport session is fully
     // established, so the server's challenge would be lost. Switch to the
     // negotiated framing for the data phase, below, before registering.
-    let mut io = WtBytesFramed::new(conn.clone(), session_id, false);
+    let mut io = WtBytesFramed::new(conn.clone(), session_id, WtTransferMode::UniPerPacket);
 
     trace!("WT srv: starting relay handshake");
     let authentication = handshake::serverside(&mut io, client_auth_header).await?;
@@ -476,7 +480,7 @@ async fn wt_relay_handshake(
     // The handshake and authorization are done; switch to the negotiated framing
     // for the data phase so `uses_datagrams()` (which the relay actor relies on)
     // and the wire framing both report the data-phase value.
-    io.set_use_datagrams(use_datagrams);
+    io.set_transfer_mode(transfer_mode);
 
     // NOTE: the WebSocket accept path applies the operator-configured per-client
     // receive rate limit at the byte-socket layer (`RateLimited<MaybeTlsStream>`

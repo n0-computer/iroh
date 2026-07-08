@@ -19,7 +19,7 @@ mod tests {
     use tracing::{info, instrument};
 
     use crate::{
-        KeyCache,
+        KeyCache, WtTransferMode,
         client::{Client, ClientBuilder, conn::Conn, h3_conn},
         http::ProtocolVersion,
         protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
@@ -51,7 +51,7 @@ mod tests {
     async fn connect_h3_client(
         server_addr: std::net::SocketAddr,
         secret_key: SecretKey,
-        use_datagrams: bool,
+        transfer_mode: WtTransferMode,
     ) -> Result<Client> {
         let tls_config = crate::tls::make_dangerous_client_config();
 
@@ -60,7 +60,7 @@ mod tests {
             "localhost",
             tls_config,
             &secret_key,
-            use_datagrams,
+            transfer_mode,
         )
         .await?;
 
@@ -102,8 +102,8 @@ mod tests {
     // See `bench/run.sh` and `plans/h3-bench.md`.
 
     /// Round-trip two direct H3 clients through a standalone H3 relay, using the
-    /// given framing (uni streams or QUIC datagrams).
-    async fn h3_relay_roundtrip(use_datagrams: bool) -> Result<()> {
+    /// given framing.
+    async fn h3_relay_roundtrip(transfer_mode: WtTransferMode) -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
         let server = spawn_h3_relay()?;
         let server_addr = server.bind_addr();
@@ -112,11 +112,11 @@ mod tests {
 
         let a_secret_key = SecretKey::from_bytes(&rng.random());
         let a_key = a_secret_key.public();
-        let mut client_a = connect_h3_client(server_addr, a_secret_key, use_datagrams).await?;
+        let mut client_a = connect_h3_client(server_addr, a_secret_key, transfer_mode).await?;
 
         let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
-        let mut client_b = connect_h3_client(server_addr, b_secret_key, use_datagrams).await?;
+        let mut client_b = connect_h3_client(server_addr, b_secret_key, transfer_mode).await?;
 
         // A -> B
         let msg = Datagrams::from("hello over h3, b!");
@@ -151,13 +151,19 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_h3_relay_clients_uni() -> Result<()> {
-        h3_relay_roundtrip(false).await
+        h3_relay_roundtrip(WtTransferMode::UniPerPacket).await
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_h3_relay_clients_datagrams() -> Result<()> {
-        h3_relay_roundtrip(true).await
+        h3_relay_roundtrip(WtTransferMode::Datagrams).await
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_h3_relay_clients_singlestream() -> Result<()> {
+        h3_relay_roundtrip(WtTransferMode::UniOrdered).await
     }
 
     /// Test H3 via `ClientBuilder::enable_h3(true)` against the full integrated server.

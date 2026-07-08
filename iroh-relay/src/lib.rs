@@ -48,7 +48,7 @@ pub use crate::{
     key_cache::KeyCache,
     ping_tracker::PingTracker,
     protos::relay::MAX_PACKET_SIZE,
-    relay_map::{H3Opts, RelayConfig, RelayMap, RelayQuicConfig},
+    relay_map::{H3Opts, RelayConfig, RelayMap, RelayQuicConfig, WtTransferMode},
 };
 
 /// Trait for extracting keying material from a TLS connection.
