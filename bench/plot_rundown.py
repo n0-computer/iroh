@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 DEG_ORDER = ["wifi", "4g", "3g"]
 BULK_DIRECTIONS = ["download", "upload", "bidi"]
 PANELS = BULK_DIRECTIONS + ["datagrams"]
-FRAMINGS = ["ws", "wt-uni", "wt-datagram"]
+FRAMINGS = ["ws", "wt-uni", "wt-datagram", "wt-singlestream"]
 
 
 def reduce_stats(values):

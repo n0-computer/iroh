@@ -72,7 +72,7 @@ use std::{
 
 use bytes::Bytes;
 use iroh::{
-    Endpoint, EndpointAddr, H3Opts, RelayMode,
+    Endpoint, EndpointAddr, H3Opts, RelayMode, WtTransferMode,
     endpoint::{Connection, presets},
     tls::CaTlsConfig,
 };
@@ -117,6 +117,9 @@ enum Framing {
     WtUni,
     /// WebTransport, one QUIC datagram per relay message.
     WtDatagram,
+    /// WebTransport, a single ordered unidirectional stream per direction
+    /// (TCP-like, the WebSocket shape but over QUIC).
+    WtSingleStream,
 }
 
 impl Framing {
@@ -125,21 +128,22 @@ impl Framing {
             Framing::Ws => "ws",
             Framing::WtUni => "wt-uni",
             Framing::WtDatagram => "wt-datagram",
+            Framing::WtSingleStream => "wt-singlestream",
         }
     }
 
     /// The `RelayConfig.h3` value that selects this framing.
     fn h3(self) -> Option<H3Opts> {
-        match self {
-            Framing::Ws => None,
-            Framing::WtUni => Some(H3Opts::default()),
-            Framing::WtDatagram => {
-                // H3Opts is #[non_exhaustive]; build via default + field set.
-                let mut opts = H3Opts::default();
-                opts.use_datagrams = true;
-                Some(opts)
-            }
-        }
+        // H3Opts is #[non_exhaustive]; build via default + field set.
+        let mode = match self {
+            Framing::Ws => return None,
+            Framing::WtUni => WtTransferMode::UniPerPacket,
+            Framing::WtDatagram => WtTransferMode::Datagrams,
+            Framing::WtSingleStream => WtTransferMode::UniOrdered,
+        };
+        let mut opts = H3Opts::default();
+        opts.transfer_mode = mode;
+        Some(opts)
     }
 }
 
@@ -315,13 +319,18 @@ async fn recv_timed(conn: &Connection, n: u64) -> Result<u64> {
         .std_context("recv transfer timed out")?
 }
 
-/// Runs a single bulk transfer for `(framing, degradation, direction)` and emits
-/// one CSV cell: throughput from the measuring side, setup time from the client.
-async fn run_bulk(framing: Framing, degradation: Degradation, direction: Direction) -> Result {
+/// Runs a single bulk transfer of `n` bytes for `(framing, degradation,
+/// direction)` and emits one CSV cell: throughput from the measuring side, setup
+/// time from the client.
+async fn run_bulk(
+    framing: Framing,
+    degradation: Degradation,
+    direction: Direction,
+    n: u64,
+    dir_label: &str,
+) -> Result {
     let fl = framing.label();
     let dl = degradation.label();
-    let dir = direction.label();
-    let n = degradation.n_bytes();
 
     let (server_body, client_body): (ConnFn, ConnFn) = match direction {
         // Server sends -> server measures throughput, client receives.
@@ -358,7 +367,7 @@ async fn run_bulk(framing: Framing, degradation: Degradation, direction: Directi
     };
 
     let (setup_ms, metric) = run_relay_degrade(framing, degradation, server_body, client_body).await?;
-    emit_cell(fl, dl, dir, metric.unwrap_or(0.0), setup_ms);
+    emit_cell(fl, dl, dir_label, metric.unwrap_or(0.0), setup_ms);
     Ok(())
 }
 
@@ -639,7 +648,12 @@ async fn run_relay_degrade(
     Ok((setup_ms, metric))
 }
 
-const FRAMINGS: &[Framing] = &[Framing::Ws, Framing::WtUni, Framing::WtDatagram];
+const FRAMINGS: &[Framing] = &[
+    Framing::Ws,
+    Framing::WtUni,
+    Framing::WtDatagram,
+    Framing::WtSingleStream,
+];
 const DEGRADATIONS: &[Degradation] =
     &[Degradation::Wifi, Degradation::Mobile4g, Degradation::Mobile3g];
 const DIRECTIONS: &[Direction] = &[Direction::Download, Direction::Upload, Direction::Bidi];
@@ -661,10 +675,26 @@ const DIRECTIONS: &[Direction] = &[Direction::Download, Direction::Upload, Direc
 #[traced_test]
 #[ignore = "full rundown matrix; long, run manually"]
 async fn relay_degrade_rundown() -> Result {
-    for &framing in FRAMINGS {
-        for &degradation in DEGRADATIONS {
-            for &direction in DIRECTIONS {
-                if let Err(err) = run_bulk(framing, degradation, direction).await {
+    run_matrix(FRAMINGS, DEGRADATIONS, DIRECTIONS, Degradation::n_bytes).await
+}
+
+/// Runs the bulk (framing x degradation x direction, `n` bytes from `n_of`) and
+/// datagram (framing x degradation) matrix, emitting one `RUNDOWN,...` line per
+/// cell. Per-cell failures are caught and logged as a `FAILED` line so one run
+/// captures the whole matrix.
+async fn run_matrix(
+    framings: &[Framing],
+    degradations: &[Degradation],
+    directions: &[Direction],
+    n_of: impl Fn(Degradation) -> u64,
+) -> Result {
+    for &framing in framings {
+        for &degradation in degradations {
+            for &direction in directions {
+                let n = n_of(degradation);
+                if let Err(err) = run_bulk(framing, degradation, direction, n, direction.label())
+                    .await
+                {
                     let reason = format!("{err:#}").replace([',', '\n'], " ");
                     println!(
                         "RUNDOWN,{},{},{},FAILED,{reason}",
@@ -687,25 +717,84 @@ async fn relay_degrade_rundown() -> Result {
     Ok(())
 }
 
+/// Quick sub-matrix for fast iteration and debugging: all framings against the
+/// two extreme conditions (clean wifi and lossy 3g), download only, at two small
+/// transfer sizes so the whole run finishes in a couple of minutes. The size is
+/// tagged into the direction column (`download@256k`).
+///
+/// `#[ignore]`d; run in release, serially:
+///   cargo test --release -p iroh --test patchbay relay_degrade_quick \
+///     -- --ignored --test-threads=1 --nocapture 2>&1 | grep RUNDOWN
+#[tokio::test]
+#[traced_test]
+#[ignore = "quick sub-matrix; run manually"]
+async fn relay_degrade_quick() -> Result {
+    const QUICK_DEGRADATIONS: &[Degradation] = &[Degradation::Wifi, Degradation::Mobile3g];
+    const QUICK_SIZES: &[(&str, u64)] = &[("256k", 256 * 1024), ("2m", 2 * 1024 * 1024)];
+    for &framing in FRAMINGS {
+        for &degradation in QUICK_DEGRADATIONS {
+            for &(size_label, n) in QUICK_SIZES {
+                let dir_label = format!("download@{size_label}");
+                if let Err(err) =
+                    run_bulk(framing, degradation, Direction::Download, n, &dir_label).await
+                {
+                    let reason = format!("{err:#}").replace([',', '\n'], " ");
+                    println!(
+                        "RUNDOWN,{},{},{dir_label},FAILED,{reason}",
+                        framing.label(),
+                        degradation.label(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 // Smoke tests run in CI: one framing x one degradation, bulk (bidi) + datagram.
 // Run with `--test-threads=1` (patchbay needs serial execution).
 #[tokio::test]
 #[traced_test]
 async fn relay_degrade_smoke_ws() -> Result {
-    run_bulk(Framing::Ws, Degradation::Wifi, Direction::Bidi).await?;
+    let n = Degradation::Wifi.n_bytes();
+    run_bulk(Framing::Ws, Degradation::Wifi, Direction::Bidi, n, "bidi").await?;
     run_datagrams(Framing::Ws, Degradation::Wifi).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn relay_degrade_smoke_wt_uni() -> Result {
-    run_bulk(Framing::WtUni, Degradation::Wifi, Direction::Bidi).await?;
+    let n = Degradation::Wifi.n_bytes();
+    run_bulk(Framing::WtUni, Degradation::Wifi, Direction::Bidi, n, "bidi").await?;
     run_datagrams(Framing::WtUni, Degradation::Wifi).await
 }
 
 #[tokio::test]
 #[traced_test]
+async fn relay_degrade_smoke_wt_singlestream() -> Result {
+    let n = Degradation::Wifi.n_bytes();
+    run_bulk(
+        Framing::WtSingleStream,
+        Degradation::Wifi,
+        Direction::Bidi,
+        n,
+        "bidi",
+    )
+    .await?;
+    run_datagrams(Framing::WtSingleStream, Degradation::Wifi).await
+}
+
+#[tokio::test]
+#[traced_test]
 async fn relay_degrade_smoke_wt_datagram() -> Result {
-    run_bulk(Framing::WtDatagram, Degradation::Wifi, Direction::Bidi).await?;
+    let n = Degradation::Wifi.n_bytes();
+    run_bulk(
+        Framing::WtDatagram,
+        Degradation::Wifi,
+        Direction::Bidi,
+        n,
+        "bidi",
+    )
+    .await?;
     run_datagrams(Framing::WtDatagram, Degradation::Wifi).await
 }
