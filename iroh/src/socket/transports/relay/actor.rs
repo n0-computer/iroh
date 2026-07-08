@@ -1288,23 +1288,11 @@ impl RelayActor {
     fn start_active_relay(&mut self, url: RelayUrl) -> ActiveRelayHandle {
         debug!(?url, "Adding relay connection");
 
-        let auth_token = self
-            .config
-            .relay_map
-            .get(&url)
-            .and_then(|cfg| cfg.auth_token.clone());
-
-        let h3_enabled = self
-            .config
-            .relay_map
-            .get(&url)
-            .map(|cfg| cfg.h3)
-            .unwrap_or(true);
-
-        let server_cert_hashes = self
-            .config
-            .relay_map
-            .get(&url)
+        let relay_cfg = self.config.relay_map.get(&url);
+        let auth_token = relay_cfg.as_ref().and_then(|cfg| cfg.auth_token.clone());
+        let h3_enabled = relay_cfg.as_ref().map(|cfg| cfg.h3).unwrap_or(true);
+        let server_cert_hashes = relay_cfg
+            .as_ref()
             .and_then(|cfg| cfg.server_cert_hashes.clone());
 
         let connection_opts = RelayConnectionOptions {

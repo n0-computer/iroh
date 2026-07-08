@@ -512,7 +512,7 @@ impl EndpointArgs {
             #[cfg(not(feature = "test-utils"))]
             {
                 n0_error::bail_any!(
-                    "Must have the `test-utils` feature enabled when using --env=dev, --insecure, or --local-relay"
+                    "Must have the `test-utils` feature enabled when using --env=dev"
                 )
             }
         }

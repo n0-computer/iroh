@@ -8,7 +8,11 @@
 //! passes its relay URL, certificate hash, and peer id to this test via the
 //! `RELAY_URL`, `RELAY_CERT_SHA256`, and `PROVIDER_ID` environment variables,
 //! baked in at compile time.
-#![cfg(all(target_family = "wasm", target_os = "unknown"))]
+#![cfg(all(
+    target_family = "wasm",
+    target_os = "unknown",
+    feature = "h3-transport"
+))]
 
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl,
