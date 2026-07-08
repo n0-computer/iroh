@@ -188,9 +188,9 @@
 //!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
 //!     let conn = ep.connect(addr, b"hello-world").await?;
 //!     let (mut send_stream, mut recv_stream) = conn.open_bi().await.std_context("open bi")?;
-//!     // `read_to_end` waits until the peer finishes or closes its send side.
 //!     send_stream.write_all(b"hello").await.std_context("write")?;
 //!     send_stream.finish().std_context("finish")?;
+//!     // `read_to_end` waits until the peer finishes or closes its send side.
 //!     let _msg = recv_stream.read_to_end(10).await.std_context("read")?;
 //!
 //!     // Gracefully close the connection and endpoint.
