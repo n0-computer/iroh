@@ -285,6 +285,22 @@ async fn send_measured(conn: &Connection, n: u64) -> Result<f64> {
     } else {
         0.0
     };
+
+    // Debug aid: iroh p2p-connection health after the transfer. Filter with
+    // `RUST_LOG=bench_stats=info` to compare framings without the noq trace flood.
+    let stats = conn.stats();
+    info!(
+        target: "bench_stats",
+        secs = format_args!("{secs:.2}"),
+        kbps = throughput_kbps as u64,
+        sent = stats.udp_tx.datagrams,
+        recv = stats.udp_rx.datagrams,
+        lost = stats.lost_packets,
+        lost_bytes = stats.lost_bytes,
+        acks_rx = stats.frame_rx.acks,
+        stream_tx = stats.frame_tx.stream,
+        "iroh p2p connection stats",
+    );
     Ok(throughput_kbps)
 }
 
@@ -749,6 +765,64 @@ async fn relay_degrade_quick() -> Result {
         }
     }
     Ok(())
+}
+
+// Tiny single-transfer trace samples, one per framing, for debugging transport
+// mechanics under a trace subscriber. Keep the transfer small so `noq=trace` is
+// readable. Run one at a time, e.g.:
+//   RUST_LOG=iroh=trace,noq=trace cargo test --release -p iroh --test patchbay \
+//     trace_wt_uni -- --ignored --test-threads=1 --nocapture 2>&1 >trace.log
+/// Bytes moved in a trace sample, overridable at runtime via the `TRACE_BYTES`
+/// env var (default 1 MiB). Use a large value for a steady-state `bench_stats`
+/// comparison; drop it low for a readable full `noq=trace` dump.
+#[cfg(test)]
+fn trace_bytes() -> u64 {
+    std::env::var("TRACE_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1024 * 1024)
+}
+
+#[tokio::test]
+#[traced_test]
+#[ignore = "trace sample; run manually with RUST_LOG"]
+async fn trace_ws() -> Result {
+    run_bulk(Framing::Ws, Degradation::Wifi, Direction::Download, trace_bytes(), "trace").await
+}
+
+#[tokio::test]
+#[traced_test]
+#[ignore = "trace sample; run manually with RUST_LOG"]
+async fn trace_wt_uni() -> Result {
+    run_bulk(Framing::WtUni, Degradation::Wifi, Direction::Download, trace_bytes(), "trace").await
+}
+
+#[tokio::test]
+#[traced_test]
+#[ignore = "trace sample; run manually with RUST_LOG"]
+async fn trace_wt_datagram() -> Result {
+    run_bulk(
+        Framing::WtDatagram,
+        Degradation::Wifi,
+        Direction::Download,
+        trace_bytes(),
+        "trace",
+    )
+    .await
+}
+
+#[tokio::test]
+#[traced_test]
+#[ignore = "trace sample; run manually with RUST_LOG"]
+async fn trace_wt_singlestream() -> Result {
+    run_bulk(
+        Framing::WtSingleStream,
+        Degradation::Wifi,
+        Direction::Download,
+        trace_bytes(),
+        "trace",
+    )
+    .await
 }
 
 // Smoke tests run in CI: one framing x one degradation, bulk (bidi) + datagram.
