@@ -190,6 +190,7 @@
 //!     let (mut send_stream, mut recv_stream) = conn.open_bi().await.std_context("open bi")?;
 //!     send_stream.write_all(b"hello").await.std_context("write")?;
 //!     send_stream.finish().std_context("finish")?;
+//!     // `read_to_end` waits until the peer finishes or closes its send side.
 //!     let _msg = recv_stream.read_to_end(10).await.std_context("read")?;
 //!
 //!     // Gracefully close the connection and endpoint.
@@ -226,6 +227,7 @@
 //!         .context("accept conn")?;
 //!     let (mut send_stream, mut recv_stream) =
 //!         conn.accept_bi().await.std_context("accept stream")?;
+//!     // `read_to_end` terminates once the client calls `finish` on its send stream.
 //!     let _msg = recv_stream.read_to_end(10).await.std_context("read")?;
 //!     send_stream.write_all(b"world").await.std_context("write")?;
 //!     send_stream.finish().std_context("finish")?;
