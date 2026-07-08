@@ -150,11 +150,12 @@ under realistic last-mile conditions there is a separate patchbay integration
 test, `relay_degrade` (linux-only, rootless user namespaces, serial). It runs
 two iroh endpoints behind symmetric `Nat::Corporate` NATs (so the connection
 stays relay-only with IP transports and GSO enabled) over a single relay at a
-1400-byte link MTU, sweeping the WebTransport framing (`ws` / `wt-uni` /
-`wt-datagram`) against three realistic conditions (`wifi` / `4g` / `3g`) in all
-three directions, plus a constant-rate datagram-delivery workload. See the
-module docs in `iroh/tests/patchbay/relay_degrade.rs` for the topology and
-measurement details.
+1400-byte link MTU, sweeping the four framings (`ws`, `wt-uni`, `wt-datagram`,
+and `wt-singlestream` -- a single ordered uni stream per direction, TCP-like)
+against three realistic conditions (`wifi` / `4g` / `3g`) in all three
+directions, plus a constant-rate datagram-delivery workload. See the module docs
+in `iroh/tests/patchbay/relay_degrade.rs` for the topology and measurement
+details.
 
 ```bash
 bench/run_rundown.sh [RUNS]     # RUNS defaults to 3
@@ -165,3 +166,12 @@ recompiling, and writes three artifacts under `bench/`: `results-raw.csv` (every
 `RUNDOWN` row from every run), `results-agg.csv` (avg/min/max/stddev per cell),
 and `rundown.png` (one panel per direction plus datagram delivery, one line per
 framing, plotting the average with a min..max band). All three are git-ignored.
+
+For fast iteration there is also `relay_degrade_quick` (all framings against
+wifi and 3g, download only, at two small transfer sizes; finishes in a couple of
+minutes), run directly:
+
+```bash
+cargo test --release -p iroh --test patchbay relay_degrade_quick \
+  -- --ignored --test-threads=1 --nocapture 2>&1 | grep RUNDOWN
+```
