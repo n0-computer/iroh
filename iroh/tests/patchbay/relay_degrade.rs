@@ -1,54 +1,64 @@
 //! Relay-transport throughput under network degradation.
 //!
 //! These tests exercise iroh's relay transport (a peer-to-peer noq/QUIC
-//! connection tunneled over a single relay) at a realistic ~1400-byte link MTU,
+//! connection tunneled over a single relay) at a standard 1500-byte link MTU,
 //! parameterized over the WebTransport framing selected on the shared relay:
 //!
 //! - `ws`: WebSocket relay transport (`RelayConfig.h3 = None`).
 //! - `wt-uni`: WebTransport, one uni stream per relay message (up to 64 KiB), so
 //!   any iroh QUIC packet fits (`Some(H3Opts::default())`).
-//! - `wt-datagram`: WebTransport, one QUIC DATAGRAM per relay message, capped
-//!   near `WT_MTU - 38` (`H3Opts { use_datagrams: true, .. }`). On a ~1400-byte
-//!   link that budget is below iroh's own packet ceiling, so an over-large
-//!   relayed packet is dropped (graceful degradation, no reconnect storm) and
-//!   the relay actor splits GSO batches into one datagram per packet.
+//! - `wt-datagram`: WebTransport, one QUIC DATAGRAM per relay message
+//!   (`H3Opts { use_datagrams: true, .. }`). Each datagram carries one whole
+//!   iroh QUIC packet, so the relay actor first splits GSO batches into one
+//!   datagram per packet. The relay H3 connection pins its minimum MTU to 1280
+//!   (IPv6 minimum) so the datagram budget always clears iroh's 1200-byte QUIC
+//!   packet floor; only iroh's own oversized PLPMTUD probes are ever dropped.
 //!
-//! Topology (ONE relay, no NATs):
+//! Topology (ONE relay, both peers behind hard NATs):
 //!   relay   (shared data-path relay; WT framing controlled by the test)
-//!   server  (measures throughput/receives, connected directly to the router)
-//!   client  (measures throughput/receives, connected directly to the router)
-//! Both endpoints call `Endpoint::builder(..).clear_ip_transports()`, so no
-//! direct/IP path can ever form and the connection is relay-only for the whole
-//! test (asserted via `is_relayed`). Both endpoints share the same `RelayMap`
-//! with the same framing applied, so both directions use the same framing.
+//!   server  (behind a symmetric `Nat::Corporate` router)
+//!   client  (behind a symmetric `Nat::Corporate` router)
+//! Each peer sits behind its own symmetric (endpoint-dependent-mapping) NAT, for
+//! which holepunching is impossible, so the connection stays relay-only for the
+//! whole test (asserted via `is_relayed`) -- but IP transports are left ENABLED.
+//! This is deliberately different from calling `clear_ip_transports()`: that
+//! forces relay-only by disabling the direct paths entirely, which also disables
+//! GSO (segment offload collapses to one packet per send), so the relay actor's
+//! GSO-split path for wt-datagram framing is never exercised and the scenario is
+//! unrealistic. Symmetric NATs keep the full IP/GSO machinery running while
+//! still pinning the data path to the relay, matching a real corporate/CGNAT
+//! peer that never manages to holepunch. Both endpoints share the same
+//! `RelayMap` with the same framing applied, so both directions use the framing.
 //!
 //! Both peers' access links carry the same [`LinkCondition`] in
 //! [`LinkDirection::Both`], so degradation is symmetric across peers and
-//! directions. Three degradation levels (`good`/`moderate`/`bad`) form a matrix
-//! dimension alongside framing and direction.
+//! directions. Three realistic last-mile levels (`wifi`/`4g`/`3g`, see
+//! [`Degradation`]) form a matrix dimension alongside framing and direction.
 //!
 //! Throughput is measured over a FIXED transfer of N bytes (identical across
 //! framings within a degradation level; see [`Degradation::n_bytes`]) on the
 //! sender's own clock: `t0` is taken just before the first write and `t_done`
 //! when the receiver confirms full receipt (the transfer-example pattern -- the
-//! sender
-//! writes N on a bi stream and `finish()`es, the receiver drains to EOF and
-//! `finish()`es its own send half, and the sender reads its recv half to EOF).
-//! Connection setup is never included in the timing. Time-to-first-byte (TTFB)
-//! is measured on the receiver's clock (from the start of draining to the first
-//! byte) and relayed back over the same bi stream so one CSV line carries both.
+//! sender writes N on a bi stream and `finish()`es, the receiver drains to EOF
+//! and `finish()`es its own send half, and the sender reads its recv half to
+//! EOF). Connection setup is never included in the throughput timing.
+//!
+//! Connection setup time ("connect to connected") is measured separately on the
+//! client's clock, from just before `Endpoint::connect` to the moment it returns
+//! the established connection, and reported in the second metric column.
 //!
 //! Machine-readable results are printed with `println!` (not tracing, which
 //! `traced_test` hides on passing tests). CSV schema (leading `RUNDOWN` tag):
 //!
-//!   RUNDOWN,<framing>,<degradation>,<direction>,<throughput_kbps>,<ttfb_ms>
-//!   RUNDOWN,<framing>,<degradation>,datagrams,<delivery_pct>,n/a
+//!   RUNDOWN,<framing>,<degradation>,<direction>,<throughput_kbps>,<setup_ms>
+//!   RUNDOWN,<framing>,<degradation>,datagrams,<delivery_pct>,<setup_ms>
 //!   RUNDOWN,<framing>,<degradation>,<direction>,FAILED,<reason>
 //!
-//! Columns: framing (ws|wt-uni|wt-datagram), degradation (good|moderate|bad),
-//! direction (download|upload|bidi|datagrams), then two metric columns whose
-//! meaning depends on the row (throughput in kbit/s + TTFB in ms for bulk;
-//! delivery percentage + n/a for datagrams; FAILED + reason on error).
+//! Columns: framing (ws|wt-uni|wt-datagram), degradation (wifi|4g|3g), direction
+//! (download|upload|bidi|datagrams), then two metric columns whose meaning
+//! depends on the row (throughput in kbit/s for bulk, delivery percentage for
+//! datagrams, FAILED on error) plus connection setup time in ms (reason on
+//! error).
 
 use std::{
     collections::HashSet,
@@ -70,7 +80,7 @@ use iroh_relay::RelayMap;
 use n0_error::{Result, StdResultExt};
 use n0_future::boxed::BoxFuture;
 use n0_tracing_test::traced_test;
-use patchbay::{IfaceConfig, IpSupport, LinkCondition, LinkDirection, LinkLimits};
+use patchbay::{IfaceConfig, IpSupport, LinkCondition, LinkDirection, Nat};
 use testdir::testdir;
 use tokio::sync::{Barrier, oneshot};
 use tracing::info;
@@ -79,16 +89,19 @@ use super::util::{self, is_relayed};
 
 const ALPN: &[u8] = b"relay-degrade";
 
-/// Link MTU used for the degraded path. At 1400, wt-datagram framing must drop
-/// over-large relayed iroh packets while wt-uni framing does not.
-const LINK_MTU: u32 = 1400;
+/// Link MTU used for the degraded path: standard 1500-byte Ethernet, the most
+/// common real last-mile MTU. This leaves enough headroom that a full-size iroh
+/// QUIC packet still fits inside one WebTransport datagram (payload budget
+/// ~= WT_MTU - 40) once the relay actor has split GSO batches, so wt-datagram
+/// framing carries bulk traffic without dropping every packet.
+const LINK_MTU: u32 = 1500;
 
 /// Per-transfer upper bound: a single bulk transfer must finish within this or
 /// it is treated as a failed cell (guards against stalls hanging the suite).
-const TRANSFER_TIMEOUT: Duration = Duration::from_secs(60);
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Overall per-cell timeout for the whole lab (setup + connect + transfer).
-const CELL_TIMEOUT: Duration = Duration::from_secs(120);
+const CELL_TIMEOUT: Duration = Duration::from_secs(200);
 
 /// Write chunk size on the sending side.
 const SEND_CHUNK: usize = 256 * 1024;
@@ -131,65 +144,49 @@ impl Framing {
 }
 
 /// Network degradation level applied to both peers' access links, both
-/// directions. All levels share the same [`LINK_MTU`].
+/// directions. Uses patchbay's realistic last-mile presets (modelled on real
+/// `tc netem` profiles), all at [`LINK_MTU`]. Latency is one-way, so the
+/// end-to-end RTT over the relay traverses two impaired links each way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Degradation {
-    Good,
-    Moderate,
-    Bad,
+    /// Good 5 GHz WiFi: 5 ms / 2 ms jitter / 0.1% loss.
+    Wifi,
+    /// 4G/LTE, good signal: 25 ms / 8 ms jitter / 0.5% loss.
+    Mobile4g,
+    /// 3G or degraded 4G: 100 ms / 30 ms jitter / 2% loss, 2 Mbit rate cap.
+    Mobile3g,
 }
 
 impl Degradation {
     fn label(self) -> &'static str {
         match self {
-            Degradation::Good => "good",
-            Degradation::Moderate => "moderate",
-            Degradation::Bad => "bad",
-        }
-    }
-
-    /// `tc netem` limits for this level. Latency is one-way, so end-to-end RTT
-    /// over the relay traverses two impaired links each way.
-    fn limits(self) -> LinkLimits {
-        match self {
-            Degradation::Good => LinkLimits {
-                latency_ms: 10,
-                loss_pct: 0.0,
-                ..Default::default()
-            },
-            Degradation::Moderate => LinkLimits {
-                latency_ms: 40,
-                loss_pct: 1.0,
-                ..Default::default()
-            },
-            Degradation::Bad => LinkLimits {
-                latency_ms: 100,
-                loss_pct: 3.0,
-                ..Default::default()
-            },
+            Degradation::Wifi => "wifi",
+            Degradation::Mobile4g => "4g",
+            Degradation::Mobile3g => "3g",
         }
     }
 
     fn condition(self) -> LinkCondition {
-        LinkCondition::Manual(self.limits())
+        match self {
+            Degradation::Wifi => LinkCondition::Wifi,
+            Degradation::Mobile4g => LinkCondition::Mobile4G,
+            Degradation::Mobile3g => LinkCondition::Mobile3G,
+        }
     }
 
-    /// Bytes moved per bulk transfer at this degradation level.
+    /// Bytes moved per bulk transfer at this level.
     ///
-    /// N is FIXED per degradation level and IDENTICAL across all three framings
-    /// and all three directions, so framing comparison within a level stays
-    /// apples-to-apples (throughput is a rate, so cross-level comparison is fine
-    /// too). N varies by level only because the throughput spread is intrinsic:
-    /// a clean path runs near link/CPU limits (tens of Mbit/s) while a
-    /// 3%-loss / ~400ms-RTT `bad` path is loss-limited to a few hundred kbit/s
-    /// (a ~400x spread). No single N can keep the fast levels above a
-    /// measurable floor while keeping the slow level under [`TRANSFER_TIMEOUT`],
-    /// so each level uses an N that finishes in a bounded, well-measured window.
+    /// N is FIXED per level and IDENTICAL across all three framings and all
+    /// three directions, so framing comparison within a level is apples-to-apples
+    /// (throughput is a rate). N is sized so each transfer runs for several
+    /// seconds -- long enough that the link's loss rate is well-averaged rather
+    /// than dominated by a lucky/unlucky burst -- while staying under
+    /// [`TRANSFER_TIMEOUT`]; it is larger where the link is faster.
     fn n_bytes(self) -> u64 {
         match self {
-            Degradation::Good => 16 * 1024 * 1024,
-            Degradation::Moderate => 2 * 1024 * 1024,
-            Degradation::Bad => 256 * 1024,
+            Degradation::Wifi => 64 * 1024 * 1024,
+            Degradation::Mobile4g => 8 * 1024 * 1024,
+            Degradation::Mobile3g => 2 * 1024 * 1024,
         }
     }
 }
@@ -217,12 +214,17 @@ impl Direction {
 }
 
 /// Boxed run function invoked on each side with the established connection.
-type ConnFn = Box<dyn FnOnce(Connection) -> BoxFuture<Result> + Send>;
+///
+/// Returns the metric this side measured, if any: the bulk sender returns
+/// `Some(throughput_kbps)`, the datagram server returns `Some(delivery_pct)`,
+/// and every non-measuring side returns `None`. Exactly one of the two sides
+/// produces a value per cell.
+type ConnFn = Box<dyn FnOnce(Connection) -> BoxFuture<Result<Option<f64>>> + Send>;
 
 fn conn_fn<F, Fut>(f: F) -> ConnFn
 where
     F: FnOnce(Connection) -> Fut + Send + 'static,
-    Fut: Future<Output = Result> + Send + 'static,
+    Fut: Future<Output = Result<Option<f64>>> + Send + 'static,
 {
     Box::new(move |conn| Box::pin(f(conn)))
 }
@@ -241,28 +243,22 @@ fn apply_framing(map: &RelayMap, framing: Framing) -> RelayMap {
 }
 
 /// Emits one machine-readable CSV cell line. See the module docs for the schema.
-fn emit_cell(
-    framing: &str,
-    degradation: &str,
-    direction: &str,
-    throughput_kbps: f64,
-    ttfb_ms: f64,
-) {
-    println!("RUNDOWN,{framing},{degradation},{direction},{throughput_kbps:.0},{ttfb_ms:.1}");
+/// `metric` is throughput in kbit/s (bulk) or delivery percentage (datagrams);
+/// `setup_ms` is the connection setup time measured on the client.
+fn emit_cell(framing: &str, degradation: &str, direction: &str, metric: f64, setup_ms: f64) {
+    println!("RUNDOWN,{framing},{degradation},{direction},{metric:.0},{setup_ms:.1}");
 }
 
 // ---
 // Bulk transfer measurement
 // ---
 
-/// Sends exactly `n` bytes on a fresh bi stream and returns
-/// `(throughput_kbps, ttfb_ms)`.
+/// Sends exactly `n` bytes on a fresh bi stream and returns the throughput in
+/// kbit/s.
 ///
 /// `t0` is taken just before the first write; the clock stops when the receiver
-/// confirms full receipt by finishing its own send half (read here as EOF). The
-/// receiver relays its TTFB (measured on its own clock, in microseconds) as the
-/// last payload before finishing, so a single line can carry both metrics.
-async fn send_measured(conn: &Connection, n: u64) -> Result<(f64, f64)> {
+/// confirms full receipt by finishing its own send half (read here as EOF).
+async fn send_measured(conn: &Connection, n: u64) -> Result<f64> {
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
     let chunk = vec![0u8; SEND_CHUNK];
     let t0 = Instant::now();
@@ -274,9 +270,9 @@ async fn send_measured(conn: &Connection, n: u64) -> Result<(f64, f64)> {
     }
     send.finish().anyerr()?;
 
-    // Confirmation: receiver finishes its send half after draining. Its payload
-    // (if any) is the TTFB in microseconds, measured on the receiver's clock.
-    let ttfb_bytes = recv.read_to_end(16).await.anyerr()?;
+    // Confirmation: receiver finishes its send half after fully draining ours,
+    // so reading it to EOF marks full receipt.
+    recv.read_to_end(16).await.anyerr()?;
     let elapsed = t0.elapsed();
 
     let secs = elapsed.as_secs_f64();
@@ -285,34 +281,20 @@ async fn send_measured(conn: &Connection, n: u64) -> Result<(f64, f64)> {
     } else {
         0.0
     };
-    let ttfb_ms = if ttfb_bytes.len() >= 8 {
-        let mut b = [0u8; 8];
-        b.copy_from_slice(&ttfb_bytes[..8]);
-        u64::from_le_bytes(b) as f64 / 1000.0
-    } else {
-        0.0
-    };
-    Ok((throughput_kbps, ttfb_ms))
+    Ok(throughput_kbps)
 }
 
-/// Accepts a bi stream and drains exactly `n` bytes, recording TTFB on its own
-/// clock and relaying it back to the sender. Returns the number of bytes read.
+/// Accepts a bi stream and drains exactly `n` bytes, then confirms full receipt
+/// by finishing its own send half. Returns the number of bytes read.
 async fn recv_measured(conn: &Connection, n: u64) -> Result<u64> {
     let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
     let mut buf = vec![0u8; RECV_BUF];
-    let start = Instant::now();
-    let mut ttfb: Option<Duration> = None;
     let mut got = 0u64;
     while let Some(k) = recv.read(&mut buf).await.anyerr()? {
-        if ttfb.is_none() {
-            ttfb = Some(start.elapsed());
-        }
         got += k as u64;
     }
 
-    // Relay TTFB (microseconds), then confirm receipt by finishing.
-    let ttfb_us = ttfb.unwrap_or_default().as_micros() as u64;
-    send.write_all(&ttfb_us.to_le_bytes()).await.anyerr()?;
+    // Confirm receipt by finishing our send half; the sender reads it as EOF.
     send.finish().anyerr()?;
 
     assert_eq!(got, n, "receiver: short transfer ({got} != {n})");
@@ -320,7 +302,7 @@ async fn recv_measured(conn: &Connection, n: u64) -> Result<u64> {
 }
 
 /// [`send_measured`] bounded by [`TRANSFER_TIMEOUT`].
-async fn send_timed(conn: &Connection, n: u64) -> Result<(f64, f64)> {
+async fn send_timed(conn: &Connection, n: u64) -> Result<f64> {
     tokio::time::timeout(TRANSFER_TIMEOUT, send_measured(conn, n))
         .await
         .std_context("send transfer timed out")?
@@ -334,7 +316,7 @@ async fn recv_timed(conn: &Connection, n: u64) -> Result<u64> {
 }
 
 /// Runs a single bulk transfer for `(framing, degradation, direction)` and emits
-/// one CSV cell from the measuring side.
+/// one CSV cell: throughput from the measuring side, setup time from the client.
 async fn run_bulk(framing: Framing, degradation: Degradation, direction: Direction) -> Result {
     let fl = framing.label();
     let dl = degradation.label();
@@ -344,27 +326,19 @@ async fn run_bulk(framing: Framing, degradation: Degradation, direction: Directi
     let (server_body, client_body): (ConnFn, ConnFn) = match direction {
         // Server sends -> server measures throughput, client receives.
         Direction::Download => (
-            conn_fn(move |conn| async move {
-                let (kbps, ttfb) = send_timed(&conn, n).await?;
-                emit_cell(fl, dl, dir, kbps, ttfb);
-                Ok(())
-            }),
+            conn_fn(move |conn| async move { Ok(Some(send_timed(&conn, n).await?)) }),
             conn_fn(move |conn| async move {
                 recv_timed(&conn, n).await?;
-                Ok(())
+                Ok(None)
             }),
         ),
         // Client sends -> client measures throughput, server receives.
         Direction::Upload => (
             conn_fn(move |conn| async move {
                 recv_timed(&conn, n).await?;
-                Ok(())
+                Ok(None)
             }),
-            conn_fn(move |conn| async move {
-                let (kbps, ttfb) = send_timed(&conn, n).await?;
-                emit_cell(fl, dl, dir, kbps, ttfb);
-                Ok(())
-            }),
+            conn_fn(move |conn| async move { Ok(Some(send_timed(&conn, n).await?)) }),
         ),
         // Both directions concurrently; the client->server stream is measured.
         Direction::Bidi => (
@@ -372,19 +346,20 @@ async fn run_bulk(framing: Framing, degradation: Degradation, direction: Directi
                 let (send_res, recv_res) = tokio::join!(send_timed(&conn, n), recv_timed(&conn, n));
                 send_res?;
                 recv_res?;
-                Ok(())
+                Ok(None)
             }),
             conn_fn(move |conn| async move {
                 let (send_res, recv_res) = tokio::join!(send_timed(&conn, n), recv_timed(&conn, n));
-                let (kbps, ttfb) = send_res?;
+                let kbps = send_res?;
                 recv_res?;
-                emit_cell(fl, dl, dir, kbps, ttfb);
-                Ok(())
+                Ok(Some(kbps))
             }),
         ),
     };
 
-    run_relay_degrade(framing, degradation, server_body, client_body).await
+    let (setup_ms, metric) = run_relay_degrade(framing, degradation, server_body, client_body).await?;
+    emit_cell(fl, dl, dir, metric.unwrap_or(0.0), setup_ms);
+    Ok(())
 }
 
 // ---
@@ -404,7 +379,7 @@ const DG_MIN_RATIO: f64 = 0.7;
 
 /// Sends `DG_COUNT` sequence-tagged datagrams at ~30 fps, then signals
 /// completion over a reliable bidi stream and waits for the ack.
-async fn dg_client(conn: Connection) -> Result {
+async fn dg_client(conn: Connection) -> Result<Option<f64>> {
     let max = conn.max_datagram_size();
     assert!(
         max.map(|m| m >= DG_SIZE).unwrap_or(false),
@@ -429,12 +404,13 @@ async fn dg_client(conn: Connection) -> Result {
     send.finish().anyerr()?;
     let ack = recv.read_to_end(16).await.anyerr()?;
     assert_eq!(&ack, b"ack", "unexpected ack");
-    Ok(())
+    Ok(None)
 }
 
 /// Counts unique received datagrams until the sender signals completion over a
-/// reliable stream, emits the delivery cell, then asserts a loose floor.
-async fn dg_server(conn: Connection, framing: &str, degradation: &str) -> Result {
+/// reliable stream, then returns the delivery percentage (and asserts a loose
+/// floor).
+async fn dg_server(conn: Connection) -> Result<Option<f64>> {
     let seen = Arc::new(AtomicUsize::new(0));
     let seen_set = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
 
@@ -463,11 +439,6 @@ async fn dg_server(conn: Connection, framing: &str, degradation: &str) -> Result
 
     let received = seen.load(Ordering::Relaxed);
     let ratio = received as f64 / DG_COUNT as f64;
-    // datagrams row: metric column is delivery percentage, ttfb column is n/a.
-    println!(
-        "RUNDOWN,{framing},{degradation},datagrams,{:.1},n/a",
-        ratio * 100.0
-    );
 
     send.write_all(b"ack").await.anyerr()?;
     send.finish().anyerr()?;
@@ -476,14 +447,18 @@ async fn dg_server(conn: Connection, framing: &str, degradation: &str) -> Result
         ratio >= DG_MIN_RATIO,
         "datagram delivery ratio too low: {ratio:.2} ({received}/{DG_COUNT})"
     );
-    Ok(())
+    Ok(Some(ratio * 100.0))
 }
 
 async fn run_datagrams(framing: Framing, degradation: Degradation) -> Result {
     let fl = framing.label();
     let dl = degradation.label();
-    let server = conn_fn(move |conn| dg_server(conn, fl, dl));
-    run_relay_degrade(framing, degradation, server, conn_fn(dg_client)).await
+    let server = conn_fn(dg_server);
+    let (setup_ms, metric) =
+        run_relay_degrade(framing, degradation, server, conn_fn(dg_client)).await?;
+    // datagrams row: the metric column is delivery percentage.
+    emit_cell(fl, dl, "datagrams", metric.unwrap_or(0.0), setup_ms);
+    Ok(())
 }
 
 // ---
@@ -493,12 +468,15 @@ async fn run_datagrams(framing: Framing, degradation: Degradation) -> Result {
 /// Builds the single-relay lab, establishes a relay-only connection under
 /// `degradation`, and runs `server_body`/`client_body` on the respective
 /// devices. `framing` selects the relay transport framing on the shared relay.
+///
+/// Returns `(setup_ms, metric)`: the connection setup time measured on the
+/// client, and whichever metric the measuring side produced (see [`ConnFn`]).
 async fn run_relay_degrade(
     framing: Framing,
     degradation: Degradation,
     server_body: ConnFn,
     client_body: ConnFn,
-) -> Result {
+) -> Result<(f64, Option<f64>)> {
     let mut builder = patchbay::Lab::builder().outdir(patchbay::OutDir::Exact(testdir!()));
     if let Some(name) = std::thread::current().name() {
         builder = builder.label(name);
@@ -506,7 +484,8 @@ async fn run_relay_degrade(
     let lab = builder.build().await?;
     let guard = lab.test_guard();
 
-    let router = lab
+    // Public backbone router carrying the shared relay.
+    let net = lab
         .add_router("net")
         .ip_support(IpSupport::DualStack)
         .mtu(LINK_MTU)
@@ -515,10 +494,10 @@ async fn run_relay_degrade(
 
     let dns = lab.dns_server()?;
 
-    // Single shared relay carrying the data path.
+    // Single shared relay carrying the data path, on the public backbone.
     let relay_dev = lab
         .add_device("relay")
-        .uplink(router.id())
+        .uplink(net.id())
         .mtu(LINK_MTU)
         .build()
         .await?;
@@ -538,13 +517,30 @@ async fn run_relay_degrade(
     // Same framing on both endpoints' shared map.
     let shared_map = apply_framing(&relay_map, framing);
 
+    // Each peer sits behind its own symmetric NAT (Nat::Corporate). Holepunching
+    // between two symmetric NATs is impossible, so the connection stays
+    // relay-only, but IP transports remain enabled (unlike clear_ip_transports),
+    // keeping GSO on so the relay actor's GSO-split path is exercised.
+    let nat_server = lab
+        .add_router("nat-server")
+        .nat(Nat::Corporate)
+        .mtu(LINK_MTU)
+        .build()
+        .await?;
+    let nat_client = lab
+        .add_router("nat-client")
+        .nat(Nat::Corporate)
+        .mtu(LINK_MTU)
+        .build()
+        .await?;
+
     // Impair both peers' access links, both directions, same condition.
     let condition = degradation.condition();
     let server_dev = lab
         .add_device("server")
         .iface(
             "eth0",
-            IfaceConfig::routed(router.id()).condition(condition, LinkDirection::Both),
+            IfaceConfig::routed(nat_server.id()).condition(condition, LinkDirection::Both),
         )
         .mtu(LINK_MTU)
         .build()
@@ -553,13 +549,15 @@ async fn run_relay_degrade(
         .add_device("client")
         .iface(
             "eth0",
-            IfaceConfig::routed(router.id()).condition(condition, LinkDirection::Both),
+            IfaceConfig::routed(nat_client.id()).condition(condition, LinkDirection::Both),
         )
         .mtu(LINK_MTU)
         .build()
         .await?;
 
     let (addr_tx, addr_rx) = oneshot::channel();
+    // Client reports its connect-to-connected setup time back to the harness.
+    let (setup_tx, setup_rx) = oneshot::channel::<Duration>();
 
     // Keep both connections alive until both bodies finish, so a sender never
     // tears down its connection before the receiver has drained the stream.
@@ -568,13 +566,10 @@ async fn run_relay_degrade(
 
     let server_map = shared_map.clone();
     let server_task = server_dev.spawn(move |_dev| async move {
-        // clear_ip_transports() disables all direct/IP paths, so the connection
-        // is relay-only without any NAT.
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(server_map))
             .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
-            .clear_ip_transports()
             .bind()
             .await
             .std_context("server bind")?;
@@ -607,13 +602,16 @@ async fn run_relay_degrade(
             .relay_mode(RelayMode::Custom(shared_map))
             .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
-            .clear_ip_transports()
             .bind()
             .await
             .std_context("client bind")?;
 
-        // The client does not await online(); it connects on demand.
+        // The client does not await online(); it connects on demand. Time the
+        // connect-to-connected setup and report it back to the harness.
+        let t_connect = Instant::now();
         let conn = ep.connect(server_addr, ALPN).await.std_context("connect")?;
+        let setup = t_connect.elapsed();
+        setup_tx.send(setup).ok();
         assert!(is_relayed(&conn), "client: connection must start relayed");
 
         let res = client_body(conn.clone()).await;
@@ -627,15 +625,23 @@ async fn run_relay_degrade(
     })
     .await
     .std_context("cell timed out")?;
-    server_res.std_context("server")??;
-    client_res.std_context("client")??;
+    let server_metric = server_res.std_context("server")??;
+    let client_metric = client_res.std_context("client")??;
+
+    let setup_ms = setup_rx
+        .await
+        .std_context("client setup time")?
+        .as_secs_f64()
+        * 1000.0;
+    let metric = server_metric.or(client_metric);
 
     guard.ok();
-    Ok(())
+    Ok((setup_ms, metric))
 }
 
 const FRAMINGS: &[Framing] = &[Framing::Ws, Framing::WtUni, Framing::WtDatagram];
-const DEGRADATIONS: &[Degradation] = &[Degradation::Good, Degradation::Moderate, Degradation::Bad];
+const DEGRADATIONS: &[Degradation] =
+    &[Degradation::Wifi, Degradation::Mobile4g, Degradation::Mobile3g];
 const DIRECTIONS: &[Direction] = &[Direction::Download, Direction::Upload, Direction::Bidi];
 
 // ---
@@ -686,20 +692,20 @@ async fn relay_degrade_rundown() -> Result {
 #[tokio::test]
 #[traced_test]
 async fn relay_degrade_smoke_ws() -> Result {
-    run_bulk(Framing::Ws, Degradation::Good, Direction::Bidi).await?;
-    run_datagrams(Framing::Ws, Degradation::Good).await
+    run_bulk(Framing::Ws, Degradation::Wifi, Direction::Bidi).await?;
+    run_datagrams(Framing::Ws, Degradation::Wifi).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn relay_degrade_smoke_wt_uni() -> Result {
-    run_bulk(Framing::WtUni, Degradation::Good, Direction::Bidi).await?;
-    run_datagrams(Framing::WtUni, Degradation::Good).await
+    run_bulk(Framing::WtUni, Degradation::Wifi, Direction::Bidi).await?;
+    run_datagrams(Framing::WtUni, Degradation::Wifi).await
 }
 
 #[tokio::test]
 #[traced_test]
 async fn relay_degrade_smoke_wt_datagram() -> Result {
-    run_bulk(Framing::WtDatagram, Degradation::Good, Direction::Bidi).await?;
-    run_datagrams(Framing::WtDatagram, Degradation::Good).await
+    run_bulk(Framing::WtDatagram, Degradation::Wifi, Direction::Bidi).await?;
+    run_datagrams(Framing::WtDatagram, Degradation::Wifi).await
 }
