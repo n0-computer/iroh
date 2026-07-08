@@ -1,0 +1,7 @@
+# Keep only the scripts and docs under version control. Everything else here is
+# local scratch: the multi-hundred-MB prebuilt binaries (rebuild from README.md),
+# results-*.txt, logs/, and the browser-test orchestration under wasm/.
+*
+!.gitignore
+!README.md
+!run.sh
