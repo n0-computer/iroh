@@ -48,7 +48,7 @@ use crate::{
         ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_DATAGRAMS_QUERY_PARAM, RELAY_PATH,
     },
     protos::{
-        h3_streams::{H3_MIN_MTU, WtBytesFramed},
+        h3_streams::{H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WtBytesFramed},
         handshake::{self, KeyMaterialClientAuth},
     },
 };
@@ -69,6 +69,13 @@ const WT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Dropping this closes the QUIC connection.
 pub(crate) struct WtConnState {
     _conn: noq::Connection,
+    /// The client endpoint the connection was opened on. noq keeps a connection
+    /// alive as long as any `Connection` handle exists (its endpoint driver runs
+    /// while the endpoint has live connections, even after every `Endpoint`
+    /// handle is dropped), so holding the endpoint here is not strictly required
+    /// -- but retaining it for the connection's whole lifetime removes any doubt
+    /// that a stray endpoint drop could close the connection with error code 0.
+    _endpoint: noq::Endpoint,
 }
 
 /// Errors during WebTransport relay connection establishment.
@@ -173,7 +180,7 @@ pub(super) async fn quic_connect(
     })?;
     let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
     let mut transport = noq_proto::TransportConfig::default();
-    transport.max_concurrent_uni_streams(256u32.into());
+    transport.max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into());
     // Keep the datagram budget above iroh's 1200-byte QUIC packet floor for the
     // whole connection -- both before MTU discovery runs and after a black-hole
     // reset; see [`H3_MIN_MTU`].
@@ -316,7 +323,10 @@ async fn wt_handshake_inner(
 
     io.set_use_datagrams(use_datagrams);
 
-    let state = WtConnState { _conn: conn };
+    let state = WtConnState {
+        _conn: conn,
+        _endpoint,
+    };
 
     Ok((io, state, local_addr))
 }

@@ -33,6 +33,22 @@ use crate::ExportKeyingMaterial;
 /// Maximum bytes to read from a single uni stream before rejecting.
 const MAX_UNI_STREAM_SIZE: usize = crate::MAX_PACKET_SIZE + 64;
 
+/// Concurrent unidirectional stream limit for the relay H3/WebTransport
+/// connection.
+///
+/// In the per-message uni-stream mode every relayed message is a fresh uni
+/// stream, so the number of streams in flight at once is the bandwidth-delay
+/// product divided by the message size. Under high RTT and loss a stream stays
+/// open until its FIN is acknowledged, which can take several round trips; at
+/// the old 256-stream limit those lingering streams exhausted the credit window
+/// and `open_uni` then blocked for *seconds* waiting for the peer to raise
+/// MAX_STREAMS, backing up iroh's send path until its connection timed out. This
+/// ceiling is set far above any realistic in-flight count so opening a new
+/// stream never blocks on credits. The peer only allocates state for streams it
+/// actually opens (bounded by the real in-flight count), so a high ceiling costs
+/// nothing on a healthy connection.
+pub(crate) const MAX_CONCURRENT_UNI_STREAMS: u32 = 100_000;
+
 /// Minimum (and initial) path MTU for the relay's H3/WebTransport QUIC
 /// connection.
 ///

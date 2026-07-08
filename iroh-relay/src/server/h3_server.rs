@@ -22,7 +22,7 @@ use crate::{
         ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_DATAGRAMS_QUERY_PARAM, RELAY_PATH,
     },
     protos::{
-        h3_streams::{H3_MIN_MTU, WtBytesFramed, drain_in_background},
+        h3_streams::{H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WtBytesFramed, drain_in_background},
         handshake,
     },
     server::{ClientRequest, DynAccessControl},
@@ -116,7 +116,7 @@ impl H3RelayServer {
         // Uni streams: high limit for per-message uni streams.
         // Bidi streams: 1 for the CONNECT session.
         transport_config
-            .max_concurrent_uni_streams(256u32.into())
+            .max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into())
             .max_concurrent_bidi_streams(2_u8.into())
             // Keep the datagram budget above iroh's 1200-byte QUIC packet floor
             // for the whole connection -- both before MTU discovery runs and
