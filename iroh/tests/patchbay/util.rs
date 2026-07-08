@@ -45,30 +45,78 @@ pub(crate) async fn lab_with_relay(
 /// Returns a [`RelayMap`] with an entry for the relay, and a drop handle that will
 /// stop the relay server once dropped.
 async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
+    let (config, guard) = spawn_relay_at(lab, "dc", "relay", "relay.test").await?;
+    Ok((RelayMap::from(config), guard))
+}
+
+/// Creates a router and device, spawns a relay server on the device, and
+/// registers `hostname` in lab-wide DNS (both IPv4 and IPv6).
+///
+/// Returns the relay's [`RelayConfig`] and a drop handle that stops the
+/// server once dropped.
+async fn spawn_relay_at(
+    lab: &Lab,
+    router_name: &str,
+    device_name: &str,
+    hostname: &str,
+) -> Result<(iroh::RelayConfig, AbortOnDropHandle<()>)> {
     let dc = lab
-        .add_router("dc")
+        .add_router(router_name)
         .ip_support(IpSupport::DualStack)
         .build()
         .await?;
-    let dev_relay = lab.add_device("relay").uplink(dc.id()).build().await?;
+    let dev_relay = lab.add_device(device_name).uplink(dc.id()).build().await?;
 
-    // Register both v4 and v6 addresses under "relay.test" lab-wide.
-    // Devices created after this will resolve "relay.test" to both addresses.
     let relay_v4 = dev_relay.ip().expect("relay has IPv4");
     let relay_v6 = dev_relay.ip6().expect("relay has IPv6");
     let dns = lab.dns_server()?;
-    dns.set_host("relay.test", relay_v4.into())?;
-    dns.set_host("relay.test", relay_v6.into())?;
-    info!(%relay_v4, %relay_v6, "DNS entries for relay.test registered");
+    dns.set_host(hostname, relay_v4.into())?;
+    dns.set_host(hostname, relay_v6.into())?;
+    info!(%relay_v4, %relay_v6, hostname, "DNS entries for relay registered");
 
-    let (relay_map_tx, relay_map_rx) = oneshot::channel();
+    let (relay_tx, relay_rx) = oneshot::channel();
+    let hostname = hostname.to_string();
     let task_relay = dev_relay.spawn(async move |_ctx| {
-        let (relay_map, _server) = run_relay_server().await.unwrap();
-        relay_map_tx.send(relay_map).unwrap();
+        let (relay_config, _server) = run_relay_server(&hostname).await.unwrap();
+        relay_tx.send(relay_config).unwrap();
         std::future::pending::<()>().await;
     })?;
-    let relay_map = relay_map_rx.await.unwrap();
-    Ok((relay_map, AbortOnDropHandle::new(task_relay)))
+    let relay_config = relay_rx.await.unwrap();
+    Ok((relay_config, AbortOnDropHandle::new(task_relay)))
+}
+
+/// Creates a lab with `count` relay servers, each on its own router and
+/// device, reachable via `https://relay0.test`, `https://relay1.test`, ...
+///
+/// Returns the lab, a [`RelayMap`] with all relays, the drop guards that
+/// keep the relays alive, and a [`TestGuard`].
+#[cfg(feature = "unstable-net-report")]
+pub(crate) async fn lab_with_relays(
+    outdir: PathBuf,
+    count: usize,
+) -> Result<(Lab, RelayMap, Vec<AbortOnDropHandle<()>>, TestGuard)> {
+    let mut builder = Lab::builder().outdir(OutDir::Exact(outdir));
+    if let Some(name) = std::thread::current().name() {
+        builder = builder.label(name);
+    }
+    let lab = builder.build().await?;
+    let guard = lab.test_guard();
+
+    let mut configs = Vec::with_capacity(count);
+    let mut guards = Vec::with_capacity(count);
+    for i in 0..count {
+        let (config, relay_guard) = spawn_relay_at(
+            &lab,
+            &format!("dc{i}"),
+            &format!("relay{i}"),
+            &format!("relay{i}.test"),
+        )
+        .await?;
+        configs.push(config);
+        guards.push(relay_guard);
+    }
+    let relay_map = RelayMap::from_iter(configs);
+    Ok((lab, relay_map, guards, guard))
 }
 
 /// Type alias for boxed run functions used in [`Pair`].
@@ -446,7 +494,7 @@ fn watch_selected_path(conn: &Connection) {
     );
 }
 
-fn endpoint_builder(device: &Device, relay_map: RelayMap) -> iroh::endpoint::Builder {
+pub(crate) fn endpoint_builder(device: &Device, relay_map: RelayMap) -> iroh::endpoint::Builder {
     #[allow(unused_mut)]
     let mut builder = Endpoint::builder(presets::Minimal)
         .relay_mode(RelayMode::Custom(relay_map))
@@ -483,7 +531,7 @@ mod relay {
 
     use iroh_base::RelayUrl;
     use iroh_relay::{
-        RelayConfig, RelayMap, RelayQuicConfig,
+        RelayConfig, RelayQuicConfig,
         server::{
             AllowAll, CertConfig, QuicConfig, RelayConfig as RelayServerConfig, Server,
             ServerConfig, SpawnError, TlsConfig, testing::self_signed_tls_certs_and_config,
@@ -492,10 +540,12 @@ mod relay {
 
     /// Spawn a relay server bound on `[::]` that accepts both IPv4 and IPv6.
     ///
-    /// The returned [`RelayMap`] uses `https://relay.test` as the relay URL.
-    /// Callers are responsible for ensuring that a DNS entry for `relay.test`
-    /// exists and points to the relay's IP addresses.
-    pub(crate) async fn run_relay_server() -> Result<(RelayMap, Server), SpawnError> {
+    /// The returned [`RelayConfig`] uses `https://<hostname>` as the relay
+    /// URL. Callers are responsible for ensuring that a DNS entry for
+    /// `hostname` exists and points to the relay's IP addresses.
+    pub(crate) async fn run_relay_server(
+        hostname: &str,
+    ) -> Result<(RelayConfig, Server), SpawnError> {
         let bind_ip: IpAddr = Ipv6Addr::UNSPECIFIED.into();
 
         let (_certs, server_config) = self_signed_tls_certs_and_config();
@@ -512,12 +562,14 @@ mod relay {
 
         let server = Server::spawn(config).await?;
 
-        let url: RelayUrl = "https://relay.test".parse().expect("valid relay url");
+        let url: RelayUrl = format!("https://{hostname}")
+            .parse()
+            .expect("valid relay url");
         let quic = server
             .quic_addr()
             .map(|addr| RelayQuicConfig::new(addr.port()));
-        let relay_map: RelayMap = RelayConfig::new(url, quic).into();
+        let relay_config = RelayConfig::new(url, quic);
 
-        Ok((relay_map, server))
+        Ok((relay_config, server))
     }
 }

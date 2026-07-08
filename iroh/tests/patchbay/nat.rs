@@ -231,3 +231,147 @@ async fn nat_hard_x_easy() -> Result {
 async fn nat_hard_x_hard() -> Result {
     run_nat_holepunch(NatKind::Hard, NatKind::Hard).await
 }
+
+// mapping_varies_by_dest
+//
+// A hard NAT (endpoint-dependent mapping) hands out a different external
+// address per destination, so the client's QAD probes to two relays observe
+// two different addresses and net_report must report
+// `mapping_varies_by_dest`. An easy NAT (endpoint-independent mapping) hands
+// out the same address to every destination, so it must not. Two relays are
+// required: mapping-varies can only be decided by comparing the addresses
+// observed against two different destinations.
+
+/// Waits until net_report reports `mapping_varies_by_dest() == Some(want)`.
+#[cfg(feature = "unstable-net-report")]
+async fn wait_for_mapping_varies(
+    endpoint: &iroh::Endpoint,
+    want: bool,
+    timeout: Duration,
+) -> Result {
+    use iroh::Watcher as _;
+    use n0_error::StdResultExt;
+
+    tokio::time::timeout(timeout, async {
+        let mut watcher = endpoint.net_report();
+        loop {
+            if watcher.get().and_then(|r| r.mapping_varies_by_dest()) == Some(want) {
+                return Ok::<(), n0_error::AnyError>(());
+            }
+            watcher.updated().await.anyerr()?;
+        }
+    })
+    .await
+    .with_std_context(|_| {
+        format!("mapping_varies_by_dest did not reach {want} within {timeout:?}")
+    })?
+}
+
+/// Binds an endpoint behind `nat` and asserts net_report decides
+/// `mapping_varies_by_dest` as `want_varies`.
+#[cfg(feature = "unstable-net-report")]
+async fn run_mapping_varies(nat: NatKind, want_varies: bool) -> Result {
+    use n0_error::StdResultExt;
+
+    use super::util::{endpoint_builder, lab_with_relays};
+
+    let (lab, relay_map, _relay_guards, guard) = lab_with_relays(testdir!(), 2).await?;
+    let router = lab.add_router("nat").nat(nat.into()).build().await?;
+    let client = lab.add_device("client").uplink(router.id()).build().await?;
+
+    let timeout = Duration::from_secs(20);
+    let task = client.spawn(move |dev| async move {
+        let endpoint = endpoint_builder(&dev, relay_map)
+            .bind()
+            .await
+            .context("client endpoint bind")?;
+        endpoint.online().await;
+        info!("endpoint online, waiting for net_report");
+        wait_for_mapping_varies(&endpoint, want_varies, timeout).await?;
+        Ok::<(), n0_error::AnyError>(())
+    })?;
+    task.await.anyerr()??;
+
+    guard.ok();
+    Ok(())
+}
+
+/// Binds an endpoint behind a `from` NAT, waits for its mapping-varies
+/// verdict, then replugs the device to a `to` NAT and verifies net_report
+/// re-detects mapping-varies with the new value.
+///
+/// This is the case that motivates always waiting for a second QAD result:
+/// after the switch the new cycle must produce a fresh `Some(_)` verdict, or
+/// `ReportHistory::record` would carry the stale value forward.
+#[cfg(feature = "unstable-net-report")]
+async fn run_mapping_varies_switch(
+    from: NatKind,
+    want_from: bool,
+    to: NatKind,
+    want_to: bool,
+) -> Result {
+    use n0_error::StdResultExt;
+
+    use super::util::{endpoint_builder, lab_with_relays};
+
+    let (lab, relay_map, _relay_guards, guard) = lab_with_relays(testdir!(), 2).await?;
+    let from_router = lab.add_router("from").nat(from.into()).build().await?;
+    let to_id = lab.add_router("to").nat(to.into()).build().await?.id();
+    let client = lab
+        .add_device("client")
+        .uplink(from_router.id())
+        .build()
+        .await?;
+
+    let timeout = Duration::from_secs(30);
+    let task = client.spawn(move |dev| async move {
+        let endpoint = endpoint_builder(&dev, relay_map)
+            .bind()
+            .await
+            .context("client endpoint bind")?;
+        endpoint.online().await;
+
+        info!(want_from, "waiting for initial mapping-varies verdict");
+        wait_for_mapping_varies(&endpoint, want_from, timeout).await?;
+
+        info!("switching networks (replug to the other NAT)");
+        dev.iface("eth0").unwrap().replug(to_id).await?;
+
+        info!(want_to, "waiting for mapping-varies to update after switch");
+        wait_for_mapping_varies(&endpoint, want_to, timeout).await?;
+
+        Ok::<(), n0_error::AnyError>(())
+    })?;
+    task.await.anyerr()??;
+
+    guard.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+#[cfg(feature = "unstable-net-report")]
+async fn mapping_varies_hard_nat() -> Result {
+    run_mapping_varies(NatKind::Hard, true).await
+}
+
+#[tokio::test]
+#[traced_test]
+#[cfg(feature = "unstable-net-report")]
+async fn mapping_varies_easy_nat() -> Result {
+    run_mapping_varies(NatKind::Easy, false).await
+}
+
+#[tokio::test]
+#[traced_test]
+#[cfg(feature = "unstable-net-report")]
+async fn mapping_varies_switch_hard_to_easy() -> Result {
+    run_mapping_varies_switch(NatKind::Hard, true, NatKind::Easy, false).await
+}
+
+#[tokio::test]
+#[traced_test]
+#[cfg(feature = "unstable-net-report")]
+async fn mapping_varies_switch_easy_to_hard() -> Result {
+    run_mapping_varies_switch(NatKind::Easy, false, NatKind::Hard, true).await
+}
