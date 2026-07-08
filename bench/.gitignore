@@ -5,4 +5,5 @@
 !.gitignore
 !README.md
 !run.sh
+!run_rundown.sh
 !plot_rundown.py
