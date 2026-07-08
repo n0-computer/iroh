@@ -76,22 +76,21 @@ pub enum Transport {
 /// Inner transport for the client connection.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ConnInner {
-    /// WebSocket transport (native).
-    #[cfg(not(wasm_browser))]
-    Ws(WsBytesFramed<MaybeTlsStream<ProxyStream>>),
-    /// WebSocket transport (browser).
-    #[cfg(wasm_browser)]
-    WsBrowser(WsBytesFramed),
-    /// WebTransport over QUIC.
-    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+    /// WebSocket transport (native or browser).
+    Ws(
+        #[cfg(not(wasm_browser))] WsBytesFramed<MaybeTlsStream<ProxyStream>>,
+        #[cfg(wasm_browser)] WsBytesFramed,
+    ),
+    /// WebTransport over QUIC (native) or the browser's native WebTransport stack.
+    #[cfg(feature = "h3-transport")]
     Wt {
+        #[cfg(not(wasm_browser))]
         stream: crate::protos::h3_streams::WtBytesFramed,
-        _state: super::h3_conn::WtConnState,
-    },
-    /// WebTransport over the browser's native WebTransport stack.
-    #[cfg(all(wasm_browser, feature = "h3-transport"))]
-    WtBrowser {
+        #[cfg(wasm_browser)]
         stream: crate::protos::h3_streams_wasm::WtBytesFramed,
+        /// Holds the native WebTransport session's streams open; unused in the browser.
+        #[cfg(not(wasm_browser))]
+        _state: super::h3_conn::WtConnState,
     },
 }
 
@@ -113,14 +112,9 @@ impl Conn {
     /// Returns which transport protocol this connection uses.
     pub(crate) fn transport(&self) -> Transport {
         match &self.conn {
-            #[cfg(not(wasm_browser))]
             ConnInner::Ws(_) => Transport::Ws,
-            #[cfg(wasm_browser)]
-            ConnInner::WsBrowser(_) => Transport::Ws,
-            #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+            #[cfg(feature = "h3-transport")]
             ConnInner::Wt { .. } => Transport::H3,
-            #[cfg(all(wasm_browser, feature = "h3-transport"))]
-            ConnInner::WtBrowser { .. } => Transport::H3,
         }
     }
 
@@ -142,10 +136,7 @@ impl Conn {
         trace!("server_handshake: done");
 
         Ok(Self {
-            #[cfg(not(wasm_browser))]
             conn: ConnInner::Ws(conn),
-            #[cfg(wasm_browser)]
-            conn: ConnInner::WsBrowser(conn),
             key_cache,
             protocol_version,
         })
@@ -178,7 +169,7 @@ impl Conn {
         protocol_version: ProtocolVersion,
     ) -> Self {
         Self {
-            conn: ConnInner::WtBrowser { stream },
+            conn: ConnInner::Wt { stream },
             key_cache,
             protocol_version,
         }
@@ -208,14 +199,9 @@ impl Stream for ConnInner {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.get_mut() {
-            #[cfg(not(wasm_browser))]
             ConnInner::Ws(ws) => Pin::new(ws).poll_next(cx),
-            #[cfg(wasm_browser)]
-            ConnInner::WsBrowser(ws) => Pin::new(ws).poll_next(cx),
-            #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+            #[cfg(feature = "h3-transport")]
             ConnInner::Wt { stream, .. } => Pin::new(stream).poll_next(cx),
-            #[cfg(all(wasm_browser, feature = "h3-transport"))]
-            ConnInner::WtBrowser { stream } => Pin::new(stream).poll_next(cx),
         }
     }
 }
@@ -225,53 +211,33 @@ impl Sink<bytes::Bytes> for ConnInner {
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.get_mut() {
-            #[cfg(not(wasm_browser))]
             ConnInner::Ws(ws) => Pin::new(ws).poll_ready(cx),
-            #[cfg(wasm_browser)]
-            ConnInner::WsBrowser(ws) => Pin::new(ws).poll_ready(cx),
-            #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+            #[cfg(feature = "h3-transport")]
             ConnInner::Wt { stream, .. } => Pin::new(stream).poll_ready(cx),
-            #[cfg(all(wasm_browser, feature = "h3-transport"))]
-            ConnInner::WtBrowser { stream } => Pin::new(stream).poll_ready(cx),
         }
     }
 
     fn start_send(self: Pin<&mut Self>, item: bytes::Bytes) -> Result<(), Self::Error> {
         match self.get_mut() {
-            #[cfg(not(wasm_browser))]
             ConnInner::Ws(ws) => Pin::new(ws).start_send(item),
-            #[cfg(wasm_browser)]
-            ConnInner::WsBrowser(ws) => Pin::new(ws).start_send(item),
-            #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+            #[cfg(feature = "h3-transport")]
             ConnInner::Wt { stream, .. } => Pin::new(stream).start_send(item),
-            #[cfg(all(wasm_browser, feature = "h3-transport"))]
-            ConnInner::WtBrowser { stream } => Pin::new(stream).start_send(item),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.get_mut() {
-            #[cfg(not(wasm_browser))]
             ConnInner::Ws(ws) => Pin::new(ws).poll_flush(cx),
-            #[cfg(wasm_browser)]
-            ConnInner::WsBrowser(ws) => Pin::new(ws).poll_flush(cx),
-            #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+            #[cfg(feature = "h3-transport")]
             ConnInner::Wt { stream, .. } => Pin::new(stream).poll_flush(cx),
-            #[cfg(all(wasm_browser, feature = "h3-transport"))]
-            ConnInner::WtBrowser { stream } => Pin::new(stream).poll_flush(cx),
         }
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.get_mut() {
-            #[cfg(not(wasm_browser))]
             ConnInner::Ws(ws) => Pin::new(ws).poll_close(cx),
-            #[cfg(wasm_browser)]
-            ConnInner::WsBrowser(ws) => Pin::new(ws).poll_close(cx),
-            #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+            #[cfg(feature = "h3-transport")]
             ConnInner::Wt { stream, .. } => Pin::new(stream).poll_close(cx),
-            #[cfg(all(wasm_browser, feature = "h3-transport"))]
-            ConnInner::WtBrowser { stream } => Pin::new(stream).poll_close(cx),
         }
     }
 }

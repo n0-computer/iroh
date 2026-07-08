@@ -53,6 +53,14 @@ use crate::{
 /// Timeout for the QUIC handshake when connecting via WebTransport.
 const QUIC_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Timeout for the WebTransport handshake once the QUIC connection is up.
+///
+/// Bounds phase 2 (settings exchange, CONNECT, and the relay handshake). Without
+/// it a server that completes the QUIC handshake and then stalls would hang the
+/// whole connect: because QUIC wins the transport race, the WebSocket fallback is
+/// only reached once this handshake fails.
+const WT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// WebTransport connection state that must outlive the relay stream.
 ///
 /// Dropping this closes the QUIC connection.
@@ -118,6 +126,8 @@ pub enum H3ConnectError {
     },
     #[error("QUIC connect timed out")]
     ConnectTimeout {},
+    #[error("WebTransport handshake timed out")]
+    HandshakeTimeout {},
 }
 
 /// Result of the QUIC connect phase. Passed to [`wt_handshake`] to complete
@@ -180,8 +190,21 @@ pub(super) async fn quic_connect(
 /// Phase 2: complete the WebTransport handshake on an established QUIC connection.
 ///
 /// Sends settings + CONNECT, receives server response, sets up the data stream,
-/// and runs the relay handshake.
+/// and runs the relay handshake. Bounded by [`WT_HANDSHAKE_TIMEOUT`].
 pub(super) async fn wt_handshake(
+    quic: QuicConnected,
+    server_name: &str,
+    secret_key: &SecretKey,
+) -> Result<(WtBytesFramed, WtConnState, SocketAddr), H3ConnectError> {
+    tokio::time::timeout(
+        WT_HANDSHAKE_TIMEOUT,
+        wt_handshake_inner(quic, server_name, secret_key),
+    )
+    .await
+    .map_err(|_| e!(H3ConnectError::HandshakeTimeout))?
+}
+
+async fn wt_handshake_inner(
     quic: QuicConnected,
     server_name: &str,
     secret_key: &SecretKey,

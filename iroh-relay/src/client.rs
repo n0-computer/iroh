@@ -374,27 +374,8 @@ impl ClientBuilder {
         match race {
             Either::Left(Ok(quic)) => {
                 debug!("QUIC handshake won the race, completing WT handshake");
-                match h3_conn::wt_handshake(quic, host, &self.secret_key).await {
-                    Ok((io, state, local_addr)) => {
-                        use tracing::{Level, event};
-
-                        event!(
-                            target: "iroh::_events::net::relay::connected",
-                            Level::DEBUG,
-                            url = %self.url,
-                            transport = "h3",
-                        );
-                        let conn = Conn::from_wt(
-                            io,
-                            state,
-                            self.key_cache.clone(),
-                            ProtocolVersion::default(),
-                        );
-                        Ok(Client {
-                            conn,
-                            local_addr: Some(local_addr),
-                        })
-                    }
+                match self.finish_wt(quic, host).await {
+                    Ok(client) => Ok(client),
                     Err(err) => {
                         debug!("WT handshake failed ({err:#}), falling back to WS");
                         ws_fut.await
@@ -412,21 +393,7 @@ impl ClientBuilder {
             Either::Right(Err(ws_err)) => {
                 debug!("WS failed ({ws_err:#}), waiting for QUIC");
                 match quic_fut.await {
-                    Ok(quic) => h3_conn::wt_handshake(quic, host, &self.secret_key)
-                        .await
-                        .map(|(io, state, local_addr)| {
-                            let conn = Conn::from_wt(
-                                io,
-                                state,
-                                self.key_cache.clone(),
-                                ProtocolVersion::default(),
-                            );
-                            Client {
-                                conn,
-                                local_addr: Some(local_addr),
-                            }
-                        })
-                        .map_err(|_| ws_err),
+                    Ok(quic) => self.finish_wt(quic, host).await.map_err(|_| ws_err),
                     Err(err) => {
                         debug!("QUIC also failed: {err:#}");
                         Err(ws_err)
@@ -434,6 +401,35 @@ impl ClientBuilder {
                 }
             }
         }
+    }
+
+    /// Completes the WebTransport handshake on a won QUIC connection and builds a
+    /// [`Client`], emitting the relay-connected telemetry event.
+    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+    async fn finish_wt(
+        &self,
+        quic: h3_conn::QuicConnected,
+        host: &str,
+    ) -> Result<Client, h3_conn::H3ConnectError> {
+        use tracing::{Level, event};
+
+        let (io, state, local_addr) = h3_conn::wt_handshake(quic, host, &self.secret_key).await?;
+        event!(
+            target: "iroh::_events::net::relay::connected",
+            Level::DEBUG,
+            url = %self.url,
+            transport = "h3",
+        );
+        let conn = Conn::from_wt(
+            io,
+            state,
+            self.key_cache.clone(),
+            ProtocolVersion::default(),
+        );
+        Ok(Client {
+            conn,
+            local_addr: Some(local_addr),
+        })
     }
 
     /// Establishes a QUIC connection to the relay, racing the resolved addresses
