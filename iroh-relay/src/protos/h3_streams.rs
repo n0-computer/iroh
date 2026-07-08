@@ -78,6 +78,12 @@ impl WtBytesFramed {
             send_priority: 0,
         }
     }
+
+    /// Whether this transport carries relay messages as QUIC datagrams (rather
+    /// than unidirectional streams).
+    pub fn uses_datagrams(&self) -> bool {
+        self.use_datagrams
+    }
 }
 
 /// Encode the WebTransport unidirectional stream header for the given session ID.

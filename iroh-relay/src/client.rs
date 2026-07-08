@@ -696,6 +696,16 @@ impl Client {
         self.conn.transport()
     }
 
+    /// Whether relay messages are carried as QUIC datagrams (WebTransport
+    /// datagram framing) rather than streams.
+    ///
+    /// Callers that pack multiple UDP packets into one relay message (GSO
+    /// batches) should split them into one message per packet when this is true,
+    /// since a batch would exceed the WebTransport datagram size.
+    pub fn uses_datagrams(&self) -> bool {
+        self.conn.uses_datagrams()
+    }
+
     /// Splits the client into a sink and a stream.
     pub fn split(self) -> (ClientStream, ClientSink) {
         let (sink, stream) = split(self.conn);

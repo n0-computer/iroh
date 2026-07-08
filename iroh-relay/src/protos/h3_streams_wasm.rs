@@ -62,6 +62,11 @@ impl WtBytesFramed {
             send_priority: 0,
         }
     }
+
+    /// The browser transport is uni-stream only, so it never uses datagrams.
+    pub fn uses_datagrams(&self) -> bool {
+        false
+    }
 }
 
 impl ExportKeyingMaterial for WtBytesFramed {

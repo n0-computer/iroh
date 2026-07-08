@@ -118,6 +118,16 @@ impl Conn {
         }
     }
 
+    /// Whether relay messages are carried as QUIC datagrams (WebTransport
+    /// datagram framing) rather than streams.
+    pub(crate) fn uses_datagrams(&self) -> bool {
+        match &self.conn {
+            ConnInner::Ws(_) => false,
+            #[cfg(feature = "h3-transport")]
+            ConnInner::Wt { stream, .. } => stream.uses_datagrams(),
+        }
+    }
+
     /// Constructs a new websocket connection, including the initial server handshake.
     pub(crate) async fn new(
         #[cfg(not(wasm_browser))] io: tokio_websockets::WebSocketStream<

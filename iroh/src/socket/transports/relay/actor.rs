@@ -233,6 +233,41 @@ struct RelayConnectionOptions {
     auth_token: Option<String>,
 }
 
+/// Iterator over the relay messages to send for one queued [`Datagrams`].
+///
+/// See [`split_gso`].
+enum SplitGso {
+    /// Send the batch as a single relay message (streamed transports).
+    Single(Option<Datagrams>),
+    /// Emit one relay message per packet (WebTransport datagram framing).
+    PerPacket(Datagrams),
+}
+
+impl Iterator for SplitGso {
+    type Item = Datagrams;
+
+    fn next(&mut self) -> Option<Datagrams> {
+        match self {
+            SplitGso::Single(datagrams) => datagrams.take(),
+            SplitGso::PerPacket(batch) => {
+                (!batch.contents.is_empty()).then(|| batch.take_segments(1))
+            }
+        }
+    }
+}
+
+/// Splits a GSO batch (a [`Datagrams`] carrying multiple UDP packets behind a
+/// `segment_size`) into one [`Datagrams`] per packet when `split` is set, so
+/// each fits a single WebTransport datagram. When `split` is false, or the batch
+/// is already a single packet, the input is yielded unchanged. Allocation-free.
+fn split_gso(datagrams: Datagrams, split: bool) -> SplitGso {
+    if split && datagrams.segment_size.is_some() {
+        SplitGso::PerPacket(datagrams)
+    } else {
+        SplitGso::Single(Some(datagrams))
+    }
+}
+
 /// Possible reasons for a failed relay connection.
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
@@ -332,25 +367,24 @@ impl ActiveRelayActor {
         )
         .tls_client_config(tls_config)
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
-        #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+        #[cfg(feature = "h3-transport")]
         {
-            // Use H3/WebTransport if the relay advertises it and UDP is available.
-            // Falls back to WS on failure (timeout or UDP blocked).
-            if let Some(opts) = h3
-                && udp_available.load(Ordering::Relaxed)
-            {
-                builder = builder.enable_h3(opts);
-            }
-        }
-        #[cfg(all(wasm_browser, feature = "h3-transport"))]
-        {
-            // In the browser, WebTransport does not depend on UDP-availability
-            // probing (a native concept): enable it whenever the relay
-            // advertises H3, and let it fall back to WebSocket on failure.
+            // Use H3/WebTransport whenever the relay advertises it. The client
+            // races WebTransport against WebSocket and keeps whichever connects
+            // first, so if UDP to the relay is blocked the WebSocket connection
+            // wins at no extra latency.
+            //
+            // We deliberately do NOT gate this on net_report's `udp_available`:
+            // the relay's WebTransport client binds its own UDP socket, and that
+            // flag is a false negative whenever net_report's QAD probe has not
+            // run -- e.g. when IP transports are disabled (`clear_ip_transports`)
+            // -- even though UDP egress to the relay works. Gating on it also left
+            // a relay that first connected before QAD completed stuck on
+            // WebSocket for the actor's lifetime.
+            let _ = &udp_available;
             if let Some(opts) = h3 {
                 builder = builder.enable_h3(opts);
             }
-            let _ = &udp_available;
         }
         // WebTransport is only available with the `h3-transport` feature; the
         // fields are unused otherwise.
@@ -562,6 +596,12 @@ impl ActiveRelayActor {
             home_relay = self.is_home_relay,
         );
 
+        // WebTransport datagram framing caps each relay message at the datagram
+        // size, so GSO batches (multiple UDP packets in one message) must be
+        // split into one message per packet before sending. Streamed transports
+        // (WS, WT uni-stream) carry the whole batch in one message.
+        let split_gso_batches = client.uses_datagrams();
+
         let (mut client_stream, client_sink) = client.split();
         let mut client_sink = client_sink.sink_map_err(|e| e!(RunError::ClientStreamWrite, e));
 
@@ -668,11 +708,14 @@ impl ActiveRelayActor {
                     self.reset_inactive_timeout();
                     // TODO(frando): can we avoid the clone here?
                     let metrics = self.metrics.clone();
-                    let packet_iter = send_datagrams_buf.drain(..).map(|item| {
+                    let packet_iter = send_datagrams_buf.drain(..).flat_map(|item| {
                         metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
-                        Ok(ClientToRelayMsg::Datagrams {
-                            dst_endpoint_id: item.remote_endpoint,
-                            datagrams: item.datagrams,
+                        let dst_endpoint_id = item.remote_endpoint;
+                        split_gso(item.datagrams, split_gso_batches).map(move |datagrams| {
+                            Ok(ClientToRelayMsg::Datagrams {
+                                dst_endpoint_id,
+                                datagrams,
+                            })
                         })
                     });
                     let mut packet_stream = n0_future::stream::iter(packet_iter);
