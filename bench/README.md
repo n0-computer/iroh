@@ -129,13 +129,39 @@ loopback numbers (release, 10s runs):
 Two important caveats:
 
 - The datagram win **does not generalize off loopback.** A WebTransport
-  datagram is capped at the QUIC path MTU (~1400 on a real network vs 65536 on
-  loopback), smaller than a full relayed packet plus its framing, so those
-  messages would be rejected by `send_datagram`. Datagram framing is only
-  viable for small messages or large-MTU paths.
+  datagram is capped at the relay connection's path MTU (~1400 on a real
+  network vs 65536 on loopback), so a full relayed packet plus its framing must
+  fit that budget. The relay H3 connection pins its minimum MTU to 1280 (see
+  `iroh_relay`'s `H3_MIN_MTU`) so a minimum-size iroh packet always fits and
+  datagram framing works on any real path; but the per-message budget is far
+  smaller than on loopback, so the large loopback lead shrinks to a modest one.
+  The `relay_degrade` rundown below measures the real off-loopback behaviour.
 - `bidi` is not just noisy but pathological on a single relay path: the two
   directions fight over the relay's per-client queues, the datagram download
   collapses to a few MiB/s (datagrams dropped once the queue is full, then
   retransmitted over a congested path), uni-stream goes lopsided, and WSS is
   unstable. Treat `bidi` numbers as illustrative of that contention, not as a
   transport ranking.
+
+## Degraded-network rundown (`relay_degrade`)
+
+The loopback harness above measures peak goodput. To measure the transports
+under realistic last-mile conditions there is a separate patchbay integration
+test, `relay_degrade` (linux-only, rootless user namespaces, serial). It runs
+two iroh endpoints behind symmetric `Nat::Corporate` NATs (so the connection
+stays relay-only with IP transports and GSO enabled) over a single relay at a
+1400-byte link MTU, sweeping the WebTransport framing (`ws` / `wt-uni` /
+`wt-datagram`) against three realistic conditions (`wifi` / `4g` / `3g`) in all
+three directions, plus a constant-rate datagram-delivery workload. See the
+module docs in `iroh/tests/patchbay/relay_degrade.rs` for the topology and
+measurement details.
+
+```bash
+bench/run_rundown.sh [RUNS]     # RUNS defaults to 3
+```
+
+It builds the test binary once, runs the full ladder `RUNS` times without
+recompiling, and writes three artifacts under `bench/`: `results-raw.csv` (every
+`RUNDOWN` row from every run), `results-agg.csv` (avg/min/max/stddev per cell),
+and `rundown.png` (one panel per direction plus datagram delivery, one line per
+framing, plotting the average with a min..max band). All three are git-ignored.
