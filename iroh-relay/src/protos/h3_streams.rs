@@ -33,6 +33,31 @@ use crate::ExportKeyingMaterial;
 /// Maximum bytes to read from a single uni stream before rejecting.
 const MAX_UNI_STREAM_SIZE: usize = crate::MAX_PACKET_SIZE + 64;
 
+/// Minimum (and initial) path MTU for the relay's H3/WebTransport QUIC
+/// connection.
+///
+/// In datagram framing each relayed message is a single QUIC DATAGRAM, whose
+/// payload is capped at the connection's current path MTU minus QUIC framing
+/// overhead (~38 bytes). The messages we carry are whole iroh QUIC packets, and
+/// iroh -- like all QUIC -- never sends a packet below the 1200-byte minimum. At
+/// QUIC's default MTU of 1200 the datagram budget is only ~1162, *below* that
+/// 1200-byte floor, so every full-size iroh packet is dropped and the tunneled
+/// connection cannot make progress.
+///
+/// This value is used as BOTH the initial MTU and the minimum MTU. The minimum
+/// matters as much as the initial: QUIC's MTU black-hole detector resets the
+/// path MTU down to `min_mtu` when it suspects the path shrank, and under a
+/// datagram flood with a little loss that reset fires spuriously. If `min_mtu`
+/// were left at the 1200 default, that reset would drop the datagram budget back
+/// to ~1162 mid-transfer and re-break the tunnel. Pinning both to the IPv6
+/// minimum link MTU (1280, guaranteed deliverable on any IPv6 path and
+/// universally safe in practice) keeps the datagram budget at ~1240 -- above
+/// iroh's 1200-byte floor -- for the whole connection. MTU discovery still
+/// probes upward from here on capable paths. A path below 1280 cannot carry a
+/// minimum-size iroh packet as a datagram at all; there the WebTransport
+/// connection is expected to fail and the client falls back to WebSocket.
+pub(crate) const H3_MIN_MTU: u16 = 1280;
+
 /// Relay transport using one unidirectional QUIC stream per message.
 ///
 /// Each message is sent on a fresh uni stream with a WT session header and
@@ -263,10 +288,15 @@ async fn send_one_message(
         let mut datagram = BytesMut::with_capacity(dgram_prefix.len() + payload.len());
         datagram.extend_from_slice(&dgram_prefix);
         datagram.extend_from_slice(&payload);
+        let dgram_len = datagram.len();
         return match conn.send_datagram(datagram.freeze()) {
             Ok(()) => Ok(()),
             Err(noq::SendDatagramError::TooLarge) => {
-                trace!("dropping too-large relay datagram; iroh QUIC will retransmit");
+                trace!(
+                    dgram_len,
+                    max = ?conn.max_datagram_size(),
+                    "dropping too-large relay datagram; iroh QUIC will retransmit"
+                );
                 Ok(())
             }
             Err(err) => Err(anyerr!(err)),

@@ -174,6 +174,11 @@ pub(super) async fn quic_connect(
     let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
     let mut transport = noq_proto::TransportConfig::default();
     transport.max_concurrent_uni_streams(256u32.into());
+    // Keep the datagram budget above iroh's 1200-byte QUIC packet floor for the
+    // whole connection -- both before MTU discovery runs and after a black-hole
+    // reset; see [`H3_MIN_MTU`].
+    let h3_mtu = crate::protos::h3_streams::H3_MIN_MTU;
+    transport.min_mtu(h3_mtu).initial_mtu(h3_mtu);
     client_config.transport_config(Arc::new(transport));
 
     trace!(%server_addr, %server_name, "WT: QUIC connecting");
