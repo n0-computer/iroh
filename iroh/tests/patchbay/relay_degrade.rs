@@ -1,7 +1,7 @@
 //! Relay-transport throughput under network degradation.
 //!
 //! These tests exercise iroh's relay transport (a peer-to-peer noq/QUIC
-//! connection tunneled over a single relay) at a standard 1500-byte link MTU,
+//! connection tunneled over a single relay) at a 1400-byte link MTU,
 //! parameterized over the WebTransport framing selected on the shared relay:
 //!
 //! - `ws`: WebSocket relay transport (`RelayConfig.h3 = None`).
@@ -89,12 +89,12 @@ use super::util::{self, is_relayed};
 
 const ALPN: &[u8] = b"relay-degrade";
 
-/// Link MTU used for the degraded path: standard 1500-byte Ethernet, the most
-/// common real last-mile MTU. This leaves enough headroom that a full-size iroh
-/// QUIC packet still fits inside one WebTransport datagram (payload budget
-/// ~= WT_MTU - 40) once the relay actor has split GSO batches, so wt-datagram
-/// framing carries bulk traffic without dropping every packet.
-const LINK_MTU: u32 = 1500;
+/// Link MTU used for the degraded path: 1400 bytes, a common real last-mile MTU
+/// once PPPoE/tunnel overhead is subtracted from Ethernet's 1500. The relay H3
+/// connection pins its minimum MTU to 1280 (see `iroh_relay`'s `H3_MIN_MTU`), so
+/// even at this reduced link MTU the datagram budget clears iroh's 1200-byte
+/// QUIC packet floor and wt-datagram framing carries bulk traffic.
+const LINK_MTU: u32 = 1400;
 
 /// Per-transfer upper bound: a single bulk transfer must finish within this or
 /// it is treated as a failed cell (guards against stalls hanging the suite).
