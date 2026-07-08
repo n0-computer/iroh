@@ -48,7 +48,7 @@ use crate::{
         ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_DATAGRAMS_QUERY_PARAM, RELAY_PATH,
     },
     protos::{
-        h3_streams::WtBytesFramed,
+        h3_streams::{H3_MIN_MTU, WtBytesFramed},
         handshake::{self, KeyMaterialClientAuth},
     },
 };
@@ -177,8 +177,7 @@ pub(super) async fn quic_connect(
     // Keep the datagram budget above iroh's 1200-byte QUIC packet floor for the
     // whole connection -- both before MTU discovery runs and after a black-hole
     // reset; see [`H3_MIN_MTU`].
-    let h3_mtu = crate::protos::h3_streams::H3_MIN_MTU;
-    transport.min_mtu(h3_mtu).initial_mtu(h3_mtu);
+    transport.min_mtu(H3_MIN_MTU).initial_mtu(H3_MIN_MTU);
     client_config.transport_config(Arc::new(transport));
 
     trace!(%server_addr, %server_name, "WT: QUIC connecting");

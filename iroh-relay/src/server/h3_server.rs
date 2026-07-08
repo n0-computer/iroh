@@ -22,7 +22,7 @@ use crate::{
         ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_DATAGRAMS_QUERY_PARAM, RELAY_PATH,
     },
     protos::{
-        h3_streams::{WtBytesFramed, drain_in_background},
+        h3_streams::{H3_MIN_MTU, WtBytesFramed, drain_in_background},
         handshake,
     },
     server::{ClientRequest, DynAccessControl},
@@ -115,15 +115,14 @@ impl H3RelayServer {
         let transport_config = Arc::get_mut(&mut server_config.transport).expect("not used yet");
         // Uni streams: high limit for per-message uni streams.
         // Bidi streams: 1 for the CONNECT session.
-        let h3_mtu = crate::protos::h3_streams::H3_MIN_MTU;
         transport_config
             .max_concurrent_uni_streams(256u32.into())
             .max_concurrent_bidi_streams(2_u8.into())
             // Keep the datagram budget above iroh's 1200-byte QUIC packet floor
             // for the whole connection -- both before MTU discovery runs and
             // after a black-hole reset; see [`H3_MIN_MTU`].
-            .min_mtu(h3_mtu)
-            .initial_mtu(h3_mtu);
+            .min_mtu(H3_MIN_MTU)
+            .initial_mtu(H3_MIN_MTU);
 
         let endpoint = noq::Endpoint::server(server_config, bind_addr)
             .map_err(|err| e!(H3SpawnError::EndpointServer, err))?;

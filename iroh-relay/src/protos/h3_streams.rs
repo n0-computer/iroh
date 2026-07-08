@@ -49,13 +49,26 @@ const MAX_UNI_STREAM_SIZE: usize = crate::MAX_PACKET_SIZE + 64;
 /// path MTU down to `min_mtu` when it suspects the path shrank, and under a
 /// datagram flood with a little loss that reset fires spuriously. If `min_mtu`
 /// were left at the 1200 default, that reset would drop the datagram budget back
-/// to ~1162 mid-transfer and re-break the tunnel. Pinning both to the IPv6
-/// minimum link MTU (1280, guaranteed deliverable on any IPv6 path and
-/// universally safe in practice) keeps the datagram budget at ~1240 -- above
-/// iroh's 1200-byte floor -- for the whole connection. MTU discovery still
-/// probes upward from here on capable paths. A path below 1280 cannot carry a
-/// minimum-size iroh packet as a datagram at all; there the WebTransport
-/// connection is expected to fail and the client falls back to WebSocket.
+/// to ~1162 mid-transfer and re-break the tunnel. MTU discovery still probes
+/// upward from here on capable paths.
+///
+/// Minimum value required, worst case:
+///
+/// ```text
+///   datagram we send = prefix + iroh_packet   must fit   current_mtu - overhead
+///     iroh_packet <= 1200   (iroh never sends below QUIC's minimum MTU)
+///     prefix      <= 8       (Quarter-Stream-ID varint, 1..=8 bytes)
+///     overhead     = 38      (QUIC DATAGRAM framing: measured, MTU 1200 -> budget 1162)
+///   => current_mtu >= 1200 + 8 + 38 = 1246
+/// ```
+///
+/// 1280 (the IPv6 minimum link MTU, RFC 8200) is the smallest standard value
+/// clearing 1246: its datagram budget is 1280 - 38 = 1242, which carries iroh's
+/// 1200-byte floor plus any prefix with room to spare. It is also guaranteed
+/// deliverable on every IPv6 path, so pinning the floor there never breaks a
+/// real relay connection. A path below 1280 cannot carry a minimum-size iroh
+/// packet as a datagram at all; there the WebTransport connection is expected to
+/// fail and the client falls back to WebSocket.
 pub(crate) const H3_MIN_MTU: u16 = 1280;
 
 /// Relay transport using one unidirectional QUIC stream per message.
