@@ -86,8 +86,10 @@ impl DnsConfig {
 }
 
 /// A DNS server that serves pkarr signed packets.
+#[derive(derive_more::Debug)]
 pub(crate) struct DnsServer {
     local_addr: SocketAddr,
+    #[debug("hickory_server::Server<DnsHandler>")]
     server: hickory_server::Server<DnsHandler>,
 }
 
