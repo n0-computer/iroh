@@ -22,7 +22,10 @@ use crate::{
         ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, RELAY_WT_MODE_QUERY_PARAM,
     },
     protos::{
-        h3_streams::{H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WtBytesFramed, drain_in_background},
+        h3_streams::{
+            H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WT_REORDER_PACKET_THRESHOLD, WtBytesFramed,
+            drain_in_background,
+        },
         handshake,
     },
     relay_map::WtTransferMode,
@@ -124,6 +127,20 @@ impl H3RelayServer {
             // after a black-hole reset; see [`H3_MIN_MTU`].
             .min_mtu(H3_MIN_MTU)
             .initial_mtu(H3_MIN_MTU);
+        // BBR instead of the default (loss-based) Cubic: this is the server end
+        // of the same relay hop, which sends the bulk download traffic. On a
+        // rate-limited, shallow-buffer last-mile link Cubic overruns the buffer
+        // and tail-drops heavily (~40% on a wifi profile), which the reliable
+        // relay stream retransmits. BBR paces to the bottleneck bandwidth. See
+        // the client side in `client/h3_conn.rs`.
+        transport_config.congestion_controller_factory(Arc::new(
+            noq_proto::congestion::Bbr3Config::default(),
+        ));
+        // Tolerate a jittery last-mile link's packet reordering rather than
+        // misreading it as loss; this end sends the bulk download traffic, so
+        // its loss detection governs the retransmit rate. See
+        // [`WT_REORDER_PACKET_THRESHOLD`].
+        transport_config.packet_threshold(WT_REORDER_PACKET_THRESHOLD);
 
         let endpoint = noq::Endpoint::server(server_config, bind_addr)
             .map_err(|err| e!(H3SpawnError::EndpointServer, err))?;
@@ -316,7 +333,62 @@ async fn handle_wt_connection(
     // stream) open until the client disconnects; dropping them would reset the
     // streams and tear the WebTransport session down.
     let _session_streams = session_streams;
+
+    // Periodic per-hop stats for benchmarking (enable with `wt_hop_stats=trace`).
+    // Logs the hop's cumulative UDP tx/rx, loss, and current RTT once a second
+    // so a bulk transfer's delivery rate and queueing delay can be read from the
+    // deltas -- the end-of-connection log below often races the relay shutdown.
+    // Only spawn the periodic sampler when the target is actually enabled, so it
+    // costs nothing in production.
+    let stats_task = tracing::enabled!(target: "wt_hop_stats", tracing::Level::TRACE).then(|| {
+        let stats_conn = conn.clone();
+        tokio::spawn(
+            async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+                loop {
+                    tick.tick().await;
+                    let s = stats_conn.stats();
+                    let rtt_us = stats_conn
+                        .rtt(noq::PathId::ZERO)
+                        .map(|d| d.as_micros() as u64)
+                        .unwrap_or(0);
+                    trace!(
+                        target: "wt_hop_stats",
+                        tx_datagrams = s.udp_tx.datagrams,
+                        tx_bytes = s.udp_tx.bytes,
+                        tx_ios = s.udp_tx.ios,
+                        rx_datagrams = s.udp_rx.datagrams,
+                        lost_packets = s.lost_packets,
+                        rtt_us,
+                        "hop tick",
+                    );
+                }
+            }
+            .instrument(tracing::Span::current()),
+        )
+    });
     conn.closed().await;
+    if let Some(task) = stats_task {
+        task.abort();
+    }
+
+    // End-of-connection stats for this WT relay hop's real UDP socket. The
+    // datagrams/ios ratio is the mean GSO/GRO batch size (~1 means a syscall
+    // per packet); together with loss and rtt this characterises the hop that
+    // carries the tunneled p2p traffic. Enable with `wt_hop_stats=debug`.
+    let s = conn.stats();
+    debug!(
+        target: "wt_hop_stats",
+        udp_tx_datagrams = s.udp_tx.datagrams,
+        udp_tx_ios = s.udp_tx.ios,
+        udp_tx_bytes = s.udp_tx.bytes,
+        udp_rx_datagrams = s.udp_rx.datagrams,
+        udp_rx_ios = s.udp_rx.ios,
+        udp_rx_bytes = s.udp_rx.bytes,
+        lost_packets = s.lost_packets,
+        lost_bytes = s.lost_bytes,
+        "WT relay-hop closed",
+    );
 
     Ok(())
 }

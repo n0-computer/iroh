@@ -51,6 +51,21 @@ type OrderedRecv = Arc<Mutex<Option<BufReader<noq::RecvStream>>>>;
 /// Maximum bytes to read from a single uni stream before rejecting.
 const MAX_UNI_STREAM_SIZE: usize = crate::MAX_PACKET_SIZE + 64;
 
+/// Packet-reordering threshold for the relay's H3/WebTransport QUIC connection.
+///
+/// QUIC (RFC 9002) declares a packet lost once this many later-numbered packets
+/// have been acknowledged before it. The default of 3 is far too aggressive for
+/// the reordering last-mile links relays sit behind: a wifi profile with a few
+/// ms of jitter reorders many packets at bulk send rates (e.g. ~18 packets per
+/// 2 ms at 100 Mbit), so at a threshold of 3 the connection declares a large
+/// fraction of in-order packets lost *spuriously* and retransmits them --
+/// measured at ~40-47% "loss" on a wifi profile with only 0.1% real loss, which
+/// halves goodput and inflates RTT. TCP avoids this by adapting its reordering
+/// window; QUIC's threshold is fixed. Raising it makes loss detection
+/// effectively time-based (the 9/8-RTT time threshold still catches genuine
+/// losses promptly), tolerating reordering the way the link requires.
+pub(crate) const WT_REORDER_PACKET_THRESHOLD: u32 = 1000;
+
 /// Concurrent unidirectional stream limit for the relay H3/WebTransport
 /// connection.
 ///
