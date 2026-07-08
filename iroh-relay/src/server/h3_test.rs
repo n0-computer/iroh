@@ -51,11 +51,18 @@ mod tests {
     async fn connect_h3_client(
         server_addr: std::net::SocketAddr,
         secret_key: SecretKey,
+        use_datagrams: bool,
     ) -> Result<Client> {
         let tls_config = crate::tls::make_dangerous_client_config();
 
-        let (io, state, local_addr) =
-            h3_conn::connect_h3(server_addr, "localhost", tls_config, &secret_key).await?;
+        let (io, state, local_addr) = h3_conn::connect_h3(
+            server_addr,
+            "localhost",
+            tls_config,
+            &secret_key,
+            use_datagrams,
+        )
+        .await?;
 
         let conn = Conn::from_wt(io, state, KeyCache::new(128), ProtocolVersion::default());
         Ok(Client::from_conn(conn, Some(local_addr)))
@@ -94,10 +101,9 @@ mod tests {
     // end-to-end comparison drives the transfer example over a localhost relay.
     // See `bench/run.sh` and `plans/h3-bench.md`.
 
-    /// Test with standalone H3 relay server and direct H3 clients.
-    #[tokio::test]
-    #[traced_test]
-    async fn test_h3_relay_clients() -> Result<()> {
+    /// Round-trip two direct H3 clients through a standalone H3 relay, using the
+    /// given framing (uni streams or QUIC datagrams).
+    async fn h3_relay_roundtrip(use_datagrams: bool) -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
         let server = spawn_h3_relay()?;
         let server_addr = server.bind_addr();
@@ -106,11 +112,11 @@ mod tests {
 
         let a_secret_key = SecretKey::from_bytes(&rng.random());
         let a_key = a_secret_key.public();
-        let mut client_a = connect_h3_client(server_addr, a_secret_key).await?;
+        let mut client_a = connect_h3_client(server_addr, a_secret_key, use_datagrams).await?;
 
         let b_secret_key = SecretKey::from_bytes(&rng.random());
         let b_key = b_secret_key.public();
-        let mut client_b = connect_h3_client(server_addr, b_secret_key).await?;
+        let mut client_b = connect_h3_client(server_addr, b_secret_key, use_datagrams).await?;
 
         // A -> B
         let msg = Datagrams::from("hello over h3, b!");
@@ -142,6 +148,18 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    #[traced_test]
+    async fn test_h3_relay_clients_uni() -> Result<()> {
+        h3_relay_roundtrip(false).await
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_h3_relay_clients_datagrams() -> Result<()> {
+        h3_relay_roundtrip(true).await
+    }
+
     /// Test H3 via `ClientBuilder::enable_h3(true)` against the full integrated server.
     #[tokio::test]
     #[traced_test]
@@ -165,7 +183,7 @@ mod tests {
         let a_key = a_secret_key.public();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, dns_resolver())
             .tls_client_config(client_config.clone())
-            .enable_h3(true)
+            .enable_h3(Default::default())
             .connect()
             .await?;
 
@@ -181,7 +199,7 @@ mod tests {
         let b_key = b_secret_key.public();
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, dns_resolver())
             .tls_client_config(client_config)
-            .enable_h3(true)
+            .enable_h3(Default::default())
             .connect()
             .await?;
 
@@ -237,7 +255,7 @@ mod tests {
         // enable_h3 is true but server has no H3, should fall back to WS.
         let client_a = ClientBuilder::new(relay_url, a_secret_key, dns_resolver())
             .tls_client_config(client_config)
-            .enable_h3(true)
+            .enable_h3(Default::default())
             .connect()
             .await?;
 

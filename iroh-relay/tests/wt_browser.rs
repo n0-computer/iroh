@@ -15,6 +15,7 @@
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
+    H3Opts,
     client::{Client, ClientBuilder, Transport},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 };
@@ -49,9 +50,10 @@ fn setup() {
 }
 
 async fn connect(secret_key: SecretKey) -> Client {
+    let mut h3 = H3Opts::default();
+    h3.server_cert_hashes = Some(cert_hashes());
     ClientBuilder::new(relay_url(), secret_key)
-        .enable_h3(true)
-        .server_cert_hashes(cert_hashes())
+        .enable_h3(h3)
         .connect()
         .await
         .expect("connect over browser WebTransport")

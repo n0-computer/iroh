@@ -528,7 +528,7 @@ pub(crate) mod relay {
             .quic_addr()
             .map(|addr| RelayQuicConfig::new(addr.port()));
         let mut cfg = RelayConfig::new(url, quic);
-        cfg.h3 = true;
+        cfg.h3 = Some(Default::default());
         let relay_map: RelayMap = cfg.into();
 
         Ok((relay_map, server))

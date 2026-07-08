@@ -222,6 +222,30 @@ impl fmt::Display for RelayMap {
     }
 }
 
+/// Options for the HTTP/3 (WebTransport) relay transport.
+///
+/// Construct with [`H3Opts::default`] and set the public fields; the struct is
+/// `#[non_exhaustive]`, so it cannot be built with a struct literal.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct H3Opts {
+    /// SHA-256 hashes of the relay's certificate for browser WebTransport.
+    ///
+    /// When set, a browser WebTransport client validates the relay certificate
+    /// against these hashes (via `serverCertificateHashes`) instead of the
+    /// system roots -- for connecting to a relay with a self-signed certificate.
+    /// Ignored on native targets, which validate via the TLS config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_cert_hashes: Option<Vec<Vec<u8>>>,
+    /// Carry relay messages as QUIC datagrams instead of unidirectional streams.
+    ///
+    /// Datagrams avoid per-message stream setup but are capped at the
+    /// WebTransport connection's path MTU, so this is only useful for small
+    /// messages or on large-MTU paths. Defaults to `false` (uni-streams).
+    #[serde(default)]
+    pub use_datagrams: bool,
+}
+
 /// Information on a specific relay server.
 ///
 /// Includes the Url where it can be dialed.
@@ -243,21 +267,13 @@ pub struct RelayConfig {
     /// Set via [`RelayConfig::with_auth_token`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_token: Option<String>,
-    /// Whether this relay supports WebTransport (H3) connections.
+    /// WebTransport (H3) transport options for this relay.
     ///
-    /// When true and UDP is available, the client prefers WebTransport over
-    /// WebSocket for lower connection latency. Defaults to true.
+    /// `Some` (the default) means the client may prefer WebTransport over
+    /// WebSocket when UDP is available; `None` disables WebTransport for this
+    /// relay. Set via [`RelayConfig::with_h3`].
     #[serde(default = "h3_default")]
-    pub h3: bool,
-    /// SHA-256 hashes of the relay's certificate for browser WebTransport.
-    ///
-    /// When set, a browser WebTransport client validates the relay certificate
-    /// against these hashes (via `serverCertificateHashes`) instead of the
-    /// system roots. This is only used in the browser with the `h3-transport`
-    /// feature and is intended for connecting to a relay that uses a self-signed
-    /// certificate. Set via [`RelayConfig::with_server_cert_hashes`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub server_cert_hashes: Option<Vec<Vec<u8>>>,
+    pub h3: Option<H3Opts>,
 }
 
 impl RelayConfig {
@@ -268,16 +284,14 @@ impl RelayConfig {
             quic,
             auth_token: None,
             h3: h3_default(),
-            server_cert_hashes: None,
         }
     }
 
-    /// Sets the SHA-256 hashes of the relay's certificate for browser
-    /// WebTransport.
+    /// Sets the WebTransport (H3) transport options for this relay.
     ///
-    /// See [`RelayConfig::server_cert_hashes`].
-    pub fn with_server_cert_hashes(mut self, hashes: Vec<Vec<u8>>) -> Self {
-        self.server_cert_hashes = Some(hashes);
+    /// See [`RelayConfig::h3`] and [`H3Opts`].
+    pub fn with_h3(mut self, opts: H3Opts) -> Self {
+        self.h3 = Some(opts);
         self
     }
 
@@ -302,7 +316,6 @@ impl From<RelayUrl> for RelayConfig {
             quic: quic_config(),
             auth_token: None,
             h3: h3_default(),
-            server_cert_hashes: None,
         }
     }
 }
@@ -311,8 +324,8 @@ fn quic_config() -> Option<RelayQuicConfig> {
     Some(RelayQuicConfig::default())
 }
 
-fn h3_default() -> bool {
-    true
+fn h3_default() -> Option<H3Opts> {
+    Some(H3Opts::default())
 }
 
 /// Configuration for speaking to the QUIC endpoint on the relay

@@ -20,7 +20,8 @@
 //!    carries the relay subprotocol and, when the connection exports keying
 //!    material, an RFC 5705 auth header so the relay [`handshake`] adds no extra
 //!    RTT. Once the server accepts, relay messages flow over [`WtBytesFramed`],
-//!    one QUIC uni stream per message.
+//!    one QUIC uni stream per message (or one datagram per message when the
+//!    negotiated `H3Opts::use_datagrams` is set).
 //!
 //! If the server does not speak WebTransport (its settings disable it, or the
 //! `CONNECT` is rejected) the caller falls back to WebSocket.
@@ -43,7 +44,9 @@ use url::Url;
 use web_transport_proto as wt;
 
 use crate::{
-    http::{ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH},
+    http::{
+        ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_DATAGRAMS_HEADER, RELAY_PATH,
+    },
     protos::{
         h3_streams::WtBytesFramed,
         handshake::{self, KeyMaterialClientAuth},
@@ -195,10 +198,11 @@ pub(super) async fn wt_handshake(
     quic: QuicConnected,
     server_name: &str,
     secret_key: &SecretKey,
+    use_datagrams: bool,
 ) -> Result<(WtBytesFramed, WtConnState, SocketAddr), H3ConnectError> {
     tokio::time::timeout(
         WT_HANDSHAKE_TIMEOUT,
-        wt_handshake_inner(quic, server_name, secret_key),
+        wt_handshake_inner(quic, server_name, secret_key, use_datagrams),
     )
     .await
     .map_err(|_| e!(H3ConnectError::HandshakeTimeout))?
@@ -208,6 +212,7 @@ async fn wt_handshake_inner(
     quic: QuicConnected,
     server_name: &str,
     secret_key: &SecretKey,
+    use_datagrams: bool,
 ) -> Result<(WtBytesFramed, WtConnState, SocketAddr), H3ConnectError> {
     let QuicConnected {
         conn,
@@ -231,6 +236,12 @@ async fn wt_handshake_inner(
     if let Some(client_auth) = KeyMaterialClientAuth::new(secret_key, &conn) {
         debug!("using TLS keying material for relay authentication");
         connect_req = connect_req.with_header(CLIENT_AUTH_HEADER, client_auth.into_header_value());
+    }
+
+    // Ask the server to use QUIC-datagram framing for this session.
+    if use_datagrams {
+        connect_req =
+            connect_req.with_header(RELAY_DATAGRAMS_HEADER, http::HeaderValue::from_static("1"));
     }
 
     let send_settings = async {
@@ -289,8 +300,8 @@ async fn wt_handshake_inner(
         }));
     }
 
-    // Use uni streams for relay messages (one stream per message).
-    let mut io = WtBytesFramed::new(conn.clone(), session_id);
+    // Carry relay messages as datagrams or uni streams per the negotiated framing.
+    let mut io = WtBytesFramed::new(conn.clone(), session_id, use_datagrams);
 
     trace!("WT: starting relay handshake");
     handshake::clientside(&mut io, secret_key).await?;
@@ -308,7 +319,8 @@ pub(crate) async fn connect_h3(
     server_name: &str,
     tls_config: rustls::ClientConfig,
     secret_key: &SecretKey,
+    use_datagrams: bool,
 ) -> Result<(WtBytesFramed, WtConnState, SocketAddr), H3ConnectError> {
     let quic = quic_connect(server_addr, server_name, tls_config).await?;
-    wt_handshake(quic, server_name, secret_key).await
+    wt_handshake(quic, server_name, secret_key, use_datagrams).await
 }

@@ -18,7 +18,9 @@ use super::{
 };
 use crate::{
     KeyCache,
-    http::{ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH},
+    http::{
+        ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_DATAGRAMS_HEADER, RELAY_PATH,
+    },
     protos::{
         h3_streams::{WtBytesFramed, drain_in_background},
         handshake,
@@ -423,6 +425,12 @@ async fn wt_relay_handshake(
         .get(CLIENT_AUTH_HEADER.as_str())
         .cloned();
 
+    // Mirror the client's framing choice so both directions match.
+    let use_datagrams = connect_req
+        .headers
+        .get(RELAY_DATAGRAMS_HEADER.as_str())
+        .is_some();
+
     let resp = wt::ConnectResponse::OK.with_protocol(protocol_version.to_string());
     let mut resp_buf = bytes::BytesMut::new();
     resp.encode(&mut resp_buf)
@@ -430,8 +438,8 @@ async fn wt_relay_handshake(
     trace!("WT srv: sending CONNECT response");
     send.write_all(&resp_buf).await?;
 
-    // Use uni streams for relay messages (one stream per message).
-    let mut io = WtBytesFramed::new(conn.clone(), session_id);
+    // Carry relay messages as datagrams or uni streams per the client's request.
+    let mut io = WtBytesFramed::new(conn.clone(), session_id, use_datagrams);
 
     trace!("WT srv: starting relay handshake");
     let authentication = handshake::serverside(&mut io, client_auth_header).await?;

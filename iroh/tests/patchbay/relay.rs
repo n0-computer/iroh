@@ -188,13 +188,13 @@ async fn run_relay_ttfb(h3: bool) -> Result {
             let relays_a: Vec<_> = relay_a_map.relays();
             for cfg in relays_a {
                 let mut c = iroh_relay::RelayConfig::clone(&cfg);
-                c.h3 = true;
+                c.h3 = Some(Default::default());
                 client_map.insert(c.url.clone(), std::sync::Arc::new(c));
             }
             let relays_b: Vec<_> = client_relay_b.relays();
             for cfg in relays_b {
                 let mut c = iroh_relay::RelayConfig::clone(&cfg);
-                c.h3 = h3;
+                c.h3 = h3.then(Default::default);
                 client_map.insert(c.url.clone(), std::sync::Arc::new(c));
             }
 

@@ -40,7 +40,7 @@ use std::{
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
-    self as relay, PingTracker, RelayMap,
+    self as relay, H3Opts, PingTracker, RelayMap,
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, Status},
 };
@@ -225,13 +225,10 @@ struct RelayConnectionOptions {
     prefer_ipv6: Arc<AtomicBool>,
     /// Whether UDP is available (from net_report). Used to prefer H3 over WebSocket.
     udp_available: Arc<AtomicBool>,
-    /// Whether this relay advertises H3/WebTransport support.
-    h3_enabled: bool,
-    /// SHA-256 hashes of the relay's certificate for browser WebTransport.
-    ///
-    /// Only used in the browser; lets a WebTransport client validate a
-    /// self-signed relay certificate against these hashes.
-    server_cert_hashes: Option<Vec<Vec<u8>>>,
+    /// WebTransport (H3) transport options for this relay, or `None` to disable
+    /// WebTransport. Carries the browser certificate hashes and the datagram
+    /// framing preference.
+    h3: Option<H3Opts>,
     tls_config: rustls::ClientConfig,
     auth_token: Option<String>,
 }
@@ -322,8 +319,7 @@ impl ActiveRelayActor {
             proxy_url,
             prefer_ipv6,
             udp_available,
-            h3_enabled,
-            server_cert_hashes,
+            h3,
             tls_config,
             auth_token,
         } = opts;
@@ -340,24 +336,26 @@ impl ActiveRelayActor {
         {
             // Use H3/WebTransport if the relay advertises it and UDP is available.
             // Falls back to WS on failure (timeout or UDP blocked).
-            builder = builder.enable_h3(h3_enabled && udp_available.load(Ordering::Relaxed));
-            let _ = &server_cert_hashes;
+            if let Some(opts) = h3
+                && udp_available.load(Ordering::Relaxed)
+            {
+                builder = builder.enable_h3(opts);
+            }
         }
         #[cfg(all(wasm_browser, feature = "h3-transport"))]
         {
             // In the browser, WebTransport does not depend on UDP-availability
             // probing (a native concept): enable it whenever the relay
             // advertises H3, and let it fall back to WebSocket on failure.
-            builder = builder.enable_h3(h3_enabled);
-            if let Some(hashes) = server_cert_hashes {
-                builder = builder.server_cert_hashes(hashes);
+            if let Some(opts) = h3 {
+                builder = builder.enable_h3(opts);
             }
             let _ = &udp_available;
         }
         // WebTransport is only available with the `h3-transport` feature; the
         // fields are unused otherwise.
         #[cfg(not(feature = "h3-transport"))]
-        let _ = (&udp_available, &h3_enabled, &server_cert_hashes);
+        let _ = (&udp_available, &h3);
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
@@ -1290,10 +1288,7 @@ impl RelayActor {
 
         let relay_cfg = self.config.relay_map.get(&url);
         let auth_token = relay_cfg.as_ref().and_then(|cfg| cfg.auth_token.clone());
-        let h3_enabled = relay_cfg.as_ref().map(|cfg| cfg.h3).unwrap_or(true);
-        let server_cert_hashes = relay_cfg
-            .as_ref()
-            .and_then(|cfg| cfg.server_cert_hashes.clone());
+        let h3 = relay_cfg.as_ref().and_then(|cfg| cfg.h3.clone());
 
         let connection_opts = RelayConnectionOptions {
             secret_key: self.config.secret_key.clone(),
@@ -1302,8 +1297,7 @@ impl RelayActor {
             proxy_url: self.config.proxy_url.clone(),
             prefer_ipv6: self.config.ipv6_reported.clone(),
             udp_available: self.config.udp_available.clone(),
-            h3_enabled,
-            server_cert_hashes,
+            h3,
             tls_config: self.config.tls_config.clone(),
             auth_token,
         };
@@ -1497,9 +1491,8 @@ mod tests {
                     .client_config(default_provider())
                     .expect("infallible"),
                 udp_available: Arc::new(AtomicBool::new(false)),
-                h3_enabled: false,
+                h3: None,
                 auth_token: None,
-                server_cert_hashes: None,
             },
             stop_token,
             metrics: Default::default(),

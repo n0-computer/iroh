@@ -77,7 +77,7 @@ pub async fn run_relay_server_with_access(
         .quic_addr()
         .map(|addr| RelayQuicConfig::new(addr.port()));
     let mut cfg = RelayConfig::new(url.clone(), quic);
-    cfg.h3 = true;
+    cfg.h3 = Some(Default::default());
     let n: RelayMap = cfg.into();
     Ok((n, url, server))
 }

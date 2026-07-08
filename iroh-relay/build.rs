@@ -9,10 +9,6 @@ fn main() {
         with_crypto_provider: { any(feature = "tls-ring", feature = "tls-aws-lc-rs") }
     }
 
-    // Experimental toggle for benchmarking datagram vs uni-stream relay framing.
-    // Build with `RUSTFLAGS="--cfg h3_datagrams"`. See `plans/h3-bench.md`.
-    println!("cargo::rustc-check-cfg=cfg(h3_datagrams)");
-
     // Emit build-time environment variables
     if let Err(e) = emit_vergen() {
         eprintln!("vergen error: {e}");

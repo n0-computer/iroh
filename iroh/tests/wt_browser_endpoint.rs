@@ -60,11 +60,11 @@ async fn browser_endpoint_echo_through_relay() {
 
     // Point the browser endpoint at the local relay over WebTransport, trusting
     // its self-signed certificate by hash.
-    let relay_config =
-        RelayConfig::new(relay_url.clone(), None).with_server_cert_hashes(vec![cert_hash]);
+    let mut h3 = iroh::H3Opts::default();
+    h3.server_cert_hashes = Some(vec![cert_hash]);
+    let relay_config = RelayConfig::new(relay_url.clone(), None).with_h3(h3);
     tracing::info!(
-        h3 = relay_config.h3,
-        has_cert_hashes = relay_config.server_cert_hashes.is_some(),
+        h3 = relay_config.h3.is_some(),
         %relay_url,
         "browser relay config"
     );
