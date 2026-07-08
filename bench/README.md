@@ -175,3 +175,31 @@ minutes), run directly:
 cargo test --release -p iroh --test patchbay relay_degrade_quick \
   -- --ignored --test-threads=1 --nocapture 2>&1 | grep RUNDOWN
 ```
+
+## Real-process harness: `run_relaybench.py` + `relay_bench`
+
+The localhost script above and the in-test `relay_degrade` ladder both run the
+transport inside a single test process. `iroh/examples/relay_bench.rs` instead
+runs the release `transfer` example as a **real OS process in its own network
+namespace** (via patchbay), over an in-process relay, so the measurement has no
+in-process harness as a variable and supports long duration-based steady-state
+runs. Linux only (patchbay uses unprivileged user namespaces; no sudo).
+
+`bench/run_relaybench.py` drives it: a strictly sequential sweep over
+framing x link-condition x direction, N runs per cell, into a CSV with mean
+throughput plus the tunneled p2p connection's send/recv batch ratio, loss, and
+RTT. Keep the machine otherwise idle -- the WT relay connect races a
+timing-sensitive QUIC handshake that gets flaky under CPU contention.
+
+```bash
+cargo build --release -p iroh --features test-utils --example transfer --example relay_bench
+bench/run_relaybench.py --framings ws,wt-uni,wt-singlestream,wt-datagram \
+  --degradations wifi,4g --modes download --duration 8 --runs 3
+# per-role trace logs: add --rust-log 'iroh_relay=debug' --log-dir /tmp/rb
+# relay-hop QUIC stats: RUST_LOG=wt_hop_stats=trace on relay_bench directly
+```
+
+Framings are the `transfer --relay-transport` values (`ws`, `wt-uni`,
+`wt-datagram`, `wt-singlestream`). `--duration` gives steady-state goodput;
+`--size` gives a fixed-size transfer. Output CSV columns include `tx_batch` /
+`rx_batch` (mean GSO/GRO batch on the p2p connection), `loss_pct`, and `rtt_us`.
