@@ -53,6 +53,9 @@ mod util;
 #[path = "patchbay/relay.rs"]
 mod relay;
 
+#[path = "patchbay/relay_degrade.rs"]
+mod relay_degrade;
+
 /// Init the user namespace before any threads are spawned.
 ///
 /// This gives us all permissions we need for the patchbay tests.
