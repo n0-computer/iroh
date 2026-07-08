@@ -45,7 +45,7 @@ impl CertMode {
     ) -> Result<TlsAcceptor> {
         Ok(match self {
             CertMode::Manual => TlsAcceptor::manual(domains, cert_cache).await?,
-            CertMode::SelfSigned => TlsAcceptor::self_signed(domains).await?,
+            CertMode::SelfSigned => TlsAcceptor::self_signed(domains)?,
             CertMode::LetsEncrypt => {
                 let contact =
                     letsencrypt_contact.context("contact is required for letsencrypt cert mode")?;
@@ -78,7 +78,7 @@ impl<I: AsyncRead + AsyncWrite + Unpin + Send + 'static, S: Send + 'static> Acce
 }
 
 impl TlsAcceptor {
-    async fn self_signed(domains: Vec<String>) -> Result<Self> {
+    fn self_signed(domains: Vec<String>) -> Result<Self> {
         let rcgen::CertifiedKey { cert, signing_key } =
             rcgen::generate_simple_self_signed(domains).anyerr()?;
         let key = PrivateKeyDer::try_from(signing_key.serialize_der())?;
