@@ -119,16 +119,6 @@ pub mod staging {
     }
 }
 
-/// Contains all timeouts that we use in `iroh`.
-pub(crate) mod timeouts {
-    use n0_future::time::Duration;
-
-    // Timeouts for net_report
-
-    /// Maximum duration to wait for a net_report.
-    pub(crate) const NET_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use std::time::Duration;
