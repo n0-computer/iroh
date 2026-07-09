@@ -239,11 +239,10 @@ impl ZoneCache {
         let zone = if let Some(zone) = self.cache.get(pubkey) {
             trace!("cache hit {}", pubkey.to_z32());
             zone
-        } else if let Some(zone) = self.dht_cache.get(pubkey) {
+        } else {
+            let zone = self.dht_cache.get(pubkey)?;
             trace!("dht cache hit {}", pubkey.to_z32());
             zone
-        } else {
-            return None;
         };
         zone.resolve(name, record_type)
     }
