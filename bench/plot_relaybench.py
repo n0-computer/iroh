@@ -66,8 +66,15 @@ def load(path: Path) -> dict[tuple[str, str], dict]:
 
 
 def main() -> None:
-    csv_path = Path(sys.argv[1] if len(sys.argv) > 1 else "bench/relaybench-results.csv")
-    out_path = Path(sys.argv[2] if len(sys.argv) > 2 else "bench/relaybench-results.png")
+    # Optional "--subtitle TEXT" anywhere; the rest are positional csv/out paths.
+    args = sys.argv[1:]
+    subtitle = ""
+    if "--subtitle" in args:
+        i = args.index("--subtitle")
+        subtitle = args[i + 1] if i + 1 < len(args) else ""
+        del args[i : i + 2]
+    csv_path = Path(args[0] if len(args) > 0 else "bench/relaybench-results.csv")
+    out_path = Path(args[1] if len(args) > 1 else "bench/relaybench-results.png")
     rows = load(csv_path)
 
     degs = [d for d in DEGRADATIONS if any((fr, d) in rows for fr in FRAMINGS)]
@@ -187,16 +194,14 @@ def main() -> None:
         y=0.995,
         fontweight="bold",
     )
-    fig.text(
-        0.02,
-        0.965,
+    caption = (
         "download, real-process benchmark; bars = mean of N runs, whisker = min..max, "
-        "dashed line = ws baseline, Nx = vs ws",
-        fontsize=9,
-        color=MUTED,
-        ha="left",
+        "dashed line = ws baseline, Nx = vs ws"
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    if subtitle:
+        caption = f"{subtitle}\n{caption}"
+    fig.text(0.02, 0.965, caption, fontsize=9, color=MUTED, ha="left", va="top", linespacing=1.5)
+    fig.tight_layout(rect=(0, 0, 1, 0.94 if subtitle else 0.95))
     fig.savefig(out_path, dpi=140)
     print(f"wrote {out_path}")
 
