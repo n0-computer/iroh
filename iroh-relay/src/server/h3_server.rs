@@ -22,10 +22,7 @@ use crate::{
         ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, RELAY_WT_MODE_QUERY_PARAM,
     },
     protos::{
-        h3_streams::{
-            H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WT_REORDER_PACKET_THRESHOLD,
-            WT_REORDER_TIME_THRESHOLD, WtBytesFramed, drain_in_background,
-        },
+        h3_streams::{WtBytesFramed, configure_relay_h3_transport, drain_in_background},
         handshake,
     },
     relay_map::WtTransferMode,
@@ -117,32 +114,12 @@ impl H3RelayServer {
         let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
         let mut server_config = noq::ServerConfig::with_crypto(Arc::new(quic_server_config));
         let transport_config = Arc::get_mut(&mut server_config.transport).expect("not used yet");
-        // Uni streams: high limit for per-message uni streams.
-        // Bidi streams: 1 for the CONNECT session.
-        transport_config
-            .max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into())
-            .max_concurrent_bidi_streams(2_u8.into())
-            // Keep the datagram budget above iroh's 1200-byte QUIC packet floor
-            // for the whole connection -- both before MTU discovery runs and
-            // after a black-hole reset; see [`H3_MIN_MTU`].
-            .min_mtu(H3_MIN_MTU)
-            .initial_mtu(H3_MIN_MTU);
-        // BBR instead of the default (loss-based) Cubic: this is the server end
-        // of the same relay hop, which sends the bulk download traffic. On a
-        // rate-limited, shallow-buffer last-mile link Cubic overruns the buffer
-        // and tail-drops heavily (~40% on a wifi profile), which the reliable
-        // relay stream retransmits. BBR paces to the bottleneck bandwidth. See
-        // the client side in `client/h3_conn.rs`.
-        transport_config.congestion_controller_factory(Arc::new(
-            noq_proto::congestion::Bbr3Config::default(),
-        ));
-        // Tolerate a jittery last-mile link's packet reordering rather than
-        // misreading it as loss, in both the packet-count and time domains; this
-        // end sends the bulk download traffic, so its loss detection governs the
-        // retransmit rate. See [`WT_REORDER_PACKET_THRESHOLD`] and
-        // [`WT_REORDER_TIME_THRESHOLD`].
-        transport_config.packet_threshold(WT_REORDER_PACKET_THRESHOLD);
-        transport_config.time_threshold(WT_REORDER_TIME_THRESHOLD);
+        // Shared with the client end of the hop; see
+        // [`configure_relay_h3_transport`].
+        configure_relay_h3_transport(transport_config);
+        // Server-only: one CONNECT bidi stream per session, so cap incoming bidi
+        // streams low.
+        transport_config.max_concurrent_bidi_streams(2_u8.into());
 
         let endpoint = noq::Endpoint::server(server_config, bind_addr)
             .map_err(|err| e!(H3SpawnError::EndpointServer, err))?;

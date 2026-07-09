@@ -84,6 +84,43 @@ pub(crate) const WT_REORDER_PACKET_THRESHOLD: u32 = 1000;
 /// ~8ms RTT) with margin.
 pub(crate) const WT_REORDER_TIME_THRESHOLD: f32 = 2.0;
 
+/// Environment variable that, when set, leaves the relay H3 connection's
+/// congestion controller and reordering thresholds at the noq defaults instead
+/// of applying the tuning in [`configure_relay_h3_transport`]. A benchmarking
+/// knob to measure the tuning against a baseline; not for production use.
+const DEFAULT_TRANSPORT_ENV: &str = "IROH_RELAY_H3_DEFAULT_TRANSPORT";
+
+/// Configures the QUIC transport parameters for a relay H3/WebTransport
+/// connection, shared by both ends of a relay hop -- the client (in
+/// [`crate::client`]) and the server (in [`crate::server`]) -- so the two stay
+/// in lockstep. The server additionally lowers its bidi-stream limit.
+///
+/// The uni-stream limit and MTU floor are always applied, as baseline
+/// requirements: a high uni-stream limit so per-message uni streams never block
+/// on credits, and a 1280-byte MTU floor so the datagram budget stays above
+/// iroh's 1200-byte packet floor (before MTU discovery runs and after a
+/// black-hole reset). See [`MAX_CONCURRENT_UNI_STREAMS`] and [`H3_MIN_MTU`].
+///
+/// The congestion controller and reordering thresholds are the loss/jitter
+/// tuning for the relay's last-mile link: BBR instead of loss-based Cubic (which
+/// on a shallow-buffer link fills the buffer until it tail-drops, and the
+/// reliable relay stream then retransmits, collapsing goodput and inflating
+/// RTT), plus raised packet- and time-reordering thresholds so a jittery link's
+/// reordering is not misread as loss. Setting the [`DEFAULT_TRANSPORT_ENV`]
+/// environment variable leaves those at the noq defaults instead.
+pub(crate) fn configure_relay_h3_transport(config: &mut noq_proto::TransportConfig) {
+    config.max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into());
+    config.min_mtu(H3_MIN_MTU).initial_mtu(H3_MIN_MTU);
+
+    if std::env::var_os(DEFAULT_TRANSPORT_ENV).is_some() {
+        return;
+    }
+
+    config.congestion_controller_factory(Arc::new(noq_proto::congestion::Bbr3Config::default()));
+    config.packet_threshold(WT_REORDER_PACKET_THRESHOLD);
+    config.time_threshold(WT_REORDER_TIME_THRESHOLD);
+}
+
 /// Concurrent unidirectional stream limit for the relay H3/WebTransport
 /// connection.
 ///

@@ -48,10 +48,7 @@ use crate::{
         ALPN_RELAY_H3, CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, RELAY_WT_MODE_QUERY_PARAM,
     },
     protos::{
-        h3_streams::{
-            H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WT_REORDER_PACKET_THRESHOLD,
-            WT_REORDER_TIME_THRESHOLD, WtBytesFramed,
-        },
+        h3_streams::{WtBytesFramed, configure_relay_h3_transport},
         handshake::{self, KeyMaterialClientAuth},
     },
     relay_map::WtTransferMode,
@@ -184,26 +181,8 @@ pub(super) async fn quic_connect(
     })?;
     let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
     let mut transport = noq_proto::TransportConfig::default();
-    transport.max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into());
-    // Keep the datagram budget above iroh's 1200-byte QUIC packet floor for the
-    // whole connection -- both before MTU discovery runs and after a black-hole
-    // reset; see [`H3_MIN_MTU`].
-    transport.min_mtu(H3_MIN_MTU).initial_mtu(H3_MIN_MTU);
-    // BBR instead of the default (loss-based) Cubic. This QUIC connection carries
-    // an already-congestion-controlled iroh connection over the relay's last-mile
-    // link. On a rate-limited link with a shallow buffer, Cubic fills the buffer
-    // until it tail-drops -- measured at ~40% packet loss on a wifi-profile link,
-    // which the reliable relay stream then retransmits, collapsing goodput and
-    // inflating RTT. BBR paces to the estimated bottleneck bandwidth instead of
-    // probing by loss, so it avoids overrunning the buffer.
-    transport.congestion_controller_factory(Arc::new(
-        noq_proto::congestion::Bbr3Config::default(),
-    ));
-    // Tolerate the packet reordering of a jittery last-mile link instead of
-    // misreading it as loss, in both the packet-count and time domains; see
-    // [`WT_REORDER_PACKET_THRESHOLD`] and [`WT_REORDER_TIME_THRESHOLD`].
-    transport.packet_threshold(WT_REORDER_PACKET_THRESHOLD);
-    transport.time_threshold(WT_REORDER_TIME_THRESHOLD);
+    // Shared with the server end of the hop; see [`configure_relay_h3_transport`].
+    configure_relay_h3_transport(&mut transport);
     client_config.transport_config(Arc::new(transport));
 
     trace!(%server_addr, %server_name, "WT: QUIC connecting");
