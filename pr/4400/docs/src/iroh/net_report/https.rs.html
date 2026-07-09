@@ -64,7 +64,7 @@
 <a href=#64 id=64 data-nosnippet>64</a>/// native targets) so it follows the same path as relay client connections.
 <a href=#65 id=65 data-nosnippet>65</a></span><span class="attr">#[allow(clippy::unused_async)]
 <a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>run_probe(
-<a href=#67 id=67 data-nosnippet>67</a>    <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: DnsResolver,
 <a href=#68 id=68 data-nosnippet>68</a>    relay: RelayUrl,
 <a href=#69 id=69 data-nosnippet>69</a>    <span class="attr">#[cfg(not(wasm_browser))] </span>tls_config: rustls::ClientConfig,
 <a href=#70 id=70 data-nosnippet>70</a>) -&gt; <span class="prelude-ty">Result</span>&lt;HttpsProbeReport, MeasureHttpsLatencyError&gt; {
@@ -147,7 +147,7 @@
 <a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">let </span>dns_resolver = DnsResolver::new();
 <a href=#148 id=148 data-nosnippet>148</a>        <span class="macro">tracing::info!</span>(relay_url = <span class="question-mark">?</span>relay.url , <span class="string">"RELAY_URL"</span>);
 <a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">let </span>report = run_probe(
-<a href=#150 id=150 data-nosnippet>150</a>            <span class="kw-2">&amp;</span>dns_resolver,
+<a href=#150 id=150 data-nosnippet>150</a>            dns_resolver,
 <a href=#151 id=151 data-nosnippet>151</a>            relay.url,
 <a href=#152 id=152 data-nosnippet>152</a>            CaTlsConfig::insecure_skip_verify()
 <a href=#153 id=153 data-nosnippet>153</a>                .client_config(default_provider())
