@@ -303,11 +303,14 @@ def summarize(cell: Cell) -> dict[str, str]:
     mbps = [r.get("mbps", 0.0) for r in cell.runs]
     if mbps:
         mean = statistics.mean(mbps)
+        med = statistics.median(mbps)
         lo = min(mbps)
         hi = max(mbps)
         sd = statistics.stdev(mbps) if len(mbps) > 1 else 0.0
     else:
-        mean = lo = hi = sd = 0.0
+        mean = med = lo = hi = sd = 0.0
+    # cv%% = the coefficient of variation, a scale-free measure of run-to-run
+    # spread; median is more robust to an outlier run than the mean.
     row = {
         "framing": cell.framing,
         "degradation": cell.degradation,
@@ -316,9 +319,11 @@ def summarize(cell: Cell) -> dict[str, str]:
         "n": str(len(cell.runs)),
         "failures": str(cell.failures),
         "mean_mbps": f"{mean:.2f}",
+        "median_mbps": f"{med:.2f}",
         "min_mbps": f"{lo:.2f}",
         "max_mbps": f"{hi:.2f}",
         "stddev_mbps": f"{sd:.2f}",
+        "cv_pct": f"{100.0 * sd / mean:.1f}" if mean else "0",
     }
     # Mean of each numeric stat field across successful runs.
     for fld in STAT_FIELDS:
@@ -364,7 +369,8 @@ def print_table(rows: list[dict[str, str]]) -> None:
         ("mode", 9),
         ("n", 3),
         ("mean_mbps", 10),
-        ("stddev_mbps", 11),
+        ("median_mbps", 11),
+        ("cv_pct", 6),
         ("tx_batch", 8),
         ("rx_batch", 8),
         ("loss_pct", 8),
