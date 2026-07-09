@@ -46,6 +46,12 @@ ALL_FRAMINGS = ["ws", "wt-uni", "wt-datagram", "wt-singlestream"]
 # patchbay namespaces/impairment) instead of --degradation.
 ALL_DEGRADATIONS = ["localhost", "lan", "wifi", "4g", "3g"]
 ALL_MODES = ["download", "upload", "bidi"]
+# WebTransport relay-hop transport config. "tuned" is the fix (BBR +
+# reorder-tolerant loss detection); "default" reverts the congestion controller
+# and reordering thresholds to the noq defaults via IROH_RELAY_H3_DEFAULT_TRANSPORT.
+# Only affects the wt-* framings; ws does not use the WebTransport hop.
+ALL_CONFIGS = ["tuned", "default"]
+DEFAULT_TRANSPORT_ENV = "IROH_RELAY_H3_DEFAULT_TRANSPORT"
 
 # The line relay_bench prints on success is a space-separated list of key=value
 # tokens after the RELAYBENCH marker, e.g.
@@ -90,12 +96,13 @@ class Cell:
     framing: str
     degradation: str
     mode: str
+    config: str = "tuned"
     runs: list[dict] = field(default_factory=list)  # parsed result per success
     failures: int = 0
 
     @property
     def key(self) -> str:
-        return f"{self.framing}/{self.degradation}/{self.mode}"
+        return f"{self.config}/{self.framing}/{self.degradation}/{self.mode}"
 
 
 def parse_args() -> argparse.Namespace:
@@ -128,6 +135,19 @@ def parse_args() -> argparse.Namespace:
         "--modes",
         default="download",
         help=f"comma-separated directions (of {','.join(ALL_MODES)})",
+    )
+    p.add_argument(
+        "--configs",
+        default="tuned",
+        help=f"comma-separated WebTransport hop configs (of {','.join(ALL_CONFIGS)}); "
+        "'default' reverts the congestion controller + reordering thresholds to the "
+        "noq defaults. wt-* only; ws is run once.",
+    )
+    p.add_argument(
+        "--full-matrix",
+        action="store_true",
+        help="run every framing x degradation x mode x {tuned,default} and render a "
+        "grouped tuned-vs-default chart per mode. Long; tune --runs/--duration.",
     )
     dur = p.add_mutually_exclusive_group()
     dur.add_argument(
@@ -223,8 +243,17 @@ def run_cell(cell: Cell, args: argparse.Namespace, log_dir: Path) -> None:
         env = dict(os.environ)
         if args.rust_log:
             env["RUST_LOG"] = args.rust_log
+        # "default" config reverts the WebTransport hop's CC + reordering
+        # thresholds to the noq defaults; "tuned" is the ambient (fixed) build.
+        if cell.config == "default":
+            env[DEFAULT_TRANSPORT_ENV] = "1"
+        else:
+            env.pop(DEFAULT_TRANSPORT_ENV, None)
 
-        log_path = log_dir / f"{cell.framing}_{cell.degradation}_{cell.mode}_run{run}.log"
+        log_path = (
+            log_dir
+            / f"{cell.config}_{cell.framing}_{cell.degradation}_{cell.mode}_run{run}.log"
+        )
         label = f"{cell.key} run {run}/{args.runs}"
         print(f"  {label} ...", end="", flush=True, file=sys.stderr)
 
@@ -278,6 +307,7 @@ def summarize(cell: Cell) -> dict[str, str]:
         "framing": cell.framing,
         "degradation": cell.degradation,
         "mode": cell.mode,
+        "config": cell.config,
         "n": str(len(cell.runs)),
         "failures": str(cell.failures),
         "mean_mbps": f"{mean:.2f}",
@@ -302,8 +332,28 @@ def summarize(cell: Cell) -> dict[str, str]:
     return row
 
 
+def render_charts(csv_path: Path, modes: list[str]) -> None:
+    """Render a grouped tuned-vs-default chart per mode from the aggregated CSV."""
+    plot = Path(__file__).resolve().parent / "plot_relaybench.py"
+    if not plot.is_file():
+        print(f"(no plot script at {plot}; skipping charts)", file=sys.stderr)
+        return
+    subtitle = (
+        "WebTransport relay hop: tuned (BBR + reorder-tolerant loss detection) "
+        "vs default (Cubic)"
+    )
+    for mode in modes:
+        out = csv_path.with_name(f"{csv_path.stem}-{mode}.png")
+        subprocess.run(
+            [sys.executable, str(plot), str(csv_path), str(out),
+             "--mode", mode, "--subtitle", f"{mode} -- {subtitle}"],
+            check=False,
+        )
+
+
 def print_table(rows: list[dict[str, str]]) -> None:
     cols = [
+        ("config", 8),
         ("framing", 16),
         ("degradation", 11),
         ("mode", 9),
@@ -328,9 +378,16 @@ def main() -> None:
     if sys.platform != "linux":
         sys.exit("relay_bench requires linux (patchbay uses user namespaces)")
 
+    if args.full_matrix:
+        args.framings = ",".join(ALL_FRAMINGS)
+        args.degradations = ",".join(ALL_DEGRADATIONS)
+        args.modes = ",".join(ALL_MODES)
+        args.configs = ",".join(ALL_CONFIGS)
+
     framings = split_csv(args.framings, ALL_FRAMINGS, "framing")
     degradations = split_csv(args.degradations, ALL_DEGRADATIONS, "degradation")
     modes = split_csv(args.modes, ALL_MODES, "mode")
+    configs = split_csv(args.configs, ALL_CONFIGS, "config")
 
     # A duration-bounded transfer finishes in `duration` plus setup, so a run
     # that has not finished well past that is stuck: bound the wait tightly so a
@@ -347,26 +404,35 @@ def main() -> None:
 
     args.log_dir.mkdir(parents=True, exist_ok=True)
 
+    # Plan the cells. ws does not use the WebTransport hop, so the config knob
+    # does not affect it -- run it once (under the first config) rather than
+    # measuring identical WebSocket runs twice.
+    plan: list[tuple[str, str, str, str]] = []  # (config, framing, degradation, mode)
+    for config in configs:
+        for framing in framings:
+            if framing == "ws" and config != configs[0]:
+                continue
+            for degradation in degradations:
+                for mode in modes:
+                    plan.append((config, framing, degradation, mode))
+
     limit = f"--size {args.size}" if args.size is not None else f"--duration {args.duration}"
-    total = len(framings) * len(degradations) * len(modes)
     print(
         f"matrix: {len(framings)} framing x {len(degradations)} degradation x "
-        f"{len(modes)} mode = {total} cells, {args.runs} run(s) each, {limit}",
+        f"{len(modes)} mode x {len(configs)} config = {len(plan)} cells, "
+        f"{args.runs} run(s) each, {limit}",
         file=sys.stderr,
     )
 
     cells: list[Cell] = []
-    idx = 0
-    for framing in framings:
-        for degradation in degradations:
-            for mode in modes:
-                idx += 1
-                cell = Cell(framing, degradation, mode)
-                print(f"[{idx}/{total}] {cell.key}", file=sys.stderr)
-                run_cell(cell, args, args.log_dir)
-                cells.append(cell)
+    for idx, (config, framing, degradation, mode) in enumerate(plan, 1):
+        cell = Cell(framing, degradation, mode, config)
+        print(f"[{idx}/{len(plan)}] {cell.key}", file=sys.stderr)
+        run_cell(cell, args, args.log_dir)
+        cells.append(cell)
 
     rows = [summarize(c) for c in cells]
+    args.csv.parent.mkdir(parents=True, exist_ok=True)
     with args.csv.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
@@ -375,6 +441,10 @@ def main() -> None:
     print_table(rows)
     print(f"\nraw CSV: {args.csv}", file=sys.stderr)
     print(f"logs:    {args.log_dir}", file=sys.stderr)
+
+    # With more than one config, render the grouped tuned-vs-default chart(s).
+    if len(configs) > 1:
+        render_charts(args.csv, modes)
 
 
 if __name__ == "__main__":
