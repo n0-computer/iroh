@@ -382,7 +382,7 @@ struct EndpointArgs {
     /// The default is 1.25 MB, which gives a max throughput of 100 MBit/s at 100ms RTT.
     ///
     /// Accepts values like "5M", "2000K", etc.
-    #[clap(long, value_parser = parse_byte_size)]
+    #[clap(long, value_parser = parse_byte_size_u32)]
     receive_window: Option<u32>,
     /// Trust any server certificate (for local testing with self-signed certs).
     #[cfg(feature = "test-utils")]
@@ -993,6 +993,14 @@ async fn write_chunk_timeout(
 fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
     let cfg = parse_size::Config::new().with_binary();
     cfg.parse_size(s)
+}
+
+/// Like [`parse_byte_size`] but yields a `u32`, for args whose value type is
+/// `u32` (clap infers the value type from the parser, so a `u64` parser on a
+/// `u32` field panics at parse time with a downcast mismatch). Saturates at
+/// `u32::MAX`.
+fn parse_byte_size_u32(s: &str) -> std::result::Result<u32, parse_size::Error> {
+    parse_byte_size(s).map(|v| u32::try_from(v).unwrap_or(u32::MAX))
 }
 
 fn spawn_path_watcher(
