@@ -49,7 +49,13 @@ fn main() -> n0_error::Result<()> {
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use std::{net::IpAddr, path::PathBuf, process::Stdio, sync::Mutex, time::Duration};
+    use std::{
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        path::PathBuf,
+        process::Stdio,
+        sync::Mutex,
+        time::Duration,
+    };
 
     use clap::{Parser, ValueEnum};
     use n0_error::{Result, StdResultExt, anyerr, bail_any};
@@ -116,9 +122,22 @@ mod imp {
         /// Overall timeout for the whole run, in seconds.
         #[clap(long, default_value_t = 180)]
         timeout: u64,
+        /// Run relay + provider + fetcher as plain loopback processes on
+        /// 127.0.0.1 with no patchbay namespaces, NAT, or netem -- a
+        /// no-namespacing baseline. `--degradation` is ignored in this mode; the
+        /// peers are forced onto the relay path with `--relay-only`.
+        #[clap(long)]
+        localhost: bool,
         /// Args passed through to both `transfer` invocations (after `--`).
         #[clap(last = true)]
         passthrough: Vec<String>,
+    }
+
+    /// Which transfer process is being spawned.
+    #[derive(Debug, Clone, Copy)]
+    enum Role {
+        Provider,
+        Fetcher,
     }
 
     /// Process-global list of spawned child PIDs (provider, fetcher) so they can
@@ -189,7 +208,11 @@ mod imp {
         // transfer, dropping the `Lab` blocks joining a stuck namespace worker
         // thread. On timeout we SIGKILL the children and exit the process hard,
         // letting the kernel reclaim the rootless namespaces.
-        let handle = tokio::spawn(run_inner(args));
+        let handle = if args.localhost {
+            tokio::spawn(run_localhost(args))
+        } else {
+            tokio::spawn(run_inner(args))
+        };
         match timeout(Duration::from_secs(timeout_secs), handle).await {
             Ok(Ok(res)) => {
                 kill_children();
@@ -231,7 +254,9 @@ mod imp {
         // Spawn the relay server in-process inside the relay device's namespace.
         let (ready_tx, ready_rx) = oneshot::channel();
         let _relay_task = relay_dev.spawn(async move |_ctx| {
-            let server = relay::spawn_relay().await.expect("spawn relay");
+            let server = relay::spawn_relay(Ipv6Addr::UNSPECIFIED.into(), 80, 443, 7842)
+                .await
+                .expect("spawn relay");
             ready_tx.send(()).ok();
             std::future::pending::<()>().await;
             drop(server);
@@ -273,6 +298,59 @@ mod imp {
             .build()
             .await?;
 
+        // Provider and fetcher run as real processes in their peer namespaces
+        // via `spawn_command`. The Corporate NATs already force the relay path,
+        // so `--relay-only` is not needed here.
+        let deg_label = format!("{:?}", args.degradation);
+        run_transfers(&args, &relay_url, &deg_label, false, |role, cmd| {
+            let dev = match role {
+                Role::Provider => &provider_dev,
+                Role::Fetcher => &fetcher_dev,
+            };
+            dev.spawn_command(cmd)
+                .map_err(|e| anyerr!("spawn {role:?}: {e}"))
+        })
+        .await
+    }
+
+    /// No-namespacing baseline: relay + provider + fetcher as plain loopback
+    /// processes on 127.0.0.1, with `--relay-only` so the peers use the relay
+    /// path rather than discovering a direct loopback connection.
+    async fn run_localhost(args: Args) -> Result<()> {
+        // Fixed high ports (no root for :443 in the host namespace). H3/WT is
+        // served on the TLS port over UDP; the QAD QUIC endpoint is separate.
+        const HTTPS_PORT: u16 = 38443;
+        let bind_ip: IpAddr = Ipv4Addr::LOCALHOST.into();
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let _relay_task = tokio::spawn(async move {
+            let server = relay::spawn_relay(bind_ip, 38080, HTTPS_PORT, 37842)
+                .await
+                .expect("spawn relay");
+            ready_tx.send(()).ok();
+            std::future::pending::<()>().await;
+            drop(server);
+        });
+        ready_rx.await.std_context("relay startup")?;
+        let relay_url = format!("https://127.0.0.1:{HTTPS_PORT}");
+        run_transfers(&args, &relay_url, "Localhost", true, |_role, mut cmd| {
+            cmd.spawn().map_err(|e| anyerr!("spawn transfer: {e}"))
+        })
+        .await
+    }
+
+    /// Spawn the provider and fetcher `transfer` processes against `relay_url`,
+    /// read the fetcher's stats, and print the `RELAYBENCH` line. `spawn` places
+    /// each child in the right place (a peer namespace, or plain loopback).
+    async fn run_transfers<F>(
+        args: &Args,
+        relay_url: &str,
+        deg_label: &str,
+        relay_only: bool,
+        spawn: F,
+    ) -> Result<()>
+    where
+        F: Fn(Role, Command) -> Result<tokio::process::Child>,
+    {
         // --- Provider ---
         // No IROH_SECRET: each run gets a fresh random endpoint id, which the
         // benchmark reads from stdout anyway. Fixed ids risked a stray leaked
@@ -283,17 +361,18 @@ mod imp {
             .arg("json")
             .arg("provide")
             .arg("--relay-url")
-            .arg(&relay_url)
+            .arg(relay_url)
             .arg("--insecure")
             .arg("--no-pkarr-publish")
-            .arg("--no-dns-resolve")
+            .arg("--no-dns-resolve");
+        if relay_only {
+            provide_cmd.arg("--relay-only");
+        }
+        provide_cmd
             .args(&args.passthrough)
             .stdout(Stdio::piped())
-            .stderr(role_stderr(&args, "provider")?);
-
-        let mut provider = provider_dev
-            .spawn_command(provide_cmd)
-            .map_err(|e| anyerr!("spawn provider: {e}"))?;
+            .stderr(role_stderr(args, "provider")?);
+        let mut provider = spawn(Role::Provider, provide_cmd)?;
         register_child(&provider);
         let provider_out = provider.stdout.take().std_context("provider stdout")?;
 
@@ -329,18 +408,20 @@ mod imp {
         }
         fetch_cmd
             .arg("--relay-url")
-            .arg(&relay_url)
+            .arg(relay_url)
             .arg("--remote-relay-url")
-            .arg(&relay_url)
+            .arg(relay_url)
             .arg("--insecure")
             .arg("--no-pkarr-publish")
-            .arg("--no-dns-resolve")
+            .arg("--no-dns-resolve");
+        if relay_only {
+            fetch_cmd.arg("--relay-only");
+        }
+        fetch_cmd
             .args(&args.passthrough)
             .stdout(Stdio::piped())
-            .stderr(role_stderr(&args, "fetcher")?);
-        let mut fetcher = fetcher_dev
-            .spawn_command(fetch_cmd)
-            .map_err(|e| anyerr!("spawn fetcher: {e}"))?;
+            .stderr(role_stderr(args, "fetcher")?);
+        let mut fetcher = spawn(Role::Fetcher, fetch_cmd)?;
         register_child(&fetcher);
         let fetcher_out = fetcher.stdout.take().std_context("fetcher stdout")?;
 
@@ -354,13 +435,12 @@ mod imp {
             Some(s) => {
                 let mbps = (s.bytes as f64 * 8.0 / 1_000_000.0) / s.secs;
                 println!(
-                    "RELAYBENCH bytes={} secs={:.3} mbps={mbps:.2} mode={} degradation={:?} \
+                    "RELAYBENCH bytes={} secs={:.3} mbps={mbps:.2} mode={} degradation={deg_label} \
                      udp_tx_datagrams={} udp_tx_ios={} udp_rx_datagrams={} udp_rx_ios={} \
                      lost_packets={} lost_bytes={} cwnd={} rtt_us={}",
                     s.bytes,
                     s.secs,
                     args.mode,
-                    args.degradation,
                     s.udp_tx_datagrams,
                     s.udp_tx_ios,
                     s.udp_rx_datagrams,
@@ -450,26 +530,32 @@ mod imp {
     }
 
     mod relay {
-        use std::net::{IpAddr, Ipv6Addr};
+        use std::net::IpAddr;
 
         use iroh_relay::server::{
             AllowAll, CertConfig, QuicConfig, RelayConfig as RelayServerConfig, Server,
             ServerConfig, SpawnError, TlsConfig, testing::self_signed_tls_certs_and_config,
         };
 
-        /// Spawn a relay server bound on `[::]` (v4 + v6) with a self-signed cert
-        /// and H3/WebTransport enabled. Clients connect with `--insecure`.
-        pub(super) async fn spawn_relay() -> Result<Server, SpawnError> {
-            let bind_ip: IpAddr = Ipv6Addr::UNSPECIFIED.into();
+        /// Spawn a relay server with a self-signed cert and H3/WebTransport
+        /// enabled, bound to `bind_ip` on the given ports (HTTP, HTTPS+H3, QUIC).
+        /// H3/WT is served on the HTTPS port over UDP. Clients connect with
+        /// `--insecure`.
+        pub(super) async fn spawn_relay(
+            bind_ip: IpAddr,
+            http_port: u16,
+            https_port: u16,
+            quic_port: u16,
+        ) -> Result<Server, SpawnError> {
             let (_certs, server_config) = self_signed_tls_certs_and_config();
-            let tls = TlsConfig::new((bind_ip, 443), CertConfig::Manual { server_config });
-            let mut relay = RelayServerConfig::new((bind_ip, 80));
+            let tls = TlsConfig::new((bind_ip, https_port), CertConfig::Manual { server_config });
+            let mut relay = RelayServerConfig::new((bind_ip, http_port));
             relay.tls = Some(tls);
             relay.key_cache_capacity = Some(1024);
             relay.access = std::sync::Arc::new(AllowAll);
             let mut config = ServerConfig::default();
             config.relay = Some(relay);
-            config.quic = Some(QuicConfig::new((bind_ip, 7842)));
+            config.quic = Some(QuicConfig::new((bind_ip, quic_port)));
             Server::spawn(config).await
         }
     }

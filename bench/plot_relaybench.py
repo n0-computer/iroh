@@ -31,8 +31,9 @@ COLORS = {
     "wt-singlestream": "#009E73",
     "wt-datagram": "#D55E00",
 }
-DEGRADATIONS = ["lan", "wifi", "4g", "3g"]
+DEGRADATIONS = ["localhost", "lan", "wifi", "4g", "3g"]
 DEG_TITLE = {
+    "localhost": "localhost  (loopback, no namespacing)",
     "lan": "LAN  (clean)",
     "wifi": "WiFi  (5ms, 2ms jitter, 0.1% loss)",
     "4g": "4G  (25ms, 8ms jitter, 0.5% loss)",
@@ -93,7 +94,7 @@ def main() -> None:
     for ax, deg in zip(axes, degs):
         present = [fr for fr in frms if (fr, deg) in rows]
         means, lo_err, hi_err, colors, labels = [], [], [], [], []
-        fails, partials = [], []
+        los, his, fails, partials = [], [], [], []
         for fr in present:
             r = rows[(fr, deg)]
             mean = float(r["mean_mbps"])
@@ -102,6 +103,8 @@ def main() -> None:
             n = int(r.get("n", 0) or 0)
             nfail = int(r.get("failures", 0) or 0)
             means.append(mean)
+            los.append(lo)
+            his.append(hi)
             lo_err.append(max(0.0, mean - lo))
             hi_err.append(max(0.0, hi - mean))
             colors.append(COLORS[fr])
@@ -139,21 +142,26 @@ def main() -> None:
 
         top = max(m + h for m, h in zip(means, hi_err)) if means else 1e-9
         top = max(top, 1e-9)
-        ax.set_ylim(0, top * 1.28)
-        for xi, (mean, hi, fr, failed, partial) in enumerate(zip(means, hi_err, present, fails, partials)):
+        ax.set_ylim(0, top * 1.42)
+        for xi, (mean, lo, hi_v, herr, fr, failed, partial) in enumerate(
+            zip(means, los, his, hi_err, present, fails, partials)
+        ):
             if failed:
                 ax.text(xi, top * 0.03, "all runs\nfailed", ha="center", va="bottom", color=COLORS[fr], fontsize=8.5, fontweight="bold", linespacing=1.2)
                 continue
-            # value label sits above the whisker cap; for wt bars annotate the
-            # ratio vs the ws baseline.
-            txt = fmt_rate(mean)
+            # Label block above the whisker cap: avg (prominent), then the
+            # min..max range, then the ratio vs the ws baseline (wt only). The
+            # whisker shows the same min..max visually.
+            y = mean + herr + top * 0.03
+            ax.text(xi, y, f"avg {fmt_rate(mean)}", ha="center", va="bottom", color=INK, fontsize=9, fontweight="bold")
+            sub = f"{fmt_rate(lo)}-{fmt_rate(hi_v)}"
             if fr != "ws" and ("ws", deg) in rows:
                 ws_mean = float(rows[("ws", deg)]["mean_mbps"])
                 if ws_mean > 0:
-                    txt += f"\n{mean / ws_mean:.2f}x"
+                    sub += f"\n{mean / ws_mean:.2f}x vs ws"
             if partial:
-                txt += f"\n({partial.strip()})"
-            ax.text(xi, mean + hi + top * 0.025, txt, ha="center", va="bottom", color=INK, fontsize=9, linespacing=1.3)
+                sub += f"\n({partial.strip()})"
+            ax.text(xi, y + top * 0.075, sub, ha="center", va="bottom", color=MUTED, fontsize=8, linespacing=1.3)
 
         ax.set_title(DEG_TITLE.get(deg, deg), fontsize=11, color=INK, loc="left", pad=8)
         ax.set_xticks(list(x))

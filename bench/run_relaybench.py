@@ -42,7 +42,9 @@ from pathlib import Path
 DEFAULT_TARGET = Path.home() / "rust_target" / "release" / "examples"
 
 ALL_FRAMINGS = ["ws", "wt-uni", "wt-datagram", "wt-singlestream"]
-ALL_DEGRADATIONS = ["lan", "wifi", "4g", "3g"]
+# "localhost" is a pseudo-condition: relay_bench runs it with --localhost (no
+# patchbay namespaces/impairment) instead of --degradation.
+ALL_DEGRADATIONS = ["localhost", "lan", "wifi", "4g", "3g"]
 ALL_MODES = ["download", "upload", "bidi"]
 
 # The line relay_bench prints on success is a space-separated list of key=value
@@ -197,11 +199,15 @@ def run_cell(cell: Cell, args: argparse.Namespace, log_dir: Path) -> None:
         cmd = [
             str(args.relay_bench_bin),
             "--transfer-bin", str(args.transfer_bin),
-            "--degradation", cell.degradation,
             "--mode", cell.mode,
             "--mtu", str(args.mtu),
             "--timeout", str(args.timeout),
         ]
+        # "localhost" is the no-namespacing baseline: --localhost, no degradation.
+        if cell.degradation == "localhost":
+            cmd += ["--localhost"]
+        else:
+            cmd += ["--degradation", cell.degradation]
         if args.size is not None:
             cmd += ["--size", str(args.size)]
         else:
