@@ -69,26 +69,37 @@ transport on an ideal path.
 
 | file | harness | runs x duration | notes |
 | ---- | ------- | --------------- | ----- |
-| `matrix-3x10s`  | patchbay + loopback | 3 x 10 s | the definitive steady-state sweep, incl. the `localhost` panel |
-| `patchbay-5x4s` | patchbay | 5 x 4 s | short-duration sweep (more slow-start weight, noisier on fast links) |
+| `matrix-3x10s`  | patchbay + loopback | 3 x 10 s | the authoritative steady-state sweep, incl. the `localhost` panel; all wt-* runs force WebTransport |
 
 ### `matrix-3x10s` numbers (download goodput, Mbit/s, mean of 3)
 
+Every `wt-*` run forces the WebTransport transport (`--webtransport-only`), so
+these numbers are guaranteed to be over WebTransport and never a silent
+WebSocket fallback. That fallback matters here: the relay client races a
+WebSocket connect against the WebTransport handshake and keeps whichever wins,
+and on a fast path (localhost, and often lan) the WebSocket TCP handshake wins,
+so without forcing it a `wt-*` request is served over WebSocket. (An earlier run
+of this table had localhost `wt-datagram` = 1729 which was actually WebSocket;
+the corrected genuine-WebTransport value is below.)
+
 | condition | ws | wt-uni | wt-singlestream | wt-datagram |
 | --------- | -- | ------ | --------------- | ----------- |
-| localhost | 1247 | 979 | 1303 | **1729** |
-| lan       | **3116** | 1721 | 1301 | 2092 |
-| wifi      | 137 | 103 | **156** (1.14x) | 19 |
-| 4g        | 4.8 | **24.8** (5.2x) | 23.7 (5.0x) | 1.8 |
-| 3g        | 0.42 | 0.75 (1.8x) | **0.90** (2.1x) | fail (flaky setup) |
+| localhost | 1101 | 992 | 1161 | **1548** |
+| lan       | **2769** | 1538 | 2485 | 1858 |
+| wifi      | 140 | 106 | **158** (1.13x) | 20 |
+| 4g        | 4.8 | **25.4** (5.24x) | 23.9 (4.93x) | 2.0 |
+| 3g        | 0.47 | 0.83 (1.77x) | **1.01** (2.15x) | fail (see note) |
 
 Reading it: on an ideal path (localhost, huge MTU, no loss) the unreliable
-datagram framing is fastest and the streams are close; on a clean gigabit LAN
-WebSocket's single kernel-TCP stream wins (WebTransport pays double-QUIC
-overhead); from wifi onward the reorder/loss tolerance of the fixed WebTransport
-hop takes over -- parity on wifi, ~5x on 4g (where TCP loss-collapses, see the
-4g section below), ~2x on 3g. `wt-datagram` is strong only on large-MTU paths
-and degrades to unusable on the constrained mobile profiles.
+datagram framing is fastest and singlestream edges out WebSocket; on a clean
+gigabit LAN WebSocket's single kernel-TCP stream wins (WebTransport pays
+double-QUIC overhead); from wifi onward the reorder/loss tolerance of the fixed
+WebTransport hop takes over -- parity+ on wifi (singlestream 1.13x), ~5x on 4g
+(where TCP loss-collapses, see the 4g section below), ~2x on 3g. `wt-datagram`
+is strong only on large-MTU paths and degrades to unusable on the constrained
+mobile profiles. On 3g `wt-datagram` now fails all runs because forcing
+WebTransport removes the WebSocket fallback that previously masked its flaky
+connection setup on that profile (see the wt-datagram note).
 
 Each `.png` is small multiples (one panel per condition, own linear scale since
 goodput spans ~3 Gbit on LAN to ~0.5 Mbit on 3G); each bar shows its min..max
