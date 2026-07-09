@@ -76,6 +76,7 @@ hop's QUIC transport config (a single shared knob,
 | ---- | ----------------------- | ----- |
 | `wt-tuned-3x10s`   | BBR + reorder-tolerant loss detection (the fix) | the authoritative result |
 | `wt-default-3x10s` | default congestion control (Cubic), RFC 9002 reordering thresholds (baseline) | shows what the tuning buys |
+| `full-matrix-2x8s-{download,upload,bidi}` | both, grouped | one grouped tuned-vs-default chart per direction (`run_relaybench.py --full-matrix`); each wt-* framing shows two bars, ws one |
 
 Both force the WebTransport transport for every `wt-*` run
 (`--webtransport-only`), so those numbers are guaranteed WebTransport and never a
@@ -151,6 +152,34 @@ tunneled connection is receive-window limited (~1 MB, same both ways),
 throughput = window / RTT, so the ~5x RTT gap is the ~5x throughput gap. This
 drives the whole crossover: loss-free lan -> ws wins; 0.1% wifi -> comparable;
 0.5% 4g (no cap) -> WebTransport ~5x; 2 Mbit-capped 3g -> both low, WT ahead.
+
+## Fast-path caveat: localhost is slower than lan, and the tuning does nothing there
+
+The `localhost` (loopback) and `lan` (veth) panels run at 1-3 Gbit, where the
+bottleneck is CPU / kernel packet processing and the relay's per-message
+userspace copying, not link bandwidth. Two consequences, neither a real transport
+result:
+
+- **lan is faster than localhost.** Counterintuitive but reproducible. The tell
+  is the RTT: loopback base latency should be microseconds, yet the tunneled
+  connection sees ~2.6-6.5 ms over loopback vs ~2.0-2.7 ms over veth -- the
+  loopback figure is almost all queueing/processing delay, and it is *higher*
+  than veth. With everything in one namespace, all traffic funnels through the
+  single `lo` interface and its softirq while contending with the three busy
+  userspace processes; the veth topology processes each peer's RX in its own
+  namespace (separate softirq contexts, more cores), so it sustains a higher rate
+  at lower latency despite the extra hops. Confirm with `mpstat -P ALL 1` during
+  a run (a single core pegged in `%soft` on localhost).
+- **The tuned-vs-default gap on localhost/lan is noise.** Those links are
+  loss-free and jitter-free, so BBR and the reordering thresholds have nothing to
+  do; any tuned/default difference there is the CPU variance above, not the
+  tuning. Disregard the "Nx tuned" labels on the localhost/lan panels of the
+  full-matrix charts (the caption says so). The tuning's real effect is on
+  wifi/4g/3g.
+
+`ws` is the cleanest illustration: it never touches the WebTransport hop, yet its
+localhost figure swings ~890-1370 Mbit between runs -- that spread is the
+measurement floor for these fast-path cells.
 
 ## wt-datagram note
 

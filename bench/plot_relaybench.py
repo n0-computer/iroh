@@ -230,6 +230,14 @@ def main() -> None:
         "real-process benchmark; bars = mean of N runs, whisker = min..max, "
         "dashed line = ws baseline"
     )
+    if grouped:
+        # The tuning only helps on lossy/jittery links; localhost and lan are
+        # loss-free and CPU-bound at these rates, so their tuned-vs-default gap is
+        # measurement noise, not the tuning.
+        caption += (
+            "\nloopback/veth panels (localhost, lan) are CPU-bound at these rates; "
+            "their tuned-vs-default gap is noise, not the tuning"
+        )
     if subtitle:
         caption = f"{subtitle}\n{caption}"
     fig.text(0.02, 0.965, caption, fontsize=9, color=MUTED, ha="left", va="top", linespacing=1.5)
