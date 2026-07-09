@@ -49,7 +49,8 @@ use crate::{
     },
     protos::{
         h3_streams::{
-            H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WT_REORDER_PACKET_THRESHOLD, WtBytesFramed,
+            H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WT_REORDER_PACKET_THRESHOLD,
+            WT_REORDER_TIME_THRESHOLD, WtBytesFramed,
         },
         handshake::{self, KeyMaterialClientAuth},
     },
@@ -199,8 +200,10 @@ pub(super) async fn quic_connect(
         noq_proto::congestion::Bbr3Config::default(),
     ));
     // Tolerate the packet reordering of a jittery last-mile link instead of
-    // misreading it as loss; see [`WT_REORDER_PACKET_THRESHOLD`].
+    // misreading it as loss, in both the packet-count and time domains; see
+    // [`WT_REORDER_PACKET_THRESHOLD`] and [`WT_REORDER_TIME_THRESHOLD`].
     transport.packet_threshold(WT_REORDER_PACKET_THRESHOLD);
+    transport.time_threshold(WT_REORDER_TIME_THRESHOLD);
     client_config.transport_config(Arc::new(transport));
 
     trace!(%server_addr, %server_name, "WT: QUIC connecting");

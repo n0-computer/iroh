@@ -23,8 +23,8 @@ use crate::{
     },
     protos::{
         h3_streams::{
-            H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WT_REORDER_PACKET_THRESHOLD, WtBytesFramed,
-            drain_in_background,
+            H3_MIN_MTU, MAX_CONCURRENT_UNI_STREAMS, WT_REORDER_PACKET_THRESHOLD,
+            WT_REORDER_TIME_THRESHOLD, WtBytesFramed, drain_in_background,
         },
         handshake,
     },
@@ -137,10 +137,12 @@ impl H3RelayServer {
             noq_proto::congestion::Bbr3Config::default(),
         ));
         // Tolerate a jittery last-mile link's packet reordering rather than
-        // misreading it as loss; this end sends the bulk download traffic, so
-        // its loss detection governs the retransmit rate. See
-        // [`WT_REORDER_PACKET_THRESHOLD`].
+        // misreading it as loss, in both the packet-count and time domains; this
+        // end sends the bulk download traffic, so its loss detection governs the
+        // retransmit rate. See [`WT_REORDER_PACKET_THRESHOLD`] and
+        // [`WT_REORDER_TIME_THRESHOLD`].
         transport_config.packet_threshold(WT_REORDER_PACKET_THRESHOLD);
+        transport_config.time_threshold(WT_REORDER_TIME_THRESHOLD);
 
         let endpoint = noq::Endpoint::server(server_config, bind_addr)
             .map_err(|err| e!(H3SpawnError::EndpointServer, err))?;

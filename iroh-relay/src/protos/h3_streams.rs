@@ -66,6 +66,24 @@ const MAX_UNI_STREAM_SIZE: usize = crate::MAX_PACKET_SIZE + 64;
 /// losses promptly), tolerating reordering the way the link requires.
 pub(crate) const WT_REORDER_PACKET_THRESHOLD: u32 = 1000;
 
+/// Time-reordering threshold for the relay's H3/WebTransport QUIC connection, a
+/// multiple of the smoothed RTT (the time-domain counterpart of
+/// [`WT_REORDER_PACKET_THRESHOLD`]).
+///
+/// QUIC also declares a packet lost once more than `threshold * RTT` has elapsed
+/// since it was sent and a later packet was acknowledged. The default 9/8 is
+/// tuned for links whose delay variation is small next to the RTT. On a low-RTT
+/// link with a few ms of jitter that breaks: at an ~8ms hop RTT the 9/8
+/// threshold is ~9ms, but 2ms of one-way jitter perturbs the RTT by a comparable
+/// amount, so a reordered-but-not-lost packet trips the time threshold and is
+/// retransmitted spuriously -- raising the packet-count threshold alone does not
+/// prevent this. Widening the window to a few RTTs absorbs the jitter; genuinely
+/// lost packets are still recovered by the probe timeout. Kept moderate (not
+/// huge) so a genuine loss on a high-RTT link is not delayed excessively: at 2x
+/// it still clears the wifi profile's jitter (a ~2ms one-way perturbation on an
+/// ~8ms RTT) with margin.
+pub(crate) const WT_REORDER_TIME_THRESHOLD: f32 = 2.0;
+
 /// Concurrent unidirectional stream limit for the relay H3/WebTransport
 /// connection.
 ///
