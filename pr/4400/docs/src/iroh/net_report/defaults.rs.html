@@ -53,4 +53,9 @@
 <a href=#53 id=53 data-nosnippet>53</a>    <span class="doccomment">/// Cycle cadence after which the next probe cycle is forced to be `Full`
 <a href=#54 id=54 data-nosnippet>54</a>    /// rather than `Refresh`. Not a timeout in the "cancellation" sense.
 <a href=#55 id=55 data-nosnippet>55</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::net_report) <span class="kw">const </span>FULL_REPORT_INTERVAL: Duration = Duration::from_secs(<span class="number">5 </span>* <span class="number">60</span>);
-<a href=#56 id=56 data-nosnippet>56</a>}</code></pre></div></section></main></body></html>
+<a href=#56 id=56 data-nosnippet>56</a>
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="doccomment">/// EXPERIMENTAL (reconnect-with-resumption): how long to keep a QAD
+<a href=#58 id=58 data-nosnippet>58</a>    /// connection open after the address arrives, long enough for the server's
+<a href=#59 id=59 data-nosnippet>59</a>    /// session ticket to arrive so the next reconnect can resume, then close.
+<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::net_report) <span class="kw">const </span>QAD_LINGER: Duration = Duration::from_secs(<span class="number">1</span>);
+<a href=#61 id=61 data-nosnippet>61</a>}</code></pre></div></section></main></body></html>
