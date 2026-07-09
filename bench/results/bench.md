@@ -181,6 +181,39 @@ result:
 localhost figure swings ~890-1370 Mbit between runs -- that spread is the
 measurement floor for these fast-path cells.
 
+## Run-to-run variance (and how to tame it)
+
+On an idle box the fast-path cells are actually stable (CV ~2-3%); the run-to-run
+variance lives on the IMPAIRED links, and it is real, not a harness bug. On an
+idle host the worst cells are wifi `ws` (CV ~25-33%, 103-203 Mbit) and 4g (up to
+~48%). The `run_relaybench.py` CSV/table now report `median_mbps` (robust to an
+outlier run) and `cv_pct` (stddev/mean) so noisy cells are visible.
+
+Source: it is not loss (wifi `ws` loses ~0.01-0.02%). It is congestion-window
+dynamics on a jittery link -- across three wifi `ws` runs the delivered
+in-flight window settled at 579 / 1027 / 605 KB (near iroh's ~1.25 MB receive
+window), so each run operates at a different point, plus each run gets a fresh
+random netem loss/jitter realization. Neither is a bug; both are inherent to
+measuring a congestion-controlled connection over a random impairment.
+
+Levers (measured):
+
+- **Longer duration** averages out the within-run fluctuation. wifi `ws` CV went
+  31.5% -> 16.9% going 8s -> 24s (roughly the expected 1/sqrt(T)).
+- **More runs + median.** The reported central value's error shrinks with runs;
+  median resists the odd fast/slow run.
+- Pinning a small receive window (`--receive-window`) makes the connection
+  window- rather than cwnd-limited and cuts the bufferbloat RTT (measured 45 ->
+  26 ms on wifi `ws`), which would stabilise the number -- but a 500 KB window
+  also made the connection intermittently stall, so it is not a drop-in fix
+  without more tuning, and it caps throughput rather than measuring peak.
+
+Recommended for a trustworthy sweep: `--duration 20` (or more) `--runs 5` (or
+more), read `median_mbps`, and treat any cell with a high `cv_pct` as a range,
+not a point. The tuned-vs-default and ws-vs-wt conclusions hold regardless
+because the effect sizes on the impaired links (3-7x) are far larger than the
+~10-30% run-to-run spread.
+
 ## wt-datagram note
 
 `wt-datagram` is the weak framing and shows failures on 3G in the aggregated
