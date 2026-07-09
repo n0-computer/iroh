@@ -313,10 +313,37 @@ impl ClientBuilder {
     pub async fn connect(&self) -> Result<Client, ConnectError> {
         #[cfg(feature = "h3-transport")]
         if let Some(opts) = &self.h3 {
+            if opts.webtransport_only {
+                return self.connect_wt_only(opts).await;
+            }
             return self.connect_race(opts).await;
         }
 
         self.connect_ws().await
+    }
+
+    /// Connect over WebTransport only, without racing or falling back to
+    /// WebSocket (see [`H3Opts::webtransport_only`]). A WebTransport failure is
+    /// returned as an error rather than silently served over WebSocket.
+    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+    async fn connect_wt_only(&self, opts: &H3Opts) -> Result<Client, ConnectError> {
+        let url = &*self.url;
+        let host = url
+            .host_str()
+            .ok_or_else(|| e!(ConnectError::InvalidRelayUrl { url: url.clone() }))?;
+        let tls_config = self
+            .tls_config
+            .clone()
+            .ok_or_else(|| e!(ConnectError::MissingCryptoProvider))?;
+
+        debug!(%url, "connecting WebTransport only (WebSocket fallback disabled)");
+        let quic = self
+            .quic_connect_happy_eyeballs(host, tls_config)
+            .await
+            .map_err(|source| e!(ConnectError::Dial { source }))?;
+        self.finish_wt(quic, host, opts.transfer_mode)
+            .await
+            .map_err(|source| e!(ConnectError::H3 { source }))
     }
 
     /// Race WebTransport and WebSocket connections concurrently.

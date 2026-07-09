@@ -391,6 +391,10 @@ struct EndpointArgs {
     /// Which relay transport to use (WebSocket, or an H3/WebTransport framing).
     #[clap(long, value_enum, default_value_t)]
     relay_transport: RelayTransport,
+    /// Force the WebTransport transport instead of racing (and possibly falling
+    /// back to) WebSocket. Only meaningful with a `wt-*` `--relay-transport`.
+    #[clap(long)]
+    webtransport_only: bool,
 }
 
 #[derive(Subcommand, Debug, derive_more::Display)]
@@ -527,7 +531,13 @@ impl EndpointArgs {
         } else if !self.relay_url.is_empty() {
             // Build the relay map with the requested relay transport (WebSocket,
             // or an H3/WebTransport framing) set on each relay config.
-            let h3 = self.relay_transport.h3_opts();
+            let mut h3 = self.relay_transport.h3_opts();
+            // With --webtransport-only, force the WebTransport transport instead
+            // of racing (and possibly silently falling back to) WebSocket, so a
+            // wt-* request is measured over WebTransport.
+            if let Some(opts) = h3.as_mut() {
+                opts.webtransport_only = self.webtransport_only;
+            }
             let mut relay_map = RelayMap::empty();
             for url in &self.relay_url {
                 let mut cfg = RelayConfig::from(url.clone());

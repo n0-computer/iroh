@@ -301,6 +301,21 @@ pub struct H3Opts {
     /// Defaults to [`WtTransferMode::UniPerPacket`].
     #[serde(default)]
     pub transfer_mode: WtTransferMode,
+    /// Connect over WebTransport only, without racing or falling back to
+    /// WebSocket.
+    ///
+    /// Default `false`: the client races a WebTransport (QUIC) handshake against
+    /// a WebSocket connect and keeps whichever completes first, falling back to
+    /// WebSocket if WebTransport fails. That fallback is desirable in production
+    /// but hides which transport actually served a connection: on a fast path
+    /// (e.g. loopback) the WebSocket handshake usually wins the race, so a
+    /// `wt-*` request is silently served over WebSocket. Set this to force the
+    /// WebTransport transport -- a WebTransport failure then surfaces as an error
+    /// rather than a silent WebSocket connection. Used to benchmark the
+    /// WebTransport transport specifically, and appropriate for a relay known to
+    /// speak it.
+    #[serde(default)]
+    pub webtransport_only: bool,
 }
 
 /// Information on a specific relay server.

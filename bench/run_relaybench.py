@@ -213,6 +213,12 @@ def run_cell(cell: Cell, args: argparse.Namespace, log_dir: Path) -> None:
         else:
             cmd += ["--duration", str(args.duration)]
         cmd += ["--", "--relay-transport", cell.framing]
+        # Force the WebTransport transport for wt-* framings so the run measures
+        # WebTransport and never silently falls back to WebSocket (which the
+        # client would otherwise do when its handshake wins the race, e.g. on a
+        # fast loopback path).
+        if cell.framing != "ws":
+            cmd += ["--webtransport-only"]
 
         env = dict(os.environ)
         if args.rust_log:
