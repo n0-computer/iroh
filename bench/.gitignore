@@ -9,3 +9,6 @@
 !run_relaybench.py
 !plot_rundown.py
 !plot_relaybench.py
+# Saved, documented result sets (CSV + PNG + bench.md).
+!results/
+!results/**
