@@ -37,9 +37,14 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Default location of the shared cargo target dir's release examples. Override
-# with --transfer-bin / --relay-bench-bin if your target dir differs.
-DEFAULT_TARGET = Path.home() / "rust_target" / "release" / "examples"
+# Default directory holding the release `transfer` and `relay_bench` binaries:
+# $BENCH_BINS if set, else the common `~/rust_target` cargo target dir's examples
+# dir. Override either binary individually with --transfer-bin / --relay-bench-bin.
+DEFAULT_TARGET = (
+    Path(os.environ["BENCH_BINS"])
+    if os.environ.get("BENCH_BINS")
+    else Path.home() / "rust_target" / "release" / "examples"
+)
 
 ALL_FRAMINGS = ["ws", "wt-uni", "wt-datagram", "wt-singlestream"]
 # "localhost" is a pseudo-condition: relay_bench runs it with --localhost (no

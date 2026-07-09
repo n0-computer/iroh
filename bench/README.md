@@ -92,15 +92,44 @@ Notes:
   WebSocket. Without it, on a fast path the WebSocket handshake wins the race and
   a `wt-*` request is served over WebSocket -- so a WebTransport benchmark would
   actually measure WebSocket. (This replaces the old source-patching hack.)
-- **Tuned vs default.** Set `IROH_RELAY_H3_DEFAULT_TRANSPORT=1` in the
-  environment to run against the noq defaults (Cubic, RFC 9002 thresholds)
-  instead of the tuning -- how the `wt-default` set above was produced.
+- **Binary location.** The driver looks for `transfer` and `relay_bench` in
+  `$BENCH_BINS` if set, else `~/rust_target/release/examples`. Override either
+  with `--transfer-bin` / `--relay-bench-bin`, or rebuild both with `--build`.
 - **Keep the machine idle.** The WebTransport connect races a timing-sensitive
   QUIC handshake that flakes under CPU contention; run sweeps sequentially with
   nothing else running.
 - **Tracing.** `--rust-log 'iroh_relay=debug' --log-dir /tmp/rb` captures
   per-role trace logs; `RUST_LOG=wt_hop_stats=trace` on `relay_bench` directly
   logs the relay hop's per-connection QUIC stats.
+
+### Comparing the tuned vs default WebTransport hop
+
+The WebTransport relay hop's QUIC config -- the tuning this branch adds (BBR +
+reorder-tolerant loss detection) versus the noq defaults (Cubic, RFC 9002
+reordering thresholds) -- is a single shared function
+(`iroh_relay::protos::h3_streams::configure_relay_h3_transport`) toggled at
+runtime with the `IROH_RELAY_H3_DEFAULT_TRANSPORT` env var. The driver drives
+both from one sweep:
+
+```bash
+# each wt-* framing under both configs, per condition/mode; ws runs once
+bench/run_relaybench.py --framings ws,wt-uni,wt-singlestream \
+  --degradations wifi,4g,3g --modes download --configs tuned,default \
+  --duration 10 --runs 3 --csv bench/results/ab.csv
+# (auto-renders bench/results/ab-download.png)
+
+# everything: all framings x all degradations x all modes x {tuned,default},
+# rendering a grouped chart per mode. Long -- tune --runs / --duration.
+bench/run_relaybench.py --full-matrix --duration 8 --runs 2 \
+  --csv bench/results/full-matrix.csv
+```
+
+With more than one `--config`, the CSV gains a `config` column and each `wt-*`
+framing gets **two bars** in the chart -- tuned (solid) and default (hatched),
+with the tuned/default speedup labelled -- while `ws` (which does not use the
+WebTransport hop) keeps a single bar. `plot_relaybench.py <csv> <png> --mode
+<mode>` renders one mode; the driver renders each mode automatically for a
+multi-config run.
 - Output CSV columns: mean/min/max/stddev goodput plus `loss_pct`, `rtt_us`, and
   `tx_batch`/`rx_batch` (mean GSO/GRO batch on the tunneled p2p connection).
 
