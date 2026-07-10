@@ -38,19 +38,25 @@ COLORS = {
     "wt-datagram": "#D55E00",
 }
 DEGRADATIONS = ["localhost", "lan", "wifi", "4g", "3g"]
+# Link parameters are the relay_bench `realistic` model (one-way delay; loss is
+# bursty Gilbert-Elliott; each also has an RTT-sized bottleneck buffer).
 DEG_TITLE = {
     "localhost": "localhost  (loopback, no namespacing)",
-    "lan": "LAN  (clean)",
-    "wifi": "WiFi  (5ms, 2ms jitter, 0.1% loss)",
-    "4g": "4G  (25ms, 8ms jitter, 0.5% loss)",
-    "3g": "3G  (100ms, 30ms jitter, 2% loss, 2Mbit)",
+    "lan": "LAN  (clean, uncapped)",
+    "wifi": "WiFi  (150 Mbit, 5ms, 2ms jitter, 0.1% bursty loss)",
+    "4g": "4G  (35 Mbit, 25ms, 8ms jitter, 0.5% bursty loss)",
+    "3g": "3G  (2 Mbit, 100ms, 30ms jitter, 2% bursty loss)",
 }
 # WebTransport hop config: tuned = solid fill, default = hatched (same colour).
 CONFIG_ORDER = ["tuned", "default"]
 HATCH = {"tuned": "", "default": "////"}
+# The tuned config differs from the noq default in exactly one thing: raised
+# packet/time reordering thresholds so a jittery link's reordering is not misread
+# as loss. Both configs use the same (noq-default Cubic) congestion controller, so
+# the controller is not mentioned here -- it is not the differentiator.
 CONFIG_LEGEND = {
-    "tuned": "tuned (BBR + reorder-tolerant loss detection)",
-    "default": "default (Cubic, RFC 9002 thresholds)",
+    "tuned": "tuned (reorder-tolerant loss detection)",
+    "default": "default (noq: RFC 9002 reorder thresholds)",
 }
 
 INK = "#1a1a1a"
@@ -230,10 +236,11 @@ def main() -> None:
         "real-process benchmark; bars = mean of N runs, whisker = min..max, "
         "dashed line = ws baseline"
     )
-    if grouped:
+    if grouped and any(d in ("localhost", "lan") for d in degs):
         # The tuning only helps on lossy/jittery links; localhost and lan are
         # loss-free and CPU-bound at these rates, so their tuned-vs-default gap is
-        # measurement noise, not the tuning.
+        # measurement noise, not the tuning. Only note this when such a panel is
+        # actually shown.
         caption += (
             "\nloopback/veth panels (localhost, lan) are CPU-bound at these rates; "
             "their tuned-vs-default gap is noise, not the tuning"

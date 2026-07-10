@@ -41,3 +41,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+# patchbay branch with the benchmark link-emulation additions (tbf buffer_ms +
+# Gilbert-Elliott burst loss, realistic presets). Same version (0.6.0) as the
+# registry crate. Remove once those land in a published release.
+[patch.crates-io]
+patchbay = { git = "https://github.com/n0-computer/patchbay.git", branch = "feat/link-realism" }

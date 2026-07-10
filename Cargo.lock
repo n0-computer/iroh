@@ -3530,8 +3530,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "patchbay"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "543b9acbe630f7745965d8243d3af809370cfad7b12d801b63e085e606349852"
+source = "git+https://github.com/n0-computer/patchbay.git?branch=feat%2Flink-realism#73093e1c6b988e814c21dc8ec37db0f2b9e55343"
 dependencies = [
  "anyhow",
  "chrono",

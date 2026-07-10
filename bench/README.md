@@ -8,24 +8,42 @@ results that motivated the WebTransport hop tuning on this branch.
 
 The WebTransport relay transport used to be 3-4x slower than WebSocket. The
 cause was the relay's H3/QUIC hop misreading a jittery last-mile link's packet
-reordering as loss (QUIC's fixed reordering thresholds) and its loss-based Cubic
-congestion controller overrunning the shallow-buffer link -- so the reliable
-relay stream retransmitted ~40% of packets, collapsing goodput and inflating
-RTT. Tuning both ends of the hop (BBR instead of Cubic, raised packet- and
-time-reordering thresholds) turns WebTransport into the *better* relay transport
-on lossy/jittery links:
+reordering as loss (QUIC's fixed reordering thresholds) -- so the reliable relay
+stream retransmitted ~40% of packets, collapsing goodput and inflating RTT.
+Raising the packet- and time-reordering thresholds fixes that, and with a
+loss-based **Cubic** congestion controller on the hop (the same controller ws'
+TCP hop uses) the reliable single-stream framing (`wt-singlestream`) reaches
+WebSocket goodput on every link:
 
 | link | ws | wt-singlestream (tuned) |
 | ---- | -- | ----------------------- |
-| lan  | fastest (kernel TCP) | 0.9x (double-QUIC overhead) |
-| wifi | comparable | comparable |
-| 4g   | ~4-5 Mbit | ~22-24 Mbit (**~5-6x**) |
-| 3g   | ~0.5 Mbit | ~1.0 Mbit (**~2x**) |
+| localhost | 1.5 Gbit | 1.7 Gbit (**1.1x**) |
+| lan  | fastest (kernel TCP) | 0.75x (double-QUIC overhead at Gbit) |
+| wifi | ~130 Mbit | ~130 Mbit (**parity**) |
+| 4g   | ~14 Mbit | ~21 Mbit (**1.5x**, lower RTT) |
+| 3g   | ~1 Mbit | ~1 Mbit (ballpark; noisy) |
+
+Note on the congestion controller: BBR3 was tried on the hop first, but its
+bandwidth estimate collapses on the tunnelled hop (the reliable tunnel looks
+app-limited whenever the inner connection is flow-control blocked), pinning the
+hop cwnd low and throttling goodput to ~half of ws. Cubic -- what ws already uses
+-- fills the link. The reorder thresholds are the load-bearing part: a Cubic hop
+*without* them collapses on spurious loss just as badly. See the overnight
+investigation in [`results/overnight/claude-report.md`](results/overnight/claude-report.md)
+and [`results/overnight/realistic-matrix-download.png`](results/overnight/realistic-matrix-download.png).
+
+The `wt-uni` framing (one uni stream per message, the current protocol default)
+stays ~2x slower: independent per-message streams deliver the tunnelled iroh
+packets reordered, which the inner connection reads as loss. `wt-singlestream`
+(`UniOrdered`) is ordered and does not, so it is the framing to use over the
+relay; switching the default to it is recommended (see the report for the
+wire-compat caveat).
 
 The fix lives in `iroh-relay`:
 `protos/h3_streams.rs::configure_relay_h3_transport` (the shared transport
-config + the `WT_REORDER_*` / `H3_MIN_MTU` / `MAX_CONCURRENT_UNI_STREAMS`
-constants), applied by both `client/h3_conn.rs` and `server/h3_server.rs`.
+config + the `WT_REORDER_*` / `WT_STREAM_RECEIVE_WINDOW` / `H3_MIN_MTU` /
+`MAX_CONCURRENT_UNI_STREAMS` constants), applied by both `client/h3_conn.rs` and
+`server/h3_server.rs`.
 
 ## Results
 

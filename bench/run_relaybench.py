@@ -51,7 +51,7 @@ ALL_FRAMINGS = ["ws", "wt-uni", "wt-datagram", "wt-singlestream"]
 # patchbay namespaces/impairment) instead of --degradation.
 ALL_DEGRADATIONS = ["localhost", "lan", "wifi", "4g", "3g"]
 ALL_MODES = ["download", "upload", "bidi"]
-# WebTransport relay-hop transport config. "tuned" is the fix (BBR +
+# WebTransport relay-hop transport config. "tuned" is the fix (Cubic +
 # reorder-tolerant loss detection); "default" reverts the congestion controller
 # and reordering thresholds to the noq defaults via IROH_RELAY_H3_DEFAULT_TRANSPORT.
 # Only affects the wt-* framings; ws does not use the WebTransport hop.
@@ -102,6 +102,7 @@ class Cell:
     degradation: str
     mode: str
     config: str = "tuned"
+    link_model: str = "preset"
     runs: list[dict] = field(default_factory=list)  # parsed result per success
     failures: int = 0
 
@@ -163,6 +164,22 @@ def parse_args() -> argparse.Namespace:
     )
     dur.add_argument(
         "--size", type=int, help="fixed transfer size in bytes (instead of --duration)"
+    )
+    p.add_argument(
+        "--link-model",
+        default="realistic",
+        choices=["realistic", "preset", "capped", "congestion"],
+        help="how --degradation is realized: realistic (default; cap + RTT-sized "
+        "buffer + bursty radio loss), preset (uncapped, per-packet loss), capped "
+        "(preset + bandwidth cap), congestion (cap + RTT-sized buffer, loss from "
+        "overflow only). Ignored for the localhost baseline.",
+    )
+    p.add_argument(
+        "--loss-burst",
+        type=int,
+        default=0,
+        help="mean loss-burst length (packets) for the capped model's radio loss; "
+        "0/1 = Bernoulli, >=2 = bursty Gilbert-Elliott at the same rate.",
     )
     p.add_argument("--runs", type=int, default=3, help="repetitions per cell")
     p.add_argument("--mtu", type=int, default=1400, help="link MTU")
@@ -233,6 +250,9 @@ def run_cell(cell: Cell, args: argparse.Namespace, log_dir: Path) -> None:
             cmd += ["--localhost"]
         else:
             cmd += ["--degradation", cell.degradation]
+            cmd += ["--link-model", args.link_model]
+            if args.loss_burst:
+                cmd += ["--loss-burst", str(args.loss_burst)]
         if args.size is not None:
             cmd += ["--size", str(args.size)]
         else:
@@ -314,6 +334,7 @@ def summarize(cell: Cell) -> dict[str, str]:
     row = {
         "framing": cell.framing,
         "degradation": cell.degradation,
+        "link_model": cell.link_model,
         "mode": cell.mode,
         "config": cell.config,
         "n": str(len(cell.runs)),
@@ -435,19 +456,24 @@ def main() -> None:
         file=sys.stderr,
     )
 
-    cells: list[Cell] = []
-    for idx, (config, framing, degradation, mode) in enumerate(plan, 1):
-        cell = Cell(framing, degradation, mode, config)
-        print(f"[{idx}/{len(plan)}] {cell.key}", file=sys.stderr)
-        run_cell(cell, args, args.log_dir)
-        cells.append(cell)
-
-    rows = [summarize(c) for c in cells]
+    # Write each cell's aggregated row to the CSV as soon as the cell finishes
+    # (and flush), so a long sweep's partial results are readable while it runs
+    # and survive an interrupt, rather than only being written at the very end.
     args.csv.parent.mkdir(parents=True, exist_ok=True)
+    rows: list[dict] = []
+    writer = None
     with args.csv.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
+        for idx, (config, framing, degradation, mode) in enumerate(plan, 1):
+            cell = Cell(framing, degradation, mode, config, link_model=args.link_model)
+            print(f"[{idx}/{len(plan)}] {cell.key}", file=sys.stderr)
+            run_cell(cell, args, args.log_dir)
+            row = summarize(cell)
+            rows.append(row)
+            if writer is None:
+                writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+                writer.writeheader()
+            writer.writerow(row)
+            f.flush()
 
     print_table(rows)
     print(f"\nraw CSV: {args.csv}", file=sys.stderr)

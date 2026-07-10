@@ -59,7 +59,9 @@ mod imp {
 
     use clap::{Parser, ValueEnum};
     use n0_error::{Result, StdResultExt, anyerr, bail_any};
-    use patchbay::{IfaceConfig, IpSupport, Lab, LinkCondition, LinkDirection, Nat, OutDir};
+    use patchbay::{
+        IfaceConfig, IpSupport, Lab, LinkCondition, LinkDirection, LinkLimits, Nat, OutDir,
+    };
     use tokio::{
         io::{AsyncBufReadExt, BufReader},
         process::Command,
@@ -82,14 +84,89 @@ mod imp {
         Mobile3g,
     }
 
+    /// How a `Degradation` is turned into concrete link limits.
+    ///
+    /// The presets model last-mile loss as independent per-packet netem loss on
+    /// an otherwise uncapped link. That is convenient but makes run-to-run
+    /// variance high (the congestion window settles against random loss
+    /// differently each run) and lets a loss-based controller collapse far below
+    /// what a real, bandwidth-limited link would allow. The `capped` and
+    /// `congestion` models trade some of that away for realism and repeatability.
+    #[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
+    enum LinkModel {
+        /// The patchbay presets: uncapped (except 3g) with independent per-packet
+        /// (Bernoulli) loss. Highest variance; kept as the historical baseline.
+        Preset,
+        /// Preset latency/jitter/loss plus a realistic bandwidth cap. Bounds the
+        /// high end without changing the loss process, so a loss-based controller
+        /// still collapses -- but against a fixed ceiling.
+        Capped,
+        /// Bandwidth cap plus a buffer sized near the path RTT and no independent
+        /// radio loss: packet loss emerges from buffer overflow (congestion), as
+        /// on a real bottleneck. Most repeatable; isolates bufferbloat behaviour.
+        Congestion,
+        /// The most faithful model, and the default: a bandwidth cap, an RTT-sized
+        /// buffer (so loss also emerges from congestion instead of only bufferbloat
+        /// at a fixed 400 ms), and bursty Gilbert-Elliott radio loss (real links
+        /// fade and hand over in bursts). Combines the realism of `congestion`
+        /// with the radio loss that a real last-mile link actually has.
+        Realistic,
+    }
+
     impl Degradation {
-        fn condition(self) -> LinkCondition {
+        /// (latency_ms, jitter_ms, rate_kbit cap, preset loss %, congestion buffer_ms).
+        ///
+        /// The cap and buffer are only used by the `capped`/`congestion` models.
+        /// Buffers are ~1.5x the bandwidth-delay product (path RTT ~= 4x one-way
+        /// latency over the two access links), so a loss-based controller
+        /// bufferbloats to ~1.5 BDP before the queue drops.
+        fn params(self) -> (u32, u32, u32, f32, u32) {
             match self {
-                Degradation::Lan => LinkCondition::Lan,
-                Degradation::Wifi => LinkCondition::Wifi,
-                Degradation::Mobile4g => LinkCondition::Mobile4G,
-                Degradation::Mobile3g => LinkCondition::Mobile3G,
+                Degradation::Lan => (0, 0, 0, 0.0, 0),
+                Degradation::Wifi => (5, 2, 150_000, 0.1, 30),
+                Degradation::Mobile4g => (25, 8, 35_000, 0.5, 150),
+                Degradation::Mobile3g => (100, 30, 2_000, 2.0, 600),
             }
+        }
+
+        /// `loss_burst` (mean burst length in packets, 0/1 = Bernoulli) makes the
+        /// `capped` and `realistic` models' radio loss bursty (Gilbert-Elliott),
+        /// as on a real fading link. For `realistic` a `0` means "use the model's
+        /// default burst"; for `capped` a `0` means Bernoulli. It has no effect on
+        /// `preset` (fixed presets) or `congestion` (no radio loss).
+        fn condition(self, model: LinkModel, loss_burst: u32) -> LinkCondition {
+            if model == LinkModel::Preset {
+                return match self {
+                    Degradation::Lan => LinkCondition::Lan,
+                    Degradation::Wifi => LinkCondition::Wifi,
+                    Degradation::Mobile4g => LinkCondition::Mobile4G,
+                    Degradation::Mobile3g => LinkCondition::Mobile3G,
+                };
+            }
+            let (latency_ms, jitter_ms, rate_kbit, loss_pct, buffer_ms) = self.params();
+            let mut limits = LinkLimits {
+                latency_ms,
+                jitter_ms,
+                rate_kbit,
+                ..Default::default()
+            };
+            match model {
+                // Keep the preset's random loss and the default (400ms) tbf buffer.
+                LinkModel::Capped => {
+                    limits.loss_pct = loss_pct;
+                    limits.loss_burst_pkts = loss_burst;
+                }
+                // No radio loss; loss comes from the RTT-sized buffer overflowing.
+                LinkModel::Congestion => limits.buffer_ms = buffer_ms,
+                // RTT-sized buffer (congestion loss) plus bursty radio loss.
+                LinkModel::Realistic => {
+                    limits.buffer_ms = buffer_ms;
+                    limits.loss_pct = loss_pct;
+                    limits.loss_burst_pkts = if loss_burst > 0 { loss_burst } else { 8 };
+                }
+                LinkModel::Preset => unreachable!(),
+            }
+            LinkCondition::Manual(limits)
         }
     }
 
@@ -107,6 +184,18 @@ mod imp {
         /// Link condition applied to both peers.
         #[clap(long, value_enum, default_value = "wifi")]
         degradation: Degradation,
+        /// How the `--degradation` is realized: `realistic` (default; cap +
+        /// RTT-sized buffer + bursty radio loss), `preset` (uncapped, per-packet
+        /// loss), `capped` (preset + bandwidth cap), or `congestion` (cap +
+        /// RTT-sized buffer, loss from overflow only). See `LinkModel`.
+        #[clap(long, value_enum, default_value = "realistic")]
+        link_model: LinkModel,
+        /// Mean loss-burst length in packets for the `capped`/`realistic` models'
+        /// radio loss. `0`/`1` = independent per-packet (Bernoulli) loss; `>= 2`
+        /// switches to bursty Gilbert-Elliott loss at the same long-run rate. For
+        /// `realistic`, `0` uses the model's default burst length.
+        #[clap(long, default_value_t = 0)]
+        loss_burst: u32,
         /// Link MTU for every link.
         #[clap(long, default_value_t = 1400)]
         mtu: u32,
@@ -266,7 +355,7 @@ mod imp {
 
         // Two peers behind their own symmetric NAT (relay stays the only path,
         // IP transports and GSO remain enabled).
-        let condition = args.degradation.condition();
+        let condition = args.degradation.condition(args.link_model, args.loss_burst);
         let nat_provider = lab
             .add_router("nat-provider")
             .nat(Nat::Corporate)
