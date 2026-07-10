@@ -1,5 +1,4 @@
-//! QAD (QUIC Address Discovery): the probe, the report it produces, and the
-//! connection it leaves open.
+//! QUIC Address Discovery: the probe, its report, and its kept-open connection.
 //!
 //! A QAD probe opens a QUIC connection to a relay. The relay reports the
 //! public socket address it sees us coming from, which is where other peers
@@ -49,7 +48,7 @@ pub(super) enum AddrFamily {
 
 #[cfg(not(wasm_browser))]
 impl AddrFamily {
-    /// DNS record type queried for this family (`A` or `AAAA`).
+    /// Returns the DNS record type queried for this family (`A` or `AAAA`).
     fn dns_record_type(self) -> &'static str {
         match self {
             Self::V4 => "A",
@@ -95,6 +94,7 @@ pub(super) enum GetRelayAddrError {
     MissingPort,
 }
 
+/// The address and latency a QAD probe learned from a relay.
 #[cfg(not(wasm_browser))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct QadProbeReport {
@@ -106,11 +106,11 @@ pub(super) struct QadProbeReport {
     pub(super) addr: SocketAddr,
 }
 
-/// An open QAD connection, with the background task that forwards its
-/// address observations to the actor.
+/// An open QAD connection and the task that forwards its address observations.
 #[cfg(not(wasm_browser))]
 #[derive(Debug)]
 pub(super) struct QadConn {
+    /// The open QUIC connection to the relay.
     pub(super) conn: noq::Connection,
     /// The most recent report from the relay.
     ///
@@ -130,20 +130,26 @@ impl QadConn {
     }
 }
 
-/// The open QAD connection kept for each address family, with the
-/// cancellation token that stops a family's other probes once one of them
-/// has answered.
+/// The open QAD connection kept for each address family.
+///
+/// Each family also has a cancellation token that stops its other probes once
+/// one of them has answered.
 #[cfg(not(wasm_browser))]
 #[derive(Debug, Default)]
 pub(super) struct QadConns {
+    /// The open IPv4 connection, if any.
     v4: Option<QadConn>,
+    /// The open IPv6 connection, if any.
     v6: Option<QadConn>,
+    /// Cancels the remaining IPv4 probes once one has answered.
     cancel_v4: CancellationToken,
+    /// Cancels the remaining IPv6 probes once one has answered.
     cancel_v6: CancellationToken,
 }
 
 #[cfg(not(wasm_browser))]
 impl QadConns {
+    /// Closes and drops both families' connections.
     pub(super) fn clear(&mut self) {
         for conn in [self.v4.take(), self.v6.take()].into_iter().flatten() {
             conn.conn
@@ -151,6 +157,7 @@ impl QadConns {
         }
     }
 
+    /// Returns the open connection for `family`, if any.
     pub(super) fn slot(&self, family: AddrFamily) -> Option<&QadConn> {
         match family {
             AddrFamily::V4 => self.v4.as_ref(),
@@ -158,6 +165,7 @@ impl QadConns {
         }
     }
 
+    /// Returns the mutable slot for `family`'s open connection.
     pub(super) fn slot_mut(&mut self, family: AddrFamily) -> &mut Option<QadConn> {
         match family {
             AddrFamily::V4 => &mut self.v4,
@@ -165,12 +173,15 @@ impl QadConns {
         }
     }
 
+    /// Returns the most recent report from `family`'s open connection, if any.
     pub(super) fn current(&self, family: AddrFamily) -> Option<QadProbeReport> {
         self.slot(family).map(|c| c.probe_report.clone())
     }
 
-    /// Returns the cancellation token for `family`. Cancel it once one probe
-    /// has answered, to stop the family's remaining probes.
+    /// Returns the cancellation token for `family`.
+    ///
+    /// Cancel it once one probe has answered, to stop the family's remaining
+    /// probes.
     pub(super) fn cancel(&self, family: AddrFamily) -> &CancellationToken {
         match family {
             AddrFamily::V4 => &self.cancel_v4,
@@ -178,8 +189,7 @@ impl QadConns {
         }
     }
 
-    /// Replaces the per-family cancellation tokens with fresh ones for
-    /// the next probe cycle.
+    /// Replaces the per-family cancellation tokens with fresh ones.
     pub(super) fn reset_cancels(&mut self) {
         self.cancel_v4 = CancellationToken::new();
         self.cancel_v6 = CancellationToken::new();
@@ -189,14 +199,14 @@ impl QadConns {
 /// Pieces needed to do QUIC address discovery.
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct QuicConfig {
-    /// A QUIC Endpoint
+    /// The QUIC endpoint to probe from.
     #[debug("noq::Endpoint")]
     pub(crate) ep: noq::Endpoint,
-    /// A client config.
+    /// The TLS client config.
     pub(crate) client_config: rustls::ClientConfig,
-    /// Enable ipv4 QUIC address discovery probes
+    /// Enables IPv4 QUIC address discovery probes.
     pub(crate) ipv4: bool,
-    /// Enable ipv6 QUIC address discovery probes
+    /// Enables IPv6 QUIC address discovery probes.
     pub(crate) ipv6: bool,
 }
 
