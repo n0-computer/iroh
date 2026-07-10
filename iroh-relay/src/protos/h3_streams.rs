@@ -101,13 +101,15 @@ const DEFAULT_TRANSPORT_ENV: &str = "IROH_RELAY_H3_DEFAULT_TRANSPORT";
 /// iroh's 1200-byte packet floor (before MTU discovery runs and after a
 /// black-hole reset). See [`MAX_CONCURRENT_UNI_STREAMS`] and [`H3_MIN_MTU`].
 ///
-/// The congestion controller and reordering thresholds are the loss/jitter
-/// tuning for the relay's last-mile link: BBR instead of loss-based Cubic (which
-/// on a shallow-buffer link fills the buffer until it tail-drops, and the
-/// reliable relay stream then retransmits, collapsing goodput and inflating
-/// RTT), plus raised packet- and time-reordering thresholds so a jittery link's
-/// reordering is not misread as loss. Setting the [`DEFAULT_TRANSPORT_ENV`]
-/// environment variable leaves those at the noq defaults instead.
+/// The reordering thresholds are the loss/jitter tuning for the relay's
+/// last-mile link: raised packet- and time-reordering thresholds so a jittery
+/// link's reordering is not misread as loss. Without them, QUIC's fixed
+/// thresholds declare a large fraction of in-order packets lost spuriously and
+/// the reliable relay stream retransmits ~40% of its traffic, collapsing goodput
+/// and inflating RTT. With them, the hop reaches WebSocket-level goodput while
+/// keeping noq's default (Cubic) congestion controller -- the same loss-based
+/// controller ws' TCP hop uses. Setting the [`DEFAULT_TRANSPORT_ENV`]
+/// environment variable leaves both thresholds at the noq defaults instead.
 pub(crate) fn configure_relay_h3_transport(config: &mut noq_proto::TransportConfig) {
     config.max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into());
     config.min_mtu(H3_MIN_MTU).initial_mtu(H3_MIN_MTU);
@@ -116,7 +118,15 @@ pub(crate) fn configure_relay_h3_transport(config: &mut noq_proto::TransportConf
         return;
     }
 
-    config.congestion_controller_factory(Arc::new(noq_proto::congestion::Bbr3Config::default()));
+    // The tuning is exactly this: raise QUIC's packet- and time-reordering
+    // thresholds so a jittery last-mile link's reordering is not misread as loss.
+    // Ablation (realistic wifi, wt-singlestream) shows these two together are the
+    // whole win -- goodput 41 -> 126 Mbit (WebSocket parity), and neither alone
+    // suffices (packet-only 77, time-only 43). Nothing else needs changing: the
+    // congestion controller is left at noq's default (Cubic), the same loss-based
+    // controller ws' TCP hop uses, which is what fills the link once spurious loss
+    // is gone. (BBR3 was tried and collapses its cwnd on the tunnelled hop --
+    // app-limited mis-sampling -- throttling goodput to ~half of ws.)
     config.packet_threshold(WT_REORDER_PACKET_THRESHOLD);
     config.time_threshold(WT_REORDER_TIME_THRESHOLD);
 }
