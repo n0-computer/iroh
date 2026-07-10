@@ -4,14 +4,16 @@
 pub(in crate::net_report) mod timeouts {
     use n0_future::time::Duration;
 
-    /// Maximum number of seconds before a net report is guaranteed to be
-    /// emitted. Exposed as a public constant for use in documentation and
-    /// caller timeout calculations.
+    /// Maximum number of seconds before a net report is guaranteed to emit.
+    ///
+    /// Exposed as a public constant for use in documentation and caller
+    /// timeout calculations.
     pub const FIRST_REPORT_TIMEOUT_SECS: u64 = 3;
 
-    /// Deadline after which the actor emits a report even if probes are
-    /// still running. Guarantees consumers see results within a bounded
-    /// time. HTTPS and captive portal probes continue past this point.
+    /// Deadline after which the actor emits a report even if probes still run.
+    ///
+    /// Guarantees consumers see results within a bounded time. HTTPS and
+    /// captive portal probes continue past this point.
     pub(in crate::net_report) const FIRST_REPORT_TIMEOUT: Duration =
         Duration::from_secs(FIRST_REPORT_TIMEOUT_SECS);
 
@@ -51,7 +53,9 @@ pub(in crate::net_report) mod timeouts {
     /// Timeout for DNS resolution used by probe helpers.
     pub(in crate::net_report) const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
-    /// Cycle cadence after which the next probe cycle is forced to be `Full`
-    /// rather than `Refresh`. Not a timeout in the "cancellation" sense.
+    /// Cadence after which the next cycle is forced to be `Full`.
+    ///
+    /// Not a timeout in the "cancellation" sense; it just promotes a
+    /// `Refresh` to a `Full` once this interval has elapsed.
     pub(in crate::net_report) const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 }

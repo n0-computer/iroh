@@ -21,6 +21,7 @@ use super::defaults::timeouts::DNS_TIMEOUT;
 use crate::address_lookup::DNS_STAGGERING_MS;
 use crate::util::reqwest_client_builder;
 
+/// The latency an HTTPS probe measured to a relay.
 #[derive(Debug, Clone)]
 pub(super) struct HttpsProbeReport {
     /// The relay that was probed.
@@ -29,6 +30,8 @@ pub(super) struct HttpsProbeReport {
     pub(super) latency: Duration,
 }
 
+/// An error running an HTTPS latency probe.
+#[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub(super) enum HttpsProbeError {

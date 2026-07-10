@@ -1,3 +1,5 @@
+//! The network [`Report`] and its per-relay latency bookkeeping.
+
 use std::{
     collections::BTreeMap,
     fmt,
@@ -27,12 +29,15 @@ pub struct Report {
     /// Whether a QAD IPv6 round trip succeeded.
     pub udp_v6: bool,
     /// Whether the observed public IPv4 address differs across relay servers.
+    ///
     /// `None` until at least two relays have reported.
     pub mapping_varies_by_dest_ipv4: Option<bool>,
     /// Whether the observed public IPv6 address differs across relay servers.
+    ///
     /// `None` until at least two relays have reported.
     pub mapping_varies_by_dest_ipv6: Option<bool>,
     /// The relay with the lowest recent latency, chosen with hysteresis.
+    ///
     /// `None` until at least one latency measurement exists.
     pub preferred_relay: Option<RelayUrl>,
     /// Best observed latency to each relay, keyed by relay URL.
@@ -41,8 +46,9 @@ pub struct Report {
     pub global_v4: Option<SocketAddrV4>,
     /// Public IPv6 address and port as observed by relay servers.
     pub global_v6: Option<SocketAddrV6>,
-    /// Whether a captive portal was detected. `None` if the check was
-    /// skipped, cancelled, or has not yet completed.
+    /// Whether a captive portal was detected.
+    ///
+    /// `None` if the check was skipped, cancelled, or has not yet completed.
     pub captive_portal: Option<bool>,
 }
 
@@ -53,13 +59,13 @@ impl fmt::Display for Report {
 }
 
 impl Report {
-    /// Do we have any indication that UDP is working?
+    /// Returns `true` if any probe indicates UDP is working.
     #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
     pub fn has_udp(&self) -> bool {
         self.udp_v4 || self.udp_v6
     }
 
-    /// Whether the reported public address differs when probing different servers.
+    /// Returns whether the reported public address differs across servers.
     #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
     pub fn mapping_varies_by_dest(&self) -> Option<bool> {
         match (
@@ -92,9 +98,10 @@ impl Report {
         );
     }
 
-    /// Applies a QAD probe result for `family`, recording the address and
-    /// deciding mapping-varies-by-destination once a second relay has
-    /// answered.
+    /// Applies a QAD probe result for `family`.
+    ///
+    /// Records the address, and decides mapping-varies-by-destination once a
+    /// second relay has answered.
     #[cfg(not(wasm_browser))]
     pub(super) fn apply_qad_result(&mut self, family: AddrFamily, probe_report: &QadProbeReport) {
         match family {
@@ -187,8 +194,7 @@ impl Report {
         trace!(?self.global_v6, ?self.mapping_varies_by_dest_ipv6, %ipp, "stored report");
     }
 
-    /// Records a QAD IPv4 address seen on the open connection, replacing the
-    /// stored global address.
+    /// Records a QAD IPv4 address seen on the open connection.
     ///
     /// Unlike [`apply_qad_result_v4`](Self::apply_qad_result_v4), this does
     /// no mapping-varies-by-destination detection. A changed address on a
@@ -210,8 +216,7 @@ impl Report {
         self.global_v4 = Some(ipp);
     }
 
-    /// Records a QAD IPv6 address seen on the open connection, replacing the
-    /// stored global address.
+    /// Records a QAD IPv6 address seen on the open connection.
     ///
     /// See [`apply_qad_observation_v4`](Self::apply_qad_observation_v4).
     #[cfg(not(wasm_browser))]
@@ -299,11 +304,13 @@ impl RelayLatencies {
         self.https.iter().map(|(k, v)| (Probe::Https, k, *v))
     }
 
+    /// Returns `true` if no relay has any latency recorded.
     #[cfg(not(wasm_browser))]
     pub(super) fn is_empty(&self) -> bool {
         self.https.is_empty() && self.ipv4.is_empty() && self.ipv6.is_empty()
     }
 
+    /// Returns `true` if no relay has any latency recorded.
     #[cfg(wasm_browser)]
     pub(super) fn is_empty(&self) -> bool {
         self.https.is_empty()
