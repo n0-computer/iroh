@@ -196,6 +196,12 @@ pub(crate) struct Options {
 
     /// Explicitly configured external addresses to advertise.
     pub(crate) configured_addrs: BTreeSet<SocketAddr>,
+
+    /// Optional fwmark applied to the underlay UDP sockets (Linux `SO_MARK`).
+    ///
+    /// Lets the caller policy-route iroh's own traffic, for example around a
+    /// full-tunnel default route. `None` leaves the sockets unmarked.
+    pub(crate) socket_mark: Option<u32>,
 }
 
 /// Inner state for an iroh [`crate::Endpoint`].
@@ -893,6 +899,7 @@ impl EndpointInner {
             net_report_config,
             static_config,
             configured_addrs,
+            socket_mark,
         } = opts;
 
         let address_lookup = address_lookup::AddressLookupServices::default();
@@ -942,6 +949,7 @@ impl EndpointInner {
             relay_actor_config,
             &metrics,
             shutdown_token.child_token(),
+            socket_mark,
         )
         .map_err(|err| e!(BindError::Sockets, err))?;
 
@@ -2184,6 +2192,7 @@ mod tests {
             net_report_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
+            socket_mark: None,
         }
     }
 
@@ -2600,6 +2609,7 @@ mod tests {
             net_report_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
+            socket_mark: None,
         };
         let sock = EndpointInner::bind(opts).await?;
         Ok(sock)
