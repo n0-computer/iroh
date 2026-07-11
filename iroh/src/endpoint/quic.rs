@@ -27,15 +27,14 @@ pub use noq::{
     OpenUni,              // iroh::endpoint::Connection
     PathStats,            // iroh::socket::remote_map::remote_state::PathInfo
     ReadDatagram,         // iroh::endpoint::Connection
-    ReadDatagrams,        // iroh::endpoint::Connection
     ReadError,            // noq::RecvStream
     ReadExactError,       // noq::RecvStream
+    ReadManyDatagrams,    // iroh::endpoint::Connection
     ReadToEndError,       // noq::RecvStream
     RecvStream,           // noq::AcceptBi, noq::AcceptUni, noq::OpenBi, noq::OpenUni
     ResetError,           // noq::RecvStream
     SendDatagram,         // iroh::endpoint::Connection
     SendDatagramError,    // iroh::endpoint::Connection
-    SendMany,             // iroh::endpoint::Connection
     SendStream,           // noq::AcceptBi, noq::OpenUni
     Side,                 // iroh::endpoint::Connection, noq::StreamId,
     StoppedError,         // noq::SendStream
@@ -45,9 +44,11 @@ pub use noq::{
     VarIntBoundsExceeded, // noq::VarInt, noq::IdleTimeout
     WriteError,           // noq::SendStream
 };
+
 #[cfg(feature = "qlog")]
 pub use noq::{QlogConfig, QlogFactory, QlogFileFactory};
-/// `noq_proto` types that are used in the public iroh API.
+
+// `noq_proto` types that are used in the public iroh API.
 // Each type is notated with the iroh type or noq type that uses it.
 pub use noq_proto::{
     ApplicationClose,                 // noq::ConnectionError

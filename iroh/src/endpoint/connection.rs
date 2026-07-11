@@ -25,6 +25,7 @@ use std::{
     task::Poll,
 };
 
+use bytes::Bytes;
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
 use iroh_base::{EndpointId, RelayUrl};
@@ -41,8 +42,8 @@ use crate::{
         AfterHandshakeOutcome,
         quic::{
             AcceptBi, AcceptUni, Closed, ConnectionError, ConnectionStats, Controller,
-            ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, ReadDatagrams, SendDatagram,
-            SendDatagramError, SendMany, ServerConfig, Side, VarInt,
+            ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, ReadManyDatagrams,
+            SendDatagram, SendDatagramError, ServerConfig, Side, VarInt,
         },
     },
     socket::{
@@ -908,16 +909,16 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.read_datagram()
     }
 
-    /// Receives a batch of application datagrams into `out`, appending in arrival order.
+    /// Receives a batch of application datagrams into `out`, in arrival order.
     ///
-    /// This is the batch analogue of [`read_datagram()`](Self::read_datagram): it drains
-    /// all currently-buffered datagrams in one connection-lock hold and returns the count.
-    /// If none are buffered it parks until at least one arrives, then drains. Use this
-    /// instead of `read_datagram()` in a loop when forwarding bursts — it amortizes the
-    /// lock and the wake across a whole batch.
+    /// This is the batch analogue of [`read_datagram()`](Self::read_datagram). The returned
+    /// future resolves once at least one datagram is buffered, drains up to `out.len()` of
+    /// them into `out` from the front, and yields the count written. Use this instead of
+    /// `read_datagram()` in a loop when forwarding bursts: a whole batch is taken under a
+    /// single lock hold.
     #[inline]
-    pub fn read_datagrams<'a>(&'a self, out: &'a mut Vec<bytes::Bytes>) -> ReadDatagrams<'a> {
-        self.inner.read_datagrams(out)
+    pub fn read_many_datagrams<'a>(&'a self, out: &'a mut [Bytes]) -> ReadManyDatagrams<'a> {
+        self.inner.read_many_datagrams(out)
     }
 
     /// Waits for the connection to be closed for any reason.
@@ -978,24 +979,22 @@ impl<T: ConnectionState> Connection<T> {
     /// of order, and `data` must both fit inside a single QUIC packet and be smaller than
     /// the maximum dictated by the peer.
     #[inline]
-    pub fn send_datagram(&self, data: bytes::Bytes) -> Result<(), SendDatagramError> {
+    pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
         self.inner.send_datagram(data)
     }
 
     /// Transmits many unreliable, unordered application datagrams in a single call.
     ///
-    /// This is the batch analogue of [`send_datagram()`](Self::send_datagram): it takes
-    /// the connection mutex once and queues the whole batch under one lock hold, then
-    /// wakes the driver once. For a high-rate sender (e.g. a VPN forwarding a burst of
-    /// packets to one peer) this turns N mutex acquisitions into one and N driver wakes
-    /// into one. Oversized datagrams are skipped (counted in `rejected`) rather than
-    /// aborting the batch.
+    /// This is the batch analogue of [`send_datagram()`](Self::send_datagram): it queues the
+    /// whole batch under one lock hold and wakes the driver once, reducing the per-datagram
+    /// overhead of calling `send_datagram()` repeatedly. Like `send_datagram()`, older queued
+    /// datagrams may be dropped to make room.
+    ///
+    /// Returns the number of datagrams queued. The batch is rejected with
+    /// [`SendDatagramError::TooLarge`] if any datagram exceeds the maximum datagram size.
     #[inline]
-    pub fn send_datagrams<I: IntoIterator<Item = bytes::Bytes>>(
-        &self,
-        datagrams: I,
-    ) -> Result<SendMany, SendDatagramError> {
-        self.inner.send_datagrams(datagrams)
+    pub fn send_many_datagrams(&self, datagrams: &[Bytes]) -> Result<usize, SendDatagramError> {
+        self.inner.send_many_datagrams(datagrams)
     }
 
     /// Transmits `data` as an unreliable, unordered application datagram
@@ -1007,7 +1006,7 @@ impl<T: ConnectionState> Connection<T> {
     ///
     /// [`send_datagram()`]: Connection::send_datagram
     #[inline]
-    pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
+    pub fn send_datagram_wait(&self, data: Bytes) -> SendDatagram<'_> {
         self.inner.send_datagram_wait(data)
     }
 
