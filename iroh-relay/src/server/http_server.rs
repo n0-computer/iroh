@@ -952,9 +952,10 @@ impl RelayService {
         &self.0.clients
     }
 
-    /// Handle the incoming connection.
+    /// Handle an incoming connection.
     ///
-    /// If a `tls_config` is given, will serve the connection using HTTPS, otherwise HTTP.
+    /// This function takes a [`TcpStream`], terminates TLS, and then serves the connection
+    /// as HTTP(S).
     ///
     /// If the connection did not fully upgrade to a relay WebSocket connection after
     /// `establish_timeout`, the connection is aborted.
@@ -1047,6 +1048,44 @@ impl RelayService {
             .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))
             .flatten();
 
+        Self::log_connection_result(res, &metrics);
+    }
+
+    /// Serves an already-established connection as a relay connection.
+    ///
+    /// Runs the HTTP/1 serve loop with WebSocket upgrades, the relay protocol
+    /// handshake and authentication, and the per-client send/recv loop, over a
+    /// stream whose transport the caller has already established (TLS-terminated
+    /// via [`MaybeTlsStream::tls`] or plain via [`MaybeTlsStream::plain`]).
+    ///
+    /// `establish_timeout` limits the time until the WebSocket upgrade must have
+    /// completed. If the time limit is exceeded, the connection is aborted.
+    /// Once the WebSocket upgrade has completed, the timeout is cleared.
+    ///
+    /// Use this when running a custom accept loop and TLS termination -- for
+    /// example to supply a custom [`rustls`] cert resolver or ALPN handling -- while
+    /// reusing the relay protocol serving. For the batteries-included path that
+    /// also terminates TLS from a raw [`TcpStream`], see
+    /// [`handle_connection`](Self::handle_connection).
+    ///
+    /// [`rustls`]: https://docs.rs/rustls
+    pub async fn serve_connection(self, io: MaybeTlsStream, establish_timeout: Duration) {
+        let metrics = self.0.metrics.clone();
+        metrics.http_connections.inc();
+        // The notification token is triggered once the connection is fully
+        // established and handed to the relay protocol, clearing the timeout.
+        let on_establish = Arc::new(Notify::new());
+        let service = RelayServiceWithNotify::new(self, on_establish.clone());
+        let res = clearable_timeout(establish_timeout, on_establish, service.serve_connection(io))
+            .await
+            .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))
+            .flatten();
+        Self::log_connection_result(res, &metrics);
+    }
+
+    /// Logs the outcome of a served connection: the common peer-disconnect cases
+    /// are downgraded to debug, genuine failures are counted and logged.
+    fn log_connection_result(res: Result<(), ServeConnectionError>, metrics: &Metrics) {
         metrics.http_connections_closed.inc();
 
         if let Err(error) = res {
