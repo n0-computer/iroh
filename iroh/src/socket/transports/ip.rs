@@ -168,10 +168,10 @@ impl IpTransport {
     ) -> io::Result<Self> {
         let addr: SocketAddr = config.into();
         debug!(?addr, "binding");
-        let socket =
-            netwatch::UdpSocket::bind_full_with_mark(addr, socket_mark).inspect_err(|err| {
-                debug!(%addr, "failed to bind: {err:#}");
-            })?;
+        let opts = netwatch::BindOptions::new().set_mark(socket_mark);
+        let socket = netwatch::UdpSocket::bind_with(addr, opts).inspect_err(|err| {
+            debug!(%addr, "failed to bind: {err:#}");
+        })?;
         let local_addr = socket.local_addr()?;
         debug!(%addr, %local_addr, "successfully bound");
         // Currently gets updated on manual rebind
