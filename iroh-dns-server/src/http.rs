@@ -70,6 +70,7 @@ pub struct HttpsConfig {
 }
 
 /// The HTTP(S) server part of iroh-dns-server
+#[derive(Debug)]
 pub(crate) struct HttpServer {
     tasks: JoinSet<std::io::Result<()>>,
     http_addr: Option<SocketAddr>,

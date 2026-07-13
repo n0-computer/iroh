@@ -24,6 +24,7 @@ use crate::{
 /// Combines a DNS listener and an HTTP/HTTPS listener into a single handle.
 /// Construct with [`Self::bind`] and drive to completion with [`Self::join`], or
 /// stop the tasks with [`Self::shutdown`].
+#[derive(Debug)]
 pub struct Server {
     http_server: HttpServer,
     dns_server: DnsServer,
