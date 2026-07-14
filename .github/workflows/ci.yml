@@ -197,7 +197,12 @@ jobs:
           # working public-internet connectivity on the GH-hosted runner; without them wlan0
           # stays NO-CARRIER and every connect() to a public IP fails with ENETUNREACH.
           # See https://github.com/ReactiveCircus/android-emulator-runner/issues/348#issuecomment-2578082030
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -dns-server 8.8.8.8 -netfast -no-metrics
+          #
+          # `-no-snapshot`: on persistent self-hosted runners the AVD survives between jobs,
+          # so the emulator quickboot-resumes from the previous run's snapshot. Resumed guests
+          # have broken networking (UDP DNS times out), failing DNS tests. Always cold boot
+          # and never save state.
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -dns-server 8.8.8.8 -netfast -no-metrics -no-snapshot
           disable-animations: true
           script: |
             adb wait-for-device
