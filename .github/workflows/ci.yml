@@ -93,10 +93,8 @@ jobs:
   android:
     name: Android Build & Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    timeout-minutes: 60
-    # runs-on: [self-hosted, linux, X64]
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_2) }}
+    timeout-minutes: 30
+    runs-on: [self-hosted, linux, X64]
     strategy:
       fail-fast: false
       matrix:
@@ -182,6 +180,7 @@ jobs:
 
       - name: Run workspace tests on Android emulator
         if: matrix.target == 'x86_64-linux-android'
+        timeout-minutes: 20
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
