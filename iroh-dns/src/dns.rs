@@ -80,7 +80,7 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to DNS operations.
 #[allow(missing_docs)]
-#[stack_error(derive, add_meta, from_sources, std_sources)]
+#[stack_error(derive, add_meta, std_sources)]
 #[non_exhaustive]
 pub enum DnsError {
     #[error("Request timed out")]
@@ -94,10 +94,45 @@ pub enum DnsError {
     },
     #[error("Missing host")]
     MissingHost {},
+
+    /// DEPRECATED since v1.1.0. Replaced by [`Self::Resolve2`].
+    // TODO: This triggers warnings in n0_error expansions. Fix in n0_error.
+    // #[deprecated(
+    //     since = "1.1.0",
+    //     note = "No longer constructed, replaced by DnsError::Resolve2"
+    // )]
     #[error("Failed to resolve")]
-    Resolve { source: AnyError },
+    Resolve {
+        // We keep the `from` here, because pre-1.1.0 the `stack_error` macro call on `DnsError` included
+        // `from_sources`, which expanded to `impl From<AnyError> for `DnsError`. The manual `from` impl
+        // here on the deprecated variant exists only to maintain backwards compatibility.
+        #[error(source, from)]
+        source: AnyError,
+    },
+    #[error("Failed to retrieve {kind} record for {host}")]
+    Resolve2 {
+        #[error(source)]
+        source: AnyError,
+        host: String,
+        kind: QueryKind,
+    },
     #[error("Invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
+}
+
+/// DNS query kind, for error reporting.
+#[derive(Debug, derive_more::Display)]
+#[non_exhaustive]
+pub enum QueryKind {
+    /// A record (IPv4)
+    #[display("A")]
+    A,
+    /// AAAA record (IPv6)
+    #[display("AAAA")]
+    AAAA,
+    /// TXT record
+    #[display("TXT")]
+    TXT,
 }
 
 /// Potential errors related to DNS endpoint address lookups.
@@ -106,15 +141,16 @@ pub enum DnsError {
 #[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum LookupError {
-    #[error("Malformed txt from lookup")]
+    #[error("Received malformed TXT record")]
     ParseError { source: ParseError },
-    #[error("Failed to resolve TXT record")]
+    #[error(transparent)]
     LookupFailed { source: DnsError },
 }
 
 /// Error returned when a staggered call fails.
 #[stack_error(derive, add_meta)]
-#[error("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
+#[error("{}", errors.first().map(|err| format!("{err:#}")).unwrap_or("all resolves failed".to_string()))]
+// #[error("no calls succeeded:\n{}", errors.iter().map(|(delay, e)| format!("[{delay:?}] {e:#}")).collect::<Vec<_>>().join("\n"))]
 pub struct StaggeredError<E: n0_error::StackError + 'static> {
     errors: Vec<E>,
 }
@@ -795,7 +831,17 @@ impl Resolver for HickoryResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.ipv4_lookup(host).await.anyerr()?;
+            let lookup = resolver
+                .ipv4_lookup(host.clone())
+                .await
+                .anyerr()
+                .map_err(|source| {
+                    e!(DnsError::Resolve2 {
+                        source,
+                        host,
+                        kind: QueryKind::A
+                    })
+                })?;
             let iter: BoxIter<Ipv4Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
@@ -810,7 +856,17 @@ impl Resolver for HickoryResolver {
     fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.ipv6_lookup(host).await.anyerr()?;
+            let lookup = resolver
+                .ipv6_lookup(host.clone())
+                .await
+                .anyerr()
+                .map_err(|source| {
+                    e!(DnsError::Resolve2 {
+                        source,
+                        host,
+                        kind: QueryKind::AAAA
+                    })
+                })?;
             let iter: BoxIter<Ipv6Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
@@ -825,7 +881,17 @@ impl Resolver for HickoryResolver {
     fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.txt_lookup(host).await.anyerr()?;
+            let lookup = resolver
+                .txt_lookup(host.clone())
+                .await
+                .anyerr()
+                .map_err(|source| {
+                    e!(DnsError::Resolve2 {
+                        source,
+                        host,
+                        kind: QueryKind::TXT
+                    })
+                })?;
             let iter: BoxIter<TxtRecordData> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
