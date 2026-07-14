@@ -93,10 +93,8 @@ jobs:
   android:
     name: Android Build & Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    timeout-minutes: 60
-    # runs-on: [self-hosted, linux, X64]
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_2) }}
+    timeout-minutes: 30
+    runs-on: [self-hosted, linux, X64]
     strategy:
       fail-fast: false
       matrix:
@@ -182,6 +180,7 @@ jobs:
 
       - name: Run workspace tests on Android emulator
         if: matrix.target == 'x86_64-linux-android'
+        timeout-minutes: 20
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -198,7 +197,12 @@ jobs:
           # working public-internet connectivity on the GH-hosted runner; without them wlan0
           # stays NO-CARRIER and every connect() to a public IP fails with ENETUNREACH.
           # See https://github.com/ReactiveCircus/android-emulator-runner/issues/348#issuecomment-2578082030
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -dns-server 8.8.8.8 -netfast -no-metrics
+          #
+          # `-no-snapshot`: on persistent self-hosted runners the AVD survives between jobs,
+          # so the emulator quickboot-resumes from the previous run's snapshot. Resumed guests
+          # have broken networking (UDP DNS times out), failing DNS tests. Always cold boot
+          # and never save state.
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -dns-server 8.8.8.8 -netfast -no-metrics -no-snapshot
           disable-animations: true
           script: |
             adb wait-for-device
