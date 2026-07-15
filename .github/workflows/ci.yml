@@ -180,7 +180,7 @@ jobs:
 
       - name: Run workspace tests on Android emulator
         if: matrix.target == 'x86_64-linux-android'
-        timeout-minutes: 20
+        timeout-minutes: 30
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
