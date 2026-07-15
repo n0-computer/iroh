@@ -1059,7 +1059,16 @@ impl State {
                     | Some(Err(PathError::MaxPathIdReached)) => {
                         self.scheduled_open_path =
                             Some(Instant::now() + Duration::from_millis(333));
-                        self.pending_open_paths.push_back(open_addr.clone());
+                        // Dedup before scheduling a retry. On a stuck connection
+                        // (persistent `RemoteCidsExhausted` / `MaxPathIdReached`) each
+                        // scheduled retry re-drives `open_path_on_all_conns`, which
+                        // re-attempts the addr on every connection, and each still-failing
+                        // connection pushes it again. Without this guard
+                        // `pending_open_paths` grows without bound (observed reaching
+                        // several GB and OOMing the host on a churning multipath link).
+                        if !self.pending_open_paths.contains(open_addr) {
+                            self.pending_open_paths.push_back(open_addr.clone());
+                        }
                         trace!(?open_addr, ?ret, "scheduling open_path");
                     }
                     _ => warn!(?ret, "Opening path failed"),
