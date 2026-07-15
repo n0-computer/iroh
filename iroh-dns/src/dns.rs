@@ -23,7 +23,7 @@ use hickory_resolver::{
     proto::rr::RData,
 };
 use iroh_base::EndpointId;
-use n0_error::{AnyError, StackError, StdResultExt, e, stack_error};
+use n0_error::{AnyError, StackError, StackErrorExt, StdResultExt, e, stack_error};
 use n0_future::{
     Either, MaybeFuture, Stream, StreamExt,
     boxed::BoxFuture,
@@ -80,7 +80,7 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to DNS operations.
 #[allow(missing_docs)]
-#[stack_error(derive, add_meta, std_sources)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum DnsError {
     #[error("Request timed out")]
@@ -95,29 +95,23 @@ pub enum DnsError {
     #[error("Missing host")]
     MissingHost {},
 
-    /// DEPRECATED since v1.1.0. Replaced by [`Self::Resolve2`].
-    // TODO: This triggers warnings in n0_error expansions. Fix in n0_error.
-    // #[deprecated(
-    //     since = "1.1.0",
-    //     note = "No longer constructed, replaced by DnsError::Resolve2"
-    // )]
-    #[error("Failed to resolve")]
-    Resolve {
-        // We keep the `from` here, because pre-1.1.0 the `stack_error` macro call on `DnsError` included
-        // `from_sources`, which expanded to `impl From<AnyError> for `DnsError`. The manual `from` impl
-        // here on the deprecated variant exists only to maintain backwards compatibility.
-        #[error(source, from)]
-        source: AnyError,
-    },
-    #[error("Failed to retrieve {kind} record for {host}")]
-    Resolve2 {
-        #[error(source)]
-        source: AnyError,
-        host: String,
-        kind: QueryKind,
-    },
+    #[error(transparent)]
+    Resolve { source: AnyError },
     #[error("Invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
+}
+
+/// Error with details about the DNS query that caused it.
+///
+/// The `source` of [`DnsError::Resolve`] can be cast to this type via [`AnyError::downcast_ref`]
+/// to access the details programatically.
+#[stack_error(derive, add_meta)]
+#[error("Failed to retrieve {} record for {}", kind, host)]
+pub struct ErrorWithDetails {
+    #[error(source)]
+    source: AnyError,
+    host: String,
+    kind: QueryKind,
 }
 
 /// DNS query kind, for error reporting.
@@ -836,10 +830,13 @@ impl Resolver for HickoryResolver {
                 .await
                 .anyerr()
                 .map_err(|source| {
-                    e!(DnsError::Resolve2 {
-                        source,
-                        host,
-                        kind: QueryKind::A
+                    e!(DnsError::Resolve {
+                        source: e!(ErrorWithDetails {
+                            source,
+                            host,
+                            kind: QueryKind::A
+                        })
+                        .into_any()
                     })
                 })?;
             let iter: BoxIter<Ipv4Addr> =
@@ -861,10 +858,13 @@ impl Resolver for HickoryResolver {
                 .await
                 .anyerr()
                 .map_err(|source| {
-                    e!(DnsError::Resolve2 {
-                        source,
-                        host,
-                        kind: QueryKind::AAAA
+                    e!(DnsError::Resolve {
+                        source: e!(ErrorWithDetails {
+                            source,
+                            host,
+                            kind: QueryKind::AAAA
+                        })
+                        .into_any()
                     })
                 })?;
             let iter: BoxIter<Ipv6Addr> =
@@ -886,10 +886,13 @@ impl Resolver for HickoryResolver {
                 .await
                 .anyerr()
                 .map_err(|source| {
-                    e!(DnsError::Resolve2 {
-                        source,
-                        host,
-                        kind: QueryKind::TXT
+                    e!(DnsError::Resolve {
+                        source: e!(ErrorWithDetails {
+                            source,
+                            host,
+                            kind: QueryKind::TXT
+                        })
+                        .into_any()
                     })
                 })?;
             let iter: BoxIter<TxtRecordData> =
