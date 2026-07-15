@@ -1082,10 +1082,14 @@ impl RelayService {
         // established and handed to the relay protocol, clearing the timeout.
         let on_establish = Arc::new(Notify::new());
         let service = RelayServiceWithNotify::new(self, on_establish.clone());
-        let res = clearable_timeout(establish_timeout, on_establish, service.serve_connection(io))
-            .await
-            .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))
-            .flatten();
+        let res = clearable_timeout(
+            establish_timeout,
+            on_establish,
+            service.serve_connection(io),
+        )
+        .await
+        .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))
+        .flatten();
         Self::log_connection_result(res, &metrics);
     }
 
@@ -1258,7 +1262,10 @@ pub fn relay_tls_headers() -> HeaderMap {
     headers
 }
 
-fn root_handler(_r: Request<Incoming>, response: ResponseBuilder) -> HyperResult<Response<BytesBody>> {
+fn root_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
     response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
