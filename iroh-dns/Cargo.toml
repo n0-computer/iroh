@@ -35,7 +35,7 @@ hickory-resolver = { version = "0.26.0", features = ["tokio", "system-config"] }
 ndk-context = "0.1"
 
 [build-dependencies]
-cfg_aliases = "0.2.1"
+cfg_aliases = "0.2.2"
 
 [features]
 default = []
