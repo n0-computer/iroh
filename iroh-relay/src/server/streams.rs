@@ -202,6 +202,30 @@ pub enum MaybeTlsStream {
 }
 
 impl MaybeTlsStream {
+    /// Wraps a plain, un-encrypted [`tokio::net::TcpStream`].
+    ///
+    /// For callers that run their own accept loop and hand the accepted stream to
+    /// [`RelayService::serve_connection`]. The enum is `#[non_exhaustive]`, so this
+    /// constructor is the way to build one outside the crate.
+    ///
+    /// [`RelayService::serve_connection`]: super::http_server::RelayService::serve_connection
+    pub fn plain(stream: tokio::net::TcpStream) -> Self {
+        Self::Plain(stream)
+    }
+
+    /// Wraps a TLS stream a caller has already terminated over a
+    /// [`tokio::net::TcpStream`].
+    ///
+    /// For callers that terminate TLS themselves (e.g. to supply their own cert
+    /// resolver or ALPN handling) and hand the decrypted stream to
+    /// [`RelayService::serve_connection`]. The enum is `#[non_exhaustive]`, so this
+    /// constructor is the way to build one outside the crate.
+    ///
+    /// [`RelayService::serve_connection`]: super::http_server::RelayService::serve_connection
+    pub fn tls(stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>) -> Self {
+        Self::Tls(stream)
+    }
+
     /// Tries to disable the nagle algorithm on the TCP stream.
     ///
     /// This sets the NO_DELAY option on the TCP stream, which turns off the

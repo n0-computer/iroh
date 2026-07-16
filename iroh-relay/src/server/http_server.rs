@@ -413,6 +413,12 @@ impl ServerBuilder {
         self
     }
 
+    /// Sets the collection of custom request handlers, replacing any already set.
+    pub(super) fn handlers(mut self, handlers: Handlers) -> Self {
+        self.handlers = handlers;
+        self
+    }
+
     /// Adds a custom handler for a specific Method & URI.
     pub(super) fn request_handler(
         mut self,
@@ -952,9 +958,10 @@ impl RelayService {
         &self.0.clients
     }
 
-    /// Handle the incoming connection.
+    /// Handle an incoming connection.
     ///
-    /// If a `tls_config` is given, will serve the connection using HTTPS, otherwise HTTP.
+    /// This function takes a [`TcpStream`], terminates TLS, and then serves the connection
+    /// as HTTP(S).
     ///
     /// If the connection did not fully upgrade to a relay WebSocket connection after
     /// `establish_timeout`, the connection is aborted.
@@ -1047,6 +1054,48 @@ impl RelayService {
             .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))
             .flatten();
 
+        Self::log_connection_result(res, &metrics);
+    }
+
+    /// Serves an already-established connection as a relay connection.
+    ///
+    /// Runs the HTTP/1 serve loop with WebSocket upgrades, the relay protocol
+    /// handshake and authentication, and the per-client send/recv loop, over a
+    /// stream whose transport the caller has already established (TLS-terminated
+    /// via [`MaybeTlsStream::tls`] or plain via [`MaybeTlsStream::plain`]).
+    ///
+    /// `establish_timeout` limits the time until the WebSocket upgrade must have
+    /// completed. If the time limit is exceeded, the connection is aborted.
+    /// Once the WebSocket upgrade has completed, the timeout is cleared.
+    ///
+    /// Use this when running a custom accept loop and TLS termination -- for
+    /// example to supply a custom [`rustls`] cert resolver or ALPN handling -- while
+    /// reusing the relay protocol serving. For the batteries-included path that
+    /// also terminates TLS from a raw [`TcpStream`], see
+    /// [`handle_connection`](Self::handle_connection).
+    ///
+    /// [`rustls`]: https://docs.rs/rustls
+    pub async fn serve_connection(self, io: MaybeTlsStream, establish_timeout: Duration) {
+        let metrics = self.0.metrics.clone();
+        metrics.http_connections.inc();
+        // The notification token is triggered once the connection is fully
+        // established and handed to the relay protocol, clearing the timeout.
+        let on_establish = Arc::new(Notify::new());
+        let service = RelayServiceWithNotify::new(self, on_establish.clone());
+        let res = clearable_timeout(
+            establish_timeout,
+            on_establish,
+            service.serve_connection(io),
+        )
+        .await
+        .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))
+        .flatten();
+        Self::log_connection_result(res, &metrics);
+    }
+
+    /// Logs the outcome of a served connection: the common peer-disconnect cases
+    /// are downgraded to debug, genuine failures are counted and logged.
+    fn log_connection_result(res: Result<(), ServeConnectionError>, metrics: &Metrics) {
         metrics.http_connections_closed.inc();
 
         if let Err(error) = res {
@@ -1151,6 +1200,115 @@ impl std::ops::DerefMut for Handlers {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
+}
+
+impl Handlers {
+    /// The default relay HTTP endpoints served alongside relay traffic: a landing
+    /// page at `/` and `/index.html`, the latency probe at
+    /// [`RELAY_PROBE_PATH`](crate::http::RELAY_PROBE_PATH), `robots.txt`, and a
+    /// `/healthz` check.
+    ///
+    /// The batteries-included [`Server`](super::Server) installs these. A consumer
+    /// embedding [`RelayService`] with its own accept loop can start from here and
+    /// override or add entries through [`DerefMut`](std::ops::DerefMut) rather than
+    /// re-implementing them.
+    pub fn relay_defaults() -> Self {
+        let mut handlers = Self::default();
+        handlers.insert((Method::GET, "/"), Box::new(root_handler));
+        handlers.insert((Method::GET, "/index.html"), Box::new(root_handler));
+        handlers.insert(
+            (Method::GET, crate::http::RELAY_PROBE_PATH),
+            Box::new(probe_handler),
+        );
+        handlers.insert((Method::GET, "/robots.txt"), Box::new(robots_handler));
+        handlers.insert((Method::GET, "/healthz"), Box::new(healthz_handler));
+        handlers
+    }
+}
+
+const INDEX: &[u8] = br#"<html><body>
+<h1>Iroh Relay</h1>
+<p>
+  This is an <a href="https://iroh.computer/">Iroh</a> Relay server.
+</p>
+"#;
+const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
+
+const RELAY_TLS_HEADERS: [(&str, &str); 2] = [
+    (
+        "Strict-Transport-Security",
+        "max-age=63072000; includeSubDomains",
+    ),
+    (
+        "Content-Security-Policy",
+        "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'",
+    ),
+];
+
+/// The security response headers a relay applies to every HTTP response: HSTS to
+/// pin HTTPS across the relay's subdomains and a strict CSP for the served pages.
+///
+/// The batteries-included [`Server`](super::Server) applies these; a consumer
+/// embedding [`RelayService`] passes them as its response headers so responses
+/// carry the same hardening.
+pub fn relay_tls_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for (name, value) in RELAY_TLS_HEADERS {
+        // The static values above are valid header values.
+        if let Ok(value) = HeaderValue::from_str(value) {
+            headers.insert(name, value);
+        }
+    }
+    headers
+}
+
+fn root_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
+    response
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(body_full(INDEX))
+        .map_err(|err| Box::new(err) as HyperError)
+}
+
+/// Latency probe; permissive CORS so it is reachable from a browser.
+fn probe_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
+    response
+        .status(StatusCode::OK)
+        .header("Access-Control-Allow-Origin", "*")
+        .body(body_full(Bytes::new()))
+        .map_err(|err| Box::new(err) as HyperError)
+}
+
+fn robots_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
+    response
+        .status(StatusCode::OK)
+        .body(body_full(ROBOTS_TXT))
+        .map_err(|err| Box::new(err) as HyperError)
+}
+
+fn healthz_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
+    let body = format!(
+        r#"{{"status":"ok","version":"{}","git_hash":"{}"}}"#,
+        env!("CARGO_PKG_VERSION"),
+        option_env!("VERGEN_GIT_SHA").unwrap_or("unknown"),
+    );
+    response
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(body_full(body))
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 /// Requires a future to complete before the specified duration elapses, unless the timeout is cleared.
