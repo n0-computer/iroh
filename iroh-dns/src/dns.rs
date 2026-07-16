@@ -152,6 +152,10 @@ pub enum DnsError {
         #[error(from)]
         source: AnyError,
     },
+    // `InvalidResponse` keeps its 1.0 discriminant (5); the new variants below
+    // are appended so no existing variant's discriminant shifts (semver).
+    #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
+    InvalidResponse {},
 
     #[error("Failed to reach nameserver")]
     Transport { source: AnyError },
@@ -160,8 +164,6 @@ pub enum DnsError {
 
     #[error("DNS server returned error: {rcode}")]
     ServerError { rcode: String },
-    #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
-    InvalidResponse {},
     #[error("domain name does not exist (NXDOMAIN)")]
     NxDomain {},
 }
