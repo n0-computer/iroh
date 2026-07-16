@@ -73,6 +73,12 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
     }
 }
 
+impl std::fmt::Display for Box<dyn CustomEndpoint> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CustomTransport")
+    }
+}
+
 /// Custom sender
 ///
 /// A sender provides a poll based interface to send packets to custom addresses.
