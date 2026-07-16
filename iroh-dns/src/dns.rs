@@ -17,8 +17,6 @@ use std::{
 
 use arc_swap::ArcSwap;
 use iroh_base::EndpointId;
-#[cfg(any(target_os = "android", doc))]
-pub use n0_dns_resolver::install_android_jni_context;
 use n0_error::{AnyError, StackError, e, stack_error};
 use n0_future::{
     Either, MaybeFuture, Stream, StreamExt,
@@ -38,6 +36,67 @@ pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link.";
 /// The n0 address lookup DNS origin, for testing.
 pub const N0_DNS_ENDPOINT_ORIGIN_STAGING: &str = "staging-dns.iroh.link.";
+
+/// Exposes a JVM to iroh so that we can read the system's DNS configuration.
+///
+/// This calls [`ndk_context::initialize_android_context`] to expose a
+/// `JavaVM` and Application Context to Rust code so that we can use JNI.
+/// This is required to get the configured nameservers on Android.
+///
+/// If this function is not called, fetching the configured nameservers will fail
+/// and the default [`DnsResolver`] will use fallback nameservers instead.
+///
+/// If you call [`ndk_context::initialize_android_context`] already somewhere
+/// up the stack in your app, or use a crate like `ndk-glue` or `android-activity`
+/// that do this for you, then there's no need to call this function.
+///
+/// If you don't use a glue crate, a typical way to initialize the context is
+/// via `JNI_OnLoad`:
+///
+/// *Note: `install_android_jni_context` is reexported from `iroh`, so you can substitute
+/// `iroh_dns` for `iroh` below.*
+///
+/// ```ignore
+/// #[cfg(target_os = "android")]
+/// #[no_mangle]
+/// pub extern "C" fn JNI_OnLoad(
+///     vm: jni::JavaVM,
+///     res: *mut std::os::raw::c_void,
+/// ) -> jni::sys::jint {
+///     use std::ffi::c_void;
+///
+///     let vm = vm.get_java_vm_pointer() as *mut c_void;
+///     unsafe {
+///         iroh_dns::install_android_jni_context(vm, res);
+///     }
+///     jni::JNIVersion::V6.into()
+/// }
+/// ```
+///
+/// # Safety
+///
+/// Both the `java_vm` and `context_jobject` pointers must remain valid until the process exits.
+/// See also [`ndk_context::initialize_android_context`].
+///
+/// [`ndk_context`]: https://docs.rs/ndk-context
+/// [`ndk_context::initialize_android_context`]: https://docs.rs/ndk-context/latest/ndk_context/fn.initialize_android_context.html
+//
+// Inlined rather than re-exported from `n0-dns-resolver`: a `pub use` of the
+// resolver crate's item does not resolve on a `doc`-only build (the dependency
+// is compiled without the `doc` cfg, so its item is absent), so we mirror the
+// signature and cfg here and delegate to it on Android.
+#[cfg(any(target_os = "android", doc))]
+pub unsafe fn install_android_jni_context(
+    java_vm: *mut std::ffi::c_void,
+    application_context: *mut std::ffi::c_void,
+) {
+    #[cfg(target_os = "android")]
+    unsafe {
+        n0_dns_resolver::install_android_jni_context(java_vm, application_context);
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (java_vm, application_context);
+}
 
 /// Percent of total delay to jitter. 20 means +/- 20% of delay.
 const MAX_JITTER_PERCENT: u64 = 20;
