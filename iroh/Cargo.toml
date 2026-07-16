@@ -49,6 +49,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 rustc-hash = "2"
 rustls = { version = "0.23.33", default-features = false }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
+simple-dns = { version = "0.11", optional = true }
 smallvec = "1.11.1"
 strum = { version = "0.28", features = ["derive"] }
 tokio = { version = "1.44.1", features = [
@@ -73,8 +74,6 @@ axum = { version = "0.8", optional = true }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-
-hickory-resolver = { version = "0.26.0", default-features = false }
 portmapper = { version = "0.19.1", optional = true, default-features = false }
 noq = { version = "1.0.1", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
@@ -102,6 +101,7 @@ postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand_chacha = "0.10"
 chrono = "0.4.43"
+simple-dns = "0.11"
 
 # *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
@@ -112,6 +112,7 @@ tokio = { version = "1", features = [
     "io-util",
     "sync",
     "rt",
+    "rt-multi-thread",
     "net",
     "fs",
     "macros",
@@ -129,6 +130,7 @@ indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
 iroh-base = { version = "1.0.2", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 console = { version = "0.16" }
+
 
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
@@ -148,7 +150,7 @@ cfg_aliases = { version = "0.2.2" }
 default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring"]
 portmapper = ["dep:portmapper"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics"]
-test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
+test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum", "dep:simple-dns"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["iroh-relay/platform-verifier"]
 qlog = ["noq/qlog"]

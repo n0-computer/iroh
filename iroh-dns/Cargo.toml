@@ -27,24 +27,22 @@ tokio = { version = "1", features = ["sync"] }
 tracing = "0.1"
 url = "2.5.3"
 
-# non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "0.26.0", features = ["tokio", "system-config"] }
-
-[target.'cfg(target_os = "android")'.dependencies]
-ndk-context = "0.1"
+n0-dns-resolver = { version = "0.1", git = "https://github.com/n0-computer/n0-dns-resolver" }
 
 [build-dependencies]
 cfg_aliases = "0.2.2"
 
 [features]
 default = []
-tls-ring = ["rustls/ring", "hickory-resolver/https-ring"]
-tls-aws-lc-rs = ["rustls/aws-lc-rs", "hickory-resolver/https-aws-lc-rs"]
+tls-ring = ["rustls/ring", "n0-dns-resolver/tls-ring"]
+tls-aws-lc-rs = ["rustls/aws-lc-rs", "n0-dns-resolver/tls-aws-lc-rs"]
 
 [dev-dependencies]
 n0-tracing-test = "0.3"
 tokio = { version = "1", features = ["macros", "rt"] }
+tracing-subscriber = "0.3.23"
+webpki-roots = "1.0.7"
 
 [package.metadata.cargo_check_external_types]
 allowed_external_types = [
