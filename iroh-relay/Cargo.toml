@@ -126,7 +126,6 @@ axum = { version = "0.8", features = ["ws"] }
 
 [build-dependencies]
 cfg_aliases = "0.2.2"
-vergen-gitcl = "9.1"
 
 [features]
 default = ["metrics", "tls-ring"]
