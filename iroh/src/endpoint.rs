@@ -922,7 +922,7 @@ pub enum ConnectWithOptsError {
     LocallyRejected,
     #[error("Endpoint is closed")]
     EndpointClosed,
-    #[error("Incalid ALPN")]
+    #[error("Invalid ALPN")]
     InvalidAlpn,
 }
 
