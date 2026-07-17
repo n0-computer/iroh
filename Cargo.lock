@@ -2896,7 +2896,7 @@ dependencies = [
 [[package]]
 name = "n0-dns-resolver"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-dns-resolver?branch=defer-system-read#33e5a37d02736e9314a7f0641cb951fdde4374c8"
+source = "git+https://github.com/n0-computer/n0-dns-resolver?branch=defer-system-read#3599d684ed24e7a73132eb2bbc4829c914723af8"
 dependencies = [
  "cfg_aliases",
  "derive_more",
