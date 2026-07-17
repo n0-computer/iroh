@@ -1,5 +1,4 @@
 use cfg_aliases::cfg_aliases;
-use vergen_gitcl::{Emitter, GitclBuilder};
 
 fn main() {
     // Setup cfg aliases
