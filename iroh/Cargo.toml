@@ -105,6 +105,7 @@ chrono = "0.4.43"
 
 # *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
+assert_matches = "1.5.0"
 axum = { version = "0.8" }
 pretty_assertions = "1.4"
 rand_chacha = "0.10"

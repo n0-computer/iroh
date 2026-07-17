@@ -1997,7 +1997,6 @@ fn is_cgi() -> bool {
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{
-        assert_matches,
         collections::BTreeMap,
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
@@ -2006,6 +2005,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    use assert_matches::assert_matches;
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
     use iroh_relay::{RelayConfig, RelayQuicConfig, server::Access, tls::CaTlsConfig};
