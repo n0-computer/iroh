@@ -17,14 +17,14 @@ use iroh_dns::dns::{DnsError, DnsResolver};
 use n0_error::StdResultExt;
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
-    Sink, Stream,
+    Either, Sink, Stream,
     split::{SplitSink, SplitStream, split},
     time,
 };
 use tracing::{debug, trace};
 use url::Url;
 
-pub use self::conn::{RecvError, SendError};
+pub use self::conn::{RecvError, SendError, Transport};
 use crate::{
     KeyCache,
     http::{ProtocolVersion, RELAY_PATH},
@@ -35,6 +35,8 @@ use crate::{
 };
 
 pub(crate) mod conn;
+#[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+pub(crate) mod h3_conn;
 #[cfg(not(wasm_browser))]
 pub(crate) mod streams;
 #[cfg(not(wasm_browser))]
@@ -96,6 +98,12 @@ pub enum ConnectError {
         "No rustls crypto provider configured while both ring and aws-lc-rs feature flags are disabled"
     )]
     MissingCryptoProvider,
+    #[cfg(feature = "h3-transport")]
+    #[error(transparent)]
+    H3 {
+        #[error(std_err)]
+        source: h3_conn::H3ConnectError,
+    },
     #[cfg(wasm_browser)]
     #[error("The relay protocol is not available in browsers")]
     RelayProtoNotAvailable {},
@@ -161,6 +169,11 @@ pub struct ClientBuilder {
     dns_resolver: DnsResolver,
     /// Cache for public keys of remote endpoints.
     key_cache: KeyCache,
+    /// Whether to prefer H3 (QUIC) transport over WebSocket.
+    ///
+    /// When true, the client tries H3 first and falls back to WebSocket on failure.
+    #[cfg(feature = "h3-transport")]
+    enable_h3: bool,
 }
 
 impl ClientBuilder {
@@ -180,6 +193,8 @@ impl ClientBuilder {
             dns_resolver,
             key_cache: KeyCache::new(128),
             auth_token: None,
+            #[cfg(feature = "h3-transport")]
+            enable_h3: false,
         }
     }
 
@@ -252,10 +267,164 @@ impl ClientBuilder {
         self
     }
 
+    /// Enable H3/WebTransport relay connections.
+    ///
+    /// When true, the client races WebTransport and WebSocket connections
+    /// concurrently. The first transport to receive a server response wins;
+    /// the other is aborted.
+    #[cfg(feature = "h3-transport")]
+    pub fn enable_h3(mut self, enable: bool) -> Self {
+        self.enable_h3 = enable;
+        self
+    }
+
     /// Establishes a new connection to the relay server.
+    ///
+    /// When H3 is enabled via [`enable_h3`](Self::enable_h3), races WebTransport
+    /// and WebSocket concurrently. The first to receive a server response wins.
     #[cfg(not(wasm_browser))]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
-        use http::header::{AUTHORIZATION, HeaderValue, SEC_WEBSOCKET_PROTOCOL};
+        #[cfg(feature = "h3-transport")]
+        if self.enable_h3 {
+            return self.connect_race().await;
+        }
+
+        self.connect_ws().await
+    }
+
+    /// Race WebTransport and WebSocket connections concurrently.
+    ///
+    /// DNS is resolved once, then both transports connect in parallel using
+    /// the same IP. The first to complete wins; the loser is dropped.
+    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+    async fn connect_race(&self) -> Result<Client, ConnectError> {
+        let url = &*self.url;
+        let host = url
+            .host_str()
+            .ok_or_else(|| e!(ConnectError::InvalidRelayUrl { url: url.clone() }))?;
+
+        let tls_config = self
+            .tls_config
+            .clone()
+            .ok_or_else(|| e!(ConnectError::MissingCryptoProvider))?;
+
+        debug!(%url, "racing WT and WS connections");
+
+        // Race the QUIC handshake against the full WS connect. The QUIC handshake is
+        // 1 RTT; WS needs TCP + TLS + HTTP upgrade (3-4 RTTs). If QUIC succeeds first,
+        // abort WS and complete the WT handshake uncontested. Both dials resolve the
+        // relay URL and race addresses Happy Eyeballs style (RFC 8305).
+        let quic_fut = self.quic_connect_happy_eyeballs(host, tls_config);
+        let ws_fut = self.connect_ws();
+        tokio::pin!(quic_fut);
+        tokio::pin!(ws_fut);
+
+        // Race QUIC handshake (1 RTT) against the full WS connect (3-4 RTTs).
+        // The &mut borrows keep the loser alive for fallback.
+        #[rustfmt::skip]
+        let race = n0_future::future::race(
+            async { Either::Left((&mut quic_fut).await) },
+            async { Either::Right((&mut ws_fut).await) }
+        )
+        .await;
+
+        match race {
+            Either::Left(Ok(quic)) => {
+                debug!("QUIC handshake won the race, completing WT handshake");
+                match h3_conn::wt_handshake(quic, host, &self.secret_key).await {
+                    Ok((io, state, local_addr)) => {
+                        use tracing::{Level, event};
+
+                        event!(
+                            target: "iroh::_events::net::relay::connected",
+                            Level::DEBUG,
+                            url = %self.url,
+                            transport = "h3",
+                        );
+                        let conn = Conn::from_wt(
+                            io,
+                            state,
+                            self.key_cache.clone(),
+                            ProtocolVersion::default(),
+                        );
+                        Ok(Client {
+                            conn,
+                            local_addr: Some(local_addr),
+                        })
+                    }
+                    Err(err) => {
+                        debug!("WT handshake failed ({err:#}), falling back to WS");
+                        ws_fut.await
+                    }
+                }
+            }
+            Either::Left(Err(err)) => {
+                debug!("QUIC failed ({err:#}), waiting for WS");
+                ws_fut.await
+            }
+            Either::Right(Ok(client)) => {
+                debug!("WS won the race");
+                Ok(client)
+            }
+            Either::Right(Err(ws_err)) => {
+                debug!("WS failed ({ws_err:#}), waiting for QUIC");
+                match quic_fut.await {
+                    Ok(quic) => h3_conn::wt_handshake(quic, host, &self.secret_key)
+                        .await
+                        .map(|(io, state, local_addr)| {
+                            let conn = Conn::from_wt(
+                                io,
+                                state,
+                                self.key_cache.clone(),
+                                ProtocolVersion::default(),
+                            );
+                            Client {
+                                conn,
+                                local_addr: Some(local_addr),
+                            }
+                        })
+                        .map_err(|_| ws_err),
+                    Err(err) => {
+                        debug!("QUIC also failed: {err:#}");
+                        Err(ws_err)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Establishes a QUIC connection to the relay, racing the resolved addresses
+    /// Happy Eyeballs style (RFC 8305), the same way the WebSocket path dials.
+    #[cfg(all(not(wasm_browser), feature = "h3-transport"))]
+    async fn quic_connect_happy_eyeballs(
+        &self,
+        server_name: &str,
+        tls_config: rustls::ClientConfig,
+    ) -> Result<h3_conn::QuicConnected, DialError> {
+        tls::race_happy_eyeballs(
+            &self.dns_resolver,
+            &self.url,
+            self.prefer_ipv6(),
+            move |addr| {
+                let tls_config = tls_config.clone();
+                async move {
+                    h3_conn::quic_connect(addr, server_name, tls_config)
+                        .await
+                        .map_err(|err| {
+                            e!(DialError::Io {
+                                source: std::io::Error::other(err)
+                            })
+                        })
+                }
+            },
+        )
+        .await
+    }
+
+    /// Connect via WebSocket.
+    #[cfg(not(wasm_browser))]
+    async fn connect_ws(&self) -> Result<Client, ConnectError> {
+        use http::header::SEC_WEBSOCKET_PROTOCOL;
         use n0_error::StdResultExt;
         use tls::MaybeTlsStreamBuilder;
 
@@ -287,8 +456,7 @@ impl ClientBuilder {
             .clone()
             .ok_or_else(|| e!(ConnectError::MissingCryptoProvider))?;
 
-        #[allow(unused_mut)]
-        let mut builder =
+        let builder =
             MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone(), tls_config)
                 .prefer_ipv6(self.prefer_ipv6())
                 .proxy_url(self.proxy_url.clone());
@@ -318,6 +486,8 @@ impl ClientBuilder {
             .config(tokio_websockets::Config::default().flush_threshold(usize::MAX));
 
         if let Some(token) = self.auth_token.as_ref() {
+            use http::{HeaderValue, header::AUTHORIZATION};
+
             let value = HeaderValue::from_str(&format!("Bearer {token}"))
                 .map_err(|_| e!(ConnectError::InvalidAuthToken))?;
             builder = builder
@@ -451,6 +621,18 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a [`Client`] from a pre-established [`Conn`] and optional local address.
+    #[cfg(all(feature = "h3-transport", test))]
+    pub(crate) fn from_conn(conn: Conn, local_addr: Option<SocketAddr>) -> Self {
+        Self { conn, local_addr }
+    }
+
+    /// Returns which transport protocol this connection uses.
+    #[cfg(not(wasm_browser))]
+    pub fn transport(&self) -> Transport {
+        self.conn.transport()
+    }
+
     /// Splits the client into a sink and a stream.
     pub fn split(self) -> (ClientStream, ClientSink) {
         let (sink, stream) = split(self.conn);

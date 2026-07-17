@@ -353,6 +353,8 @@ pub(crate) struct Socket {
     net_report: Watchable<(Option<Report>, UpdateReason)>,
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
+    /// If the last net_report report, reports UDP to be available.
+    udp_available: Arc<AtomicBool>,
     /// Maps for resolving mapped addrs to/from IP and relay addresses.
     mapped_addrs: MappedAddrs,
 
@@ -921,6 +923,7 @@ impl EndpointInner {
             .unwrap_or_else(RelayMap::empty);
 
         let ipv6_reported = Arc::new(AtomicBool::new(false));
+        let udp_available = Arc::new(AtomicBool::new(false));
 
         let relay_actor_config = RelayActorConfig {
             my_relay: HomeRelayWatch::default(),
@@ -929,9 +932,10 @@ impl EndpointInner {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
+            udp_available: udp_available.clone(),
             tls_config: tls_config.clone(),
-            metrics: metrics.socket.clone(),
             relay_map: relay_map.clone(),
+            metrics: metrics.socket.clone(),
         };
 
         let shutdown_state = ShutdownState::default();
@@ -991,6 +995,7 @@ impl EndpointInner {
             remote_actors: remote_map.senders(),
             shutdown: shutdown_state,
             ipv6_reported,
+            udp_available,
             mapped_addrs: remote_map.mapped_addrs.clone(),
             address_lookup,
             relay_map: relay_map.clone(),
@@ -1964,6 +1969,9 @@ impl Actor {
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
         if let Some(ref mut r) = report {
             self.sock.ipv6_reported.store(r.udp_v6, Ordering::Relaxed);
+            self.sock
+                .udp_available
+                .store(r.has_udp(), Ordering::Relaxed);
             if r.preferred_relay.is_none()
                 && let Some(my_relay) = self.sock.my_relay()
             {

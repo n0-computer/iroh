@@ -442,13 +442,15 @@ impl ServerBuilder {
     pub(super) async fn spawn(self) -> Result<Server, SpawnError> {
         let cancel_token = CancellationToken::new();
 
+        let metrics = self.metrics.unwrap_or_default();
+        let key_cache = KeyCache::new(self.key_cache_capacity);
         let service = RelayService::new(
             self.handlers,
             self.headers,
             self.client_rx_ratelimit,
-            KeyCache::new(self.key_cache_capacity),
+            key_cache,
             self.access,
-            self.metrics.unwrap_or_default(),
+            metrics,
         );
 
         let addr = self.addr;
@@ -950,6 +952,21 @@ impl RelayService {
     /// connected endpoint via [`Clients::disconnect`].
     pub fn clients(&self) -> &Clients {
         &self.0.clients
+    }
+
+    /// Returns the access control shared by all transports.
+    pub(crate) fn access(&self) -> &Arc<dyn DynAccessControl> {
+        &self.0.access
+    }
+
+    /// Returns the key cache shared by all transports.
+    pub(crate) fn key_cache(&self) -> &KeyCache {
+        &self.0.key_cache
+    }
+
+    /// Returns the metrics shared by all transports.
+    pub(crate) fn metrics(&self) -> &Arc<Metrics> {
+        &self.0.metrics
     }
 
     /// Handle the incoming connection.

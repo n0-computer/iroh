@@ -345,6 +345,10 @@ struct EndpointArgs {
     /// Accepts values like "5M", "2000K", etc.
     #[clap(long, value_parser = parse_byte_size)]
     receive_window: Option<u32>,
+    /// Trust any server certificate (for local testing with self-signed certs).
+    #[cfg(feature = "test-utils")]
+    #[clap(long)]
+    insecure: bool,
 }
 
 #[derive(Subcommand, Debug, derive_more::Display)]
@@ -495,7 +499,12 @@ impl EndpointArgs {
             builder = builder.addr_filter(AddrFilter::relay_only());
         }
 
-        if Env::Dev == self.env {
+        #[cfg(feature = "test-utils")]
+        let needs_insecure = Env::Dev == self.env || self.insecure;
+        #[cfg(not(feature = "test-utils"))]
+        let needs_insecure = Env::Dev == self.env;
+
+        if needs_insecure {
             #[cfg(feature = "test-utils")]
             {
                 builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::insecure_skip_verify());
@@ -503,7 +512,7 @@ impl EndpointArgs {
             #[cfg(not(feature = "test-utils"))]
             {
                 n0_error::bail_any!(
-                    "Must have the `test-utils` feature enabled when using the `--env=dev` flag"
+                    "Must have the `test-utils` feature enabled when using --env=dev, --insecure, or --local-relay"
                 )
             }
         }

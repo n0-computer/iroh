@@ -50,6 +50,9 @@ mod switch_uplink;
 #[path = "patchbay/util.rs"]
 mod util;
 
+#[path = "patchbay/relay.rs"]
+mod relay;
+
 /// Init the user namespace before any threads are spawned.
 ///
 /// This gives us all permissions we need for the patchbay tests.
