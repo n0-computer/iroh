@@ -2896,9 +2896,8 @@ dependencies = [
 [[package]]
 name = "n0-dns-resolver"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-dns-resolver?branch=defer-system-read#3599d684ed24e7a73132eb2bbc4829c914723af8"
+source = "git+https://github.com/n0-computer/n0-dns-resolver#2274fc497af22f21cd88283947feffe8c0ea8922"
 dependencies = [
- "cfg_aliases",
  "derive_more",
  "ipconfig",
  "jni 0.22.4",
@@ -2914,6 +2913,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+ "webpki-roots",
 ]
 
 [[package]]

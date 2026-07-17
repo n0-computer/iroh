@@ -169,7 +169,6 @@ pub enum DnsError {
 }
 
 /// Potential errors related to DNS endpoint address lookups.
-#[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
@@ -201,7 +200,7 @@ pub struct Builder {
     nameservers: Vec<Nameserver>,
     fallback_mode: FallbackMode,
     fallback_nameservers: Vec<Nameserver>,
-    #[cfg(with_crypto_provider)]
+    #[cfg(not(wasm_browser))]
     tls_client_config: Option<rustls::ClientConfig>,
 }
 
@@ -249,8 +248,7 @@ impl FallbackMode {
 struct Nameserver {
     addr: SocketAddr,
     protocol: DnsProtocol,
-    /// Only used for DoT/DoH, which require a crypto provider.
-    #[cfg(with_crypto_provider)]
+    /// Only used for DoT/DoH.
     server_name: Option<String>,
 }
 
@@ -260,14 +258,12 @@ impl Nameserver {
         Self {
             addr,
             protocol,
-            #[cfg(with_crypto_provider)]
             server_name: None,
         }
     }
 
     /// Converts into the resolver crate's nameserver type.
     fn into_inner(self) -> n0_dns_resolver::Nameserver {
-        #[cfg(with_crypto_provider)]
         if let Some(server_name) = self.server_name {
             return n0_dns_resolver::Nameserver::with_server_name(
                 self.addr,
@@ -280,7 +276,6 @@ impl Nameserver {
 
     /// Adds this nameserver as a primary nameserver on a resolver builder.
     fn add_to(self, builder: n0_dns_resolver::Builder) -> n0_dns_resolver::Builder {
-        #[cfg(with_crypto_provider)]
         if let Some(server_name) = self.server_name {
             return builder.nameserver_with_name(
                 self.addr,
@@ -310,14 +305,12 @@ pub enum DnsProtocol {
     /// Performs DNS lookups over TLS-encrypted TCP connections, as defined in [RFC 7858].
     ///
     /// [RFC 7858]: https://www.rfc-editor.org/rfc/rfc7858.html
-    #[cfg(with_crypto_provider)]
     Tls,
     /// DNS over HTTPS
     ///
     /// Performs DNS lookups over HTTPS, as defined in [RFC 8484].
     ///
     /// [RFC 8484]: https://www.rfc-editor.org/rfc/rfc8484.html
-    #[cfg(with_crypto_provider)]
     Https,
 }
 
@@ -327,9 +320,7 @@ impl DnsProtocol {
         match self {
             DnsProtocol::Udp => n0_dns_resolver::DnsProtocol::Udp,
             DnsProtocol::Tcp => n0_dns_resolver::DnsProtocol::Tcp,
-            #[cfg(with_crypto_provider)]
             DnsProtocol::Tls => n0_dns_resolver::DnsProtocol::Tls,
-            #[cfg(with_crypto_provider)]
             DnsProtocol::Https => n0_dns_resolver::DnsProtocol::Https,
         }
     }
@@ -374,7 +365,6 @@ impl Builder {
     /// The connection is made to `addr`, but `server_name` is used for the SNI
     /// and certificate validation. Use this for providers whose certificates
     /// cover a hostname rather than the IP.
-    #[cfg(any(with_crypto_provider, doc))]
     pub fn with_tls_nameserver(mut self, addr: SocketAddr, server_name: impl Into<String>) -> Self {
         self.nameservers.push(Nameserver {
             addr,
@@ -389,7 +379,6 @@ impl Builder {
     /// The request is sent to `https://<server_name>/dns-query` with the
     /// connection pinned to `addr`. Use this for providers whose certificates
     /// cover a hostname rather than the IP.
-    #[cfg(any(with_crypto_provider, doc))]
     pub fn with_https_nameserver(
         mut self,
         addr: SocketAddr,
@@ -407,7 +396,7 @@ impl Builder {
     ///
     /// This is only used with DNS-over-TLS and DNS-over-HTTPS, and requires
     /// enabling either the ring or aws-lc-rs feature.
-    #[cfg(any(with_crypto_provider, doc))]
+    #[cfg(not(wasm_browser))]
     pub fn tls_client_config(mut self, client_config: rustls::ClientConfig) -> Self {
         self.tls_client_config = Some(client_config);
         self
@@ -463,7 +452,7 @@ impl Builder {
                     .map(Nameserver::into_inner),
             );
         }
-        #[cfg(with_crypto_provider)]
+        #[cfg(not(wasm_browser))]
         if let Some(tls_client_config) = self.tls_client_config {
             builder = builder.tls_client_config(tls_client_config);
         }
