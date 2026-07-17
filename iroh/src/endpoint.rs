@@ -1997,6 +1997,7 @@ fn is_cgi() -> bool {
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{
+        assert_matches,
         collections::BTreeMap,
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
@@ -2047,6 +2048,31 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Connecting to ourself"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_connect_empty_alpn() -> Result {
+        let server = Endpoint::builder(presets::Minimal)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await
+            .unwrap();
+        let server_addr = server.addr();
+
+        let client = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+        let res = client.connect(server_addr, b"").await;
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert_matches!(
+            err,
+            ConnectError::Connect {
+                source: ConnectWithOptsError::InvalidAlpn { .. },
+                ..
+            }
+        );
 
         Ok(())
     }
