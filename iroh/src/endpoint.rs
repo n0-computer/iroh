@@ -922,6 +922,8 @@ pub enum ConnectWithOptsError {
     LocallyRejected,
     #[error("Endpoint is closed")]
     EndpointClosed,
+    #[error("Incalid ALPN")]
+    InvalidAlpn,
 }
 
 #[allow(missing_docs)]
@@ -1110,6 +1112,7 @@ impl Endpoint {
 
         // Connecting to ourselves is not supported.
         ensure!(endpoint_id != self.id(), ConnectWithOptsError::SelfConnect);
+        ensure!(!alpn.is_empty(), ConnectWithOptsError::InvalidAlpn);
 
         event!(
             target: "iroh::_events::conn::connecting",
