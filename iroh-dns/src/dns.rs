@@ -430,13 +430,6 @@ impl Builder {
         self.with_fallback_mode(FallbackMode::Never)
     }
 
-    /// Races the fallback nameservers alongside the primary ones from the start.
-    ///
-    /// Shorthand for [`Self::with_fallback_mode`] with [`FallbackMode::Always`].
-    pub fn always_use_fallback(self) -> Self {
-        self.with_fallback_mode(FallbackMode::Always)
-    }
-
     /// Replaces the default public-resolver fallback with the given nameservers,
     /// each addressed by IP.
     ///
