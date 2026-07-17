@@ -263,6 +263,7 @@ impl Builder {
         #[cfg(not(wasm_browser))]
         let dns_resolver = self.dns_resolver.unwrap_or_else(|| {
             DnsResolver::builder()
+                .with_system_defaults()
                 .tls_client_config(tls_config.clone())
                 .build()
         });
