@@ -315,7 +315,9 @@ impl RemoteStateActor {
                     self.trigger_holepunching();
                 }
                 Some(item) = maybe_next(self.state.address_lookup_stream.as_mut()), if self.state.address_lookup_stream.is_some() => {
-                    self.state.handle_address_lookup_item(item);
+                    for path in self.state.handle_address_lookup_item(item) {
+                        self.open_path_on_all_conns(&path);
+                    }
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -442,6 +444,22 @@ impl RemoteStateActor {
                     self.state
                         .open_path_on_conn(conn_id, conn_state, &conn, &open_addr);
                 }
+            }
+        }
+        // Address lookup can finish before the Noq connection is registered.
+        // Open those candidates now so a relay PathId(0) can still be upgraded.
+        if conn.side().is_client() {
+            let ip_paths = self
+                .state
+                .paths
+                .addrs()
+                .filter(|addr| matches!(addr, transports::Addr::Ip(_)))
+                .cloned()
+                .map(transports::FourTuple::from_remote)
+                .collect::<Vec<_>>();
+            for path in ip_paths {
+                self.state
+                    .open_path_on_conn(conn_id, conn_state, &conn, &path);
             }
         }
         self.trigger_holepunching();
@@ -886,11 +904,12 @@ impl State {
     fn handle_address_lookup_item(
         &mut self,
         item: Option<Result<AddressLookupItem, AddressLookupFailed>>,
-    ) {
+    ) -> Vec<transports::FourTuple> {
         match item {
             None => {
                 self.paths.address_lookup_finished(Ok(()));
                 self.address_lookup_stream = None;
+                Vec::new()
             }
             Some(Err(err)) => {
                 if let AddressLookupFailed::NoServiceConfigured { .. } = err {
@@ -900,6 +919,7 @@ impl State {
                 }
                 self.paths.address_lookup_finished(Err(err));
                 self.address_lookup_stream = None;
+                Vec::new()
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
@@ -907,13 +927,22 @@ impl State {
                         ?item,
                         "Address Lookup emitted item for wrong remote endpoint"
                     );
+                    Vec::new()
                 } else {
                     let source = Source::AddressLookup {
                         name: item.provenance().to_string(),
                     };
                     let addrs =
-                        to_transports_addr(self.endpoint_id, item.into_endpoint_addr().addrs);
-                    self.paths.insert_multiple(addrs, source);
+                        to_transports_addr(self.endpoint_id, item.into_endpoint_addr().addrs)
+                            .collect::<Vec<_>>();
+                    let ip_paths = addrs
+                        .iter()
+                        .filter(|addr| matches!(addr, transports::Addr::Ip(_)))
+                        .cloned()
+                        .map(transports::FourTuple::from_remote)
+                        .collect();
+                    self.paths.insert_multiple(addrs.into_iter(), source);
+                    ip_paths
                 }
             }
         }
@@ -1059,7 +1088,9 @@ impl State {
                     | Some(Err(PathError::MaxPathIdReached)) => {
                         self.scheduled_open_path =
                             Some(Instant::now() + Duration::from_millis(333));
-                        self.pending_open_paths.push_back(open_addr.clone());
+                        if !self.pending_open_paths.contains(open_addr) {
+                            self.pending_open_paths.push_back(open_addr.clone());
+                        }
                         trace!(?open_addr, ?ret, "scheduling open_path");
                     }
                     _ => warn!(?ret, "Opening path failed"),
@@ -1526,5 +1557,58 @@ async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<O
     match maybe_stream {
         None => None,
         Some(s) => Some(s.next().await),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeSet, net::SocketAddrV6};
+
+    use iroh_base::SecretKey;
+    use n0_watcher::Watchable;
+
+    use super::*;
+    use crate::{
+        address_lookup::{EndpointData, EndpointInfo},
+        socket::biased_rtt_path_selector::BiasedRttPathSelector,
+    };
+
+    #[test]
+    fn address_lookup_returns_ip_paths_for_each_update() {
+        let endpoint_id = SecretKey::from([7; 32]).public();
+        let local_direct_addrs: Watchable<BTreeSet<DirectAddr>> = Watchable::default();
+        let mut actor = RemoteStateActor::new(
+            endpoint_id,
+            local_direct_addrs.watch(),
+            Default::default(),
+            Default::default(),
+            Arc::new(SocketMetrics::default()),
+            AddressLookupServices::default(),
+            Arc::new(BiasedRttPathSelector::default()),
+        );
+        let ip = SocketAddr::V6(SocketAddrV6::new("fe80::1".parse().unwrap(), 4242, 0, 7));
+        let relay: RelayUrl = "https://example.com".parse().unwrap();
+        let item = || {
+            AddressLookupItem::new(
+                EndpointInfo::from_parts(
+                    endpoint_id,
+                    EndpointData::new(vec![
+                        TransportAddr::Ip(ip),
+                        TransportAddr::Relay(relay.clone()),
+                    ]),
+                ),
+                "test",
+                None,
+            )
+        };
+
+        assert_eq!(
+            actor.state.handle_address_lookup_item(Some(Ok(item()))),
+            [transports::FourTuple::from_remote(transports::Addr::Ip(ip))]
+        );
+        assert_eq!(
+            actor.state.handle_address_lookup_item(Some(Ok(item()))),
+            [transports::FourTuple::from_remote(transports::Addr::Ip(ip))]
+        );
     }
 }

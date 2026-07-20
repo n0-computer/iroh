@@ -509,6 +509,37 @@ mod tests {
     const FAIRNESS_SAMPLE_POLLS: usize = 10_000;
 
     #[test]
+    fn canonicalization_preserves_native_ipv6_scope() {
+        let scoped = SocketAddr::V6(SocketAddrV6::new("fe80::1".parse().unwrap(), 4242, 9, 7));
+        let canonical = SocketAddr::V6(SocketAddrV6::new("fe80::1".parse().unwrap(), 4242, 0, 7));
+
+        assert_eq!(Addr::from(scoped), Addr::Ip(canonical));
+        assert_eq!(Addr::from(&scoped), Addr::Ip(canonical));
+
+        let mapped = SocketAddr::V6(SocketAddrV6::new(
+            std::net::Ipv4Addr::LOCALHOST.to_ipv6_mapped(),
+            4242,
+            9,
+            7,
+        ));
+        assert_eq!(
+            Addr::from(mapped),
+            Addr::Ip(SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 4242)))
+        );
+
+        let global_with_scope = SocketAddr::V6(SocketAddrV6::new(
+            "2001:db8::1".parse().unwrap(),
+            4242,
+            0,
+            7,
+        ));
+        assert_eq!(
+            Addr::from(global_with_scope),
+            Addr::Ip("[2001:db8::1]:4242".parse().unwrap())
+        );
+    }
+
+    #[test]
     fn ready_custom_transports_are_polled_fairly() {
         // GIVEN: two custom transport lanes that are always ready.
         let first_polls = Arc::new(AtomicUsize::new(0));
@@ -822,25 +853,33 @@ impl Default for Addr {
     }
 }
 
+/// Canonicalizes IPv4-mapped IPv6 addresses while preserving native IPv6 scope.
+pub(super) fn canonical_socket_addr(addr: SocketAddr) -> SocketAddr {
+    match addr {
+        SocketAddr::V4(_) => addr,
+        SocketAddr::V6(addr) => match addr.ip().to_canonical() {
+            IpAddr::V4(ip) => SocketAddr::new(ip.into(), addr.port()),
+            IpAddr::V6(ip) => {
+                let scope_id = if ip.is_unicast_link_local() || ip.is_multicast() {
+                    addr.scope_id()
+                } else {
+                    0
+                };
+                SocketAddrV6::new(ip, addr.port(), 0, scope_id).into()
+            }
+        },
+    }
+}
+
 impl From<SocketAddr> for Addr {
     fn from(value: SocketAddr) -> Self {
-        match value {
-            SocketAddr::V4(_) => Self::Ip(value),
-            SocketAddr::V6(addr) => {
-                Self::Ip(SocketAddr::new(addr.ip().to_canonical(), addr.port()))
-            }
-        }
+        Self::Ip(canonical_socket_addr(value))
     }
 }
 
 impl From<&SocketAddr> for Addr {
     fn from(value: &SocketAddr) -> Self {
-        match value {
-            SocketAddr::V4(_) => Self::Ip(*value),
-            SocketAddr::V6(addr) => {
-                Self::Ip(SocketAddr::new(addr.ip().to_canonical(), addr.port()))
-            }
-        }
+        Self::from(*value)
     }
 }
 
@@ -1455,8 +1494,7 @@ impl noq::UdpSender for Sender {
             }
             MultipathMappedAddr::Ip(socket_addr) => {
                 // Ensure IPv6 mapped addresses are converted back
-                let socket_addr =
-                    SocketAddr::new(socket_addr.ip().to_canonical(), socket_addr.port());
+                let socket_addr = canonical_socket_addr(socket_addr);
                 FourTuple::Ip {
                     remote: socket_addr,
                     local: noq_transmit.src_ip,
