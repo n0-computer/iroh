@@ -41,9 +41,9 @@ netwatch = "0.19.1"
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-noq = { version = "1.0.1", default-features = false, features = ["rustls"] }
-noq-proto = { version = "1.0.1", default-features = false }
-noq-udp = { version = "1.0.1", default-features = false }
+noq = { version = "1.1.0", default-features = false, features = ["rustls"] }
+noq-proto = { version = "1.1.0", default-features = false }
+noq-udp = { version = "1.1.0", default-features = false }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustc-hash = "2"

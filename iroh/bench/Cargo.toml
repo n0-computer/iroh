@@ -12,7 +12,7 @@ iroh = { version = "1.0.2", path = "..", default-features = false }
 iroh-metrics = { version = "1.0.1", optional = true }
 n0-future = "0.3"
 n0-error = "1.0.0"
-noq = "1.0.1"
+noq = "1.1.0"
 rcgen = "0.14"
 rustls = { version = "0.23.33", default-features = false }
 clap = { version = "4", features = ["derive"] }
