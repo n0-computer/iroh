@@ -131,6 +131,23 @@ pub trait Resolver: fmt::Debug + Send + Sync + 'static {
 pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to DNS operations.
+///
+/// Distinct, matchable causes have their own variant, such as [`Self::NxDomain`]
+/// (a nameserver reported the name does not exist, unlike a transient transport
+/// or timeout failure). Any other cause is reported as [`Self::Resolve`], whose
+/// [`AnyError`] source carries the underlying error.
+///
+/// The resolver backing this crate is an implementation detail and its error
+/// types are not part of the public API. If you depend on `n0-dns-resolver`
+/// directly and need the exact reason, downcast a [`Self::Resolve`] source:
+///
+/// ```ignore
+/// if let DnsError::Resolve { source, .. } = &err {
+///     if let Some(inner) = source.downcast_ref::<n0_dns_resolver::Error>() {
+///         // match on `inner` for the specific failure
+///     }
+/// }
+/// ```
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, std_sources)]
 #[non_exhaustive]
@@ -146,24 +163,21 @@ pub enum DnsError {
     },
     #[error("Missing host")]
     MissingHost {},
-
+    /// A resolution failure not covered by another variant. Downcast the source
+    /// (see the type-level docs) to recover the specific cause.
     #[error("Failed to resolve")]
     Resolve {
         #[error(from)]
         source: AnyError,
     },
-    // `InvalidResponse` keeps its 1.0 discriminant (5); the new variants below
-    // are appended so no existing variant's discriminant shifts (semver).
     #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
-
-    #[error("Failed to reach nameserver")]
-    Transport { source: AnyError },
-    #[error("Failed to build query")]
-    InvalidQuery { source: AnyError },
-
-    #[error("DNS server returned error: {rcode}")]
-    ServerError { rcode: String },
+    /// The domain name does not exist (NXDOMAIN).
+    ///
+    /// A nameserver authoritatively reported that the name does not exist, as
+    /// opposed to a transient transport or timeout failure, so retrying will not
+    /// make the lookup succeed. Appended after [`Self::InvalidResponse`] so the
+    /// pre-existing variants keep their discriminants (API compatibility).
     #[error("domain name does not exist (NXDOMAIN)")]
     NxDomain {},
 }
@@ -437,8 +451,8 @@ impl Builder {
 
     /// Builds the DNS resolver.
     pub fn build(self) -> DnsResolver {
-        let mut builder = n0_dns_resolver::SimpleDnsResolver::builder()
-            .fallback_mode(self.fallback_mode.into_inner());
+        let mut builder =
+            n0_dns_resolver::DnsResolver::builder().fallback_mode(self.fallback_mode.into_inner());
         if !self.use_system_defaults {
             builder = builder.without_system_defaults();
         }
@@ -456,17 +470,17 @@ impl Builder {
         if let Some(tls_client_config) = self.tls_client_config {
             builder = builder.tls_client_config(tls_client_config);
         }
-        DnsResolver::custom(SimpleResolver(Arc::new(builder.build())))
+        DnsResolver::custom(DefaultResolver(Arc::new(builder.build())))
     }
 }
 
-/// Adapts the [`n0_dns_resolver::SimpleDnsResolver`] to the [`Resolver`] trait,
+/// Adapts the [`n0_dns_resolver::DnsResolver`] to the [`Resolver`] trait,
 /// converting its types to this crate's so that `n0-dns-resolver` stays an
 /// internal detail rather than part of the public API.
 #[derive(Debug)]
-struct SimpleResolver(Arc<n0_dns_resolver::SimpleDnsResolver>);
+struct DefaultResolver(Arc<n0_dns_resolver::DnsResolver>);
 
-impl Resolver for SimpleResolver {
+impl Resolver for DefaultResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let this = self.0.clone();
         Box::pin(async move {
@@ -499,31 +513,25 @@ impl Resolver for SimpleResolver {
     }
 
     fn reset(&self) -> Box<dyn Resolver> {
-        Box::new(SimpleResolver(Arc::new(self.0.reset())))
+        Box::new(DefaultResolver(Arc::new(self.0.reset())))
     }
 }
 
 /// Maps an [`n0_dns_resolver::Error`] onto this crate's [`DnsError`].
 ///
-/// A private function rather than a `From` impl, to keep `n0_dns_resolver::Error`
-/// out of this crate's public API.
+/// A private function rather than a `From` impl, so `n0_dns_resolver`'s error
+/// types stay out of this crate's public API. The distinct, matchable causes map
+/// to their own variant; every other cause becomes [`DnsError::Resolve`] carrying
+/// the original error as its [`AnyError`] source, which callers can downcast (see
+/// the [`DnsError`] docs).
 fn map_resolve_error(err: n0_dns_resolver::Error) -> DnsError {
     use n0_dns_resolver::Error as E;
     match err {
         E::Timeout { .. } => e!(DnsError::Timeout),
         E::NoResponse { .. } => e!(DnsError::NoResponse),
-        E::Transport { source, .. } => e!(DnsError::Transport, source),
-        E::InvalidQuery { source, .. } => e!(DnsError::InvalidQuery, source),
-        E::InvalidResponse { .. } => e!(DnsError::InvalidResponse),
-        E::ServerError { rcode, .. } => e!(DnsError::ServerError { rcode }),
         E::NxDomain { .. } => e!(DnsError::NxDomain),
-        E::MissingTlsConfig { .. } => e!(
-            DnsError::Transport,
-            AnyError::from_std(std::io::Error::other(
-                "TLS config required for DNS-over-TLS or DNS-over-HTTPS",
-            ))
-        ),
-        other => e!(DnsError::Transport, AnyError::from_stack(other)),
+        E::InvalidResponse { .. } => e!(DnsError::InvalidResponse),
+        other => e!(DnsError::Resolve, AnyError::from_stack(other)),
     }
 }
 

@@ -2896,7 +2896,7 @@ dependencies = [
 [[package]]
 name = "n0-dns-resolver"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-dns-resolver#2274fc497af22f21cd88283947feffe8c0ea8922"
+source = "git+https://github.com/n0-computer/n0-dns-resolver#d17fb6ae3043c18a8033c22f0ace4804d8521fa4"
 dependencies = [
  "derive_more",
  "ipconfig",
