@@ -54,6 +54,7 @@ struct RelayState {
     access: Arc<dyn DynAccessControl>,
     metrics: Arc<Metrics>,
     clients: Clients,
+    relay_url: RelayUrl,
 }
 
 impl RelayState {
@@ -63,6 +64,7 @@ impl RelayState {
             access: Arc::new(AllowAll),
             metrics: Arc::new(Metrics::default()),
             clients: Clients::default(),
+            relay_url: "http://127.0.0.1".parse().unwrap(),
         }
     }
 }
@@ -184,7 +186,8 @@ async fn handle_relay_websocket(
     client_auth_header: Option<http::HeaderValue>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut adapter = AxumWebSocketAdapter::new(socket);
-    let authentication = handshake::serverside(&mut adapter, client_auth_header).await?;
+    let authentication =
+        handshake::serverside(&mut adapter, client_auth_header, &state.relay_url).await?;
     trace!(?authentication.mechanism, "verified authentication");
 
     let request = ClientRequest::new(

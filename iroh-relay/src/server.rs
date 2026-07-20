@@ -37,7 +37,6 @@ use http::{
 use http_body_util::Full;
 use hyper::body::Incoming;
 use iroh_base::EndpointId;
-#[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use n0_error::{e, stack_error};
 use n0_future::{StreamExt, task::AbortOnDropHandle};
@@ -144,6 +143,11 @@ pub struct RelayConfig {
     pub key_cache_capacity: Option<usize>,
     /// Access control for incoming connections.
     pub access: Arc<dyn DynAccessControl>,
+    /// Canonical URL clients use to reach this relay, for challenge-response binding.
+    ///
+    /// When `None`, derived from the bind address. Required when clients connect
+    /// via a hostname that differs from the bind address (e.g. behind a proxy).
+    pub relay_url: Option<RelayUrl>,
 }
 
 impl RelayConfig {
@@ -159,6 +163,7 @@ impl RelayConfig {
             limits: Limits::default(),
             key_cache_capacity: None,
             access: Arc::new(AllowAll),
+            relay_url: None,
         }
     }
 }
@@ -729,6 +734,16 @@ impl Server {
                     .key_cache_capacity
                     .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
+                    .relay_url(relay_config.relay_url.clone().unwrap_or_else(|| {
+                        let scheme = if relay_config.tls.is_some() {
+                            "https"
+                        } else {
+                            "http"
+                        };
+                        format!("{scheme}://{relay_bind_addr}")
+                            .parse()
+                            .expect("valid relay url")
+                    }))
                     .metrics(metrics.server.clone())
                     .headers(headers)
                     .key_cache_capacity(key_cache_capacity)
@@ -1609,8 +1624,10 @@ mod tests {
     #[traced_test]
     async fn test_relay_client_falls_back_to_ipv4() -> Result {
         // A relay reachable only over IPv4.
+        let mut relay_config = RelayConfig::new((Ipv4Addr::LOCALHOST, 0));
+        relay_config.relay_url = Some("http://relay.test".parse().unwrap());
         let config = ServerConfig {
-            relay: Some(RelayConfig::new((Ipv4Addr::LOCALHOST, 0))),
+            relay: Some(relay_config),
             ..Default::default()
         };
         let server = Server::spawn(config).await?;

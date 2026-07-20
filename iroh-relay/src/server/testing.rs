@@ -57,6 +57,7 @@ pub fn relay_config() -> RelayConfig {
         limits: Default::default(),
         key_cache_capacity: Some(1024),
         access: Arc::new(AllowAll),
+        relay_url: None,
     }
 }
 

@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use iroh_base::SecretKey;
+use iroh_base::{RelayUrl, SecretKey};
 use n0_error::{AnyError, anyerr, ensure, stack_error};
 use n0_future::{Sink, Stream};
 use tracing::trace;
@@ -89,12 +89,12 @@ impl Conn {
         key_cache: KeyCache,
         secret_key: &SecretKey,
         protocol_version: ProtocolVersion,
+        relay_url: &RelayUrl,
     ) -> Result<Self, handshake::Error> {
         let mut conn = WsBytesFramed { io };
 
-        // exchange information with the server
         trace!("server_handshake: started");
-        handshake::clientside(&mut conn, secret_key).await?;
+        handshake::clientside(&mut conn, secret_key, relay_url).await?;
         trace!("server_handshake: done");
 
         Ok(Self {

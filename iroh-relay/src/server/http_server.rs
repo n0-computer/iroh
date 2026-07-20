@@ -21,6 +21,7 @@ use hyper::{
     service::Service,
     upgrade::Upgraded,
 };
+use iroh_base::RelayUrl;
 use n0_error::{e, ensure, stack_error};
 use n0_future::MaybeFuture;
 use tokio::{
@@ -354,6 +355,7 @@ pub(super) struct ServerBuilder {
     access: Arc<dyn DynAccessControl>,
     metrics: Option<Arc<Metrics>>,
     establish_timeout: Duration,
+    relay_url: RelayUrl,
 }
 
 impl ServerBuilder {
@@ -361,6 +363,7 @@ impl ServerBuilder {
     pub(super) fn new(addr: SocketAddr) -> Self {
         Self {
             addr,
+            relay_url: "http://127.0.0.1".parse().expect("valid URL"),
             tls_config: None,
             handlers: Default::default(),
             headers: HeaderMap::new(),
@@ -438,6 +441,12 @@ impl ServerBuilder {
         self
     }
 
+    /// Sets the relay's canonical URL, used for challenge binding.
+    pub(super) fn relay_url(mut self, url: RelayUrl) -> Self {
+        self.relay_url = url;
+        self
+    }
+
     /// Builds and spawns an HTTP(S) Relay Server.
     pub(super) async fn spawn(self) -> Result<Server, SpawnError> {
         let cancel_token = CancellationToken::new();
@@ -449,6 +458,7 @@ impl ServerBuilder {
             KeyCache::new(self.key_cache_capacity),
             self.access,
             self.metrics.unwrap_or_default(),
+            self.relay_url,
         );
 
         let addr = self.addr;
@@ -536,6 +546,7 @@ struct Inner {
     key_cache: KeyCache,
     access: Arc<dyn DynAccessControl>,
     metrics: Arc<Metrics>,
+    relay_url: RelayUrl,
 }
 
 #[stack_error(derive, add_meta)]
@@ -697,6 +708,7 @@ impl RelayServiceWithNotify {
 /// #         streams::MaybeTlsStream
 /// #     },
 /// # };
+/// # use iroh_base::RelayUrl;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let service = RelayService::new(
 ///     Handlers::default(),
@@ -705,6 +717,7 @@ impl RelayServiceWithNotify {
 ///     KeyCache::new(1024),
 ///     Arc::new(AllowAll),
 ///     Arc::new(Metrics::default()),
+///     "http://127.0.0.1".parse().unwrap(),
 /// );
 /// let service = RelayServiceWithNotify::new(service, Arc::new(Notify::new()));
 ///
@@ -865,7 +878,8 @@ impl Inner {
         let mut io = WsBytesFramed { io: websocket };
 
         let client_auth_header = request_parts.headers.get(CLIENT_AUTH_HEADER).cloned();
-        let authentication = handshake::serverside(&mut io, client_auth_header).await?;
+        let authentication =
+            handshake::serverside(&mut io, client_auth_header, &self.relay_url).await?;
 
         trace!(?authentication.mechanism, "accept: verified authentication");
 
@@ -918,6 +932,7 @@ impl RelayService {
         key_cache: KeyCache,
         access: Arc<dyn DynAccessControl>,
         metrics: Arc<Metrics>,
+        relay_url: RelayUrl,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
@@ -928,6 +943,7 @@ impl RelayService {
             key_cache,
             access,
             metrics,
+            relay_url,
         }))
     }
 
@@ -965,6 +981,7 @@ impl RelayService {
     /// # use std::{sync::Arc, time::Duration};
     /// # use tokio::net::TcpStream;
     /// # use http::HeaderMap;
+    /// # use iroh_base::RelayUrl;
     /// # use iroh_relay::server::http_server::{Handlers, RelayService, TlsConfig};
     /// # use iroh_relay::{KeyCache, server::{AllowAll, Metrics}};
     /// # use webpki_types::{CertificateDer, PrivateKeyDer};
@@ -981,6 +998,7 @@ impl RelayService {
     ///     key_cache,
     ///     Arc::new(AllowAll),
     ///     metrics,
+    ///     "https://localhost".parse().unwrap(),
     /// );
     ///
     /// // Generate a self-signed certificate for HTTPS
@@ -1471,7 +1489,15 @@ mod tests {
     async fn make_test_client(client: tokio::io::DuplexStream, key: &SecretKey) -> Result<Conn> {
         let client = crate::client::streams::MaybeTlsStream::Test(client);
         let client = tokio_websockets::ClientBuilder::new().take_over(client);
-        let client = Conn::new(client, KeyCache::test(), key, Default::default()).await?;
+        let relay_url: RelayUrl = "http://127.0.0.1".parse().unwrap();
+        let client = Conn::new(
+            client,
+            KeyCache::test(),
+            key,
+            Default::default(),
+            &relay_url,
+        )
+        .await?;
         Ok(client)
     }
 
@@ -1489,6 +1515,7 @@ mod tests {
             KeyCache::test(),
             Arc::new(crate::server::AllowAll),
             metrics.clone(),
+            "http://127.0.0.1".parse().unwrap(),
         );
 
         info!("Create client A and connect it to the server.");
@@ -1601,6 +1628,7 @@ mod tests {
             KeyCache::test(),
             Arc::new(crate::server::AllowAll),
             Default::default(),
+            "http://127.0.0.1".parse().unwrap(),
         );
 
         info!("Create client A and connect it to the server.");

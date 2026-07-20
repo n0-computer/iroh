@@ -359,6 +359,7 @@ impl ClientBuilder {
             self.key_cache.clone(),
             &self.secret_key,
             protocol_version,
+            &self.url,
         )
         .await?;
 
@@ -431,6 +432,7 @@ impl ClientBuilder {
             self.key_cache.clone(),
             &self.secret_key,
             protocol_version,
+            &self.url,
         )
         .await?;
 

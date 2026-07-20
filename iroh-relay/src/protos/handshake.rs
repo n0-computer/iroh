@@ -33,7 +33,7 @@ use data_encoding::BASE32HEX_NOPAD as HEX;
 use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
-use iroh_base::{PublicKey, SecretKey};
+use iroh_base::{PublicKey, RelayUrl, SecretKey};
 use n0_error::{AnyError, anyerr, e, ensure, stack_error};
 use n0_future::{SinkExt, TryStreamExt};
 #[cfg(feature = "server")]
@@ -207,32 +207,46 @@ impl ServerChallenge {
     }
 
     /// The actual message bytes to sign (and verify against) for this challenge.
-    fn message_to_sign(&self) -> [u8; 32] {
-        // We're signing a key instead of the direct challenge.
-        // This gives us domain separation protecting from multiple possible attacks,
-        // but especially this one:
-        // Assume a malicious relay. If the protocol required the client to sign the
-        // challenge directly, this would allow the relay to obtain an arbitrary 16-byte
-        // signature, if it maliciously choses the challenge instead of generating it
-        // randomly.
-        // Deriving a key to sign instead mitigates this attack.
-        blake3::derive_key(DOMAIN_SEP_CHALLENGE, &self.challenge)
+    fn message_to_sign(&self, relay_url: &RelayUrl) -> [u8; 32] {
+        // Derive a signing key from the challenge rather than signing it
+        // directly. This gives domain separation: a malicious relay can't obtain
+        // arbitrary signatures by choosing specific challenge bytes.
+        // Including the relay hostname also binds the challenge to a specific
+        // relay, preventing cross-relay authentication proxying.
+        let host = relay_url
+            .host_str()
+            .expect("RelayUrl must have a host")
+            .to_ascii_lowercase();
+        let mut hasher = blake3::Hasher::new_derive_key(DOMAIN_SEP_CHALLENGE);
+        hasher.update(&self.challenge);
+        hasher.update(host.as_bytes());
+        hasher.finalize().into()
     }
 }
 
 impl ClientAuth {
     /// Generates a signature for the given challenge from the server.
-    pub(crate) fn new(secret_key: &SecretKey, challenge: &ServerChallenge) -> Self {
+    pub(crate) fn new(
+        secret_key: &SecretKey,
+        challenge: &ServerChallenge,
+        relay_url: &RelayUrl,
+    ) -> Self {
         Self {
             public_key: secret_key.public(),
-            signature: secret_key.sign(&challenge.message_to_sign()).to_bytes(),
+            signature: secret_key
+                .sign(&challenge.message_to_sign(relay_url))
+                .to_bytes(),
         }
     }
 
-    /// Verifies this client's authentication given the challenge this was sent in response to.
+    /// Verifies this client's authentication given the challenge and relay URL.
     #[cfg(feature = "server")]
-    pub(crate) fn verify(&self, challenge: &ServerChallenge) -> Result<(), Box<VerificationError>> {
-        let message = challenge.message_to_sign();
+    pub(crate) fn verify(
+        &self,
+        challenge: &ServerChallenge,
+        relay_url: &RelayUrl,
+    ) -> Result<(), Box<VerificationError>> {
+        let message = challenge.message_to_sign(relay_url);
         self.public_key
             .verify(&message, &Signature::from_bytes(&self.signature))
             .map_err(|err| {
@@ -340,6 +354,7 @@ impl KeyMaterialClientAuth {
 pub(crate) async fn clientside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     secret_key: &SecretKey,
+    relay_url: &RelayUrl,
 ) -> Result<ServerConfirmsAuth, Error> {
     let (tag, frame) = read_frame(
         io,
@@ -354,7 +369,7 @@ pub(crate) async fn clientside(
     let (tag, frame) = if tag == ServerChallenge::TAG {
         let challenge: ServerChallenge = deserialize_frame(frame)?;
 
-        let client_info = ClientAuth::new(secret_key, &challenge);
+        let client_info = ClientAuth::new(secret_key, &challenge, relay_url);
         write_frame(io, client_info).await?;
 
         read_frame(io, &[ServerConfirmsAuth::TAG, ServerDeniesAuth::TAG]).await?
@@ -421,6 +436,7 @@ pub enum Mechanism {
 pub async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     client_auth_header: Option<HeaderValue>,
+    relay_url: &RelayUrl,
 ) -> Result<SuccessfulAuthentication, Error> {
     if let Some(client_auth_header) = client_auth_header {
         let client_auth_bytes = data_encoding::BASE64URL_NOPAD
@@ -455,7 +471,7 @@ pub async fn serverside(
     let (_, frame) = read_frame(io, &[ClientAuth::TAG]).await?;
     let client_auth: ClientAuth = deserialize_frame(frame)?;
 
-    if let Err(err) = client_auth.verify(&challenge) {
+    if let Err(err) = client_auth.verify(&challenge, relay_url) {
         trace!(?client_auth.public_key, ?err, "authentication failed");
         let denial = ServerDeniesAuth {
             reason: "signature invalid".into(),
@@ -606,7 +622,7 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use bytes::BytesMut;
-    use iroh_base::{PublicKey, SecretKey};
+    use iroh_base::{PublicKey, RelayUrl, SecretKey};
     use n0_error::{AnyError, Result, StackResultExt, StdResultExt};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use n0_tracing_test::traced_test;
@@ -702,6 +718,7 @@ mod tests {
         server_shared_secret: Option<u64>,
         restricted_to: Option<PublicKey>,
     ) -> (Result<ServerConfirmsAuth>, Result<(PublicKey, Mechanism)>) {
+        let relay_url: RelayUrl = "https://relay.example.com".parse().unwrap();
         let (client, server) = tokio::io::duplex(1024);
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())
@@ -720,13 +737,13 @@ mod tests {
 
         n0_future::future::zip(
             async {
-                super::clientside(&mut client_io, secret_key)
+                super::clientside(&mut client_io, secret_key, &relay_url)
                     .await
                     .context("clientside")
             }
             .instrument(info_span!("clientside")),
             async {
-                let auth_n = super::serverside(&mut server_io, client_auth_header)
+                let auth_n = super::serverside(&mut server_io, client_auth_header, &relay_url)
                     .await
                     .context("serverside")?;
                 let mechanism = auth_n.mechanism;
@@ -845,13 +862,15 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let secret_key = SecretKey::from_bytes(&rng.random());
         let challenge = ServerChallenge::new(&mut rng);
-        let client_auth = ClientAuth::new(&secret_key, &challenge);
+        let relay_url: RelayUrl = "https://relay.example.com".parse().unwrap();
+        let client_auth = ClientAuth::new(&secret_key, &challenge, &relay_url);
 
         let bytes = postcard::to_allocvec(&client_auth).anyerr()?;
         let decoded: ClientAuth = postcard::from_bytes(&bytes).anyerr()?;
 
         assert_eq!(client_auth.public_key, decoded.public_key);
         assert_eq!(client_auth.signature, decoded.signature);
+        assert!(client_auth.verify(&challenge, &relay_url).is_ok());
 
         Ok(())
     }
@@ -883,9 +902,25 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let secret_key = SecretKey::from_bytes(&rng.random());
         let challenge = ServerChallenge::new(&mut rng);
-        let client_auth = ClientAuth::new(&secret_key, &challenge);
-        assert!(client_auth.verify(&challenge).is_ok());
+        let relay_url: RelayUrl = "https://relay.example.com".parse().unwrap();
+        let client_auth = ClientAuth::new(&secret_key, &challenge, &relay_url);
+        assert!(client_auth.verify(&challenge, &relay_url).is_ok());
 
+        Ok(())
+    }
+
+    /// Verifies that the challenge-response handshake binds to the relay URL.
+    /// A ClientAuth signed for one relay must not be valid on another.
+    #[test]
+    fn test_challenge_relay_binding() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let secret_key = SecretKey::from_bytes(&rng.random());
+        let honest_url: RelayUrl = "https://honest.example.com".parse().unwrap();
+        let malicious_url: RelayUrl = "https://malicious.example.com".parse().unwrap();
+        let challenge_h = ServerChallenge::new(&mut rng);
+        let client_auth = ClientAuth::new(&secret_key, &challenge_h, &malicious_url);
+        assert!(client_auth.verify(&challenge_h, &malicious_url).is_ok());
+        assert!(client_auth.verify(&challenge_h, &honest_url).is_err());
         Ok(())
     }
 

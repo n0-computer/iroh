@@ -61,6 +61,7 @@ async fn serve_hyper() -> Result<(SocketAddr, AbortOnDropHandle<()>)> {
         KeyCache::new(1024),
         Arc::new(AllowAll),
         Arc::new(Metrics::default()),
+        "http://127.0.0.1".parse().unwrap(),
     );
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
