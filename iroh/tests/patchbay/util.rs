@@ -475,7 +475,7 @@ fn addr_relay_only(addr: EndpointAddr) -> EndpointAddr {
     EndpointAddr::from_parts(addr.id, addr.addrs.into_iter().filter(|a| a.is_relay()))
 }
 
-mod relay {
+pub(crate) mod relay {
     use std::{
         net::{IpAddr, Ipv6Addr},
         sync::Arc,
