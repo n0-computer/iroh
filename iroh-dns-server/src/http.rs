@@ -51,7 +51,7 @@ pub struct HttpConfig {
 pub struct HttpsConfig {
     /// Port to bind the HTTPS listener to.
     pub port: u16,
-    /// Address to bind the HTTP listener to (defaults to `::`, i.e. IPv6 wildcard which also covers IPv4).
+    /// Address to bind the HTTPS listener to (defaults to `::`, i.e. IPv6 wildcard which also covers IPv4).
     pub bind_addr: Option<IpAddr>,
     /// Domains for which TLS certificates are issued or loaded.
     pub domains: Vec<String>,
