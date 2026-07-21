@@ -17,6 +17,12 @@ use self::relay::run_relay_server;
 
 const TEST_ALPN: &[u8] = b"test";
 
+/// Upper bound on waiting for the peer task at the end-of-run barrier in [`Pair::run`].
+///
+/// Generous compared to the run functions' own timeouts; it only triggers when the
+/// peer task died before reaching the barrier.
+const BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Creates a lab with a relay server.
 ///
 /// Returns the lab, relay map, a drop guard that keeps the relay alive,
@@ -211,6 +217,10 @@ impl Pair {
         // `Endpoint::close` on both sides. `Endpoint::close` often takes several seconds,
         // which increases test runtime for all tests significantly, and closing behavior
         // should be tested for separately from the tests that use `Pair`.
+        //
+        // The barrier waits are bounded: a task that fails or panics before reaching the
+        // barrier would otherwise hang the healthy side until the nextest timeout kills
+        // the whole test instead of letting it report the failure.
         let barrier_server = Arc::new(Barrier::new(2));
         let barrier_client = barrier_server.clone();
 
@@ -247,7 +257,7 @@ impl Pair {
                 }
 
                 // Wait until the client run function completed before dropping the endpoint.
-                barrier_server.wait().await;
+                let _ = tokio::time::timeout(BARRIER_TIMEOUT, barrier_server.wait()).await;
                 for group in endpoint.metrics().groups() {
                     dev.record_iroh_metrics(group);
                 }
@@ -288,7 +298,7 @@ impl Pair {
                 }
 
                 // Wait until the server run function completed before dropping the endpoint.
-                barrier_client.wait().await;
+                let _ = tokio::time::timeout(BARRIER_TIMEOUT, barrier_client.wait()).await;
                 for group in endpoint.metrics().groups() {
                     dev.record_iroh_metrics(group);
                 }

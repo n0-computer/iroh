@@ -6,8 +6,8 @@
 //! The connect tests place both peers on access networks that support only
 //! one IP family, so all traffic to the relay uses that family. The
 //! reconnect tests pin the connection to the relay by putting both peers
-//! behind symmetric (`Nat::Corporate`) NATs, for which holepunching is
-//! impossible while IP transports stay enabled, and then break either one
+//! behind symmetric (`Nat::Corporate`) NATs, for which holepunching fails
+//! even though IP transports stay enabled, and then break either one
 //! peer's access link or the relay server itself.
 
 use std::time::Duration;
@@ -23,21 +23,26 @@ use tracing::info;
 
 use super::util::{self, Pair, is_relayed, lab_with_relay, ping_accept, ping_open};
 
-/// Connects two peers whose access networks support only one IP family.
+/// Connects two peers through the relay over a single IP family.
 ///
-/// The relay's own network is dual-stack. The connection starts relayed
-/// (the [`Pair`] harness hands out relay-only addresses) and a ping in each
-/// direction proves the relay carries data over the family under test.
+/// The relay's own network is dual-stack; both access routers support only
+/// the family under test. Their firewall drops all UDP except DNS, so QAD
+/// and holepunching are impossible and the relay is the only usable path:
+/// the ping exchange proves the relay carries data over that family.
+/// Direct-path coverage per family lives in the switch_uplink and nat
+/// matrices.
 async fn run_relay_connect(ip_support: IpSupport) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let access1 = lab
         .add_router("access1")
         .ip_support(ip_support)
+        .firewall_custom(|f| f.block_inbound().allow_udp(&[53]))
         .build()
         .await?;
     let access2 = lab
         .add_router("access2")
         .ip_support(ip_support)
+        .firewall_custom(|f| f.block_inbound().allow_udp(&[53]))
         .build()
         .await?;
     let server = lab
@@ -50,6 +55,7 @@ async fn run_relay_connect(ip_support: IpSupport) -> Result {
         .uplink(access2.id())
         .build()
         .await?;
+    // Sanity-check the harness: only the family under test is assigned.
     for dev in [&server, &client] {
         assert_eq!(dev.ip().is_some(), ip_support.has_v4(), "IPv4 assignment");
         assert_eq!(dev.ip6().is_some(), ip_support.has_v6(), "IPv6 assignment");
@@ -59,12 +65,14 @@ async fn run_relay_connect(ip_support: IpSupport) -> Result {
         .server(server, async move |_dev, _ep, conn| {
             assert!(is_relayed(&conn), "connection started relayed");
             ping_accept(&conn, timeout).await.context("ping_accept")?;
+            assert!(is_relayed(&conn), "still relayed with UDP blocked");
             conn.closed().await;
             Ok(())
         })
         .client(client, async move |_dev, _ep, conn| {
             assert!(is_relayed(&conn), "connection started relayed");
             ping_open(&conn, timeout).await.context("ping_open")?;
+            assert!(is_relayed(&conn), "still relayed with UDP blocked");
             conn.close(0u32.into(), b"bye");
             Ok(())
         })
@@ -94,15 +102,14 @@ enum UdpBlocked {
     ClientOnly,
 }
 
-/// Connects two peers of which one or both cannot use UDP at all.
+/// Connects two peers of which one or both cannot use UDP beyond DNS.
 ///
-/// The blocked peers sit behind a home NAT whose firewall drops unsolicited
-/// inbound traffic and all outbound UDP except DNS (the lab DNS server is
-/// UDP-only); outbound TCP stays open. This is the hotel or airport guest
-/// WiFi shape. It rules out QAD and holepunching, so the endpoints must
-/// connect through the relay over TCP and stay there. The unblocked peer is
-/// behind a plain home NAT; a direct path still needs UDP on both ends, so
-/// the connection must remain relayed in every variant.
+/// The blocked peers sit behind a home NAT that drops unsolicited inbound and
+/// all outbound UDP except DNS (the lab DNS server is UDP-only), the hotel or
+/// airport guest WiFi shape. That rules out QAD and holepunching, so they must
+/// reach each other through the relay over TCP. Any unblocked peer is behind a
+/// plain home NAT; a direct path needs UDP on both ends, so the connection
+/// stays relayed in every variant.
 async fn run_relay_udp_blocked(blocked: UdpBlocked) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let server_blocked = matches!(blocked, UdpBlocked::Both | UdpBlocked::ServerOnly);
@@ -169,7 +176,8 @@ async fn relay_udp_blocked_client() -> Result {
 /// Takes one peer's link down and verifies the relay path recovers.
 ///
 /// Both peers sit behind symmetric NATs, so the connection cannot escape to
-/// a direct path and recovery must happen through a relay reconnect.
+/// a direct path; the affected peer's relay client notices the dead link and
+/// reconnects once the link is back.
 async fn run_relay_reconnect_link_outage(outage_side: Side, downtime: Duration) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let nat1 = lab.add_router("nat1").nat(Nat::Corporate).build().await?;
@@ -177,6 +185,10 @@ async fn run_relay_reconnect_link_outage(outage_side: Side, downtime: Duration) 
     let outage = lab.add_device("outage").uplink(nat1.id()).build().await?;
     let peer = lab.add_device("peer").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(15);
+    // The reconnect backoff can sleep through the link returning: dials during
+    // the outage fail fast and grow the backoff to several seconds plus jitter,
+    // so the post-outage pings need generous headroom.
+    let recovery_timeout = Duration::from_secs(30);
     Pair::new(relay_map)
         .left(outage_side, outage, async move |dev, _ep, conn| {
             assert!(is_relayed(&conn), "connection started relayed");
@@ -188,7 +200,7 @@ async fn run_relay_reconnect_link_outage(outage_side: Side, downtime: Duration) 
             tokio::time::sleep(downtime).await;
             dev.iface("eth0").unwrap().link_up().await?;
             info!("link restored, waiting for relay reconnect");
-            ping_open(&conn, timeout)
+            ping_open(&conn, recovery_timeout)
                 .await
                 .context("ping after link restored")?;
             assert!(is_relayed(&conn), "still relayed behind symmetric NAT");
@@ -200,7 +212,7 @@ async fn run_relay_reconnect_link_outage(outage_side: Side, downtime: Duration) 
             ping_accept(&conn, timeout)
                 .await
                 .context("ping before outage")?;
-            ping_accept(&conn, timeout)
+            ping_accept(&conn, recovery_timeout)
                 .await
                 .context("ping after link restored")?;
             conn.closed().await;
@@ -247,6 +259,8 @@ async fn relay_reconnect_relay_restart() -> Result {
         .build()
         .await?;
     let dev_relay = lab.add_device("relay").uplink(dc.id()).build().await?;
+    // Register DNS before the endpoint devices below; only later devices
+    // resolve it.
     let dns = lab.dns_server()?;
     dns.set_host("relay.test", dev_relay.ip().expect("relay has IPv4").into())?;
     dns.set_host(
@@ -263,9 +277,20 @@ async fn relay_reconnect_relay_restart() -> Result {
         restart_rx.await.expect("restart signal");
         server.shutdown().await.expect("relay shutdown");
         info!("relay stopped, starting a new relay on the same ports");
-        let (_relay_map, _server) = util::relay::run_relay_server()
-            .await
-            .expect("relay respawn");
+        // The old server's sockets are released asynchronously after
+        // shutdown() returns; retry briefly if a port is still taken.
+        let mut attempts = 0;
+        let (_relay_map, _server) = loop {
+            match util::relay::run_relay_server().await {
+                Ok(relay) => break relay,
+                Err(err) if attempts < 20 => {
+                    attempts += 1;
+                    info!("relay respawn attempt {attempts} failed: {err:#}");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(err) => panic!("relay respawn: {err:#}"),
+            }
+        };
         restarted_tx.send(()).expect("test task alive");
         std::future::pending::<()>().await;
     })?;
