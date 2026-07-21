@@ -24,7 +24,7 @@ on:
     types: [ 'labeled', 'unlabeled', 'opened', 'synchronize', 'reopened' ]
   schedule:
     # 04:30 UTC every day
-    - cron: '30 6 * * *'
+    - cron: '30 4 * * *'
   workflow_dispatch:
     inputs:
       branch:
