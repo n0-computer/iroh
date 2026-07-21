@@ -16,7 +16,7 @@ use iroh::endpoint::Side;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
 use n0_future::task::AbortOnDropHandle;
 use n0_tracing_test::traced_test;
-use patchbay::{IpSupport, Lab, Nat, OutDir};
+use patchbay::{Firewall, IpSupport, Lab, Nat, OutDir};
 use testdir::testdir;
 use tokio::sync::oneshot;
 use tracing::info;
@@ -84,6 +84,85 @@ async fn relay_connect_ipv4() -> Result {
 #[traced_test]
 async fn relay_connect_ipv6() -> Result {
     run_relay_connect(IpSupport::V6Only).await
+}
+
+/// Which peers sit behind a UDP-blocking access router.
+#[derive(Debug, Clone, Copy)]
+enum UdpBlocked {
+    Both,
+    ServerOnly,
+    ClientOnly,
+}
+
+/// Connects two peers of which one or both cannot use UDP at all.
+///
+/// The blocked peers sit behind a home NAT with a [`Firewall::CaptivePortal`]
+/// ruleset: outbound TCP is free, but all UDP except DNS is dropped, like
+/// hotel or airport guest WiFi. That rules out QAD and holepunching, so the
+/// endpoints must connect through the relay over TCP and stay there. The
+/// unblocked peer is behind a plain home NAT; a direct path still needs UDP
+/// on both ends, so the connection must remain relayed in every variant.
+async fn run_relay_udp_blocked(blocked: UdpBlocked) -> Result {
+    let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
+    let server_blocked = matches!(blocked, UdpBlocked::Both | UdpBlocked::ServerOnly);
+    let client_blocked = matches!(blocked, UdpBlocked::Both | UdpBlocked::ClientOnly);
+    let mut net1 = lab.add_router("net1").nat(Nat::Home);
+    if server_blocked {
+        net1 = net1.firewall(Firewall::CaptivePortal);
+    }
+    let net1 = net1.build().await?;
+    let mut net2 = lab.add_router("net2").nat(Nat::Home);
+    if client_blocked {
+        net2 = net2.firewall(Firewall::CaptivePortal);
+    }
+    let net2 = net2.build().await?;
+    let server = lab.add_device("server").uplink(net1.id()).build().await?;
+    let client = lab.add_device("client").uplink(net2.id()).build().await?;
+
+    // Long enough for a holepunch to complete if one were possible.
+    let hold = Duration::from_secs(3);
+    let timeout = Duration::from_secs(15);
+    Pair::new(relay_map)
+        .server(server, async move |_dev, _ep, conn| {
+            assert!(is_relayed(&conn), "connection started relayed");
+            ping_accept(&conn, timeout).await.context("ping 1")?;
+            tokio::time::sleep(hold).await;
+            assert!(is_relayed(&conn), "still relayed with UDP blocked");
+            ping_accept(&conn, timeout).await.context("ping 2")?;
+            conn.closed().await;
+            Ok(())
+        })
+        .client(client, async move |_dev, _ep, conn| {
+            assert!(is_relayed(&conn), "connection started relayed");
+            ping_open(&conn, timeout).await.context("ping 1")?;
+            tokio::time::sleep(hold).await;
+            assert!(is_relayed(&conn), "still relayed with UDP blocked");
+            ping_open(&conn, timeout).await.context("ping 2")?;
+            conn.close(0u32.into(), b"bye");
+            Ok(())
+        })
+        .run()
+        .await?;
+    guard.ok();
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn relay_udp_blocked_both() -> Result {
+    run_relay_udp_blocked(UdpBlocked::Both).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn relay_udp_blocked_server() -> Result {
+    run_relay_udp_blocked(UdpBlocked::ServerOnly).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn relay_udp_blocked_client() -> Result {
+    run_relay_udp_blocked(UdpBlocked::ClientOnly).await
 }
 
 /// Takes one peer's link down and verifies the relay path recovers.
