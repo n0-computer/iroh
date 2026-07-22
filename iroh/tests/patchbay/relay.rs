@@ -16,12 +16,21 @@ use iroh::endpoint::Side;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
 use n0_future::task::AbortOnDropHandle;
 use n0_tracing_test::traced_test;
-use patchbay::{IpSupport, Lab, Nat, OutDir};
+use patchbay::{FirewallConfigBuilder, IpSupport, Lab, Nat, OutDir};
 use testdir::testdir;
 use tokio::sync::oneshot;
 use tracing::info;
 
 use super::util::{self, Pair, is_relayed, lab_with_relay, ping_accept, ping_open};
+
+/// Firewall rules that block all outbound UDP except DNS, leaving TCP open.
+///
+/// The lab DNS server is UDP-only, so port 53 must stay open. Everything else
+/// over UDP (QAD, holepunch probes) is dropped, forcing traffic onto the relay
+/// over TCP. Pass to [`RouterBuilder::firewall_custom`](patchbay::RouterBuilder).
+fn block_udp_except_dns(f: &mut FirewallConfigBuilder) -> &mut FirewallConfigBuilder {
+    f.block_inbound().allow_udp(&[53])
+}
 
 /// Connects two peers through the relay over a single IP family.
 ///
@@ -36,13 +45,13 @@ async fn run_relay_connect(ip_support: IpSupport) -> Result {
     let access1 = lab
         .add_router("access1")
         .ip_support(ip_support)
-        .firewall_custom(|f| f.block_inbound().allow_udp(&[53]))
+        .firewall_custom(block_udp_except_dns)
         .build()
         .await?;
     let access2 = lab
         .add_router("access2")
         .ip_support(ip_support)
-        .firewall_custom(|f| f.block_inbound().allow_udp(&[53]))
+        .firewall_custom(block_udp_except_dns)
         .build()
         .await?;
     let server = lab
@@ -116,12 +125,12 @@ async fn run_relay_udp_blocked(blocked: UdpBlocked) -> Result {
     let client_blocked = matches!(blocked, UdpBlocked::Both | UdpBlocked::ClientOnly);
     let mut net1 = lab.add_router("net1").nat(Nat::Home);
     if server_blocked {
-        net1 = net1.firewall_custom(|f| f.block_inbound().allow_udp(&[53]));
+        net1 = net1.firewall_custom(block_udp_except_dns);
     }
     let net1 = net1.build().await?;
     let mut net2 = lab.add_router("net2").nat(Nat::Home);
     if client_blocked {
-        net2 = net2.firewall_custom(|f| f.block_inbound().allow_udp(&[53]));
+        net2 = net2.firewall_custom(block_udp_except_dns);
     }
     let net2 = net2.build().await?;
     let server = lab.add_device("server").uplink(net1.id()).build().await?;
