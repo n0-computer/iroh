@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/socket/transports/custom.rs`."><title>custom.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0-nightly (b6f0945e4 2025-10-08)" data-channel="nightly" data-search-js="search-8d3311b9.js" data-stringdex-js="stringdex-828709d0.js" data-settings-js="settings-c38705f0.js" ><script src="../../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/socket/transports/</div>custom.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// The items in this module are exported from [`crate::endpoint::transports`] only if
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/socket/transports/custom.rs`."><title>custom.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0-nightly (b6f0945e4 2025-10-08)" data-channel="nightly" data-search-js="search-8d3311b9.js" data-stringdex-js="stringdex-828709d0.js" data-settings-js="settings-c38705f0.js" ><script src="../../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/socket/transports/</div>custom.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// The items in this module are exported from [`crate::endpoint::transports`] only if
 <a href=#2 id=2 data-nosnippet>2</a>// the "unstable-custom-transports" feature is enabled
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="attr">#![cfg_attr(not(feature = <span class="string">"unstable-custom-transports"</span>), allow(unreachable_pub))]
 <a href=#4 id=4 data-nosnippet>4</a>
@@ -73,27 +73,33 @@
 <a href=#73 id=73 data-nosnippet>73</a>    }
 <a href=#74 id=74 data-nosnippet>74</a>}
 <a href=#75 id=75 data-nosnippet>75</a>
-<a href=#76 id=76 data-nosnippet>76</a><span class="doccomment">/// Custom sender
-<a href=#77 id=77 data-nosnippet>77</a>///
-<a href=#78 id=78 data-nosnippet>78</a>/// A sender provides a poll based interface to send packets to custom addresses.
-<a href=#79 id=79 data-nosnippet>79</a>/// It can decide whether it wants to send to a given custom address type.
-<a href=#80 id=80 data-nosnippet>80</a>///
-<a href=#81 id=81 data-nosnippet>81</a>/// This is not enforced at type level, but [CustomSender::poll_send] should
-<a href=#82 id=82 data-nosnippet>82</a>/// only be called with addresses for which [CustomSender::is_valid_send_addr]
-<a href=#83 id=83 data-nosnippet>83</a>/// returns true.
-<a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">pub trait </span>CustomSender: std::fmt::Debug + Send + Sync + <span class="lifetime">'static </span>{
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// True if this sender can send to the given address.
-<a href=#86 id=86 data-nosnippet>86</a>    </span><span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>CustomAddr) -&gt; bool;
-<a href=#87 id=87 data-nosnippet>87</a>    <span class="doccomment">/// poll sending a packet on this sender.
-<a href=#88 id=88 data-nosnippet>88</a>    ///
-<a href=#89 id=89 data-nosnippet>89</a>    /// This will only be called from iroh with addresses for which [CustomSender::is_valid_send_addr] returns true.
-<a href=#90 id=90 data-nosnippet>90</a>    ///
-<a href=#91 id=91 data-nosnippet>91</a>    /// You should handle invalid addresses by returning an error.
-<a href=#92 id=92 data-nosnippet>92</a>    </span><span class="kw">fn </span>poll_send(
-<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#94 id=94 data-nosnippet>94</a>        cx: <span class="kw-2">&amp;mut </span>std::task::Context,
-<a href=#95 id=95 data-nosnippet>95</a>        dst: <span class="kw-2">&amp;</span>CustomAddr,
-<a href=#96 id=96 data-nosnippet>96</a>        src: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>CustomAddr&gt;,
-<a href=#97 id=97 data-nosnippet>97</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#98 id=98 data-nosnippet>98</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt;;
-<a href=#99 id=99 data-nosnippet>99</a>}</code></pre></div></section></main></body></html>
+<a href=#76 id=76 data-nosnippet>76</a><span class="kw">impl </span>std::fmt::Display <span class="kw">for </span>Box&lt;<span class="kw">dyn </span>CustomEndpoint&gt; {
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::fmt::Result {
+<a href=#78 id=78 data-nosnippet>78</a>        <span class="macro">write!</span>(f, <span class="string">"CustomTransport"</span>)
+<a href=#79 id=79 data-nosnippet>79</a>    }
+<a href=#80 id=80 data-nosnippet>80</a>}
+<a href=#81 id=81 data-nosnippet>81</a>
+<a href=#82 id=82 data-nosnippet>82</a><span class="doccomment">/// Custom sender
+<a href=#83 id=83 data-nosnippet>83</a>///
+<a href=#84 id=84 data-nosnippet>84</a>/// A sender provides a poll based interface to send packets to custom addresses.
+<a href=#85 id=85 data-nosnippet>85</a>/// It can decide whether it wants to send to a given custom address type.
+<a href=#86 id=86 data-nosnippet>86</a>///
+<a href=#87 id=87 data-nosnippet>87</a>/// This is not enforced at type level, but [CustomSender::poll_send] should
+<a href=#88 id=88 data-nosnippet>88</a>/// only be called with addresses for which [CustomSender::is_valid_send_addr]
+<a href=#89 id=89 data-nosnippet>89</a>/// returns true.
+<a href=#90 id=90 data-nosnippet>90</a></span><span class="kw">pub trait </span>CustomSender: std::fmt::Debug + Send + Sync + <span class="lifetime">'static </span>{
+<a href=#91 id=91 data-nosnippet>91</a>    <span class="doccomment">/// True if this sender can send to the given address.
+<a href=#92 id=92 data-nosnippet>92</a>    </span><span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>CustomAddr) -&gt; bool;
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// poll sending a packet on this sender.
+<a href=#94 id=94 data-nosnippet>94</a>    ///
+<a href=#95 id=95 data-nosnippet>95</a>    /// This will only be called from iroh with addresses for which [CustomSender::is_valid_send_addr] returns true.
+<a href=#96 id=96 data-nosnippet>96</a>    ///
+<a href=#97 id=97 data-nosnippet>97</a>    /// You should handle invalid addresses by returning an error.
+<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">fn </span>poll_send(
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#100 id=100 data-nosnippet>100</a>        cx: <span class="kw-2">&amp;mut </span>std::task::Context,
+<a href=#101 id=101 data-nosnippet>101</a>        dst: <span class="kw-2">&amp;</span>CustomAddr,
+<a href=#102 id=102 data-nosnippet>102</a>        src: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>CustomAddr&gt;,
+<a href=#103 id=103 data-nosnippet>103</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#104 id=104 data-nosnippet>104</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt;;
+<a href=#105 id=105 data-nosnippet>105</a>}</code></pre></div></section></main></body></html>
