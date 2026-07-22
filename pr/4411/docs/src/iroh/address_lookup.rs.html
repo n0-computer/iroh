@@ -467,12 +467,12 @@
 <a href=#467 id=467 data-nosnippet>467</a>    </span>last_data: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;EndpointData&gt;&gt;&gt;,
 <a href=#468 id=468 data-nosnippet>468</a>    <span class="doccomment">/// Optional filter applied to all data before publishing to any service.
 <a href=#469 id=469 data-nosnippet>469</a>    </span>addr_filter: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;AddrFilter&gt;&gt;&gt;,
-<a href=#470 id=470 data-nosnippet>470</a>    <span class="doccomment">/// Metrics tracking per-service resolution outcomes.
+<a href=#470 id=470 data-nosnippet>470</a>    <span class="doccomment">/// Metrics for lookup outcomes.
 <a href=#471 id=471 data-nosnippet>471</a>    </span>metrics: Arc&lt;Metrics&gt;,
 <a href=#472 id=472 data-nosnippet>472</a>}
 <a href=#473 id=473 data-nosnippet>473</a>
 <a href=#474 id=474 data-nosnippet>474</a><span class="kw">impl </span>AddressLookupServices {
-<a href=#475 id=475 data-nosnippet>475</a>    <span class="doccomment">/// Creates a new registry that records resolution outcomes in the given metrics.
+<a href=#475 id=475 data-nosnippet>475</a>    <span class="doccomment">/// Creates a registry recording lookup outcomes in `metrics`.
 <a href=#476 id=476 data-nosnippet>476</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>with_metrics(metrics: Arc&lt;Metrics&gt;) -&gt; <span class="self">Self </span>{
 <a href=#477 id=477 data-nosnippet>477</a>        <span class="self">Self </span>{
 <a href=#478 id=478 data-nosnippet>478</a>            metrics,
@@ -1169,7 +1169,7 @@
 <a href=#1169 id=1169 data-nosnippet>1169</a>        <span class="prelude-val">Ok</span>(())
 <a href=#1170 id=1170 data-nosnippet>1170</a>    }
 <a href=#1171 id=1171 data-nosnippet>1171</a>
-<a href=#1172 id=1172 data-nosnippet>1172</a>    <span class="doccomment">/// Verifies that resolution outcomes are counted per service, labeled by provenance.
+<a href=#1172 id=1172 data-nosnippet>1172</a>    <span class="doccomment">/// Lookup outcomes are counted per service.
 <a href=#1173 id=1173 data-nosnippet>1173</a>    </span><span class="attr">#[tokio::test]
 <a href=#1174 id=1174 data-nosnippet>1174</a>    #[traced_test]
 <a href=#1175 id=1175 data-nosnippet>1175</a>    </span><span class="kw">async fn </span>address_lookup_metrics() -&gt; <span class="prelude-ty">Result</span> {
