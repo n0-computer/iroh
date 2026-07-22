@@ -4,7 +4,10 @@ use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     num::NonZeroUsize,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
     task::{Context, Poll},
 };
 
@@ -55,6 +58,8 @@ pub(crate) struct Transports {
     ip: IpTransports,
     relay: Vec<RelayTransport>,
     custom: Vec<Box<dyn CustomEndpoint>>,
+    #[cfg(not(wasm_browser))]
+    link_local_scope: Arc<AtomicU32>,
 
     poll_recv_counter: usize,
     /// Cache for per-packet recv info, to speed up access
@@ -223,7 +228,9 @@ impl Transports {
             ip_configs
         };
         #[cfg(not(wasm_browser))]
-        let ip = IpTransports::bind(ip_configs.into_iter(), metrics)?;
+        let link_local_scope = Arc::new(AtomicU32::new(0));
+        #[cfg(not(wasm_browser))]
+        let ip = IpTransports::bind(ip_configs.into_iter(), link_local_scope.clone(), metrics)?;
 
         let relay = configs
             .iter()
@@ -246,12 +253,19 @@ impl Transports {
         Ok(Self {
             #[cfg(not(wasm_browser))]
             ip,
+            #[cfg(not(wasm_browser))]
+            link_local_scope,
             relay,
             custom,
             poll_recv_counter: Default::default(),
             recv_infos: Default::default(),
             consecutive_total_recv_failures: 0,
         })
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn link_local_scope(&self) -> Arc<AtomicU32> {
+        self.link_local_scope.clone()
     }
 
     pub(crate) fn poll_recv(
@@ -471,6 +485,8 @@ impl Transports {
         TransportsSender {
             #[cfg(not(wasm_browser))]
             ip,
+            #[cfg(not(wasm_browser))]
+            link_local_scope: self.link_local_scope.clone(),
             relay,
             custom,
             max_transmit_segments,
@@ -579,7 +595,10 @@ mod tests {
         let metrics = EndpointMetrics::default();
         Transports {
             #[cfg(not(wasm_browser))]
-            ip: ip::IpTransports::bind(std::iter::empty(), &metrics).unwrap(),
+            ip: ip::IpTransports::bind(std::iter::empty(), Arc::new(AtomicU32::new(0)), &metrics)
+                .unwrap(),
+            #[cfg(not(wasm_browser))]
+            link_local_scope: Arc::new(AtomicU32::new(0)),
             relay: Vec::new(),
             custom,
             poll_recv_counter: 0,
@@ -1191,6 +1210,8 @@ impl fmt::Display for FourTuple {
 pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
     ip: IpTransportsSender,
+    #[cfg(not(wasm_browser))]
+    link_local_scope: Arc<AtomicU32>,
     relay: Vec<RelaySender>,
     custom: Vec<Arc<dyn CustomSender>>,
     max_transmit_segments: NonZeroUsize,
@@ -1229,17 +1250,21 @@ impl TransportsSender {
                     }
                 }
                 SocketAddr::V6(_) => {
+                    let dst_addr = ip::canonical_addr(
+                        *dst_addr,
+                        self.link_local_scope.load(Ordering::Relaxed),
+                    );
                     if let Some(sender) = self
                         .ip
                         .v6_iter_mut()
-                        .find(|s| s.is_valid_send_addr(*src, dst_addr))
+                        .find(|s| s.is_valid_send_addr(*src, &dst_addr))
                     {
-                        return Pin::new(sender).poll_send(cx, *dst_addr, *src, transmit);
+                        return Pin::new(sender).poll_send(cx, dst_addr, *src, transmit);
                     }
                     if let Some(sender) = self.ip.v6_default_mut()
-                        && sender.is_valid_default_addr(*src, dst_addr)
+                        && sender.is_valid_default_addr(*src, &dst_addr)
                     {
-                        return Pin::new(sender).poll_send(cx, *dst_addr, *src, transmit);
+                        return Pin::new(sender).poll_send(cx, dst_addr, *src, transmit);
                     }
                 }
             },

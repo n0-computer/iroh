@@ -1014,6 +1014,20 @@ impl Endpoint {
         self.inner.add_external_addr(addr).await;
     }
 
+    /// Sets the interface scope used for scope-zero IPv6 link-local destinations.
+    ///
+    /// This is a temporary API for transports that learn an interface after the endpoint binds.
+    /// The scope applies to all scope-zero link-local destinations on this endpoint. A scope ID of
+    /// zero disables injection.
+    #[cfg(not(wasm_browser))]
+    pub fn set_link_local_scope(&self, scope_id: u32) {
+        if self.is_closed() {
+            warn!("Attempting to set link-local scope for a closed endpoint. Ignoring.");
+            return;
+        }
+        self.inner.set_link_local_scope(scope_id);
+    }
+
     /// Removes a configured external address. Returns `true` if it was present.
     pub async fn remove_external_addr(&self, addr: &SocketAddr) -> bool {
         if self.is_closed() {

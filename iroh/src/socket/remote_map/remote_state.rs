@@ -315,9 +315,8 @@ impl RemoteStateActor {
                     self.trigger_holepunching();
                 }
                 Some(item) = maybe_next(self.state.address_lookup_stream.as_mut()), if self.state.address_lookup_stream.is_some() => {
-                    for path in self.state.handle_address_lookup_item(item) {
-                        self.open_path_on_all_conns(&path);
-                    }
+                    let _ = self.state.handle_address_lookup_item(item);
+                    self.trigger_holepunching();
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -444,22 +443,6 @@ impl RemoteStateActor {
                     self.state
                         .open_path_on_conn(conn_id, conn_state, &conn, &open_addr);
                 }
-            }
-        }
-        // Address lookup can finish before the Noq connection is registered.
-        // Open those candidates now so a relay PathId(0) can still be upgraded.
-        if conn.side().is_client() {
-            let ip_paths = self
-                .state
-                .paths
-                .addrs()
-                .filter(|addr| matches!(addr, transports::Addr::Ip(_)))
-                .cloned()
-                .map(transports::FourTuple::from_remote)
-                .collect::<Vec<_>>();
-            for path in ip_paths {
-                self.state
-                    .open_path_on_conn(conn_id, conn_state, &conn, &path);
             }
         }
         self.trigger_holepunching();

@@ -3,7 +3,10 @@ use std::{
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     num::NonZeroUsize,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
     task::{Context, Poll},
 };
 
@@ -21,6 +24,7 @@ pub(crate) struct IpTransport {
     config: Config,
     socket: Arc<UdpSocket>,
     local_addr: Watchable<SocketAddr>,
+    link_local_scope: Arc<AtomicU32>,
     metrics: Arc<SocketMetrics>,
 }
 
@@ -126,6 +130,10 @@ impl Config {
                         },
                         SocketAddr::V6(dst_v6),
                     ) => {
+                        if dst_v6.ip().is_unicast_link_local() && dst_v6.scope_id() != 0 {
+                            return ip_net.addr().is_unspecified()
+                                || *scope_id == dst_v6.scope_id();
+                        }
                         if ip_net.contains(dst_v6.ip()) {
                             return true;
                         }
@@ -161,7 +169,11 @@ impl From<Config> for SocketAddr {
 }
 
 impl IpTransport {
-    pub(crate) fn bind(config: Config, metrics: Arc<SocketMetrics>) -> io::Result<Self> {
+    pub(crate) fn bind(
+        config: Config,
+        link_local_scope: Arc<AtomicU32>,
+        metrics: Arc<SocketMetrics>,
+    ) -> io::Result<Self> {
         let addr: SocketAddr = config.into();
         debug!(?addr, "binding");
         let socket = netwatch::UdpSocket::bind_full(addr).inspect_err(|err| {
@@ -177,6 +189,7 @@ impl IpTransport {
             config,
             socket: Arc::new(socket),
             local_addr,
+            link_local_scope,
             metrics,
         })
     }
@@ -267,6 +280,7 @@ impl IpTransport {
         IpSender {
             config: self.config,
             sender,
+            link_local_scope: self.link_local_scope.clone(),
             metrics: self.metrics.clone(),
         }
     }
@@ -300,6 +314,7 @@ pub(super) struct IpSender {
     config: Config,
     #[pin]
     sender: UdpSender,
+    link_local_scope: Arc<AtomicU32>,
     metrics: Arc<SocketMetrics>,
 }
 
@@ -312,16 +327,6 @@ impl IpSender {
         self.config.is_valid_default_addr(src, *dst)
     }
 
-    /// Creates a canonical socket address.
-    ///
-    /// We may be asked to send IPv4-mapped IPv6 addresses.  But our sockets are configured
-    /// to only send their actual family.  So we need to map those back to the canonical
-    /// addresses.
-    #[inline]
-    fn canonical_addr(addr: SocketAddr) -> SocketAddr {
-        canonical_socket_addr(addr)
-    }
-
     pub(super) fn poll_send(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
@@ -330,9 +335,10 @@ impl IpSender {
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         let total_bytes = transmit.contents.len() as u64;
+        let destination = canonical_addr(dst, self.link_local_scope.load(Ordering::Relaxed));
         let res = Pin::new(&mut self.sender).poll_send(
             &noq_udp::Transmit {
-                destination: Self::canonical_addr(dst),
+                destination,
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,
@@ -357,6 +363,19 @@ impl IpSender {
             Poll::Pending => Poll::Pending,
         }
     }
+}
+
+/// Canonicalizes an IP destination and injects a link-local scope when needed.
+#[inline]
+pub(super) fn canonical_addr(addr: SocketAddr, link_local_scope: u32) -> SocketAddr {
+    let mut addr = canonical_socket_addr(addr);
+    if let SocketAddr::V6(addr) = &mut addr
+        && addr.ip().is_unicast_link_local()
+        && addr.scope_id() == 0
+    {
+        addr.set_scope_id(link_local_scope);
+    }
+    addr
 }
 
 #[derive(Debug, Clone)]
@@ -420,6 +439,7 @@ impl IpTransports {
 
     pub(super) fn bind(
         configs: impl Iterator<Item = Config>,
+        link_local_scope: Arc<AtomicU32>,
         metrics: &EndpointMetrics,
     ) -> io::Result<Self> {
         let mut has_v4_default = false;
@@ -429,7 +449,7 @@ impl IpTransports {
         let mut ip_v6 = Vec::new();
 
         for config in configs {
-            match IpTransport::bind(config, metrics.socket.clone()) {
+            match IpTransport::bind(config, link_local_scope.clone(), metrics.socket.clone()) {
                 Ok(transport) => {
                     if config.is_ipv4() {
                         if config.is_default() {
@@ -487,10 +507,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sender_canonicalization_preserves_ipv6_scope() {
+    fn sender_canonicalization_preserves_and_injects_ipv6_scope() {
         let scoped = SocketAddr::V6(SocketAddrV6::new("fe80::1".parse().unwrap(), 4242, 9, 7));
         assert_eq!(
-            IpSender::canonical_addr(scoped),
+            canonical_addr(scoped, 7),
+            SocketAddr::V6(SocketAddrV6::new("fe80::1".parse().unwrap(), 4242, 0, 7,))
+        );
+        let unscoped = SocketAddr::V6(SocketAddrV6::new("fe80::1".parse().unwrap(), 4242, 0, 0));
+        assert_eq!(
+            canonical_addr(unscoped, 7),
             SocketAddr::V6(SocketAddrV6::new("fe80::1".parse().unwrap(), 4242, 0, 7,))
         );
     }
@@ -507,6 +532,23 @@ mod tests {
             meta.addr,
             SocketAddr::V6(SocketAddrV6::new("fe80::1".parse().unwrap(), 4242, 0, 7,))
         );
+    }
+
+    #[test]
+    fn scoped_link_local_destination_matches_interface() {
+        let config = Config::V6 {
+            ip_net: Ipv6Net::new("fe80::1".parse().unwrap(), 64).unwrap(),
+            scope_id: 7,
+            port: 0,
+            is_required: true,
+            is_default: false,
+        };
+        let matching = SocketAddr::V6(SocketAddrV6::new("fe80::2".parse().unwrap(), 4242, 0, 7));
+        let other_interface =
+            SocketAddr::V6(SocketAddrV6::new("fe80::2".parse().unwrap(), 4242, 0, 8));
+
+        assert!(config.is_valid_send_addr(None, matching));
+        assert!(!config.is_valid_send_addr(None, other_interface));
     }
 
     #[tokio::test]
@@ -557,7 +599,8 @@ mod tests {
             },
         ];
 
-        let transports = IpTransports::bind(config.into_iter(), &metrics)?;
+        let transports =
+            IpTransports::bind(config.into_iter(), Arc::new(AtomicU32::new(0)), &metrics)?;
         assert_eq!(transports.v4[0].config.prefix_len(), 24);
         assert_eq!(transports.v4[1].config.prefix_len(), 8);
         assert_eq!(transports.v4[2].config.prefix_len(), 0);

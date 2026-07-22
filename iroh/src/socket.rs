@@ -21,7 +21,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     sync::{
         Arc, Mutex, RwLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
 };
 
@@ -362,6 +362,8 @@ pub(crate) struct Socket {
     /// Currently bound IP addresses of all sockets
     #[cfg(not(wasm_browser))]
     ip_bind_addrs: Vec<SocketAddr>,
+    #[cfg(not(wasm_browser))]
+    link_local_scope: Arc<AtomicU32>,
     /// The DNS resolver to be used in this socket.
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
@@ -1005,6 +1007,8 @@ impl EndpointInner {
             home_relay_watch,
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            #[cfg(not(wasm_browser))]
+            link_local_scope: transports.link_local_scope(),
             tls_config: tls_config.clone(),
             hooks,
             span: span.clone(),
@@ -1266,6 +1270,11 @@ impl EndpointInner {
             .send(ActorMessage::DirectAddrRefresh)
             .await
             .ok();
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn set_link_local_scope(&self, scope_id: u32) {
+        self.link_local_scope.store(scope_id, Ordering::Relaxed);
     }
 
     /// Removes a configured external address. Returns `true` if it was present.
