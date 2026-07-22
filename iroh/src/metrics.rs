@@ -38,7 +38,7 @@ mod tests {
         metrics.net_report.reports.inc_by(10);
         metrics
             .address_lookup
-            .resolve_success
+            .service_results
             .get_or_create(&ServiceLabels::new("dns"))
             .inc_by(3);
         let encoded = postcard::to_stdvec(&metrics).unwrap();
@@ -48,7 +48,7 @@ mod tests {
         assert_eq!(
             decoded
                 .address_lookup
-                .resolve_success
+                .service_results
                 .get(&ServiceLabels::new("dns"))
                 .map(|counter| counter.get()),
             Some(3)

@@ -314,14 +314,6 @@ impl Error {
     pub fn from_err_any(provenance: &'static str, source: impl Into<AnyError>) -> Self {
         Self::new(provenance, Arc::new(source.into()))
     }
-
-    /// Returns the provenance of the address lookup service that produced this error.
-    ///
-    /// The provenance is a static string which identifies the address lookup service,
-    /// see [`Item::provenance`].
-    pub fn provenance(&self) -> &'static str {
-        self.provenance
-    }
 }
 
 /// AddressLookup system for [`super::Endpoint`].
@@ -475,22 +467,17 @@ pub struct AddressLookupServices {
     last_data: Arc<RwLock<Option<EndpointData>>>,
     /// Optional filter applied to all data before publishing to any service.
     addr_filter: Arc<RwLock<Option<AddrFilter>>>,
-    /// Metrics tracking per-service resolution outcomes.
+    /// Metrics for lookup outcomes.
     metrics: Arc<Metrics>,
 }
 
 impl AddressLookupServices {
-    /// Creates a new registry that records resolution outcomes in the given metrics.
-    pub fn with_metrics(metrics: Arc<Metrics>) -> Self {
+    /// Creates a registry recording lookup outcomes in `metrics`.
+    pub(crate) fn with_metrics(metrics: Arc<Metrics>) -> Self {
         Self {
             metrics,
             ..Default::default()
         }
-    }
-
-    /// Returns the metrics tracking per-service resolution outcomes.
-    pub fn metrics(&self) -> &Arc<Metrics> {
-        &self.metrics
     }
 
     /// Sets the address filter applied before publishing to any service.
@@ -661,7 +648,7 @@ impl Stream for AddressLookupStream {
             Some(Ok(item)) => {
                 this.did_emit = true;
                 this.metrics
-                    .resolve_success
+                    .service_results
                     .get_or_create(&ServiceLabels::new(item.provenance()))
                     .inc();
                 Some(Ok(Ok(item)))
@@ -669,8 +656,8 @@ impl Stream for AddressLookupStream {
             Some(Err(error)) => {
                 debug!("address lookup error: {error:#}");
                 this.metrics
-                    .resolve_error
-                    .get_or_create(&ServiceLabels::new(error.provenance()))
+                    .service_errors
+                    .get_or_create(&ServiceLabels::new(error.provenance))
                     .inc();
                 this.errors.push(error.clone());
                 Some(Ok(Err(error)))
@@ -834,24 +821,6 @@ mod tests {
                 ))
             };
             Some(n0_future::stream::once_future(fut).boxed())
-        }
-    }
-
-    /// An address lookup that yields a single item with a fixed provenance and then ends.
-    #[derive(Debug, Clone)]
-    struct StaticAddressLookup {
-        provenance: &'static str,
-    }
-
-    impl AddressLookup for StaticAddressLookup {
-        fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
-            let data = EndpointData::from_iter([TransportAddr::Ip("127.0.0.1:1".parse().unwrap())]);
-            let item = Item::new(
-                EndpointInfo::from_parts(endpoint_id, data),
-                self.provenance,
-                None,
-            );
-            Some(n0_future::stream::once(Ok(item)).boxed())
         }
     }
 
@@ -1200,7 +1169,7 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that resolution outcomes are counted per service, labeled by provenance.
+    /// Lookup outcomes are counted per service.
     #[tokio::test]
     #[traced_test]
     async fn address_lookup_metrics() -> Result {
@@ -1208,28 +1177,29 @@ mod tests {
         let endpoint_id = SecretKey::from_bytes(&rng.random()).public();
 
         // One succeeding and one failing service.
+        let succeeding = MemoryLookup::with_provenance("static-test");
+        let data = EndpointData::from_iter([TransportAddr::Ip("127.0.0.1:1".parse().unwrap())]);
+        succeeding.add_endpoint_info(EndpointInfo::from_parts(endpoint_id, data));
         let services = AddressLookupServices::default();
-        services.add(StaticAddressLookup {
-            provenance: "static-test",
-        });
+        services.add(succeeding);
         services.add(FailingAddressLookup {
             delay: Duration::from_millis(10),
         });
         let _results: Vec<_> = services.resolve(endpoint_id).collect().await;
 
-        let metrics = services.metrics();
+        let metrics = &services.metrics;
         assert_eq!(metrics.lookups.get(), 1);
         assert_eq!(metrics.lookups_failed.get(), 0);
         assert_eq!(
             metrics
-                .resolve_success
+                .service_results
                 .get(&ServiceLabels::new("static-test"))
                 .map(|counter| counter.get()),
             Some(1)
         );
         assert_eq!(
             metrics
-                .resolve_error
+                .service_errors
                 .get(&ServiceLabels::new("failing-test"))
                 .map(|counter| counter.get()),
             Some(1)
@@ -1241,13 +1211,13 @@ mod tests {
             delay: Duration::from_millis(10),
         });
         let _results: Vec<_> = services.resolve(endpoint_id).collect().await;
-        assert_eq!(services.metrics().lookups_failed.get(), 1);
+        assert_eq!(services.metrics.lookups_failed.get(), 1);
 
         // No services configured: also counted as failed.
         let services = AddressLookupServices::default();
         let _results: Vec<_> = services.resolve(endpoint_id).collect().await;
-        assert_eq!(services.metrics().lookups.get(), 1);
-        assert_eq!(services.metrics().lookups_failed.get(), 1);
+        assert_eq!(services.metrics.lookups.get(), 1);
+        assert_eq!(services.metrics.lookups_failed.get(), 1);
 
         Ok(())
     }
