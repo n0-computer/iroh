@@ -217,7 +217,7 @@ async fn healthz() -> Json<Health> {
     Json(Health {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
-        git_hash: option_env!("VERGEN_GIT_SHA").unwrap_or("unknown"),
+        git_hash: "unknown",
     })
 }
 

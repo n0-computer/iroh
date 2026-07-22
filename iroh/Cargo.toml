@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2024"
 readme = "README.md"
 description = "p2p quic connections dialed by public key"
@@ -28,12 +28,12 @@ ctutils = { version = "0.4.0", default-features = false }
 data-encoding = "2.2"
 
 derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_into", "deref", "from_str", "into_iterator"] }
-ed25519-dalek = { version = "=3.0.0-rc.0", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
+ed25519-dalek = { version = ">=3.0.0-rc.0,<4.0.0", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
 ipnet = "2"
-iroh-base = { version = "1.0.2", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
-iroh-dns = { version = "1.0.2", path = "../iroh-dns" }
-iroh-relay = { version = "1.0.2", path = "../iroh-relay", default-features = false }
+iroh-base = { version = "1.0.3", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-dns = { version = "1.0.3", path = "../iroh-dns" }
+iroh-relay = { version = "1.0.3", path = "../iroh-relay", default-features = false }
 n0-future = "0.3"
 n0-error = "1.0.0"
 n0-watcher = "1.0.0"
@@ -41,9 +41,9 @@ netwatch = "0.19.1"
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-noq = { version = "1.0.1", default-features = false, features = ["rustls"] }
-noq-proto = { version = "1.0.1", default-features = false }
-noq-udp = { version = "1.0.1", default-features = false }
+noq = { version = "1.1.0", default-features = false, features = ["rustls"] }
+noq-proto = { version = "1.1.0", default-features = false }
+noq-udp = { version = "1.1.0", default-features = false }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustc-hash = "2"
@@ -105,6 +105,7 @@ chrono = "0.4.43"
 
 # *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
+assert_matches = "1.5.0"
 axum = { version = "0.8" }
 pretty_assertions = "1.4"
 rand_chacha = "0.10"
@@ -119,7 +120,7 @@ tokio = { version = "1", features = [
     "test-util",
 ] }
 serde_json = "1"
-iroh-relay = { version = "1.0.2", path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
+iroh-relay = { version = "1.0.3", path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
 n0-tracing-test = "0.3"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = [
@@ -127,7 +128,7 @@ tracing-subscriber = { version = "0.3", features = [
 ] }
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
-iroh-base = { version = "1.0.2", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-base = { version = "1.0.3", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 console = { version = "0.16" }
 
 # wasm-in-browser test/dev dependencies
@@ -142,7 +143,7 @@ patchbay = { version = "0.6", features = ["iroh-metrics"] }
 testdir = "0.10"
 
 [build-dependencies]
-cfg_aliases = { version = "0.2.1" }
+cfg_aliases = { version = "0.2.2" }
 
 [features]
 default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring"]

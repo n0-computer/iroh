@@ -95,8 +95,9 @@ impl Preset for Minimal {
 /// The default address lookup service publishes to and resolves from the
 /// n0.computer dns server `iroh.link`.
 ///
-/// This is equivalent to adding both a [`crate::address_lookup::PkarrPublisher`]
-/// and a [`crate::address_lookup::DnsAddressLookup`], both configured to use the
+/// This is equivalent to adding a [`crate::address_lookup::PkarrPublisher`],
+/// a [`crate::address_lookup::PkarrResolver`], and (outside browsers) a
+/// [`crate::address_lookup::DnsAddressLookup`], all configured to use the
 /// n0.computer dns server.
 ///
 /// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
@@ -114,20 +115,19 @@ pub struct N0;
 #[cfg(with_crypto_provider)]
 impl Preset for N0 {
     fn apply(self, mut builder: Builder) -> Builder {
-        use crate::{address_lookup::PkarrPublisher, endpoint::default_relay_mode};
+        use crate::{
+            address_lookup::{PkarrPublisher, PkarrResolver},
+            endpoint::default_relay_mode,
+        };
 
         builder = Minimal.apply(builder);
 
         builder = builder.address_lookup(PkarrPublisher::n0_dns());
 
-        // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
-        #[cfg(wasm_browser)]
-        {
-            use crate::address_lookup::PkarrResolver;
+        // Resolve using HTTPS requests to our DNS server's /pkarr path.
+        builder = builder.address_lookup(PkarrResolver::n0_dns());
 
-            builder = builder.address_lookup(PkarrResolver::n0_dns());
-        }
-        // Resolve using DNS queries outside browsers.
+        // Additionally resolve using DNS queries outside browsers.
         #[cfg(not(wasm_browser))]
         {
             builder = builder.address_lookup(crate::address_lookup::DnsAddressLookup::n0_dns());
@@ -157,8 +157,9 @@ impl Preset for N0 {
 /// The default address lookup service publishes to and resolves from the
 /// n0.computer dns server `iroh.link`.
 ///
-/// This is equivalent to adding both a [`crate::address_lookup::PkarrPublisher`]
-/// and a [`crate::address_lookup::DnsAddressLookup`], both configured to use the
+/// This is equivalent to adding a [`crate::address_lookup::PkarrPublisher`],
+/// a [`crate::address_lookup::PkarrResolver`], and (outside browsers) a
+/// [`crate::address_lookup::DnsAddressLookup`], all configured to use the
 /// n0.computer dns server.
 ///
 /// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].

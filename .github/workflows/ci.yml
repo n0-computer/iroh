@@ -93,10 +93,8 @@ jobs:
   android:
     name: Android Build & Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    timeout-minutes: 60
-    # runs-on: [self-hosted, linux, X64]
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_2) }}
+    timeout-minutes: 30
+    runs-on: [self-hosted, linux, X64]
     strategy:
       fail-fast: false
       matrix:
@@ -145,6 +143,11 @@ jobs:
       # Replace cargo-ndk-runner with a wrapper that forwards RUST_LOG
       # and RUST_BACKTRACE into the emulator shell. The upstream binary
       # does `adb shell <bin>` without inheriting any host env.
+      #
+      # The wrapper also removes each binary from the guest once it has run.
+      # A full run pushes ~1.25GB of debug test binaries into /data/local/tmp
+      # and the guest data partition is only ~5.8GB, so leaving them behind
+      # accumulates across jobs (see the sweep in the emulator script below).
       - name: Wrap cargo-ndk-runner to forward logging env
         if: matrix.target == 'x86_64-linux-android'
         run: |
@@ -155,7 +158,11 @@ jobs:
           adb push "$1" "$dev" >/dev/null
           adb shell chmod 755 "$dev"
           shift
+          set +e
           adb shell "RUST_LOG=$RUST_LOG RUST_BACKTRACE=$RUST_BACKTRACE $dev $*"
+          rc=$?
+          adb shell rm -f "$dev" >/dev/null 2>&1
+          exit $rc
           WRAPPER
           chmod +x "$(which cargo-ndk-runner)"
 
@@ -182,6 +189,7 @@ jobs:
 
       - name: Run workspace tests on Android emulator
         if: matrix.target == 'x86_64-linux-android'
+        timeout-minutes: 30
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -198,7 +206,12 @@ jobs:
           # working public-internet connectivity on the GH-hosted runner; without them wlan0
           # stays NO-CARRIER and every connect() to a public IP fails with ENETUNREACH.
           # See https://github.com/ReactiveCircus/android-emulator-runner/issues/348#issuecomment-2578082030
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -dns-server 8.8.8.8 -netfast -no-metrics
+          #
+          # `-no-snapshot`: on persistent self-hosted runners the AVD survives between jobs,
+          # so the emulator quickboot-resumes from the previous run's snapshot. Resumed guests
+          # have broken networking (UDP DNS times out), failing DNS tests. Always cold boot
+          # and never save state.
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -dns-server 8.8.8.8 -netfast -no-metrics -no-snapshot
           disable-animations: true
           script: |
             adb wait-for-device
@@ -216,6 +229,15 @@ jobs:
             adb shell sysctl -w net.ipv6.conf.default.disable_ipv6=1 || true
             adb shell sysctl -w net.ipv6.conf.lo.disable_ipv6=1 || true
             adb shell ip addr
+            # Sweep leftover test binaries out of the guest. `force-avd-creation: false`
+            # keeps the AVD between jobs, and `-no-snapshot` only disables the *RAM*
+            # quickboot snapshot - the userdata qcow2 overlay still persists on disk. A
+            # job that is cancelled or times out leaves its pushed binaries behind, so
+            # without this they accumulate until /data (~5.8G) fills and every `adb push`
+            # fails with ENOSPC. The runner wrapper deletes binaries as it goes; this
+            # catches what it could not.
+            adb shell 'rm -rf /data/local/tmp/*' || true
+            adb shell df -h /data
             cargo ndk test -p iroh-base --all-features
             cargo ndk test -p iroh-dns --features tls-ring
             cargo ndk test -p iroh-relay --features tls-ring,metrics
