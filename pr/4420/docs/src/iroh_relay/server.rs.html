@@ -1098,7 +1098,7 @@
 <a href=#1098 id=1098 data-nosnippet>1098</a>    <span class="kw">let </span>health = Health {
 <a href=#1099 id=1099 data-nosnippet>1099</a>        status: <span class="string">"ok"</span>,
 <a href=#1100 id=1100 data-nosnippet>1100</a>        version: <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>),
-<a href=#1101 id=1101 data-nosnippet>1101</a>        git_hash: <span class="macro">option_env!</span>(<span class="string">"VERGEN_GIT_SHA"</span>).unwrap_or(<span class="string">"unknown"</span>),
+<a href=#1101 id=1101 data-nosnippet>1101</a>        git_hash: <span class="string">"unknown"</span>,
 <a href=#1102 id=1102 data-nosnippet>1102</a>    };
 <a href=#1103 id=1103 data-nosnippet>1103</a>    <span class="kw">let </span>body = serde_json::to_string(<span class="kw-2">&amp;</span>health).unwrap_or_else(|<span class="kw">_</span>| <span class="string">r#"{"status":"error"}"#</span>.into());
 <a href=#1104 id=1104 data-nosnippet>1104</a>    <span class="kw">let </span>body: BytesBody = Box::new(Full::from(body));
