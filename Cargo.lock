@@ -2239,6 +2239,7 @@ dependencies = [
  "ipnet",
  "iroh-base",
  "iroh-dns",
+ "iroh-dns-server",
  "iroh-metrics",
  "iroh-relay",
  "n0-error",
