@@ -11,7 +11,12 @@
 //!
 //! [module docs]: crate
 
-use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+};
 
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
@@ -148,6 +153,17 @@ pub struct Builder {
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
+    direct_addr_filter: Option<Arc<dyn DirectAddrFilter>>,
+}
+
+/// Filters the endpoint's direct (underlay) address candidates.
+///
+/// An address for which [`Self::keeps`] returns `false` is dropped: it is not
+/// stored, published, or used as a holepunch candidate. Set it with
+/// [`Builder::direct_addr_filter`].
+pub trait DirectAddrFilter: Send + Sync + std::fmt::Debug + 'static {
+    /// Returns `true` to keep `ip` as a candidate, `false` to drop it.
+    fn keeps(&self, ip: IpAddr) -> bool;
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -216,6 +232,7 @@ impl Builder {
             net_report_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
+            direct_addr_filter: None,
         }
     }
 
@@ -279,6 +296,7 @@ impl Builder {
             net_report_config: self.net_report_config,
             static_config,
             configured_addrs: self.configured_addrs,
+            direct_addr_filter: self.direct_addr_filter,
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
@@ -625,6 +643,13 @@ impl Builder {
     /// filters set by presets.
     pub fn clear_addr_filter(mut self) -> Self {
         self.addr_filter = None;
+        self
+    }
+
+    /// Sets a [`DirectAddrFilter`] that drops selected addresses from the
+    /// endpoint's direct address candidates.
+    pub fn direct_addr_filter(mut self, filter: impl DirectAddrFilter) -> Self {
+        self.direct_addr_filter = Some(Arc::new(filter));
         self
     }
 
