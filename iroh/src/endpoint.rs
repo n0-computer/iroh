@@ -148,6 +148,7 @@ pub struct Builder {
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
+    socket_mark: Option<u32>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -216,6 +217,7 @@ impl Builder {
             net_report_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
+            socket_mark: None,
         }
     }
 
@@ -279,6 +281,7 @@ impl Builder {
             net_report_config: self.net_report_config,
             static_config,
             configured_addrs: self.configured_addrs,
+            socket_mark: self.socket_mark,
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
@@ -510,6 +513,18 @@ impl Builder {
     pub fn clear_relay_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Relay { .. }));
+        self
+    }
+
+    /// Sets an fwmark on the underlay UDP sockets (Linux `SO_MARK`).
+    ///
+    /// The mark is applied to every IP transport socket the endpoint binds, and
+    /// reapplied on rebind. It lets you policy-route iroh's own traffic with an
+    /// `ip rule`, for example to keep it off a full-tunnel default route so the
+    /// tunnel does not swallow the packets carrying it. No-op on non-Linux
+    /// platforms.
+    pub fn socket_mark(mut self, mark: u32) -> Self {
+        self.socket_mark = Some(mark);
         self
     }
 

@@ -168,10 +168,15 @@ impl From<Config> for SocketAddr {
 }
 
 impl IpTransport {
-    pub(crate) fn bind(config: Config, metrics: Arc<SocketMetrics>) -> io::Result<Self> {
+    pub(crate) fn bind(
+        config: Config,
+        metrics: Arc<SocketMetrics>,
+        socket_mark: Option<u32>,
+    ) -> io::Result<Self> {
         let addr: SocketAddr = config.into();
         debug!(?addr, "binding");
-        let socket = netwatch::UdpSocket::bind_full(addr).inspect_err(|err| {
+        let opts = netwatch::BindOptions::new().set_mark(socket_mark);
+        let socket = netwatch::UdpSocket::bind_with(addr, opts).inspect_err(|err| {
             debug!(%addr, "failed to bind: {err:#}");
         })?;
         let local_addr = socket.local_addr()?;
@@ -416,6 +421,7 @@ impl IpTransports {
     pub(super) fn bind(
         configs: impl Iterator<Item = Config>,
         metrics: &EndpointMetrics,
+        socket_mark: Option<u32>,
     ) -> io::Result<Self> {
         let mut has_v4_default = false;
         let mut ip_v4 = Vec::new();
@@ -424,7 +430,7 @@ impl IpTransports {
         let mut ip_v6 = Vec::new();
 
         for config in configs {
-            match IpTransport::bind(config, metrics.socket.clone()) {
+            match IpTransport::bind(config, metrics.socket.clone(), socket_mark) {
                 Ok(transport) => {
                     if config.is_ipv4() {
                         if config.is_default() {

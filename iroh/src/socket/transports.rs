@@ -193,6 +193,7 @@ impl Transports {
         relay_actor_config: RelayActorConfig,
         metrics: &EndpointMetrics,
         shutdown_token: CancellationToken,
+        socket_mark: Option<u32>,
     ) -> io::Result<Self> {
         #[cfg(not(wasm_browser))]
         let ip_configs = {
@@ -223,7 +224,7 @@ impl Transports {
             ip_configs
         };
         #[cfg(not(wasm_browser))]
-        let ip = IpTransports::bind(ip_configs.into_iter(), metrics)?;
+        let ip = IpTransports::bind(ip_configs.into_iter(), metrics, socket_mark)?;
 
         let relay = configs
             .iter()
@@ -553,7 +554,7 @@ mod tests {
         let metrics = EndpointMetrics::default();
         Transports {
             #[cfg(not(wasm_browser))]
-            ip: ip::IpTransports::bind(std::iter::empty(), &metrics).unwrap(),
+            ip: ip::IpTransports::bind(std::iter::empty(), &metrics, None).unwrap(),
             relay: Vec::new(),
             custom,
             poll_recv_counter: 0,
