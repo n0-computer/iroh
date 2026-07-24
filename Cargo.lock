@@ -3016,8 +3016,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.19.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d9cbe01741347ef750d743d6690603f5eed8341e679fb51c8e629337aa11976"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#425a0eaa9f91a577881bfa40fb251b6fa79bb221"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3622,8 +3621,7 @@ dependencies = [
 [[package]]
 name = "portmapper"
 version = "0.19.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb3713e4977408279158444a18c1a01ac9bf2e7eaf1fbfd1a19ac9cd18d90721"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#425a0eaa9f91a577881bfa40fb251b6fa79bb221"
 dependencies = [
  "base64",
  "bytes",
