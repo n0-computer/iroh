@@ -62,6 +62,7 @@ criterion = "0.8.0"
 data-encoding = "2.3.3"
 hickory-resolver = { version = "0.26.0", features = ["tls-ring", "https-ring"] }
 iroh = { path = "../iroh" }
+n0-error = { version = "1.0.0", features = ["anyhow"] }
 n0-tracing-test = "0.3"
 rand = "0.10"
 simple-dns = "0.11"
@@ -71,6 +72,12 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 serde_json = "1.0.145"
 tempfile = "3.23.0"
+
+# patchbay netsim test dependencies (linux only)
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "1.0"
+patchbay = "0.6"
+testdir = "0.10"
 
 [features]
 default = ["ring"]
