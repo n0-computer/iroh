@@ -236,7 +236,11 @@ impl RemoteMap {
         if leftover_msgs.is_empty() {
             // the actor shut down cleanly
             self.senders.remove(&remote_id);
-            trace!(%remote_id, "cleaned up RemoteStateActor");
+            self.mapped_addrs.endpoint_addrs.remove(&remote_id);
+            self.mapped_addrs
+                .relay_addrs
+                .retain(|k, _| k.1 != remote_id);
+            trace!(%remote_id, "cleaned up RemoteStateActor and mapped_addrs");
             true
         } else {
             // The remote actor got messages while it was closing, so we're restarting
