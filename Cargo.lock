@@ -2233,7 +2233,6 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.4.3",
- "hickory-resolver",
  "http",
  "indicatif",
  "ipnet",
@@ -2265,6 +2264,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "simple-dns",
  "smallvec",
  "strum",
  "testdir",
@@ -2328,12 +2328,11 @@ dependencies = [
  "arc-swap",
  "cfg_aliases",
  "derive_more",
- "hickory-resolver",
  "iroh-base",
+ "n0-dns-resolver",
  "n0-error",
  "n0-future",
  "n0-tracing-test",
- "ndk-context",
  "portable-atomic",
  "rand 0.10.1",
  "rustls",
@@ -2341,7 +2340,9 @@ dependencies = [
  "strum",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2447,7 +2448,6 @@ dependencies = [
  "data-encoding",
  "derive_more",
  "getrandom 0.4.3",
- "hickory-resolver",
  "http",
  "http-body-util",
  "hyper",
@@ -2830,6 +2830,29 @@ dependencies = [
  "smallvec",
  "tagptr",
  "uuid",
+]
+
+[[package]]
+name = "n0-dns-resolver"
+version = "0.1.0"
+source = "git+https://github.com/n0-computer/n0-dns-resolver#d17fb6ae3043c18a8033c22f0ace4804d8521fa4"
+dependencies = [
+ "derive_more",
+ "ipconfig",
+ "jni 0.22.4",
+ "lru 0.18.0",
+ "n0-error",
+ "n0-future",
+ "ndk-context",
+ "rand 0.10.1",
+ "reqwest",
+ "rustls",
+ "simple-dns",
+ "system-configuration",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "webpki-roots",
 ]
 
 [[package]]
