@@ -64,6 +64,17 @@ const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(10);
 /// Even if we have some non-relay route that works.
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Initial backoff between forced address lookup retries.
+///
+/// A forced lookup (e.g. because a connection's only path went suspect) can
+/// race the remote republishing a new address, so it keeps retrying until
+/// something else ends the need for it (a working path, or the path
+/// recovering on its own).
+const ADDRESS_LOOKUP_RETRY_BACKOFF_INITIAL: Duration = Duration::from_millis(500);
+
+/// Maximum backoff between forced address lookup retries.
+const ADDRESS_LOOKUP_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(5);
+
 /// The time after which an idle [`RemoteStateActor`] stops.
 ///
 /// The actor only enters the idle state if no connections are active and no inbox senders exist
@@ -166,8 +177,42 @@ struct State {
     /// Stream of Address Lookup results, or always pending if Address Lookup is not running.
     address_lookup_stream: Option<BoxStream<Result<AddressLookupItem, AddressLookupFailed>>>,
 
+    /// A forced address lookup still outstanding, if any.
+    ///
+    /// `Some` for as long as something needs the lookup to keep retrying
+    /// until it is no longer needed (see [`State::trigger_address_lookup`]),
+    /// e.g. a connection's only path going suspect (see
+    /// [`NoqPathEvent::Suspect`]). Cleared once a replacement path
+    /// establishes, the path recovers on its own, or the last connection
+    /// closes.
+    address_lookup_retry: Option<AddressLookupRetry>,
+
     /// The path selector used to pick the preferred path among the candidates.
     path_selector: Arc<dyn PathSelector>,
+}
+
+/// Retry schedule for a forced address lookup that is still needed.
+#[derive(Debug)]
+struct AddressLookupRetry {
+    /// When to start the next address lookup attempt, if one is scheduled.
+    next_lookup: Option<Instant>,
+    /// Backoff applied when the next lookup attempt is scheduled.
+    backoff: Duration,
+}
+
+impl AddressLookupRetry {
+    fn new() -> Self {
+        Self {
+            next_lookup: None,
+            backoff: ADDRESS_LOOKUP_RETRY_BACKOFF_INITIAL,
+        }
+    }
+
+    /// Schedules the next lookup attempt and doubles the backoff, capped.
+    fn schedule_lookup(&mut self) {
+        self.next_lookup = Some(Instant::now() + self.backoff);
+        self.backoff = (self.backoff * 2).min(ADDRESS_LOOKUP_RETRY_BACKOFF_MAX);
+    }
 }
 
 impl RemoteStateActor {
@@ -200,6 +245,7 @@ impl RemoteStateActor {
                 scheduled_open_path: None,
                 pending_open_paths: VecDeque::new(),
                 address_lookup_stream: None,
+                address_lookup_retry: None,
                 path_selector,
             },
         }
@@ -263,6 +309,16 @@ impl RemoteStateActor {
                 None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_hp);
+            let scheduled_lookup_retry = match self
+                .state
+                .address_lookup_retry
+                .as_ref()
+                .and_then(|retry| retry.next_lookup)
+            {
+                Some(when) => MaybeFuture::Some(time::sleep_until(when)),
+                None => MaybeFuture::None,
+            };
+            n0_future::pin!(scheduled_lookup_retry);
             if !self.is_idle(&inbox) {
                 idle_timeout
                     .as_mut()
@@ -315,7 +371,14 @@ impl RemoteStateActor {
                     self.trigger_holepunching();
                 }
                 Some(item) = maybe_next(self.state.address_lookup_stream.as_mut()), if self.state.address_lookup_stream.is_some() => {
-                    self.state.handle_address_lookup_item(item);
+                    self.handle_address_lookup_item(item);
+                }
+                _ = &mut scheduled_lookup_retry => {
+                    if let Some(retry) = self.state.address_lookup_retry.as_mut() {
+                        retry.next_lookup = None;
+                        trace!("retrying forced address lookup");
+                        self.state.start_address_lookup();
+                    }
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -470,6 +533,58 @@ impl RemoteStateActor {
         }
     }
 
+    /// Processes an address lookup item, opening any newly found relay addrs and
+    /// continuing a forced retry if one is still outstanding.
+    ///
+    /// Relay addrs from the lookup are opened as paths right away: paths are
+    /// otherwise only opened at connection setup, so a lookup result arriving
+    /// later has to open them itself. When the lookup stream finishes while a
+    /// forced retry is still outstanding, the next attempt is scheduled with
+    /// backoff (see [`State::trigger_address_lookup`]).
+    fn handle_address_lookup_item(
+        &mut self,
+        item: Option<Result<AddressLookupItem, AddressLookupFailed>>,
+    ) {
+        // Collect relay addrs before the state consumes the item.
+        match &item {
+            Some(Ok(item)) if item.endpoint_id() == self.state.endpoint_id => {
+                let relay_addrs: Vec<transports::Addr> = item
+                    .addrs()
+                    .filter_map(|addr| match addr {
+                        TransportAddr::Relay(url) => Some(transports::Addr::from((
+                            url.clone(),
+                            self.state.endpoint_id,
+                        ))),
+                        _ => None,
+                    })
+                    .collect();
+                for addr in relay_addrs {
+                    let open_addr = transports::FourTuple::from_remote(addr);
+                    debug!(?open_addr, "found relay addr, opening path");
+                    self.open_path_on_all_conns(&open_addr);
+                }
+            }
+            _ => {}
+        }
+        let no_service = matches!(
+            &item,
+            Some(Err(AddressLookupFailed::NoServiceConfigured { .. }))
+        );
+
+        let finished = self.state.handle_address_lookup_item(item);
+
+        if finished {
+            if no_service {
+                // No point retrying without a lookup service; whatever wanted the
+                // retry has to be satisfied some other way (e.g. a path
+                // recovering on its own).
+                self.state.address_lookup_retry = None;
+            } else if let Some(retry) = self.state.address_lookup_retry.as_mut() {
+                retry.schedule_lookup();
+            }
+        }
+    }
+
     fn handle_connection_close(&mut self, conn_id: ConnId, closed: Closed) {
         event!(
             target: "iroh::_events::conn::closed",
@@ -486,6 +601,7 @@ impl RemoteStateActor {
         if self.connections.is_empty() {
             trace!("last connection closed - clearing selected_path");
             self.state.selected_path = None;
+            self.state.address_lookup_retry = None;
         }
     }
 
@@ -593,6 +709,43 @@ impl RemoteStateActor {
 
                 self.state
                     .register_and_configure_path(conn_id, conn_state, &path);
+                // A new working path ends any outstanding forced address
+                // lookup. A suspect relay path is closed as a redundant relay
+                // path once `select_path` picks the new one (see
+                // `apply_selected_path`). Closing triggers noq's normal loss
+                // detection for whatever was still queued on it, which
+                // retransmits it over the new path shortly after.
+                if self.state.address_lookup_retry.take().is_some() {
+                    debug!("path established, ending forced address lookup");
+                }
+                self.select_path();
+            }
+            NoqPathEvent::Suspect { id, .. } => {
+                // Re-select first so traffic moves off the suspect path.
+                self.select_path();
+                // A lookup is only warranted when nothing else can carry the
+                // connection: any other path already covers it.
+                let conn_state = &self.connections[&conn_id];
+                if conn_state.paths.len() > 1 {
+                    return;
+                }
+                let Some(transports::FourTuple::Relay { url, .. }) = conn_state.paths.get(&id)
+                else {
+                    return;
+                };
+                debug!(%url, "only path is suspect, forcing address lookup");
+                self.state.trigger_address_lookup(true);
+            }
+            NoqPathEvent::Recovered { id, .. } => {
+                // The path acknowledges again. If it's still our only path, an
+                // outstanding forced lookup was for this path and is no
+                // longer needed; if we already opened a second one, leave it
+                // to be cleared once that path establishes.
+                if self.connections[&conn_id].paths.len() <= 1
+                    && self.state.address_lookup_retry.take().is_some()
+                {
+                    debug!(%id, "suspect path recovered, ending forced address lookup");
+                }
                 self.select_path();
             }
             NoqPathEvent::Abandoned { id, reason, .. } => {
@@ -675,7 +828,7 @@ impl RemoteStateActor {
     /// Propagates a change of [`State::selected_path`] to noq.
     ///
     /// Iterates over all connections and applies the selected path as follows:
-    /// - Closes non-selected IP paths (but keeps one IP path open still)
+    /// - Closes non-selected IP and relay paths (but keeps one of each kind open still)
     /// - Sets all non-selected paths to [`PathStatus::Backup`]
     /// - Opens the selected path if it does not exist on the connection
     /// - Sets the selected path to [`PathStatus::Available`]
@@ -700,17 +853,24 @@ impl RemoteStateActor {
                     continue;
                 };
 
-                // Closes redundant IP paths so that at most one remains per connection.
+                // Closes redundant IP and relay paths so that at most one of
+                // each kind remains per connection. A second relay path only
+                // ever appears during relay-path recovery (see
+                // `NoqPathEvent::Suspect`); this is what lets the connection
+                // drop a suspect relay path once its replacement works.
                 //
-                // Relay and custom paths are kept open. Only the client closes paths,
-                // to avoid the client and server independently closing different paths
-                // and racing to abandon the last one.
-                if conn.side().is_client()
-                    && path_remote.is_ip()
-                    && path_remote != &selected
-                    && conn_state.paths.values().filter(|a| a.is_ip()).count() > 1
-                {
-                    trace!(?path_remote, %conn_id, %path_id, "closing direct path");
+                // Custom paths are kept open. Only the client closes paths, to
+                // avoid the client and server independently closing different
+                // paths and racing to abandon the last one.
+                let same_kind_count = if path_remote.is_ip() {
+                    conn_state.paths.values().filter(|a| a.is_ip()).count()
+                } else if path_remote.is_relay() {
+                    conn_state.paths.values().filter(|a| a.is_relay()).count()
+                } else {
+                    0
+                };
+                if conn.side().is_client() && path_remote != &selected && same_kind_count > 1 {
+                    trace!(?path_remote, %conn_id, %path_id, "closing redundant path");
                     match path.close() {
                         Err(noq_proto::ClosePathError::MultipathNotNegotiated) => {
                             error!("multipath not negotiated");
@@ -855,16 +1015,35 @@ impl State {
         let addrs = to_transports_addr(self.endpoint_id, addrs);
         self.paths.insert_multiple(addrs, Source::App);
         self.paths.resolve_remote(tx);
-        // Start Address Lookup if we have no selected path.
-        self.trigger_address_lookup();
+        // Start Address Lookup if we have no selected path. Not forced: this
+        // is just an opportunistic lookup, nothing needs it to keep retrying.
+        if self.selected_path.is_none() {
+            self.trigger_address_lookup(false);
+        }
     }
 
-    /// Triggers Address Lookup for the remote endpoint, if needed.
+    /// Triggers Address Lookup for the remote endpoint.
     ///
-    /// Does not start Address Lookup if we have a selected path or if Address Lookup is
-    /// currently running.
-    fn trigger_address_lookup(&mut self) {
-        if self.selected_path.is_some() || self.address_lookup_stream.is_some() {
+    /// If Address Lookup is not currently running, starts it right away regardless of
+    /// `force`. If it is already running: with `force: false` this does nothing; with
+    /// `force: true` it ensures a retry is queued once the current attempt finishes,
+    /// with backoff, repeating for as long as `force` keeps getting requested (e.g. on
+    /// every [`NoqPathEvent::Suspect`] while a connection's only path stays suspect).
+    /// The retry is cleared by whoever no longer needs it (a working path, the suspect
+    /// path recovering on its own, or the last connection closing).
+    fn trigger_address_lookup(&mut self, force: bool) {
+        if force {
+            self.address_lookup_retry
+                .get_or_insert_with(AddressLookupRetry::new);
+        }
+        if self.address_lookup_stream.is_none() {
+            self.start_address_lookup();
+        }
+    }
+
+    /// Starts an Address Lookup stream, unless one is already running.
+    fn start_address_lookup(&mut self) {
+        if self.address_lookup_stream.is_some() {
             return;
         }
         let stream = self.address_lookup.resolve(self.endpoint_id);
@@ -883,14 +1062,17 @@ impl State {
     ///
     /// All address lookup results end up being sent here. It takes care of updating the
     /// [`RemotePathState`] with the results.
+    ///
+    /// Returns whether the lookup stream finished with this item.
     fn handle_address_lookup_item(
         &mut self,
         item: Option<Result<AddressLookupItem, AddressLookupFailed>>,
-    ) {
+    ) -> bool {
         match item {
             None => {
                 self.paths.address_lookup_finished(Ok(()));
                 self.address_lookup_stream = None;
+                true
             }
             Some(Err(err)) => {
                 if let AddressLookupFailed::NoServiceConfigured { .. } = err {
@@ -900,6 +1082,7 @@ impl State {
                 }
                 self.paths.address_lookup_finished(Err(err));
                 self.address_lookup_stream = None;
+                true
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
@@ -915,6 +1098,7 @@ impl State {
                         to_transports_addr(self.endpoint_id, item.into_endpoint_addr().addrs);
                     self.paths.insert_multiple(addrs, source);
                 }
+                false
             }
         }
     }

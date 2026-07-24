@@ -77,6 +77,41 @@ async fn spawn_relay(lab: &Lab) -> Result<(RelayMap, AbortOnDropHandle<()>)> {
     Ok((relay_map, AbortOnDropHandle::new(task_relay)))
 }
 
+/// Spawns an iroh-dns-server on `dev` for address lookup in the lab.
+///
+/// Serves DNS on port 53 (peers behind a UDP-blocking firewall can still reach
+/// it: DNS is the one allowed UDP port) and the pkarr relay over plain HTTP on
+/// port 8080. Returns once the listeners are bound, with a drop handle that
+/// stops the server.
+pub(crate) async fn spawn_dns_server(
+    dev: &Device,
+    data_dir: PathBuf,
+) -> Result<AbortOnDropHandle<()>> {
+    let (ready_tx, ready_rx) = oneshot::channel::<()>();
+    let task = dev.spawn(move |_dev| async move {
+        tokio::fs::create_dir_all(&data_dir)
+            .await
+            .expect("create dns data dir");
+        let mut config = iroh_dns_server::config::Config::default();
+        config.dns.port = 53;
+        config.https = None;
+        config.metrics = Some(iroh_dns_server::config::MetricsConfig::disabled());
+        config.data_dir = Some(data_dir);
+        let server = iroh_dns_server::Server::bind(config)
+            .await
+            .expect("dns-server bind");
+        ready_tx.send(()).expect("test task alive");
+        server
+            .join()
+            .await
+            .expect("dns-server stopped unexpectedly");
+    })?;
+    ready_rx
+        .await
+        .std_context("dns-server died before binding")?;
+    Ok(AbortOnDropHandle::new(task))
+}
+
 /// Type alias for boxed run functions used in [`Pair`].
 type RunFn = Box<dyn 'static + Send + FnOnce(Device, Endpoint, Connection) -> BoxFuture<Result>>;
 
@@ -506,6 +541,18 @@ pub(crate) mod relay {
     /// Callers are responsible for ensuring that a DNS entry for `relay.test`
     /// exists and points to the relay's IP addresses.
     pub(crate) async fn run_relay_server() -> Result<(RelayMap, Server), SpawnError> {
+        run_relay_server_named("relay.test").await
+    }
+
+    /// Like [`run_relay_server`], but with a caller-chosen hostname.
+    ///
+    /// The returned [`RelayMap`] uses `https://<host>` as the relay URL. Use
+    /// this to run several relays in one lab, each on its own device (the
+    /// fixed ports do not clash across network namespaces) with a matching
+    /// DNS entry for its host.
+    pub(crate) async fn run_relay_server_named(
+        host: &str,
+    ) -> Result<(RelayMap, Server), SpawnError> {
         let bind_ip: IpAddr = Ipv6Addr::UNSPECIFIED.into();
 
         let (_certs, server_config) = self_signed_tls_certs_and_config();
@@ -522,7 +569,7 @@ pub(crate) mod relay {
 
         let server = Server::spawn(config).await?;
 
-        let url: RelayUrl = "https://relay.test".parse().expect("valid relay url");
+        let url: RelayUrl = format!("https://{host}").parse().expect("valid relay url");
         let quic = server
             .quic_addr()
             .map(|addr| RelayQuicConfig::new(addr.port()));
