@@ -6,7 +6,10 @@ use iroh_metrics::MetricsGroupSet;
 pub use iroh_relay::server::Metrics as RelayMetrics;
 use serde::{Deserialize, Serialize};
 
-pub use crate::{net_report::Metrics as NetReportMetrics, socket::Metrics as SocketMetrics};
+pub use crate::{
+    address_lookup::Metrics as AddressLookupMetrics, net_report::Metrics as NetReportMetrics,
+    socket::Metrics as SocketMetrics,
+};
 
 /// Metrics collected by an [`crate::endpoint::Endpoint`].
 ///
@@ -19,6 +22,8 @@ pub struct EndpointMetrics {
     pub socket: Arc<SocketMetrics>,
     /// Metrics collected by net reports.
     pub net_report: Arc<NetReportMetrics>,
+    /// Metrics collected by address lookup.
+    pub address_lookup: Arc<AddressLookupMetrics>,
 }
 
 #[cfg(test)]
@@ -26,12 +31,27 @@ mod tests {
     use super::EndpointMetrics;
     #[test]
     fn test_serde() {
+        use crate::address_lookup::ServiceLabels;
+
         let metrics = EndpointMetrics::default();
         metrics.socket.actor_link_change.inc();
         metrics.net_report.reports.inc_by(10);
+        metrics
+            .address_lookup
+            .service_results
+            .get_or_create(&ServiceLabels::new("dns"))
+            .inc_by(3);
         let encoded = postcard::to_stdvec(&metrics).unwrap();
         let decoded: EndpointMetrics = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(decoded.socket.actor_link_change.get(), 1);
         assert_eq!(decoded.net_report.reports.get(), 10);
+        assert_eq!(
+            decoded
+                .address_lookup
+                .service_results
+                .get(&ServiceLabels::new("dns"))
+                .map(|counter| counter.get()),
+            Some(3)
+        );
     }
 }
