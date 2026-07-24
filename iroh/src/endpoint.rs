@@ -906,9 +906,9 @@ pub struct Endpoint {
 pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
-    #[error("No addressing information available")]
+    #[error("Failed to resolve remote address")]
     NoAddress { source: AddressLookupFailed },
-    #[error("Unable to connect to remote")]
+    #[error("Failed to connect to remote")]
     Noq {
         #[error(std_err)]
         source: QuicConnectError,

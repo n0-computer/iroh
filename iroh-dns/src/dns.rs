@@ -23,7 +23,7 @@ use hickory_resolver::{
     proto::rr::RData,
 };
 use iroh_base::EndpointId;
-use n0_error::{AnyError, StackError, StdResultExt, e, stack_error};
+use n0_error::{AnyError, StackError, StackErrorExt, StdResultExt, e, stack_error};
 use n0_future::{
     Either, MaybeFuture, Stream, StreamExt,
     boxed::BoxFuture,
@@ -94,10 +94,39 @@ pub enum DnsError {
     },
     #[error("Missing host")]
     MissingHost {},
-    #[error("Failed to resolve")]
+
+    #[error(transparent)]
     Resolve { source: AnyError },
     #[error("Invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
+}
+
+/// Error with details about the DNS query that caused it.
+///
+/// The `source` of [`DnsError::Resolve`] can be cast to this type via [`AnyError::downcast_ref`]
+/// to access the details programatically.
+#[stack_error(derive, add_meta)]
+#[error("Failed to retrieve {} record for {}", kind, host)]
+pub struct ErrorWithDetails {
+    #[error(source)]
+    source: AnyError,
+    host: String,
+    kind: QueryKind,
+}
+
+/// DNS query kind, for error reporting.
+#[derive(Debug, derive_more::Display)]
+#[non_exhaustive]
+pub enum QueryKind {
+    /// A record (IPv4)
+    #[display("A")]
+    A,
+    /// AAAA record (IPv6)
+    #[display("AAAA")]
+    AAAA,
+    /// TXT record
+    #[display("TXT")]
+    TXT,
 }
 
 /// Potential errors related to DNS endpoint address lookups.
@@ -106,15 +135,16 @@ pub enum DnsError {
 #[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum LookupError {
-    #[error("Malformed txt from lookup")]
+    #[error("Received malformed TXT record")]
     ParseError { source: ParseError },
-    #[error("Failed to resolve TXT record")]
+    #[error(transparent)]
     LookupFailed { source: DnsError },
 }
 
 /// Error returned when a staggered call fails.
 #[stack_error(derive, add_meta)]
-#[error("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
+#[error("{}", errors.first().map(|err| format!("{err:#}")).unwrap_or("all resolves failed".to_string()))]
+// #[error("no calls succeeded:\n{}", errors.iter().map(|(delay, e)| format!("[{delay:?}] {e:#}")).collect::<Vec<_>>().join("\n"))]
 pub struct StaggeredError<E: n0_error::StackError + 'static> {
     errors: Vec<E>,
 }
@@ -795,7 +825,20 @@ impl Resolver for HickoryResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.ipv4_lookup(host).await.anyerr()?;
+            let lookup = resolver
+                .ipv4_lookup(host.clone())
+                .await
+                .anyerr()
+                .map_err(|source| {
+                    e!(DnsError::Resolve {
+                        source: e!(ErrorWithDetails {
+                            source,
+                            host,
+                            kind: QueryKind::A
+                        })
+                        .into_any()
+                    })
+                })?;
             let iter: BoxIter<Ipv4Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
@@ -810,7 +853,20 @@ impl Resolver for HickoryResolver {
     fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.ipv6_lookup(host).await.anyerr()?;
+            let lookup = resolver
+                .ipv6_lookup(host.clone())
+                .await
+                .anyerr()
+                .map_err(|source| {
+                    e!(DnsError::Resolve {
+                        source: e!(ErrorWithDetails {
+                            source,
+                            host,
+                            kind: QueryKind::AAAA
+                        })
+                        .into_any()
+                    })
+                })?;
             let iter: BoxIter<Ipv6Addr> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
@@ -825,7 +881,20 @@ impl Resolver for HickoryResolver {
     fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
         let resolver = self.resolver.clone();
         Box::pin(async move {
-            let lookup = resolver.txt_lookup(host).await.anyerr()?;
+            let lookup = resolver
+                .txt_lookup(host.clone())
+                .await
+                .anyerr()
+                .map_err(|source| {
+                    e!(DnsError::Resolve {
+                        source: e!(ErrorWithDetails {
+                            source,
+                            host,
+                            kind: QueryKind::TXT
+                        })
+                        .into_any()
+                    })
+                })?;
             let iter: BoxIter<TxtRecordData> =
                 Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
                     match &record.data {
