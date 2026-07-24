@@ -6,13 +6,12 @@ pub(crate) use imp::Options;
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::net_report::{NetReportConfig, QuicConfig, probes::Probe};
+    use crate::net_report::{NetReportConfig, probes::Probe, qad::QuicConfig};
 
-    /// Options for running probes
+    /// Options for running probes.
     ///
-    /// By default, will run Https probes.
-    ///
-    /// Use [`Options::quic_config`] to enable  QUIC address discovery.
+    /// Runs HTTPS probes by default. Use [`Options::quic_config`] to enable
+    /// QUIC address discovery.
     #[derive(Debug, Clone)]
     pub(crate) struct Options {
         /// The configuration needed to launch QUIC address discovery probes.
@@ -26,6 +25,7 @@ mod imp {
     }
 
     impl Options {
+        /// Creates options with the given TLS config and defaults.
         pub(crate) fn new(tls_config: rustls::ClientConfig) -> Self {
             Self {
                 quic_config: None,
@@ -33,19 +33,20 @@ mod imp {
                 user_config: NetReportConfig::default(),
             }
         }
-        /// Enable quic probes
+
+        /// Enables QUIC address discovery probes with the given config.
         pub(crate) fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
             self.quic_config = quic_config;
             self
         }
 
-        /// Set the net report configuration.
+        /// Sets the net report configuration.
         pub(crate) fn net_report_config(mut self, config: NetReportConfig) -> Self {
             self.user_config = config;
             self
         }
 
-        /// Turn the options into set of valid protocols
+        /// Returns the set of enabled probe protocols.
         pub(crate) fn as_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();
             if let Some(ref quic) = self.quic_config {
@@ -68,12 +69,11 @@ mod imp {
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::net_report::{NetReportConfig, Probe};
+    use crate::net_report::{NetReportConfig, probes::Probe};
 
     /// Options for running probes (in browsers).
     ///
-    /// Only HTTPS probes are supported in browsers.
-    /// These are run by default.
+    /// Only HTTPS probes are supported in browsers, and they run by default.
     #[derive(Debug, Clone)]
     pub(crate) struct Options {
         /// User-facing configuration.
@@ -89,13 +89,13 @@ mod imp {
     }
 
     impl Options {
-        /// Set the net report configuration.
+        /// Sets the net report configuration.
         pub(crate) fn net_report_config(mut self, config: NetReportConfig) -> Self {
             self.user_config = config;
             self
         }
 
-        /// Turn the options into set of valid protocols
+        /// Returns the set of enabled probe protocols.
         pub(crate) fn as_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();
             if self.user_config.https_probes {

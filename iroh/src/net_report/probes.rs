@@ -17,18 +17,18 @@ const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 /// The delay before starting HTTPS probes.
 const HTTPS_OFFSET: Duration = Duration::from_millis(200);
 
-/// The protocol used to time an endpoint's latency.
+/// The protocol used to time a relay's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
 #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 #[non_exhaustive]
 pub enum Probe {
-    /// HTTPS
+    /// An HTTPS latency probe.
     Https,
-    /// QUIC Address Discovery Ipv4
+    /// A QUIC address discovery probe over IPv4.
     #[cfg(not(wasm_browser))]
     QadIpv4,
-    /// QUIC Address Discovery Ipv6
+    /// A QUIC address discovery probe over IPv6.
     #[cfg(not(wasm_browser))]
     QadIpv6,
 }
@@ -61,40 +61,36 @@ impl ProbeSet {
         }
     }
 
-    pub(super) fn proto(&self) -> Probe {
-        self.proto
-    }
-
-    fn push(&mut self, delay: Duration, endpoint: Arc<RelayConfig>) {
-        self.probes.push((delay, endpoint));
+    fn push(&mut self, delay: Duration, relay: Arc<RelayConfig>) {
+        self.probes.push((delay, relay));
     }
 
     fn is_empty(&self) -> bool {
         self.probes.is_empty()
     }
 
+    /// Returns the `(delay, relay)` pairs for the probes in this set.
     pub(super) fn params(&self) -> impl Iterator<Item = &(Duration, Arc<RelayConfig>)> {
         self.probes.iter()
     }
 }
 
-/// A probe plan.
+/// An ordered collection of [`ProbeSet`]s to execute.
 ///
-/// A probe plan contains a number of [`ProbeSet`]s containing probes to be executed.
-/// Generally the first probe of of a set which completes aborts the remaining probes of a
-/// set.  Sometimes a failing probe can also abort the remaining probes of a set.
+/// Generally the first probe of a set that completes aborts the remaining
+/// probes of the set. Sometimes a failing probe can also abort the rest.
 ///
-/// The [`reportgen`] actor will also abort all the remaining [`ProbeSet`]s once it has
+/// The [`actor`] will also abort all the remaining [`ProbeSet`]s once it has
 /// sufficient information for a report.
 ///
-/// [`reportgen`]: crate::net_report::reportgen
+/// [`actor`]: crate::net_report::actor
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct ProbePlan {
     set: BTreeSet<ProbeSet>,
 }
 
 impl ProbePlan {
-    /// Creates an initial probe plan
+    /// Creates the initial probe plan.
     pub(super) fn initial(relay_map: &RelayMap, protocols: &BTreeSet<Probe>) -> Self {
         let mut plan = Self::default();
 
@@ -111,9 +107,23 @@ impl ProbePlan {
         plan
     }
 
-    /// Creates a follow up probe plan using a previous net_report report in browsers.
+    /// Builds the HTTPS probe plan for a `Refresh` cycle.
     ///
-    /// This will only schedule HTTPS probes.
+    /// A `Refresh` cycle relies on the open QAD connections for latency and
+    /// address data, so once the previous report has any relay latencies this
+    /// returns an empty plan: no HTTPS probes run, and the preferred relay is
+    /// re-picked from the QAD latencies instead. Only when there is no latency
+    /// data at all does it fall back to the full initial HTTPS plan.
+    ///
+    /// A `Full` cycle does not go through here. It clears the report history
+    /// and runs [`initial`](Self::initial), so HTTPS is re-measured on every
+    /// `Full`, which the actor forces at least once per full-report interval.
+    // TODO: On a QUIC-blocked network HTTPS is the only latency source, yet a
+    // Refresh still skips it. That is fine only as long as the periodic Full
+    // cycle runs often enough to keep HTTPS latencies fresh; between Full
+    // cycles the preferred relay cannot adapt on such networks. Revisit if
+    // that staleness turns out to matter, e.g. by re-probing the current
+    // preferred relay on Refresh.
     pub(super) fn with_last_report(
         relay_map: &RelayMap,
         last_report: &Report,
@@ -123,7 +133,6 @@ impl ProbePlan {
             return Self::initial(relay_map, protocols);
         }
 
-        // TODO: is this good?
         Self::default()
     }
 
@@ -132,8 +141,10 @@ impl ProbePlan {
         self.set.iter()
     }
 
-    /// Adds a [`ProbeSet`] if it contains probes and the protocol indicated in
-    /// the [`ProbeSet] matches a protocol in our set of [`Probe`]s.
+    /// Adds `set` if it is non-empty and its protocol is enabled.
+    ///
+    /// The protocol is enabled when [`ProbeSet::proto`] is present in
+    /// `protocols`.
     fn add_if_enabled(&mut self, protocols: &BTreeSet<Probe>, set: ProbeSet) {
         if !set.is_empty() && protocols.contains(&set.proto) {
             self.set.insert(set);
@@ -146,8 +157,8 @@ impl fmt::Display for ProbePlan {
         writeln!(f, "ProbePlan {{")?;
         for probe_set in self.set.iter() {
             writeln!(f, r#"    ProbeSet("{}") {{"#, probe_set.proto)?;
-            for (delay, endpoint) in probe_set.probes.iter() {
-                writeln!(f, "        {delay:?} to {endpoint},")?;
+            for (delay, relay) in probe_set.probes.iter() {
+                writeln!(f, "        {delay:?} to {relay},")?;
             }
             writeln!(f, "    }}")?;
         }
@@ -173,13 +184,13 @@ mod tests {
     /// Shorthand which declares a new ProbeSet.
     ///
     /// `$kind`: The `Probe`.
-    /// `$endpoint`: Expression which will be an `Arc<RelayConfig>`.
+    /// `$relay`: Expression which will be an `Arc<RelayConfig>`.
     /// `$delays`: A `Vec` of the delays for this probe.
     macro_rules! probeset {
-        (proto: Probe::$kind:ident, relay: $endpoint:expr, delays: $delays:expr,) => {
+        (proto: Probe::$kind:ident, relay: $relay:expr, delays: $delays:expr,) => {
             ProbeSet {
                 proto: Probe::$kind,
-                probes: $delays.iter().map(|delay| (*delay, $endpoint)).collect(),
+                probes: $delays.iter().map(|delay| (*delay, $relay)).collect(),
             }
         };
     }

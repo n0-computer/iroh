@@ -289,7 +289,7 @@ pub use iroh_dns::dns;
 pub use iroh_dns::endpoint_info;
 pub use iroh_relay::{RelayConfig, RelayMap};
 pub use n0_watcher::Watcher;
-pub use net_report::{NetReportConfig, TIMEOUT as NET_REPORT_TIMEOUT};
+pub use net_report::{FIRST_REPORT_TIMEOUT_SECS as NET_REPORT_TIMEOUT, NetReportConfig};
 
 #[cfg(feature = "unstable-net-report")]
 pub mod unstable_net_report {
