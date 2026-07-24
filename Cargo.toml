@@ -58,3 +58,11 @@ trait_method_marked_deprecated = { required-update = "minor" }
 type_associated_const_marked_deprecated = { required-update = "minor" }
 type_marked_deprecated = { required-update = "minor" }
 type_method_marked_deprecated = { required-update = "minor" }
+
+# Temporary: noq with PathEvent::Suspect, see plans/relay-failover-simplify.md.
+# Does not include the abandon-time retransmit fix (noq PR pending); until
+# that lands, relay_teardown_failover is expected to be flaky.
+[patch.crates-io]
+noq = { git = "https://github.com/n0-computer/noq", branch = "Frando/path-suspect" }
+noq-proto = { git = "https://github.com/n0-computer/noq", branch = "Frando/path-suspect" }
+noq-udp = { git = "https://github.com/n0-computer/noq", branch = "Frando/path-suspect" }

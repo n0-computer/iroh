@@ -150,6 +150,12 @@ impl PathSelector for BiasedRttPathSelector {
             let Some(stats) = psd.stats() else {
                 continue;
             };
+            // A suspect path stopped acknowledging data; its stale RTT would
+            // otherwise keep winning against live but slower paths.
+            if stats.suspect {
+                trace!(%network_path, "skipping suspect path");
+                continue;
+            }
             let rtt = stats.rtt;
             trace!(%network_path, ?rtt);
             let key = self.sort_key(network_path, rtt);
