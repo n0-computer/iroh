@@ -3100,7 +3100,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "1.1.0"
-source = "git+https://github.com/n0-computer/noq?branch=Frando%2Fpath-suspect#a29df8afe9c16b4db08e51cc4914138ee6a93b23"
+source = "git+https://github.com/n0-computer/noq?branch=Frando%2Fpath-suspect-and-abandon-retransmit#8e4c6ad8be62bc7879723a7f087fa6430e61ac3f"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3121,7 +3121,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.1.0"
-source = "git+https://github.com/n0-computer/noq?branch=Frando%2Fpath-suspect#a29df8afe9c16b4db08e51cc4914138ee6a93b23"
+source = "git+https://github.com/n0-computer/noq?branch=Frando%2Fpath-suspect-and-abandon-retransmit#8e4c6ad8be62bc7879723a7f087fa6430e61ac3f"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3151,7 +3151,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.1.0"
-source = "git+https://github.com/n0-computer/noq?branch=Frando%2Fpath-suspect#a29df8afe9c16b4db08e51cc4914138ee6a93b23"
+source = "git+https://github.com/n0-computer/noq?branch=Frando%2Fpath-suspect-and-abandon-retransmit#8e4c6ad8be62bc7879723a7f087fa6430e61ac3f"
 dependencies = [
  "cfg_aliases",
  "libc",

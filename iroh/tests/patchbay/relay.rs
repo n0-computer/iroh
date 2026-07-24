@@ -486,10 +486,11 @@ async fn relay_teardown_failover() -> Result {
     let dev_server = lab.add_device("server").uplink(nat1.id()).build().await?;
     let dev_client = lab.add_device("client").uplink(nat2.id()).build().await?;
 
-    let timeout = Duration::from_secs(15);
+    let timeout = Duration::from_secs(10);
     // Recovery spans the server's home failover (deferred full net report), the
-    // republish, and the client's lookup retries; allow generous headroom.
-    let recovery_timeout = Duration::from_secs(30);
+    // republish, and the client's lookup retries; observed well under 15s with
+    // noq's abandon-time retransmit fix, so this is still a comfortable margin.
+    let recovery_timeout = Duration::from_secs(15);
 
     // Both run functions wait here before dropping their endpoint, so neither
     // side is left waiting out QUIC timeouts on a vanished peer (the same

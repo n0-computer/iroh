@@ -59,10 +59,12 @@ type_associated_const_marked_deprecated = { required-update = "minor" }
 type_marked_deprecated = { required-update = "minor" }
 type_method_marked_deprecated = { required-update = "minor" }
 
-# Temporary: noq with PathEvent::Suspect, see plans/relay-failover-simplify.md.
-# Does not include the abandon-time retransmit fix (noq PR pending); until
-# that lands, relay_teardown_failover is expected to be flaky.
+# Temporary: noq with PathEvent::Suspect plus the abandon-time retransmit fix,
+# see plans/relay-failover-simplify.md. Both noq changes have their own PRs
+# pending upstream (Frando/path-suspect, Frando/abandon-retransmit); this
+# branch combines them for testing until they land and iroh can go back to a
+# released noq version.
 [patch.crates-io]
-noq = { git = "https://github.com/n0-computer/noq", branch = "Frando/path-suspect" }
-noq-proto = { git = "https://github.com/n0-computer/noq", branch = "Frando/path-suspect" }
-noq-udp = { git = "https://github.com/n0-computer/noq", branch = "Frando/path-suspect" }
+noq = { git = "https://github.com/n0-computer/noq", branch = "Frando/path-suspect-and-abandon-retransmit" }
+noq-proto = { git = "https://github.com/n0-computer/noq", branch = "Frando/path-suspect-and-abandon-retransmit" }
+noq-udp = { git = "https://github.com/n0-computer/noq", branch = "Frando/path-suspect-and-abandon-retransmit" }
