@@ -187,9 +187,9 @@ struct State {
     address_lookup_retry: Option<AddressLookupRetry>,
 
     /// Relay connection events from the relay transport.
-    relay_conn_events: broadcast::Receiver<RelayConnEvent>,
-    /// Set once `relay_conn_events` reports closed, to disable its poll arm.
-    relay_conn_events_closed: bool,
+    ///
+    /// `None` once the channel reported closed, disabling its poll arm.
+    relay_conn_events: Option<broadcast::Receiver<RelayConnEvent>>,
     /// Relays whose connection is currently lost (per [`RelayConnEvent`]).
     ///
     /// Paths over these relays are marked down for path selection, so a
@@ -257,8 +257,7 @@ impl RemoteStateActor {
                 pending_open_paths: VecDeque::new(),
                 address_lookup_stream: None,
                 address_lookup_retry: None,
-                relay_conn_events,
-                relay_conn_events_closed: false,
+                relay_conn_events: Some(relay_conn_events),
                 lost_relays: BTreeSet::new(),
                 path_selector,
             },
@@ -394,14 +393,14 @@ impl RemoteStateActor {
                         self.state.start_address_lookup();
                     }
                 }
-                evt = self.state.relay_conn_events.recv(), if !self.state.relay_conn_events_closed => {
+                Some(evt) = maybe_recv(self.state.relay_conn_events.as_mut()), if self.state.relay_conn_events.is_some() => {
                     match evt {
                         Ok(evt) => self.handle_relay_conn_event(evt),
                         // Events are advisory: on lag we just keep going with
                         // whatever events still arrive.
                         Err(broadcast::error::RecvError::Lagged(_)) => {}
                         Err(broadcast::error::RecvError::Closed) => {
-                            self.state.relay_conn_events_closed = true;
+                            self.state.relay_conn_events = None;
                         }
                     }
                 }
@@ -1810,5 +1809,15 @@ async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<O
     match maybe_stream {
         None => None,
         Some(s) => Some(s.next().await),
+    }
+}
+
+/// Receives the next value if `maybe_rx` is `Some`, or returns `None` otherwise.
+async fn maybe_recv<T: Clone>(
+    maybe_rx: Option<&mut broadcast::Receiver<T>>,
+) -> Option<Result<T, broadcast::error::RecvError>> {
+    match maybe_rx {
+        None => None,
+        Some(rx) => Some(rx.recv().await),
     }
 }
