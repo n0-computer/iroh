@@ -52,7 +52,7 @@ use n0_future::{
 };
 use n0_watcher::Watchable;
 use netwatch::interfaces;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 use url::Url;
@@ -152,6 +152,11 @@ struct ActiveRelayActor {
     stop_token: CancellationToken,
     metrics: Arc<SocketMetrics>,
     my_relay: HomeRelayWatch,
+    /// Broadcasts [`RelayConnEvent`]s for this relay.
+    conn_events: broadcast::Sender<RelayConnEvent>,
+    /// Whether a [`RelayConnEvent::Lost`] was sent and not yet followed by a
+    /// [`RelayConnEvent::Restored`].
+    conn_lost_emitted: bool,
 }
 
 #[derive(Debug)]
@@ -196,6 +201,7 @@ struct ActiveRelayActorOptions {
     stop_token: CancellationToken,
     metrics: Arc<SocketMetrics>,
     my_relay: HomeRelayWatch,
+    conn_events: broadcast::Sender<RelayConnEvent>,
 }
 
 /// Configuration needed to create a connection to a relay server.
@@ -268,6 +274,7 @@ impl ActiveRelayActor {
             stop_token,
             metrics,
             my_relay,
+            conn_events,
         } = opts;
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
@@ -282,6 +289,8 @@ impl ActiveRelayActor {
             stop_token,
             metrics,
             my_relay,
+            conn_events,
+            conn_lost_emitted: false,
         }
     }
 
@@ -330,6 +339,20 @@ impl ActiveRelayActor {
             self.my_relay
                 .set_status(&self.url, RelayConnectionState::Disconnected { last_error });
             if !was_established {
+                // A connection attempt failed: the relay is genuinely
+                // unreachable right now, not just briefly disconnected. An
+                // established connection dropping retries immediately without
+                // ending up here, so a spurious disconnect followed by a
+                // successful reconnect never emits this. Connecting and
+                // handshaking take on the order of several round trips, so
+                // this also leaves a dropped connection at least that long to
+                // come back before the loss is announced.
+                if !self.conn_lost_emitted {
+                    self.conn_lost_emitted = true;
+                    self.conn_events
+                        .send(RelayConnEvent::Lost(self.url.clone()))
+                        .ok();
+                }
                 // If dialing failed, or if the relay connection failed before we received a pong,
                 // we wait an exponentially increasing time until we attempt to reconnect again.
                 let Some(delay) = backoff.next() else {
@@ -407,6 +430,12 @@ impl ActiveRelayActor {
         };
         self.my_relay
             .set_status(&self.url, RelayConnectionState::Connected);
+        if self.conn_lost_emitted {
+            self.conn_lost_emitted = false;
+            self.conn_events
+                .send(RelayConnEvent::Restored(self.url.clone()))
+                .ok();
+        }
         self.run_connected(client)
             .instrument(info_span!("connected"))
             .await
@@ -916,6 +945,24 @@ pub(crate) struct Config {
     /// Per-relay configuration. Consulted when starting a connection to
     /// look up the auth token and any future per-relay options.
     pub relay_map: RelayMap,
+    /// Broadcasts [`RelayConnEvent`]s to interested parties (the
+    /// `RemoteStateActor`s, which react to a relay connection loss by
+    /// re-resolving remotes that depend on it).
+    pub conn_events: broadcast::Sender<RelayConnEvent>,
+}
+
+/// A change in an active relay connection, broadcast by the [`ActiveRelayActor`]s.
+///
+/// `Lost` is debounced: it is only sent once an established connection dropped
+/// (or a fresh one could not be made) *and* a reconnect attempt has failed, so
+/// a spurious disconnect with a successful immediate reconnect emits nothing.
+/// One `Restored` follows each `Lost` once the connection is back.
+#[derive(Debug, Clone)]
+pub(crate) enum RelayConnEvent {
+    /// The connection to this relay was lost and a reconnect attempt failed.
+    Lost(RelayUrl),
+    /// The connection to this relay is established again after a `Lost`.
+    Restored(RelayUrl),
 }
 
 /// Connection state of the home relay.
@@ -1300,6 +1347,7 @@ impl RelayActor {
             stop_token: self.cancel_token.child_token(),
             metrics: self.config.metrics.clone(),
             my_relay: self.config.my_relay.clone(),
+            conn_events: self.config.conn_events.clone(),
         };
         let actor = ActiveRelayActor::new(opts);
         self.active_relay_tasks.spawn(
@@ -1436,7 +1484,7 @@ mod tests {
     };
     use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use n0_tracing_test::traced_test;
-    use tokio::sync::{mpsc, oneshot};
+    use tokio::sync::{broadcast, mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, info, info_span};
 
@@ -1478,6 +1526,7 @@ mod tests {
             stop_token,
             metrics: Default::default(),
             my_relay: Default::default(),
+            conn_events: broadcast::channel(16).0,
         };
         let task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
         AbortOnDropHandle::new(task)

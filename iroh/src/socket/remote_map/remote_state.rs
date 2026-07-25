@@ -18,7 +18,7 @@ use n0_watcher::Watcher;
 use noq::{Closed, PathStats, PathStatus, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent as NoqPathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 
@@ -36,7 +36,7 @@ use crate::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, CustomMappedAddr, RelayMappedAddr},
         remote_map::remote_state::path_watcher::PathStateSender,
-        transports::{self, OwnedTransmit, TransportsSender},
+        transports::{self, OwnedTransmit, RelayConnEvent, TransportsSender},
     },
 };
 
@@ -63,6 +63,17 @@ const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(10);
 ///
 /// Even if we have some non-relay route that works.
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Initial backoff between forced address lookup retries.
+///
+/// A forced lookup (e.g. because a connection's only path went suspect) can
+/// race the remote republishing a new address, so it keeps retrying until
+/// something else ends the need for it (a working path, or the path
+/// recovering on its own).
+const ADDRESS_LOOKUP_RETRY_BACKOFF_INITIAL: Duration = Duration::from_millis(500);
+
+/// Maximum backoff between forced address lookup retries.
+const ADDRESS_LOOKUP_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(5);
 
 /// The time after which an idle [`RemoteStateActor`] stops.
 ///
@@ -166,8 +177,52 @@ struct State {
     /// Stream of Address Lookup results, or always pending if Address Lookup is not running.
     address_lookup_stream: Option<BoxStream<Result<AddressLookupItem, AddressLookupFailed>>>,
 
+    /// A forced address lookup still outstanding, if any.
+    ///
+    /// `Some` for as long as something needs the lookup to keep retrying
+    /// until it is no longer needed (see [`State::trigger_address_lookup`]),
+    /// e.g. losing the relay connection carrying a connection's only path.
+    /// Cleared once a replacement path establishes, the relay connection is
+    /// restored, or the last connection closes.
+    address_lookup_retry: Option<AddressLookupRetry>,
+
+    /// Relay connection events from the relay transport.
+    relay_conn_events: broadcast::Receiver<RelayConnEvent>,
+    /// Set once `relay_conn_events` reports closed, to disable its poll arm.
+    relay_conn_events_closed: bool,
+    /// Relays whose connection is currently lost (per [`RelayConnEvent`]).
+    ///
+    /// Paths over these relays are marked down for path selection, so a
+    /// replacement path wins selection despite the dead path's better
+    /// (stale) RTT.
+    lost_relays: BTreeSet<RelayUrl>,
+
     /// The path selector used to pick the preferred path among the candidates.
     path_selector: Arc<dyn PathSelector>,
+}
+
+/// Retry schedule for a forced address lookup that is still needed.
+#[derive(Debug)]
+struct AddressLookupRetry {
+    /// When to start the next address lookup attempt, if one is scheduled.
+    next_lookup: Option<Instant>,
+    /// Backoff applied when the next lookup attempt is scheduled.
+    backoff: Duration,
+}
+
+impl AddressLookupRetry {
+    fn new() -> Self {
+        Self {
+            next_lookup: None,
+            backoff: ADDRESS_LOOKUP_RETRY_BACKOFF_INITIAL,
+        }
+    }
+
+    /// Schedules the next lookup attempt and doubles the backoff, capped.
+    fn schedule_lookup(&mut self) {
+        self.next_lookup = Some(Instant::now() + self.backoff);
+        self.backoff = (self.backoff * 2).min(ADDRESS_LOOKUP_RETRY_BACKOFF_MAX);
+    }
 }
 
 impl RemoteStateActor {
@@ -180,6 +235,7 @@ impl RemoteStateActor {
         metrics: Arc<SocketMetrics>,
         address_lookup: AddressLookupServices,
         path_selector: Arc<dyn PathSelector>,
+        relay_conn_events: broadcast::Receiver<RelayConnEvent>,
     ) -> Self {
         Self {
             connections: FxHashMap::default(),
@@ -200,6 +256,10 @@ impl RemoteStateActor {
                 scheduled_open_path: None,
                 pending_open_paths: VecDeque::new(),
                 address_lookup_stream: None,
+                address_lookup_retry: None,
+                relay_conn_events,
+                relay_conn_events_closed: false,
+                lost_relays: BTreeSet::new(),
                 path_selector,
             },
         }
@@ -263,6 +323,16 @@ impl RemoteStateActor {
                 None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_hp);
+            let scheduled_lookup_retry = match self
+                .state
+                .address_lookup_retry
+                .as_ref()
+                .and_then(|retry| retry.next_lookup)
+            {
+                Some(when) => MaybeFuture::Some(time::sleep_until(when)),
+                None => MaybeFuture::None,
+            };
+            n0_future::pin!(scheduled_lookup_retry);
             if !self.is_idle(&inbox) {
                 idle_timeout
                     .as_mut()
@@ -315,7 +385,25 @@ impl RemoteStateActor {
                     self.trigger_holepunching();
                 }
                 Some(item) = maybe_next(self.state.address_lookup_stream.as_mut()), if self.state.address_lookup_stream.is_some() => {
-                    self.state.handle_address_lookup_item(item);
+                    self.handle_address_lookup_item(item);
+                }
+                _ = &mut scheduled_lookup_retry => {
+                    if let Some(retry) = self.state.address_lookup_retry.as_mut() {
+                        retry.next_lookup = None;
+                        trace!("retrying forced address lookup");
+                        self.state.start_address_lookup();
+                    }
+                }
+                evt = self.state.relay_conn_events.recv(), if !self.state.relay_conn_events_closed => {
+                    match evt {
+                        Ok(evt) => self.handle_relay_conn_event(evt),
+                        // Events are advisory: on lag we just keep going with
+                        // whatever events still arrive.
+                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(broadcast::error::RecvError::Closed) => {
+                            self.state.relay_conn_events_closed = true;
+                        }
+                    }
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -470,6 +558,58 @@ impl RemoteStateActor {
         }
     }
 
+    /// Processes an address lookup item, opening any newly found relay addrs and
+    /// continuing a forced retry if one is still outstanding.
+    ///
+    /// Relay addrs from the lookup are opened as paths right away: paths are
+    /// otherwise only opened at connection setup, so a lookup result arriving
+    /// later has to open them itself. When the lookup stream finishes while a
+    /// forced retry is still outstanding, the next attempt is scheduled with
+    /// backoff (see [`State::trigger_address_lookup`]).
+    fn handle_address_lookup_item(
+        &mut self,
+        item: Option<Result<AddressLookupItem, AddressLookupFailed>>,
+    ) {
+        // Collect relay addrs before the state consumes the item.
+        match &item {
+            Some(Ok(item)) if item.endpoint_id() == self.state.endpoint_id => {
+                let relay_addrs: Vec<transports::Addr> = item
+                    .addrs()
+                    .filter_map(|addr| match addr {
+                        TransportAddr::Relay(url) => Some(transports::Addr::from((
+                            url.clone(),
+                            self.state.endpoint_id,
+                        ))),
+                        _ => None,
+                    })
+                    .collect();
+                for addr in relay_addrs {
+                    let open_addr = transports::FourTuple::from_remote(addr);
+                    debug!(?open_addr, "found relay addr, opening path");
+                    self.open_path_on_all_conns(&open_addr);
+                }
+            }
+            _ => {}
+        }
+        let no_service = matches!(
+            &item,
+            Some(Err(AddressLookupFailed::NoServiceConfigured { .. }))
+        );
+
+        let finished = self.state.handle_address_lookup_item(item);
+
+        if finished {
+            if no_service {
+                // No point retrying without a lookup service; whatever wanted the
+                // retry has to be satisfied some other way (e.g. a path
+                // recovering on its own).
+                self.state.address_lookup_retry = None;
+            } else if let Some(retry) = self.state.address_lookup_retry.as_mut() {
+                retry.schedule_lookup();
+            }
+        }
+    }
+
     fn handle_connection_close(&mut self, conn_id: ConnId, closed: Closed) {
         event!(
             target: "iroh::_events::conn::closed",
@@ -486,6 +626,7 @@ impl RemoteStateActor {
         if self.connections.is_empty() {
             trace!("last connection closed - clearing selected_path");
             self.state.selected_path = None;
+            self.state.address_lookup_retry = None;
         }
     }
 
@@ -593,6 +734,14 @@ impl RemoteStateActor {
 
                 self.state
                     .register_and_configure_path(conn_id, conn_state, &path);
+                // A new working path ends any outstanding forced address
+                // lookup. A dead relay path is closed as a redundant relay
+                // path once `select_path` picks the new one (see
+                // `apply_selected_path`). Closing declares whatever was still
+                // queued on it lost, which retransmits it over the new path.
+                if self.state.address_lookup_retry.take().is_some() {
+                    debug!("path established, ending forced address lookup");
+                }
                 self.select_path();
             }
             NoqPathEvent::Abandoned { id, reason, .. } => {
@@ -612,6 +761,7 @@ impl RemoteStateActor {
                 {
                     self.state.paths.abandoned_path(&network_path.remote());
                 }
+                let last_path_gone = conn_state.paths.is_empty();
 
                 event!(
                     target: "iroh::_events::path::abandoned",
@@ -625,6 +775,16 @@ impl RemoteStateActor {
 
                 // If the remote closed our selected path, select a new one.
                 self.select_path();
+
+                // A relay path dying end-to-end without our own relay
+                // connection being lost (the remote lost *its* relay) produces
+                // no relay transport event; the path just idles out and noq
+                // abandons it. Re-resolving the remote is then the only way
+                // back to it.
+                if last_path_gone && network_path.is_relay() {
+                    debug!(%network_path, "last path abandoned, forcing address lookup");
+                    self.state.trigger_address_lookup(true);
+                }
             }
             NoqPathEvent::Discarded { id, path_stats, .. } => {
                 trace!(%id, ?path_stats, "path discarded");
@@ -642,6 +802,54 @@ impl RemoteStateActor {
         }
     }
 
+    /// Handles a [`RelayConnEvent`] from the relay transport.
+    ///
+    /// Losing a relay connection kills all paths over it: their remote ends
+    /// are only reachable through that relay. The relay is recorded in
+    /// [`State::lost_relays`] so path selection treats paths over it as down,
+    /// and if that leaves a connection with no live path, a forced address
+    /// lookup re-resolves the remote (it may have failed over to a different
+    /// home relay and republished). Restoring the connection reverses both.
+    fn handle_relay_conn_event(&mut self, evt: RelayConnEvent) {
+        match evt {
+            RelayConnEvent::Lost(url) => {
+                if !self.state.lost_relays.insert(url.clone()) {
+                    return;
+                }
+                // Re-select so traffic moves off dead paths where possible.
+                self.select_path();
+                // A lookup is only warranted when a connection has no way
+                // around the lost relay.
+                let stranded = self.connections.values().any(|conn_state| {
+                    !conn_state.paths.is_empty()
+                        && conn_state.paths.values().all(
+                            |path| matches!(path, transports::FourTuple::Relay { url: u, .. } if *u == url),
+                        )
+                });
+                if stranded {
+                    debug!(%url, "relay connection lost, forcing address lookup");
+                    self.state.trigger_address_lookup(true);
+                }
+            }
+            RelayConnEvent::Restored(url) => {
+                if !self.state.lost_relays.remove(&url) {
+                    return;
+                }
+                // Paths over this relay work again; any forced lookup started
+                // for its loss is no longer needed.
+                let has_path = self.connections.values().any(|conn_state| {
+                    conn_state.paths.values().any(
+                        |path| matches!(path, transports::FourTuple::Relay { url: u, .. } if *u == url),
+                    )
+                });
+                if has_path && self.state.address_lookup_retry.take().is_some() {
+                    debug!(%url, "relay connection restored, ending forced address lookup");
+                }
+                self.select_path();
+            }
+        }
+    }
+
     /// Selects the preferred path by invoking the configured [`PathSelector`].
     ///
     /// The selected path is added to any connections which do not yet have it.  Any unused
@@ -650,7 +858,8 @@ impl RemoteStateActor {
     fn select_path(&mut self) {
         let current_path = self.state.selected_path.as_ref();
         let selected_addr = {
-            let ctx = PathSelectionContext::new(current_path, &self.connections);
+            let ctx =
+                PathSelectionContext::new(current_path, &self.connections, &self.state.lost_relays);
             self.state.path_selector.select(&ctx).selected().cloned()
         };
 
@@ -675,7 +884,7 @@ impl RemoteStateActor {
     /// Propagates a change of [`State::selected_path`] to noq.
     ///
     /// Iterates over all connections and applies the selected path as follows:
-    /// - Closes non-selected IP paths (but keeps one IP path open still)
+    /// - Closes non-selected IP and relay paths (but keeps one of each kind open still)
     /// - Sets all non-selected paths to [`PathStatus::Backup`]
     /// - Opens the selected path if it does not exist on the connection
     /// - Sets the selected path to [`PathStatus::Available`]
@@ -700,17 +909,24 @@ impl RemoteStateActor {
                     continue;
                 };
 
-                // Closes redundant IP paths so that at most one remains per connection.
+                // Closes redundant IP and relay paths so that at most one of
+                // each kind remains per connection. A second relay path only
+                // ever appears during relay-path recovery (see
+                // `NoqPathEvent::Suspect`); this is what lets the connection
+                // drop a suspect relay path once its replacement works.
                 //
-                // Relay and custom paths are kept open. Only the client closes paths,
-                // to avoid the client and server independently closing different paths
-                // and racing to abandon the last one.
-                if conn.side().is_client()
-                    && path_remote.is_ip()
-                    && path_remote != &selected
-                    && conn_state.paths.values().filter(|a| a.is_ip()).count() > 1
-                {
-                    trace!(?path_remote, %conn_id, %path_id, "closing direct path");
+                // Custom paths are kept open. Only the client closes paths, to
+                // avoid the client and server independently closing different
+                // paths and racing to abandon the last one.
+                let same_kind_count = if path_remote.is_ip() {
+                    conn_state.paths.values().filter(|a| a.is_ip()).count()
+                } else if path_remote.is_relay() {
+                    conn_state.paths.values().filter(|a| a.is_relay()).count()
+                } else {
+                    0
+                };
+                if conn.side().is_client() && path_remote != &selected && same_kind_count > 1 {
+                    trace!(?path_remote, %conn_id, %path_id, "closing redundant path");
                     match path.close() {
                         Err(noq_proto::ClosePathError::MultipathNotNegotiated) => {
                             error!("multipath not negotiated");
@@ -855,16 +1071,35 @@ impl State {
         let addrs = to_transports_addr(self.endpoint_id, addrs);
         self.paths.insert_multiple(addrs, Source::App);
         self.paths.resolve_remote(tx);
-        // Start Address Lookup if we have no selected path.
-        self.trigger_address_lookup();
+        // Start Address Lookup if we have no selected path. Not forced: this
+        // is just an opportunistic lookup, nothing needs it to keep retrying.
+        if self.selected_path.is_none() {
+            self.trigger_address_lookup(false);
+        }
     }
 
-    /// Triggers Address Lookup for the remote endpoint, if needed.
+    /// Triggers Address Lookup for the remote endpoint.
     ///
-    /// Does not start Address Lookup if we have a selected path or if Address Lookup is
-    /// currently running.
-    fn trigger_address_lookup(&mut self) {
-        if self.selected_path.is_some() || self.address_lookup_stream.is_some() {
+    /// If Address Lookup is not currently running, starts it right away regardless of
+    /// `force`. If it is already running: with `force: false` this does nothing; with
+    /// `force: true` it ensures a retry is queued once the current attempt finishes,
+    /// with backoff, repeating for as long as `force` keeps getting requested (e.g. on
+    /// every [`NoqPathEvent::Suspect`] while a connection's only path stays suspect).
+    /// The retry is cleared by whoever no longer needs it (a working path, the suspect
+    /// path recovering on its own, or the last connection closing).
+    fn trigger_address_lookup(&mut self, force: bool) {
+        if force {
+            self.address_lookup_retry
+                .get_or_insert_with(AddressLookupRetry::new);
+        }
+        if self.address_lookup_stream.is_none() {
+            self.start_address_lookup();
+        }
+    }
+
+    /// Starts an Address Lookup stream, unless one is already running.
+    fn start_address_lookup(&mut self) {
+        if self.address_lookup_stream.is_some() {
             return;
         }
         let stream = self.address_lookup.resolve(self.endpoint_id);
@@ -883,14 +1118,17 @@ impl State {
     ///
     /// All address lookup results end up being sent here. It takes care of updating the
     /// [`RemotePathState`] with the results.
+    ///
+    /// Returns whether the lookup stream finished with this item.
     fn handle_address_lookup_item(
         &mut self,
         item: Option<Result<AddressLookupItem, AddressLookupFailed>>,
-    ) {
+    ) -> bool {
         match item {
             None => {
                 self.paths.address_lookup_finished(Ok(()));
                 self.address_lookup_stream = None;
+                true
             }
             Some(Err(err)) => {
                 if let AddressLookupFailed::NoServiceConfigured { .. } = err {
@@ -900,6 +1138,7 @@ impl State {
                 }
                 self.paths.address_lookup_finished(Err(err));
                 self.address_lookup_stream = None;
+                true
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
@@ -915,6 +1154,7 @@ impl State {
                         to_transports_addr(self.endpoint_id, item.into_endpoint_addr().addrs);
                     self.paths.insert_multiple(addrs, source);
                 }
+                false
             }
         }
     }
@@ -1288,7 +1528,10 @@ pub struct PathSelectionContext<'a> {
 /// (for unit-testing selectors).
 #[derive(Debug)]
 enum PathsSource<'a> {
-    Live(&'a FxHashMap<ConnId, ConnectionState>),
+    Live {
+        connections: &'a FxHashMap<ConnId, ConnectionState>,
+        lost_relays: &'a BTreeSet<RelayUrl>,
+    },
     #[cfg(test)]
     Test(Vec<PathSelectionData<'a>>),
 }
@@ -1298,10 +1541,14 @@ impl<'a> PathSelectionContext<'a> {
     fn new(
         current: Option<&'a transports::FourTuple>,
         connections: &'a FxHashMap<ConnId, ConnectionState>,
+        lost_relays: &'a BTreeSet<RelayUrl>,
     ) -> Self {
         Self {
             current,
-            source: PathsSource::Live(connections),
+            source: PathsSource::Live {
+                connections,
+                lost_relays,
+            },
         }
     }
 
@@ -1328,16 +1575,32 @@ impl<'a> PathSelectionContext<'a> {
     /// connections to the remote.  Selectors that care should aggregate as appropriate.
     pub fn paths(&self) -> Box<dyn Iterator<Item = PathSelectionData<'a>> + '_> {
         match &self.source {
-            PathsSource::Live(connections) => Box::new(
-                connections
-                    .values()
-                    .filter_map(|state| state.handle.upgrade().map(|conn| (state, conn)))
-                    .flat_map(|(state, conn)| {
-                        state.paths.iter().map(move |(path_id, addr)| {
-                            PathSelectionData::live(addr, *path_id, conn.clone())
-                        })
-                    }),
-            ),
+            PathsSource::Live {
+                connections,
+                lost_relays,
+            } => {
+                let lost_relays: &'a BTreeSet<RelayUrl> = lost_relays;
+                Box::new(
+                    connections
+                        .values()
+                        .filter_map(|state| state.handle.upgrade().map(|conn| (state, conn)))
+                        .flat_map(move |(state, conn)| {
+                            state.paths.iter().map(move |(path_id, addr)| {
+                                let transport_down = matches!(
+                                    addr,
+                                    transports::FourTuple::Relay { url, .. }
+                                        if lost_relays.contains(url)
+                                );
+                                PathSelectionData::live(
+                                    addr,
+                                    *path_id,
+                                    conn.clone(),
+                                    transport_down,
+                                )
+                            })
+                        }),
+                )
+            }
             #[cfg(test)]
             PathsSource::Test(paths) => Box::new(paths.iter().cloned()),
         }
@@ -1353,6 +1616,7 @@ impl<'a> PathSelectionContext<'a> {
 #[derive(derive_more::Debug, Clone)]
 pub struct PathSelectionData<'a> {
     network_path: &'a transports::FourTuple,
+    transport_down: bool,
     #[debug(skip)]
     source: StatsSource,
 }
@@ -1375,9 +1639,11 @@ impl<'a> PathSelectionData<'a> {
         network_path: &'a transports::FourTuple,
         path_id: PathId,
         conn: noq::Connection,
+        transport_down: bool,
     ) -> Self {
         Self {
             network_path,
+            transport_down,
             source: StatsSource::Live { path_id, conn },
         }
     }
@@ -1393,13 +1659,31 @@ impl<'a> PathSelectionData<'a> {
     ) -> Self {
         Self {
             network_path,
+            transport_down: false,
             source: StatsSource::Test(stats.map(Box::new)),
         }
+    }
+
+    /// Marks this candidate's transport as down (testing only).
+    #[cfg(test)]
+    pub(crate) fn with_transport_down(mut self) -> Self {
+        self.transport_down = true;
+        self
     }
 
     /// The network path of the candidate path.
     pub fn network_path(&self) -> &transports::FourTuple {
         self.network_path
+    }
+
+    /// Returns `true` if the transport below this path is known to be down.
+    ///
+    /// Currently this is set for relay paths whose relay connection is lost.
+    /// Such a path cannot carry data right now, but may become usable again;
+    /// its statistics (in particular the RTT) are stale. Selectors should
+    /// only pick it as a last resort.
+    pub fn transport_down(&self) -> bool {
+        self.transport_down
     }
 
     /// Returns path statistics if available.

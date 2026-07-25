@@ -21,7 +21,9 @@ use crate::endpoint::RelayStatus;
 
 mod actor;
 
-pub(crate) use self::actor::{Config as RelayActorConfig, HomeRelayWatch, RelayConnectionState};
+pub(crate) use self::actor::{
+    Config as RelayActorConfig, HomeRelayWatch, RelayConnEvent, RelayConnectionState,
+};
 use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
 
 type RelayAddrWatcher =

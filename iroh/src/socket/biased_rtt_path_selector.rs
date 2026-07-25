@@ -141,6 +141,7 @@ impl PathSelector for BiasedRttPathSelector {
         // naturally picks the lowest-RTT instance — no separate aggregation needed.
         let current = ctx.current();
         let mut best: Option<(PathSelectionData<'_>, (TransportType, i128))> = None;
+        let mut best_down: Option<(PathSelectionData<'_>, (TransportType, i128))> = None;
         let mut current_key: Option<(TransportType, i128)> = None;
 
         trace!("dumping path RTTs");
@@ -151,8 +152,19 @@ impl PathSelector for BiasedRttPathSelector {
                 continue;
             };
             let rtt = stats.rtt;
-            trace!(%network_path, ?rtt);
+            trace!(%network_path, ?rtt, transport_down = psd.transport_down());
             let key = self.sort_key(network_path, rtt);
+
+            // A path whose transport is down cannot carry data right now and
+            // its RTT is stale, so it never wins against a live path. It is
+            // still better than no path at all, so it is kept as a fallback
+            // rather than fully excluded.
+            if psd.transport_down() {
+                if best_down.as_ref().is_none_or(|(_, b)| key < *b) {
+                    best_down = Some((psd, key));
+                }
+                continue;
+            }
 
             if Some(network_path) == current && current_key.is_none_or(|c| key < c) {
                 current_key = Some(key);
@@ -163,8 +175,14 @@ impl PathSelector for BiasedRttPathSelector {
         }
 
         let mut selection = PathSelection::none();
-        let Some((best_psd, (best_tier, best_biased))) = best else {
-            return selection;
+        let (best_psd, (best_tier, best_biased)) = match (best, best_down) {
+            (Some(best), _) => best,
+            // Nothing live at all: a down path beats no path.
+            (None, Some(down)) => {
+                selection.set(&down.0);
+                return selection;
+            }
+            (None, None) => return selection,
         };
 
         // If we have no current path or no data for it, switch to the best.
@@ -228,6 +246,10 @@ mod tests {
         let mut stats = PathStats::default();
         stats.rtt = Duration::from_millis(rtt_ms);
         PathSelectionData::for_test(addr, Some(stats))
+    }
+
+    fn psd_down(addr: &transports::FourTuple, rtt_ms: u64) -> PathSelectionData<'_> {
+        psd(addr, rtt_ms).with_transport_down()
     }
 
     /// Runs [`BiasedRttPathSelector::default`] against the given paths and current
@@ -319,5 +341,30 @@ mod tests {
         // Current is set but there are no candidates: keep current (primary() == None).
         let v4 = v4(1);
         assert_eq!(select_with_default(Some(&v4), vec![]), None);
+    }
+
+    #[test]
+    fn down_path_used_as_last_resort() {
+        let relay = relay(1);
+
+        // The only candidate's transport is down: still better than no path.
+        let chosen = select_with_default(Some(&relay), vec![psd_down(&relay, 10)]);
+        assert_eq!(chosen.as_ref(), Some(&relay));
+    }
+
+    #[test]
+    fn live_path_always_preferred_over_down() {
+        let relay_dead = relay(1);
+        let relay_live = relay(2);
+
+        // A live candidate wins even with a much worse RTT than the down
+        // one - the down path's stale RTT must never win a comparison
+        // against a live path, or a replacement relay path could never take
+        // over from a dead relay with a better historical RTT.
+        let chosen = select_with_default(
+            Some(&relay_dead),
+            vec![psd_down(&relay_dead, 1), psd(&relay_live, 500)],
+        );
+        assert_eq!(chosen.as_ref(), Some(&relay_live));
     }
 }

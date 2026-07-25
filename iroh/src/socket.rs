@@ -944,6 +944,11 @@ impl EndpointInner {
 
         let ipv6_reported = Arc::new(AtomicBool::new(false));
 
+        // Relay connection loss/restore notifications, from the relay actors
+        // to the remote-state actors (which react to a lost relay by
+        // re-resolving remotes that depend on it).
+        let (relay_conn_events, _) = tokio::sync::broadcast::channel(32);
+
         let relay_actor_config = RelayActorConfig {
             my_relay: HomeRelayWatch::default(),
             secret_key: secret_key.clone(),
@@ -954,6 +959,7 @@ impl EndpointInner {
             tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
             relay_map: relay_map.clone(),
+            conn_events: relay_conn_events.clone(),
         };
 
         let shutdown_state = ShutdownState::default();
@@ -1003,6 +1009,7 @@ impl EndpointInner {
                 address_lookup.clone(),
                 shutdown_token.child_token(),
                 path_selector,
+                relay_conn_events,
                 span.clone(),
             )
         };
