@@ -5,7 +5,7 @@ use std::time::Duration;
 use iroh::endpoint::Side;
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_tracing_test::traced_test;
-use patchbay::{LinkCondition, LinkDirection, LinkLimits, Nat};
+use patchbay::{LinkCondition, LinkDirection, Nat};
 use testdir::testdir;
 use tracing::info;
 
@@ -15,82 +15,65 @@ use super::util::{Pair, PathConnectionExt, lab_with_relay, ping_accept, ping_ope
 ///
 /// Each level adds more latency, loss, and reordering. The levels are tested
 /// individually for both server-side and client-side impairment.
-const DEGRADE_LEVELS: &[LinkLimits] = &[
+const DEGRADE_LEVELS: &[LinkCondition] = &[
+    // The levels keep independent (Bernoulli) loss, so `loss_pct` is used
+    // directly rather than `bursty_loss`. Latency, jitter, and reordering grow
+    // with each step; the links stay uncapped.
     // 0: mild - good wifi
-    LinkLimits {
-        latency_ms: 10,
-        jitter_ms: 5,
-        loss_pct: 0.5,
-        reorder_pct: 0.0,
-        rate_kbit: 0,
-        duplicate_pct: 0.0,
-        corrupt_pct: 0.0,
-    },
+    LinkCondition::new()
+        .latency_ms(10)
+        .jitter_ms(5)
+        .loss_pct(0.5)
+        .label("mild"),
     // 1: poor - bad wifi or 3G
-    LinkLimits {
-        latency_ms: 100,
-        jitter_ms: 30,
-        loss_pct: 3.0,
-        reorder_pct: 3.0,
-        rate_kbit: 0,
-        duplicate_pct: 0.0,
-        corrupt_pct: 0.0,
-    },
+    LinkCondition::new()
+        .latency_ms(100)
+        .jitter_ms(30)
+        .loss_pct(3.0)
+        .reorder_pct(3.0)
+        .label("poor"),
     // 2: bad - congested 3G
-    LinkLimits {
-        latency_ms: 200,
-        jitter_ms: 60,
-        loss_pct: 5.0,
-        reorder_pct: 5.0,
-        rate_kbit: 0,
-        duplicate_pct: 0.0,
-        corrupt_pct: 0.0,
-    },
+    LinkCondition::new()
+        .latency_ms(200)
+        .jitter_ms(60)
+        .loss_pct(5.0)
+        .reorder_pct(5.0)
+        .label("bad"),
     // 3: terrible - barely usable
-    LinkLimits {
-        latency_ms: 300,
-        jitter_ms: 80,
-        loss_pct: 8.0,
-        reorder_pct: 8.0,
-        rate_kbit: 0,
-        duplicate_pct: 0.0,
-        corrupt_pct: 0.0,
-    },
+    LinkCondition::new()
+        .latency_ms(300)
+        .jitter_ms(80)
+        .loss_pct(8.0)
+        .reorder_pct(8.0)
+        .label("terrible"),
     // 4: extreme - GEO satellite with heavy loss
-    LinkLimits {
-        latency_ms: 500,
-        jitter_ms: 100,
-        loss_pct: 12.0,
-        reorder_pct: 12.0,
-        rate_kbit: 0,
-        duplicate_pct: 0.0,
-        corrupt_pct: 0.0,
-    },
+    LinkCondition::new()
+        .latency_ms(500)
+        .jitter_ms(100)
+        .loss_pct(12.0)
+        .reorder_pct(12.0)
+        .label("extreme"),
     // 5: absurd - stress test
-    LinkLimits {
-        latency_ms: 800,
-        jitter_ms: 200,
-        loss_pct: 20.0,
-        reorder_pct: 20.0,
-        rate_kbit: 0,
-        duplicate_pct: 0.0,
-        corrupt_pct: 0.0,
-    },
+    LinkCondition::new()
+        .latency_ms(800)
+        .jitter_ms(200)
+        .loss_pct(20.0)
+        .reorder_pct(20.0)
+        .label("absurd"),
 ];
 
 /// Runs a single degradation level.
 ///
-/// Creates two devices behind Home NATs, applies the given [`LinkLimits`] to
+/// Creates two devices behind Home NATs, applies the given [`LinkCondition`] to
 /// `impaired_side`, then attempts to holepunch and ping. Returns the
 /// [`TestGuard`] on success so the caller can mark it as passed.
 async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<()> {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
-    let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
+    let nat1 = lab.add_router("nat1").nat(Nat::Moderate).build().await?;
+    let nat2 = lab.add_router("nat2").nat(Nat::Moderate).build().await?;
     let timeout = Duration::from_secs(20 + level as u64 * 10);
 
     let limits = DEGRADE_LEVELS[level];
-    let link_condition = LinkCondition::Manual(limits);
 
     let server = lab
         .add_device("server")
@@ -109,7 +92,7 @@ async fn run_degrade_level(impaired_side: Side, level: usize) -> Result<()> {
     impaired_device
         .iface("eth0")
         .unwrap()
-        .set_condition(link_condition, LinkDirection::Both)
+        .set_condition(limits, LinkDirection::Both)
         .await?;
 
     info!(?impaired_side, ?limits, %level, ?timeout, "degrade test start");
