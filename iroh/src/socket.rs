@@ -144,6 +144,19 @@ pub(crate) const MAX_MULTIPATH_PATHS: u32 = 8;
 /// value.
 pub(crate) const MAX_QNT_ADDRESSES: u8 = 32;
 
+/// How long to wait after the home relay connection is lost before forcing a
+/// full net report.
+///
+/// A brief blip (a single reconnect) should not trigger a report, so the check
+/// is deferred: if the relay reconnects within this window nothing happens.
+const HOME_RELAY_LOST_REPORT_DELAY: Duration = Duration::from_secs(2);
+
+/// Minimum gap between successive forced reports while the home relay stays down.
+///
+/// Once a forced report has run and the relay is still unreachable, wait this
+/// long before forcing another, rather than retrying back to back.
+const HOME_RELAY_LOST_REPORT_RETRY: Duration = Duration::from_secs(5);
+
 /// Error returned when the endpoint state actor stopped while waiting for a reply.
 #[stack_error(add_meta, derive)]
 #[error("endpoint state actor stopped")]
@@ -725,11 +738,20 @@ enum UpdateReason {
     LinkChangeMajor,
     LinkChangeMinor,
     RelayMapChange,
+    /// The home relay connection was lost and has not come back.
+    ///
+    /// This forces a full report so the relay latencies are re-measured
+    /// (incremental reports skip the HTTPS probes), letting another
+    /// reachable relay be promoted to home.
+    HomeRelayLost,
 }
 
 impl UpdateReason {
     fn is_major(self) -> bool {
-        matches!(self, Self::LinkChangeMajor | Self::RelayMapChange)
+        matches!(
+            self,
+            Self::LinkChangeMajor | Self::RelayMapChange | Self::HomeRelayLost
+        )
     }
 }
 
@@ -922,6 +944,11 @@ impl EndpointInner {
 
         let ipv6_reported = Arc::new(AtomicBool::new(false));
 
+        // Relay connection loss/restore notifications, from the relay actors
+        // to the remote-state actors (which react to a lost relay by
+        // re-resolving remotes that depend on it).
+        let (relay_conn_events, _) = tokio::sync::broadcast::channel(32);
+
         let relay_actor_config = RelayActorConfig {
             my_relay: HomeRelayWatch::default(),
             secret_key: secret_key.clone(),
@@ -932,6 +959,7 @@ impl EndpointInner {
             tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
             relay_map: relay_map.clone(),
+            conn_events: relay_conn_events.clone(),
         };
 
         let shutdown_state = ShutdownState::default();
@@ -981,6 +1009,7 @@ impl EndpointInner {
                 address_lookup.clone(),
                 shutdown_token.child_token(),
                 path_selector,
+                relay_conn_events,
                 span.clone(),
             )
         };
@@ -1501,6 +1530,13 @@ impl Actor {
 
         let mut net_report_watcher = self.sock.net_report.watch();
 
+        // Watch the home relay connection so a lost home relay can force a
+        // full net report (see `UpdateReason::HomeRelayLost`). `home_relay_lost_at`
+        // holds the deadline of a pending deferred report, or `None` when idle.
+        let mut home_relay_watcher = self.sock.home_relay_status();
+        let mut home_relay_connected = home_relay_watcher.get().iter().any(|s| s.is_connected());
+        let mut home_relay_lost_at: Option<Instant> = None;
+
         // ensure we are doing an initial publish of our addresses
         self.sock.publish_my_addr();
 
@@ -1515,6 +1551,12 @@ impl Actor {
                 None => MaybeFuture::None,
             };
             n0_future::pin!(notify_quic_network_change);
+
+            let home_relay_recheck = match home_relay_lost_at {
+                Some(at) => MaybeFuture::Some(n0_future::time::sleep_until(at)),
+                None => MaybeFuture::None,
+            };
+            n0_future::pin!(home_relay_recheck);
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
@@ -1563,6 +1605,30 @@ impl Actor {
                         Err(_) => {
                             warn!("net report watcher stopped");
                         }
+                    }
+                }
+                status = home_relay_watcher.updated() => {
+                    if let Ok(status) = status {
+                        let connected = status.iter().any(|s| s.is_connected());
+                        if connected {
+                            // Home relay is up (again); cancel any pending report.
+                            home_relay_lost_at = None;
+                        } else if home_relay_connected && home_relay_lost_at.is_none() {
+                            // Home relay just dropped. Defer a full report so a
+                            // brief reconnect does not trigger one.
+                            debug!("home relay lost, scheduling a full net report");
+                            home_relay_lost_at = Some(Instant::now() + HOME_RELAY_LOST_REPORT_DELAY);
+                        }
+                        home_relay_connected = connected;
+                    }
+                }
+                _ = &mut home_relay_recheck => {
+                    home_relay_lost_at = None;
+                    if !home_relay_connected {
+                        debug!("home relay still down, forcing a full net report");
+                        self.re_stun(UpdateReason::HomeRelayLost);
+                        // Do not retry back to back if it is still failing.
+                        home_relay_lost_at = Some(Instant::now() + HOME_RELAY_LOST_REPORT_RETRY);
                     }
                 }
                 reason = self.direct_addr_done_rx.recv() => {

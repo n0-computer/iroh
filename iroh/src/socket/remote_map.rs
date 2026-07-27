@@ -9,7 +9,7 @@ use std::{
 use iroh_base::{CustomAddr, EndpointAddr, EndpointId, RelayUrl};
 use n0_future::task::JoinSet;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Span, error, trace};
 
@@ -34,6 +34,7 @@ use super::{
         AddrMap, CustomMappedAddr, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr,
     },
     transports,
+    transports::RelayConnEvent,
 };
 use crate::{
     address_lookup::{self, AddressLookupFailed},
@@ -147,6 +148,8 @@ struct Tasks {
     poll_cleanup_waker: Option<Waker>,
     /// The path selector used by all [`RemoteStateActor`]s spawned by this map.
     path_selector: Arc<dyn PathSelector>,
+    /// Relay connection events, subscribed to by each [`RemoteStateActor`].
+    relay_conn_events: broadcast::Sender<RelayConnEvent>,
     /// The tracing span for this endpoint, to be used as parent span for `RemoteStateActor` tasks.
     span: Span,
 }
@@ -159,6 +162,7 @@ impl RemoteMap {
         address_lookup: address_lookup::AddressLookupServices,
         shutdown_token: CancellationToken,
         path_selector: Arc<dyn PathSelector>,
+        relay_conn_events: broadcast::Sender<RelayConnEvent>,
         span: Span,
     ) -> Self {
         Self {
@@ -172,6 +176,7 @@ impl RemoteMap {
                 tasks: Default::default(),
                 poll_cleanup_waker: None,
                 path_selector,
+                relay_conn_events,
                 span,
             },
         }
@@ -335,6 +340,7 @@ impl Tasks {
             self.metrics.clone(),
             self.address_lookup.clone(),
             self.path_selector.clone(),
+            self.relay_conn_events.subscribe(),
         )
         .start(
             initial_msgs,
@@ -401,6 +407,7 @@ mod tests {
             address_lookup::AddressLookupServices::default(),
             shutdown_token.clone(),
             Arc::new(BiasedRttPathSelector::default()),
+            broadcast::channel(16).0,
             Span::none(),
         );
         let guards = (watchable, shutdown_token.clone().drop_guard());
