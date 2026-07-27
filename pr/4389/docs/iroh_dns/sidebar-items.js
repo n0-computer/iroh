@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["IROH_TXT_NAME"],"enum":["EncodingError","ParseError"],"fn":["install_android_jni_context"],"mod":["dns","endpoint_info","pkarr"]};

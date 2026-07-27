@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ConnectError","DialError","RecvError","SendError","Transport"],"struct":["Client","ClientBuilder","ClientSink","ClientStream"]};
