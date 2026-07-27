@@ -76,7 +76,7 @@ tempfile = "3.23.0"
 # patchbay netsim test dependencies (linux only)
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 ctor = "1.0"
-patchbay = "0.6"
+patchbay = "0.7"
 testdir = "0.10"
 
 [features]

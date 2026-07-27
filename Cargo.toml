@@ -58,9 +58,3 @@ trait_method_marked_deprecated = { required-update = "minor" }
 type_associated_const_marked_deprecated = { required-update = "minor" }
 type_marked_deprecated = { required-update = "minor" }
 type_method_marked_deprecated = { required-update = "minor" }
-
-# Test-only: point patchbay at git main, which carries the reworked NAT
-# taxonomy, the merged LinkCondition API, and the Lab test-setup helpers that
-# are not in a crates.io release yet.
-[patch.crates-io]
-patchbay = { git = "https://github.com/n0-computer/patchbay.git", branch = "main" }
