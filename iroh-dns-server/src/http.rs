@@ -1,7 +1,7 @@
 //! HTTP server part of iroh-dns-server
 
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     path::PathBuf,
     time::Instant,
 };
@@ -39,7 +39,7 @@ use crate::state::AppState;
 pub struct HttpConfig {
     /// Port to bind the HTTP listener to.
     pub port: u16,
-    /// Address to bind the HTTP listener to (defaults to `0.0.0.0`).
+    /// Address to bind the HTTP listener to (defaults to `::`, i.e. IPv6 wildcard which also covers IPv4).
     pub bind_addr: Option<IpAddr>,
 }
 
@@ -51,7 +51,7 @@ pub struct HttpConfig {
 pub struct HttpsConfig {
     /// Port to bind the HTTPS listener to.
     pub port: u16,
-    /// Address to bind the HTTPS listener to (defaults to `0.0.0.0`).
+    /// Address to bind the HTTPS listener to (defaults to `::`, i.e. IPv6 wildcard which also covers IPv4).
     pub bind_addr: Option<IpAddr>,
     /// Domains for which TLS certificates are issued or loaded.
     pub domains: Vec<String>,
@@ -97,7 +97,7 @@ impl HttpServer {
         // launch http
         let http_addr = if let Some(config) = http_config {
             let bind_addr = SocketAddr::new(
-                config.bind_addr.unwrap_or(Ipv4Addr::UNSPECIFIED.into()),
+                config.bind_addr.unwrap_or(Ipv6Addr::UNSPECIFIED.into()),
                 config.port,
             );
             let app = app.clone();
@@ -119,7 +119,7 @@ impl HttpServer {
         // launch https
         let https_addr = if let Some(config) = https_config {
             let bind_addr = SocketAddr::new(
-                config.bind_addr.unwrap_or(Ipv4Addr::UNSPECIFIED.into()),
+                config.bind_addr.unwrap_or(Ipv6Addr::UNSPECIFIED.into()),
                 config.port,
             );
             let acceptor = {
