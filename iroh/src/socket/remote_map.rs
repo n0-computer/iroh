@@ -42,6 +42,17 @@ use crate::{
 
 mod remote_state;
 
+/// The number of entries after which we'll start pruning unused addresses.
+///
+/// It is nice to keep mapped addresses consistent, but also if we cycle through lots of
+/// connections that keeps requiring memory. So we make a compromise where we start pruning
+/// only once the number has exceeded a certain size. This means we get stable remote
+/// addresses for the many endpoints that don't end up cycling through lots of peers.
+///
+/// The number is pretty arbitrary: there is not that much data stored for each
+/// [`EndpointId`].
+const MAPPED_ADDR_PRUNE_LIMIT: usize = 64;
+
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
 // /// periodically via [`NodeMap::prune_inactive`].
@@ -76,6 +87,14 @@ pub(crate) struct MappedAddrs {
     pub(super) relay_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
     pub(super) custom_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
+}
+
+impl MappedAddrs {
+    /// Removes all mapped addresses for an [`EndpointId`].
+    fn remove(&self, eid: &EndpointId) {
+        self.endpoint_addrs.remove(&eid);
+        self.relay_addrs.retain(|k, _| k.1 != *eid);
+    }
 }
 
 /// Converts a mapped socket address to a transport address.
@@ -236,6 +255,9 @@ impl RemoteMap {
         if leftover_msgs.is_empty() {
             // the actor shut down cleanly
             self.senders.remove(&remote_id);
+            if self.mapped_addrs.endpoint_addrs.len() > MAPPED_ADDR_PRUNE_LIMIT {
+                self.mapped_addrs.remove(&remote_id);
+            }
             trace!(%remote_id, "cleaned up RemoteStateActor");
             true
         } else {

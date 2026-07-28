@@ -359,10 +359,36 @@ where
         }
     }
 
+    /// Returns the number of entries in this address map.
+    pub(super) fn len(&self) -> usize {
+        self.inner.lock().expect("poisoned").addrs.len()
+    }
+
     /// Performs the reverse lookup.
     pub(super) fn lookup(&self, addr: &V) -> Option<K> {
         let inner = self.inner.lock().expect("poisoned");
         inner.lookup.get(addr).cloned()
+    }
+
+    /// Removes the [`MappedAddr`] if present, returning it.
+    pub(super) fn remove(&self, key: &K) -> Option<V> {
+        let mut inner = self.inner.lock().expect("poisoned");
+        inner.addrs.remove(key).inspect(|addr| {
+            inner.lookup.remove(addr);
+        })
+    }
+
+    /// Retains the elements for which `f` returns `true`.
+    pub(super) fn retain(&self, mut f: impl FnMut(&K, &V) -> bool) {
+        let mut inner = self.inner.lock().expect("poisoned");
+        let AddrMapInner { addrs, lookup } = &mut *inner;
+        addrs.retain(|k: &K, v| {
+            let retain = f(k, v);
+            if !retain {
+                lookup.remove(v);
+            }
+            retain
+        });
     }
 }
 
@@ -379,5 +405,31 @@ impl<K, V> Default for AddrMapInner<K, V> {
             addrs: Default::default(),
             lookup: Default::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_addrmap_remove() {
+        let map: AddrMap<u8, EndpointIdMappedAddr> = AddrMap::default();
+        let addr = map.get(&0);
+        assert!(map.lookup(&addr).is_some(), "reverse lookup not found");
+
+        map.remove(&0);
+        assert!(map.lookup(&addr).is_none(), "reverse lookup not cleared");
+    }
+
+    #[test]
+    fn test_addrmap_retain() {
+        let map: AddrMap<u8, EndpointIdMappedAddr> = AddrMap::default();
+        map.get(&0);
+        let addr1 = map.get(&1);
+        assert!(map.lookup(&addr1).is_some(), "reverse lookup not found");
+
+        map.retain(|k, _a| *k == 0);
+        assert!(map.lookup(&addr1).is_none(), "reverse lookup not cleared");
     }
 }
