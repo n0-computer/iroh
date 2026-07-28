@@ -92,7 +92,7 @@
 <a href=#92 id=92 data-nosnippet>92</a><span class="kw">impl </span>MappedAddrs {
 <a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// Removes all mapped addresses for an [`EndpointId`].
 <a href=#94 id=94 data-nosnippet>94</a>    </span><span class="kw">fn </span>remove(<span class="kw-2">&amp;</span><span class="self">self</span>, eid: <span class="kw-2">&amp;</span>EndpointId) {
-<a href=#95 id=95 data-nosnippet>95</a>        <span class="self">self</span>.endpoint_addrs.remove(<span class="kw-2">&amp;</span>eid);
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="self">self</span>.endpoint_addrs.remove(eid);
 <a href=#96 id=96 data-nosnippet>96</a>        <span class="self">self</span>.relay_addrs.retain(|k, <span class="kw">_</span>| k.<span class="number">1 </span>!= <span class="kw-2">*</span>eid);
 <a href=#97 id=97 data-nosnippet>97</a>    }
 <a href=#98 id=98 data-nosnippet>98</a>}
