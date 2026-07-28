@@ -92,7 +92,7 @@ pub(crate) struct MappedAddrs {
 impl MappedAddrs {
     /// Removes all mapped addresses for an [`EndpointId`].
     fn remove(&self, eid: &EndpointId) {
-        self.endpoint_addrs.remove(&eid);
+        self.endpoint_addrs.remove(eid);
         self.relay_addrs.retain(|k, _| k.1 != *eid);
     }
 }
