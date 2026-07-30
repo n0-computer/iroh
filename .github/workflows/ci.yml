@@ -354,7 +354,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
       - name: Check semver
@@ -388,7 +388,7 @@ jobs:
         with:
           toolchain: ${{ env.TOOLCHAIN }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Install cargo-check-external-types
         uses: taiki-e/install-action@v2
@@ -412,7 +412,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
       - uses: taiki-e/install-action@cargo-make
@@ -434,7 +434,7 @@ jobs:
         with:
           toolchain: nightly-2025-10-09
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
@@ -455,7 +455,7 @@ jobs:
         with:
           components: clippy
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
@@ -507,7 +507,7 @@ jobs:
         with:
           toolchain: ${{ env.MSRV }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
