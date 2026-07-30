@@ -65,7 +65,7 @@ iroh = { path = "../iroh" }
 n0-error = { version = "1.0.0", features = ["anyhow"] }
 n0-tracing-test = "0.3"
 rand = "0.10"
-simple-dns = "0.11"
+simple-dns = "0.12"
 rand_chacha = "0.10"
 reqwest = { version = "0.13", default-features = false, features = [
     "rustls-no-provider", "http2", "json"
