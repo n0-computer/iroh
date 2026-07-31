@@ -66,8 +66,9 @@ pub struct Config<S> {
     /// Optional signal to inform the client when it is being rate-limited.
     ///
     /// When set, the connection actor notifies the client once with a
-    /// [`Status::RateLimited`] message when the receiver first flips to `true`.
-    pub rate_limited: Option<watch::Receiver<bool>>,
+    /// [`Status::RateLimited`] message when the rate-limited counter first
+    /// becomes non-zero.
+    pub rate_limited: Option<watch::Receiver<u64>>,
 }
 
 impl<S> Config<S> {
@@ -224,14 +225,13 @@ impl Client {
     }
 }
 
-/// Completes when `rx` observes the connection being rate-limited for the first time.
+/// Completes when `rx` observes the connection being rate-limited.
 ///
-/// Pends forever when `rx` is `None`, so that after the first notification the
-/// caller can disarm its select branch by dropping the receiver.
-async fn rate_limited_signal(rx: &mut Option<watch::Receiver<bool>>) -> bool {
+/// Pends forever when `rx` is `None`, i.e. when no rate-limit signal is configured.
+async fn rate_limited_signal(rx: &mut Option<watch::Receiver<u64>>) -> bool {
     match rx {
         Some(rx) => match rx.changed().await {
-            Ok(()) => *rx.borrow_and_update(),
+            Ok(()) => *rx.borrow_and_update() > 0,
             // The sender lives inside this actor's stream, so it cannot drop while
             // the actor runs. Report not limited to be safe.
             Err(_) => false,
@@ -334,10 +334,8 @@ struct Actor<S> {
     ping_tracker: PingTracker,
     /// Relay protocol version negotiated for this client.
     protocol_version: ProtocolVersion,
-    /// Signal that flips to `true` when the connection is rate-limited for the first time.
-    ///
-    /// Set to `None` after the client has been notified, or when no signal was configured.
-    rate_limited: Option<watch::Receiver<bool>>,
+    /// Optional signal counting how often the connection has been rate-limited.
+    rate_limited: Option<watch::Receiver<u64>>,
     metrics: Arc<Metrics>,
 }
 
@@ -378,6 +376,8 @@ where
         ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         ping_interval.tick().await;
 
+        let mut rate_limit_notified = false;
+
         loop {
             tokio::select! {
                 biased;
@@ -388,10 +388,10 @@ where
                     self.stream.flush().await.map_err(|_| e!(RunError::Flush))?;
                     break;
                 }
-                limited = rate_limited_signal(&mut self.rate_limited) => {
-                    // Notify the client once per connection, then disarm this branch.
-                    // V1 clients are are not notified.
-                    self.rate_limited = None;
+                limited = rate_limited_signal(&mut self.rate_limited), if !rate_limit_notified => {
+                    // Notify the client once per connection.
+                    // V1 clients are not notified.
+                    rate_limit_notified = true;
                     if limited && self.protocol_version == ProtocolVersion::V2 {
                         debug!("connection is rate-limited, notifying client");
                         self.write_frame(RelayToClientMsg::Status(Status::RateLimited))
