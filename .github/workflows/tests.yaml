@@ -299,6 +299,10 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
+        with:
+          # Pinned: sccache >= 0.17.0 expands rustc @argfiles and breaks Windows'
+          # 32K command line limit: https://github.com/mozilla/sccache/issues/2397
+          version: "v0.16.0"
       - uses: ./.github/workflows/sccache-probe
 
       - uses: msys2/setup-msys2@v2
@@ -415,6 +419,10 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
+        with:
+          # Pinned: sccache >= 0.17.0 expands rustc @argfiles and breaks Windows'
+          # 32K command line limit: https://github.com/mozilla/sccache/issues/2397
+          version: "v0.16.0"
       - uses: ./.github/workflows/sccache-probe
 
       - uses: msys2/setup-msys2@v2
