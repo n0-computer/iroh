@@ -1376,8 +1376,11 @@ impl RelayActor {
     /// Stops all [`ActiveRelayActor`]s and awaits for them to finish.
     async fn close_all_active_relays(&mut self) {
         self.cancel_token.cancel();
-        let tasks = std::mem::take(&mut self.active_relay_tasks);
-        tasks.join_all().await;
+        let mut tasks = std::mem::take(&mut self.active_relay_tasks);
+        // Drain rather than `join_all`: `join_all` panics on any `JoinError`,
+        // which includes a merely *cancelled* task, so an actor aborted out
+        // from under us would take this worker thread down during shutdown.
+        while tasks.join_next().await.is_some() {}
 
         self.log_active_relay();
     }
