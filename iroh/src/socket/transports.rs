@@ -507,7 +507,14 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
+    #[cfg(with_crypto_provider)]
+    use std::sync::{Mutex, atomic::AtomicBool};
+
+    #[cfg(with_crypto_provider)]
+    use futures_util::task::{ArcWake, AtomicWaker, waker};
     use n0_watcher::Watchable;
+    #[cfg(with_crypto_provider)]
+    use noq::UdpSender as _;
 
     use super::*;
 
@@ -547,6 +554,60 @@ mod tests {
             selected.iter().take(4).copied().collect::<Vec<_>>(),
             vec![2, 1, 2, 1],
         );
+    }
+
+    #[cfg(with_crypto_provider)]
+    #[tokio::test]
+    async fn outer_sender_propagates_pending_and_preserves_payload_on_repoll() {
+        let endpoint = crate::Endpoint::builder(crate::endpoint::presets::Minimal)
+            .bind()
+            .await
+            .unwrap();
+        let sock = endpoint.inner().unwrap().sock.clone();
+        let remote_addr = CustomAddr::from_parts(2, &[7]);
+        let state = Arc::new(PendingSendState::default());
+        let transports = custom_only_transports(vec![Box::new(PendingCustomEndpoint {
+            remote_addr: remote_addr.clone(),
+            state: state.clone(),
+            local_addr_watch: Watchable::new(vec![CustomAddr::from_parts(1, &[7])]),
+        })]);
+        let destination = sock
+            .mapped_addrs
+            .custom_addrs
+            .get(&remote_addr)
+            .private_socket_addr();
+        let mut sender = Sender {
+            sock,
+            sender: transports.create_sender(),
+        };
+        let contents = [1, 2, 3];
+        let transmit = noq_udp::Transmit {
+            destination,
+            ecn: None,
+            contents: &contents,
+            segment_size: None,
+            src_ip: None,
+        };
+        let wakes = Arc::new(WakeCounter::default());
+        let waker = waker(wakes.clone());
+        let mut cx = Context::from_waker(&waker);
+
+        assert!(
+            Pin::new(&mut sender)
+                .poll_send(&transmit, &mut cx)
+                .is_pending()
+        );
+        assert_eq!(state.transmits(), vec![contents]);
+
+        state.allow_send();
+        assert_eq!(wakes.0.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            Pin::new(&mut sender).poll_send(&transmit, &mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert_eq!(state.transmits(), vec![contents, contents]);
+
+        endpoint.close().await;
     }
 
     fn custom_only_transports(custom: Vec<Box<dyn CustomEndpoint>>) -> Transports {
@@ -651,6 +712,106 @@ mod tests {
             _transmit: &Transmit<'_>,
         ) -> Poll<io::Result<()>> {
             Poll::Ready(Ok(()))
+        }
+    }
+
+    #[cfg(with_crypto_provider)]
+    #[derive(Default)]
+    struct WakeCounter(AtomicUsize);
+
+    #[cfg(with_crypto_provider)]
+    impl ArcWake for WakeCounter {
+        fn wake_by_ref(counter: &Arc<Self>) {
+            counter.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[cfg(with_crypto_provider)]
+    #[derive(Debug, Default)]
+    struct PendingSendState {
+        ready: AtomicBool,
+        transmits: Mutex<Vec<Vec<u8>>>,
+        waker: AtomicWaker,
+    }
+
+    #[cfg(with_crypto_provider)]
+    impl PendingSendState {
+        fn allow_send(&self) {
+            self.ready.store(true, Ordering::Release);
+            self.waker.wake();
+        }
+
+        fn transmits(&self) -> Vec<Vec<u8>> {
+            self.transmits.lock().expect("poisoned").clone()
+        }
+    }
+
+    #[cfg(with_crypto_provider)]
+    #[derive(Debug)]
+    struct PendingCustomEndpoint {
+        remote_addr: CustomAddr,
+        state: Arc<PendingSendState>,
+        local_addr_watch: Watchable<Vec<CustomAddr>>,
+    }
+
+    #[cfg(with_crypto_provider)]
+    impl CustomEndpoint for PendingCustomEndpoint {
+        fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<CustomAddr>> {
+            self.local_addr_watch.watch()
+        }
+
+        fn create_sender(&self) -> Arc<dyn CustomSender> {
+            Arc::new(PendingCustomSender {
+                remote_addr: self.remote_addr.clone(),
+                state: self.state.clone(),
+            })
+        }
+
+        fn poll_recv(
+            &mut self,
+            _cx: &mut Context,
+            _bufs: &mut [io::IoSliceMut<'_>],
+            _metas: &mut [noq_udp::RecvMeta],
+            _recv_infos: &mut [RecvInfo],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Pending
+        }
+    }
+
+    #[cfg(with_crypto_provider)]
+    #[derive(Debug)]
+    struct PendingCustomSender {
+        remote_addr: CustomAddr,
+        state: Arc<PendingSendState>,
+    }
+
+    #[cfg(with_crypto_provider)]
+    impl CustomSender for PendingCustomSender {
+        fn is_valid_send_addr(&self, addr: &CustomAddr) -> bool {
+            addr == &self.remote_addr
+        }
+
+        fn poll_send(
+            &self,
+            cx: &mut Context,
+            _dst: &CustomAddr,
+            _src: Option<&CustomAddr>,
+            transmit: &Transmit<'_>,
+        ) -> Poll<io::Result<()>> {
+            self.state
+                .transmits
+                .lock()
+                .expect("poisoned")
+                .push(transmit.contents.to_vec());
+            if self.state.ready.load(Ordering::Acquire) {
+                return Poll::Ready(Ok(()));
+            }
+            self.state.waker.register(cx.waker());
+            if self.state.ready.load(Ordering::Acquire) {
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
         }
     }
 }
@@ -1227,13 +1388,18 @@ impl TransportsSender {
                 }
             }
             FourTuple::Custom { remote, local } => {
+                let mut has_valid_sender = false;
                 for sender in &mut self.custom {
                     if sender.is_valid_send_addr(remote) {
+                        has_valid_sender = true;
                         match sender.poll_send(cx, remote, local.as_ref(), transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
                     }
+                }
+                if has_valid_sender {
+                    return Poll::Pending;
                 }
             }
         }
@@ -1490,14 +1656,7 @@ impl noq::UdpSender for Sender {
                 debug!(dst=%network_path, "dropped transmit: {err:#}");
                 Poll::Ready(Ok(()))
             }
-            Poll::Pending => {
-                // We do not want to block the next send which might be on a
-                // different transport.  Instead we let Noq handle this as a lost
-                // datagram.
-                // TODO: Revisit this: we might want to do something better.
-                trace!(dst=%network_path, "transport pending, dropped transmit");
-                Poll::Ready(Ok(()))
-            }
+            Poll::Pending => Poll::Pending,
         }
     }
 

@@ -95,6 +95,11 @@ pub trait CustomSender: std::fmt::Debug + Send + Sync + 'static {
     /// This will only be called from iroh with addresses for which [CustomSender::is_valid_send_addr] returns true.
     ///
     /// You should handle invalid addresses by returning an error.
+    ///
+    /// On noq's connection send path, returning [`Poll::Pending`] retains this
+    /// transmit for retry. Before returning pending, register the current task's
+    /// waker without losing any other outstanding waiter. Stateless endpoint
+    /// responses may instead be dropped when sending blocks.
     fn poll_send(
         &self,
         cx: &mut std::task::Context,
