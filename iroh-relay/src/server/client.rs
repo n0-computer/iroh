@@ -68,7 +68,7 @@ pub struct Config<S> {
     /// When set, the connection actor notifies the client once with a
     /// [`Status::RateLimited`] message when the rate-limited counter first
     /// becomes non-zero.
-    pub rate_limited: Option<watch::Receiver<u64>>,
+    pub(crate) rate_limited: Option<watch::Receiver<u64>>,
 }
 
 impl<S> Config<S> {
