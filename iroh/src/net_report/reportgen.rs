@@ -45,6 +45,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info_span, trace, warn};
 use url::Host;
+#[cfg(not(wasm_browser))]
+use url::Url;
 
 #[cfg(not(wasm_browser))]
 use super::defaults::timeouts::DNS_TIMEOUT;
@@ -107,6 +109,8 @@ pub(super) struct SocketState {
     pub(super) quic_client: Option<QuicClient>,
     /// The DNS resolver to use for probes that need to resolve DNS records.
     pub(super) dns_resolver: DnsResolver,
+    /// The proxy to send the HTTP(S) based probes through, if any.
+    pub(super) proxy_url: Option<Url>,
 }
 
 impl Client {
@@ -290,6 +294,7 @@ impl Actor {
                 .and_then(|l| l.preferred_relay.clone());
 
             let dns_resolver = self.socket_state.dns_resolver.clone();
+            let proxy_url = self.socket_state.proxy_url.clone();
             let dm = self.relay_map.clone();
             let token = token.clone();
             #[cfg(not(wasm_browser))]
@@ -307,6 +312,7 @@ impl Actor {
                                     &dm,
                                     preferred_relay,
                                     tls_config,
+                                    proxy_url.as_ref(),
                                 ),
                             )
                             .await
@@ -522,6 +528,8 @@ impl Probe {
                     relay.url.clone(),
                     #[cfg(not(wasm_browser))]
                     tls_config,
+                    #[cfg(not(wasm_browser))]
+                    socket_state.proxy_url.as_ref(),
                 )
                 .await
                 {
@@ -569,6 +577,7 @@ async fn check_captive_portal(
     dm: &RelayMap,
     preferred_relay: Option<RelayUrl>,
     tls_config: rustls::ClientConfig,
+    proxy_url: Option<&Url>,
 ) -> Result<bool, CaptivePortalError> {
     // If we have a preferred relay and we can use it for non-QAD requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
@@ -591,8 +600,12 @@ async fn check_captive_portal(
         }
     };
 
-    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone())
-        .redirect(reqwest::redirect::Policy::none());
+    let mut builder = maybe_proxied(
+        reqwest_client_builder(tls_config, dns_resolver.clone()),
+        proxy_url,
+    )
+    .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?
+    .redirect(reqwest::redirect::Policy::none());
 
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
@@ -642,6 +655,26 @@ async fn check_captive_portal(
     let has_captive = res.status() != 204 || !is_valid_response;
 
     Ok(has_captive)
+}
+
+/// Routes the client being built through `proxy_url`, if one is configured.
+///
+/// This mirrors the proxy handling of the relay client, so that the HTTP(S) based probes
+/// take the same path out of the network as the relay connections themselves.  Without
+/// this, on a network that only allows outbound traffic via a proxy all these probes fail
+/// and no home relay can be selected.
+///
+/// A proxy URL that reqwest cannot use is reported rather than ignored: silently probing
+/// directly would leak traffic past the proxy the user asked for.
+#[cfg(not(wasm_browser))]
+fn maybe_proxied(
+    builder: reqwest::ClientBuilder,
+    proxy_url: Option<&Url>,
+) -> Result<reqwest::ClientBuilder, reqwest::Error> {
+    match proxy_url {
+        Some(url) => Ok(builder.proxy(reqwest::Proxy::all(url.clone())?)),
+        None => Ok(builder),
+    }
 }
 
 /// Returns the proper port based on the protocol of the probe.
@@ -816,6 +849,7 @@ async fn run_https_probe(
     #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
     relay: RelayUrl,
     #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
+    #[cfg(not(wasm_browser))] proxy_url: Option<&Url>,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
     let url = relay.join(RELAY_PROBE_PATH)?;
@@ -824,7 +858,11 @@ async fn run_https_probe(
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
     #[cfg(not(wasm_browser))]
-    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone());
+    let mut builder = maybe_proxied(
+        reqwest_client_builder(tls_config, dns_resolver.clone()),
+        proxy_url,
+    )
+    .map_err(|err| e!(MeasureHttpsLatencyError::CreateReqwestClient, err))?;
     #[cfg(wasm_browser)]
     let mut builder = reqwest_client_builder();
 
@@ -891,6 +929,7 @@ mod tests {
     use iroh_relay::tls::{CaTlsConfig, default_provider};
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;
+    use tokio::{io::AsyncReadExt, sync::oneshot};
 
     use super::{super::test_utils, *};
 
@@ -905,10 +944,82 @@ mod tests {
             CaTlsConfig::insecure_skip_verify()
                 .client_config(default_provider())
                 .expect("infallible"),
+            None,
         )
         .await?;
 
         assert!(report.latency > Duration::ZERO);
+
+        Ok(())
+    }
+
+    /// Spawns a fake HTTP proxy which captures the request line of the first connection
+    /// it receives and then hangs up.
+    ///
+    /// Returns the URL to configure as proxy and a receiver for the captured request line.
+    async fn capturing_proxy() -> Result<(Url, oneshot::Receiver<String>)> {
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .anyerr()?;
+        let url: Url = format!("http://{}", listener.local_addr().anyerr()?)
+            .parse()
+            .anyerr()?;
+        let (tx, rx) = oneshot::channel();
+        task::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut line = Vec::new();
+            let mut byte = [0u8; 1];
+            while let Ok(1) = stream.read(&mut byte).await {
+                if byte[0] == b'\n' {
+                    break;
+                }
+                line.push(byte[0]);
+            }
+            tx.send(String::from_utf8_lossy(&line).trim().to_string())
+                .ok();
+        });
+        Ok((url, rx))
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_measure_https_latency_via_proxy() -> Result {
+        let (_server, relay) = test_utils::relay().await;
+        let dns_resolver = DnsResolver::new();
+        let (proxy_url, request_line) = capturing_proxy().await?;
+        let target = format!(
+            "{}:{}",
+            relay.url.host_str().expect("relay url has a host"),
+            relay.url.port().expect("relay url has a port")
+        );
+
+        // The probe cannot succeed: the fake proxy never completes the CONNECT tunnel.
+        // What matters is that the probe was attempted via the proxy rather than
+        // connecting to the relay directly.
+        let res = run_https_probe(
+            &dns_resolver,
+            relay.url,
+            CaTlsConfig::insecure_skip_verify()
+                .client_config(default_provider())
+                .expect("infallible"),
+            Some(&proxy_url),
+        )
+        .await;
+        assert!(
+            res.is_err(),
+            "probe must not succeed through a proxy that refuses to tunnel, got {res:?}"
+        );
+
+        let request_line = time::timeout(Duration::from_secs(10), request_line)
+            .await
+            .expect("proxy did not receive a request, the probe bypassed it")
+            .anyerr()?;
+        assert!(
+            request_line.starts_with(&format!("CONNECT {target} ")),
+            "expected the probe to tunnel to {target}, proxy received: {request_line}"
+        );
 
         Ok(())
     }
