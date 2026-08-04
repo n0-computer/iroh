@@ -35,7 +35,7 @@
 <a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span><span class="kw">crate</span>::state::AppState;
 <a href=#36 id=36 data-nosnippet>36</a>
 <a href=#37 id=37 data-nosnippet>37</a><span class="doccomment">/// How long a connection may be idle before keepalive probing starts.
-<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">const </span>TCP_KEEPALIVE_TIME: Duration = Duration::from_secs(<span class="number">60</span>);
+<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">const </span>TCP_KEEPALIVE_TIME: Duration = Duration::from_mins(<span class="number">1</span>);
 <a href=#39 id=39 data-nosnippet>39</a>
 <a href=#40 id=40 data-nosnippet>40</a><span class="doccomment">/// Interval between keepalive probes once probing starts.
 <a href=#41 id=41 data-nosnippet>41</a></span><span class="kw">const </span>TCP_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(<span class="number">15</span>);
@@ -549,20 +549,4 @@
 <a href=#549 id=549 data-nosnippet>549</a>            cfg
 <a href=#550 id=550 data-nosnippet>550</a>        }
 <a href=#551 id=551 data-nosnippet>551</a>    }
-<a href=#552 id=552 data-nosnippet>552</a>
-<a href=#553 id=553 data-nosnippet>553</a>    <span class="doccomment">/// Keepalive is set on the listener, so this asserts that accepted
-<a href=#554 id=554 data-nosnippet>554</a>    /// connections actually inherit it.
-<a href=#555 id=555 data-nosnippet>555</a>    </span><span class="attr">#[test]
-<a href=#556 id=556 data-nosnippet>556</a>    </span><span class="kw">fn </span>keepalive_is_inherited_by_accepted_connections() {
-<a href=#557 id=557 data-nosnippet>557</a>        <span class="kw">let </span>listener = std::net::TcpListener::bind(<span class="string">"127.0.0.1:0"</span>).expect(<span class="string">"bind"</span>);
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="kw">super</span>::set_keepalive(<span class="kw-2">&amp;</span>listener).expect(<span class="string">"set keepalive"</span>);
-<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">let </span>_client =
-<a href=#560 id=560 data-nosnippet>560</a>            std::net::TcpStream::connect(listener.local_addr().expect(<span class="string">"addr"</span>)).expect(<span class="string">"connect"</span>);
-<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw">let </span>(accepted, <span class="kw">_</span>) = listener.accept().expect(<span class="string">"accept"</span>);
-<a href=#562 id=562 data-nosnippet>562</a>        <span class="macro">assert!</span>(
-<a href=#563 id=563 data-nosnippet>563</a>            <span class="kw">super</span>::SockRef::from(<span class="kw-2">&amp;</span>accepted)
-<a href=#564 id=564 data-nosnippet>564</a>                .keepalive()
-<a href=#565 id=565 data-nosnippet>565</a>                .expect(<span class="string">"read keepalive"</span>)
-<a href=#566 id=566 data-nosnippet>566</a>        );
-<a href=#567 id=567 data-nosnippet>567</a>    }
-<a href=#568 id=568 data-nosnippet>568</a>}</code></pre></div></section></main></body></html>
+<a href=#552 id=552 data-nosnippet>552</a>}</code></pre></div></section></main></body></html>
