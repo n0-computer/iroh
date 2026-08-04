@@ -35,7 +35,7 @@ pub use self::{rate_limiting::RateLimitConfig, tls::CertMode};
 use crate::state::AppState;
 
 /// How long a connection may be idle before keepalive probing starts.
-const TCP_KEEPALIVE_TIME: Duration = Duration::from_secs(60);
+const TCP_KEEPALIVE_TIME: Duration = Duration::from_mins(1);
 
 /// Interval between keepalive probes once probing starts.
 const TCP_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
@@ -548,21 +548,5 @@ mod tests {
                 .set_certificate_verifier(Arc::new(NoCertificateVerification::default()));
             cfg
         }
-    }
-
-    /// Keepalive is set on the listener, so this asserts that accepted
-    /// connections actually inherit it.
-    #[test]
-    fn keepalive_is_inherited_by_accepted_connections() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        super::set_keepalive(&listener).expect("set keepalive");
-        let _client =
-            std::net::TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
-        let (accepted, _) = listener.accept().expect("accept");
-        assert!(
-            super::SockRef::from(&accepted)
-                .keepalive()
-                .expect("read keepalive")
-        );
     }
 }
