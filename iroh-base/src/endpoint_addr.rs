@@ -265,7 +265,8 @@ impl<'de> Deserialize<'de> for CustomAddrBytes {
                 Ok(CustomAddrBytes::copy_from_slice(&v))
             }
 
-            /// Self-describing formats deserialize the bytes as a sequence.
+            /// Needed for json, which has no byte type and encodes bytes as a number
+            /// array, so `deserialize_bytes` comes back as a sequence.
             fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 // Does not reserve from the attacker-controlled `size_hint`.
                 let mut data = Vec::new();
