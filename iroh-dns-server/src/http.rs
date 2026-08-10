@@ -3,7 +3,7 @@
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
     path::PathBuf,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -17,6 +17,7 @@ use axum::{
 };
 use n0_error::{Result, StdResultExt, anyerr, bail_any};
 use serde::{Deserialize, Serialize};
+use socket2::{SockRef, TcpKeepalive};
 use tokio::{net::TcpListener, task::JoinSet};
 use tower_http::{
     cors::{self, CorsLayer},
@@ -32,6 +33,24 @@ mod tls;
 
 pub use self::{rate_limiting::RateLimitConfig, tls::CertMode};
 use crate::state::AppState;
+
+/// How long a connection may be idle before keepalive probing starts.
+const TCP_KEEPALIVE_TIME: Duration = Duration::from_mins(1);
+
+/// Interval between keepalive probes once probing starts.
+const TCP_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Enable TCP keepalive on `listener`, which accepted connections inherit.
+///
+/// Without it, connections whose peer vanished without closing are never
+/// reaped: they accumulate for the lifetime of the process until it is
+/// OOM-killed.
+fn set_keepalive(listener: &std::net::TcpListener) -> std::io::Result<()> {
+    let keepalive = TcpKeepalive::new()
+        .with_time(TCP_KEEPALIVE_TIME)
+        .with_interval(TCP_KEEPALIVE_INTERVAL);
+    SockRef::from(listener).set_tcp_keepalive(&keepalive)
+}
 
 /// Configuration for the HTTP listener.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -107,6 +126,7 @@ impl HttpServer {
                 .into_std()
                 .anyerr()?;
             let bound_addr = listener.local_addr().anyerr()?;
+            set_keepalive(&listener).anyerr()?;
             let fut = axum_server::from_tcp(listener)?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>());
             info!("HTTP server listening on {bind_addr}");
@@ -147,6 +167,7 @@ impl HttpServer {
                 .into_std()
                 .anyerr()?;
             let bound_addr = listener.local_addr().anyerr()?;
+            set_keepalive(&listener).anyerr()?;
             let fut = axum_server::from_tcp(listener)?
                 .acceptor(acceptor)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>());
