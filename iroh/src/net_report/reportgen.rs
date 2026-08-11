@@ -44,7 +44,6 @@ use rand::seq::IteratorRandom;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info_span, trace, warn};
-use url::Host;
 #[cfg(not(wasm_browser))]
 use url::Url;
 
@@ -600,27 +599,14 @@ async fn check_captive_portal(
         }
     };
 
-    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone());
+    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone())
+        .redirect(reqwest::redirect::Policy::none());
     if let Some(proxy_url) = proxy_url {
-        let proxy = reqwest::Proxy::all(url.clone())
+        let proxy = reqwest::Proxy::all(proxy_url.clone())
             .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?;
-        builder = builder.proxy(proxy).redirect(reqwest::redirect::Policy::none());
+        builder = builder.proxy(proxy);
     }
 
-    if let Some(Host::Domain(domain)) = url.host() {
-        // Use our own resolver rather than getaddrinfo
-        //
-        // Be careful, a non-zero port will override the port in the URI.
-        //
-        // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
-        // them.  But our resolver doesn't support that yet.
-        let addrs: Vec<_> = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
-            .await?
-            .map(|ipaddr| SocketAddr::new(ipaddr, 0))
-            .collect();
-        builder = builder.resolve_to_addrs(domain, &addrs);
-    }
     let client = builder
         .build()
         .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?;
@@ -655,26 +641,6 @@ async fn check_captive_portal(
     let has_captive = res.status() != 204 || !is_valid_response;
 
     Ok(has_captive)
-}
-
-/// Routes the client being built through `proxy_url`, if one is configured.
-///
-/// This mirrors the proxy handling of the relay client, so that the HTTP(S) based probes
-/// take the same path out of the network as the relay connections themselves.  Without
-/// this, on a network that only allows outbound traffic via a proxy all these probes fail
-/// and no home relay can be selected.
-///
-/// A proxy URL that reqwest cannot use is reported rather than ignored: silently probing
-/// directly would leak traffic past the proxy the user asked for.
-#[cfg(not(wasm_browser))]
-fn maybe_proxied(
-    builder: reqwest::ClientBuilder,
-    proxy_url: Option<&Url>,
-) -> Result<reqwest::ClientBuilder, reqwest::Error> {
-    match proxy_url {
-        Some(url) => Ok(builder.proxy(reqwest::Proxy::all(url.clone())?)),
-        None => Ok(builder),
-    }
 }
 
 /// Returns the proper port based on the protocol of the probe.
@@ -858,35 +824,16 @@ async fn run_https_probe(
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
     #[cfg(not(wasm_browser))]
-    let mut builder = maybe_proxied(
-        reqwest_client_builder(tls_config, dns_resolver.clone()),
-        proxy_url,
-    )
-    .map_err(|err| e!(MeasureHttpsLatencyError::CreateReqwestClient, err))?;
+    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone())
+        .redirect(reqwest::redirect::Policy::none());
     #[cfg(wasm_browser)]
-    let mut builder = reqwest_client_builder();
+    let builder = reqwest_client_builder();
 
     #[cfg(not(wasm_browser))]
-    {
-        builder = builder.redirect(reqwest::redirect::Policy::none());
-    }
-
-    #[cfg(not(wasm_browser))]
-    if let Some(Host::Domain(domain)) = url.host() {
-        // Use our own resolver rather than getaddrinfo
-        //
-        // Be careful, a non-zero port will override the port in the URI.
-        //
-        // The relay Client uses `.lookup_ipv4_ipv6` to connect, so use the same function
-        // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
-        // IPv6 though.  But our resolver does not have a function for that yet.
-        let addrs: Vec<_> = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
-            .await?
-            .map(|ipaddr| SocketAddr::new(ipaddr, 0))
-            .collect();
-        trace!(?addrs, "resolved addrs");
-        builder = builder.resolve_to_addrs(domain, &addrs);
+    if let Some(proxy_url) = proxy_url {
+        let proxy = reqwest::Proxy::all(proxy_url.clone())
+            .map_err(|err| e!(MeasureHttpsLatencyError::CreateReqwestClient, err))?;
+        builder = builder.proxy(proxy);
     }
 
     let client = builder
