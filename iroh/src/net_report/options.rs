@@ -46,7 +46,7 @@ mod imp {
             self
         }
 
-        /// Set the proxy to send the HTTP(S) based probes through.
+        /// Sets the proxy to send the HTTP(S) based probes through.
         pub(crate) fn proxy_url(mut self, proxy_url: Option<Url>) -> Self {
             self.proxy_url = proxy_url;
             self
