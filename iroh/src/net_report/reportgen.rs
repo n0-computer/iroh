@@ -445,14 +445,16 @@ impl ProbeReport {
 }
 
 #[cfg(not(wasm_browser))]
+#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct QadProbeReport {
+/// The result of a QUIC address discovery (QAD) probe.
+pub struct QadProbeReport {
     /// The relay that was probed
-    pub(super) relay: RelayUrl,
+    pub relay: RelayUrl,
     /// The latency to the relay.
-    pub(super) latency: Duration,
+    pub latency: Duration,
     /// The discovered public address.
-    pub(super) addr: SocketAddr,
+    pub addr: SocketAddr,
 }
 
 #[derive(Debug, Clone)]
@@ -659,9 +661,11 @@ fn get_quic_port(relay: &RelayConfig) -> Option<u16> {
 }
 
 #[cfg(not(wasm_browser))]
+#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
+#[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
-pub(super) enum GetRelayAddrError {
+pub enum GetRelayAddrError {
     #[error("No valid hostname in the relay URL")]
     InvalidHostname,
     #[error("No suitable relay address found for {url} ({addr_type})")]

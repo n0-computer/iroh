@@ -146,6 +146,7 @@ pub struct Builder {
     path_selector: Arc<dyn PathSelector>,
     portmapper_config: PortmapperConfig,
     net_report_config: NetReportConfig,
+    discovery_relays: Vec<RelayConfig>,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
 }
@@ -214,6 +215,7 @@ impl Builder {
             path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             net_report_config: Default::default(),
+            discovery_relays: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
         }
@@ -277,6 +279,7 @@ impl Builder {
             path_selector: self.path_selector,
             portmapper_config: self.portmapper_config,
             net_report_config: self.net_report_config,
+            discovery_relays: self.discovery_relays,
             static_config,
             configured_addrs: self.configured_addrs,
         };
@@ -797,6 +800,21 @@ impl Builder {
     /// Some non-essential features of the net report component can be disabled via this configuration.
     pub fn net_report_config(mut self, config: NetReportConfig) -> Self {
         self.net_report_config = config;
+        self
+    }
+
+    /// Sets the relays used for QUIC address discovery (QAD) probes.
+    ///
+    /// The endpoint runs address-discovery probes against these relays to
+    /// learn its public (NAT-mapped) address.  When set, these relays are used
+    /// instead of the relay transport's relay map, so a node can discover its
+    /// public address from custom relays while the relay transport stays
+    /// disabled ([`RelayMode::Disabled`]) or is configured independently.
+    ///
+    /// The probes are short-lived QUIC connections: no relay sessions are held
+    /// open and nothing is published to these relays.
+    pub fn discovery_relays(mut self, relays: impl IntoIterator<Item = RelayConfig>) -> Self {
+        self.discovery_relays = relays.into_iter().collect();
         self
     }
 
@@ -3301,6 +3319,44 @@ mod tests {
         // can get a first report
         endpoint.net_report().updated().await.anyerr()?;
 
+        Ok(())
+    }
+
+    /// The endpoint must discover its public address from explicitly configured
+    /// discovery relays even when the relay transport is disabled.
+    #[tokio::test]
+    #[traced_test]
+    #[cfg(feature = "unstable-net-report")]
+    async fn discovery_relays_probe_custom_relays() -> Result {
+        let (relay_map, relay_url, _server) = run_relay_server().await?;
+        let relay = relay_map.get(&relay_url).expect("relay in map").as_ref().clone();
+
+        let endpoint = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Disabled)
+            // The test relay uses a self-signed certificate.
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+            .discovery_relays([relay])
+            .bind()
+            .await?;
+
+        let mut net_report = endpoint.net_report();
+        let report = time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(report) = net_report.get() {
+                    return Ok::<_, Error>(report);
+                }
+                net_report.updated().await.anyerr()?;
+            }
+        })
+        .await
+        .std_context("net report timed out")??;
+
+        assert!(
+            report.global_v4.is_some(),
+            "expected a QAD-discovered global IPv4 address, got {report:?}"
+        );
+
+        endpoint.close().await;
         Ok(())
     }
 

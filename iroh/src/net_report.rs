@@ -41,7 +41,7 @@ use tracing::{debug, trace, warn};
 
 use self::reportgen::{ProbeFinished, ProbeReport};
 #[cfg(not(wasm_browser))]
-use self::reportgen::{QadProbeReport, SocketState};
+use self::reportgen::SocketState;
 #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 pub use self::{
     // exported primarily for use in documentation
@@ -50,6 +50,9 @@ pub use self::{
     probes::Probe,
     report::{RelayLatencies, Report},
 };
+#[cfg(not(wasm_browser))]
+#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
+pub use self::reportgen::{GetRelayAddrError, QadProbeReport};
 pub(crate) use self::{
     options::Options,
     reportgen::{IfStateDetails, QuicConfig},
@@ -63,14 +66,13 @@ mod report;
 mod reportgen;
 
 #[cfg(not(wasm_browser))]
+#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
-enum QadProbeError {
+pub enum QadProbeError {
     #[error("Failed to resolve relay address")]
-    GetRelayAddr {
-        source: self::reportgen::GetRelayAddrError,
-    },
+    GetRelayAddr { source: GetRelayAddrError },
     #[error("Missing host in relay URL")]
     MissingHost,
     #[error("QUIC connection failed")]
@@ -828,19 +830,43 @@ async fn run_probe_v4(
     dns_resolver: DnsResolver,
     shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-    use noq_proto::PathId;
-
     let relay_addr = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay)
         .await
         .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
+    run_qad_probe(relay, relay_addr.into(), quic_client, shutdown_token).await
+}
 
-    trace!(?relay_addr, "resolved relay server address");
+#[cfg(not(wasm_browser))]
+async fn run_probe_v6(
+    relay: Arc<RelayConfig>,
+    quic_client: QuicClient,
+    dns_resolver: DnsResolver,
+    shutdown_token: CancellationToken,
+) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
+    let relay_addr = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay)
+        .await
+        .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
+    run_qad_probe(relay, relay_addr.into(), quic_client, shutdown_token).await
+}
+
+/// Runs a single QUIC address discovery probe against `server_addr` and keeps
+/// the connection alive so later observations update the returned observer.
+#[cfg(not(wasm_browser))]
+async fn run_qad_probe(
+    relay: Arc<RelayConfig>,
+    server_addr: SocketAddr,
+    quic_client: QuicClient,
+    shutdown_token: CancellationToken,
+) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
+    use noq_proto::PathId;
+
+    trace!(?server_addr, "resolved relay server address");
     let host = relay
         .url
         .host_str()
         .ok_or_else(|| e!(QadProbeError::MissingHost))?;
     let conn = quic_client
-        .create_conn(relay_addr.into(), host)
+        .create_conn(server_addr, host)
         .await
         .map_err(|source| e!(QadProbeError::Quic { source }))?;
 
@@ -890,73 +916,37 @@ async fn run_probe_v4(
     ))
 }
 
+/// Probes `relay` for the node's public (NAT-mapped) address via QUIC address
+/// discovery (QAD).
+///
+/// Opens a short-lived QUIC connection to the relay's address discovery
+/// endpoint at `server_addr`, reports the address the relay observed for it
+/// and closes the connection again.  `server_addr` must be the relay's QUIC
+/// address-discovery endpoint (see [`RelayConfig::quic`]); resolve it from
+/// the relay's hostname with your own DNS resolver so you control which
+/// address family to probe.
+///
+/// This is the same probe the endpoint runs internally for its net reports;
+/// it is exposed so applications can run address discovery against relays of
+/// their choice (e.g. a private relay set) without installing the relay
+/// transport.  The probe must run from a dedicated socket, so the observed
+/// port is the NAT mapping of the *probe* socket; it is only trustworthy when
+/// the NAT preserves ports (cone NAT).
+///
+/// [`RelayConfig::quic`]: iroh_relay::RelayConfig::quic
 #[cfg(not(wasm_browser))]
-async fn run_probe_v6(
-    relay: Arc<RelayConfig>,
-    quic_client: QuicClient,
-    dns_resolver: DnsResolver,
-    shutdown_token: CancellationToken,
-) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-    use noq_proto::PathId;
-
-    let relay_addr = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay)
-        .await
-        .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
-
-    trace!(?relay_addr, "resolved relay server address");
-    let host = relay
-        .url
-        .host_str()
-        .ok_or_else(|| e!(QadProbeError::MissingHost))?;
-    let conn = quic_client
-        .create_conn(relay_addr.into(), host)
-        .await
-        .map_err(|source| e!(QadProbeError::Quic { source }))?;
-
-    let mut watcher = conn.observed_external_addr();
-
-    // wait for an addr
-    let addr = watcher
-        .next()
-        .await
-        .ok_or_else(|| e!(QadProbeError::ReceiverDropped))?;
-    let report = QadProbeReport {
-        relay: relay.url.clone(),
-        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
-        latency: conn.rtt(PathId::ZERO).unwrap_or_default(),
-    };
-
-    let observer = Watchable::new(None);
-    let endpoint = relay.url.clone();
-    let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
-        let observer = observer.clone();
-        let conn = conn.clone();
-        async move {
-            while let Some(val) = watcher.next().await {
-                // if we've sent to an ipv4 address, but received an observed address
-                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-                let val = SocketAddr::new(val.ip().to_canonical(), val.port());
-                let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
-                observer
-                    .set(Some(QadProbeReport {
-                        relay: endpoint.clone(),
-                        addr: val,
-                        latency,
-                    }))
-                    .ok();
-            }
-        }
-    }));
-    let handle = AbortOnDropHandle::new(handle);
-
-    Ok((
-        report,
-        QadConn {
-            conn,
-            observer,
-            _handle: handle,
-        },
-    ))
+#[cfg(feature = "unstable-net-report")]
+pub async fn probe_relay(
+    relay: &RelayConfig,
+    server_addr: SocketAddr,
+    quic_client: &QuicClient,
+    shutdown: CancellationToken,
+) -> Result<QadProbeReport, QadProbeError> {
+    let (report, conn) =
+        run_qad_probe(Arc::new(relay.clone()), server_addr, quic_client.clone(), shutdown).await?;
+    conn.conn
+        .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -1249,6 +1239,36 @@ mod tests {
             assert_eq!(got, want, "preferred_relay");
         }
 
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    #[cfg(feature = "unstable-net-report")]
+    async fn test_probe_relay() -> Result<()> {
+        let (server, relay) = test_utils::relay().await;
+        let client_config = iroh_relay::tls::make_dangerous_client_config();
+        let ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
+        let client_addr = ep.local_addr().anyerr()?;
+        let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
+        let dns_resolver = DnsResolver::default();
+
+        // Resolve the relay's QUIC address-discovery endpoint and probe it.
+        let relay_addr = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay)
+            .await
+            .anyerr()?;
+        let report = probe_relay(&relay, relay_addr.into(), &quic_client, CancellationToken::new())
+            .await
+            .anyerr()?;
+
+        assert_eq!(report.relay, relay.url);
+        assert_eq!(
+            report.addr, client_addr,
+            "observed address must match the probe socket"
+        );
+
+        ep.wait_idle().await;
+        server.shutdown().await?;
         Ok(())
     }
 }

@@ -298,6 +298,8 @@ pub mod unstable_net_report {
     /// It is not covered by semantic versioning guarantees and may change in any release
     /// without a major version bump.
     pub use crate::net_report::{Probe, RelayLatencies, Report as NetReport};
+    #[cfg(not(wasm_browser))]
+    pub use crate::net_report::{GetRelayAddrError, QadProbeError, QadProbeReport, probe_relay};
 }
 
 #[cfg(any(test, feature = "test-utils"))]
