@@ -600,12 +600,12 @@ async fn check_captive_portal(
         }
     };
 
-    let mut builder = maybe_proxied(
-        reqwest_client_builder(tls_config, dns_resolver.clone()),
-        proxy_url,
-    )
-    .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?
-    .redirect(reqwest::redirect::Policy::none());
+    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone());
+    if let Some(proxy_url) = proxy_url {
+        let proxy = reqwest::Proxy::all(url.clone())
+            .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?;
+        builder = builder.proxy(proxy).redirect(reqwest::redirect::Policy::none());
+    }
 
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
