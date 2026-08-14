@@ -50,8 +50,8 @@ mod tests {
         tls::{CaTlsConfig, default_provider},
     };
     use iroh_dns::pkarr::SignedPacket;
-    use mainline::{DhtBuilder, MutableItem, Testnet};
     use n0_error::{Result, StdResultExt};
+    use n0_mainline::{DhtBuilder, MutableItem, Testnet};
     use n0_tracing_test::traced_test;
     use rand::{CryptoRng, RngExt, SeedableRng};
 
@@ -280,7 +280,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         // run a mainline testnet
-        let testnet = Testnet::new_async(5).await.anyerr()?;
+        let testnet = Testnet::new(5).await.anyerr()?;
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
@@ -312,11 +312,7 @@ mod tests {
             signed_packet.timestamp().as_micros() as i64,
             None,
         );
-        dht.clone()
-            .as_async()
-            .put_mutable(item, None)
-            .await
-            .anyerr()?;
+        dht.put_mutable(item, None).await.anyerr()?;
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(server.dns_addr());
