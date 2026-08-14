@@ -88,6 +88,11 @@ impl TlsConfig {
         crypto.resumption = rustls::client::Resumption::store(self.session_store.clone());
         crypto.enable_early_data = true;
 
+        // The synthetic server name is used locally to select the expected endpoint ID
+        // and to partition the session cache. Iroh servers do not use SNI, so do not
+        // disclose the endpoint ID in the ClientHello.
+        crypto.enable_sni = false;
+
         if keylog {
             warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
             crypto.key_log = Arc::new(rustls::KeyLogFile::new());
