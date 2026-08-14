@@ -242,6 +242,8 @@ pub(crate) struct StaticConfig {
     #[debug("Arc<dyn TokenStore>")]
     pub(crate) token_store: Arc<dyn TokenStore>,
     pub(crate) transport_config: QuicTransportConfig,
+    /// Whether incoming connection attempts must carry a valid dial token.
+    pub(crate) require_endpoint_id_knowledge: bool,
 }
 
 impl StaticConfig {
@@ -2161,6 +2163,7 @@ mod tests {
             token_key: Arc::new(RustlsTokenKey::new(rng, &crypto_provider).unwrap()),
             token_store: Arc::new(noq::TokenMemoryCache::default()),
             transport_config: QuicTransportConfig::default(),
+            require_endpoint_id_knowledge: false,
         };
         let server_config = static_config.create_server_config(vec![]);
         Options {
@@ -2576,6 +2579,7 @@ mod tests {
             token_key: Arc::new(RustlsTokenKey::new(&mut rand::rng(), &crypto_provider).unwrap()),
             token_store: Arc::new(noq::TokenMemoryCache::default()),
             transport_config: QuicTransportConfig::default(),
+            require_endpoint_id_knowledge: false,
         };
         let server_config = static_config.create_server_config(vec![ALPN.to_vec()]);
 
@@ -2652,6 +2656,11 @@ mod tests {
         quic_client_config.set_alpn_protocols(vec![ALPN.to_vec()]);
         let mut client_config = noq::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
+        // Prove knowledge of the remote's endpoint id in the initial DCID. To remotes
+        // that don't require this it is indistinguishable from a random DCID.
+        client_config.initial_dst_cid_provider(Arc::new(move || {
+            noq_proto::ConnectionId::new(&crate::dial_token::generate(&endpoint_id))
+        }));
         let connect = ep
             .connect_with(
                 client_config,

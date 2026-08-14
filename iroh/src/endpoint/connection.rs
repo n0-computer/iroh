@@ -106,21 +106,35 @@ impl Future for Accept<'_> {
     type Output = Option<Incoming>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this.inner.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(inner)) => {
-                let incoming = Incoming {
-                    inner,
-                    ep: this.ep.clone(),
-                };
-                event!(
-                    target: "iroh::_events::conn::incoming",
-                    tracing::Level::DEBUG,
-                    remote_addr = ?incoming.remote_addr(),
-                );
-                Poll::Ready(Some(incoming))
+        let mut this = self.project();
+        loop {
+            match this.inner.as_mut().poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Ready(Some(inner)) => {
+                    if this.ep.inner.static_config.require_endpoint_id_knowledge
+                        && !crate::dial_token::verify(&this.ep.id(), &inner.orig_dst_cid())
+                    {
+                        event!(
+                            target: "iroh::_events::conn::ignored",
+                            tracing::Level::DEBUG,
+                            remote_addr = ?inner.remote_address(),
+                            "ignoring connection attempt without valid dial token",
+                        );
+                        inner.ignore();
+                        continue;
+                    }
+                    let incoming = Incoming {
+                        inner,
+                        ep: this.ep.clone(),
+                    };
+                    event!(
+                        target: "iroh::_events::conn::incoming",
+                        tracing::Level::DEBUG,
+                        remote_addr = ?incoming.remote_addr(),
+                    );
+                    return Poll::Ready(Some(incoming));
+                }
             }
         }
     }

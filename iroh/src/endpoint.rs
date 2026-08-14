@@ -148,6 +148,7 @@ pub struct Builder {
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
+    require_endpoint_id_knowledge: bool,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -216,7 +217,22 @@ impl Builder {
             net_report_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
+            require_endpoint_id_knowledge: false,
         }
+    }
+
+    /// Requires incoming connection attempts to prove knowledge of this endpoint's id.
+    ///
+    /// When set, connection attempts whose initial DCID does not carry a valid dial
+    /// token (see [`crate::dial_token`]) are silently ignored, making this endpoint
+    /// indistinguishable from a closed port for anyone who only knows its address.
+    ///
+    /// Iroh dialers always send dial tokens, so any peer that knows this endpoint's
+    /// id can connect. Note that this makes the endpoint unreachable for older iroh
+    /// versions that do not send dial tokens yet.
+    pub fn require_endpoint_id_knowledge(mut self) -> Self {
+        self.require_endpoint_id_knowledge = true;
+        self
     }
 
     // # The final constructor that everyone needs.
@@ -249,6 +265,7 @@ impl Builder {
             transport_config: self.transport_config.clone(),
             token_key,
             token_store: Arc::new(noq::TokenMemoryCache::default()),
+            require_endpoint_id_knowledge: self.require_endpoint_id_knowledge,
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
@@ -1139,10 +1156,15 @@ impl Endpoint {
 
         let mut alpn_protocols = vec![alpn.to_vec()];
         alpn_protocols.extend(options.additional_alpns);
-        let client_config = self
+        let mut client_config = self
             .inner
             .static_config
             .create_client_config(alpn_protocols, transport_config.clone());
+        // Prove knowledge of the remote's endpoint id in the initial DCID. To remotes
+        // that don't require this it is indistinguishable from a random DCID.
+        client_config.initial_dst_cid_provider(Arc::new(move || {
+            noq_proto::ConnectionId::new(&crate::dial_token::generate(&endpoint_id))
+        }));
 
         let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(endpoint_id);
@@ -2416,6 +2438,45 @@ mod tests {
             conn_closed,
             ConnectionError::ApplicationClosed(ApplicationClose { .. })
         ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_require_endpoint_id_knowledge() -> Result {
+        // A gated endpoint only answers connection attempts that prove knowledge of
+        // its endpoint id in the initial DCID. Iroh dialers always send dial tokens,
+        // so a regular connect works transparently.
+        let server = Endpoint::builder(presets::N0)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            .require_endpoint_id_knowledge()
+            .bind()
+            .await?;
+        let client = Endpoint::builder(presets::N0)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+
+        let server_addr = server.addr();
+        let accept = tokio::spawn({
+            let server = server.clone();
+            async move {
+                let conn = server.accept().await.anyerr()?.await.anyerr()?;
+                let mut recv = conn.accept_uni().await.anyerr()?;
+                let msg = recv.read_to_end(100).await.anyerr()?;
+                assert_eq!(msg, b"hello");
+                Ok::<_, n0_error::AnyError>(())
+            }
+        });
+
+        let conn = client.connect(server_addr, TEST_ALPN).await?;
+        let mut send = conn.open_uni().await.anyerr()?;
+        send.write_all(b"hello").await.anyerr()?;
+        send.finish().anyerr()?;
+        accept.await.anyerr()??;
 
         Ok(())
     }
