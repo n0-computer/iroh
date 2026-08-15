@@ -58,3 +58,7 @@ trait_method_marked_deprecated = { required-update = "minor" }
 type_associated_const_marked_deprecated = { required-update = "minor" }
 type_marked_deprecated = { required-update = "minor" }
 type_method_marked_deprecated = { required-update = "minor" }
+
+[patch.crates-io]
+netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
+portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
