@@ -69,7 +69,8 @@ use crate::{
     address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::{
-        LocalTransportAddr, RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig,
+        DirectAddrFilter, LocalTransportAddr, RelayStatus, hooks::EndpointHooksList,
+        quic::QuicTransportConfig,
     },
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
@@ -197,8 +198,8 @@ pub(crate) struct Options {
     /// Explicitly configured external addresses to advertise.
     pub(crate) configured_addrs: BTreeSet<SocketAddr>,
 
-    /// Optional filter dropping gathered local interface addresses (e.g. VPN overlay IPs).
-    pub(crate) direct_addr_filter: Option<Arc<dyn crate::endpoint::DirectAddrFilter>>,
+    /// Optional filter dropping direct address candidates (e.g. VPN overlay IPs).
+    pub(crate) direct_addr_filter: Option<Arc<dyn DirectAddrFilter>>,
 }
 
 /// Inner state for an iroh [`crate::Endpoint`].
@@ -376,8 +377,8 @@ pub(crate) struct Socket {
     address_lookup_user_data: RwLock<Option<UserData>>,
     /// Explicitly configured external addresses to advertise.
     configured_addrs: RwLock<BTreeSet<SocketAddr>>,
-    /// Optional filter dropping gathered local interface addresses (e.g. VPN overlay IPs).
-    direct_addr_filter: Option<Arc<dyn crate::endpoint::DirectAddrFilter>>,
+    /// Optional filter dropping direct address candidates (e.g. VPN overlay IPs).
+    direct_addr_filter: Option<Arc<dyn DirectAddrFilter>>,
 
     pub(crate) tls_config: rustls::ClientConfig,
 
@@ -1883,7 +1884,7 @@ impl Actor {
         }
 
         // Finally create and store store all these direct addresses
-        let direct_addr_filter = self.sock.direct_addr_filter.clone();
+        let direct_addr_filter = self.sock.direct_addr_filter.as_deref();
         let stored_addrs = addrs
             .into_iter()
             .filter_map(|(addr, (typ, flags))| {
@@ -1895,7 +1896,7 @@ impl Actor {
                 // Drop addresses rejected by the application filter (e.g. a VPN
                 // overlay IP bound on a TUN device), so they are never stored,
                 // published, or used as a holepunch / NAT-traversal candidate.
-                if let Some(f) = &direct_addr_filter
+                if let Some(f) = direct_addr_filter
                     && !f.keeps(addr.ip())
                 {
                     return None;
@@ -2133,7 +2134,12 @@ impl Display for DirectAddrType {
 
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
-    use std::{net::SocketAddrV4, sync::Arc, time::Duration};
+    use std::{
+        collections::BTreeSet,
+        net::{IpAddr, Ipv4Addr, SocketAddrV4},
+        sync::Arc,
+        time::Duration,
+    };
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
@@ -2151,7 +2157,7 @@ mod tests {
         Endpoint, SecretKey,
         address_lookup::memory::MemoryLookup,
         dns::DnsResolver,
-        endpoint::{QuicTransportConfig, presets},
+        endpoint::{DirectAddrFilter, QuicTransportConfig, presets},
         socket::{
             EndpointInner, StaticConfig, TransportConfig,
             biased_rtt_path_selector::BiasedRttPathSelector,
@@ -2576,7 +2582,9 @@ mod tests {
     async fn direct_addr_filter_drops_local_addresses() {
         // Baseline: without a filter, local interface addresses are gathered.
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let sock = EndpointInner::bind(default_options(&mut rng)).await.unwrap();
+        let sock = EndpointInner::bind(default_options(&mut rng))
+            .await
+            .unwrap();
         assert!(
             !sock.ip_addrs().get().is_empty(),
             "expected some local addresses without a filter"
@@ -2586,8 +2594,8 @@ mod tests {
         // `collect_local_addresses` contributes nothing.
         #[derive(Debug)]
         struct DropAll;
-        impl crate::endpoint::DirectAddrFilter for DropAll {
-            fn keeps(&self, _ip: std::net::IpAddr) -> bool {
+        impl DirectAddrFilter for DropAll {
+            fn keeps(&self, _ip: IpAddr) -> bool {
                 false
             }
         }
@@ -2614,24 +2622,22 @@ mod tests {
             .get();
 
         #[derive(Debug)]
-        struct DropOne(std::net::IpAddr);
-        impl crate::endpoint::DirectAddrFilter for DropOne {
-            fn keeps(&self, ip: std::net::IpAddr) -> bool {
+        struct DropOne(IpAddr);
+        impl DirectAddrFilter for DropOne {
+            fn keeps(&self, ip: IpAddr) -> bool {
                 ip != self.0
             }
         }
         // 192.0.2.1 is TEST-NET-1 (RFC 5737); it is never a real local address.
-        let never = std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 0, 2, 1));
+        let never = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let mut opts = default_options(&mut rng);
         opts.direct_addr_filter = Some(Arc::new(DropOne(never)));
         let sock = EndpointInner::bind(opts).await.unwrap();
         // Compare by IP: each bind gets a fresh ephemeral port, so the full
         // SocketAddrs differ even though the same interface addresses are kept.
-        let ips = |set: &std::collections::BTreeSet<super::DirectAddr>| {
-            set.iter()
-                .map(|d| d.addr.ip())
-                .collect::<std::collections::BTreeSet<_>>()
+        let ips = |set: &BTreeSet<super::DirectAddr>| {
+            set.iter().map(|d| d.addr.ip()).collect::<BTreeSet<_>>()
         };
         assert_eq!(ips(&sock.ip_addrs().get()), ips(&baseline));
     }

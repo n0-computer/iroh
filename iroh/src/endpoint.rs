@@ -18,7 +18,6 @@ use std::{
     sync::Arc,
 };
 
-use ipnet::IpNet;
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
@@ -96,6 +95,9 @@ pub(crate) mod quic;
 #[cfg(not(wasm_browser))]
 pub use bind::{BindOpts, InvalidSocketAddr, ToSocketAddr};
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
+/// Re-exported so callers of [`Builder::exclude_direct_addrs`] do not need to
+/// depend on a matching `ipnet` themselves.
+pub use ipnet::IpNet;
 
 #[cfg(feature = "qlog")]
 pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
@@ -167,13 +169,15 @@ pub trait DirectAddrFilter: Send + Sync + std::fmt::Debug + 'static {
     fn keeps(&self, ip: IpAddr) -> bool;
 }
 
-/// A list of networks acts as an exclude filter: an address contained in any of
-/// them is dropped, everything else is kept. This lets whole CIDR ranges be
-/// excluded (e.g. a VPN overlay bound on a TUN device) without implementing
-/// [`DirectAddrFilter`]. An empty list keeps every address.
-impl DirectAddrFilter for Vec<IpNet> {
+/// The filter behind [`Builder::exclude_direct_addrs`]: an address contained in
+/// any of the networks is dropped, everything else is kept. An empty list keeps
+/// every address.
+#[derive(Debug)]
+struct ExcludeNets(Vec<IpNet>);
+
+impl DirectAddrFilter for ExcludeNets {
     fn keeps(&self, ip: IpAddr) -> bool {
-        !self.iter().any(|net| net.contains(&ip))
+        !self.0.iter().any(|net| net.contains(&ip))
     }
 }
 
@@ -657,22 +661,38 @@ impl Builder {
         self
     }
 
-    /// Sets a [`DirectAddrFilter`] that drops selected addresses from the
-    /// endpoint's direct address candidates.
-    pub fn direct_addr_filter(mut self, filter: impl DirectAddrFilter) -> Self {
-        self.direct_addr_filter = Some(Arc::new(filter));
-        self
-    }
-
     /// Excludes addresses in the given networks from the endpoint's direct
     /// address candidates.
     ///
-    /// Convenience over [`Self::direct_addr_filter`] for the common case of
-    /// dropping whole CIDR ranges (e.g. a VPN overlay bound on a TUN device). An
-    /// address contained in any of `nets` is never stored, published, or offered
-    /// as a holepunch / NAT-traversal candidate.
+    /// An address contained in any of `nets` is never stored, published, or
+    /// offered as a holepunch / NAT-traversal candidate. This is the common case
+    /// of [`Self::direct_addr_filter`]: excluding a virtual interface's addresses,
+    /// such as a VPN overlay bound on a TUN device, which peers would otherwise
+    /// discover and dial, looping the underlay back through the tunnel.
+    ///
+    /// ```no_run
+    /// # use iroh::{Endpoint, endpoint::IpNet, endpoint::presets};
+    /// # async fn wrapper() -> n0_error::Result<()> {
+    /// let overlay: IpNet = "100.64.0.0/10".parse().expect("valid prefix");
+    /// let ep = Endpoint::builder(presets::N0)
+    ///     .exclude_direct_addrs([overlay])
+    ///     .bind()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn exclude_direct_addrs(self, nets: impl IntoIterator<Item = IpNet>) -> Self {
-        self.direct_addr_filter(nets.into_iter().collect::<Vec<IpNet>>())
+        self.direct_addr_filter(ExcludeNets(nets.into_iter().collect()))
+    }
+
+    /// Sets a [`DirectAddrFilter`] that drops selected addresses from the
+    /// endpoint's direct address candidates.
+    ///
+    /// Use [`Self::exclude_direct_addrs`] instead when the addresses to drop can
+    /// be named as networks; this is for filters that cannot.
+    pub fn direct_addr_filter(mut self, filter: impl DirectAddrFilter) -> Self {
+        self.direct_addr_filter = Some(Arc::new(filter));
+        self
     }
 
     /// Sets the initial user-defined data to be published in Address Lookup's for this node.
@@ -2066,7 +2086,7 @@ mod tests {
     use tokio::sync::oneshot;
     use tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
 
-    use super::{DirectAddrFilter, Endpoint};
+    use super::{DirectAddrFilter, Endpoint, ExcludeNets};
     use crate::{
         RelayMap, RelayMode,
         address_lookup::memory::MemoryLookup,
@@ -2083,17 +2103,22 @@ mod tests {
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
     #[test]
-    fn vec_ipnet_direct_addr_filter_excludes_contained() {
-        let nets: Vec<ipnet::IpNet> =
-            vec!["100.64.0.0/10".parse().unwrap(), "200::/7".parse().unwrap()];
+    fn exclude_nets_drops_contained_addresses() {
+        let nets = ExcludeNets(vec![
+            "100.64.0.0/10".parse().unwrap(),
+            "200::/7".parse().unwrap(),
+        ]);
         // Addresses inside the excluded ranges are dropped.
         assert!(!nets.keeps(IpAddr::from_str("100.64.1.2").unwrap()));
         assert!(!nets.keeps(IpAddr::from_str("200::1").unwrap()));
-        // Everything else is kept.
+        // Everything else is kept, including addresses that only look adjacent:
+        // 100.128.0.0 is the first address past the /10.
+        assert!(nets.keeps(IpAddr::from_str("100.63.255.255").unwrap()));
+        assert!(nets.keeps(IpAddr::from_str("100.128.0.0").unwrap()));
         assert!(nets.keeps(IpAddr::from_str("192.168.1.5").unwrap()));
         assert!(nets.keeps(IpAddr::from_str("2001:db8::1").unwrap()));
         // An empty list keeps every address.
-        assert!(Vec::<ipnet::IpNet>::new().keeps(IpAddr::from_str("100.64.1.2").unwrap()));
+        assert!(ExcludeNets(Vec::new()).keeps(IpAddr::from_str("100.64.1.2").unwrap()));
     }
 
     #[tokio::test]
