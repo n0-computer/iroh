@@ -35,13 +35,14 @@ iroh-base = { version = "1.0.3", path = "../iroh-base", features = ["key"] }
 iroh-metrics = { version = "1.0.1", features = ["service"] }
 iroh-dns = { version = "1.0.3", path = "../iroh-dns" }
 lru = "0.18.0"
-mainline = "7"
+n0-mainline = "0.6"
 n0-future = "0.3"
 rcgen = "0.14"
 redb = "4.1.0"
 regex = "1.10.3"
 rustls = { version = "0.23.33", default-features = false }
 serde = { version = "1", features = ["derive"] }
+socket2 = "0.6"
 n0-error = "1.0.0"
 strum = { version = "0.28", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
@@ -62,15 +63,22 @@ criterion = "0.8.0"
 data-encoding = "2.3.3"
 hickory-resolver = { version = "0.26.0", features = ["tls-ring", "https-ring"] }
 iroh = { path = "../iroh" }
+n0-error = { version = "1.0.0", features = ["anyhow"] }
 n0-tracing-test = "0.3"
 rand = "0.10"
-simple-dns = "0.11"
+simple-dns = "0.12"
 rand_chacha = "0.10"
 reqwest = { version = "0.13", default-features = false, features = [
     "rustls-no-provider", "http2", "json"
 ] }
 serde_json = "1.0.145"
 tempfile = "3.23.0"
+
+# patchbay netsim test dependencies (linux only)
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "1.0"
+patchbay = "0.7"
+testdir = "0.10"
 
 [features]
 default = ["ring"]

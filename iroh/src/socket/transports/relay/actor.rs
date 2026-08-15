@@ -337,7 +337,9 @@ impl ActiveRelayActor {
                     break;
                 };
                 debug!("retry in {delay:?}");
-                time::sleep(delay).await;
+                if !self.sleep_backoff(delay).await {
+                    break;
+                }
             } else {
                 // If the relay connection remained established long enough so that we received a pong
                 // from the relay server, we reset the backoff and attempt to reconnect immediately.
@@ -345,6 +347,41 @@ impl ActiveRelayActor {
             }
         }
         debug!("exiting");
+    }
+
+    /// Waits out a reconnect backoff delay while still answering priority messages.
+    ///
+    /// Other active relays may query [`ActiveRelayPrioMessage::HasEndpointRoute`] on this
+    /// relay while it is backing off, e.g. when [`RelayActor`] is looking for an existing
+    /// relay connection to an endpoint. Answering immediately (with `false`, since a
+    /// disconnected relay cannot have an endpoint route) keeps that lookup from stalling
+    /// for however long is left of this relay's own unrelated backoff.
+    ///
+    /// Returns `false` if the actor should shut down instead of retrying.
+    async fn sleep_backoff(&mut self, delay: Duration) -> bool {
+        let sleep = time::sleep(delay);
+        tokio::pin!(sleep);
+        loop {
+            tokio::select! {
+                biased;
+                _ = self.stop_token.cancelled() => {
+                    debug!("Shutdown.");
+                    return false;
+                }
+                msg = self.prio_inbox.recv() => {
+                    let Some(msg) = msg else {
+                        warn!("Priority inbox closed, shutdown.");
+                        return false;
+                    };
+                    match msg {
+                        ActiveRelayPrioMessage::HasEndpointRoute(_peer, sender) => {
+                            sender.send(false).ok();
+                        }
+                    }
+                }
+                _ = &mut sleep => return true,
+            }
+        }
     }
 
     fn build_backoff() -> impl Backoff {
@@ -1745,6 +1782,64 @@ mod tests {
 
         let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
         assert!(res.is_err(), "ping timeout should only happen once");
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_prio_inbox_answered_during_backoff() {
+        tokio::time::pause();
+        let secret_key = SecretKey::from_bytes(&[1u8; 32]);
+        let peer = SecretKey::from_bytes(&[2u8; 32]).public();
+        let url: RelayUrl = "https://relay.invalid".parse().unwrap();
+        let (prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
+        let (_inbox_tx, inbox_rx) = mpsc::channel(16);
+        let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
+        let (recv_datagram_tx, _recv_datagram_rx) = mpsc::channel(16);
+        let opts = ActiveRelayActorOptions {
+            url,
+            prio_inbox_: prio_inbox_rx,
+            inbox: inbox_rx,
+            relay_datagrams_send: send_datagram_rx,
+            relay_datagrams_recv: recv_datagram_tx,
+            connection_opts: RelayConnectionOptions {
+                secret_key,
+                dns_resolver: DnsResolver::new(),
+                proxy_url: None,
+                prefer_ipv6: Arc::new(AtomicBool::new(true)),
+                tls_config: CaTlsConfig::insecure_skip_verify()
+                    .client_config(default_provider())
+                    .expect("infallible"),
+                auth_token: None,
+            },
+            stop_token: CancellationToken::new(),
+            metrics: Default::default(),
+            my_relay: Default::default(),
+        };
+        let mut actor = ActiveRelayActor::new(opts);
+
+        let backoff = tokio::spawn(async move {
+            let keep_running = actor.sleep_backoff(Duration::from_secs(10)).await;
+            (actor, keep_running)
+        });
+
+        // Query the actor while it waits out the backoff delay. The reply must
+        // arrive well before the delay elapses; before the backoff wait
+        // serviced the priority inbox, this reply only arrived after the
+        // remaining backoff delay (up to 16s).
+        let (tx, rx) = oneshot::channel();
+        prio_inbox_tx
+            .send(ActiveRelayPrioMessage::HasEndpointRoute(peer, tx))
+            .await
+            .expect("actor alive");
+        let reply = tokio::time::timeout(Duration::from_secs(1), rx)
+            .await
+            .expect("no reply within 1s of a 10s backoff")
+            .expect("sender dropped");
+        assert!(!reply, "a disconnected relay has no endpoint routes");
+
+        // The backoff itself still runs to completion.
+        let (_actor, keep_running) = backoff.await.expect("backoff task panicked");
+        assert!(keep_running, "backoff should complete normally");
     }
 
     #[test]

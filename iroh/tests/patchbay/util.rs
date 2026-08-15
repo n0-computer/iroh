@@ -9,7 +9,7 @@ use iroh_metrics::MetricsGroupSet;
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{StreamExt, boxed::BoxFuture, task::AbortOnDropHandle};
 use noq::Side;
-use patchbay::{Device, IpSupport, Lab, OutDir, TestGuard};
+use patchbay::{Device, IpSupport, Lab, TestGuard};
 use tokio::sync::{Barrier, oneshot};
 use tracing::{Instrument, debug, error, error_span, event, info};
 
@@ -33,12 +33,10 @@ const BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) async fn lab_with_relay(
     outdir: PathBuf,
 ) -> Result<(Lab, RelayMap, AbortOnDropHandle<()>, TestGuard)> {
-    let mut builder = Lab::builder().outdir(OutDir::Exact(outdir));
-    if let Some(name) = std::thread::current().name() {
-        builder = builder.label(name);
-    }
-    let lab = builder.build().await?;
-    let guard = lab.test_guard();
+    // `for_test` writes into `outdir`, labels the lab with the current thread
+    // (the test name under the default current-thread runtime), and returns the
+    // pass/fail guard.
+    let (lab, guard) = Lab::for_test(outdir).await?;
     let (relay_map, relay_guard) = spawn_relay(&lab).await?;
     Ok((lab, relay_map, relay_guard, guard))
 }
