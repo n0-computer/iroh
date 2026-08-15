@@ -1,12 +1,16 @@
 //! NAT traversal matrix tests.
 //!
-//! Tests holepunching across combinations of NAT types (None, Home, Corporate).
+//! Tests holepunching across combinations of the upstream [`patchbay::Nat`]
+//! behavior tiers:
 //!
-//! - None: no NAT, publicly routable
-//! - Home: endpoint-independent mapping (EIM), address-and-port-dependent
-//!   filtering (APDF), port-preserving (typical home router)
-//! - Corporate: endpoint-dependent mapping (EDM), APDF, random ports per
-//!   destination (enterprise firewall, cloud NAT)
+//! - `None`: no NAT, publicly routable.
+//! - `Open`: endpoint-independent mapping (EIM), endpoint-independent
+//!   filtering (EIF); RFC 3489 full cone. Typical of routers with UPnP or
+//!   static port forwarding.
+//! - `Moderate`: EIM, address-and-port-dependent filtering (APDF); RFC 3489
+//!   port-restricted cone. The typical home router.
+//! - `Strict`: endpoint-dependent mapping (EDM) with random ports, APDF; RFC
+//!   3489 symmetric. Holepunching between two `Strict` NATs requires a relay.
 //!
 //! Every test expects a direct path to be established. Tests where holepunching
 //! is not yet working are marked `#[ignore]`.
@@ -15,80 +19,17 @@ use std::time::Duration;
 
 use n0_error::{Result, StackResultExt};
 use n0_tracing_test::traced_test;
-use patchbay::{Nat, NatConfig, NatFiltering, NatMapping};
+use patchbay::Nat;
 use testdir::testdir;
 use tracing::info;
 
 use super::util::{Pair, PathConnectionExt, lab_with_relay};
 use crate::util::{is_relayed, ping_accept, ping_open};
 
-enum NatKind {
-    /// No NAT. The device has a publicly routable address.
-    None,
-    /// Most permissive NAT.
-    ///
-    /// Typical of consumer routers with UPnP or static port forwarding.
-    ///
-    /// RFC 4787: Endpoint-Independent Mapping, Endpoint-Independent Filtering (EIM/EIF).
-    /// RFC 3489: Full Cone NAT.
-    Easiest,
-    /// Moderately restrictive NAT.
-    ///
-    /// The external mapping is stable across destinations, but inbound packets are filtered
-    /// by source address and port. Common in home routers without UPnP.
-    ///
-    /// RFC 4787: Endpoint-Independent Mapping, Address-and-Port-Dependent Filtering (EIM/APDF).
-    /// RFC 3489: Port Restricted Cone NAT.
-    Easy,
-    /// Most restrictive NAT.
-    ///
-    /// Each destination gets a different external mapping, and inbound packets are filtered
-    /// by source address and port. Holepunching between two Hard NATs requires a relay
-    /// (TURN or similar). Typical of corporate firewalls and carrier-grade NAT (CGN).
-    ///
-    /// RFC 4787: Endpoint-Dependent Mapping, Address-and-Port-Dependent Filtering (EDM/APDF).
-    /// RFC 3489: Symmetric NAT.
-    Hard,
-}
-
-impl From<NatKind> for Nat {
-    fn from(value: NatKind) -> Self {
-        let (mapping, filtering) = match value {
-            NatKind::None => return Nat::None,
-            NatKind::Easiest => (
-                NatMapping::EndpointIndependent,
-                NatFiltering::EndpointIndependent,
-            ),
-            NatKind::Easy => (
-                NatMapping::EndpointIndependent,
-                NatFiltering::AddressAndPortDependent,
-            ),
-            NatKind::Hard => (
-                NatMapping::EndpointDependent,
-                NatFiltering::AddressAndPortDependent,
-            ),
-        };
-        Nat::Custom(NatConfig {
-            mapping,
-            filtering,
-            timeouts: Default::default(),
-            hairpin: false,
-        })
-    }
-}
-
-async fn run_nat_holepunch(nat_server: NatKind, nat_client: NatKind) -> Result {
+async fn run_nat_holepunch(nat_server: Nat, nat_client: Nat) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let router_server = lab
-        .add_router("nat_server")
-        .nat(nat_server.into())
-        .build()
-        .await?;
-    let router_client = lab
-        .add_router("nat_client")
-        .nat(nat_client.into())
-        .build()
-        .await?;
+    let router_server = lab.add_router("nat_server").nat(nat_server).build().await?;
+    let router_client = lab.add_router("nat_client").nat(nat_client).build().await?;
     let server = lab
         .add_device("server")
         .uplink(router_server.id())
@@ -130,104 +71,104 @@ async fn run_nat_holepunch(nat_server: NatKind, nat_client: NatKind) -> Result {
 #[tokio::test]
 #[traced_test]
 async fn nat_none_x_none() -> Result {
-    run_nat_holepunch(NatKind::None, NatKind::None).await
+    run_nat_holepunch(Nat::None, Nat::None).await
 }
 
 #[tokio::test]
 #[traced_test]
-async fn nat_none_x_easiest() -> Result {
-    run_nat_holepunch(NatKind::None, NatKind::Easiest).await
+async fn nat_none_x_open() -> Result {
+    run_nat_holepunch(Nat::None, Nat::Open).await
 }
 
 #[tokio::test]
 #[traced_test]
-async fn nat_none_x_easy() -> Result {
-    run_nat_holepunch(NatKind::None, NatKind::Easy).await
+async fn nat_none_x_moderate() -> Result {
+    run_nat_holepunch(Nat::None, Nat::Moderate).await
 }
 
 #[tokio::test]
 #[traced_test]
-async fn nat_none_x_hard() -> Result {
-    run_nat_holepunch(NatKind::None, NatKind::Hard).await
+async fn nat_none_x_strict() -> Result {
+    run_nat_holepunch(Nat::None, Nat::Strict).await
 }
 
-// Easiest x *
+// Open x *
 
 #[tokio::test]
 #[traced_test]
-async fn nat_easiest_x_none() -> Result {
-    run_nat_holepunch(NatKind::Easiest, NatKind::None).await
-}
-
-#[tokio::test]
-#[traced_test]
-async fn nat_easiest_x_easiest() -> Result {
-    run_nat_holepunch(NatKind::Easiest, NatKind::Easiest).await
+async fn nat_open_x_none() -> Result {
+    run_nat_holepunch(Nat::Open, Nat::None).await
 }
 
 #[tokio::test]
 #[traced_test]
-async fn nat_easiest_x_easy() -> Result {
-    run_nat_holepunch(NatKind::Easiest, NatKind::Easy).await
+async fn nat_open_x_open() -> Result {
+    run_nat_holepunch(Nat::Open, Nat::Open).await
 }
 
 #[tokio::test]
 #[traced_test]
-async fn nat_easiest_x_hard() -> Result {
-    run_nat_holepunch(NatKind::Easiest, NatKind::Hard).await
-}
-
-// Easy x *
-
-#[tokio::test]
-#[traced_test]
-async fn nat_easy_x_none() -> Result {
-    run_nat_holepunch(NatKind::Easy, NatKind::None).await
+async fn nat_open_x_moderate() -> Result {
+    run_nat_holepunch(Nat::Open, Nat::Moderate).await
 }
 
 #[tokio::test]
 #[traced_test]
-async fn nat_easy_x_easiest() -> Result {
-    run_nat_holepunch(NatKind::Easy, NatKind::Easiest).await
+async fn nat_open_x_strict() -> Result {
+    run_nat_holepunch(Nat::Open, Nat::Strict).await
+}
+
+// Moderate x *
+
+#[tokio::test]
+#[traced_test]
+async fn nat_moderate_x_none() -> Result {
+    run_nat_holepunch(Nat::Moderate, Nat::None).await
 }
 
 #[tokio::test]
 #[traced_test]
-async fn nat_easy_x_easy() -> Result {
-    run_nat_holepunch(NatKind::Easy, NatKind::Easy).await
+async fn nat_moderate_x_open() -> Result {
+    run_nat_holepunch(Nat::Moderate, Nat::Open).await
 }
 
 #[tokio::test]
 #[traced_test]
-#[ignore = "not yet passing (and likely can't without port guessing)"]
-async fn nat_easy_x_hard() -> Result {
-    run_nat_holepunch(NatKind::Easy, NatKind::Hard).await
-}
-
-// Hard x *
-
-#[tokio::test]
-#[traced_test]
-async fn nat_hard_x_none() -> Result {
-    run_nat_holepunch(NatKind::Hard, NatKind::None).await
-}
-
-#[tokio::test]
-#[traced_test]
-async fn nat_hard_x_easiest() -> Result {
-    run_nat_holepunch(NatKind::Hard, NatKind::Easiest).await
+async fn nat_moderate_x_moderate() -> Result {
+    run_nat_holepunch(Nat::Moderate, Nat::Moderate).await
 }
 
 #[tokio::test]
 #[traced_test]
 #[ignore = "not yet passing (and likely can't without port guessing)"]
-async fn nat_hard_x_easy() -> Result {
-    run_nat_holepunch(NatKind::Hard, NatKind::Easy).await
+async fn nat_moderate_x_strict() -> Result {
+    run_nat_holepunch(Nat::Moderate, Nat::Strict).await
+}
+
+// Strict x *
+
+#[tokio::test]
+#[traced_test]
+async fn nat_strict_x_none() -> Result {
+    run_nat_holepunch(Nat::Strict, Nat::None).await
+}
+
+#[tokio::test]
+#[traced_test]
+async fn nat_strict_x_open() -> Result {
+    run_nat_holepunch(Nat::Strict, Nat::Open).await
 }
 
 #[tokio::test]
 #[traced_test]
 #[ignore = "not yet passing (and likely can't without port guessing)"]
-async fn nat_hard_x_hard() -> Result {
-    run_nat_holepunch(NatKind::Hard, NatKind::Hard).await
+async fn nat_strict_x_moderate() -> Result {
+    run_nat_holepunch(Nat::Strict, Nat::Moderate).await
+}
+
+#[tokio::test]
+#[traced_test]
+#[ignore = "not yet passing (and likely can't without port guessing)"]
+async fn nat_strict_x_strict() -> Result {
+    run_nat_holepunch(Nat::Strict, Nat::Strict).await
 }

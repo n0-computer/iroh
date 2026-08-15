@@ -41,6 +41,12 @@ pub(crate) struct RelayTransport {
     my_endpoint_id: EndpointId,
 }
 
+impl std::fmt::Display for RelayTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RelayTransport")
+    }
+}
+
 impl RelayTransport {
     pub(crate) fn new(config: RelayActorConfig, cancel_token: CancellationToken) -> Self {
         let (relay_datagram_send_tx, relay_datagram_send_rx) = mpsc::channel(256);

@@ -2,6 +2,38 @@
 
 All notable changes to iroh will be documented in this file.
 
+## [1.0.3](https://github.com/n0-computer/iroh/compare/v1.0.2..1.0.3) - 2026-07-20
+
+### 🐛 Bug Fixes
+
+- *(ci)* Move android test back to self hosted nodes ([#4413](https://github.com/n0-computer/iroh/issues/4413)) - ([5e994a7](https://github.com/n0-computer/iroh/commit/5e994a71b7021c3d17d44d5490217158916fb05e))
+- *(iroh)* Error when connecting with an empty ALPN ([#4427](https://github.com/n0-computer/iroh/issues/4427)) - ([cc876c7](https://github.com/n0-computer/iroh/commit/cc876c75e53171dfcaf2e5fa0b81a417904694ba))
+- Add pkarr resolver to n0 preset ([#4412](https://github.com/n0-computer/iroh/issues/4412)) - ([3e1e4b7](https://github.com/n0-computer/iroh/commit/3e1e4b7d63814cb936dcf93d0105e40ccff5e9eb))
+- Remove vergen use from build.rs files ([#4426](https://github.com/n0-computer/iroh/issues/4426)) - ([1795b93](https://github.com/n0-computer/iroh/commit/1795b9363c68820661fd06cf679d94561ec66c0c))
+
+### 🚜 Refactor
+
+- *(iroh)* Reduce warn logs ([#4378](https://github.com/n0-computer/iroh/issues/4378)) - ([9f951b2](https://github.com/n0-computer/iroh/commit/9f951b216bd0538dd2d9a2aa2e7e456f3ee39307))
+
+### 📚 Documentation
+
+- *(iroh-relay)* System deps and build command ([#4385](https://github.com/n0-computer/iroh/issues/4385)) - ([403af3c](https://github.com/n0-computer/iroh/commit/403af3c9ed8eeda07f72a4ac4617d67ca053ccb7))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(ci)* Make sure android cleans up after itself ([#4421](https://github.com/n0-computer/iroh/issues/4421)) - ([c717c70](https://github.com/n0-computer/iroh/commit/c717c70b4a285b51bc7b1f6edf21862633401830))
+- Bump crossbeam-epoch for invalid pointer dereference ([#4402](https://github.com/n0-computer/iroh/issues/4402)) - ([908ddf5](https://github.com/n0-computer/iroh/commit/908ddf5d7c15259de88129af26d4dce7481e1e69))
+- Fixes for clippy from rust 1.97 ([#4404](https://github.com/n0-computer/iroh/issues/4404)) - ([8b097b2](https://github.com/n0-computer/iroh/commit/8b097b24880581bc0bd348ac9965fa05e84428c9))
+- Update semver checks for 1.0 stability ([#4401](https://github.com/n0-computer/iroh/issues/4401)) - ([5817271](https://github.com/n0-computer/iroh/commit/5817271c4a5fedc3e8387ec788ed42d68ba22064))
+- Allow GA releases of curve25519-dalek and ed25519-dalek ([#4416](https://github.com/n0-computer/iroh/issues/4416)) - ([57fb5c2](https://github.com/n0-computer/iroh/commit/57fb5c2805d6c64b12765f8ef6efe43efbd03a2a))
+- Bump cfg_aliases ([#4422](https://github.com/n0-computer/iroh/issues/4422)) - ([4e0a820](https://github.com/n0-computer/iroh/commit/4e0a820d07f9edd7f32caf352dbf82c0a17d4c42))
+- Run daily jobs earlier & run patchbay in merge queue ([#4425](https://github.com/n0-computer/iroh/issues/4425)) - ([b8c5759](https://github.com/n0-computer/iroh/commit/b8c5759d47c3e427354e84294e26bfe8eb2e9dfa))
+- Update to `noq` 1.1.0 - ([e84fe96](https://github.com/n0-computer/iroh/commit/e84fe96ddeb75ef5e408f06c14edde513f2b6be8))
+
+# Changelog
+
+All notable changes to iroh will be documented in this file.
+
 ## [1.0.2](https://github.com/n0-computer/iroh/compare/v1.0.1..1.0.2) - 2026-07-06
 
 ### 🐛 Bug Fixes
