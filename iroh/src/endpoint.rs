@@ -927,6 +927,8 @@ pub enum ConnectWithOptsError {
     LocallyRejected,
     #[error("Endpoint is closed")]
     EndpointClosed,
+    #[error("Invalid ALPN")]
+    InvalidAlpn,
 }
 
 #[allow(missing_docs)]
@@ -1115,6 +1117,7 @@ impl Endpoint {
 
         // Connecting to ourselves is not supported.
         ensure!(endpoint_id != self.id(), ConnectWithOptsError::SelfConnect);
+        ensure!(!alpn.is_empty(), ConnectWithOptsError::InvalidAlpn);
 
         event!(
             target: "iroh::_events::conn::connecting",
@@ -2007,6 +2010,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    use assert_matches::assert_matches;
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
     use iroh_relay::{RelayConfig, RelayQuicConfig, server::Access, tls::CaTlsConfig};
@@ -2049,6 +2053,31 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Connecting to ourself"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_connect_empty_alpn() -> Result {
+        let server = Endpoint::builder(presets::Minimal)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await
+            .unwrap();
+        let server_addr = server.addr();
+
+        let client = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+        let res = client.connect(server_addr, b"").await;
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert_matches!(
+            err,
+            ConnectError::Connect {
+                source: ConnectWithOptsError::InvalidAlpn { .. },
+                ..
+            }
+        );
 
         Ok(())
     }
