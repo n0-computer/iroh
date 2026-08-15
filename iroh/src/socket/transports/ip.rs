@@ -8,13 +8,33 @@ use std::{
 };
 
 use ipnet::{Ipv4Net, Ipv6Net};
+use iroh_relay::socket::{ConfigureSocket, IpFamily as HookFamily, SocketRef as HookSocketRef};
 use n0_watcher::Watchable;
-use netwatch::{UdpSender, UdpSocket};
+use netwatch::{BindOptions, UdpSender, UdpSocket};
 use pin_project::pin_project;
 use tracing::{debug, info, trace};
 
 use super::{RecvInfo, Transmit};
 use crate::metrics::{EndpointMetrics, SocketMetrics};
+
+/// Translates our hook into the one netwatch takes when it binds (and rebinds)
+/// a socket.
+///
+/// The two are the same shape, but not the same types: netwatch hands out its
+/// own `SocketRef`, which we re-borrow as ours so that the caller sees one type
+/// whether the socket came from netwatch or from the relay's TCP dial.
+fn bind_opts(configure_socket: Option<ConfigureSocket>) -> BindOptions {
+    let Some(configure) = configure_socket else {
+        return BindOptions::new();
+    };
+    BindOptions::new().configure_socket(move |socket, family| {
+        let family = match family {
+            netwatch::IpFamily::V4 => HookFamily::V4,
+            netwatch::IpFamily::V6 => HookFamily::V6,
+        };
+        configure(HookSocketRef::new(&socket), family)
+    })
+}
 
 #[derive(Debug)]
 pub(crate) struct IpTransport {
@@ -171,14 +191,14 @@ impl IpTransport {
     pub(crate) fn bind(
         config: Config,
         metrics: Arc<SocketMetrics>,
-        socket_mark: Option<u32>,
+        configure_socket: Option<ConfigureSocket>,
     ) -> io::Result<Self> {
         let addr: SocketAddr = config.into();
         debug!(?addr, "binding");
-        let opts = netwatch::BindOptions::new().set_mark(socket_mark);
-        let socket = netwatch::UdpSocket::bind_with(addr, opts).inspect_err(|err| {
-            debug!(%addr, "failed to bind: {err:#}");
-        })?;
+        let socket = netwatch::UdpSocket::bind_with(addr, bind_opts(configure_socket))
+            .inspect_err(|err| {
+                debug!(%addr, "failed to bind: {err:#}");
+            })?;
         let local_addr = socket.local_addr()?;
         debug!(%addr, %local_addr, "successfully bound");
         // Currently gets updated on manual rebind
@@ -421,7 +441,7 @@ impl IpTransports {
     pub(super) fn bind(
         configs: impl Iterator<Item = Config>,
         metrics: &EndpointMetrics,
-        socket_mark: Option<u32>,
+        configure_socket: Option<ConfigureSocket>,
     ) -> io::Result<Self> {
         let mut has_v4_default = false;
         let mut ip_v4 = Vec::new();
@@ -430,7 +450,7 @@ impl IpTransports {
         let mut ip_v6 = Vec::new();
 
         for config in configs {
-            match IpTransport::bind(config, metrics.socket.clone(), socket_mark) {
+            match IpTransport::bind(config, metrics.socket.clone(), configure_socket.clone()) {
                 Ok(transport) => {
                     if config.is_ipv4() {
                         if config.is_default() {
@@ -535,7 +555,7 @@ mod tests {
             },
         ];
 
-        let transports = IpTransports::bind(config.into_iter(), &metrics)?;
+        let transports = IpTransports::bind(config.into_iter(), &metrics, None)?;
         assert_eq!(transports.v4[0].config.prefix_len(), 24);
         assert_eq!(transports.v4[1].config.prefix_len(), 8);
         assert_eq!(transports.v4[2].config.prefix_len(), 0);

@@ -9,6 +9,11 @@ members = [
 ]
 resolver = "2"
 
+# The UDP half of `Builder::configure_socket` needs the hook added in
+# n0-computer/net-tools#182, which is not released yet. Drop this once it is.
+[patch.crates-io]
+netwatch = { git = "https://github.com/rayfish/net-tools", branch = "feat/configure-socket" }
+
 [profile.release]
 debug = true
 

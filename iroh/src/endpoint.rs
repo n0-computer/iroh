@@ -16,6 +16,8 @@ use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+#[cfg(not(wasm_browser))]
+pub use iroh_relay::socket::{ConfigureSocket, IpFamily, SocketRef};
 use iroh_relay::{RelayConfig, RelayMap, tls::CaTlsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
@@ -125,7 +127,7 @@ pub use crate::{net_report::NetReportConfig, portmapper::PortmapperConfig};
 /// new [`EndpointId`].
 ///
 /// To create the [`Endpoint`] call [`Builder::bind`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct Builder {
     secret_key: Option<SecretKey>,
     alpn_protocols: Vec<Vec<u8>>,
@@ -148,7 +150,9 @@ pub struct Builder {
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
-    socket_mark: Option<u32>,
+    #[cfg(not(wasm_browser))]
+    #[debug(skip)]
+    configure_socket: Option<ConfigureSocket>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -217,7 +221,8 @@ impl Builder {
             net_report_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
-            socket_mark: None,
+            #[cfg(not(wasm_browser))]
+            configure_socket: None,
         }
     }
 
@@ -281,7 +286,8 @@ impl Builder {
             net_report_config: self.net_report_config,
             static_config,
             configured_addrs: self.configured_addrs,
-            socket_mark: self.socket_mark,
+            #[cfg(not(wasm_browser))]
+            configure_socket: self.configure_socket,
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
@@ -516,15 +522,41 @@ impl Builder {
         self
     }
 
-    /// Sets an fwmark on the underlay UDP sockets (Linux `SO_MARK`).
+    /// Sets a hook run on every socket the endpoint opens.
     ///
-    /// The mark is applied to every IP transport socket the endpoint binds, and
-    /// reapplied on rebind. It lets you policy-route iroh's own traffic with an
-    /// `ip rule`, for example to keep it off a full-tunnel default route so the
-    /// tunnel does not swallow the packets carrying it. No-op on non-Linux
-    /// platforms.
-    pub fn socket_mark(mut self, mark: u32) -> Self {
-        self.socket_mark = Some(mark);
+    /// It runs on each underlay UDP socket and on each relay connection, before
+    /// the socket is bound or connected, and again whenever a socket is rebound.
+    /// A hook that reads the current network state therefore re-reads it on
+    /// every network change.
+    ///
+    /// Its purpose is to let the caller decide how iroh's own traffic is routed,
+    /// which matters to a VPN that points the default route at its own tunnel
+    /// device: without a way to keep iroh's underlay off that route, the
+    /// transport is routed into the tunnel it is carrying. The options that do
+    /// that are platform-specific (`SO_MARK` on Linux, `IP_BOUND_IF` on Apple
+    /// platforms), so iroh does not model them itself and hands out the socket
+    /// instead.
+    ///
+    /// An error from the hook fails the bind or the dial, rather than leaving a
+    /// socket configured in a way the caller did not ask for.
+    ///
+    /// ```no_run
+    /// # async fn wrapper() -> n0_error::Result<()> {
+    /// use iroh::{Endpoint, endpoint::presets};
+    ///
+    /// let ep = Endpoint::builder(presets::N0)
+    ///     .configure_socket(std::sync::Arc::new(|socket, _family| {
+    ///         socket2::SockRef::from(&socket).set_recv_buffer_size(1 << 20)
+    ///     }))
+    ///     .bind()
+    ///     .await?;
+    /// # ep.close().await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(not(wasm_browser))]
+    pub fn configure_socket(mut self, configure: ConfigureSocket) -> Self {
+        self.configure_socket = Some(configure);
         self
     }
 
@@ -2089,6 +2121,63 @@ mod tests {
             }
         );
 
+        Ok(())
+    }
+
+    /// The `configure_socket` hook must reach *every* socket the endpoint opens:
+    /// the UDP transport sockets and the relay connection. A VPN uses it to keep
+    /// iroh's underlay off its own tunnel route, and a relay connection that
+    /// missed the hook would be routed into the tunnel it is carrying.
+    #[tokio::test]
+    #[traced_test]
+    async fn configure_socket_hook_reaches_udp_and_relay_sockets() -> Result {
+        use std::sync::{
+            Mutex,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
+
+        let udp_calls = Arc::new(AtomicUsize::new(0));
+        let tcp_calls = Arc::new(AtomicUsize::new(0));
+        let families = Arc::new(Mutex::new(Vec::new()));
+        let (udp, tcp, seen) = (udp_calls.clone(), tcp_calls.clone(), families.clone());
+
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+            .configure_socket(Arc::new(move |socket, family| {
+                // Tell the UDP transport sockets from the relay's TCP dial by the
+                // socket's own type, not by guessing from call order.
+                match socket2::SockRef::from(&socket).r#type()? {
+                    socket2::Type::DGRAM => udp.fetch_add(1, Ordering::SeqCst),
+                    socket2::Type::STREAM => tcp.fetch_add(1, Ordering::SeqCst),
+                    other => panic!("unexpected socket type {other:?}"),
+                };
+                seen.lock().expect("poisoned").push(family);
+                Ok(())
+            }))
+            .bind()
+            .await?;
+
+        // `online()` resolves once the endpoint has a home relay, which means the
+        // relay connection has been dialed.
+        ep.online().await;
+
+        assert!(
+            udp_calls.load(Ordering::SeqCst) > 0,
+            "hook never ran on a UDP transport socket"
+        );
+        assert!(
+            tcp_calls.load(Ordering::SeqCst) > 0,
+            "hook never ran on the relay's TCP socket: it would be routed into the tunnel"
+        );
+        assert!(
+            !families.lock().expect("poisoned").is_empty(),
+            "hook was never told which family it was handed"
+        );
+
+        ep.close().await;
         Ok(())
     }
 
