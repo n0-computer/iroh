@@ -10,7 +10,7 @@ use std::{collections::BTreeSet, fmt, net::SocketAddr};
 
 use data_encoding::HEXLOWER;
 use n0_error::stack_error;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::{EndpointId, PublicKey, RelayUrl};
 
@@ -232,10 +232,53 @@ pub enum CustomAddrParseError {
     InvalidData,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Inline or heap storage, chosen by length. Serializes as plain bytes: the cutoff is an
+/// implementation detail, and `copy_from_slice` must stay the only constructor.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum CustomAddrBytes {
     Inline { size: u8, data: [u8; 30] },
     Heap(Box<[u8]>),
+}
+
+impl Serialize for CustomAddrBytes {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(self.as_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for CustomAddrBytes {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct BytesVisitor;
+
+        impl<'de> de::Visitor<'de> for BytesVisitor {
+            type Value = CustomAddrBytes;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("custom transport address bytes")
+            }
+
+            fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+                Ok(CustomAddrBytes::copy_from_slice(v))
+            }
+
+            fn visit_byte_buf<E: de::Error>(self, v: Vec<u8>) -> Result<Self::Value, E> {
+                Ok(CustomAddrBytes::copy_from_slice(&v))
+            }
+
+            /// Needed for json, which has no byte type and encodes bytes as a number
+            /// array, so `deserialize_bytes` comes back as a sequence.
+            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                // Does not reserve from the attacker-controlled `size_hint`.
+                let mut data = Vec::new();
+                while let Some(byte) = seq.next_element::<u8>()? {
+                    data.push(byte);
+                }
+                Ok(CustomAddrBytes::copy_from_slice(&data))
+            }
+        }
+
+        deserializer.deserialize_bytes(BytesVisitor)
+    }
 }
 
 impl fmt::Debug for CustomAddrBytes {
@@ -419,6 +462,95 @@ mod tests {
         assert_eq!(s, "deadbeef_0102");
         let parsed: CustomAddr = s.parse().unwrap();
         assert_eq!(addr, parsed);
+    }
+
+    /// The serialized form is just the bytes, so no encoding can disagree with itself.
+    #[test]
+    fn test_custom_addr_serde_roundtrip() {
+        for len in [0usize, 1, 29, 30, 31, 32, 255] {
+            let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+            let addr = CustomAddr::from_parts(0x544f52, &data);
+            let ser = postcard::to_stdvec(&addr).unwrap();
+            let back: CustomAddr = postcard::from_bytes(&ser).unwrap();
+            assert_eq!(addr, back);
+            assert_eq!(back.data(), &data[..]);
+
+            // The bytes are those of a plain `Vec<u8>`, with no trace of the cutoff.
+            let expected = postcard::to_stdvec(&(0x544f52u64, &data)).unwrap();
+            assert_eq!(ser, expected);
+
+            // Self-describing formats go through `visit_seq`.
+            let json = serde_json::to_string(&addr).unwrap();
+            let back: CustomAddr = serde_json::from_str(&json).unwrap();
+            assert_eq!(addr, back);
+        }
+    }
+
+    /// Equal addresses must be equal whatever route they arrive by.
+    #[test]
+    fn test_custom_addr_deserialize_is_canonical() {
+        for len in [5usize, 30, 31] {
+            let data = vec![9u8; len];
+            let addr = CustomAddr::from_parts(0x544f52, &data);
+            let ser = postcard::to_stdvec(&addr).unwrap();
+            let back: CustomAddr = postcard::from_bytes(&ser).unwrap();
+
+            assert_eq!(back.data(), addr.data());
+            assert_eq!(back, addr);
+            let set: BTreeSet<CustomAddr> = [back, addr].into_iter().collect();
+            assert_eq!(set.len(), 1);
+        }
+    }
+
+    /// The reported crash: an inline `size` larger than the 30-byte buffer, which the
+    /// derived `Deserialize` used to accept and every reader then panicked on.
+    #[test]
+    fn test_custom_addr_deserialize_oversized_inline() {
+        // The old encoding, with the inline size byte set to 255.
+        let mut crafted = postcard::to_stdvec(&(0x544f52u64, 0u32, 30u8, [9u8; 30])).unwrap();
+        let idx = crafted.len() - 31;
+        assert_eq!(crafted[idx], 30);
+        crafted[idx] = 255;
+
+        if let Ok(addr) = postcard::from_bytes::<CustomAddr>(&crafted) {
+            assert_eq!(addr.data().len(), addr.to_vec().len() - 8);
+            let _ = format!("{addr:?}");
+            let _ = format!("{addr:#?}");
+            let _ = addr.to_string();
+        }
+    }
+
+    /// The same, reached the way an attacker would: an [`EndpointAddr`] from a ticket.
+    #[test]
+    fn test_endpoint_addr_deserialize_arbitrary_bytes() {
+        let id = PublicKey::from_bytes(&[0; 32]).unwrap();
+        let addr = EndpointAddr {
+            id,
+            addrs: [TransportAddr::Custom(CustomAddr::from_parts(
+                0x544f52, &[9u8; 30],
+            ))]
+            .into_iter()
+            .collect(),
+        };
+        let ser = postcard::to_stdvec(&addr).unwrap();
+
+        // Flipping any single byte must not make a value that panics when read.
+        for idx in 0..ser.len() {
+            for bit in 0..8 {
+                let mut crafted = ser.clone();
+                crafted[idx] ^= 1 << bit;
+                if let Ok(evil) = postcard::from_bytes::<EndpointAddr>(&crafted) {
+                    let _ = format!("{evil:?}");
+                    for addr in &evil.addrs {
+                        if let TransportAddr::Custom(custom) = addr {
+                            let _ = custom.data();
+                            let _ = custom.to_vec();
+                            let _ = custom.to_string();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

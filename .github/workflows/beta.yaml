@@ -4,8 +4,8 @@ name: Beta Rust
 
 on:
   schedule:
-    # 06:50 UTC every Monday
-    - cron: '50 6 * * 1'
+    # 04:50 UTC every Monday
+    - cron: '50 4 * * 1'
   workflow_dispatch:
 
 concurrency:
