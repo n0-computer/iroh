@@ -6,7 +6,7 @@
 //! The connect tests place both peers on access networks that support only
 //! one IP family, so all traffic to the relay uses that family. The
 //! reconnect tests pin the connection to the relay by putting both peers
-//! behind symmetric (`Nat::Corporate`) NATs, for which holepunching fails
+//! behind symmetric (`Nat::Strict`) NATs, for which holepunching fails
 //! even though IP transports stay enabled, and then break either one
 //! peer's access link or the relay server itself.
 
@@ -123,12 +123,12 @@ async fn run_relay_udp_blocked(blocked: UdpBlocked) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
     let server_blocked = matches!(blocked, UdpBlocked::Both | UdpBlocked::ServerOnly);
     let client_blocked = matches!(blocked, UdpBlocked::Both | UdpBlocked::ClientOnly);
-    let mut net1 = lab.add_router("net1").nat(Nat::Home);
+    let mut net1 = lab.add_router("net1").nat(Nat::Moderate);
     if server_blocked {
         net1 = net1.firewall_custom(block_udp_except_dns);
     }
     let net1 = net1.build().await?;
-    let mut net2 = lab.add_router("net2").nat(Nat::Home);
+    let mut net2 = lab.add_router("net2").nat(Nat::Moderate);
     if client_blocked {
         net2 = net2.firewall_custom(block_udp_except_dns);
     }
@@ -189,8 +189,8 @@ async fn relay_udp_blocked_client() -> Result {
 /// reconnects once the link is back.
 async fn run_relay_reconnect_link_outage(outage_side: Side, downtime: Duration) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let nat1 = lab.add_router("nat1").nat(Nat::Corporate).build().await?;
-    let nat2 = lab.add_router("nat2").nat(Nat::Corporate).build().await?;
+    let nat1 = lab.add_router("nat1").nat(Nat::Strict).build().await?;
+    let nat2 = lab.add_router("nat2").nat(Nat::Strict).build().await?;
     let outage = lab.add_device("outage").uplink(nat1.id()).build().await?;
     let peer = lab.add_device("peer").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(15);
@@ -306,8 +306,8 @@ async fn relay_reconnect_relay_restart() -> Result {
     let _relay_guard = AbortOnDropHandle::new(relay_task);
     let relay_map = map_rx.await.std_context("relay task died before binding")?;
 
-    let nat1 = lab.add_router("nat1").nat(Nat::Corporate).build().await?;
-    let nat2 = lab.add_router("nat2").nat(Nat::Corporate).build().await?;
+    let nat1 = lab.add_router("nat1").nat(Nat::Strict).build().await?;
+    let nat2 = lab.add_router("nat2").nat(Nat::Strict).build().await?;
     let server = lab.add_device("server").uplink(nat1.id()).build().await?;
     let client = lab.add_device("client").uplink(nat2.id()).build().await?;
 
