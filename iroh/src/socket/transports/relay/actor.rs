@@ -1615,6 +1615,7 @@ mod tests {
         let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
+        let metrics = Arc::new(SocketMetrics::default());
         let task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
@@ -1623,7 +1624,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_tx.clone(),
-            Default::default(),
+            metrics.clone(),
             info_span!("actor-under-test"),
         );
 
@@ -1704,6 +1705,15 @@ mod tests {
         cancel_token.cancel();
         task.await.std_context("wait for task to finish")?;
 
+        // The actor connected once at startup and once more after the connection check
+        // failed.
+        assert_eq!(metrics.relay_conns_opened.get(), 2);
+        assert_eq!(
+            metrics.relay_conns_closed.get(),
+            2,
+            "the connections are counted as closed once the actor stops"
+        );
+
         Ok(())
     }
 
@@ -1748,6 +1758,13 @@ mod tests {
         .await
         .std_context("timeout")?;
 
+        assert_eq!(metrics.relay_conns_opened.get(), 1);
+        assert_eq!(
+            metrics.relay_conns_closed.get(),
+            0,
+            "the connection is only counted as closed once it is gone"
+        );
+
         // We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.
         info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2");
@@ -1778,11 +1795,12 @@ mod tests {
             "actor task still running"
         );
 
-        assert_eq!(metrics.relay_conns_opened.get(), 1);
+        // The actor may have reconnected while we advanced time, because a ping to the relay
+        // server can time out while time is frozen, so we do not assert an exact count here.
         assert_eq!(
             metrics.relay_conns_closed.get(),
-            1,
-            "the connection is counted as closed once the actor stops"
+            metrics.relay_conns_opened.get(),
+            "all connections are counted as closed once the actor stops"
         );
 
         cancel_token.cancel();
