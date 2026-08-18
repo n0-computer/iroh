@@ -407,9 +407,13 @@ impl ActiveRelayActor {
         };
         self.my_relay
             .set_status(&self.url, RelayConnectionState::Connected);
-        self.run_connected(client)
+        self.metrics.relay_conns_opened.inc();
+        let res = self
+            .run_connected(client)
             .instrument(info_span!("connected"))
-            .await
+            .await;
+        self.metrics.relay_conns_closed.inc();
+        res
     }
 
     fn reset_inactive_timeout(&mut self) {
@@ -1459,7 +1463,7 @@ mod tests {
         RELAY_INACTIVE_CLEANUP_TIME, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem,
         UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
-    use crate::{dns::DnsResolver, test_utils};
+    use crate::{dns::DnsResolver, metrics::SocketMetrics, test_utils};
 
     /// Starts a new [`ActiveRelayActor`].
     #[allow(clippy::too_many_arguments)]
@@ -1471,6 +1475,7 @@ mod tests {
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
         relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
         relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
+        metrics: Arc<SocketMetrics>,
         span: tracing::Span,
     ) -> AbortOnDropHandle<()> {
         let opts = ActiveRelayActorOptions {
@@ -1490,7 +1495,7 @@ mod tests {
                 auth_token: None,
             },
             stop_token,
-            metrics: Default::default(),
+            metrics,
             my_relay: Default::default(),
         };
         let task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
@@ -1517,6 +1522,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             recv_datagram_tx,
+            Default::default(),
             info_span!("echo-endpoint"),
         );
         let echo_task = tokio::spawn({
@@ -1613,6 +1619,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_tx.clone(),
+            Default::default(),
             info_span!("actor-under-test"),
         );
 
@@ -1707,6 +1714,7 @@ mod tests {
         let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
+        let metrics = Arc::new(SocketMetrics::default());
         let mut task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
@@ -1715,6 +1723,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_tx,
+            metrics.clone(),
             info_span!("actor-under-test"),
         );
 
@@ -1763,6 +1772,13 @@ mod tests {
                 .await
                 .is_ok(),
             "actor task still running"
+        );
+
+        assert_eq!(metrics.relay_conns_opened.get(), 1);
+        assert_eq!(
+            metrics.relay_conns_closed.get(),
+            1,
+            "the connection is counted as closed once the actor stops"
         );
 
         cancel_token.cancel();
