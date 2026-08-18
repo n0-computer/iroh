@@ -43,6 +43,10 @@ pub struct Metrics {
     /// Failed dial attempts are not counted. A relay that is reconnected to is counted
     /// once per connection, so this grows on every reconnect.
     pub relay_conns_opened: Counter,
+    /// Number of failed attempts to connect to a relay server.
+    ///
+    /// Each attempt is counted, so an unreachable relay increments this on every retry.
+    pub relay_conns_failed: Counter,
     /// Number of connections to a relay server that ended.
     ///
     /// Paired with [`Self::relay_conns_opened`], so the number of current connections is

@@ -402,7 +402,11 @@ impl ActiveRelayActor {
         self.my_relay
             .set_status(&self.url, RelayConnectionState::Connecting);
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
-            Some(client_res) => client_res.map_err(|err| e!(RelayConnectionError::Dial, err))?,
+            Some(Ok(client)) => client,
+            Some(Err(err)) => {
+                self.metrics.relay_conns_failed.inc();
+                return Err(e!(RelayConnectionError::Dial, err));
+            }
             None => return Ok(()),
         };
         self.my_relay
