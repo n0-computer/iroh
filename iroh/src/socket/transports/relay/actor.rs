@@ -559,6 +559,7 @@ impl ActiveRelayActor {
             last_packet_src: None,
             pong_pending: None,
             established: false,
+            rate_limited: false,
             #[cfg(test)]
             test_pong: None,
         };
@@ -743,8 +744,15 @@ impl ActiveRelayActor {
             }
             RelayToClientMsg::Status(status) => match status {
                 Status::Healthy => info!("Relay server reports: {status}"),
-                // The relay sends this at most once per connection.
-                Status::RateLimited => warn!("{status}"),
+                Status::RateLimited => {
+                    warn!("{status}");
+                    // The relay sends this at most once per connection, but do not rely
+                    // on the remote for the metric to count connections.
+                    if !state.rate_limited {
+                        state.rate_limited = true;
+                        self.metrics.relay_conns_ratelimited.inc();
+                    }
+                }
                 _ => warn!("Relay server reports problem: {status}"),
             },
             RelayToClientMsg::Restarting { .. } => {
@@ -853,6 +861,10 @@ struct ConnectedRelayState {
     ///
     /// This is set to `true` once a pong was received from the server.
     established: bool,
+    /// Whether the relay reported that it is rate-limiting this connection.
+    ///
+    /// Used to count each affected connection only once.
+    rate_limited: bool,
     #[cfg(test)]
     test_pong: Option<([u8; 8], oneshot::Sender<()>)>,
 }

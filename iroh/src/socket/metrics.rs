@@ -38,6 +38,12 @@ pub struct Metrics {
     /// This includes the initial assignment from no home relay to a home relay.
     pub relay_home_change: Counter,
 
+    /// Number of relay connections on which the relay reported rate limiting.
+    ///
+    /// This is incremented at most once per connection, so it counts the affected
+    /// connections and not how often the relay reported the problem.
+    pub relay_conns_ratelimited: Counter,
+
     /*
      * Holepunching metrics
      */
