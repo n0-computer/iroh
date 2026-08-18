@@ -743,6 +743,8 @@ impl ActiveRelayActor {
             }
             RelayToClientMsg::Status(status) => match status {
                 Status::Healthy => info!("Relay server reports: {status}"),
+                // The relay sends this at most once per connection.
+                Status::RateLimited => warn!("{status}"),
                 _ => warn!("Relay server reports problem: {status}"),
             },
             RelayToClientMsg::Restarting { .. } => {
