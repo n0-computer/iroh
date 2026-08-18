@@ -47,6 +47,18 @@ pub mod transports {
     };
 }
 
+/// Host-provided QUIC clock and timer factory.
+///
+/// <div class="warning">
+///
+/// This API is unstable and gated behind the `unstable-custom-runtime` feature.
+/// It is not covered by semantic versioning guarantees and may change in any release
+/// without a major version bump.
+///
+/// </div>
+#[cfg(feature = "unstable-custom-runtime")]
+pub use crate::quic_time_source::{QuicInstant, QuicTimeSource};
+
 use self::hooks::EndpointHooksList;
 pub use super::socket::{
     BindError, DirectAddr, DirectAddrType,
@@ -148,6 +160,7 @@ pub struct Builder {
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
+    quic_time_source: Option<Arc<dyn crate::quic_time_source::QuicTimeSource>>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -216,6 +229,7 @@ impl Builder {
             net_report_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
+            quic_time_source: None,
         }
     }
 
@@ -279,6 +293,7 @@ impl Builder {
             net_report_config: self.net_report_config,
             static_config,
             configured_addrs: self.configured_addrs,
+            quic_time_source: self.quic_time_source,
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
@@ -797,6 +812,24 @@ impl Builder {
     /// Some non-essential features of the net report component can be disabled via this configuration.
     pub fn net_report_config(mut self, config: NetReportConfig) -> Self {
         self.net_report_config = config;
+        self
+    }
+
+    /// Sets the monotonic clock and sleep factory used by this endpoint's QUIC runtime.
+    ///
+    /// Iroh continues to manage task spawning, tracing, and endpoint shutdown. If this
+    /// method is not called, the platform's default clock and timers are used.
+    ///
+    /// <div class="warning">
+    ///
+    /// This API is unstable and gated behind the `unstable-custom-runtime` feature.
+    /// It is not covered by semantic versioning guarantees and may change in any release
+    /// without a major version bump.
+    ///
+    /// </div>
+    #[cfg(feature = "unstable-custom-runtime")]
+    pub fn quic_time_source(mut self, time_source: Arc<dyn QuicTimeSource>) -> Self {
+        self.quic_time_source = Some(time_source);
         self
     }
 

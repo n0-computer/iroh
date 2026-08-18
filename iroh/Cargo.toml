@@ -161,6 +161,8 @@ tls-ring = ["noq/ring", "iroh-relay/tls-ring", "iroh-dns/tls-ring"]
 tls-aws-lc-rs = ["noq/aws-lc-rs", "iroh-relay/tls-aws-lc-rs", "iroh-dns/tls-aws-lc-rs"]
 # Unstable: Custom transport API (may change without notice)
 unstable-custom-transports = []
+# Unstable: Custom QUIC time source API (may change without notice)
+unstable-custom-runtime = []
 # Unstable: API to access an endpoint's NetReport (may change without notice)
 unstable-net-report = []
 
