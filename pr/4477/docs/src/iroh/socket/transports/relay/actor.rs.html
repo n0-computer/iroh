@@ -411,7 +411,7 @@
 <a href=#411 id=411 data-nosnippet>411</a>        };
 <a href=#412 id=412 data-nosnippet>412</a>        <span class="self">self</span>.my_relay
 <a href=#413 id=413 data-nosnippet>413</a>            .set_status(<span class="kw-2">&amp;</span><span class="self">self</span>.url, RelayConnectionState::Connected);
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="self">self</span>.metrics.relay_conns_opened.inc();
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="self">self</span>.metrics.relay_conns_success.inc();
 <a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>res = <span class="self">self
 <a href=#416 id=416 data-nosnippet>416</a>            </span>.run_connected(client)
 <a href=#417 id=417 data-nosnippet>417</a>            .instrument(<span class="macro">info_span!</span>(<span class="string">"connected"</span>))
@@ -1707,7 +1707,7 @@
 <a href=#1707 id=1707 data-nosnippet>1707</a>
 <a href=#1708 id=1708 data-nosnippet>1708</a>        <span class="comment">// The actor connected once at startup and once more after the connection check
 <a href=#1709 id=1709 data-nosnippet>1709</a>        // failed.
-<a href=#1710 id=1710 data-nosnippet>1710</a>        </span><span class="macro">assert_eq!</span>(metrics.relay_conns_opened.get(), <span class="number">2</span>);
+<a href=#1710 id=1710 data-nosnippet>1710</a>        </span><span class="macro">assert_eq!</span>(metrics.relay_conns_success.get(), <span class="number">2</span>);
 <a href=#1711 id=1711 data-nosnippet>1711</a>        <span class="macro">assert_eq!</span>(
 <a href=#1712 id=1712 data-nosnippet>1712</a>            metrics.relay_conns_closed.get(),
 <a href=#1713 id=1713 data-nosnippet>1713</a>            <span class="number">2</span>,
@@ -1758,7 +1758,7 @@
 <a href=#1758 id=1758 data-nosnippet>1758</a>        .<span class="kw">await
 <a href=#1759 id=1759 data-nosnippet>1759</a>        </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?</span>;
 <a href=#1760 id=1760 data-nosnippet>1760</a>
-<a href=#1761 id=1761 data-nosnippet>1761</a>        <span class="macro">assert_eq!</span>(metrics.relay_conns_opened.get(), <span class="number">1</span>);
+<a href=#1761 id=1761 data-nosnippet>1761</a>        <span class="macro">assert_eq!</span>(metrics.relay_conns_success.get(), <span class="number">1</span>);
 <a href=#1762 id=1762 data-nosnippet>1762</a>        <span class="macro">assert_eq!</span>(
 <a href=#1763 id=1763 data-nosnippet>1763</a>            metrics.relay_conns_closed.get(),
 <a href=#1764 id=1764 data-nosnippet>1764</a>            <span class="number">0</span>,
@@ -1799,7 +1799,7 @@
 <a href=#1799 id=1799 data-nosnippet>1799</a>        // server can time out while time is frozen, so we do not assert an exact count here.
 <a href=#1800 id=1800 data-nosnippet>1800</a>        </span><span class="macro">assert_eq!</span>(
 <a href=#1801 id=1801 data-nosnippet>1801</a>            metrics.relay_conns_closed.get(),
-<a href=#1802 id=1802 data-nosnippet>1802</a>            metrics.relay_conns_opened.get(),
+<a href=#1802 id=1802 data-nosnippet>1802</a>            metrics.relay_conns_success.get(),
 <a href=#1803 id=1803 data-nosnippet>1803</a>            <span class="string">"all connections are counted as closed once the actor stops"
 <a href=#1804 id=1804 data-nosnippet>1804</a>        </span>);
 <a href=#1805 id=1805 data-nosnippet>1805</a>
