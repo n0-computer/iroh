@@ -252,9 +252,6 @@ impl Builder {
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
-        #[cfg(not(wasm_browser))]
-        let dns_resolver = self.dns_resolver.unwrap_or_default();
-
         let metrics = EndpointMetrics::default();
 
         let tls_config = self
@@ -262,6 +259,14 @@ impl Builder {
             .unwrap_or_default()
             .client_config(crypto_provider)
             .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
+
+        #[cfg(not(wasm_browser))]
+        let dns_resolver = self.dns_resolver.unwrap_or_else(|| {
+            DnsResolver::builder()
+                .with_system_defaults()
+                .tls_client_config(tls_config.clone())
+                .build()
+        });
 
         let sock_opts = socket::Options {
             transports: self.transports,
