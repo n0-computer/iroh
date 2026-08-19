@@ -213,6 +213,7 @@ struct RelayConnectionOptions {
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_cert_verify: bool,
     protocol: iroh_relay::http::Protocol,
+    outbound_address_policy: Option<relay::client::OutboundAddressPolicy>,
 }
 
 /// Possible reasons for a failed relay connection.
@@ -266,6 +267,7 @@ impl ActiveRelayActor {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify,
             protocol,
+            outbound_address_policy,
         } = opts;
 
         let mut builder = relay::client::ClientBuilder::new(
@@ -276,6 +278,9 @@ impl ActiveRelayActor {
         )
         .protocol(protocol)
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
+        if let Some(policy) = outbound_address_policy {
+            builder = builder.outbound_address_policy(policy);
+        }
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
@@ -1043,6 +1048,7 @@ impl RelayActor {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: self.msock.insecure_skip_relay_cert_verify,
             protocol: self.protocol,
+            outbound_address_policy: self.msock.outbound_address_policy.clone(),
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -1346,6 +1352,7 @@ mod tests {
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 insecure_skip_cert_verify: true,
                 protocol: iroh_relay::http::Protocol::default(),
+                outbound_address_policy: None,
             },
             stop_token,
             metrics: Default::default(),

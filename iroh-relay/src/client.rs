@@ -3,11 +3,47 @@
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
 use std::{
+    fmt, io,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{self, Poll},
 };
+
+/// A cloneable policy that authorizes concrete outbound socket addresses.
+///
+/// The policy runs immediately before an outbound socket operation. Returning
+/// an error rejects that operation.
+#[derive(Clone)]
+pub struct OutboundAddressPolicy(Arc<dyn Fn(SocketAddr) -> io::Result<()> + Send + Sync + 'static>);
+
+impl fmt::Debug for OutboundAddressPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("OutboundAddressPolicy")
+            .field(&"<callback>")
+            .finish()
+    }
+}
+
+impl OutboundAddressPolicy {
+    /// Creates a policy from an address authorization callback.
+    pub fn new<F>(policy: F) -> Self
+    where
+        F: Fn(SocketAddr) -> io::Result<()> + Send + Sync + 'static,
+    {
+        Self(Arc::new(policy))
+    }
+
+    /// Authorizes one concrete outbound socket address.
+    pub fn check(&self, addr: SocketAddr) -> io::Result<()> {
+        (self.0)(addr).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "outbound address rejected by policy",
+            )
+        })
+    }
+}
 
 use anyhow::{anyhow, bail, Result};
 use conn::Conn;
@@ -61,6 +97,8 @@ pub struct ClientBuilder {
     dns_resolver: DnsResolver,
     /// Cache for public keys of remote nodes.
     key_cache: KeyCache,
+    /// Policy for concrete outbound socket addresses.
+    outbound_address_policy: Option<OutboundAddressPolicy>,
 }
 
 impl ClientBuilder {
@@ -86,7 +124,17 @@ impl ClientBuilder {
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
+            outbound_address_policy: None,
         }
+    }
+
+    /// Sets the policy for concrete outbound socket addresses.
+    ///
+    /// Configuring a policy also rejects proxy connections, for which the
+    /// relay destination is not the socket address dialed by this client.
+    pub fn outbound_address_policy(mut self, policy: OutboundAddressPolicy) -> Self {
+        self.outbound_address_policy = Some(policy);
+        self
     }
 
     /// Sets whether to connect to the relay via websockets or not.

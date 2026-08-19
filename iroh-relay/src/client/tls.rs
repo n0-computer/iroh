@@ -43,6 +43,7 @@ pub struct MaybeTlsStreamBuilder {
     prefer_ipv6: bool,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_cert_verify: bool,
+    outbound_address_policy: Option<OutboundAddressPolicy>,
 }
 
 impl MaybeTlsStreamBuilder {
@@ -54,7 +55,13 @@ impl MaybeTlsStreamBuilder {
             prefer_ipv6: false,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
+            outbound_address_policy: None,
         }
+    }
+
+    pub(crate) fn outbound_address_policy(mut self, policy: Option<OutboundAddressPolicy>) -> Self {
+        self.outbound_address_policy = policy;
+        self
     }
 
     pub fn proxy_url(mut self, proxy_url: Option<Url>) -> Self {
@@ -74,6 +81,9 @@ impl MaybeTlsStreamBuilder {
     }
 
     pub async fn connect(self) -> Result<MaybeTlsStream<ProxyStream>> {
+        if self.outbound_address_policy.is_some() && self.proxy_url.is_some() {
+            bail!("outbound address policies do not support relay proxies");
+        }
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         };
@@ -146,6 +156,9 @@ impl MaybeTlsStreamBuilder {
     async fn dial_url_direct(&self) -> Result<tokio::net::TcpStream> {
         use tokio::net::TcpStream;
         debug!(%self.url, "dial url");
+        if self.outbound_address_policy.is_some() {
+            validate_policy_relay_url(&self.url)?;
+        }
         let dst_ip = self
             .dns_resolver
             .resolve_host(&self.url, self.prefer_ipv6, DNS_TIMEOUT)
@@ -153,6 +166,9 @@ impl MaybeTlsStreamBuilder {
 
         let port = url_port(&self.url).ok_or_else(|| anyhow!("Missing URL port"))?;
         let addr = SocketAddr::new(dst_ip, port);
+        if let Some(policy) = &self.outbound_address_policy {
+            policy.check(addr)?;
+        }
 
         debug!("connecting to {}", addr);
         let tcp_stream = time::timeout(
@@ -264,17 +280,67 @@ impl MaybeTlsStreamBuilder {
     }
 }
 
+fn validate_policy_relay_url(url: &Url) -> Result<()> {
+    if !matches!(url.scheme(), "http" | "https" | "ws" | "wss")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || !matches!(url.path(), "" | "/" | crate::http::RELAY_PATH)
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        bail!("relay URL is not supported with an outbound address policy");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::validate_policy_relay_url;
+    use url::Url;
+
+    #[test]
+    fn policy_relay_url_shape_is_unambiguous() {
+        for url in [
+            "https://relay.example/",
+            "https://relay.example:443/",
+            "wss://relay.example/relay",
+        ] {
+            validate_policy_relay_url(&Url::parse(url).expect("valid URL"))
+                .expect("supported relay URL");
+        }
+
+        for url in [
+            "ftp://relay.example/",
+            "ftp://relay.example/evil",
+            "https://user@relay.example/",
+            "https://relay.example/other",
+            "https://relay.example/?target=other",
+            "https://relay.example/#fragment",
+        ] {
+            assert!(
+                validate_policy_relay_url(&Url::parse(url).expect("valid URL")).is_err(),
+                "{url}"
+            );
+        }
+    }
+}
+
 impl ClientBuilder {
     /// Connects to configured relay using HTTP(S) with an upgrade header
     /// set to [`HTTP_UPGRADE_PROTOCOL`].
     ///
     /// [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
     pub(super) async fn connect_relay(&self) -> Result<(Conn, SocketAddr)> {
+        if self.outbound_address_policy.is_some() {
+            validate_policy_relay_url(&self.url)?;
+        }
         #[allow(unused_mut)]
         let mut builder =
             MaybeTlsStreamBuilder::new(self.url.clone().into(), self.dns_resolver.clone())
                 .prefer_ipv6(self.prefer_ipv6())
-                .proxy_url(self.proxy_url.clone());
+                .proxy_url(self.proxy_url.clone())
+                .outbound_address_policy(self.outbound_address_policy.clone());
 
         #[cfg(any(test, feature = "test-utils"))]
         if self.insecure_skip_cert_verify {
@@ -307,6 +373,9 @@ impl ClientBuilder {
     }
 
     pub(super) async fn connect_ws(&self) -> Result<(Conn, SocketAddr)> {
+        if self.outbound_address_policy.is_some() {
+            validate_policy_relay_url(&self.url)?;
+        }
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -324,7 +393,8 @@ impl ClientBuilder {
         #[allow(unused_mut)]
         let mut builder = MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone())
             .prefer_ipv6(self.prefer_ipv6())
-            .proxy_url(self.proxy_url.clone());
+            .proxy_url(self.proxy_url.clone())
+            .outbound_address_policy(self.outbound_address_policy.clone());
 
         #[cfg(any(test, feature = "test-utils"))]
         if self.insecure_skip_cert_verify {

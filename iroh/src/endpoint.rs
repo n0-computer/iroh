@@ -121,6 +121,7 @@ pub struct Builder {
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
     tls_auth: tls::Authentication,
+    outbound_address_policy: Option<iroh_relay::client::OutboundAddressPolicy>,
 }
 
 impl Default for Builder {
@@ -147,6 +148,7 @@ impl Default for Builder {
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
             tls_auth: tls::Authentication::RawPublicKey,
+            outbound_address_policy: None,
         }
     }
 }
@@ -202,6 +204,7 @@ impl Builder {
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: self.path_selection,
             metrics,
+            outbound_address_policy: self.outbound_address_policy,
         };
         Endpoint::bind(static_config, msock_opts).await
     }
@@ -273,6 +276,18 @@ impl Builder {
     /// [number 0]: https://n0.computer
     pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
         self.relay_mode = relay_mode;
+        self
+    }
+
+    /// Sets a policy that authorizes every concrete outbound socket address.
+    ///
+    /// The policy is disabled by default. When configured, it runs immediately
+    /// before direct UDP sends and relay TCP connects.
+    pub fn outbound_address_policy(
+        mut self,
+        policy: iroh_relay::client::OutboundAddressPolicy,
+    ) -> Self {
+        self.outbound_address_policy = Some(policy);
         self
     }
 

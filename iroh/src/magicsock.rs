@@ -152,6 +152,7 @@ pub(crate) struct Options {
     pub(crate) path_selection: PathSelection,
 
     pub(crate) metrics: EndpointMetrics,
+    pub(crate) outbound_address_policy: Option<iroh_relay::client::OutboundAddressPolicy>,
 }
 
 /// Contents of a relay message. Use a SmallVec to avoid allocations for the very
@@ -188,6 +189,8 @@ pub(crate) struct MagicSock {
     me: String,
     /// Proxy
     proxy_url: Option<Url>,
+    /// Policy for concrete outbound socket addresses.
+    outbound_address_policy: Option<iroh_relay::client::OutboundAddressPolicy>,
     /// Queue to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
     ///
     /// Relay datagrams received by relays are put into this queue and consumed by
@@ -744,6 +747,9 @@ impl MagicSock {
 
     #[cfg(not(wasm_browser))]
     fn try_send_udp(&self, addr: SocketAddr, transmit: &quinn_udp::Transmit) -> io::Result<()> {
+        if let Some(policy) = &self.outbound_address_policy {
+            policy.check(addr)?;
+        }
         let conn = self.conn_for_addr(addr)?;
         conn.try_send(transmit)?;
         let total_bytes: u64 = transmit.contents.len() as u64;
@@ -1726,6 +1732,7 @@ impl Handle {
             #[cfg(any(test, feature = "test-utils"))]
             path_selection,
             metrics,
+            outbound_address_policy,
         } = opts;
 
         #[cfg(not(wasm_browser))]
@@ -1794,6 +1801,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
             discovery_subscribers: DiscoverySubscribers::new(),
             metrics,
+            outbound_address_policy,
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -3472,6 +3480,7 @@ mod tests {
                 path_selection: PathSelection::default(),
                 discovery_user_data: None,
                 metrics: Default::default(),
+                outbound_address_policy: None,
             }
         }
     }
@@ -4083,6 +4092,7 @@ mod tests {
             insecure_skip_relay_cert_verify: true,
             path_selection: PathSelection::default(),
             metrics: Default::default(),
+            outbound_address_policy: None,
         };
         let msock = MagicSock::spawn(opts).await?;
         Ok(msock)
