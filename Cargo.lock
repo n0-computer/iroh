@@ -2341,7 +2341,6 @@ dependencies = [
  "derive_more",
  "dirs-next",
  "governor",
- "hickory-resolver",
  "hickory-server",
  "http",
  "humantime",
