@@ -29,6 +29,8 @@ mod reqwest_dns_resolver {
 
     use iroh_dns::dns::{DNS_TIMEOUT, DnsResolver};
 
+    use crate::address_lookup::DNS_STAGGERING_MS;
+
     /// Implementation of [`reqwest::dns::Resolve`] for [`DnsResolver`].
     ///
     /// Wrapped in a newtype to not expose this in the public iroh API.
@@ -39,11 +41,23 @@ mod reqwest_dns_resolver {
             let this = self.0.clone();
             let name = name.as_str().to_string();
             Box::pin(async move {
-                let res = this.lookup_ipv4_ipv6(name, DNS_TIMEOUT).await;
+                // Staggered so that a single unresponsive DNS server does not stall the
+                // request for the full timeout.  Ideally this resolves **both** IPv4 and
+                // IPv6 rather than racing them, but our resolver has no function for that
+                // yet.
+                let res = this
+                    .lookup_ipv4_ipv6_staggered(name, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                    .await
+                    // Collected eagerly: the returned iterator borrows the resolver, which
+                    // does not outlive this future.
+                    .map(|addrs| {
+                        addrs
+                            .map(|addr| SocketAddr::new(addr, 0))
+                            .collect::<Vec<_>>()
+                    });
                 match res {
                     Ok(addrs) => {
-                        let addrs: reqwest::dns::Addrs =
-                            Box::new(addrs.map(|addr| SocketAddr::new(addr, 0)));
+                        let addrs: reqwest::dns::Addrs = Box::new(addrs.into_iter());
                         Ok(addrs)
                     }
                     Err(err) => {

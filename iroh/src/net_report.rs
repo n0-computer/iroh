@@ -272,6 +272,7 @@ impl Client {
         let socket_state = SocketState {
             quic_client,
             dns_resolver,
+            proxy_url: opts.proxy_url,
         };
 
         Client {
