@@ -45,6 +45,8 @@ use crate::util::is_relayed;
 mod degrade;
 #[path = "patchbay/nat.rs"]
 mod nat;
+#[path = "patchbay/relay.rs"]
+mod relay;
 #[path = "patchbay/switch-uplink.rs"]
 mod switch_uplink;
 #[path = "patchbay/util.rs"]
@@ -67,8 +69,8 @@ fn userns_ctor() {
 #[traced_test]
 async fn holepunch_simple() -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
-    let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
+    let nat1 = lab.add_router("nat1").nat(Nat::Moderate).build().await?;
+    let nat2 = lab.add_router("nat2").nat(Nat::Moderate).build().await?;
     let server = lab.add_device("server").uplink(nat1.id()).build().await?;
     let client = lab.add_device("client").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(10);
@@ -96,14 +98,15 @@ async fn holepunch_simple() -> Result {
 /// the selected path should switch to the faster LAN link.
 async fn run_add_faster_link(active_side: Side) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let nat_a = lab.add_router("nat_a").nat(Nat::Home).build().await?;
-    let nat_b = lab.add_router("nat_b").nat(Nat::Home).build().await?;
+    let nat_a = lab.add_router("nat_a").nat(Nat::Moderate).build().await?;
+    let nat_b = lab.add_router("nat_b").nat(Nat::Moderate).build().await?;
 
     let active = lab
         .add_device("active")
         .iface(
             "eth0",
-            IfaceConfig::routed(nat_a.id()).condition(LinkCondition::Mobile4G, LinkDirection::Both),
+            IfaceConfig::routed(nat_a.id())
+                .condition(LinkCondition::mobile_4g(), LinkDirection::Both),
         )
         .iface("eth1", IfaceConfig::routed(nat_b.id()).down())
         .build()
@@ -189,8 +192,8 @@ async fn add_faster_link_server() -> Result {
 /// direct path), then waits for a direct path to be selected again.
 async fn run_link_outage_recovery(outage_side: Side, downtime: Duration) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
-    let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
+    let nat1 = lab.add_router("nat1").nat(Nat::Moderate).build().await?;
+    let nat2 = lab.add_router("nat2").nat(Nat::Moderate).build().await?;
     let outage = lab.add_device("outage").uplink(nat1.id()).build().await?;
     let peer = lab.add_device("peer").uplink(nat2.id()).build().await?;
     let timeout = Duration::from_secs(15);
@@ -245,13 +248,17 @@ async fn link_outage_recovery_server() -> Result {
 /// it to a Home NAT and verifies a direct path is established.
 async fn run_hard_nat_to_holepunchable(replug_side: Side) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let nat_easy = lab.add_router("nat_easy").nat(Nat::Home).build().await?;
-    let nat_hard = lab
-        .add_router("nat_hard")
-        .nat(Nat::Corporate)
+    let nat_easy = lab
+        .add_router("nat_easy")
+        .nat(Nat::Moderate)
         .build()
         .await?;
-    let nat_peer = lab.add_router("nat_peer").nat(Nat::Home).build().await?;
+    let nat_hard = lab.add_router("nat_hard").nat(Nat::Strict).build().await?;
+    let nat_peer = lab
+        .add_router("nat_peer")
+        .nat(Nat::Moderate)
+        .build()
+        .await?;
 
     let replug = lab
         .add_device("replug")
@@ -329,8 +336,8 @@ async fn hard_nat_to_holepunchable_server() -> Result {
 /// Holepunching succeeds despite many unreachable local addresses on one side.
 async fn run_holepunch_many_addrs(many_addrs_side: Side, addr_count: u8) -> Result {
     let (lab, relay_map, _relay_guard, guard) = lab_with_relay(testdir!()).await?;
-    let nat1 = lab.add_router("nat1").nat(Nat::Home).build().await?;
-    let nat2 = lab.add_router("nat2").nat(Nat::Home).build().await?;
+    let nat1 = lab.add_router("nat1").nat(Nat::Moderate).build().await?;
+    let nat2 = lab.add_router("nat2").nat(Nat::Moderate).build().await?;
 
     let mut builder = lab.add_device("many_addrs").uplink(nat1.id());
     for i in 0..addr_count {

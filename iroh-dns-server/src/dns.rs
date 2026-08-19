@@ -46,7 +46,7 @@ const DEFAULT_A_TTL: u32 = 60 * 60; // 1h
 pub struct DnsConfig {
     /// Port to bind the DNS listener to, for both UDP and TCP.
     pub port: u16,
-    /// Address to bind the DNS listener to (defaults to `0.0.0.0`).
+    /// Address to bind the DNS listener to (defaults to `::`, i.e. IPv6 wildcard which also covers IPv4).
     pub bind_addr: Option<IpAddr>,
     /// SOA record data served for authoritative zones, in zone-file format.
     pub default_soa: String,
@@ -86,8 +86,10 @@ impl DnsConfig {
 }
 
 /// A DNS server that serves pkarr signed packets.
+#[derive(derive_more::Debug)]
 pub(crate) struct DnsServer {
     local_addr: SocketAddr,
+    #[debug("hickory_server::Server<DnsHandler>")]
     server: hickory_server::Server<DnsHandler>,
 }
 
@@ -98,7 +100,7 @@ impl DnsServer {
         let mut server = hickory_server::Server::new(dns_handler);
 
         let bind_addr = SocketAddr::new(
-            config.bind_addr.unwrap_or(Ipv4Addr::UNSPECIFIED.into()),
+            config.bind_addr.unwrap_or(Ipv6Addr::UNSPECIFIED.into()),
             config.port,
         );
 

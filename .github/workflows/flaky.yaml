@@ -23,8 +23,8 @@ on:
   pull_request:
     types: [ 'labeled', 'unlabeled', 'opened', 'synchronize', 'reopened' ]
   schedule:
-    # 06:30 UTC every day
-    - cron: '30 6 * * *'
+    # 04:30 UTC every day
+    - cron: '30 4 * * *'
   workflow_dispatch:
     inputs:
       branch:
