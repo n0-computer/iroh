@@ -132,7 +132,6 @@ parse-size = { version = "1.1.0", features = ['std'] }
 iroh-base = { version = "1.0.3", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 console = { version = "0.16" }
 
-
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
 wasm-tracing = "2.1.0"

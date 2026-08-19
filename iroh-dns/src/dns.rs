@@ -29,7 +29,7 @@ use url::Url;
 
 use crate::{ParseError, endpoint_info::EndpointInfo};
 
-/// Default timeout for DNS requests
+/// Default DNS query timeout.
 pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The n0 address lookup DNS origin, for production.
@@ -163,22 +163,25 @@ pub enum DnsError {
     },
     #[error("Missing host")]
     MissingHost {},
-    /// A resolution failure not covered by another variant. Downcast the source
-    /// (see the type-level docs) to recover the specific cause.
+    /// A resolution failure not covered by another variant.
+    ///
+    /// Downcast the source (see the type-level docs) to recover the specific cause.
     #[error("Failed to resolve")]
     Resolve {
         #[error(from)]
         source: AnyError,
     },
-    #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
+    #[error("Invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
     /// The domain name does not exist (NXDOMAIN).
     ///
     /// A nameserver authoritatively reported that the name does not exist, as
     /// opposed to a transient transport or timeout failure, so retrying will not
-    /// make the lookup succeed. Appended after [`Self::InvalidResponse`] so the
-    /// pre-existing variants keep their discriminants (API compatibility).
-    #[error("domain name does not exist (NXDOMAIN)")]
+    /// make the lookup succeed.
+    //
+    // Appended after `InvalidResponse` so the pre-existing variants keep their
+    // discriminants.
+    #[error("Domain name does not exist (NXDOMAIN)")]
     NxDomain {},
 }
 
@@ -227,15 +230,19 @@ pub struct Builder {
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum FallbackMode {
-    /// Never query the fallback nameservers.
+    /// Never queries the fallback nameservers.
     Never,
-    /// Race the fallback nameservers alongside the primary ones from the start.
+    /// Races the fallback nameservers alongside the primary ones from the start.
     Always,
-    /// Use the fallback nameservers only when the system DNS configuration could
-    /// not be loaded or configured no nameservers.
+    /// Uses the fallback nameservers only when the system DNS configuration is unusable.
+    ///
+    /// The configuration is unusable if it could not be loaded, or if it lists
+    /// no nameservers.
     IfSystemUnavailable,
-    /// Keep the fallback nameservers as a lower-priority tier, queried only once
-    /// every primary nameserver has failed or timed out. This is the default.
+    /// Keeps the fallback nameservers as a lower-priority tier.
+    ///
+    /// They are queried only once every primary nameserver has failed or timed
+    /// out. This is the default.
     #[default]
     Deferred,
 }
@@ -252,8 +259,7 @@ impl FallbackMode {
     }
 }
 
-/// A configured nameserver: its address, transport, and an optional TLS server
-/// name for DNS-over-TLS / DNS-over-HTTPS.
+/// A configured nameserver.
 ///
 /// The connection is always made to `addr`. When `server_name` is set it is
 /// used for the TLS SNI and certificate validation (and as the DoH URL
@@ -267,7 +273,7 @@ struct Nameserver {
 }
 
 impl Nameserver {
-    /// A nameserver addressed by IP, with no TLS server name.
+    /// Creates a nameserver addressed by IP, with no TLS server name.
     fn new(addr: SocketAddr, protocol: DnsProtocol) -> Self {
         Self {
             addr,
@@ -474,9 +480,10 @@ impl Builder {
     }
 }
 
-/// Adapts the [`n0_dns_resolver::DnsResolver`] to the [`Resolver`] trait,
-/// converting its types to this crate's so that `n0-dns-resolver` stays an
-/// internal detail rather than part of the public API.
+/// Adapts [`n0_dns_resolver::DnsResolver`] to the [`Resolver`] trait.
+///
+/// Converts the resolver crate's types to this crate's own, so that
+/// `n0-dns-resolver` stays an internal detail rather than part of the public API.
 #[derive(Debug)]
 struct DefaultResolver(Arc<n0_dns_resolver::DnsResolver>);
 
@@ -1164,7 +1171,6 @@ pub(crate) mod tests {
 
     use super::*;
 
-    #[cfg(with_crypto_provider)]
     #[test]
     fn builder_named_nameservers_carry_server_name() {
         let addr = SocketAddr::new(std::net::Ipv4Addr::new(1, 1, 1, 1).into(), 443);
