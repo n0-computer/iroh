@@ -411,7 +411,7 @@ impl ActiveRelayActor {
         };
         self.my_relay
             .set_status(&self.url, RelayConnectionState::Connected);
-        self.metrics.relay_conns_opened.inc();
+        self.metrics.relay_conns_success.inc();
         let res = self
             .run_connected(client)
             .instrument(info_span!("connected"))
@@ -1707,7 +1707,7 @@ mod tests {
 
         // The actor connected once at startup and once more after the connection check
         // failed.
-        assert_eq!(metrics.relay_conns_opened.get(), 2);
+        assert_eq!(metrics.relay_conns_success.get(), 2);
         assert_eq!(
             metrics.relay_conns_closed.get(),
             2,
@@ -1758,7 +1758,7 @@ mod tests {
         .await
         .std_context("timeout")?;
 
-        assert_eq!(metrics.relay_conns_opened.get(), 1);
+        assert_eq!(metrics.relay_conns_success.get(), 1);
         assert_eq!(
             metrics.relay_conns_closed.get(),
             0,
@@ -1799,7 +1799,7 @@ mod tests {
         // server can time out while time is frozen, so we do not assert an exact count here.
         assert_eq!(
             metrics.relay_conns_closed.get(),
-            metrics.relay_conns_opened.get(),
+            metrics.relay_conns_success.get(),
             "all connections are counted as closed once the actor stops"
         );
 
