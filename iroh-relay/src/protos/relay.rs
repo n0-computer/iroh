@@ -128,6 +128,15 @@ pub enum Status {
         "Another endpoint connected with the same endpoint id. No more messages will be received."
     )]
     SameEndpointIdConnected,
+    /// The relay is rate-limiting traffic received from this endpoint.
+    ///
+    /// Sent once per connection when the relay first throttles reading from the client.
+    #[display(
+        "The relay is rate-limiting this endpoint; outbound relay traffic is being throttled. \
+        Send less data over the relay, or, if you operate this relay, raise Limits::client_rx. \
+        Read more about rate limiting at https://docs.iroh.computer/relays/rate-limiting"
+    )]
+    RateLimited,
     /// Placeholder for backwards-compatibility for future new health status variants.
     #[display("Unsupported health message ({_0})")]
     Unknown(u8),
@@ -139,6 +148,7 @@ impl Status {
         match self {
             Status::Healthy => dst.put_u8(0),
             Status::SameEndpointIdConnected => dst.put_u8(1),
+            Status::RateLimited => dst.put_u8(2),
             Status::Unknown(discriminant) => dst.put_u8(*discriminant),
         }
         dst
@@ -155,6 +165,7 @@ impl Status {
         match discriminant {
             0 => Ok(Self::Healthy),
             1 => Ok(Self::SameEndpointIdConnected),
+            2 => Ok(Self::RateLimited),
             n => Ok(Self::Unknown(n)),
         }
     }
@@ -677,6 +688,10 @@ mod tests {
                 RelayToClientMsg::Status(Status::SameEndpointIdConnected).write_to(Vec::new()),
                 "0d 01",
             ),
+            (
+                RelayToClientMsg::Status(Status::RateLimited).write_to(Vec::new()),
+                "0d 02",
+            ),
         ]);
 
         Ok(())
@@ -823,7 +838,12 @@ mod proptests {
                 s.len() < MAX_PACKET_SIZE // a single unicode character can match a regex "." but take up multiple bytes
             })
             .prop_map(|problem| RelayToClientMsg::Health { problem });
-        let health = Just(Status::SameEndpointIdConnected).prop_map(RelayToClientMsg::Status);
+        let health = prop_oneof![
+            Just(Status::Healthy),
+            Just(Status::SameEndpointIdConnected),
+            Just(Status::RateLimited),
+        ]
+        .prop_map(RelayToClientMsg::Status);
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),

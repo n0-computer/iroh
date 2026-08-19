@@ -6,6 +6,8 @@ pub(crate) use imp::Options;
 mod imp {
     use std::collections::BTreeSet;
 
+    use url::Url;
+
     use crate::net_report::{NetReportConfig, QuicConfig, probes::Probe};
 
     /// Options for running probes
@@ -21,6 +23,10 @@ mod imp {
         pub(crate) quic_config: Option<QuicConfig>,
         /// TLS config for HTTPS probes.
         pub(crate) tls_config: rustls::ClientConfig,
+        /// Proxy to send the HTTP(S) based probes through.
+        ///
+        /// If not provided, the probes connect directly.
+        pub(crate) proxy_url: Option<Url>,
         /// User-facing configuration.
         pub(crate) user_config: NetReportConfig,
     }
@@ -30,12 +36,19 @@ mod imp {
             Self {
                 quic_config: None,
                 tls_config,
+                proxy_url: None,
                 user_config: NetReportConfig::default(),
             }
         }
         /// Enable quic probes
         pub(crate) fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
             self.quic_config = quic_config;
+            self
+        }
+
+        /// Sets the proxy to send the HTTP(S) based probes through.
+        pub(crate) fn proxy_url(mut self, proxy_url: Option<Url>) -> Self {
+            self.proxy_url = proxy_url;
             self
         }
 
