@@ -402,14 +402,22 @@ impl ActiveRelayActor {
         self.my_relay
             .set_status(&self.url, RelayConnectionState::Connecting);
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
-            Some(client_res) => client_res.map_err(|err| e!(RelayConnectionError::Dial, err))?,
+            Some(Ok(client)) => client,
+            Some(Err(err)) => {
+                self.metrics.relay_conns_failed.inc();
+                return Err(e!(RelayConnectionError::Dial, err));
+            }
             None => return Ok(()),
         };
         self.my_relay
             .set_status(&self.url, RelayConnectionState::Connected);
-        self.run_connected(client)
+        self.metrics.relay_conns_success.inc();
+        let res = self
+            .run_connected(client)
             .instrument(info_span!("connected"))
-            .await
+            .await;
+        self.metrics.relay_conns_closed.inc();
+        res
     }
 
     fn reset_inactive_timeout(&mut self) {
@@ -559,6 +567,7 @@ impl ActiveRelayActor {
             last_packet_src: None,
             pong_pending: None,
             established: false,
+            rate_limited: false,
             #[cfg(test)]
             test_pong: None,
         };
@@ -743,8 +752,15 @@ impl ActiveRelayActor {
             }
             RelayToClientMsg::Status(status) => match status {
                 Status::Healthy => info!("Relay server reports: {status}"),
-                // The relay sends this at most once per connection.
-                Status::RateLimited => warn!("{status}"),
+                Status::RateLimited => {
+                    warn!("{status}");
+                    // The relay sends this at most once per connection, but do not rely
+                    // on the remote for the metric to count connections.
+                    if !state.rate_limited {
+                        state.rate_limited = true;
+                        self.metrics.relay_conns_ratelimited.inc();
+                    }
+                }
                 _ => warn!("Relay server reports problem: {status}"),
             },
             RelayToClientMsg::Restarting { .. } => {
@@ -853,6 +869,10 @@ struct ConnectedRelayState {
     ///
     /// This is set to `true` once a pong was received from the server.
     established: bool,
+    /// Whether the relay reported that it is rate-limiting this connection.
+    ///
+    /// Used to count each affected connection only once.
+    rate_limited: bool,
     #[cfg(test)]
     test_pong: Option<([u8; 8], oneshot::Sender<()>)>,
 }
@@ -1447,7 +1467,7 @@ mod tests {
         RELAY_INACTIVE_CLEANUP_TIME, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem,
         UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
-    use crate::{dns::DnsResolver, test_utils};
+    use crate::{dns::DnsResolver, metrics::SocketMetrics, test_utils};
 
     /// Starts a new [`ActiveRelayActor`].
     #[allow(clippy::too_many_arguments)]
@@ -1459,6 +1479,7 @@ mod tests {
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
         relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
         relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
+        metrics: Arc<SocketMetrics>,
         span: tracing::Span,
     ) -> AbortOnDropHandle<()> {
         let opts = ActiveRelayActorOptions {
@@ -1478,7 +1499,7 @@ mod tests {
                 auth_token: None,
             },
             stop_token,
-            metrics: Default::default(),
+            metrics,
             my_relay: Default::default(),
         };
         let task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
@@ -1505,6 +1526,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             recv_datagram_tx,
+            Default::default(),
             info_span!("echo-endpoint"),
         );
         let echo_task = tokio::spawn({
@@ -1593,6 +1615,7 @@ mod tests {
         let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
+        let metrics = Arc::new(SocketMetrics::default());
         let task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
@@ -1601,6 +1624,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_tx.clone(),
+            metrics.clone(),
             info_span!("actor-under-test"),
         );
 
@@ -1681,6 +1705,15 @@ mod tests {
         cancel_token.cancel();
         task.await.std_context("wait for task to finish")?;
 
+        // The actor connected once at startup and once more after the connection check
+        // failed.
+        assert_eq!(metrics.relay_conns_success.get(), 2);
+        assert_eq!(
+            metrics.relay_conns_closed.get(),
+            2,
+            "the connections are counted as closed once the actor stops"
+        );
+
         Ok(())
     }
 
@@ -1695,6 +1728,7 @@ mod tests {
         let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
+        let metrics = Arc::new(SocketMetrics::default());
         let mut task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
@@ -1703,6 +1737,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_tx,
+            metrics.clone(),
             info_span!("actor-under-test"),
         );
 
@@ -1722,6 +1757,13 @@ mod tests {
         })
         .await
         .std_context("timeout")?;
+
+        assert_eq!(metrics.relay_conns_success.get(), 1);
+        assert_eq!(
+            metrics.relay_conns_closed.get(),
+            0,
+            "the connection is only counted as closed once it is gone"
+        );
 
         // We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.
@@ -1751,6 +1793,14 @@ mod tests {
                 .await
                 .is_ok(),
             "actor task still running"
+        );
+
+        // The actor may have reconnected while we advanced time, because a ping to the relay
+        // server can time out while time is frozen, so we do not assert an exact count here.
+        assert_eq!(
+            metrics.relay_conns_closed.get(),
+            metrics.relay_conns_success.get(),
+            "all connections are counted as closed once the actor stops"
         );
 
         cancel_token.cancel();
