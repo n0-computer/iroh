@@ -188,6 +188,7 @@ allowed_external_types = [
     "tokio::*",
     "url::*",
     # non-1.0 crates that we decided to accept in the public API
+    "ipnet::*",
     "rustls::*",
     "futures_core::stream::Stream",
     # only type alias
