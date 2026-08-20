@@ -1377,9 +1377,7 @@ impl RelayActor {
     async fn close_all_active_relays(&mut self) {
         self.cancel_token.cancel();
         let mut tasks = std::mem::take(&mut self.active_relay_tasks);
-        // Drain rather than `join_all`: `join_all` panics on any `JoinError`,
-        // which includes a merely *cancelled* task, so an actor aborted out
-        // from under us would take this worker thread down during shutdown.
+        // Drain instead of `join_all`, which panics on a cancelled task.
         while tasks.join_next().await.is_some() {}
 
         self.log_active_relay();
@@ -1450,20 +1448,8 @@ mod tests {
     };
     use crate::{dns::DnsResolver, test_utils};
 
-    /// `close_all_active_relays` must survive an [`ActiveRelayActor`] task that
-    /// was cancelled rather than allowed to finish.
-    ///
-    /// It used to await the set with [`JoinSet::join_all`], which panics on any
-    /// [`JoinError`] — including a merely *cancelled* task, not just a panicked
-    /// one — so a cancelled actor took the calling runtime worker down with it.
-    ///
-    /// In the wild this is reached by racing a runtime drop against shutdown,
-    /// which is not something a test can provoke reliably. Aborting the task
-    /// puts the set in the identical state deterministically: `join_next`
-    /// yields `Err(err)` with `err.is_cancelled()` either way.
-    ///
-    /// [`JoinSet::join_all`]: n0_future::task::JoinSet::join_all
-    /// [`JoinError`]: n0_future::task::JoinError
+    /// Abort stands in for the runtime drop that triggers this in the wild:
+    /// `join_next` yields a cancelled `JoinError` either way.
     #[tokio::test]
     async fn close_all_active_relays_survives_a_cancelled_task() {
         let (relay_datagram_recv_queue, _recv_rx) = mpsc::channel(1);
@@ -1482,14 +1468,10 @@ mod tests {
         let mut actor =
             RelayActor::new(config, relay_datagram_recv_queue, CancellationToken::new());
 
-        // A task that never completes on its own, then cancelled — no relay
-        // server and no real actor needed, since the failure is in how the set
-        // is awaited, not in what was spawned into it.
         let handle = actor.active_relay_tasks.spawn(std::future::pending::<()>());
         handle.abort();
 
-        // The assertion is that this returns at all: with `join_all` it panics
-        // with "task N was cancelled".
+        // Panicked with `join_all`.
         actor.close_all_active_relays().await;
 
         assert!(actor.active_relay_tasks.is_empty());
