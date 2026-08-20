@@ -59,7 +59,7 @@ jobs:
           echo TESTS_RESULT=$result
           echo "TESTS_RESULT=$result" >>"$GITHUB_ENV"
       - name: download nextest reports
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-*
           merge-multiple: true
@@ -90,7 +90,7 @@ jobs:
           echo "See https://github.com/${{ github.repository }}/actions/workflows/flaky.yaml" >> $GITHUB_OUTPUT
           echo "$EOF" >> $GITHUB_OUTPUT
       - name: Notify discord on failure
-        uses: n0-computer/discord-webhook-notify@v1
+        uses: n0-computer/discord-webhook-notify@1399c1b2d57cc05894d506d2cfdc33c5f012b993 # v1.1.1
         if: ${{ env.TESTS_RESULT == 'failure' || env.TESTS_RESULT == 'success' }}
         with:
           text: "Flaky tests in **${{ github.repository }}**:"

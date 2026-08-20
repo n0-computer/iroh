@@ -66,13 +66,13 @@ jobs:
             echo "version is: ${{ env.RELEASE_VERSION }}"
           fi
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
       - name: Create GitHub release
         id: release
         if: github.event.inputs.create_release == 'true' || github.event_name == 'push'
-        uses: actions/create-release@v1
+        uses: actions/create-release@0cb9c9b65d5d1901c1f53e5e66eaf4afd303e70e # v1.1.4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -151,13 +151,13 @@ jobs:
         steps:
         - name: Checkout
           if: inputs.base_hash == ''
-          uses: actions/checkout@v7
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
           with:
             submodules: recursive
 
         - name: Checkout specified commit
           if: inputs.base_hash != ''
-          uses: actions/checkout@v7
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
           with:
             ref: ${{ inputs.base_hash }}
             submodules: recursive
@@ -179,7 +179,7 @@ jobs:
 
         - name: Install Rust
           if: matrix.os != 'windows-latest'
-          uses: dtolnay/rust-toolchain@stable
+          uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
           with:
             toolchain: ${{ matrix.rust }}
             targets: ${{ matrix.cargo_targets }}
@@ -214,7 +214,7 @@ jobs:
         - name: Cache AWS CLI
           if: matrix.os != 'windows-latest'
           id: cache-awscli
-          uses: actions/cache@v6
+          uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
           with:
             path: ~/awscli
             key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
@@ -305,14 +305,14 @@ jobs:
             $ASSETS = $ASSETS -join ','
             Add-Content -Path $env:GITHUB_ENV -Value "ASSET=$ASSETS"
 
-        - uses: n0-computer/actions-upload-release-asset@main
+        - uses: n0-computer/actions-upload-release-asset@2613dacb5369f21a7e14f8eedce32ea9f88bb19f # main
           if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
           with:
             upload_url: ${{ github.event.inputs.upload_url || needs.create-release.outputs.upload_url }}
             asset_path: ${{ env.ASSET }}
 
         - name: attach artifacts
-          uses: actions/upload-artifact@v7
+          uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
           if : matrix.os != 'windows-latest'
           with:
             name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}${{ matrix.libc == 'musl' && '-musl' || '' }}-bundle
@@ -321,7 +321,7 @@ jobs:
             retention-days: 1
 
         - name: attach artifacts
-          uses: actions/upload-artifact@v7
+          uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
           if : matrix.os == 'windows-latest'
           with:
             name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle

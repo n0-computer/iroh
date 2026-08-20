@@ -57,12 +57,14 @@ jobs:
           # - x86_64-unknown-netbsd
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
       - name: Install rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
       - name: Cleanup Docker
         continue-on-error: true
@@ -72,14 +74,16 @@ jobs:
         # See https://github.com/cross-rs/cross/issues/1222
       - name: Cache cross
         id: cache-cross
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cross
           key: cross-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install cross
         if: steps.cache-cross.outputs.cache-hit != 'true'
-        uses: taiki-e/install-action@cross
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: cross
 
       - name: build
         # cross tests are currently broken vor armv7 and aarch64
@@ -105,7 +109,7 @@ jobs:
             api-level: 35
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Enable KVM for nested virtualization
         if: matrix.target == 'x86_64-linux-android'
@@ -116,22 +120,23 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: stable
           target: ${{ matrix.target }}
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: "temurin"
           java-version: "17"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
 
       # Pinned to a release tag (rather than @main) for supply-chain hygiene.
       - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
         id: setup-ndk
         with:
           ndk-version: r25c
@@ -190,7 +195,7 @@ jobs:
       - name: Run workspace tests on Android emulator
         if: matrix.target == 'x86_64-linux-android'
         timeout-minutes: 30
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           # Forwarded into the emulator by the cargo-ndk-runner wrapper.
@@ -259,12 +264,14 @@ jobs:
       RUSTFLAGS: "-Dwarnings --cfg skip_patchbay"
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
       - name: Install rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
       - name: Cleanup Docker
         continue-on-error: true
@@ -274,14 +281,16 @@ jobs:
         # See https://github.com/cross-rs/cross/issues/1222
       - name: Cache cross
         id: cache-cross
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cross
           key: cross-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install cross
         if: steps.cache-cross.outputs.cache-hit != 'true'
-        uses: taiki-e/install-action@cross
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: cross
 
       - name: test
         run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
@@ -298,27 +307,29 @@ jobs:
       RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup node.js version 22.5 # needed for browser-like websocket API support in node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.5
 
       - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install wasm-bindgen-test-runner
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
         with:
           # Match the version of wasm-bindgen used in Cargo.lock
           tool: wasm-bindgen-cli@0.2.122
 
       - name: Install wasm-tools
-        uses: bytecodealliance/actions/wasm-tools/setup@v1
+        uses: bytecodealliance/actions/wasm-tools/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
 
       - name: wasm32 build (iroh-base)
         run: cargo build --target wasm32-unknown-unknown -p iroh-base --all-features
@@ -350,16 +361,16 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
       - name: Check semver
-        # uses: obi1kenobi/cargo-semver-checks-action@v2
-        uses: n0-computer/cargo-semver-checks-action@feat-baseline
+        # uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2
+        uses: n0-computer/cargo-semver-checks-action@b49de9133f8849bb51cae32c6bdeb19a5c37e61f # feat-baseline
         with:
           package: iroh, iroh-base, iroh-dns, iroh-dns-server, iroh-relay
 
@@ -383,15 +394,15 @@ jobs:
       CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.5.0"
       TOOLCHAIN: "nightly-2026-03-20"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ env.TOOLCHAIN }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
       - name: Install cargo-check-external-types
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
         with:
           tool: |
             cargo-make
@@ -408,14 +419,17 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: stable
           components: rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
-      - uses: taiki-e/install-action@cargo-make
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: cargo-make
       - run: cargo make format-check
 
   check_docs:
@@ -429,12 +443,12 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
       RUSTDOCFLAGS: --cfg docsrs
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: nightly-2025-10-09
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
@@ -450,12 +464,13 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: stable
           components: clippy
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
@@ -475,8 +490,10 @@ jobs:
     name: Check optional deps are absent without features
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
       - name: Verify optional deps are absent without features
         run: |
           fail=0
@@ -502,12 +519,12 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ env.MSRV }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
@@ -520,8 +537,8 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           arguments: --workspace --all-features
           command: check
@@ -544,9 +561,9 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache pip
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pip
           key: pip-codespell-2.4.1

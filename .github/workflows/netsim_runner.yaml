@@ -104,16 +104,18 @@ jobs:
     runs-on: [self-hosted, linux, X64]
     steps:
     - name: Checkout
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         submodules: recursive
         ref: ${{ inputs.branch }}
 
     - name: Install rust stable
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      with:
+        toolchain: stable
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.11
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       continue-on-error: true
     - uses: ./.github/workflows/sccache-probe
 
@@ -191,7 +193,7 @@ jobs:
     - name: Cache AWS CLI
       if: always()
       id: cache-awscli
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/awscli
         key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
@@ -229,7 +231,7 @@ jobs:
 
     - name: Upload report
       if: always()
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       id: upload-report
       with:
         name: netsim-report-${{ env.LAST_COMMIT_SHA }}
@@ -250,7 +252,7 @@ jobs:
 
     - name: Find Docs Comment
       if: ${{ inputs.pr_number != '' }}
-      uses: peter-evans/find-comment@v4
+      uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
       id: fc
       with:
         issue-number: ${{ inputs.pr_number }}
@@ -259,7 +261,7 @@ jobs:
 
     - name: Create or Update Docs Comment
       if: ${{ inputs.pr_number != '' && !github.event.pull_request.head.repo.fork }}
-      uses: peter-evans/create-or-update-comment@v5
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.pr_number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
@@ -281,7 +283,7 @@ jobs:
         echo "EOFMARKER" >> ${GITHUB_OUTPUT}
 
     - name: Echo Report Table on PR
-      uses: peter-evans/create-or-update-comment@v5
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       if: ${{ inputs.pr_number != '' && inputs.report_table && !github.event.pull_request.head.repo.fork }}
       with:
         issue-number: ${{ inputs.pr_number }}

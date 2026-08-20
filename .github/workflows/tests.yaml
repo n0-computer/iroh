@@ -114,22 +114,22 @@ jobs:
               # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk                                                                                                
             fi     
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.git-ref }}
 
       - name: Install ${{ matrix.rust }} rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ matrix.rust }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
         with:
           tool: nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
@@ -180,7 +180,7 @@ jobs:
 
       - name: upload results
         if: ${{ failure() && inputs.flaky }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
           path: output
@@ -251,7 +251,7 @@ jobs:
               # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk
             fi
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.git-ref }}
 
@@ -264,7 +264,7 @@ jobs:
 
       - name: Cache cargo-nextest
         id: cache-nextest
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-nextest.exe
           key: nextest-windows-${{ env.NEXTEST_VERSION }}
@@ -297,7 +297,7 @@ jobs:
           }
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
         with:
           # Pinned: sccache >= 0.17.0 expands rustc @argfiles and breaks Windows'
@@ -305,7 +305,7 @@ jobs:
           version: "v0.16.0"
       - uses: ./.github/workflows/sccache-probe
 
-      - uses: msys2/setup-msys2@v2
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
         with:
           # Blacksmith's Windows image ships no pre-installed MSYS2 (C:\msys64),
           # so install it there. Self-hosted keeps the pre-installed one (faster).
@@ -341,7 +341,7 @@ jobs:
 
       - name: upload results
         if: ${{ failure() && inputs.flaky }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
           path: output
@@ -366,8 +366,10 @@ jobs:
             release-arch: aarch64
             runner: [self-hosted, macOS, ARM64]
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: nightly
       - name: cargo check
         run: |
           rm -f Cargo.lock
@@ -406,7 +408,7 @@ jobs:
               # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk
             fi
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.git-ref }}
 
@@ -417,7 +419,7 @@ jobs:
           rustup set default-host ${{ matrix.target }}
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
         with:
           # Pinned: sccache >= 0.17.0 expands rustc @argfiles and breaks Windows'
@@ -425,7 +427,7 @@ jobs:
           version: "v0.16.0"
       - uses: ./.github/workflows/sccache-probe
 
-      - uses: msys2/setup-msys2@v2
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
         with:
           # Blacksmith's Windows image ships no pre-installed MSYS2 (C:\msys64),
           # so install it there. Self-hosted keeps the pre-installed one (faster).

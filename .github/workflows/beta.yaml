@@ -32,7 +32,7 @@ jobs:
           echo TESTS_RESULT=$result
           echo "TESTS_RESULT=$result" >>"$GITHUB_ENV"
       - name: Notify discord on failure
-        uses: n0-computer/discord-webhook-notify@v1
+        uses: n0-computer/discord-webhook-notify@1399c1b2d57cc05894d506d2cfdc33c5f012b993 # v1.1.1
         if: ${{ env.TESTS_RESULT == 'failure' }}
         with:
           severity: error
