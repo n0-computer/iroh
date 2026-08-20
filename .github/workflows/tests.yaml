@@ -275,22 +275,12 @@ jobs:
           rustup target add $env:RUST_TARGET
           rustup set default-host $env:RUST_TARGET
 
-      - name: Cache cargo-nextest
-        id: cache-nextest
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/bin/cargo-nextest.exe
-          key: nextest-windows-${{ env.NEXTEST_VERSION }}
-
+      # Was a bare Invoke-WebRequest from get.nexte.st with no checksum,
+      # unpacked into ~/.cargo/bin on a long-lived host.
       - name: Install cargo-nextest
-        if: steps.cache-nextest.outputs.cache-hit != 'true'
-        shell: powershell
-        run: |
-          $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
-          Invoke-WebRequest -OutFile $tmp https://get.nexte.st/${{ env.NEXTEST_VERSION }}/windows
-          $outputDir = if ($Env:CARGO_HOME) { Join-Path $Env:CARGO_HOME "bin" } else { "~/.cargo/bin" }
-          $tmp | Expand-Archive -DestinationPath $outputDir -Force
-          $tmp | Remove-Item
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Select features
         run: |
