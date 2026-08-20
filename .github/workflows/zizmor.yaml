@@ -1,0 +1,54 @@
+# Static analysis of our own workflows. The tree is clean, so this gates on
+# every finding, not just High.
+name: Workflow Lint
+
+on:
+  pull_request:
+    paths: ['.github/workflows/**', '.github/dependabot.yml', '.pinact.yaml', 'zizmor.yml']
+  push:
+    branches: [main]
+    paths: ['.github/workflows/**', '.github/dependabot.yml', '.pinact.yaml', 'zizmor.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: zizmor
+      # whole repo, not just workflows/ -- dependabot.yml is audited too
+      - run: zizmor --offline .
+
+  pinact:
+    # Fails if a pinned SHA drifts from its version comment, or is younger
+    # than the cooldown in .pinact.yaml.
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Release tarball + checksum instead of pinact-action, which wants
+      # contents:write to push commits. This job only reads.
+      - name: Install pinact
+        env:
+          PINACT_VERSION: "4.1.1"
+        run: |
+          set -euo pipefail
+          base="https://github.com/suzuki-shunsuke/pinact/releases/download/v${PINACT_VERSION}"
+          curl -fsSL -O "$base/pinact_linux_amd64.tar.gz"
+          curl -fsSL -O "$base/pinact_${PINACT_VERSION}_checksums.txt"
+          grep ' pinact_linux_amd64.tar.gz$' "pinact_${PINACT_VERSION}_checksums.txt" | sha256sum -c -
+          tar xzf pinact_linux_amd64.tar.gz pinact
+          install -m755 pinact /usr/local/bin/pinact
+      - run: pinact run --check --verify-comment --verify-min-age
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
