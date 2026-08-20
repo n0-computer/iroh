@@ -59,13 +59,14 @@ jobs:
 
       - name: Build tests
         # Release mode required - debug builds exceed mingw's export ordinal limit (~65k symbols)
-        run: cargo build --target x86_64-pc-windows-gnu --tests -p iroh --release
+        run: cargo build --locked --target x86_64-pc-windows-gnu --tests -p iroh --release
 
       - name: Run tests under Wine
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER: wine
         run: >
           cargo nextest run
+          --locked
           --target x86_64-pc-windows-gnu
           --profile wine
           --release

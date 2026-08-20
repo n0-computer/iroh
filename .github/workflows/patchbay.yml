@@ -52,6 +52,10 @@ jobs:
           PATCHBAY_LOG: ${{ runner.debug && 'trace' || 'debug' }}
           RUST_LOG: ${{ runner.debug && 'trace' || 'debug' }}
 
+      - name: Lockfile must not have moved
+        # cargo make takes no --locked; assert the lockfile instead.
+        run: git diff --exit-code Cargo.lock
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

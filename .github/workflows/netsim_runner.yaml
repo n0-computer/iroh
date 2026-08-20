@@ -121,7 +121,7 @@ jobs:
 
     - name: Build iroh
       run: |
-        cargo build --profile ${{ inputs.build_profile }} --workspace --all-features --examples --bins
+        cargo build --locked --profile ${{ inputs.build_profile }} --workspace --all-features --examples --bins
 
     - name: Fetch netsim
       run: |

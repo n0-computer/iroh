@@ -205,11 +205,11 @@ jobs:
               # process segfaults in `_start_c` before reaching `main`.
               export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C relocation-model=static -C link-arg=-static"
             fi
-            cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
+            cargo build --locked --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
 
         - name: build release
           if: matrix.os == 'windows-latest'
-          run: cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
+          run: cargo build --locked --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
 
         - name: Cache AWS CLI
           if: matrix.os != 'windows-latest'
