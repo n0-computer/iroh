@@ -373,7 +373,11 @@ jobs:
           compression-level: 0
 
   minimal-crates:
+    # Ephemeral only: this job resolves versions the lockfile has never seen
+    # and runs their build scripts.
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -383,12 +387,12 @@ jobs:
             os: ubuntu-latest
             release-os: linux
             release-arch: amd64
-            runner: [self-hosted, linux, X64]
+            runner: ubuntu-latest
           - name: macOS-arm-latest
             os: macOS-latest
             release-os: darwin
             release-arch: aarch64
-            runner: [self-hosted, macOS, ARM64]
+            runner: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -408,8 +412,12 @@ jobs:
   minimal-crates-windows:
     timeout-minutes: 30
     name: "Minimal Crates (Windows)"
+    # Still self-hosted; moving to windows-latest needs sccache switched to
+    # SCCACHE_GHA_ENABLED. Follow-up.
     needs: pick-runner-windows
     runs-on: ${{ fromJSON(matrix.runs_on) }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
