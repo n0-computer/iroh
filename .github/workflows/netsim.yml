@@ -45,7 +45,13 @@ jobs:
       pull-requests: write   # netsim_runner posts the report comment
     if: ${{github.ref_name=='main' && github.event_name == 'push'}}
     uses: './.github/workflows/netsim_runner.yaml'
-    secrets: inherit
+    secrets:
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_REPORT_BUCKET: ${{ secrets.S3_REPORT_BUCKET }}
+      METRO_TOKEN: ${{ secrets.METRO_TOKEN }}
+      METRO_ENDPOINT: ${{ secrets.METRO_ENDPOINT }}
     with:
       branch: "main"
       max_workers: 1
@@ -61,7 +67,13 @@ jobs:
       pull-requests: write   # netsim_runner posts the report comment
     if: ${{github.event_name != 'push'}}
     uses: './.github/workflows/netsim_runner.yaml'
-    secrets: inherit
+    secrets:
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_REPORT_BUCKET: ${{ secrets.S3_REPORT_BUCKET }}
+      METRO_TOKEN: ${{ secrets.METRO_TOKEN }}
+      METRO_ENDPOINT: ${{ secrets.METRO_ENDPOINT }}
     with:
       branch: ${{inputs.branch}}
       max_workers: 1

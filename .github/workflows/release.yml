@@ -288,28 +288,34 @@ jobs:
         - name: Build archives
           if: matrix.os != 'windows-latest'
           shell: bash
+          env:
+            VERSION: ${{ needs.create-release.outputs.release_version }}
+            TARGET: ${{ matrix.cargo_targets }}
           run: |
-            IFS=',' read -ra BIN_NAMES <<< "${{ env.BIN_NAMES }}"
+            IFS=',' read -ra BIN_NAMES <<< "$BIN_NAMES"
             ASSETS=""
             for BIN_NAME in "${BIN_NAMES[@]}"; do
-              staging="$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
+              staging="$BIN_NAME-$VERSION-$TARGET"
               mkdir -p "$staging"
-              cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
+              cp "target/$TARGET/optimized-release/$BIN_NAME" "$staging/"
               tar czf "$staging.tar.gz" -C "$staging" .
               ASSETS+="$staging.tar.gz,"
             done
-            echo "ASSET=$(echo $ASSETS | sed 's/,$//')" >> $GITHUB_ENV
+            echo "ASSET=${ASSETS%,}" >> "$GITHUB_ENV"
 
         - name: Build archives (windows)
           if: matrix.os == 'windows-latest'
           shell: pwsh
+          env:
+            VERSION: ${{ needs.create-release.outputs.release_version }}
+            TARGET: ${{ matrix.cargo_targets }}
           run: |
-            $BIN_NAMES = "${{ env.BIN_NAMES }}".Split(',')
+            $BIN_NAMES = $env:BIN_NAMES.Split(',')
             $ASSETS = @()
             foreach ($BIN_NAME in $BIN_NAMES) {
-              $staging = "$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
+              $staging = "$BIN_NAME-$($env:VERSION)-$($env:TARGET)"
               New-Item -ItemType Directory -Force -Path "$staging"
-              Copy-Item -Path "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME.exe" -Destination "$staging/"
+              Copy-Item -Path "target/$($env:TARGET)/optimized-release/$BIN_NAME.exe" -Destination "$staging/"
               Set-Location -Path "$staging"
               Compress-Archive -Path * -DestinationPath "../$staging.zip"
               $ASSETS += "$staging.zip"
@@ -345,7 +351,11 @@ jobs:
     docker:
       needs: build_release
       uses: './.github/workflows/docker.yaml'
-      secrets: inherit
+      secrets:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+        S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
       with:
         release_version: ${{ needs.build_release.outputs.release_version }}
         base_hash: ${{ needs.build_release.outputs.base_hash }}

@@ -35,6 +35,15 @@ on:
           required: true
           type: boolean
           default: false
+      secrets:
+        DOCKERHUB_USERNAME:
+          required: true
+        DOCKERHUB_TOKEN:
+          required: true
+        S3_ACCESS_KEY_ID:
+          required: true
+        S3_ACCESS_KEY:
+          required: true
 
 env:
   IROH_FORCE_STAGING_RELAYS: "1"

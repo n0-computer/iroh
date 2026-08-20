@@ -87,6 +87,19 @@ on:
         required: false
         type: string
         default: ""
+    secrets:
+      S3_ACCESS_KEY_ID:
+        required: false
+      S3_ACCESS_KEY:
+        required: false
+      S3_BUCKET:
+        required: false
+      S3_REPORT_BUCKET:
+        required: false
+      METRO_TOKEN:
+        required: false
+      METRO_ENDPOINT:
+        required: false
 
 env:
   RUST_BACKTRACE: 1
@@ -259,8 +272,10 @@ jobs:
 
     - name: Fail Job if Tests Failed
       if: ${{ steps.run_tests.outcome == 'failure' }}
+      env:
+        REPORT_URL: ${{ steps.upload-report.outputs.artifact-url }}
       run: |
-        echo "Tests failed. Report: ${{steps.upload-report.outputs.artifact-url}}"
+        echo "Tests failed. Report: $REPORT_URL"
         echo ""
         if [ -f ../chuck/netsim/logs/failed_tests.txt ]; then
           echo "=== FAILED TESTS ==="
