@@ -92,12 +92,14 @@ jobs:
               echo "AWS_DEFAULT_REGION=us-west-2" >> $GITHUB_ENV
 
         - name: Fetch release binaries
+          env:
+            BASE_HASH: ${{ inputs.base_hash }}
           run: |
-            aws s3 cp s3://vorc/iroh-relay-linux-amd64-musl-${{ inputs.base_hash }} bins/linux/amd64/iroh-relay
-            aws s3 cp s3://vorc/iroh-dns-server-linux-amd64-musl-${{ inputs.base_hash }} bins/linux/amd64/iroh-dns-server
+            aws s3 cp "s3://vorc/iroh-relay-linux-amd64-musl-$BASE_HASH" bins/linux/amd64/iroh-relay
+            aws s3 cp "s3://vorc/iroh-dns-server-linux-amd64-musl-$BASE_HASH" bins/linux/amd64/iroh-dns-server
 
-            aws s3 cp s3://vorc/iroh-relay-linux-aarch64-musl-${{ inputs.base_hash }} bins/linux/arm64/iroh-relay
-            aws s3 cp s3://vorc/iroh-dns-server-linux-aarch64-musl-${{ inputs.base_hash }} bins/linux/arm64/iroh-dns-server
+            aws s3 cp "s3://vorc/iroh-relay-linux-aarch64-musl-$BASE_HASH" bins/linux/arm64/iroh-relay
+            aws s3 cp "s3://vorc/iroh-dns-server-linux-aarch64-musl-$BASE_HASH" bins/linux/arm64/iroh-dns-server
 
         - name: Build Docker image (iroh-relay)
           uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0

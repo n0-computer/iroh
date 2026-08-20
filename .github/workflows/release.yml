@@ -62,15 +62,17 @@ jobs:
       - name: Get the release version from the tag or input
         shell: bash
         if: env.RELEASE_VERSION == ''
+        env:
+          INPUT_RELEASE_VERSION: ${{ github.event.inputs.release_version }}
         run: |
-          if "${{ github.event.inputs.release_version }}" != ""; then
-            echo "RELEASE_VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_ENV
-            echo "version is: ${{ env.RELEASE_VERSION }}"
+          if [ -n "$INPUT_RELEASE_VERSION" ]; then
+            version="$INPUT_RELEASE_VERSION"
           else
             # See: https://github.community/t5/GitHub-Actions/How-to-get-just-the-tag-name/m-p/32167/highlight/true#M1027
-            echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-            echo "version is: ${{ env.RELEASE_VERSION }}"
+            version="${GITHUB_REF#refs/tags/}"
           fi
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "version is: $version"
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

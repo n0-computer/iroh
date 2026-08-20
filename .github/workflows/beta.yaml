@@ -30,9 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Extract test results
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          printf '${{ toJSON(needs) }}\n'
-          result=$(echo '${{ toJSON(needs) }}' | jq -r .tests.result)
+          printf '%s\n' "$NEEDS_JSON"
+          result=$(echo "$NEEDS_JSON" | jq -r .tests.result)
           echo TESTS_RESULT=$result
           echo "TESTS_RESULT=$result" >>"$GITHUB_ENV"
       - name: Notify discord on failure

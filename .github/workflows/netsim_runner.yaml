@@ -127,14 +127,18 @@ jobs:
     - uses: ./.github/workflows/sccache-probe
 
     - name: Build iroh
+      env:
+        BUILD_PROFILE: ${{ inputs.build_profile }}
       run: |
-        cargo build --locked --profile ${{ inputs.build_profile }} --workspace --all-features --examples --bins
+        cargo build --locked --profile "$BUILD_PROFILE" --workspace --all-features --examples --bins
 
     - name: Fetch netsim
+      env:
+        NETSIM_BRANCH: ${{ inputs.netsim_branch }}
       run: |
         cd ..
         rm -rf chuck
-        git clone --depth 1 --single-branch --branch ${{ inputs.netsim_branch }} https://github.com/n0-computer/chuck.git
+        git clone --depth 1 --single-branch --branch "$NETSIM_BRANCH" https://github.com/n0-computer/chuck.git
 
     - name: Install netsim deps
       run: |
@@ -150,11 +154,13 @@ jobs:
         cp -r .github/sims/paused/ ../chuck/netsim/sims/paused/
 
     - name: Copy binaries to right location
+      env:
+        BUILD_PROFILE: ${{ inputs.build_profile }}
       run: |
-        cp target/${{inputs.build_profile}}/examples/* ../chuck/netsim/bins/
-        cp target/${{inputs.build_profile}}/examples/transfer ../chuck/netsim/bins/iroh-transfer
-        cp target/${{inputs.build_profile}}/iroh-relay ../chuck/netsim/bins/iroh-relay
-        cp target/${{inputs.build_profile}}/iroh-dns-server ../chuck/netsim/bins/iroh-dns-server
+        cp "target/$BUILD_PROFILE/examples/"* ../chuck/netsim/bins/
+        cp "target/$BUILD_PROFILE/examples/transfer" ../chuck/netsim/bins/iroh-transfer
+        cp "target/$BUILD_PROFILE/iroh-relay" ../chuck/netsim/bins/iroh-relay
+        cp "target/$BUILD_PROFILE/iroh-dns-server" ../chuck/netsim/bins/iroh-dns-server
 
     - name: Get commit sha
       shell: bash
@@ -164,26 +170,29 @@ jobs:
     - name: Run tests
       id: run_tests
       continue-on-error: true
+      env:
+        SIM_PATHS: ${{ inputs.sim_paths }}
+        RUST_LOG_INPUT: ${{ inputs.rust_log }}
+        FILTER: ${{ inputs.filter }}
+        MAX_WORKERS: ${{ inputs.max_workers }}
       run: |
         cd ../chuck/netsim
-        IFS=',' read -ra sim_paths <<< "${{ inputs.sim_paths }}"
-        rust_log="${{ inputs.rust_log }}"
-        filter="${{ inputs.filter }}"
+        IFS=',' read -ra sim_paths <<< "$SIM_PATHS"
         filter_flag=""
-        if [[ -n "${filter}" ]]; then
-          if [[ "${filter}" == skip:* ]]; then
-            filter_flag="--skip=${filter#skip:}"
-          elif [[ "${filter}" == only:* ]]; then
-            filter_flag="--only=${filter#only:}"
+        if [[ -n "$FILTER" ]]; then
+          if [[ "$FILTER" == skip:* ]]; then
+            filter_flag="--skip=${FILTER#skip:}"
+          elif [[ "$FILTER" == only:* ]]; then
+            filter_flag="--only=${FILTER#only:}"
           else
-            filter_flag="--only=${filter}"
+            filter_flag="--only=$FILTER"
           fi
         fi
         for sim_path in "${sim_paths[@]}"; do
-          if [[ -n "${rust_log}" ]]; then
-            sudo RUST_LOG="${rust_log}" python3 main.py ${filter_flag} --max-workers=${{ inputs.max_workers }} --integration $sim_path
+          if [[ -n "$RUST_LOG_INPUT" ]]; then
+            sudo RUST_LOG="$RUST_LOG_INPUT" python3 main.py ${filter_flag} --max-workers="$MAX_WORKERS" --integration "$sim_path"
           else
-            sudo python3 main.py ${filter_flag} --max-workers=${{ inputs.max_workers }} --integration $sim_path
+            sudo python3 main.py ${filter_flag} --max-workers="$MAX_WORKERS" --integration "$sim_path"
           fi
         done
 
@@ -193,9 +202,9 @@ jobs:
       run: |
         cd ../chuck/netsim
         python3 reports_csv.py --table > report_table.txt
-        python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
-        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
-        python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
+        python3 reports_csv.py --prom --commit "$LAST_COMMIT_SHA" > report_prom.txt
+        python3 reports_csv.py --metro --commit "$LAST_COMMIT_SHA" > report_metro.txt
+        python3 reports_csv.py --metro --integration --commit "$LAST_COMMIT_SHA" > report_metro_integration.txt
 
     - name: Cache AWS CLI
       if: always()
@@ -218,17 +227,19 @@ jobs:
 
     - name: Upload report
       if: always()
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+        AWS_DEFAULT_REGION: us-west-2
+        S3_BUCKET: ${{ secrets.S3_BUCKET }}
+        S3_REPORT_BUCKET: ${{ secrets.S3_REPORT_BUCKET }}
       run: |
-        export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
-        export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
-        export AWS_DEFAULT_REGION=us-west-2
-
         cd ../chuck/netsim
 
-        aws_fname=${{ env.LAST_COMMIT_SHA }}.tar.gz
+        aws_fname="$LAST_COMMIT_SHA.tar.gz"
         tar -cvzf report.tar.gz report_prom.txt report_table.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
-        if [[ -n "${{ secrets.S3_BUCKET }}" ]]; then
-          aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/$aws_fname --no-progress
+        if [[ -n "$S3_BUCKET" ]]; then
+          aws s3 cp ./report.tar.gz "s3://$S3_REPORT_BUCKET/$aws_fname" --no-progress
         fi
 
     - name: Move report
