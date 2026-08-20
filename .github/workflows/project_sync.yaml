@@ -23,6 +23,10 @@ jobs:
           app-id: ${{ secrets.N0_BOT_APP_ID }}
           private-key: ${{ secrets.PROJECT_BOARD_PKEY }}
           owner: n0-computer
+          # Omitting permission-contents is the point: no code write anywhere.
+          permission-issues: write
+          permission-pull-requests: write
+          permission-organization-projects: write
 
       - name: Update PRs
         env:
