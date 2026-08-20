@@ -15,6 +15,10 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   pick-runner:
     uses: "./.github/workflows/pick-runner.yml"

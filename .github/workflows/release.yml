@@ -45,8 +45,14 @@ env:
   BIN_NAMES: "iroh-relay,iroh-dns-server"
   RELEASE_VERSION: ${{ github.event.inputs.release_version }}
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
     create-release:
+      permissions:
+        contents: write      # drafts the GitHub release
       name: create-release
       runs-on: ubuntu-latest
       outputs:
@@ -81,6 +87,8 @@ jobs:
           release_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version }}
 
     build_release:
+        permissions:
+          contents: write    # attaches binaries to the release
         timeout-minutes: 60
         name: Build release binaries
         needs: create-release

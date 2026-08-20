@@ -20,6 +20,10 @@ env:
   SCCACHE_CACHE_SIZE: "10G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   pick-runner:
     uses: "./.github/workflows/pick-runner.yml"
@@ -551,7 +555,9 @@ jobs:
           command-arguments: "-Dwarnings"
 
   netsim-integration-tests:
-    permissions: write-all
+    permissions:
+      contents: read
+      pull-requests: write   # netsim_runner posts the report comment
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     uses: "./.github/workflows/netsim_runner.yaml"
     secrets: inherit

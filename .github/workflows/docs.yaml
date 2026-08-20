@@ -15,9 +15,15 @@ concurrency:
 env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   preview_docs:
-    permissions: write-all
+    permissions:
+      contents: write        # actions-gh-pages pushes the preview branch
+      pull-requests: write   # find-comment / create-or-update-comment
     timeout-minutes: 30
     name: Docs preview
     if: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' ) && !github.event.pull_request.head.repo.fork }}

@@ -15,11 +15,14 @@ concurrency:
 env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   clean_docs_branch:
     permissions:
-      issues: write
-      contents: write
+      contents: write        # this job prunes the preview branch with a push
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

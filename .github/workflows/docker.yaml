@@ -39,6 +39,10 @@ on:
 env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
     build_and_publish:
       timeout-minutes: 30

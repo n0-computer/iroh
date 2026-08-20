@@ -96,9 +96,15 @@ env:
   RUSTC_WRAPPER: "sccache"
   IROH_FORCE_STAGING_RELAYS: "1"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   netsim:
-    permissions: write-all
+    permissions:
+      contents: read
+      pull-requests: write   # posts the report comment
     name: Netsim
     timeout-minutes: 45
     runs-on: [self-hosted, linux, X64]
