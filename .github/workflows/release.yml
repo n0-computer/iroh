@@ -74,6 +74,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 1
       - name: Create GitHub release
         id: release
@@ -161,12 +162,14 @@ jobs:
           if: inputs.base_hash == ''
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
           with:
+            persist-credentials: false
             submodules: recursive
 
         - name: Checkout specified commit
           if: inputs.base_hash != ''
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
           with:
+            persist-credentials: false
             ref: ${{ inputs.base_hash }}
             submodules: recursive
 
