@@ -175,7 +175,7 @@ impl PathStateSender {
         let id = handle.id();
         let remote_addr: TransportAddr = network_path.remote().into();
         let local_addr = network_path.local();
-        {
+        let replaced = {
             let mut state = self.shared.state.lock().expect("poisoned");
             let entry = PathData {
                 handle,
@@ -183,10 +183,16 @@ impl PathStateSender {
                 local_addr: local_addr.clone(),
             };
             match state.list.iter().position(|e| e.handle.id() == id) {
-                Some(idx) => state.list[idx] = entry,
-                None => state.list.push(entry),
+                Some(idx) => Some(std::mem::replace(&mut state.list[idx], entry)),
+                None => {
+                    state.list.push(entry);
+                    None
+                }
             }
-        }
+        };
+        // Dropped outside the guard: `WeakPathHandle::drop` can reach noq's
+        // connection lock, whose own `lock()` panics on poison.
+        drop(replaced);
         self.shared.notify.notify_waiters();
         let _ = self.events.send(PathEvent::Opened {
             id,
@@ -256,39 +262,48 @@ impl PathStateSender {
     ///
     /// [`WeakPathHandle`]: noq::WeakPathHandle
     pub(super) fn close(self, closed: noq::Closed) {
-        let mut state = self.shared.state.lock().expect("poisoned");
-        if !state.closed {
-            for path in state.list.iter() {
-                if let Some(stats) = closed
-                    .path_stats
-                    .iter()
-                    .find(|(id, _stats)| *id == path.handle.id())
-                    .map(|(_id, stats)| stats)
-                {
-                    let _ = self.events.send(PathEvent::Closed {
-                        id: path.handle.id(),
-                        remote_addr: path.remote_addr.clone(),
-                        local_addr: path.local_addr.clone(),
-                        last_stats: Box::new(*stats),
-                    });
-                } else {
-                    warn!(
-                        "Connection close event is missing path stats for path {}",
-                        path.handle.id()
-                    );
-                }
+        // The guard is not held across `events.send` or `warn!`: both run consumer
+        // code, and a panic there would poison this mutex before `Drop` re-enters it.
+        let paths = {
+            let state = self.shared.state.lock().expect("poisoned");
+            if state.closed {
+                return;
             }
-            state.closed = true;
-            self.shared.notify.notify_waiters();
+            state.list.clone()
+        };
+        for path in paths {
+            let id = path.handle.id();
+            if let Some((_id, stats)) = closed.path_stats.iter().find(|(sid, _)| *sid == id) {
+                let _ = self.events.send(PathEvent::Closed {
+                    id,
+                    remote_addr: path.remote_addr,
+                    local_addr: path.local_addr,
+                    last_stats: Box::new(*stats),
+                });
+            } else {
+                warn!("Connection close event is missing path stats for path {id}");
+            }
         }
+        // `closed` is set only once the terminal events are queued, so a
+        // `PathListStream` cannot observe the close and end before them.
+        self.shared.state.lock().expect("poisoned").closed = true;
+        self.shared.notify.notify_waiters();
     }
 }
 
 impl Drop for PathStateSender {
     fn drop(&mut self) {
-        let mut state = self.shared.state.lock().expect("poisoned");
-        if !state.closed {
+        // Recover rather than panic: a panic in a `Drop` during another unwind is
+        // a double panic and aborts the process. This only writes `closed`, never
+        // reads, so a torn snapshot cannot affect it; `notify_waiters` runs
+        // consumer wakers and so stays outside the critical section.
+        let was_open = {
+            let mut state = self.shared.state.lock().unwrap_or_else(|e| e.into_inner());
+            let was_open = !state.closed;
             state.closed = true;
+            was_open
+        };
+        if was_open {
             self.shared.notify.notify_waiters();
         }
     }
@@ -552,5 +567,30 @@ impl Stream for PathEventStream {
             Ok(event) => Some(event),
             Err(BroadcastStreamRecvError::Lagged(missed)) => Some(PathEvent::Lagged { missed }),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test: `Drop` must tolerate poison left by a panic elsewhere.
+    #[test]
+    fn drop_tolerates_a_poisoned_state_lock() {
+        let (sender, _receiver) = PathStateSender::new();
+        let shared = sender.shared.clone();
+
+        // Poison the mutex the way a panic under any other lock site would.
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = shared.state.lock().expect("not yet poisoned");
+            panic!("poisoning the state lock");
+        });
+        assert!(shared.state.is_poisoned());
+
+        drop(sender);
+
+        // Still marked closed, so a reader waiting on `notify` is released.
+        let state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(state.closed);
     }
 }
