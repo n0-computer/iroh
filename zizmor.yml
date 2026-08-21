@@ -1,9 +1,11 @@
 rules:
   github-app:
     ignore:
-      # Permissions are scoped; the install stays owner-wide because the bot
-      # sweeps every repo in REPOS_LIST and an explicit list breaks the run as
-      # soon as one of them lacks the app.
+      # The token itself is least-privilege: issues, pull-requests and
+      # organization-projects write only, contents deliberately omitted. What
+      # zizmor flags is the install scope, which stays owner-wide because the
+      # bot sweeps every repo in REPOS_LIST and an explicit `repositories:`
+      # list fails the whole run as soon as one of them lacks the app.
       - project_sync.yaml
   cache-poisoning:
     ignore:

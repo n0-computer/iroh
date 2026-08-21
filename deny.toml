@@ -20,8 +20,13 @@ allow = [
 
 
 [advisories]
-# Yanking is how the 2026-08-20 arrayref attack was staged: yank every version
-# satisfying a range so the malicious upload is the only one left.
+# Explicit rather than load-bearing: `warn` is the default and the deny job
+# already passes -Dwarnings. Note this is not a defence against how the
+# 2026-08-20 arrayref attack was staged -- yanking every good version so that
+# fresh resolves move onto the malicious upload. Refusing yanked crates does
+# not help there; the committed lock files are what pin us off that path. All
+# this buys is a hard failure in the deny job instead of a warning to spot in
+# the log.
 yanked = "deny"
 ignore = [
   "RUSTSEC-2024-0436", # paste -> netlink-packet-core
