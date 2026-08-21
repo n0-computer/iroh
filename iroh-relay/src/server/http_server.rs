@@ -855,6 +855,7 @@ impl Inner {
 
         let io = RateLimited::from_watcher(io, self.rate_limit.subscribe(), self.metrics.clone())
             .map_err(|err| e!(AcceptError::RateLimitingMisconfigured, err))?;
+        let limited_watcher = io.limited_watcher();
 
         // Create a server builder with default config
         let websocket = tokio_websockets::ServerBuilder::new()
@@ -887,6 +888,7 @@ impl Inner {
         trace!("accept: build client conn");
         let mut client_conn_builder = Config::new(guard, io, protocol_version);
         client_conn_builder.write_timeout = self.write_timeout;
+        client_conn_builder.rate_limited = Some(limited_watcher);
         trace!(endpoint_id = %request.endpoint_id().fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
