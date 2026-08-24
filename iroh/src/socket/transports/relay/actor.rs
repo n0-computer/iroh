@@ -47,7 +47,7 @@ use iroh_relay::{
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     FuturesUnorderedBounded, MaybeFuture, SinkExt, StreamExt,
-    task::JoinSet,
+    task::{JoinError, JoinSet},
     time::{self, Duration, Instant, MissedTickBehavior},
 };
 use n0_watcher::Watchable;
@@ -1089,16 +1089,7 @@ impl RelayActor {
                     break;
                 }
                 Some(res) = self.active_relay_tasks.join_next() => {
-                    match res {
-                        Ok(()) => (),
-                        Err(err) if err.is_panic() => {
-                            error!("ActiveRelayActor task panicked: {err:#?}");
-                        }
-                        Err(err) if err.is_cancelled() => {
-                            error!("ActiveRelayActor cancelled: {err:#?}");
-                        }
-                        Err(err) => error!("ActiveRelayActor failed: {err:#?}"),
-                    }
+                    log_active_relay_task_result(res);
                     self.reap_active_relays();
                 }
                 msg = receiver.recv() => {
@@ -1401,8 +1392,11 @@ impl RelayActor {
     /// Stops all [`ActiveRelayActor`]s and awaits for them to finish.
     async fn close_all_active_relays(&mut self) {
         self.cancel_token.cancel();
-        let tasks = std::mem::take(&mut self.active_relay_tasks);
-        tasks.join_all().await;
+        let mut tasks = std::mem::take(&mut self.active_relay_tasks);
+        // Drain instead of `join_all`, which panics on any `JoinError`.
+        while let Some(res) = tasks.join_next().await {
+            log_active_relay_task_result(res);
+        }
 
         self.log_active_relay();
     }
@@ -1425,6 +1419,16 @@ impl RelayActor {
         ids.sort();
 
         ids.into_iter()
+    }
+}
+
+/// Reports how one [`ActiveRelayActor`] task ended, in the run loop and on shutdown.
+fn log_active_relay_task_result(res: Result<(), JoinError>) {
+    match res {
+        Ok(()) => (),
+        Err(err) if err.is_panic() => error!("ActiveRelayActor task panicked: {err:#?}"),
+        Err(err) if err.is_cancelled() => error!("ActiveRelayActor cancelled: {err:#?}"),
+        Err(err) => error!("ActiveRelayActor failed: {err:#?}"),
     }
 }
 
@@ -1467,10 +1471,41 @@ mod tests {
 
     use super::{
         ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        RELAY_INACTIVE_CLEANUP_TIME, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem,
-        UNDELIVERABLE_DATAGRAM_TIMEOUT,
+        Config, RELAY_INACTIVE_CLEANUP_TIME, RelayActor, RelayConnectionOptions, RelayMap,
+        RelayRecvDatagram, RelaySendItem, UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
     use crate::{dns::DnsResolver, metrics::SocketMetrics, test_utils};
+
+    /// Abort stands in for the runtime drop that triggers this in the wild:
+    /// `join_next` yields a cancelled `JoinError` either way.
+    #[tokio::test]
+    #[traced_test]
+    async fn close_all_active_relays_survives_a_cancelled_task() {
+        let (relay_datagram_recv_queue, _recv_rx) = mpsc::channel(1);
+        let config = Config {
+            my_relay: Default::default(),
+            secret_key: SecretKey::from_bytes(&[0u8; 32]),
+            dns_resolver: DnsResolver::new(),
+            proxy_url: None,
+            ipv6_reported: Arc::new(AtomicBool::new(false)),
+            tls_config: CaTlsConfig::insecure_skip_verify()
+                .client_config(default_provider())
+                .expect("infallible"),
+            metrics: Default::default(),
+            relay_map: RelayMap::empty(),
+        };
+        let mut actor =
+            RelayActor::new(config, relay_datagram_recv_queue, CancellationToken::new());
+
+        let handle = actor.active_relay_tasks.spawn(std::future::pending::<()>());
+        handle.abort();
+
+        // Panicked with `join_all`.
+        actor.close_all_active_relays().await;
+
+        assert!(actor.active_relay_tasks.is_empty());
+        assert!(logs_contain("ActiveRelayActor cancelled"));
+    }
 
     /// Starts a new [`ActiveRelayActor`].
     #[allow(clippy::too_many_arguments)]
