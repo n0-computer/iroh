@@ -34,12 +34,24 @@ env:
   RUSTC_WRAPPER: "sccache"
   IROH_FORCE_STAGING_RELAYS: "1"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   netsim-release:
-    permissions: write-all
+    permissions:
+      contents: read
+      pull-requests: write   # netsim_runner posts the report comment
     if: ${{github.ref_name=='main' && github.event_name == 'push'}}
     uses: './.github/workflows/netsim_runner.yaml'
-    secrets: inherit
+    secrets:
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_REPORT_BUCKET: ${{ secrets.S3_REPORT_BUCKET }}
+      METRO_TOKEN: ${{ secrets.METRO_TOKEN }}
+      METRO_ENDPOINT: ${{ secrets.METRO_ENDPOINT }}
     with:
       branch: "main"
       max_workers: 1
@@ -50,10 +62,18 @@ jobs:
       build_profile: "optimized-release"
 
   netsim-perf:
-    permissions: write-all
+    permissions:
+      contents: read
+      pull-requests: write   # netsim_runner posts the report comment
     if: ${{github.event_name != 'push'}}
     uses: './.github/workflows/netsim_runner.yaml'
-    secrets: inherit
+    secrets:
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_REPORT_BUCKET: ${{ secrets.S3_REPORT_BUCKET }}
+      METRO_TOKEN: ${{ secrets.METRO_TOKEN }}
+      METRO_ENDPOINT: ${{ secrets.METRO_ENDPOINT }}
     with:
       branch: ${{inputs.branch}}
       max_workers: 1

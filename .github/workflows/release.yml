@@ -45,8 +45,14 @@ env:
   BIN_NAMES: "iroh-relay,iroh-dns-server"
   RELEASE_VERSION: ${{ github.event.inputs.release_version }}
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
     create-release:
+      permissions:
+        contents: write      # drafts the GitHub release
       name: create-release
       runs-on: ubuntu-latest
       outputs:
@@ -56,23 +62,26 @@ jobs:
       - name: Get the release version from the tag or input
         shell: bash
         if: env.RELEASE_VERSION == ''
+        env:
+          INPUT_RELEASE_VERSION: ${{ github.event.inputs.release_version }}
         run: |
-          if "${{ github.event.inputs.release_version }}" != ""; then
-            echo "RELEASE_VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_ENV
-            echo "version is: ${{ env.RELEASE_VERSION }}"
+          if [ -n "$INPUT_RELEASE_VERSION" ]; then
+            version="$INPUT_RELEASE_VERSION"
           else
             # See: https://github.community/t5/GitHub-Actions/How-to-get-just-the-tag-name/m-p/32167/highlight/true#M1027
-            echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-            echo "version is: ${{ env.RELEASE_VERSION }}"
+            version="${GITHUB_REF#refs/tags/}"
           fi
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "version is: $version"
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 1
       - name: Create GitHub release
         id: release
         if: github.event.inputs.create_release == 'true' || github.event_name == 'push'
-        uses: actions/create-release@v1
+        uses: actions/create-release@0cb9c9b65d5d1901c1f53e5e66eaf4afd303e70e # v1.1.4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -81,6 +90,8 @@ jobs:
           release_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version }}
 
     build_release:
+        permissions:
+          contents: write    # attaches binaries to the release
         timeout-minutes: 60
         name: Build release binaries
         needs: create-release
@@ -151,14 +162,16 @@ jobs:
         steps:
         - name: Checkout
           if: inputs.base_hash == ''
-          uses: actions/checkout@v7
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
           with:
+            persist-credentials: false
             submodules: recursive
 
         - name: Checkout specified commit
           if: inputs.base_hash != ''
-          uses: actions/checkout@v7
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
           with:
+            persist-credentials: false
             ref: ${{ inputs.base_hash }}
             submodules: recursive
 
@@ -179,7 +192,7 @@ jobs:
 
         - name: Install Rust
           if: matrix.os != 'windows-latest'
-          uses: dtolnay/rust-toolchain@stable
+          uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
           with:
             toolchain: ${{ matrix.rust }}
             targets: ${{ matrix.cargo_targets }}
@@ -205,16 +218,16 @@ jobs:
               # process segfaults in `_start_c` before reaching `main`.
               export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C relocation-model=static -C link-arg=-static"
             fi
-            cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
+            cargo build --locked --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
 
         - name: build release
           if: matrix.os == 'windows-latest'
-          run: cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
+          run: cargo build --locked --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
 
         - name: Cache AWS CLI
           if: matrix.os != 'windows-latest'
           id: cache-awscli
-          uses: actions/cache@v6
+          uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
           with:
             path: ~/awscli
             key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
@@ -275,28 +288,34 @@ jobs:
         - name: Build archives
           if: matrix.os != 'windows-latest'
           shell: bash
+          env:
+            VERSION: ${{ needs.create-release.outputs.release_version }}
+            TARGET: ${{ matrix.cargo_targets }}
           run: |
-            IFS=',' read -ra BIN_NAMES <<< "${{ env.BIN_NAMES }}"
+            IFS=',' read -ra BIN_NAMES <<< "$BIN_NAMES"
             ASSETS=""
             for BIN_NAME in "${BIN_NAMES[@]}"; do
-              staging="$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
+              staging="$BIN_NAME-$VERSION-$TARGET"
               mkdir -p "$staging"
-              cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
+              cp "target/$TARGET/optimized-release/$BIN_NAME" "$staging/"
               tar czf "$staging.tar.gz" -C "$staging" .
               ASSETS+="$staging.tar.gz,"
             done
-            echo "ASSET=$(echo $ASSETS | sed 's/,$//')" >> $GITHUB_ENV
+            echo "ASSET=${ASSETS%,}" >> "$GITHUB_ENV"
 
         - name: Build archives (windows)
           if: matrix.os == 'windows-latest'
           shell: pwsh
+          env:
+            VERSION: ${{ needs.create-release.outputs.release_version }}
+            TARGET: ${{ matrix.cargo_targets }}
           run: |
-            $BIN_NAMES = "${{ env.BIN_NAMES }}".Split(',')
+            $BIN_NAMES = $env:BIN_NAMES.Split(',')
             $ASSETS = @()
             foreach ($BIN_NAME in $BIN_NAMES) {
-              $staging = "$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
+              $staging = "$BIN_NAME-$($env:VERSION)-$($env:TARGET)"
               New-Item -ItemType Directory -Force -Path "$staging"
-              Copy-Item -Path "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME.exe" -Destination "$staging/"
+              Copy-Item -Path "target/$($env:TARGET)/optimized-release/$BIN_NAME.exe" -Destination "$staging/"
               Set-Location -Path "$staging"
               Compress-Archive -Path * -DestinationPath "../$staging.zip"
               $ASSETS += "$staging.zip"
@@ -305,14 +324,14 @@ jobs:
             $ASSETS = $ASSETS -join ','
             Add-Content -Path $env:GITHUB_ENV -Value "ASSET=$ASSETS"
 
-        - uses: n0-computer/actions-upload-release-asset@main
+        - uses: n0-computer/actions-upload-release-asset@2613dacb5369f21a7e14f8eedce32ea9f88bb19f # main
           if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
           with:
             upload_url: ${{ github.event.inputs.upload_url || needs.create-release.outputs.upload_url }}
             asset_path: ${{ env.ASSET }}
 
         - name: attach artifacts
-          uses: actions/upload-artifact@v7
+          uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
           if : matrix.os != 'windows-latest'
           with:
             name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}${{ matrix.libc == 'musl' && '-musl' || '' }}-bundle
@@ -321,7 +340,7 @@ jobs:
             retention-days: 1
 
         - name: attach artifacts
-          uses: actions/upload-artifact@v7
+          uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
           if : matrix.os == 'windows-latest'
           with:
             name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle
@@ -332,7 +351,11 @@ jobs:
     docker:
       needs: build_release
       uses: './.github/workflows/docker.yaml'
-      secrets: inherit
+      secrets:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+        S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
       with:
         release_version: ${{ needs.build_release.outputs.release_version }}
         base_hash: ${{ needs.build_release.outputs.base_hash }}

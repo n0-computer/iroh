@@ -165,6 +165,10 @@ on:
         description: PAT with read:org scope for runner availability query
         required: false
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   pick:
     name: Pick runner (live availability, per-slot)

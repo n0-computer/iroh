@@ -15,17 +15,22 @@ concurrency:
 env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   clean_docs_branch:
     permissions:
-      issues: write
-      contents: write
+      contents: write        # this job prunes the preview branch with a push
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: generated-docs-preview
+          # stays on: this job prunes the branch with a bare `git push`
+          persist-credentials: true
       - name: Clean docs branch
         run: |
           git config user.name "github-actions[bot]"
