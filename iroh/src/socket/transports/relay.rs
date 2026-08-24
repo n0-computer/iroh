@@ -124,15 +124,30 @@ impl RelayTransport {
                 .segment_size
                 .map_or(1, |ss| buf_out.len() / u16::from(ss) as usize);
             let datagrams = dm.datagrams.take_segments(num_segments);
+            let empty_now = datagrams.contents.is_empty();
             let empty_after = dm.datagrams.contents.is_empty();
+
             let dm = RelayRecvDatagram {
                 datagrams,
                 src: dm.src,
                 url: dm.url.clone(),
             };
-            // take_segments can leave `self.pending_item` empty, in that case we clear it
-            if empty_after {
+
+            // If `take_segments` processed the whole contents (empty_after) or none at all
+            // (empty_now) we shouldn't process what's left in `self.pending_item`.
+            // In the first case the remaining `pending_item` is empty and can be dropped.
+            // In the second case a single segment could not fit into the buffer, future
+            // calls to `poll_recv` would not change this so drop the `pending_item` with
+            // the oversized segment size.
+            if empty_after || empty_now {
                 self.pending_item = None;
+            }
+            if empty_now {
+                warn!(
+                    noq_buf_len = buf_out.len(),
+                    segment_size = ?dm.datagrams.segment_size,
+                    "dropping received datagram: segment_size too large");
+                continue;
             }
 
             if buf_out.len() < dm.datagrams.contents.len() {
@@ -315,14 +330,23 @@ fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, time::Duration};
+    use std::{
+        collections::BTreeSet,
+        num::NonZeroU16,
+        sync::{Arc, atomic::AtomicBool},
+        time::Duration,
+    };
 
-    use iroh_base::EndpointId;
+    use iroh_base::{EndpointId, SecretKey};
+    use iroh_relay::{
+        RelayMap,
+        tls::{CaTlsConfig, default_provider},
+    };
     use tokio::task::JoinSet;
     use tracing::debug;
 
     use super::*;
-    use crate::defaults::staging;
+    use crate::{defaults::staging, dns::DnsResolver};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_relay_datagram_queue() {
@@ -371,5 +395,68 @@ mod tests {
         {
             panic!("Timeout - not all messages between 0 and {capacity} received.");
         }
+    }
+
+    /// Builds a [`RelayTransport`] that never actually dials a relay (its home
+    /// relay watcher is left unset), just so we get a real `poll_recv` to exercise.
+    fn test_relay_transport() -> RelayTransport {
+        let config = RelayActorConfig {
+            my_relay: HomeRelayWatch::default(),
+            secret_key: SecretKey::from_bytes(&[7u8; 32]),
+            dns_resolver: DnsResolver::new(),
+            proxy_url: None,
+            ipv6_reported: Arc::new(AtomicBool::new(false)),
+            tls_config: CaTlsConfig::insecure_skip_verify()
+                .client_config(default_provider())
+                .expect("infallible"),
+            metrics: Default::default(),
+            relay_map: RelayMap::empty(),
+        };
+        RelayTransport::new(config, CancellationToken::new())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn progress_is_made_for_large_segment_size_datagram_batch() {
+        let mut transport = test_relay_transport();
+
+        let url = staging::default_na_east_relay().url;
+        let src = EndpointId::from_bytes(&[3u8; 32]).unwrap();
+
+        // Fat datagram batch with segment size larger than the buffer
+        let datagrams = Datagrams {
+            ecn: None,
+            segment_size: NonZeroU16::new(2000),
+            contents: Bytes::from(vec![0u8; 4000]),
+        };
+
+        transport.pending_item = Some(RelayRecvDatagram {
+            url,
+            src,
+            datagrams,
+        });
+
+        let waker = std::task::Waker::noop();
+        let mut cx = Context::from_waker(waker);
+
+        // Deliberately smaller than the 2000-byte segment size above
+        let mut storage = [0u8; 1500];
+        let mut metas = [noq_udp::RecvMeta::default()];
+        let mut recv_infos = [RecvInfo::default()];
+
+        let mut progressed = false;
+        // progress does not need to be immediate but within a reasonable number of iterations
+        for _ in 0..10 {
+            let mut bufs = [io::IoSliceMut::new(&mut storage)];
+            match transport.poll_recv(&mut cx, &mut bufs, &mut metas, &mut recv_infos) {
+                Poll::Ready(Ok(_)) | Poll::Pending => {}
+                Poll::Ready(Err(err)) => panic!("poll_recv failed: {err}"),
+            }
+            if transport.pending_item.is_none() {
+                progressed = true;
+                break;
+            }
+        }
+
+        assert!(progressed, "poll_recv made no progress on batch too large");
     }
 }
