@@ -3,7 +3,7 @@
 name: Min Crates
 
 on:
-  # Workflow used by main CI workflow which has the triggers.
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
