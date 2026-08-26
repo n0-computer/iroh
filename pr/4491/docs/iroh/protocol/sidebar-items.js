@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AcceptError","IncomingFilterOutcome"],"struct":["Router","RouterBuilder"],"trait":["DynProtocolHandler","ProtocolHandler"],"type":["IncomingFilter"]};
