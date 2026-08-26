@@ -3,10 +3,7 @@
 name: Min Crates
 
 on:
-  pull_request:
-  merge_group:
-  push:
-    branches: [main]
+  # Workflow used by main CI workflow which has the triggers.
   workflow_dispatch:
 
 concurrency:
