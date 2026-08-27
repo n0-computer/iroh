@@ -168,11 +168,7 @@ async fn check_reachable(ip: IpAddr, ports: Ports) -> Result {
     let name = format!("_iroh.{z32}.irohdns.example.");
     for protocol in [DnsProtocol::Udp, DnsProtocol::Tcp] {
         let resolver = DnsResolver::builder()
-            .add_nameserver(
-                Nameserver::new(ip)
-                    .with_port(ports.dns)
-                    .with_protocol(protocol),
-            )
+            .add_nameserver(Nameserver::new((ip, ports.dns)).with_protocol(protocol))
             .build();
         let records: Vec<String> = resolver
             .lookup_txt(&name, Duration::from_secs(5))

@@ -430,8 +430,7 @@ mod tests {
             let https_addr = server.https_addr().expect("https is bound");
             DnsResolver::builder()
                 .add_nameserver(
-                    Nameserver::new(https_addr.ip())
-                        .with_port(https_addr.port())
+                    Nameserver::new(https_addr)
                         .with_protocol(DnsProtocol::Https)
                         .with_tls_server_name("localhost"),
                 )

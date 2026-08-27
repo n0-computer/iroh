@@ -273,36 +273,16 @@ pub struct Nameserver {
 }
 
 impl Nameserver {
-    /// Creates a UDP Do53 nameserver addressed by IP.
+    /// Creates a DNS over UDP nameserver addressed by IP.
     ///
     /// This nameserver will be using DNS over UDP on port 53, see [`Self::with_port`],
     /// [`Self::with_protocol`] and [`Self::with_tls_server_name`] to further customise this
     /// nameserver.
-    pub fn new(addr: IpAddr) -> Self {
+    pub fn new(addr: impl Into<SocketAddr>) -> Self {
         Self {
-            addr: (addr, 53).into(),
+            addr: addr.into(),
             protocol: DnsProtocol::Udp,
             server_name: None,
-        }
-    }
-
-    /// Sets the port for the nameserver.
-    ///
-    /// For Do53 this is not usually needed, DoH however will likely require this.
-    ///
-    /// # Returns
-    ///
-    /// A new instance is returned, this struct is essentially a builder for itself.
-    pub fn with_port(self, port: u16) -> Self {
-        let Self {
-            addr,
-            protocol,
-            server_name,
-        } = self;
-        Self {
-            addr: (addr.ip(), port).into(),
-            protocol,
-            server_name,
         }
     }
 
@@ -447,11 +427,8 @@ impl Builder {
     /// [`Self::with_https_nameserver`] instead.
     #[deprecated(since = "1.2.0", note = "Use add_nameserver instead")]
     pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
-        self.nameservers.push(
-            Nameserver::new(addr.ip())
-                .with_port(addr.port())
-                .with_protocol(protocol),
-        );
+        self.nameservers
+            .push(Nameserver::new(addr).with_protocol(protocol));
         self
     }
 
@@ -461,12 +438,11 @@ impl Builder {
         mut self,
         nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
     ) -> Self {
-        self.nameservers
-            .extend(nameservers.into_iter().map(|(addr, protocol)| {
-                Nameserver::new(addr.ip())
-                    .with_port(addr.port())
-                    .with_protocol(protocol)
-            }));
+        self.nameservers.extend(
+            nameservers
+                .into_iter()
+                .map(|(addr, protocol)| Nameserver::new(addr).with_protocol(protocol)),
+        );
         self
     }
 
@@ -735,7 +711,7 @@ impl DnsResolver {
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         Builder::default()
-            .add_nameserver(Nameserver::new(nameserver.ip()).with_port(nameserver.port()))
+            .add_nameserver(Nameserver::new(nameserver))
             .build()
     }
 
@@ -1231,17 +1207,16 @@ pub(crate) mod tests {
 
     #[test]
     fn builder_named_nameservers_carry_server_name() {
-        let nameserver = Nameserver::new(Ipv4Addr::new(1, 1, 1, 1).into()).with_port(443);
+        let addr = SocketAddr::new(Ipv4Addr::new(1, 1, 1, 1).into(), 443);
         let builder = Builder::default()
-            .add_nameserver(nameserver.clone().with_protocol(DnsProtocol::Https))
+            .add_nameserver(Nameserver::new(addr).with_protocol(DnsProtocol::Https))
             .add_nameserver(
-                nameserver
-                    .clone()
+                Nameserver::new(addr)
                     .with_protocol(DnsProtocol::Https)
                     .with_tls_server_name("cloudflare-dns.com"),
             )
             .add_nameserver(
-                nameserver
+                Nameserver::new(addr)
                     .with_protocol(DnsProtocol::Tls)
                     .with_tls_server_name("cloudflare-dns.com"),
             );
