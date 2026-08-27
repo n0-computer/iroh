@@ -265,7 +265,7 @@ impl FallbackMode {
 /// used for the TLS SNI and certificate validation (and as the DoH URL
 /// authority, with the address pinned); otherwise DoT/DoH are addressed by IP.
 #[derive(Debug, Clone)]
-struct Nameserver {
+pub struct Nameserver {
     addr: SocketAddr,
     protocol: DnsProtocol,
     /// Only used for DoT/DoH.
@@ -273,12 +273,80 @@ struct Nameserver {
 }
 
 impl Nameserver {
-    /// Creates a nameserver addressed by IP, with no TLS server name.
-    fn new(addr: SocketAddr, protocol: DnsProtocol) -> Self {
+    /// Creates a UDP Do53 nameserver addressed by IP.
+    ///
+    /// This nameserver will be using DNS over UDP on port 53, see [`Self::with_port`],
+    /// [`Self::with_protocol`] and [`Self::with_tls_server_name`] to further customise this
+    /// nameserver.
+    pub fn new(addr: IpAddr) -> Self {
+        Self {
+            addr: (addr, 53).into(),
+            protocol: DnsProtocol::Udp,
+            server_name: None,
+        }
+    }
+
+    /// Sets the port for the nameserver.
+    ///
+    /// For Do53 this is not usually needed, DoH however will likely require this.
+    ///
+    /// # Returns
+    ///
+    /// A new instance is returned, this struct is essentially a builder for itself.
+    pub fn with_port(self, port: u16) -> Self {
+        let Self {
+            addr,
+            protocol,
+            server_name,
+        } = self;
+        Self {
+            addr: (addr.ip(), port).into(),
+            protocol,
+            server_name,
+        }
+    }
+
+    /// Sets the protocol for the nameserver.
+    ///
+    /// Use this if you want to use DNS over TCP (Do53), TLS (DoT) or HTTPS (DoH). By
+    /// default [`Self::new`] uses DNS over UDP (Do53 as well).
+    ///
+    /// # Returns
+    ///
+    /// A new instance is returned, this struct is essentially a builder for itself.
+    pub fn with_protocol(self, protocol: DnsProtocol) -> Self {
+        let Self {
+            addr,
+            protocol: _,
+            server_name,
+        } = self;
         Self {
             addr,
             protocol,
-            server_name: None,
+            server_name,
+        }
+    }
+
+    /// Sets the TLS server name for the nameserver.
+    ///
+    /// Nameservers are always connected to via IP address. However for the protocols
+    /// running over TLS (DoT & DoH), the server certificate may use a server name rather
+    /// than IP address. When enabled the TLS `ClientHello` will use this server name in the
+    /// SNI.
+    ///
+    /// # Returns
+    ///
+    /// A new instance is returned, this struct is essentially a builder for itself.
+    pub fn with_tls_server_name(self, server_name: impl Into<String>) -> Self {
+        let Self {
+            addr,
+            protocol,
+            server_name: _,
+        } = self;
+        Self {
+            addr,
+            protocol,
+            server_name: Some(server_name.into()),
         }
     }
 
@@ -357,58 +425,48 @@ impl Builder {
         self
     }
 
+    /// Adds a custom nameserver.
+    pub fn add_nameserver(mut self, nameserver: Nameserver) -> Self {
+        self.nameservers.push(nameserver);
+        self
+    }
+
+    /// Adds a list of nameservers.
+    pub fn add_many_nameservers(
+        mut self,
+        nameservers: impl IntoIterator<Item = Nameserver>,
+    ) -> Self {
+        self.nameservers.extend(nameservers);
+        self
+    }
+
     /// Adds a single nameserver, addressed by IP.
     ///
     /// For DNS-over-TLS or DNS-over-HTTPS against a server whose certificate
     /// only covers a hostname, use [`Self::with_tls_nameserver`] or
     /// [`Self::with_https_nameserver`] instead.
+    #[deprecated(since = "1.2.0", note = "Use add_nameserver instead")]
     pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
-        self.nameservers.push(Nameserver::new(addr, protocol));
-        self
-    }
-
-    /// Adds a list of nameservers, each addressed by IP.
-    pub fn with_nameservers(
-        mut self,
-        nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
-    ) -> Self {
-        self.nameservers.extend(
-            nameservers
-                .into_iter()
-                .map(|(addr, protocol)| Nameserver::new(addr, protocol)),
+        self.nameservers.push(
+            Nameserver::new(addr.ip())
+                .with_port(addr.port())
+                .with_protocol(protocol),
         );
         self
     }
 
-    /// Adds a DNS-over-TLS nameserver with an explicit TLS server name.
-    ///
-    /// The connection is made to `addr`, but `server_name` is used for the SNI
-    /// and certificate validation. Use this for providers whose certificates
-    /// cover a hostname rather than the IP.
-    pub fn with_tls_nameserver(mut self, addr: SocketAddr, server_name: impl Into<String>) -> Self {
-        self.nameservers.push(Nameserver {
-            addr,
-            protocol: DnsProtocol::Tls,
-            server_name: Some(server_name.into()),
-        });
-        self
-    }
-
-    /// Adds a DNS-over-HTTPS nameserver with an explicit server name.
-    ///
-    /// The request is sent to `https://<server_name>/dns-query` with the
-    /// connection pinned to `addr`. Use this for providers whose certificates
-    /// cover a hostname rather than the IP.
-    pub fn with_https_nameserver(
+    /// Adds a list of nameservers, each addressed by IP.
+    #[deprecated(since = "1.2.0", note = "Use add_many_nameservers instead")]
+    pub fn with_nameservers(
         mut self,
-        addr: SocketAddr,
-        server_name: impl Into<String>,
+        nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
     ) -> Self {
-        self.nameservers.push(Nameserver {
-            addr,
-            protocol: DnsProtocol::Https,
-            server_name: Some(server_name.into()),
-        });
+        self.nameservers
+            .extend(nameservers.into_iter().map(|(addr, protocol)| {
+                Nameserver::new(addr.ip())
+                    .with_port(addr.port())
+                    .with_protocol(protocol)
+            }));
         self
     }
 
@@ -427,6 +485,9 @@ impl Builder {
     /// The default is [`FallbackMode::Deferred`]: the fallback nameservers are a
     /// lower-priority tier, queried only when the primary nameservers fail or
     /// time out. See [`FallbackMode`] for the other modes.
+    ///
+    /// The primary reason to use this is to use the system DNS configuration by default but
+    /// fallback to other nameservers if that is not available or those servers do not work.
     pub fn with_fallback_mode(mut self, mode: FallbackMode) -> Self {
         self.fallback_mode = mode;
         self
@@ -439,19 +500,16 @@ impl Builder {
         self.with_fallback_mode(FallbackMode::Never)
     }
 
-    /// Replaces the default public-resolver fallback with the given nameservers,
-    /// each addressed by IP.
+    /// Sets the fallback nameservers to use.
+    ///
+    /// It is suggested to use some DoH (DNS over HTTPS) nameservers as fallback.
     ///
     /// Has no effect when the fallback mode is [`FallbackMode::Never`].
     pub fn with_fallback_nameservers(
         mut self,
-        nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
+        nameservers: impl IntoIterator<Item = Nameserver>,
     ) -> Self {
-        self.fallback_nameservers.extend(
-            nameservers
-                .into_iter()
-                .map(|(addr, protocol)| Nameserver::new(addr, protocol)),
-        );
+        self.fallback_nameservers.extend(nameservers);
         self
     }
 
@@ -677,7 +735,7 @@ impl DnsResolver {
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         Builder::default()
-            .with_nameserver(nameserver, DnsProtocol::Udp)
+            .add_nameserver(Nameserver::new(nameserver.ip()).with_port(nameserver.port()))
             .build()
     }
 
@@ -1173,11 +1231,20 @@ pub(crate) mod tests {
 
     #[test]
     fn builder_named_nameservers_carry_server_name() {
-        let addr = SocketAddr::new(std::net::Ipv4Addr::new(1, 1, 1, 1).into(), 443);
+        let nameserver = Nameserver::new(Ipv4Addr::new(1, 1, 1, 1).into()).with_port(443);
         let builder = Builder::default()
-            .with_nameserver(addr, DnsProtocol::Https)
-            .with_https_nameserver(addr, "cloudflare-dns.com")
-            .with_tls_nameserver(addr, "cloudflare-dns.com");
+            .add_nameserver(nameserver.clone().with_protocol(DnsProtocol::Https))
+            .add_nameserver(
+                nameserver
+                    .clone()
+                    .with_protocol(DnsProtocol::Https)
+                    .with_tls_server_name("cloudflare-dns.com"),
+            )
+            .add_nameserver(
+                nameserver
+                    .with_protocol(DnsProtocol::Tls)
+                    .with_tls_server_name("cloudflare-dns.com"),
+            );
         let ns = &builder.nameservers;
         assert_eq!(ns[0].server_name, None);
         assert_eq!(ns[1].protocol, DnsProtocol::Https);

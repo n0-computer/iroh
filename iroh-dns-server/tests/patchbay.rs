@@ -16,11 +16,9 @@
 // via a cfg directive
 #![cfg(all(target_os = "linux", not(skip_patchbay)))]
 
-use std::{
-    net::{IpAddr, SocketAddr},
-    time::Duration,
-};
+use std::{net::IpAddr, time::Duration};
 
+use iroh::dns::Nameserver;
 use iroh_base::SecretKey;
 use iroh_dns::{
     dns::{DnsProtocol, DnsResolver},
@@ -170,7 +168,11 @@ async fn check_reachable(ip: IpAddr, ports: Ports) -> Result {
     let name = format!("_iroh.{z32}.irohdns.example.");
     for protocol in [DnsProtocol::Udp, DnsProtocol::Tcp] {
         let resolver = DnsResolver::builder()
-            .with_nameserver(SocketAddr::new(ip, ports.dns), protocol)
+            .add_nameserver(
+                Nameserver::new(ip)
+                    .with_port(ports.dns)
+                    .with_protocol(protocol),
+            )
             .build();
         let records: Vec<String> = resolver
             .lookup_txt(&name, Duration::from_secs(5))
