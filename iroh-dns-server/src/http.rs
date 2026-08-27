@@ -332,7 +332,7 @@ mod tests {
     use iroh::{
         RelayUrl, SecretKey,
         address_lookup::{EndpointInfo, PkarrRelayClient},
-        dns::{DNS_TIMEOUT, DnsResolver},
+        dns::{DNS_TIMEOUT, DnsResolver, NameserverConfig},
         tls::{CaTlsConfig, default_provider},
     };
     use n0_error::StdResultExt;
@@ -429,7 +429,10 @@ mod tests {
         let resolver = {
             let https_addr = server.https_addr().expect("https is bound");
             DnsResolver::builder()
-                .with_https_nameserver(https_addr, "localhost")
+                .nameserver_config(NameserverConfig::https(
+                    https_addr,
+                    Some("localhost".into()),
+                ))
                 .tls_client_config(self::tls::insecure_tls_config())
                 .disable_fallback()
                 .build()
