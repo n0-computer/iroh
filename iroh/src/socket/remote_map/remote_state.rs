@@ -11,6 +11,7 @@ use n0_error::StackResultExt;
 use n0_future::{
     FuturesUnordered, MaybeFuture, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
+    future::now_or_never,
     task::JoinSet,
     time::{self, Duration, Instant},
 };
@@ -100,7 +101,8 @@ pub(super) struct RemoteStateActor {
     connections: FxHashMap<ConnId, ConnectionState>,
     /// State of the actor and hooks into the rest of the remote endpoint.
     ///
-    /// This is on a separate struct so that we can have parallel mutable borrows to `connections` and `state`.
+    /// This is on a separate struct so that we can have parallel mutable borrows to
+    /// `connections` and `state`.
     state: State,
 }
 
@@ -602,9 +604,10 @@ impl RemoteStateActor {
                     return;
                 };
 
-                // We track all known remote addresses for the peer in `State::paths`. The paths are tracked
-                // by remote address only (we ignore the local IP). Therefore, we mark a remote addr as abandoned
-                // in the remote-global state only once no connections have any path to that remote addr.
+                // We track all known remote addresses for the peer in `State::paths`. The
+                // paths are tracked by remote address only (we ignore the local
+                // IP). Therefore, we mark a remote addr as abandoned in the remote-global
+                // state only once no connections have any path to that remote addr.
                 if !conn_state
                     .paths
                     .values()
@@ -681,8 +684,9 @@ impl RemoteStateActor {
     /// - Sets the selected path to [`PathStatus::Available`]
     fn apply_selected_path(&mut self) {
         let Some(selected) = self.state.selected_path.clone() else {
-            // We can't open the selected path on all paths if we don't have one yet.
-            // And we can't close all "unselected" paths either, because we don't know which one is selected.
+            // We can't open the selected path on all paths if we don't have one yet.  And
+            // we can't close all "unselected" paths either, because we don't know which one
+            // is selected.
             return;
         };
 
@@ -695,7 +699,7 @@ impl RemoteStateActor {
             self.state
                 .open_path_on_conn(*conn_id, conn_state, &conn, &selected);
 
-            for (path_id, path_remote) in conn_state.paths.iter() {
+            for (path_id, path_fourtuple) in conn_state.paths.iter() {
                 let Some(path) = conn.path(*path_id) else {
                     continue;
                 };
@@ -706,11 +710,11 @@ impl RemoteStateActor {
                 // to avoid the client and server independently closing different paths
                 // and racing to abandon the last one.
                 if conn.side().is_client()
-                    && path_remote.is_ip()
-                    && path_remote != &selected
+                    && path_fourtuple.is_ip()
+                    && path_fourtuple != &selected
                     && conn_state.paths.values().filter(|a| a.is_ip()).count() > 1
                 {
-                    trace!(?path_remote, %conn_id, %path_id, "closing direct path");
+                    trace!(?path_fourtuple, %conn_id, %path_id, "closing direct path");
                     match path.close() {
                         Err(noq_proto::ClosePathError::MultipathNotNegotiated) => {
                             error!("multipath not negotiated");
@@ -726,8 +730,9 @@ impl RemoteStateActor {
                     continue;
                 }
 
-                // Set path status: The selected path becomes Available, all other paths become Backup.
-                self.state.set_path_status(*conn_id, &path, path_remote);
+                // Set path status: The selected path becomes Available, all other paths
+                // become Backup.
+                self.state.set_path_status(*conn_id, &path, path_fourtuple);
             }
 
             // Record the new selected path in the path watcher.
@@ -1215,7 +1220,11 @@ struct HolepunchAttempt {
 #[display("{_0}")]
 struct ConnId(usize);
 
-/// State about one connection.
+/// A connection managed by the [`RemoteStateActor`].
+///
+/// - A handle to the connection.
+/// - The paths we know about.
+/// And some stuff to make observers happy.
 #[derive(Debug)]
 struct ConnectionState {
     /// Weak handle to the connection.
@@ -1227,6 +1236,13 @@ struct ConnectionState {
     /// [`Connection`]: crate::endpoint::Connection
     path_state: PathStateSender,
     /// The open paths that exist on this connection.
+    ///
+    /// This might be lagging from the connection state inside noq itself as this can only
+    /// be updated once we received the event from noq.
+    ///
+    /// IP paths *should* have the local IP address filled in by the time we receive the
+    /// event. The noq established event is only emitted once at least one datagram is
+    /// received from the peer on the path.
     paths: FxHashMap<PathId, transports::FourTuple>,
     /// Whether this connection has ever had a direct path.
     ///
@@ -1466,15 +1482,6 @@ impl PathSelection {
     /// Returns `None` when nothing has been selected.
     pub(crate) fn selected(&self) -> Option<&transports::FourTuple> {
         self.selection.as_ref()
-    }
-}
-
-/// Poll a future once, like n0_future::future::poll_once but sync.
-fn now_or_never<T, F: Future<Output = T>>(fut: F) -> Option<T> {
-    let fut = std::pin::pin!(fut);
-    match fut.poll(&mut std::task::Context::from_waker(std::task::Waker::noop())) {
-        Poll::Ready(res) => Some(res),
-        Poll::Pending => None,
     }
 }
 

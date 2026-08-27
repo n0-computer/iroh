@@ -890,7 +890,10 @@ impl Addr {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum LocalTransportAddr {
-    /// The local IP, if the OS surfaced it.
+    /// The local IP.
+    ///
+    /// This is almost always present, only some very old operating systems do not support
+    /// it.
     Ip(Option<IpAddr>),
     /// The relay over which this network path is connected.
     Relay(RelayUrl),
