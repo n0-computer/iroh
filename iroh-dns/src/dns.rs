@@ -214,9 +214,9 @@ impl<E: StackError + 'static> StaggeredError<E> {
 #[derive(Debug, Clone, Default)]
 pub struct Builder {
     use_system_defaults: bool,
-    nameservers: Vec<Nameserver>,
+    nameservers: Vec<NameserverConfig>,
     fallback_mode: FallbackMode,
-    fallback_nameservers: Vec<Nameserver>,
+    fallback_nameservers: Vec<NameserverConfig>,
     #[cfg(not(wasm_browser))]
     tls_client_config: Option<rustls::ClientConfig>,
 }
@@ -265,14 +265,14 @@ impl FallbackMode {
 /// used for the TLS SNI and certificate validation (and as the DoH URL
 /// authority, with the address pinned); otherwise DoT/DoH are addressed by IP.
 #[derive(Debug, Clone)]
-pub struct Nameserver {
+pub struct NameserverConfig {
     addr: SocketAddr,
     protocol: DnsProtocol,
     /// Only used for DoT/DoH.
     server_name: Option<String>,
 }
 
-impl Nameserver {
+impl NameserverConfig {
     /// Creates a DNS over UDP nameserver addressed by IP.
     ///
     /// This nameserver will be using DNS over UDP on port 53, see [`Self::with_port`],
@@ -406,7 +406,7 @@ impl Builder {
     }
 
     /// Adds a custom nameserver.
-    pub fn add_nameserver(mut self, nameserver: Nameserver) -> Self {
+    pub fn add_nameserver(mut self, nameserver: NameserverConfig) -> Self {
         self.nameservers.push(nameserver);
         self
     }
@@ -414,7 +414,7 @@ impl Builder {
     /// Adds a list of nameservers.
     pub fn add_many_nameservers(
         mut self,
-        nameservers: impl IntoIterator<Item = Nameserver>,
+        nameservers: impl IntoIterator<Item = NameserverConfig>,
     ) -> Self {
         self.nameservers.extend(nameservers);
         self
@@ -428,7 +428,7 @@ impl Builder {
     #[deprecated(since = "1.2.0", note = "Use add_nameserver instead")]
     pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
         self.nameservers
-            .push(Nameserver::new(addr).with_protocol(protocol));
+            .push(NameserverConfig::new(addr).with_protocol(protocol));
         self
     }
 
@@ -441,7 +441,7 @@ impl Builder {
         self.nameservers.extend(
             nameservers
                 .into_iter()
-                .map(|(addr, protocol)| Nameserver::new(addr).with_protocol(protocol)),
+                .map(|(addr, protocol)| NameserverConfig::new(addr).with_protocol(protocol)),
         );
         self
     }
@@ -483,7 +483,7 @@ impl Builder {
     /// Has no effect when the fallback mode is [`FallbackMode::Never`].
     pub fn with_fallback_nameservers(
         mut self,
-        nameservers: impl IntoIterator<Item = Nameserver>,
+        nameservers: impl IntoIterator<Item = NameserverConfig>,
     ) -> Self {
         self.fallback_nameservers.extend(nameservers);
         self
@@ -503,7 +503,7 @@ impl Builder {
             builder = builder.fallback_nameservers(
                 self.fallback_nameservers
                     .into_iter()
-                    .map(Nameserver::into_inner),
+                    .map(NameserverConfig::into_inner),
             );
         }
         #[cfg(not(wasm_browser))]
@@ -711,7 +711,7 @@ impl DnsResolver {
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         Builder::default()
-            .add_nameserver(Nameserver::new(nameserver))
+            .add_nameserver(NameserverConfig::new(nameserver))
             .build()
     }
 
@@ -1209,14 +1209,14 @@ pub(crate) mod tests {
     fn builder_named_nameservers_carry_server_name() {
         let addr = SocketAddr::new(Ipv4Addr::new(1, 1, 1, 1).into(), 443);
         let builder = Builder::default()
-            .add_nameserver(Nameserver::new(addr).with_protocol(DnsProtocol::Https))
+            .add_nameserver(NameserverConfig::new(addr).with_protocol(DnsProtocol::Https))
             .add_nameserver(
-                Nameserver::new(addr)
+                NameserverConfig::new(addr)
                     .with_protocol(DnsProtocol::Https)
                     .with_tls_server_name("cloudflare-dns.com"),
             )
             .add_nameserver(
-                Nameserver::new(addr)
+                NameserverConfig::new(addr)
                     .with_protocol(DnsProtocol::Tls)
                     .with_tls_server_name("cloudflare-dns.com"),
             );
