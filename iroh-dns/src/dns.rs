@@ -276,7 +276,7 @@ impl NameserverConfig {
         }
     }
 
-    /// Creates a new nameserver config for DNS over UDP.
+    /// Creates a new nameserver config for DNS over UDP (Do53).
     ///
     /// This nameserver will be using DNS over UDP on port 53, see
     /// [`Self::with_port`] to further customise this nameserver.
