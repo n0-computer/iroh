@@ -312,8 +312,6 @@ impl NameserverConfig {
 
     /// Sets the port for the nameserver.
     ///
-    /// For Do53 this is not usually needed, DoH however will likely require this.
-    ///
     /// # Returns
     ///
     /// A new instance is returned, this struct is essentially a builder for itself.
@@ -450,13 +448,13 @@ impl Builder {
     }
 
     /// Adds a single nameserver config.
-    pub fn nameserver_config(mut self, nameserver: NameserverConfig) -> Self {
+    pub fn add_nameserver_config(mut self, nameserver: NameserverConfig) -> Self {
         self.nameservers.push(nameserver);
         self
     }
 
     /// Adds a list of nameserver configs.
-    pub fn nameserver_configs(
+    pub fn add_nameserver_configs(
         mut self,
         nameservers: impl IntoIterator<Item = NameserverConfig>,
     ) -> Self {
@@ -728,7 +726,9 @@ impl DnsResolver {
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         Builder::default()
-            .nameserver_config(NameserverConfig::udp(nameserver.ip()).with_port(nameserver.port()))
+            .add_nameserver_config(
+                NameserverConfig::udp(nameserver.ip()).with_port(nameserver.port()),
+            )
             .build()
     }
 
@@ -1226,10 +1226,10 @@ pub(crate) mod tests {
     fn builder_named_nameservers_carry_server_name() {
         let addr = SocketAddr::new(std::net::Ipv4Addr::new(1, 1, 1, 1).into(), 443);
         let builder = Builder::default()
-            .nameserver_config(
+            .add_nameserver_config(
                 NameserverConfig::https(addr.ip()).with_tls_server_name("cloudflare-dns.com"),
             )
-            .nameserver_config(
+            .add_nameserver_config(
                 NameserverConfig::tls(addr.ip())
                     .with_port(addr.port())
                     .with_tls_server_name("cloudflare-dns.com"),
