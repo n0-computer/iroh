@@ -416,7 +416,7 @@ impl Builder {
     ///
     /// For DNS-over-TLS and DNS-over-HTTPS, the server name is inferred from the
     /// IP address. If you need to specify a different server name, use
-    /// [`Self::nameserver_config`] instead.
+    /// [`Self::add_nameserver_config`] instead.
     pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
         self.nameservers.push(NameserverConfig {
             addr,
@@ -430,7 +430,7 @@ impl Builder {
     ///
     /// For DNS-over-TLS and DNS-over-HTTPS, the server name is inferred from the
     /// IP address. If you need to specify a different server name, use
-    /// [`Self::nameserver_configs`] instead.
+    /// [`Self::add_nameserver_configs`] instead.
     pub fn with_nameservers(
         mut self,
         nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
