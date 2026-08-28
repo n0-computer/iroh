@@ -284,7 +284,7 @@ impl NameserverConfig {
         Self::new(addr, 53, DnsProtocol::Udp)
     }
 
-    /// Creates a new nameserver config for DNS over TCP.
+    /// Creates a new nameserver config for DNS over TCP (Do53).
     ///
     /// This nameserver will be using DNS over TCP on port 53, see
     /// [`Self::with_port`] to further customise this nameserver.
