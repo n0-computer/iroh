@@ -15,6 +15,10 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   pick-runner:
     uses: "./.github/workflows/pick-runner.yml"
@@ -29,7 +33,9 @@ jobs:
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_1) }}
     # runs-on: [self-hosted, linux, X64]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Wine
         run: |
@@ -44,25 +50,29 @@ jobs:
           WINEARCH=win64 wineboot --init
 
       - name: Install Rust + mingw target
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: stable
           targets: x86_64-pc-windows-gnu
 
       - name: Install mingw-w64
         run: sudo apt-get install -y mingw-w64
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        with:
+          tool: nextest
 
       - name: Build tests
         # Release mode required - debug builds exceed mingw's export ordinal limit (~65k symbols)
-        run: cargo build --target x86_64-pc-windows-gnu --tests -p iroh --release
+        run: cargo build --locked --target x86_64-pc-windows-gnu --tests -p iroh --release
 
       - name: Run tests under Wine
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER: wine
         run: >
           cargo nextest run
+          --locked
           --target x86_64-pc-windows-gnu
           --profile wine
           --release

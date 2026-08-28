@@ -2,6 +2,20 @@
 
 All notable changes to iroh-relay will be documented in this file.
 
+## [1.1.0](https://github.com/n0-computer/iroh/compare/v1.0.3..1.1.0) - 2026-08-25
+
+### ⛰️  Features
+
+- *(iroh-relay, iroh)* Inform clients when they are rate-limited and warn log in iroh ([#4455](https://github.com/n0-computer/iroh/issues/4455)) - ([e68dbda](https://github.com/n0-computer/iroh/commit/e68dbda9ada25da61a2bcdff5eb12b9bc8e0ba1e))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(*)* Update `noq` and `net-tools` dependencies ([#4487](https://github.com/n0-computer/iroh/issues/4487)) - ([1960e73](https://github.com/n0-computer/iroh/commit/1960e73f1494eb53a730f2dc408f91e599f620e7))
+
+# Changelog
+
+All notable changes to iroh-relay will be documented in this file.
+
 ## [1.0.3](https://github.com/n0-computer/iroh/compare/v1.0.2..1.0.3) - 2026-07-20
 
 ### 🐛 Bug Fixes

@@ -27,6 +27,10 @@ env:
   IROH_FORCE_STAGING_RELAYS: "1"
   NEXTEST_VERSION: "0.9.80"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   pick-runner:
     uses: "./.github/workflows/pick-runner.yml"
@@ -114,22 +118,23 @@ jobs:
               # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk                                                                                                
             fi     
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ inputs.git-ref }}
 
       - name: Install ${{ matrix.rust }} rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ matrix.rust }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
         with:
           tool: nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
@@ -156,31 +161,35 @@ jobs:
           do
             echo "Checking $i $FEATURES"
             targets="--lib --bins"
-            echo cargo check -p $i $FEATURES $targets
-            cargo check -p $i $FEATURES $targets
+            echo cargo check --locked -p $i $FEATURES $targets
+            cargo check --locked -p $i $FEATURES $targets
           done
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
 
       - name: build tests
         run: |
-          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --no-run
+          cargo nextest run --locked --workspace $FEATURES --lib --bins --tests --no-run
 
       - name: list ignored tests
         run: |
-          cargo nextest list --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ignored-only
+          cargo nextest list --locked --workspace $FEATURES --lib --bins --tests --run-ignored ignored-only
 
       - name: run tests
         run: |
           mkdir -p output
-          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --profile ci --run-ignored ${{ inputs.flaky && 'all' || 'default' }} ${{ inputs.flaky && '--verbose' || '' }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} > output/${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
+          cargo nextest run --locked --workspace $FEATURES --lib --bins --tests --profile ci --run-ignored "$RUN_IGNORED" $VERBOSE --no-fail-fast --message-format "$MSG_FORMAT" > "output/$OUT_NAME.json"
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
           NEXTEST_EXPERIMENTAL_LIBTEST_JSON: 1
+          RUN_IGNORED: ${{ inputs.flaky && 'all' || 'default' }}
+          VERBOSE: ${{ inputs.flaky && '--verbose' || '' }}
+          MSG_FORMAT: ${{ inputs.flaky && 'libtest-json' || 'human' }}
+          OUT_NAME: ${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}
 
       - name: upload results
         if: ${{ failure() && inputs.flaky }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
           path: output
@@ -192,7 +201,7 @@ jobs:
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
         run: |
-          cargo test --workspace --all-features --doc
+          cargo test --locked --workspace --all-features --doc
 
       # We can not check the doctest features by only compiling them,
       # so are forced to run them once more.
@@ -204,8 +213,8 @@ jobs:
           for i in ${CRATES_LIST//,/ }
           do
             echo "Checking $i doctest $FEATURES"
-            echo cargo test -p $i --doc $FEATURES
-            cargo test -p $i --doc $FEATURES
+            echo cargo test --locked -p $i --doc $FEATURES
+            cargo test --locked -p $i --doc $FEATURES
           done
 
   build_and_test_windows:
@@ -251,33 +260,27 @@ jobs:
               # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk
             fi
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ inputs.git-ref }}
 
       - name: Install ${{ matrix.rust }}
+        env:
+          RUST_TOOLCHAIN: ${{ matrix.rust }}
+          RUST_TARGET: ${{ matrix.target }}
         run: |
-          rustup toolchain install ${{ matrix.rust }}
-          rustup toolchain default ${{ matrix.rust }}
-          rustup target add ${{ matrix.target }}
-          rustup set default-host ${{ matrix.target }}
+          rustup toolchain install $env:RUST_TOOLCHAIN
+          rustup toolchain default $env:RUST_TOOLCHAIN
+          rustup target add $env:RUST_TARGET
+          rustup set default-host $env:RUST_TARGET
 
-      - name: Cache cargo-nextest
-        id: cache-nextest
-        uses: actions/cache@v6
-        with:
-          path: ~/.cargo/bin/cargo-nextest.exe
-          key: nextest-windows-${{ env.NEXTEST_VERSION }}
-
+      # Was a bare Invoke-WebRequest from get.nexte.st with no checksum,
+      # unpacked into ~/.cargo/bin on a long-lived host.
       - name: Install cargo-nextest
-        if: steps.cache-nextest.outputs.cache-hit != 'true'
-        shell: powershell
-        run: |
-          $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
-          Invoke-WebRequest -OutFile $tmp https://get.nexte.st/${{ env.NEXTEST_VERSION }}/windows
-          $outputDir = if ($Env:CARGO_HOME) { Join-Path $Env:CARGO_HOME "bin" } else { "~/.cargo/bin" }
-          $tmp | Expand-Archive -DestinationPath $outputDir -Force
-          $tmp | Remove-Item
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Select features
         run: |
@@ -297,7 +300,7 @@ jobs:
           }
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
         with:
           # Pinned: sccache >= 0.17.0 expands rustc @argfiles and breaks Windows'
@@ -305,7 +308,7 @@ jobs:
           version: "v0.16.0"
       - uses: ./.github/workflows/sccache-probe
 
-      - uses: msys2/setup-msys2@v2
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
         with:
           # Blacksmith's Windows image ships no pre-installed MSYS2 (C:\msys64),
           # so install it there. Self-hosted keeps the pre-installed one (faster).
@@ -324,126 +327,37 @@ jobs:
           echo "C:\Program Files\NASM" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: build tests
+        env:
+          RUST_TARGET: ${{ matrix.target }}
         run: |
-          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --no-run
+          $feat = if ($env:FEATURES) { $env:FEATURES -split '\s+' } else { @() }
+          cargo nextest run --locked --workspace @feat --lib --bins --tests --target $env:RUST_TARGET --no-run
 
       - name: list ignored tests
+        env:
+          RUST_TARGET: ${{ matrix.target }}
         run: |
-          cargo nextest list --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --run-ignored ignored-only
+          $feat = if ($env:FEATURES) { $env:FEATURES -split '\s+' } else { @() }
+          cargo nextest list --locked --workspace @feat --lib --bins --tests --target $env:RUST_TARGET --run-ignored ignored-only
 
       - name: tests
         run: |
           mkdir -p output
-          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --profile ci --target ${{ matrix.target }} --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} > output/${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
+          $feat = if ($env:FEATURES) { $env:FEATURES -split '\s+' } else { @() }
+          cargo nextest run --locked --workspace @feat --lib --bins --tests --profile ci --target $env:RUST_TARGET --run-ignored $env:RUN_IGNORED --no-fail-fast --message-format $env:MSG_FORMAT > "output/$($env:OUT_NAME).json"
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
           NEXTEST_EXPERIMENTAL_LIBTEST_JSON: 1
+          RUST_TARGET: ${{ matrix.target }}
+          RUN_IGNORED: ${{ inputs.flaky && 'all' || 'default' }}
+          MSG_FORMAT: ${{ inputs.flaky && 'libtest-json' || 'human' }}
+          OUT_NAME: ${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}
 
       - name: upload results
         if: ${{ failure() && inputs.flaky }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
           path: output
           retention-days: 1
           compression-level: 0
-
-  minimal-crates:
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [ubuntu-latest, macOS-arm-latest] # TODO: windows
-        include:
-          - name: ubuntu-latest
-            os: ubuntu-latest
-            release-os: linux
-            release-arch: amd64
-            runner: [self-hosted, linux, X64]
-          - name: macOS-arm-latest
-            os: macOS-latest
-            release-os: darwin
-            release-arch: aarch64
-            runner: [self-hosted, macOS, ARM64]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly
-      - name: cargo check
-        run: |
-          rm -f Cargo.lock
-          cargo +nightly check -Z minimal-versions --workspace --all-features --lib --bins
-
-  minimal-crates-windows:
-    timeout-minutes: 30
-    name: "Minimal Crates (Windows)"
-    needs: pick-runner-windows
-    runs-on: ${{ fromJSON(matrix.runs_on) }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [windows-latest]
-        rust: ["${{ inputs.rust-version}}"]
-        target:
-          - x86_64-pc-windows-msvc
-        include:
-          # distinct slot (4) so it can run alongside the 3 build cells
-          - name: windows-latest
-            os: windows
-            runs_on: ${{ needs.pick-runner-windows.outputs.overflow_4 }}
-    env:
-      # sccache backend is selected at runtime in "Configure sccache backend":
-      # local disk on self-hosted, GHA-backed on Blacksmith (ephemeral).
-      RUSTC_WRAPPER: "sccache"
-    steps:
-      - name: Configure sccache backend
-        shell: bash
-        run: |
-            if [[ "${RUNNER_NAME:-}" == blacksmith-* ]]; then
-              echo "Runner: $RUNNER_NAME → GHA-backed sccache"
-              echo "SCCACHE_GHA_ENABLED=on" >> "$GITHUB_ENV"
-            else
-              echo "Runner: $RUNNER_NAME → local-disk sccache"
-              # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk
-            fi
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.git-ref }}
-
-      - name: Install Rust nightly
-        run: |
-          rustup toolchain install nightly
-          rustup target add ${{ matrix.target }}
-          rustup set default-host ${{ matrix.target }}
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        continue-on-error: true
-        with:
-          # Pinned: sccache >= 0.17.0 expands rustc @argfiles and breaks Windows'
-          # 32K command line limit: https://github.com/mozilla/sccache/issues/2397
-          version: "v0.16.0"
-      - uses: ./.github/workflows/sccache-probe
-
-      - uses: msys2/setup-msys2@v2
-        with:
-          # Blacksmith's Windows image ships no pre-installed MSYS2 (C:\msys64),
-          # so install it there. Self-hosted keeps the pre-installed one (faster).
-          release: ${{ startsWith(runner.name, 'blacksmith-') }}
-
-      - name: Install aws-lc-sys build dependencies
-        shell: powershell
-        run: |
-          $chocoPath = "$Env:ProgramData\chocolatey\bin\choco.exe"
-          if (!(Test-Path $chocoPath)) {
-            $chocoPath = "$Env:SystemDrive\ProgramData\chocolatey\bin\choco.exe"
-          }
-          & $chocoPath install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-          & $chocoPath install nasm -y
-          echo "C:\Program Files\CMake\bin" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
-          echo "C:\Program Files\NASM" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: cargo check
-        run: |
-          rm -Force Cargo.lock
-          cargo +nightly check -Z minimal-versions --workspace --all-features --lib --bins

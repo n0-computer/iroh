@@ -15,9 +15,15 @@ concurrency:
 env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   preview_docs:
-    permissions: write-all
+    permissions:
+      contents: write        # actions-gh-pages pushes the preview branch
+      pull-requests: write   # find-comment / create-or-update-comment
     timeout-minutes: 30
     name: Docs preview
     if: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' ) && !github.event.pull_request.head.repo.fork }}
@@ -29,22 +35,24 @@ jobs:
       PREVIEW_PATH: pr/${{ github.event.pull_request.number || inputs.pr_number }}/docs
 
     steps:
-    - uses: actions/checkout@v7
-    - uses: dtolnay/rust-toolchain@master
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
       with:
         toolchain: nightly-2025-10-09
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.11
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       continue-on-error: true
     - uses: ./.github/workflows/sccache-probe
 
     - name: Generate Docs
-      run: cargo doc --workspace --all-features --no-deps
+      run: cargo doc --locked --workspace --all-features --no-deps
       env:
         RUSTDOCFLAGS: --cfg iroh_docsrs
 
     - name: Deploy Docs to Preview Branch
-      uses: peaceiris/actions-gh-pages@v4
+      uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./target/doc/
@@ -52,7 +60,7 @@ jobs:
         publish_branch: generated-docs-preview
 
     - name: Find Docs Comment
-      uses: peter-evans/find-comment@v4
+      uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
       id: fc
       with:
         issue-number: ${{ github.event.pull_request.number || inputs.pr_number }}
@@ -64,7 +72,7 @@ jobs:
       run: echo "TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
 
     - name: Create or Update Docs Comment
-      uses: peter-evans/create-or-update-comment@v5
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ github.event.pull_request.number || inputs.pr_number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
