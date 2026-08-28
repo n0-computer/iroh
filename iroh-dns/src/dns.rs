@@ -259,7 +259,7 @@ impl FallbackMode {
     }
 }
 
-/// A DNS nameserver configuration.
+/// A DNS nameserver configuration for a single server.
 #[derive(Debug, Clone)]
 pub struct NameserverConfig {
     addr: SocketAddr,
