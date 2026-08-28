@@ -292,7 +292,7 @@ impl NameserverConfig {
         Self::new(addr, 53, DnsProtocol::Tcp)
     }
 
-    /// Creates a new nameserver config for DNS over TLS.
+    /// Creates a new nameserver config for DNS over TLS (DoT).
     ///
     /// This nameserver will be using DNS over TLS on port 853, see
     /// [`Self::with_port`] and [`Self::with_tls_server_name`] to further customise
@@ -301,7 +301,7 @@ impl NameserverConfig {
         Self::new(addr, 853, DnsProtocol::Tls)
     }
 
-    /// Creates a new nameserver config for DNS over HTTPS.
+    /// Creates a new nameserver config for DNS over HTTPS (DoH).
     ///
     /// This nameserver will be using DNS over HTTPS on port 443, see
     /// [`Self::with_port`] and [`Self::with_tls_server_name`] to further customise
