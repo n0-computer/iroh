@@ -259,7 +259,7 @@
 <a href=#259 id=259 data-nosnippet>259</a>    }
 <a href=#260 id=260 data-nosnippet>260</a>}
 <a href=#261 id=261 data-nosnippet>261</a>
-<a href=#262 id=262 data-nosnippet>262</a><span class="doccomment">/// A DNS nameserver configuration.
+<a href=#262 id=262 data-nosnippet>262</a><span class="doccomment">/// A DNS nameserver configuration for a single server.
 <a href=#263 id=263 data-nosnippet>263</a></span><span class="attr">#[derive(Debug, Clone)]
 <a href=#264 id=264 data-nosnippet>264</a></span><span class="kw">pub struct </span>NameserverConfig {
 <a href=#265 id=265 data-nosnippet>265</a>    addr: SocketAddr,
@@ -276,7 +276,7 @@
 <a href=#276 id=276 data-nosnippet>276</a>        }
 <a href=#277 id=277 data-nosnippet>277</a>    }
 <a href=#278 id=278 data-nosnippet>278</a>
-<a href=#279 id=279 data-nosnippet>279</a>    <span class="doccomment">/// Creates a new nameserver config for DNS over UDP.
+<a href=#279 id=279 data-nosnippet>279</a>    <span class="doccomment">/// Creates a new nameserver config for DNS over UDP (Do53).
 <a href=#280 id=280 data-nosnippet>280</a>    ///
 <a href=#281 id=281 data-nosnippet>281</a>    /// This nameserver will be using DNS over UDP on port 53, see
 <a href=#282 id=282 data-nosnippet>282</a>    /// [`Self::with_port`] to further customise this nameserver.
