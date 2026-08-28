@@ -429,10 +429,11 @@ mod tests {
         let resolver = {
             let https_addr = server.https_addr().expect("https is bound");
             DnsResolver::builder()
-                .nameserver_config(NameserverConfig::https(
-                    https_addr,
-                    Some("localhost".into()),
-                ))
+                .nameserver_config(
+                    NameserverConfig::https(https_addr.ip())
+                        .with_port(https_addr.port())
+                        .with_tls_server_name("localhost"),
+                )
                 .tls_client_config(self::tls::insecure_tls_config())
                 .disable_fallback()
                 .build()

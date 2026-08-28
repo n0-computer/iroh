@@ -268,9 +268,9 @@ pub struct NameserverConfig {
 }
 
 impl NameserverConfig {
-    fn new(addr: SocketAddr, protocol: DnsProtocol) -> Self {
+    fn new(addr: IpAddr, port: u16, protocol: DnsProtocol) -> Self {
         Self {
-            addr,
+            addr: SocketAddr::new(addr, port),
             protocol,
             server_name: None,
         }
@@ -278,41 +278,66 @@ impl NameserverConfig {
 
     /// Creates a new nameserver config for DNS over UDP.
     ///
-    /// This is the classic DNS protocol and supported by most DNS servers.
-    pub fn udp(addr: SocketAddr) -> Self {
-        Self::new(addr, DnsProtocol::Udp)
+    /// This nameserver will be using DNS over UDP on port 53, see
+    /// [`Self::with_port`] to further customise this nameserver.
+    pub fn udp(addr: IpAddr) -> Self {
+        Self::new(addr, 53, DnsProtocol::Udp)
     }
 
     /// Creates a new nameserver config for DNS over TCP.
     ///
-    /// This is specified in the original DNS RFCs, but is not supported by all DNS servers.
-    pub fn tcp(addr: SocketAddr) -> Self {
-        Self::new(addr, DnsProtocol::Tcp)
+    /// This nameserver will be using DNS over TCP on port 53, see
+    /// [`Self::with_port`] to further customise this nameserver.
+    pub fn tcp(addr: IpAddr) -> Self {
+        Self::new(addr, 53, DnsProtocol::Tcp)
     }
 
-    /// Configure a DNS-over-TLS nameserver with an optional TLS server name.
+    /// Creates a new nameserver config for DNS over TLS.
     ///
-    /// If server_name is set, the connection is made to `addr`, but `server_name`
-    /// is used for the SNI and certificate validation. Use this for providers
-    /// whose certificates cover a hostname rather than the IP.
-    pub fn tls(addr: SocketAddr, server_name: Option<String>) -> Self {
+    /// This nameserver will be using DNS over TLS on port 853, see
+    /// [`Self::with_port`] and [`Self::with_tls_server_name`] to further customise
+    /// this nameserver.
+    pub fn tls(addr: IpAddr) -> Self {
+        Self::new(addr, 853, DnsProtocol::Tls)
+    }
+
+    /// Creates a new nameserver config for DNS over HTTPS.
+    ///
+    /// This nameserver will be using DNS over HTTPS on port 443, see
+    /// [`Self::with_port`] and [`Self::with_tls_server_name`] to further customise
+    /// this nameserver.
+    pub fn https(addr: IpAddr) -> Self {
+        Self::new(addr, 443, DnsProtocol::Https)
+    }
+
+    /// Sets the port for the nameserver.
+    ///
+    /// For Do53 this is not usually needed, DoH however will likely require this.
+    ///
+    /// # Returns
+    ///
+    /// A new instance is returned, this struct is essentially a builder for itself.
+    pub fn with_port(self, port: u16) -> Self {
         Self {
-            addr,
-            protocol: DnsProtocol::Tls,
-            server_name,
+            addr: SocketAddr::new(self.addr.ip(), port),
+            ..self
         }
     }
 
-    /// Configure a DNS-over-HTTPS nameserver with an optional TLS server name.
+    /// Sets the TLS server name for the nameserver.
     ///
-    /// If server_name is set, the connection is made to `addr`, but `server_name`
-    /// is used for the SNI and certificate validation. Use this for providers
-    /// whose certificates cover a hostname rather than the IP.
-    pub fn https(addr: SocketAddr, server_name: Option<String>) -> Self {
+    /// Nameservers are always connected to via IP address. However for the protocols
+    /// running over TLS (DoT & DoH), the server certificate may use a server name rather
+    /// than IP address. When enabled the TLS `ClientHello` will use this server name in the
+    /// SNI.
+    ///
+    /// # Returns
+    ///
+    /// A new instance is returned, this struct is essentially a builder for itself.
+    pub fn with_tls_server_name(self, server_name: impl Into<String>) -> Self {
         Self {
-            addr,
-            protocol: DnsProtocol::Https,
-            server_name,
+            server_name: Some(server_name.into()),
+            ..self
         }
     }
 
@@ -395,7 +420,11 @@ impl Builder {
     /// IP address. If you need to specify a different server name, use
     /// [`Self::nameserver_config`] instead.
     pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
-        self.nameservers.push(NameserverConfig::new(addr, protocol));
+        self.nameservers.push(NameserverConfig {
+            addr,
+            protocol,
+            server_name: None,
+        });
         self
     }
 
@@ -411,7 +440,11 @@ impl Builder {
         self.nameservers.extend(
             nameservers
                 .into_iter()
-                .map(|(addr, protocol)| NameserverConfig::new(addr, protocol)),
+                .map(|(addr, protocol)| NameserverConfig {
+                    addr,
+                    protocol,
+                    server_name: None,
+                }),
         );
         self
     }
@@ -695,7 +728,7 @@ impl DnsResolver {
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         Builder::default()
-            .nameserver_config(NameserverConfig::udp(nameserver))
+            .nameserver_config(NameserverConfig::udp(nameserver.ip()).with_port(nameserver.port()))
             .build()
     }
 
@@ -1193,22 +1226,23 @@ pub(crate) mod tests {
     fn builder_named_nameservers_carry_server_name() {
         let addr = SocketAddr::new(std::net::Ipv4Addr::new(1, 1, 1, 1).into(), 443);
         let builder = Builder::default()
-            .nameserver_config(NameserverConfig::https(
-                addr,
-                Some("cloudflare-dns.com".into()),
-            ))
-            .nameserver_config(NameserverConfig::tls(
-                addr,
-                Some("cloudflare-dns.com".into()),
-            ))
-            .fallback_nameserver_configs([NameserverConfig::https(
-                addr,
-                Some("fallback.example.com".into()),
-            )]);
+            .nameserver_config(
+                NameserverConfig::https(addr.ip()).with_tls_server_name("cloudflare-dns.com"),
+            )
+            .nameserver_config(
+                NameserverConfig::tls(addr.ip())
+                    .with_port(addr.port())
+                    .with_tls_server_name("cloudflare-dns.com"),
+            )
+            .fallback_nameserver_configs([
+                NameserverConfig::https(addr.ip()).with_tls_server_name("fallback.example.com")
+            ]);
         let ns = &builder.nameservers;
         assert_eq!(ns[0].protocol, DnsProtocol::Https);
+        assert_eq!(ns[0].addr.port(), 443);
         assert_eq!(ns[0].server_name.as_deref(), Some("cloudflare-dns.com"));
         assert_eq!(ns[1].protocol, DnsProtocol::Tls);
+        assert_eq!(ns[1].addr.port(), 443);
         assert_eq!(ns[1].server_name.as_deref(), Some("cloudflare-dns.com"));
         assert_eq!(
             builder.fallback_nameservers[0].server_name.as_deref(),
