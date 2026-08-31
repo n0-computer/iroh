@@ -1210,7 +1210,7 @@ struct ConnId(usize);
 ///
 /// - A handle to the connection.
 /// - The paths we know about.
-/// And some stuff to make observers happy.
+/// - Some stuff to make observers happy.
 #[derive(Debug)]
 struct ConnectionState {
     /// Weak handle to the connection.
