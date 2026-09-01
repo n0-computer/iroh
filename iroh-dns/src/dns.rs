@@ -237,7 +237,11 @@ pub enum FallbackMode {
     /// Uses the fallback nameservers only when the system configuration is empty.
     ///
     /// A system configuration counts as empty when it yields no nameservers,
-    /// whether because it could not be read or because it listed none.
+    /// whether because it could not be read or because it listed none. One that
+    /// did yield nameservers is never supplemented: if those fail at query time
+    /// the lookup fails rather than escalating. Without
+    /// [`Builder::with_system_defaults`] there is no configuration at all, which
+    /// also counts as empty, so this behaves like [`Self::Eager`] then.
     IfSystemEmpty,
     /// Keeps the fallback nameservers as a lower-priority tier.
     ///
@@ -265,7 +269,7 @@ impl FallbackMode {
 }
 
 /// A DNS nameserver configuration for a single server.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NameserverConfig {
     addr: SocketAddr,
     protocol: DnsProtocol,
@@ -409,8 +413,9 @@ impl Builder {
     /// Adds a single nameserver config.
     ///
     /// For DNS-over-TLS and DNS-over-HTTPS, the server name is inferred from the
-    /// IP address. If you need to specify a different server name, use
-    /// [`Self::add_nameserver_config`] instead.
+    /// IP address. To set a different one, build a [`NameserverConfig`] with
+    /// [`NameserverConfig::with_tls_server_name`] and pass it to
+    /// [`Self::add_nameserver_config`].
     pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
         self.nameservers.push(NameserverConfig {
             addr,
@@ -423,8 +428,9 @@ impl Builder {
     /// Adds a list of nameserver configs.
     ///
     /// For DNS-over-TLS and DNS-over-HTTPS, the server name is inferred from the
-    /// IP address. If you need to specify a different server name, use
-    /// [`Self::add_nameserver_configs`] instead.
+    /// IP address. To set a different one, build a [`NameserverConfig`] with
+    /// [`NameserverConfig::with_tls_server_name`] and pass it to
+    /// [`Self::add_nameserver_configs`].
     pub fn with_nameservers(
         mut self,
         nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
@@ -631,10 +637,11 @@ fn convert_txt(txt: n0_dns_resolver::TxtRecordData) -> TxtRecordData {
 /// once at startup, see docs there for details.
 ///
 /// If `ndk_context` is not initialized, fetching the system config on Android will fail
-/// and the resolver will use Google's fallback DNS servers. Due to how things are
-/// implemented in `ndk_context`, detecting the failure relies on unwinding a panic.
-/// If your app uses `panic = "abort"` in its compilation profile, this doesn't work,
-/// so in that case your app will panic if no JNI context is initialized.
+/// and the resolver will use the fallback nameservers instead, subject to the configured
+/// [`FallbackMode`]. Due to how things are implemented in `ndk_context`, detecting the
+/// failure relies on unwinding a panic. If your app uses `panic = "abort"` in its
+/// compilation profile, this doesn't work, so in that case your app will panic if no
+/// JNI context is initialized.
 /// Therefore, either make sure that the JNI context is installed, or don't use
 /// `panic = "abort"`.
 ///
