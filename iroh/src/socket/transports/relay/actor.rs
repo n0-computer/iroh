@@ -324,7 +324,7 @@ impl ActiveRelayActor {
         let mut backoff = Self::build_backoff();
 
         while let Err(err) = self.run_once().await {
-            warn!("{err:#}");
+            debug!("{err:#}");
             let was_established = matches!(err, RelayConnectionError::Established { .. });
             let last_error = Some(Arc::new(AnyError::from(err)));
             self.my_relay
@@ -333,7 +333,7 @@ impl ActiveRelayActor {
                 // If dialing failed, or if the relay connection failed before we received a pong,
                 // we wait an exponentially increasing time until we attempt to reconnect again.
                 let Some(delay) = backoff.next() else {
-                    warn!("retries exceeded");
+                    debug!("retries exceeded");
                     break;
                 };
                 debug!("retry in {delay:?}");
