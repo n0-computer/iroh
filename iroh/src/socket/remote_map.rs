@@ -2,6 +2,7 @@ use std::{
     collections::BTreeSet,
     future::poll_fn,
     hash::Hash,
+    net::SocketAddr,
     sync::Arc,
     task::{Context, Poll, Waker, ready},
 };
@@ -31,12 +32,14 @@ pub(crate) use self::remote_state::{
 use super::{
     DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{
-        AddrMap, CustomMappedAddr, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr,
+        AddrMap, CustomMappedAddr, EndpointIdMappedAddr, MappedAddr, MultipathMappedAddr,
+        RelayMappedAddr,
     },
     transports,
 };
 use crate::{
     address_lookup::{self, AddressLookupFailed},
+    endpoint::LocalTransportAddr,
     socket::concurrent_read_map::{ConcurrentReadMap, ReadOnlyMap},
 };
 
@@ -78,6 +81,51 @@ pub(crate) struct MappedAddrs {
     pub(super) custom_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
 }
 
+impl MappedAddrs {
+    /// Converts a possibly mapped-IP address into a [`transports::Addr`].
+    pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> Option<transports::Addr> {
+        to_transport_addr(addr, &self.relay_addrs, &self.custom_addrs)
+    }
+
+    /// Converts a possibly mapped-IP 4-tuple into a [`transports::FourTuple`].
+    pub(crate) fn to_transport_tuple(
+        &self,
+        four_tuple: &noq::FourTuple,
+    ) -> Option<transports::FourTuple> {
+        let remote = to_transport_addr(four_tuple.remote(), &self.relay_addrs, &self.custom_addrs)?;
+        let local = LocalTransportAddr::from_noq_local_ip(
+            four_tuple.local_ip(),
+            &remote,
+            &self.custom_addrs,
+        );
+        Some(transports::FourTuple::new(remote, local))
+    }
+
+    /// Converts a [`transports::FourTuple`] to a mapped-IP 4-tuple.
+    pub(crate) fn to_mapped_tuple(&self, four_tuple: &transports::FourTuple) -> noq::FourTuple {
+        let (remote, local) = match four_tuple {
+            transports::FourTuple::Ip { remote, local } => (*remote, *local),
+            transports::FourTuple::Relay { url, endpoint_id } => (
+                self.relay_addrs
+                    .get(&(url.clone(), *endpoint_id))
+                    .private_socket_addr(),
+                None,
+            ),
+            transports::FourTuple::Custom { remote, local } => {
+                let remote = self.custom_addrs.get(remote).private_socket_addr();
+                let local = local.as_ref().map(|custom_addr| {
+                    self.custom_addrs
+                        .get(custom_addr)
+                        .private_socket_addr()
+                        .ip()
+                });
+                (remote, local)
+            }
+        };
+        noq::FourTuple::new(remote, local)
+    }
+}
+
 /// Converts a mapped socket address to a transport address.
 ///
 /// This takes a socket address, converts it into a [`MultipathMappedAddr`] and then tries
@@ -87,7 +135,7 @@ pub(crate) struct MappedAddrs {
 /// if an entry exists in the corresponding map.
 ///
 /// Returns `None` for [`MultipathMappedAddr::Mixed`] addresses or unknown mapped addresses.
-pub(super) fn to_transport_addr(
+fn to_transport_addr(
     addr: impl Into<MultipathMappedAddr>,
     relay_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     custom_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
@@ -330,8 +378,7 @@ impl Tasks {
         let sender = RemoteStateActor::new(
             eid,
             self.local_direct_addrs.clone(),
-            mapped_addrs.relay_addrs.clone(),
-            mapped_addrs.custom_addrs.clone(),
+            mapped_addrs.clone(),
             self.metrics.clone(),
             self.address_lookup.clone(),
             self.path_selector.clone(),
