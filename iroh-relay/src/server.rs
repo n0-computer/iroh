@@ -500,7 +500,7 @@ pub struct Limits {
 }
 
 /// Per-client rate limit configuration.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ClientRateLimit {
     /// Max number of bytes per second to read from the client connection.
@@ -1098,7 +1098,7 @@ fn healthz_handler(
     let health = Health {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
-        git_hash: option_env!("VERGEN_GIT_SHA").unwrap_or("unknown"),
+        git_hash: "unknown",
     };
     let body = serde_json::to_string(&health).unwrap_or_else(|_| r#"{"status":"error"}"#.into());
     let body: BytesBody = Box::new(Full::from(body));

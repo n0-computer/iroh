@@ -23,6 +23,21 @@ relays, including:
 
 Used in [iroh], created with love by the [n0 team](https://n0.computer/).
 
+## Build the server
+
+You can build an optimised release of `iroh-relay` by running `cargo build`
+with the appropriate flags from the workspace parent directory as follows.
+
+```
+cd ../
+cargo build \
+  --profile optimized-release \
+  --package iroh-relay \
+  --features server
+```
+
+You will find the optimised binary at `target/optimized-release/iroh-relay`.
+
 ## Access control
 
 The relay server supports several access control modes, configured via the

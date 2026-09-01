@@ -2,7 +2,7 @@
 # changelog header
 header = """
 # Changelog\n
-All notable changes to iroh will be documented in this file.\n
+All notable changes to {{ get_env(name="CRATE_NAME", default="iroh") }} will be documented in this file.\n
 """
 
 body = """

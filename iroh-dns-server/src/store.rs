@@ -8,8 +8,8 @@ use hickory_server::proto::{
 };
 use iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError, Timestamp};
 use lru::LruCache;
-use mainline::{Dht, DhtBuilder, MutableItem};
 use n0_error::{Result, StdResultExt};
+use n0_mainline::{Dht, DhtBuilder, MutableItem};
 pub(crate) use signed_packets::Options;
 use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};
@@ -142,11 +142,7 @@ impl ZoneStore {
 
         if let Some(dht) = self.dht.as_ref() {
             debug!("DHT resolve {}", pubkey.to_z32());
-            let maybe_item = dht
-                .clone()
-                .as_async()
-                .get_mutable_most_recent(pubkey.as_bytes(), None)
-                .await;
+            let maybe_item = dht.get_mutable_most_recent(pubkey.as_bytes(), None).await?;
             if let Some(item) = maybe_item
                 && let Ok(packet) = mutable_item_to_signed_packet(&item)
             {
@@ -239,11 +235,10 @@ impl ZoneCache {
         let zone = if let Some(zone) = self.cache.get(pubkey) {
             trace!("cache hit {}", pubkey.to_z32());
             zone
-        } else if let Some(zone) = self.dht_cache.get(pubkey) {
+        } else {
+            let zone = self.dht_cache.get(pubkey)?;
             trace!("dht cache hit {}", pubkey.to_z32());
             zone
-        } else {
-            return None;
         };
         zone.resolve(name, record_type)
     }

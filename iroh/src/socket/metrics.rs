@@ -38,6 +38,27 @@ pub struct Metrics {
     /// This includes the initial assignment from no home relay to a home relay.
     pub relay_home_change: Counter,
 
+    /// Number of connections to a relay server that were established.
+    ///
+    /// Failed dial attempts are not counted. A relay that is reconnected to is counted
+    /// once per connection, so this grows on every reconnect.
+    pub relay_conns_success: Counter,
+    /// Number of failed attempts to connect to a relay server.
+    ///
+    /// Each attempt is counted, so an unreachable relay increments this on every retry.
+    pub relay_conns_failed: Counter,
+    /// Number of connections to a relay server that ended.
+    ///
+    /// Paired with [`Self::relay_conns_success`], so the number of current connections is
+    /// `relay_conns_success` - `relay_conns_closed`.
+    pub relay_conns_closed: Counter,
+    /// Number of relay connections on which the relay reported rate limiting.
+    ///
+    /// This is incremented at most once per connection, so it counts the affected
+    /// connections and not how often the relay reported the problem. Relate it to
+    /// [`Self::relay_conns_success`] to see how many connections were affected.
+    pub relay_conns_ratelimited: Counter,
+
     /*
      * Holepunching metrics
      */

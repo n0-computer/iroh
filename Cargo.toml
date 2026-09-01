@@ -42,7 +42,27 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 [workspace.lints.clippy]
 unused-async = "warn"
 
+[workspace.metadata.cargo-semver-checks.lints]
+enum_struct_variant_field_marked_deprecated = { required-update = "minor" }
+enum_tuple_variant_field_marked_deprecated = { required-update = "minor" }
+enum_variant_marked_deprecated = { required-update = "minor" }
+function_marked_deprecated = { required-update = "minor" }
+global_value_marked_deprecated = { required-update = "minor" }
+macro_marked_deprecated = { required-update = "minor" }
+proc_macro_marked_deprecated = { required-update = "minor" }
+struct_field_marked_deprecated = { required-update = "minor" }
+trait_associated_const_marked_deprecated = { required-update = "minor" }
+trait_associated_type_marked_deprecated = { required-update = "minor" }
+trait_marked_deprecated = { required-update = "minor" }
+trait_method_marked_deprecated = { required-update = "minor" }
+type_associated_const_marked_deprecated = { required-update = "minor" }
+type_marked_deprecated = { required-update = "minor" }
+type_method_marked_deprecated = { required-update = "minor" }
+
 [patch.crates-io]
-noq = { path = "../noq/noq" }
-noq-proto = { path = "../noq/noq-proto" }
-noq-udp = { path = "../noq/noq-udp" }
+n0-error = { git = "https://github.com/n0-computer/n0-error" }
+# noq's batch datagram APIs (upstream PR n0-computer/noq#735); drop these once
+# a noq release carries them.
+noq = { git = "https://github.com/rayfish/noq", branch = "perf/datagram-batching" }
+noq-proto = { git = "https://github.com/rayfish/noq", branch = "perf/datagram-batching" }
+noq-udp = { git = "https://github.com/rayfish/noq", branch = "perf/datagram-batching" }

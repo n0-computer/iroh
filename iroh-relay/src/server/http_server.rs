@@ -25,7 +25,7 @@ use n0_error::{e, ensure, stack_error};
 use n0_future::MaybeFuture;
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::Notify,
+    sync::{Notify, watch},
 };
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -532,7 +532,7 @@ struct Inner {
     headers: HeaderMap,
     clients: Clients,
     write_timeout: Duration,
-    rate_limit: Option<ClientRateLimit>,
+    rate_limit: watch::Sender<Option<ClientRateLimit>>,
     key_cache: KeyCache,
     access: Arc<dyn DynAccessControl>,
     metrics: Arc<Metrics>,
@@ -853,8 +853,9 @@ impl Inner {
         // Set the socket to NO_DELAY.
         io.disable_nagle();
 
-        let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone())
+        let io = RateLimited::from_watcher(io, self.rate_limit.subscribe(), self.metrics.clone())
             .map_err(|err| e!(AcceptError::RateLimitingMisconfigured, err))?;
+        let limited_watcher = io.limited_watcher();
 
         // Create a server builder with default config
         let websocket = tokio_websockets::ServerBuilder::new()
@@ -887,6 +888,7 @@ impl Inner {
         trace!("accept: build client conn");
         let mut client_conn_builder = Config::new(guard, io, protocol_version);
         client_conn_builder.write_timeout = self.write_timeout;
+        client_conn_builder.rate_limited = Some(limited_watcher);
         trace!(endpoint_id = %request.endpoint_id().fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
@@ -924,11 +926,19 @@ impl RelayService {
             headers,
             clients: Clients::default(),
             write_timeout: SERVER_WRITE_TIMEOUT,
-            rate_limit,
+            rate_limit: watch::Sender::new(rate_limit),
             key_cache,
             access,
             metrics,
         }))
+    }
+
+    /// Updates the per-client receive rate limit.
+    ///
+    /// The new rate limit will be applied to all current and future client connections.
+    /// Passing `None` will remove rate limiting from all connections.
+    pub fn set_client_rate_limit(&self, rate_limit: Option<ClientRateLimit>) {
+        self.0.rate_limit.send_replace(rate_limit);
     }
 
     /// Shuts down the relay service, disconnecting all clients.

@@ -33,7 +33,7 @@ use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use noq::WeakConnectionHandle as NoqWeakConnectionHandle;
 use pin_project::pin_project;
-use tracing::{event, warn};
+use tracing::{error, event, warn};
 
 use super::quic::DecryptedInitial;
 use crate::{
@@ -202,8 +202,13 @@ impl Incoming {
 
     /// Returns the remote address of this incoming connection.
     pub fn remote_addr(&self) -> IncomingAddr {
+        let remote = self.inner.remote_address();
         self.ep
-            .to_transport_addr(self.inner.remote_address())
+            .to_transport_addr(remote)
+            .unwrap_or_else(|| {
+                error!(mapped_addr = ?remote, "Incoming::remote_addr: invalid mapped address");
+                transports::Addr::Ip(remote)
+            })
             .into()
     }
 
@@ -642,8 +647,13 @@ impl Accepting {
 
     /// Returns the remote address of this connection.
     pub fn remote_addr(&self) -> IncomingAddr {
+        let remote = self.inner.remote_address();
         self.ep
-            .to_transport_addr(self.inner.remote_address())
+            .to_transport_addr(remote)
+            .unwrap_or_else(|| {
+                error!(mapped_addr = ?remote, "Accepting::remote_addr: invalid mapped address");
+                transports::Addr::Ip(remote)
+            })
             .into()
     }
 
@@ -917,7 +927,10 @@ impl<T: ConnectionState> Connection<T> {
     /// `read_datagram()` in a loop when forwarding bursts: a whole batch is taken under a
     /// single lock hold.
     #[inline]
-    pub fn read_many_datagrams<'a>(&'a self, out: &'a mut [Bytes]) -> ReadManyDatagrams<'a> {
+    pub fn read_many_datagrams<'a, 'b>(
+        &'a self,
+        out: &'b mut [Bytes],
+    ) -> ReadManyDatagrams<'a, 'b> {
         self.inner.read_many_datagrams(out)
     }
 

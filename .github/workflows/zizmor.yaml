@@ -1,0 +1,61 @@
+# Static analysis of our own workflows. The tree is clean, so this gates on
+# every finding, not just High.
+name: Workflow Lint
+
+on:
+  pull_request:
+    paths: ['.github/workflows/**', '.github/dependabot.yml', '.pinact.yaml', 'zizmor.yml']
+  push:
+    branches: [main]
+    paths: ['.github/workflows/**', '.github/dependabot.yml', '.pinact.yaml', 'zizmor.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        with:
+          tool: zizmor
+      # whole repo, not just workflows/ -- dependabot.yml is audited too
+      - run: zizmor --offline .
+
+  pinact:
+    # Fails if a pinned SHA drifts from its version comment, or is younger
+    # than the cooldown in .pinact.yaml.
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Release tarball instead of pinact-action, which wants contents:write
+      # to push commits. This job only reads.
+      #
+      # The digest is hardcoded here, same as the SHA pins on every action
+      # above: fetching the upstream checksums file alongside the tarball
+      # would only prove the two came from the same place, which is exactly
+      # what an attacker who can replace release assets controls. Bump both
+      # PINACT_VERSION and PINACT_SHA256 together, verifying the new digest
+      # out of band.
+      - name: Install pinact
+        env:
+          PINACT_VERSION: "4.1.1"
+          PINACT_SHA256: "d1cffebe5704b74e2e5f8a864efb9f7e54768972dc686188c008033fb1797841"
+        run: |
+          set -euo pipefail
+          curl -fsSL -o pinact.tar.gz \
+            "https://github.com/suzuki-shunsuke/pinact/releases/download/v${PINACT_VERSION}/pinact_linux_amd64.tar.gz"
+          echo "${PINACT_SHA256}  pinact.tar.gz" | sha256sum -c -
+          tar xzf pinact.tar.gz pinact
+          install -m755 pinact /usr/local/bin/pinact
+      - run: pinact run --check --verify-comment --verify-min-age
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
