@@ -233,12 +233,12 @@ pub enum FallbackMode {
     /// Never queries the fallback nameservers.
     Never,
     /// Races the fallback nameservers alongside the primary ones from the start.
-    Always,
-    /// Uses the fallback nameservers only when the system DNS configuration is unusable.
+    Eager,
+    /// Uses the fallback nameservers only when the system configuration is empty.
     ///
-    /// The configuration is unusable if it could not be loaded, or if it lists
-    /// no nameservers.
-    IfSystemUnavailable,
+    /// A system configuration counts as empty when it yields no nameservers,
+    /// whether because it could not be read or because it listed none.
+    IfSystemEmpty,
     /// Keeps the fallback nameservers as a lower-priority tier.
     ///
     /// They are queried only once every primary nameserver has failed or timed
@@ -249,12 +249,17 @@ pub enum FallbackMode {
 
 impl FallbackMode {
     /// Converts into the resolver crate's fallback mode.
-    fn to_resolver_mode(self) -> n0_dns_resolver::FallbackMode {
+    ///
+    /// Returns `None` for [`Self::Never`]. The resolver crate has no such mode,
+    /// because its fallback tier starts empty and querying nothing is simply
+    /// adding nothing. Here the tier defaults to public resolvers, so we keep a
+    /// way to say no.
+    fn to_resolver_mode(self) -> Option<n0_dns_resolver::FallbackMode> {
         match self {
-            FallbackMode::Never => n0_dns_resolver::FallbackMode::Never,
-            FallbackMode::Always => n0_dns_resolver::FallbackMode::Always,
-            FallbackMode::IfSystemUnavailable => n0_dns_resolver::FallbackMode::IfSystemUnavailable,
-            FallbackMode::Deferred => n0_dns_resolver::FallbackMode::Deferred,
+            FallbackMode::Never => None,
+            FallbackMode::Eager => Some(n0_dns_resolver::FallbackMode::Eager),
+            FallbackMode::IfSystemEmpty => Some(n0_dns_resolver::FallbackMode::IfSystemEmpty),
+            FallbackMode::Deferred => Some(n0_dns_resolver::FallbackMode::Deferred),
         }
     }
 }
@@ -349,17 +354,6 @@ impl NameserverConfig {
         }
         n0_dns_resolver::Nameserver::new(self.addr, self.protocol.to_resolver_protocol())
     }
-
-    fn add_to(self, builder: n0_dns_resolver::Builder) -> n0_dns_resolver::Builder {
-        if let Some(server_name) = self.server_name {
-            return builder.nameserver_with_name(
-                self.addr,
-                self.protocol.to_resolver_protocol(),
-                server_name,
-            );
-        }
-        builder.nameserver(self.addr, self.protocol.to_resolver_protocol())
-    }
 }
 
 /// Protocols over which DNS records can be resolved.
@@ -404,9 +398,9 @@ impl DnsProtocol {
 impl Builder {
     /// Makes the builder respect the host system's DNS configuration.
     ///
-    /// We will try to read the system's DNS configuration in a platform-specific
-    /// way. If that fails for whatever reason, the resolver will be configured
-    /// to use Google's DNS servers instead.
+    /// The configuration is read in a platform-specific way. If that fails, or
+    /// if it lists no nameservers, the fallback tier answers instead, subject
+    /// to the [`FallbackMode`].
     pub fn with_system_defaults(mut self) -> Self {
         self.use_system_defaults = true;
         self
@@ -493,9 +487,12 @@ impl Builder {
         self.with_fallback_mode(FallbackMode::Never)
     }
 
-    /// Replaces the default public-resolver fallback with the given nameservers.
+    /// Adds nameservers to the fallback tier, in place of the default ones.
     ///
-    /// Has no effect when the fallback mode is [`FallbackMode::Never`].
+    /// Appends, so it can be called repeatedly. Adding any nameserver here
+    /// replaces the default public resolvers, which are only used when this
+    /// list is left empty. Has no effect when the fallback mode is
+    /// [`FallbackMode::Never`].
     pub fn fallback_nameserver_configs(
         mut self,
         nameservers: impl IntoIterator<Item = NameserverConfig>,
@@ -506,26 +503,45 @@ impl Builder {
 
     /// Builds the DNS resolver.
     pub fn build(self) -> DnsResolver {
-        let mut builder = n0_dns_resolver::DnsResolver::builder()
-            .fallback_mode(self.fallback_mode.to_resolver_mode());
-        if !self.use_system_defaults {
-            builder = builder.without_system_defaults();
+        DnsResolver::custom(DefaultResolver(Arc::new(
+            self.into_resolver_builder().build(),
+        )))
+    }
+
+    /// Maps this configuration onto the resolver crate's builder.
+    ///
+    /// Split out from [`Self::build`] so that the mapping can be asserted on
+    /// without a resolver in the way.
+    fn into_resolver_builder(self) -> n0_dns_resolver::Builder {
+        // The resolver crate's builder starts empty, so every source this
+        // builder was asked for is added explicitly.
+        let mut builder = n0_dns_resolver::DnsResolver::builder().nameservers(
+            self.nameservers
+                .into_iter()
+                .map(NameserverConfig::into_resolver_nameserver),
+        );
+        if self.use_system_defaults {
+            builder = builder.use_system_config();
         }
-        for nameserver in self.nameservers {
-            builder = nameserver.add_to(builder);
-        }
-        if !self.fallback_nameservers.is_empty() {
-            builder = builder.fallback_nameservers(
-                self.fallback_nameservers
-                    .into_iter()
-                    .map(NameserverConfig::into_resolver_nameserver),
-            );
+        // Unlike the resolver crate, the fallback tier is opt-out here: leaving
+        // the list empty means the default public resolvers rather than none.
+        if let Some(mode) = self.fallback_mode.to_resolver_mode() {
+            builder = builder.fallback_mode(mode);
+            builder = if self.fallback_nameservers.is_empty() {
+                builder.default_fallback_nameservers()
+            } else {
+                builder.fallback_nameservers(
+                    self.fallback_nameservers
+                        .into_iter()
+                        .map(NameserverConfig::into_resolver_nameserver),
+                )
+            };
         }
         #[cfg(not(wasm_browser))]
         if let Some(tls_client_config) = self.tls_client_config {
             builder = builder.tls_client_config(tls_client_config);
         }
-        DnsResolver::custom(DefaultResolver(Arc::new(builder.build())))
+        builder
     }
 }
 
@@ -716,9 +732,10 @@ impl Inner {
 impl DnsResolver {
     /// Creates a new DNS resolver with sensible cross-platform defaults.
     ///
-    /// We first try to read the system's resolver from `/etc/resolv.conf`.
-    /// This does not work at least on some Androids, therefore we fallback
-    /// to the default `ResolverConfig` which uses e.g. Google's `8.8.8.8` or `8.8.4.4`.
+    /// Reads the host system's DNS configuration, with the default public
+    /// resolvers behind it as a fallback tier. Those are queried only when the
+    /// system configuration cannot be read, which happens on some Android
+    /// versions, or when its nameservers do not answer.
     pub fn new() -> Self {
         Builder::default().with_system_defaults().build()
     }
@@ -1249,6 +1266,48 @@ pub(crate) mod tests {
             Some("fallback.example.com")
         );
     }
+
+    /// Collects the nameserver addresses the resolver crate ends up configured
+    /// with, for a builder that reads nothing from the host.
+    fn resolver_nameservers(builder: Builder) -> Vec<SocketAddr> {
+        builder
+            .into_resolver_builder()
+            .build()
+            .configured_nameservers()
+            .iter()
+            .map(|ns| ns.addr())
+            .collect()
+    }
+
+    /// An empty fallback list means the default public resolvers, not none.
+    ///
+    /// The resolver crate's fallback tier starts empty, so this mapping is ours
+    /// to keep: leaving the list unset here has to opt into its defaults.
+    #[test]
+    fn empty_fallback_list_uses_public_resolvers() {
+        let addrs = resolver_nameservers(Builder::default());
+        assert!(!addrs.is_empty());
+        assert!(addrs.iter().any(|addr| addr.ip() == CLOUDFLARE_IP));
+    }
+
+    /// `disable_fallback` leaves the resolver with no nameservers at all.
+    #[test]
+    fn disable_fallback_drops_the_public_resolvers() {
+        let addrs = resolver_nameservers(Builder::default().disable_fallback());
+        assert!(addrs.is_empty(), "{addrs:?}");
+    }
+
+    /// An explicit fallback list replaces the defaults rather than adding to them.
+    #[test]
+    fn explicit_fallback_list_replaces_the_defaults() {
+        let custom = SocketAddr::new(std::net::Ipv4Addr::new(192, 0, 2, 1).into(), 53);
+        let addrs = resolver_nameservers(
+            Builder::default().fallback_nameserver_configs([NameserverConfig::udp(custom.ip())]),
+        );
+        assert_eq!(addrs, vec![custom]);
+    }
+
+    const CLOUDFLARE_IP: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1));
 
     #[tokio::test]
     #[traced_test]
