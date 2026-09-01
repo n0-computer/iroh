@@ -2,6 +2,12 @@
 
 All notable changes to iroh-dns will be documented in this file.
 
+## [1.1.0](https://github.com/n0-computer/iroh/compare/v1.0.3..1.1.0) - 2026-08-25
+
+# Changelog
+
+All notable changes to iroh-dns will be documented in this file.
+
 ## [1.0.3](https://github.com/n0-computer/iroh/compare/v1.0.2..1.0.3) - 2026-07-20
 
 ### ⚙️ Miscellaneous Tasks

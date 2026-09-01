@@ -250,7 +250,9 @@ pub(super) struct PathState {
 ///
 /// - We do not have unbounded growth of paths.
 /// - If we have many paths for this remote, we prune the paths that cannot hole punch.
-/// - We do not prune holepunched paths that are currently not in use too quickly. For example, if a large number of untested paths are added at once, we will not immediately prune all of the unused, but valid, paths at once.
+/// - We do not prune holepunched paths that are currently not in use too quickly. For
+///   example, if a large number of untested paths are added at once, we will not
+///   immediately prune all of the unused, but valid, paths at once.
 fn prune_non_relay_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
     // if the total number of paths is less than the max, bail early
     if paths.len() < MAX_NON_RELAY_PATHS {

@@ -2,6 +2,25 @@
 
 All notable changes to iroh-dns-server will be documented in this file.
 
+## [1.1.0](https://github.com/n0-computer/iroh/compare/v1.0.3..1.1.0) - 2026-08-25
+
+### 🐛 Bug Fixes
+
+- *(iroh-dns-server)* Enable TCP keepalive on HTTP listeners ([#4462](https://github.com/n0-computer/iroh/issues/4462)) - ([735958f](https://github.com/n0-computer/iroh/commit/735958f81e9aa5868a2118db6195b33179e33cd0))
+- Bind iroh-dns-server to both IPv4 and IPv6 ([#4432](https://github.com/n0-computer/iroh/issues/4432)) - ([bbc82b6](https://github.com/n0-computer/iroh/commit/bbc82b65545b3bbdf0afb9282d5a01aeb89f264b))
+
+### 🧪 Testing
+
+- *(iroh)* Update patchbay to 0.7.0 ([#4445](https://github.com/n0-computer/iroh/issues/4445)) - ([7d8c9bf](https://github.com/n0-computer/iroh/commit/7d8c9bf05d3f77dd0ef85f5f2f028f4fd0e72f55))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(iroh-dns-server)* Replace `mainline` with `n0-mainline` and update `lru` ([#4470](https://github.com/n0-computer/iroh/issues/4470)) - ([82eed32](https://github.com/n0-computer/iroh/commit/82eed32993f09cf3af66b82b80e12d41350d2119))
+
+# Changelog
+
+All notable changes to iroh-dns-server will be documented in this file.
+
 ## [1.0.3](https://github.com/n0-computer/iroh/compare/v1.0.2..1.0.3) - 2026-07-20
 
 ### 🐛 Bug Fixes

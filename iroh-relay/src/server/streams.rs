@@ -69,7 +69,7 @@ impl ServerRelayedStream {
         stream: tokio::io::DuplexStream,
         max_burst_bytes: u32,
         bytes_per_second: u32,
-    ) -> Result<Self, InvalidBucketConfig> {
+    ) -> Result<(Self, watch::Receiver<u64>), InvalidBucketConfig> {
         let stream = MaybeTlsStream::Test(stream);
         let stream = RateLimited::new(
             stream,
@@ -77,14 +77,16 @@ impl ServerRelayedStream {
             bytes_per_second,
             Arc::new(Metrics::default()),
         )?;
-        Ok(Self {
+        let limited_watcher = stream.limited_watcher();
+        let stream = Self {
             inner: WsBytesFramed {
                 io: tokio_websockets::ServerBuilder::new()
                     .limits(Self::limits())
                     .serve(stream),
             },
             key_cache: KeyCache::test(),
-        })
+        };
+        Ok((stream, limited_watcher))
     }
 
     fn limits() -> tokio_websockets::Limits {
@@ -334,8 +336,11 @@ pub(crate) struct RateLimited<S> {
     inner: S,
     bucket: Option<Bucket>,
     bucket_refilled: Option<Pin<Box<time::Sleep>>>,
-    /// Keeps track if this stream was ever rate-limited.
-    limited_once: bool,
+    /// Counts how often reads from this stream have been rate-limited.
+    ///
+    /// Subscribe via [`RateLimited::limited_watcher`] to be notified about it, e.g. to
+    /// inform the client that it is being throttled.
+    limited_tx: watch::Sender<u64>,
     /// Watcher for the per-client rate limit, if set.
     ///
     /// If set by constructing via [`RateLimited::from_watcher`], we check for
@@ -489,7 +494,7 @@ impl<S> RateLimited<S> {
             inner: io,
             bucket,
             bucket_refilled: None,
-            limited_once: false,
+            limited_tx: watch::Sender::new(0),
             rate_limit_watcher: Some(rate_limit_watcher),
             metrics,
         })
@@ -510,7 +515,7 @@ impl<S> RateLimited<S> {
                 time::Duration::from_millis(100),
             )?),
             bucket_refilled: None,
-            limited_once: false,
+            limited_tx: watch::Sender::new(0),
             rate_limit_watcher: None,
             metrics,
         })
@@ -522,20 +527,27 @@ impl<S> RateLimited<S> {
             inner,
             bucket: None,
             bucket_refilled: None,
-            limited_once: false,
+            limited_tx: watch::Sender::new(0),
             rate_limit_watcher: None,
             metrics,
         }
+    }
+
+    /// Returns a watcher that counts how often reads from this stream have been rate-limited.
+    pub(crate) fn limited_watcher(&self) -> watch::Receiver<u64> {
+        self.limited_tx.subscribe()
     }
 
     /// Records metrics about being rate-limited.
     fn record_rate_limited(&mut self, bytes: usize) {
         // TODO: add a label for the frame type.
         self.metrics.bytes_rx_ratelimited_total.inc_by(bytes as u64);
-        if !self.limited_once {
-            self.metrics.conns_rx_ratelimited_total.inc();
-            self.limited_once = true;
-        }
+        self.limited_tx.send_modify(|count| {
+            if *count == 0 {
+                self.metrics.conns_rx_ratelimited_total.inc();
+            }
+            *count += 1;
+        });
     }
 }
 

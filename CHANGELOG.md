@@ -2,6 +2,49 @@
 
 All notable changes to iroh will be documented in this file.
 
+## [1.1.0](https://github.com/n0-computer/iroh/compare/v1.0.3..1.1.0) - 2026-08-25
+
+### ⛰️  Features
+
+- *(iroh)* Add metrics for relay connections ([#4477](https://github.com/n0-computer/iroh/issues/4477)) - ([fc1fc21](https://github.com/n0-computer/iroh/commit/fc1fc2133615c5b592da8869f46bc3119f1e06df))
+- *(iroh-relay, iroh)* Inform clients when they are rate-limited and warn log in iroh ([#4455](https://github.com/n0-computer/iroh/issues/4455)) - ([e68dbda](https://github.com/n0-computer/iroh/commit/e68dbda9ada25da61a2bcdff5eb12b9bc8e0ba1e))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Keep answering priority messages during relay reconnect backoff delay ([#4444](https://github.com/n0-computer/iroh/issues/4444)) - ([0458319](https://github.com/n0-computer/iroh/commit/04583191e7c9522af706eafbcd7120bb9c3d9d60))
+- *(iroh)* Route net_report HTTP probes through the configured proxy ([#4463](https://github.com/n0-computer/iroh/issues/4463)) - ([de24dae](https://github.com/n0-computer/iroh/commit/de24daede835fb9616a7e3342b4020989b8d5a8b))
+- *(iroh)* Drain relay tasks with join_next instead of join_all ([#4460](https://github.com/n0-computer/iroh/issues/4460)) - ([09a0aca](https://github.com/n0-computer/iroh/commit/09a0aca1b66aab4ac1c2bcdc078b57d6acf511c0))
+- *(iroh-dns-server)* Enable TCP keepalive on HTTP listeners ([#4462](https://github.com/n0-computer/iroh/issues/4462)) - ([735958f](https://github.com/n0-computer/iroh/commit/735958f81e9aa5868a2118db6195b33179e33cd0))
+- Bind iroh-dns-server to both IPv4 and IPv6 ([#4432](https://github.com/n0-computer/iroh/issues/4432)) - ([bbc82b6](https://github.com/n0-computer/iroh/commit/bbc82b65545b3bbdf0afb9282d5a01aeb89f264b))
+- [**breaking**] Fix serialization of CustomAddr so that the data serializes the same  as a Vec<u8> ([#4465](https://github.com/n0-computer/iroh/issues/4465)) - ([4706ec9](https://github.com/n0-computer/iroh/commit/4706ec97e991eb7150b4b98de6bbecdc3534adfd))
+- Use random mapped addrs instead of a counter. ([#4469](https://github.com/n0-computer/iroh/issues/4469)) - ([a05c9c4](https://github.com/n0-computer/iroh/commit/a05c9c41429dd9fd98b48bad2631d8ebee63fed4))
+
+### 🚜 Refactor
+
+- Don't send SNI ([#4473](https://github.com/n0-computer/iroh/issues/4473)) - ([6d7f68c](https://github.com/n0-computer/iroh/commit/6d7f68c50c6c7ac7b46cd2c881496485cfc85817))
+
+### 📚 Documentation
+
+- Explain read_to_end termination ([#4391](https://github.com/n0-computer/iroh/issues/4391)) - ([94835be](https://github.com/n0-computer/iroh/commit/94835be9283601b4aca9389fdebe0c5db7f0f963))
+
+### 🧪 Testing
+
+- *(iroh)* Update patchbay to 0.7.0 ([#4445](https://github.com/n0-computer/iroh/issues/4445)) - ([7d8c9bf](https://github.com/n0-computer/iroh/commit/7d8c9bf05d3f77dd0ef85f5f2f028f4fd0e72f55))
+- *(iroh)* Disable flaky patchbay test for now ([#4449](https://github.com/n0-computer/iroh/issues/4449)) - ([d27d430](https://github.com/n0-computer/iroh/commit/d27d430e4c9afc1e03f433ecc3688d469301401c))
+- *(iroh)* Add patchbay tests for relay connectivity ([#4434](https://github.com/n0-computer/iroh/issues/4434)) - ([8455111](https://github.com/n0-computer/iroh/commit/845511114923dba88acff41c47e5a3f6ca9afc2a))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(*)* Update `noq` and `net-tools` dependencies ([#4487](https://github.com/n0-computer/iroh/issues/4487)) - ([1960e73](https://github.com/n0-computer/iroh/commit/1960e73f1494eb53a730f2dc408f91e599f620e7))
+- *(ci)* Pin sccache to 0.16 on windows due to cli len limit ([#4456](https://github.com/n0-computer/iroh/issues/4456)) - ([0438766](https://github.com/n0-computer/iroh/commit/0438766522229f8b330ac95f45cd61c7159f352a))
+- *(iroh-dns-server)* Replace `mainline` with `n0-mainline` and update `lru` ([#4470](https://github.com/n0-computer/iroh/issues/4470)) - ([82eed32](https://github.com/n0-computer/iroh/commit/82eed32993f09cf3af66b82b80e12d41350d2119))
+- *(secruity)* Hardening + lock files + dependabot cooldown ([#4480](https://github.com/n0-computer/iroh/issues/4480)) - ([89ed3bf](https://github.com/n0-computer/iroh/commit/89ed3bfdaf81e689322f1a00f23dd1975f9396bc))
+- Run daily flaky CI even 2h earlier ([#4431](https://github.com/n0-computer/iroh/issues/4431)) - ([e080db7](https://github.com/n0-computer/iroh/commit/e080db719a1ed6c1728ccdaaa9ffcc9259dec83d))
+
+# Changelog
+
+All notable changes to iroh will be documented in this file.
+
 ## [1.0.3](https://github.com/n0-computer/iroh/compare/v1.0.2..1.0.3) - 2026-07-20
 
 ### 🐛 Bug Fixes

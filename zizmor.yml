@@ -1,0 +1,20 @@
+rules:
+  github-app:
+    ignore:
+      # The token itself is least-privilege: issues, pull-requests and
+      # organization-projects write only, contents deliberately omitted. What
+      # zizmor flags is the install scope, which stays owner-wide because the
+      # bot sweeps every repo in REPOS_LIST and an explicit `repositories:`
+      # list fails the whole run as soon as one of them lacks the app.
+      - project_sync.yaml
+  cache-poisoning:
+    ignore:
+      # AWS CLI installer zip only, and PR-scoped caches are not visible to
+      # the default branch.
+      - docker.yaml
+      - release.yml
+  archived-uses:
+    ignore:
+      # actions/create-release is archived but pinned to a SHA; replacing it
+      # means reworking the upload_url handoff to the asset upload step.
+      - release.yml

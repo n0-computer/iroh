@@ -1,0 +1,154 @@
+# Check the minimally allowed crate versions build
+
+name: Min Crates
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: min-crates-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -Dwarnings
+  RUSTDOCFLAGS: -Dwarnings
+  SCCACHE_CACHE_SIZE: "10G"
+
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
+jobs:
+  # Windows overflow routing onto Blacksmith, with its own idle count and an
+  # independent Blacksmith cap of 4 (see blacksmith_busy_match: windows).
+  pick-runner-windows:
+    uses: "./.github/workflows/pick-runner.yml"
+    with:
+      core_runner: '["self-hosted","windows","x64"]'
+      overflow_runner: '["blacksmith-4vcpu-windows-2025"]'
+      blacksmith_busy_match: windows
+      max_blacksmith_concurrent: 4
+      min_free_runners: 1
+    secrets:
+      RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
+
+  minimal-crates:
+    # Ephemeral only: this job resolves versions the lockfile has never seen
+    # and runs their build scripts.
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [ubuntu-latest, macOS-arm-latest] # TODO: windows
+        include:
+          - name: ubuntu-latest
+            os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            runner: ubuntu-latest
+          - name: macOS-arm-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: aarch64
+            runner: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: nightly
+      - name: cargo check
+        # No --locked: re-resolving is the point, so -Z min-publish-age guards
+        # the versions the lockfile has never seen.
+        run: |
+          rm -f Cargo.lock
+          cargo +nightly check -Z minimal-versions -Z min-publish-age \
+            --config 'registry.global-min-publish-age="3 days"' \
+            --workspace --all-features --lib --bins
+
+  minimal-crates-windows:
+    timeout-minutes: 30
+    name: "Minimal Crates (Windows)"
+    # Still self-hosted; moving to windows-latest needs sccache switched to
+    # SCCACHE_GHA_ENABLED. Follow-up.
+    needs: pick-runner-windows
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [windows-latest]
+        target:
+          - x86_64-pc-windows-msvc
+        include:
+          # distinct slot (4) so it can run alongside the 3 build cells
+          - name: windows-latest
+            os: windows
+            runs_on: ${{ needs.pick-runner-windows.outputs.overflow_4 }}
+    env:
+      # sccache backend is selected at runtime in "Configure sccache backend":
+      # local disk on self-hosted, GHA-backed on Blacksmith (ephemeral).
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - name: Configure sccache backend
+        shell: bash
+        run: |
+            if [[ "${RUNNER_NAME:-}" == blacksmith-* ]]; then
+              echo "Runner: $RUNNER_NAME → GHA-backed sccache"
+              echo "SCCACHE_GHA_ENABLED=on" >> "$GITHUB_ENV"
+            else
+              echo "Runner: $RUNNER_NAME → local-disk sccache"
+              # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk
+            fi
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust nightly
+        run: |
+          rustup toolchain install nightly
+          rustup target add ${{ matrix.target }}
+          rustup set default-host ${{ matrix.target }}
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        continue-on-error: true
+        with:
+          # Pinned: sccache >= 0.17.0 expands rustc @argfiles and breaks Windows'
+          # 32K command line limit: https://github.com/mozilla/sccache/issues/2397
+          version: "v0.16.0"
+      - uses: ./.github/workflows/sccache-probe
+
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          # Blacksmith's Windows image ships no pre-installed MSYS2 (C:\msys64),
+          # so install it there. Self-hosted keeps the pre-installed one (faster).
+          release: ${{ startsWith(runner.name, 'blacksmith-') }}
+
+      - name: Install aws-lc-sys build dependencies
+        shell: powershell
+        run: |
+          $chocoPath = "$Env:ProgramData\chocolatey\bin\choco.exe"
+          if (!(Test-Path $chocoPath)) {
+            $chocoPath = "$Env:SystemDrive\ProgramData\chocolatey\bin\choco.exe"
+          }
+          & $chocoPath install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          & $chocoPath install nasm -y
+          echo "C:\Program Files\CMake\bin" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Program Files\NASM" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: cargo check
+        # No --locked: re-resolving is the point, so -Z min-publish-age guards
+        # the versions the lockfile has never seen.
+        run: |
+          rm -Force Cargo.lock
+          cargo +nightly check -Z minimal-versions -Z min-publish-age `
+            --config 'registry.global-min-publish-age="3 days"' `
+            --workspace --all-features --lib --bins

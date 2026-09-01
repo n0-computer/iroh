@@ -35,9 +35,22 @@ on:
           required: true
           type: boolean
           default: false
+      secrets:
+        DOCKERHUB_USERNAME:
+          required: true
+        DOCKERHUB_TOKEN:
+          required: true
+        S3_ACCESS_KEY_ID:
+          required: true
+        S3_ACCESS_KEY:
+          required: true
 
 env:
   IROH_FORCE_STAGING_RELAYS: "1"
+
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
 
 jobs:
     build_and_publish:
@@ -46,13 +59,15 @@ jobs:
       runs-on: [self-hosted, linux, X64]
       steps:
         - name: Checkout
-          uses: actions/checkout@v7
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          with:
+            persist-credentials: false
 
         - name: Set up Docker Buildx
-          uses: docker/setup-buildx-action@v4
+          uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
         - name: Login to Docker Hub
-          uses: docker/login-action@v4
+          uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
           with:
             username: ${{ secrets.DOCKERHUB_USERNAME }}
             password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -64,7 +79,7 @@ jobs:
 
         - name: Cache AWS CLI
           id: cache-awscli
-          uses: actions/cache@v6
+          uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
           with:
             path: ~/awscli
             key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
@@ -86,15 +101,17 @@ jobs:
               echo "AWS_DEFAULT_REGION=us-west-2" >> $GITHUB_ENV
 
         - name: Fetch release binaries
+          env:
+            BASE_HASH: ${{ inputs.base_hash }}
           run: |
-            aws s3 cp s3://vorc/iroh-relay-linux-amd64-musl-${{ inputs.base_hash }} bins/linux/amd64/iroh-relay
-            aws s3 cp s3://vorc/iroh-dns-server-linux-amd64-musl-${{ inputs.base_hash }} bins/linux/amd64/iroh-dns-server
+            aws s3 cp "s3://vorc/iroh-relay-linux-amd64-musl-$BASE_HASH" bins/linux/amd64/iroh-relay
+            aws s3 cp "s3://vorc/iroh-dns-server-linux-amd64-musl-$BASE_HASH" bins/linux/amd64/iroh-dns-server
 
-            aws s3 cp s3://vorc/iroh-relay-linux-aarch64-musl-${{ inputs.base_hash }} bins/linux/arm64/iroh-relay
-            aws s3 cp s3://vorc/iroh-dns-server-linux-aarch64-musl-${{ inputs.base_hash }} bins/linux/arm64/iroh-dns-server
+            aws s3 cp "s3://vorc/iroh-relay-linux-aarch64-musl-$BASE_HASH" bins/linux/arm64/iroh-relay
+            aws s3 cp "s3://vorc/iroh-dns-server-linux-aarch64-musl-$BASE_HASH" bins/linux/arm64/iroh-dns-server
 
         - name: Build Docker image (iroh-relay)
-          uses: docker/build-push-action@v7
+          uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
           with:
             context: .
             push: ${{ inputs.publish }}
@@ -104,7 +121,7 @@ jobs:
             file: docker/Dockerfile.ci
 
         - name: Build Docker image (iroh-dns-server)
-          uses: docker/build-push-action@v7
+          uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
           with:
             context: .
             push: ${{ inputs.publish }}

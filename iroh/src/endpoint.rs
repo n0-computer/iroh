@@ -1796,9 +1796,11 @@ impl Endpoint {
 
     // # Remaining private methods
 
-    /// Translates a raw [`SocketAddr`] (which may be a synthetic mapped address) into
-    /// a transport address.
-    pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> crate::socket::transports::Addr {
+    /// Translates a possible IP-mapped [`SocketAddr`] into a transport address.
+    pub(crate) fn to_transport_addr(
+        &self,
+        addr: SocketAddr,
+    ) -> Option<crate::socket::transports::Addr> {
         self.inner.to_transport_addr(addr)
     }
 

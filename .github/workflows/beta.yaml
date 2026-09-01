@@ -15,6 +15,10 @@ concurrency:
 env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   tests:
     uses: './.github/workflows/tests.yaml'
@@ -26,13 +30,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Extract test results
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          printf '${{ toJSON(needs) }}\n'
-          result=$(echo '${{ toJSON(needs) }}' | jq -r .tests.result)
+          printf '%s\n' "$NEEDS_JSON"
+          result=$(echo "$NEEDS_JSON" | jq -r .tests.result)
           echo TESTS_RESULT=$result
           echo "TESTS_RESULT=$result" >>"$GITHUB_ENV"
       - name: Notify discord on failure
-        uses: n0-computer/discord-webhook-notify@v1
+        uses: n0-computer/discord-webhook-notify@1399c1b2d57cc05894d506d2cfdc33c5f012b993 # v1.1.1
         if: ${{ env.TESTS_RESULT == 'failure' }}
         with:
           severity: error
