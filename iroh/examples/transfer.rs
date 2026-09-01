@@ -1346,18 +1346,18 @@ mod duration_micros {
 }
 
 pub fn init_tracing(path: Option<&Path>) {
-    use tracing_subscriber::{fmt, registry};
+    let layer = tracing_subscriber::fmt::layer().with_line_number(true);
     if let Some(path) = path {
         let file = File::create(path).expect("failed to create trace log file");
         let filter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("iroh=trace,transfer=trace,noq=trace"));
-        let layer = fmt::layer().with_writer(file).with_filter(filter);
-        registry().with(layer).init()
+        let layer = layer.with_writer(file).with_filter(filter);
+        tracing_subscriber::registry().with(layer).init()
     } else {
-        let layer = fmt::layer()
+        let layer = layer
             .with_writer(std::io::stderr)
             .with_filter(EnvFilter::from_default_env());
-        registry().with(layer).init()
+        tracing_subscriber::registry().with(layer).init()
     }
 }
 

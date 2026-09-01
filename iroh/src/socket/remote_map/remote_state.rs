@@ -6,11 +6,12 @@ use std::{
     task::Poll,
 };
 
-use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
+use iroh_base::{EndpointId, TransportAddr};
 use n0_error::StackResultExt;
 use n0_future::{
     FuturesUnordered, MaybeFuture, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
+    future::now_or_never,
     task::JoinSet,
     time::{self, Duration, Instant},
 };
@@ -28,13 +29,12 @@ pub use self::{
     path_watcher::{Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream},
     remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage},
 };
-use super::Source;
+use super::{MappedAddrs, Source};
 use crate::{
     address_lookup::{AddressLookupFailed, AddressLookupServices, Item as AddressLookupItem},
     endpoint::DirectAddr,
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
-        mapped_addrs::{AddrMap, CustomMappedAddr, RelayMappedAddr},
         remote_map::remote_state::path_watcher::PathStateSender,
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -100,7 +100,8 @@ pub(super) struct RemoteStateActor {
     connections: FxHashMap<ConnId, ConnectionState>,
     /// State of the actor and hooks into the rest of the remote endpoint.
     ///
-    /// This is on a separate struct so that we can have parallel mutable borrows to `connections` and `state`.
+    /// This is on a separate struct so that we can have parallel mutable borrows to
+    /// `connections` and `state`.
     state: State,
 }
 
@@ -117,10 +118,8 @@ struct State {
     ///
     /// These are our local addresses and any reflexive transport addresses.
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
-    relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-    /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
-    custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
+    /// The mapped addresses for this endpoint.
+    mapped_addrs: MappedAddrs,
     /// Address lookup service, cloned from the socket.
     address_lookup: AddressLookupServices,
 
@@ -175,8 +174,7 @@ impl RemoteStateActor {
     pub(super) fn new(
         endpoint_id: EndpointId,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-        custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
+        mapped_addrs: MappedAddrs,
         metrics: Arc<SocketMetrics>,
         address_lookup: AddressLookupServices,
         path_selector: Arc<dyn PathSelector>,
@@ -187,8 +185,7 @@ impl RemoteStateActor {
                 endpoint_id,
                 metrics: metrics.clone(),
                 local_direct_addrs,
-                relay_mapped_addrs,
-                custom_mapped_addrs,
+                mapped_addrs,
                 address_lookup,
                 connections_close: Default::default(),
                 path_events: Default::default(),
@@ -602,9 +599,10 @@ impl RemoteStateActor {
                     return;
                 };
 
-                // We track all known remote addresses for the peer in `State::paths`. The paths are tracked
-                // by remote address only (we ignore the local IP). Therefore, we mark a remote addr as abandoned
-                // in the remote-global state only once no connections have any path to that remote addr.
+                // We track all known remote addresses for the peer in `State::paths`. The
+                // paths are tracked by remote address only (we ignore the local
+                // IP). Therefore, we mark a remote addr as abandoned in the remote-global
+                // state only once no connections have any path to that remote addr.
                 if !conn_state
                     .paths
                     .values()
@@ -681,8 +679,9 @@ impl RemoteStateActor {
     /// - Sets the selected path to [`PathStatus::Available`]
     fn apply_selected_path(&mut self) {
         let Some(selected) = self.state.selected_path.clone() else {
-            // We can't open the selected path on all paths if we don't have one yet.
-            // And we can't close all "unselected" paths either, because we don't know which one is selected.
+            // We can't open the selected path on all paths if we don't have one yet.  And
+            // we can't close all "unselected" paths either, because we don't know which one
+            // is selected.
             return;
         };
 
@@ -695,7 +694,7 @@ impl RemoteStateActor {
             self.state
                 .open_path_on_conn(*conn_id, conn_state, &conn, &selected);
 
-            for (path_id, path_remote) in conn_state.paths.iter() {
+            for (path_id, path_fourtuple) in conn_state.paths.iter() {
                 let Some(path) = conn.path(*path_id) else {
                     continue;
                 };
@@ -706,11 +705,11 @@ impl RemoteStateActor {
                 // to avoid the client and server independently closing different paths
                 // and racing to abandon the last one.
                 if conn.side().is_client()
-                    && path_remote.is_ip()
-                    && path_remote != &selected
+                    && path_fourtuple.is_ip()
+                    && path_fourtuple != &selected
                     && conn_state.paths.values().filter(|a| a.is_ip()).count() > 1
                 {
-                    trace!(?path_remote, %conn_id, %path_id, "closing direct path");
+                    trace!(?path_fourtuple, %conn_id, %path_id, "closing direct path");
                     match path.close() {
                         Err(noq_proto::ClosePathError::MultipathNotNegotiated) => {
                             error!("multipath not negotiated");
@@ -726,8 +725,9 @@ impl RemoteStateActor {
                     continue;
                 }
 
-                // Set path status: The selected path becomes Available, all other paths become Backup.
-                self.state.set_path_status(*conn_id, &path, path_remote);
+                // Set path status: The selected path becomes Available, all other paths
+                // become Backup.
+                self.state.set_path_status(*conn_id, &path, path_fourtuple);
             }
 
             // Record the new selected path in the path watcher.
@@ -979,7 +979,9 @@ impl State {
         conn_state: &mut ConnectionState,
         path: &noq::Path,
     ) -> Option<transports::FourTuple> {
-        let network_path = self.transport_tuple_for_path(path)?;
+        let network_path = self
+            .mapped_addrs
+            .to_transport_tuple(&path.network_path().ok()?)?;
         event!(
             target: "iroh::_events::path::open",
             Level::DEBUG,
@@ -1031,7 +1033,7 @@ impl State {
         conn_id: ConnId,
         conn_state: &ConnectionState,
         conn: &noq::Connection,
-        open_addr: &transports::FourTuple,
+        open_4tuple: &transports::FourTuple,
     ) {
         // Only the client opens paths; the server receives them via
         // QUIC frames and reacts to PathOpened events.
@@ -1039,15 +1041,14 @@ impl State {
             return;
         }
         // Already open on this connection; nothing to do.
-        if conn_state.paths.values().any(|a| a == open_addr) {
+        if conn_state.paths.values().any(|a| a == open_4tuple) {
             return;
         }
 
-        let quic_addr =
-            open_addr.to_noq_four_tuple(&self.relay_mapped_addrs, &self.custom_mapped_addrs);
-        let path_status = self.path_status_for_addr(open_addr);
+        let mapped_4tuple = self.mapped_addrs.to_mapped_tuple(open_4tuple);
+        let path_status = self.path_status_for_addr(open_4tuple);
 
-        let fut = conn.open_path_ensure(quic_addr, path_status);
+        let fut = conn.open_path_ensure(mapped_4tuple, path_status);
         match fut.path_id() {
             Some(path_id) => {
                 trace!(%conn_id, %path_id, ?path_status, "opening new path");
@@ -1059,8 +1060,8 @@ impl State {
                     | Some(Err(PathError::MaxPathIdReached)) => {
                         self.scheduled_open_path =
                             Some(Instant::now() + Duration::from_millis(333));
-                        self.pending_open_paths.push_back(open_addr.clone());
-                        trace!(?open_addr, ?ret, "scheduling open_path");
+                        self.pending_open_paths.push_back(open_4tuple.clone());
+                        trace!(?open_4tuple, ?ret, "scheduling open_path");
                     }
                     _ => warn!(?ret, "Opening path failed"),
                 }
@@ -1078,16 +1079,6 @@ impl State {
         } else {
             PathStatus::Backup
         }
-    }
-
-    /// Returns the [`transports::FourTuple] for a path.
-    fn transport_tuple_for_path(&self, path: &noq::Path) -> Option<transports::FourTuple> {
-        let noq_network_path = path.network_path().ok()?;
-        transports::FourTuple::from_noq(
-            noq_network_path,
-            &self.relay_mapped_addrs,
-            &self.custom_mapped_addrs,
-        )
     }
 
     /// Returns the current set of local direct addresses.
@@ -1215,7 +1206,11 @@ struct HolepunchAttempt {
 #[display("{_0}")]
 struct ConnId(usize);
 
-/// State about one connection.
+/// A connection managed by the [`RemoteStateActor`].
+///
+/// - A handle to the connection.
+/// - The paths we know about.
+/// - Some stuff to make observers happy.
 #[derive(Debug)]
 struct ConnectionState {
     /// Weak handle to the connection.
@@ -1227,6 +1222,13 @@ struct ConnectionState {
     /// [`Connection`]: crate::endpoint::Connection
     path_state: PathStateSender,
     /// The open paths that exist on this connection.
+    ///
+    /// This might be lagging from the connection state inside noq itself as this can only
+    /// be updated once we received the event from noq.
+    ///
+    /// IP paths *should* have the local IP address filled in by the time we receive the
+    /// event. The noq established event is only emitted once at least one datagram is
+    /// received from the peer on the path.
     paths: FxHashMap<PathId, transports::FourTuple>,
     /// Whether this connection has ever had a direct path.
     ///
@@ -1466,15 +1468,6 @@ impl PathSelection {
     /// Returns `None` when nothing has been selected.
     pub(crate) fn selected(&self) -> Option<&transports::FourTuple> {
         self.selection.as_ref()
-    }
-}
-
-/// Poll a future once, like n0_future::future::poll_once but sync.
-fn now_or_never<T, F: Future<Output = T>>(fut: F) -> Option<T> {
-    let fut = std::pin::pin!(fut);
-    match fut.poll(&mut std::task::Context::from_waker(std::task::Waker::noop())) {
-        Poll::Ready(res) => Some(res),
-        Poll::Pending => None,
     }
 }
 

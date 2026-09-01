@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/suzuki-shunsuke/pinact/refs/heads/main/json-schema/pinact.json
+version: 3
+
+min_age:
+  value: 7 # days, matches the dependabot cooldown
+
+# No semver tag upstream to verify the version comment against. Forks and
+# tool-named tags; revisit rather than leave indefinitely.
+rules:
+  - ignore: true
+    conditions:
+      # fork of obi1kenobi/cargo-semver-checks-action; check whether the
+      # baseline feature landed upstream.
+      - expr: |
+          ActionName == "n0-computer/cargo-semver-checks-action"
+  - ignore: true
+    conditions:
+      # n0-owned, no releases cut.
+      - expr: |
+          ActionName == "n0-computer/actions-upload-release-asset"

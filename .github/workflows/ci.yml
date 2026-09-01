@@ -20,6 +20,10 @@ env:
   SCCACHE_CACHE_SIZE: "10G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
 jobs:
   pick-runner:
     uses: "./.github/workflows/pick-runner.yml"
@@ -32,6 +36,10 @@ jobs:
     name: CI Test Suite
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     uses: "./.github/workflows/tests.yaml"
+
+  min-crates:
+    name: Min Crates
+    uses: "./.github/workflows/minimal-crates.yaml"
 
   cross_build:
     name: Cross Build Only
@@ -57,12 +65,15 @@ jobs:
           # - x86_64-unknown-netbsd
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
       - name: Cleanup Docker
         continue-on-error: true
@@ -72,14 +83,16 @@ jobs:
         # See https://github.com/cross-rs/cross/issues/1222
       - name: Cache cross
         id: cache-cross
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cross
           key: cross-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install cross
         if: steps.cache-cross.outputs.cache-hit != 'true'
-        uses: taiki-e/install-action@cross
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        with:
+          tool: cross
 
       - name: build
         # cross tests are currently broken vor armv7 and aarch64
@@ -105,7 +118,9 @@ jobs:
             api-level: 35
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Enable KVM for nested virtualization
         if: matrix.target == 'x86_64-linux-android'
@@ -116,29 +131,30 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: stable
           target: ${{ matrix.target }}
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: "temurin"
           java-version: "17"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
 
       # Pinned to a release tag (rather than @main) for supply-chain hygiene.
       - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
         id: setup-ndk
         with:
           ndk-version: r25c
           add-to-path: true
 
       - name: Install cargo-ndk
-        run: cargo install --version 4.1.2 cargo-ndk
+        run: cargo install --locked --version 4.1.2 cargo-ndk
 
       # Replace cargo-ndk-runner with a wrapper that forwards RUST_LOG
       # and RUST_BACKTRACE into the emulator shell. The upstream binary
@@ -170,7 +186,7 @@ jobs:
         if: matrix.target != 'x86_64-linux-android'
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: cargo ndk --target ${{ matrix.target }} build
+        run: cargo ndk --target ${{ matrix.target }} build --locked
 
       # Build all the test binaries up front so the emulator boot can
       # overlap with compilation. cargo-ndk runs `cargo test --no-run`
@@ -182,15 +198,15 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           CARGO_NDK_TARGET: ${{ matrix.target }}
         run: |
-          cargo ndk test --no-run -p iroh-base --all-features
-          cargo ndk test --no-run -p iroh-dns --features tls-ring
-          cargo ndk test --no-run -p iroh-relay --features tls-ring,metrics
-          cargo ndk test --no-run -p iroh --features tls-ring,metrics,portmapper,test-utils
+          cargo ndk test --locked --no-run -p iroh-base --all-features
+          cargo ndk test --locked --no-run -p iroh-dns --features tls-ring
+          cargo ndk test --locked --no-run -p iroh-relay --features tls-ring,metrics
+          cargo ndk test --locked --no-run -p iroh --features tls-ring,metrics,portmapper,test-utils
 
       - name: Run workspace tests on Android emulator
         if: matrix.target == 'x86_64-linux-android'
         timeout-minutes: 30
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           # Forwarded into the emulator by the cargo-ndk-runner wrapper.
@@ -238,10 +254,10 @@ jobs:
             # catches what it could not.
             adb shell 'rm -rf /data/local/tmp/*' || true
             adb shell df -h /data
-            cargo ndk test -p iroh-base --all-features
-            cargo ndk test -p iroh-dns --features tls-ring
-            cargo ndk test -p iroh-relay --features tls-ring,metrics
-            cargo ndk test -p iroh --features tls-ring,metrics,portmapper,test-utils
+            cargo ndk test --locked -p iroh-base --all-features
+            cargo ndk test --locked -p iroh-dns --features tls-ring
+            cargo ndk test --locked -p iroh-relay --features tls-ring,metrics
+            cargo ndk test --locked -p iroh --features tls-ring,metrics,portmapper,test-utils
 
   cross_test:
     name: Cross Test
@@ -259,12 +275,15 @@ jobs:
       RUSTFLAGS: "-Dwarnings --cfg skip_patchbay"
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
       - name: Cleanup Docker
         continue-on-error: true
@@ -274,14 +293,16 @@ jobs:
         # See https://github.com/cross-rs/cross/issues/1222
       - name: Cache cross
         id: cache-cross
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cross
           key: cross-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install cross
         if: steps.cache-cross.outputs.cache-hit != 'true'
-        uses: taiki-e/install-action@cross
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        with:
+          tool: cross
 
       - name: test
         run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
@@ -298,36 +319,40 @@ jobs:
       RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup node.js version 22.5 # needed for browser-like websocket API support in node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.5
 
       - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install wasm-bindgen-test-runner
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
         with:
           # Match the version of wasm-bindgen used in Cargo.lock
           tool: wasm-bindgen-cli@0.2.122
 
       - name: Install wasm-tools
-        uses: bytecodealliance/actions/wasm-tools/setup@v1
+        uses: bytecodealliance/actions/wasm-tools/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
 
       - name: wasm32 build (iroh-base)
-        run: cargo build --target wasm32-unknown-unknown -p iroh-base --all-features
+        run: cargo build --locked --target wasm32-unknown-unknown -p iroh-base --all-features
 
       - name: wasm32 build (iroh-relay)
-        run: cargo build --target wasm32-unknown-unknown -p iroh-relay
+        run: cargo build --locked --target wasm32-unknown-unknown -p iroh-relay
 
       - name: wasm32 build (iroh)
-        run: cargo build --target wasm32-unknown-unknown -p iroh
+        run: cargo build --locked --target wasm32-unknown-unknown -p iroh
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
@@ -340,7 +365,7 @@ jobs:
           ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh.wasm | grep 'import "env"'
 
       - name: Run integration test in wasm
-        run: cargo test -p iroh --test integration --target=wasm32-unknown-unknown
+        run: cargo test --locked -p iroh --test integration --target=wasm32-unknown-unknown
 
   check_semver:
     needs: pick-runner
@@ -350,16 +375,17 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
       - name: Check semver
-        # uses: obi1kenobi/cargo-semver-checks-action@v2
-        uses: n0-computer/cargo-semver-checks-action@feat-baseline
+        # uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2
+        uses: n0-computer/cargo-semver-checks-action@b49de9133f8849bb51cae32c6bdeb19a5c37e61f # feat-baseline
         with:
           package: iroh, iroh-base, iroh-dns, iroh-dns-server, iroh-relay
 
@@ -383,15 +409,17 @@ jobs:
       CARGO_CHECK_EXTERNAL_TYPES_VERSION: "0.5.0"
       TOOLCHAIN: "nightly-2026-03-20"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ env.TOOLCHAIN }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
       - name: Install cargo-check-external-types
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
         with:
           tool: |
             cargo-make
@@ -399,6 +427,9 @@ jobs:
 
       - name: Check external types
         run: cargo make check-external-types
+      - name: Lockfile must not have moved
+        # cargo make takes no --locked; assert the lockfile instead.
+        run: git diff --exit-code Cargo.lock
 
   check_fmt:
     timeout-minutes: 30
@@ -408,15 +439,23 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
           components: rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
-      - uses: taiki-e/install-action@cargo-make
+      - uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        with:
+          tool: cargo-make
       - run: cargo make format-check
+      - name: Lockfile must not have moved
+        # cargo make takes no --locked; assert the lockfile instead.
+        run: git diff --exit-code Cargo.lock
 
   check_docs:
     timeout-minutes: 30
@@ -429,17 +468,19 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
       RUSTDOCFLAGS: --cfg docsrs
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: nightly-2025-10-09
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
       - name: Docs
-        run: cargo doc --workspace --all-features --no-deps --document-private-items
+        run: cargo doc --locked --workspace --all-features --no-deps --document-private-items
 
   clippy_check:
     timeout-minutes: 30
@@ -450,39 +491,46 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
           components: clippy
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
       # TODO: We have a bunch of platform-dependent code so should
       #    probably run this job on the full platform matrix
       - name: clippy check (all features)
-        run: cargo clippy --workspace --all-features --all-targets --lib --bins --tests --benches --examples
+        run: cargo clippy --locked --workspace --all-features --all-targets --lib --bins --tests --benches --examples
 
       - name: clippy check (no features)
-        run: cargo clippy --workspace --no-default-features --all-targets --lib --bins --tests --benches --examples
+        run: cargo clippy --locked --workspace --no-default-features --all-targets --lib --bins --tests --benches --examples
 
       - name: clippy check (default features)
-        run: cargo clippy --workspace --all-targets --lib --bins --tests --benches --examples
+        run: cargo clippy --locked --workspace --all-targets --lib --bins --tests --benches --examples
 
   check_optional_deps:
     timeout-minutes: 10
     name: Check optional deps are absent without features
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
       - name: Verify optional deps are absent without features
         run: |
           fail=0
           for dep in portmapper igd-next swarm-discovery ring aws-lc-rs; do
-            echo    "cargo tree -p iroh --no-default-features --edges normal --target all -i $dep";
-            output=$(cargo tree -p iroh --no-default-features --edges normal --target all -i "$dep" 2>&1) || true
+            echo    "cargo tree --locked -p iroh --no-default-features --edges normal --target all -i $dep";
+            output=$(cargo tree --locked -p iroh --no-default-features --edges normal --target all -i "$dep" 2>&1) || true
             if ! echo "$output" | grep -qE "(nothing to print|did not match any packages)"; then
               echo "ERROR: $dep should not be in the dependency tree without its feature"
               echo "$output"
@@ -502,36 +550,48 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ env.MSRV }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
       - uses: ./.github/workflows/sccache-probe
 
       - name: Check MSRV all features
         run: |
-          cargo +$MSRV check --workspace --all-targets
+          cargo +$MSRV check --locked --workspace --all-targets
 
   cargo_deny:
     timeout-minutes: 30
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           arguments: --workspace --all-features
           command: check
           command-arguments: "-Dwarnings"
 
   netsim-integration-tests:
-    permissions: write-all
+    permissions:
+      contents: read
+      pull-requests: write   # netsim_runner posts the report comment
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     uses: "./.github/workflows/netsim_runner.yaml"
-    secrets: inherit
+    secrets:
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_REPORT_BUCKET: ${{ secrets.S3_REPORT_BUCKET }}
+      METRO_TOKEN: ${{ secrets.METRO_TOKEN }}
+      METRO_ENDPOINT: ${{ secrets.METRO_ENDPOINT }}
     with:
       branch: ${{ github.ref }}
       max_workers: 6
@@ -544,9 +604,11 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Cache pip
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pip
           key: pip-codespell-2.4.1

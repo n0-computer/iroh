@@ -527,24 +527,12 @@ impl Socket {
         &self.dns_resolver
     }
 
-    /// Translates a raw [`SocketAddr`] (which may be a synthetic mapped address) into
-    /// a [`transports::Addr`].
+    /// Translates a possible IP-mapped [`SocketAddr`] into a [`transports::Addr`].
     ///
-    /// For regular IP addresses this returns `Addr::Ip`. For synthetic relay-mapped
-    /// IPv6 addresses this performs a reverse lookup and returns `Addr::Relay`.
-    ///
-    /// This lookup only makes sense for a remote address of the
-    /// underlying QUIC connection.
-    ///
-    /// If you call this with a mapped address for which no mapping exists,
-    /// it will return the address as an `Addr::Ip`.
-    pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> transports::Addr {
-        remote_map::to_transport_addr(
-            addr,
-            &self.mapped_addrs.relay_addrs,
-            &self.mapped_addrs.custom_addrs,
-        )
-        .unwrap_or(transports::Addr::Ip(addr))
+    /// For regular IP addresses this returns `Addr::Ip`. For mapped addresses this performs
+    /// a reverse lookup.
+    pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> Option<transports::Addr> {
+        self.mapped_addrs.to_transport_addr(addr)
     }
 
     pub(crate) fn to_local_transport_addr(
@@ -552,7 +540,13 @@ impl Socket {
         local_ip: Option<IpAddr>,
         remote_addr: SocketAddr,
     ) -> LocalTransportAddr {
-        let remote_addr = self.to_transport_addr(remote_addr);
+        let remote_addr = self.to_transport_addr(remote_addr).unwrap_or_else(|| {
+            error!(
+                mapped_addr = ?remote_addr,
+                "Socket::to_local_transport_addr: invalid mapped address",
+            );
+            transports::Addr::Ip(remote_addr)
+        });
         LocalTransportAddr::from_noq_local_ip(
             local_ip,
             &remote_addr,
@@ -1060,6 +1054,7 @@ impl EndpointInner {
             });
             net_report::Options::new(tls_config.clone())
                 .quic_config(qad_config)
+                .proxy_url(proxy_url.clone())
                 .net_report_config(net_report_config)
         };
 

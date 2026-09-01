@@ -1,5 +1,9 @@
 //! Implementation of encoding iroh EndpointIds as domain names.
 //!
+//! We used to send this name via SNI up until iroh version 1.0.3, but stopped doing so in
+//! versions after that. It is now used only locally by the `ServerCertificateVerifier` and
+//! to separate the buckets for 0-RTT session tickets.
+//!
 //! We used to use a constant "localhost" for the TLS server name - however, that affects
 //! 0-RTT and would put all of the TLS session tickets we receive into the same bucket in
 //! the TLS session ticket cache.

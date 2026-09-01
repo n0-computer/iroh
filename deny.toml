@@ -20,12 +20,13 @@ allow = [
 
 
 [advisories]
+yanked = "deny"
 ignore = [
   "RUSTSEC-2024-0436", # paste -> netlink-packet-core
   "RUSTSEC-2023-0089", # unmaintained: postcard -> heapless -> atomic-polyfill
-  "RUSTSEC-2026-0194", # netwatch -> netdev -> plist -> quick-xml: remove once https://github.com/ebarnard/rust-plist/pull/191 is released
-  "RUSTSEC-2026-0195", # netwatch -> netdev -> plist -> quick-xml: remove once https://github.com/ebarnard/rust-plist/pull/191 is released
 ]
 
 [sources]
-allow-git = []
+allow-git = [
+  "https://github.com/n0-computer/n0-error",
+]
