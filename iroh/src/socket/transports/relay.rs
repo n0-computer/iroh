@@ -411,6 +411,7 @@ mod tests {
                 .expect("infallible"),
             metrics: Default::default(),
             relay_map: RelayMap::empty(),
+            configure_socket: None,
         };
         RelayTransport::new(config, CancellationToken::new())
     }
