@@ -191,6 +191,14 @@ pub(crate) struct Options {
     pub(crate) portmapper_config: portmapper::PortmapperConfig,
     pub(crate) net_report_config: crate::net_report::NetReportConfig,
 
+    /// Relays used for QUIC address discovery (QAD) probes.
+    ///
+    /// When set, these relays are probed to discover the node's public address
+    /// instead of the relay transport's relay map.  This allows address
+    /// discovery against custom relays while the relay transport stays
+    /// disabled.
+    pub(crate) discovery_relays: Vec<RelayConfig>,
+
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
 
@@ -891,6 +899,7 @@ impl EndpointInner {
             path_selector,
             portmapper_config,
             net_report_config,
+            discovery_relays,
             static_config,
             configured_addrs,
         } = opts;
@@ -1059,10 +1068,19 @@ impl EndpointInner {
         #[cfg(wasm_browser)]
         let net_report_config = net_report::Options::default().net_report_config(net_report_config);
 
+        // The net report probes an explicitly configured discovery relay list
+        // when one is set (address discovery against custom relays without a
+        // relay transport); otherwise it probes the relay transport's map.
+        let net_report_relay_map = if discovery_relays.is_empty() {
+            relay_map.clone()
+        } else {
+            RelayMap::from_iter(discovery_relays)
+        };
+
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
             dns_resolver,
-            relay_map.clone(),
+            net_report_relay_map.clone(),
             net_report_config,
             metrics.net_report.clone(),
         );
@@ -1072,7 +1090,7 @@ impl EndpointInner {
             sock.clone(),
             port_mapper,
             Arc::new(AsyncMutex::new(net_reporter)),
-            relay_map,
+            net_report_relay_map,
             direct_addr_done_tx,
             sock.shutdown.at_close_start.child_token(),
         );
@@ -2183,6 +2201,7 @@ mod tests {
             path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             net_report_config: Default::default(),
+            discovery_relays: Default::default(),
             static_config,
             configured_addrs: Default::default(),
         }
@@ -2599,6 +2618,7 @@ mod tests {
             path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
             net_report_config: Default::default(),
+            discovery_relays: Default::default(),
             static_config,
             configured_addrs: Default::default(),
         };
