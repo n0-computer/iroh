@@ -1380,6 +1380,10 @@ impl Endpoint {
     /// The watcher updates whenever any home relay's connection status changes.
     /// See [`RelayStatus`] for the information available on each entry.
     ///
+    /// This may be used to observe connection failures to the home relay.
+    /// The reason for a failure to connect to the home relay can be observed
+    /// via [`RelayStatus::last_error`]. See its docs for details.
+    ///
     /// The returned watcher only becomes disconnected once the last clone of
     /// the [`Endpoint`] is dropped. Closing the endpoint does not disconnect
     /// the watcher. To stop a task once the endpoint stops, combine with
@@ -1910,11 +1914,32 @@ impl RelayStatus {
         self.state.is_connected()
     }
 
-    /// Returns the most recent connection error, if the relay is currently
-    /// disconnected.
+    /// Returns the most recent connection error.
     ///
     /// Returns `None` when the relay is connected, or when the endpoint has
     /// not yet observed a failed connection attempt.
+    ///
+    /// The returned error is an [`AnyError`]. You can try to downcast the
+    /// error, or any further error in the chain, to a specific type.
+    ///
+    /// For example, the function below will check if the error indicates
+    /// an authentication failure, and if so return the reason for the
+    /// failed authentication as reported by the relay server.
+    ///
+    /// ```no_run
+    /// use iroh_relay::protos::handshake;
+    /// use n0_error::{AnyError, StackError};
+    ///
+    /// /// Returns the reason if `error` was caused by the relay server denying our authentication.
+    /// fn is_auth_denied(error: &AnyError) -> Option<String> {
+    ///     error
+    ///         .stack()
+    ///         .find_map(|error| match error.downcast_ref::<handshake::Error>()? {
+    ///             handshake::Error::ServerDeniedAuth { reason, .. } => Some(reason.clone()),
+    ///             _ => None,
+    ///         })
+    /// }
+    /// ```
     pub fn last_error(&self) -> Option<&AnyError> {
         self.state.last_error().map(Arc::as_ref)
     }
