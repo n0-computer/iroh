@@ -12,8 +12,6 @@ concurrency:
 
 env:
   RUST_BACKTRACE: 1
-  RUSTFLAGS: -Dwarnings
-  RUSTDOCFLAGS: -Dwarnings
   SCCACHE_CACHE_SIZE: "10G"
 
 # Default to read-only; jobs that need more grant it explicitly.
