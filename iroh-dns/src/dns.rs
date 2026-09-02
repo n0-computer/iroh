@@ -562,8 +562,8 @@ impl Resolver for DefaultResolver {
     fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
         let this = self.0.clone();
         Box::pin(async move {
-            let iter = this.lookup_ipv4(host).await.map_err(map_resolve_error)?;
-            let iter: BoxIter<_> = Box::new(iter);
+            let list = this.lookup_ipv4(host).await.map_err(map_resolve_error)?;
+            let iter: BoxIter<_> = Box::new(list.into_iter());
             Ok(iter)
         })
     }
@@ -571,8 +571,8 @@ impl Resolver for DefaultResolver {
     fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
         let this = self.0.clone();
         Box::pin(async move {
-            let iter = this.lookup_ipv6(host).await.map_err(map_resolve_error)?;
-            let iter: BoxIter<_> = Box::new(iter);
+            let list = this.lookup_ipv6(host).await.map_err(map_resolve_error)?;
+            let iter: BoxIter<_> = Box::new(list.into_iter());
             Ok(iter)
         })
     }
@@ -580,8 +580,8 @@ impl Resolver for DefaultResolver {
     fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
         let this = self.0.clone();
         Box::pin(async move {
-            let iter = this.lookup_txt(host).await.map_err(map_resolve_error)?;
-            let iter: BoxIter<TxtRecordData> = Box::new(iter.map(convert_txt));
+            let list = this.lookup_txt(host).await.map_err(map_resolve_error)?;
+            let iter: BoxIter<TxtRecordData> = Box::new(list.into_iter().map(convert_txt));
             Ok(iter)
         })
     }
