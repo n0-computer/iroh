@@ -77,7 +77,7 @@ async fn report_home_relay_status(endpoint: Endpoint) {
             // We are not connected, and we have an error from the last connection failure
             // or failed connection attempt. The error is a `AnyError`. We can try to downcast
             // it to a more specific type!
-            if let Some(auth_denial_reason) = is_auth_denied(&error) {
+            if let Some(auth_denial_reason) = is_auth_denied(error) {
                 // The home relay connection failed due to authentication. We could report this
                 // prominently in our app.
                 println!("Relay {url}: Authentication denied ({auth_denial_reason})");
