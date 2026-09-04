@@ -39,7 +39,7 @@ jobs:
 
   min-crates:
     name: Min Crates
-    uses: "n0-computer/workflows/.github/workflows/minimal-crates.yaml@flub/no-deny-warnings" # v1.0.0
+    uses: "n0-computer/workflows/.github/workflows/minimal-crates.yaml@d5ec1bb761407b2ab406b983e39e4e71fb28acf8" # v1.1.0
 
   cross_build:
     name: Cross Build Only
