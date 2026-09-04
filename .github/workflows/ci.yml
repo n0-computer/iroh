@@ -35,11 +35,11 @@ jobs:
   tests:
     name: CI Test Suite
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    uses: "./.github/workflows/tests.yaml"
+    uses: "$/.github/workflows/tests.yaml"
 
   min-crates:
     name: Min Crates
-    uses: "./.github/workflows/minimal-crates.yaml"
+    uses: "n0-computer/workflows/.github/workflows/minimal-crates.yaml@d5ec1bb761407b2ab406b983e39e4e71fb28acf8" # v1.1.0
 
   cross_build:
     name: Cross Build Only
