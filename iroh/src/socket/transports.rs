@@ -36,7 +36,7 @@ pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{
-    HomeRelayWatch, RelayActorConfig, RelayConnectionState, RelayTransport,
+    HomeRelayWatch, RelayActorConfig, RelayConnectionFailure, RelayConnectionState, RelayTransport,
 };
 
 /// How many times all transports may error on `poll_recv` before we give up.
