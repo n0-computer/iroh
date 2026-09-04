@@ -1,6 +1,11 @@
 # Use cargo-make to run tasks here: https://crates.io/crates/cargo-make
 
+[config]
+skip_core_tasks = true
+default_to_workspace = false
+
 [env]
+CARGO_BUILD_WARNINGS = "deny"
 # Make per-member iterations inherit this Makefile so workspace tasks can be
 # defined here without needing a per-crate Makefile.toml.
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
@@ -9,8 +14,21 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 # is generated. Only the `check-external-types` task uses this.
 CARGO_MAKE_WORKSPACE_SKIP_MEMBERS = ["iroh/bench"]
 
+[tasks.default]
+alias = "dev-flow"
+
+[tasks.dev-flow]
+description = "Fast local sub-set of all CI checks"
+dependencies = [
+     "format-check",
+     "check",
+     "clippy",
+     "doc",
+     "test",
+]
+
 [tasks.format]
-workspace = false
+description = "Format the rust files following style rules"
 command = "cargo"
 args = [
      "fmt",
@@ -23,7 +41,7 @@ args = [
 ]
 
 [tasks.format-check]
-workspace = false
+description = "Check the rust files for formatting style"
 command = "cargo"
 args = [
      "fmt",
@@ -36,8 +54,46 @@ args = [
      "imports_granularity=Crate,group_imports=StdExternalCrate,reorder_imports=true,format_code_in_doc_comments=true",
 ]
 
+[tasks.check]
+description = "Run cargo-check for entire project"
+# Allows us to use CARGO_BUILD_WARNINGS instead of
+# RUSTFLAGS=-Dwarnings which breaks the build cache.
+toolchain = { channel = "stable", min_version = "1.97.0" }
+command = "cargo"
+args = ["check", "--workspace", "--all-features", "--all-targets"]
+
+[tasks.clippy]
+description = "Run cargo-clippy for entire project"
+# Allows us to use CARGO_BUILD_WARNINGS instead of
+# RUSTFLAGS=-Dwarnings which breaks the build cache.
+toolchain = { channel = "stable", min_version = "1.97.0" }
+command = "cargo"
+args = ["clippy", "--workspace", "--all-features", "--all-targets"]
+
+[tasks.doc]
+description = "Check the documentation build"
+# Allows us to use CARGO_BUILD_WARNINGS instead of
+# RUSTDOCFLAGS=-Dwarnings which breaks the build cache.
+toolchain = { channel = "stable", min_version = "1.97.0" }
+command = "cargo"
+args = ["doc", "--workspace", "--all-features", "--no-deps", "--document-private-items"]
+
+[tasks.test]
+description = "Run unit tests"
+command = "cargo"
+args = [
+     "nextest",
+     "run",
+     "--workspace",
+     "--all-features",
+     "--lib",
+     "--bins",
+     "--tests",
+     "--no-fail-fast",
+]
+
 [tasks.patchbay]
-workspace = false
+description = "Run tests against real NAT scenarios"
 command = "cargo"
 args = ["nextest", "run", "--locked", "-p", "iroh", "-p", "iroh-dns-server", "--features", "iroh/qlog", "--test", "patchbay", "--profile", "patchbay", "${@}"]
 
