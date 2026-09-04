@@ -42,7 +42,10 @@ use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay, PingTracker, RelayMap,
     client::{Client, ConnectError, RecvError, SendError},
-    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, Status},
+    protos::{
+        handshake,
+        relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, Status},
+    },
 };
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
@@ -326,9 +329,11 @@ impl ActiveRelayActor {
         while let Err(err) = self.run_once().await {
             warn!("{err:#}");
             let was_established = matches!(err, RelayConnectionError::Established { .. });
-            let last_error = Some(Arc::new(AnyError::from(err)));
-            self.my_relay
-                .set_status(&self.url, RelayConnectionState::Disconnected { last_error });
+            let last_failure = Some(Arc::new(RelayConnectionFailure::new(err)));
+            self.my_relay.set_status(
+                &self.url,
+                RelayConnectionState::Disconnected { last_failure },
+            );
             if !was_established {
                 // If dialing failed, or if the relay connection failed before we received a pong,
                 // we wait an exponentially increasing time until we attempt to reconnect again.
@@ -962,13 +967,15 @@ pub(crate) enum RelayConnectionState {
     /// Not connected. Either the connection was lost after having been
     /// established, or an attempt to connect failed.
     ///
-    /// `last_error` carries the most recent connection error, if any. The
+    /// `last_failure` carries the most recent connection failure, if any. The
     /// initial transition into this state (before any attempt has produced
     /// an error) carries `None`.
     ///
     /// The `Arc` is compared by pointer identity: each new failure produces
     /// a fresh allocation, so the watcher fires on every new error.
-    Disconnected { last_error: Option<Arc<AnyError>> },
+    Disconnected {
+        last_failure: Option<Arc<RelayConnectionFailure>>,
+    },
 }
 
 impl RelayConnectionState {
@@ -976,9 +983,9 @@ impl RelayConnectionState {
         matches!(self, Self::Connected)
     }
 
-    pub(crate) fn last_error(&self) -> Option<&Arc<AnyError>> {
+    pub(crate) fn last_failure(&self) -> Option<&RelayConnectionFailure> {
         match self {
-            Self::Disconnected { last_error } => last_error.as_ref(),
+            Self::Disconnected { last_failure } => last_failure.as_deref(),
             _ => None,
         }
     }
@@ -988,7 +995,7 @@ impl PartialEq for RelayConnectionState {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Connecting, Self::Connecting) | (Self::Connected, Self::Connected) => true,
-            (Self::Disconnected { last_error: a }, Self::Disconnected { last_error: b }) => {
+            (Self::Disconnected { last_failure: a }, Self::Disconnected { last_failure: b }) => {
                 match (a, b) {
                     (None, None) => true,
                     (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -1001,6 +1008,54 @@ impl PartialEq for RelayConnectionState {
 }
 
 impl Eq for RelayConnectionState {}
+
+/// A failed attempt to connect to a relay server, or a lost connection.
+///
+/// Contains the type-erased error, together with whatever we could classify from it
+/// while the concrete error type was still at hand.
+#[derive(Debug)]
+pub(crate) struct RelayConnectionFailure {
+    error: AnyError,
+    auth_denied_reason: Option<String>,
+}
+
+impl RelayConnectionFailure {
+    fn new(error: RelayConnectionError) -> Self {
+        Self {
+            auth_denied_reason: auth_denied_reason(&error).map(ToOwned::to_owned),
+            error: AnyError::from(error),
+        }
+    }
+
+    /// Returns the type-erased error.
+    pub(crate) fn error(&self) -> &AnyError {
+        &self.error
+    }
+
+    /// Returns the reason if the relay server denied our authentication.
+    pub(crate) fn auth_denied_reason(&self) -> Option<&str> {
+        self.auth_denied_reason.as_deref()
+    }
+}
+
+/// Returns the reason if `error` was caused by the relay server denying our authentication.
+fn auth_denied_reason(error: &RelayConnectionError) -> Option<&str> {
+    match error {
+        RelayConnectionError::Dial {
+            source:
+                DialError::Connect {
+                    source:
+                        ConnectError::Handshake {
+                            source: handshake::Error::ServerDeniedAuth { reason, .. },
+                            ..
+                        },
+                    ..
+                },
+            ..
+        } => Some(reason),
+        _ => None,
+    }
+}
 
 /// Shared watchable for the home relay URL and connection status.
 ///
@@ -1953,7 +2008,10 @@ mod tests {
         watch.set(b.clone(), RelayConnectionState::Connecting);
 
         // Old actor A tries to write -- rejected because URL changed
-        watch.set_status(&a, RelayConnectionState::Disconnected { last_error: None });
+        watch.set_status(
+            &a,
+            RelayConnectionState::Disconnected { last_failure: None },
+        );
         assert_eq!(
             watch.get(),
             Some(RelayStatus::new(
