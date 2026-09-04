@@ -1950,6 +1950,8 @@ impl RelayStatus {
     ///
     /// ```no_run
     /// # async fn wrapper() -> n0_error::Result<()> {
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
     /// use iroh::{Endpoint, Watcher, endpoint::presets};
     /// use n0_future::StreamExt;
     ///
@@ -1962,6 +1964,7 @@ impl RelayStatus {
     ///         }
     ///     }
     /// }
+    /// # }
     /// # Ok(()) }
     /// ```
     pub fn auth_denied_reason(&self) -> Option<&str> {
