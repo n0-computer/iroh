@@ -27,7 +27,7 @@ tracing = "0.1"
 url = "2.5.3"
 
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-n0-dns-resolver = { version = "0.1", git = "https://github.com/n0-computer/n0-dns-resolver", branch = "main", default-features = false, features = ["transport-tls", "transport-https"] }
+n0-dns-resolver = { version = "0.1", default-features = false, features = ["transport-tls", "transport-https"] }
 rustls = { version = "0.23.33", default-features = false }
 
 [build-dependencies]
