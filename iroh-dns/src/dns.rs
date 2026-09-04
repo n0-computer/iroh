@@ -16,14 +16,8 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use hickory_resolver::{
-    TokioResolver,
-    config::{ConnectionConfig, ResolverConfig, ResolverOpts},
-    net::runtime::TokioRuntimeProvider,
-    proto::rr::RData,
-};
 use iroh_base::EndpointId;
-use n0_error::{AnyError, StackError, StdResultExt, e, stack_error};
+use n0_error::{AnyError, StackError, e, stack_error};
 use n0_future::{
     Either, MaybeFuture, Stream, StreamExt,
     boxed::BoxFuture,
@@ -31,12 +25,9 @@ use n0_future::{
     time::{self, Duration},
 };
 use tokio::sync::Notify;
-use tracing::warn;
 use url::Url;
 
-#[cfg(any(target_os = "android", doc))]
-pub use crate::android::install_android_jni_context;
-use crate::{attrs::ParseError, endpoint_info::EndpointInfo};
+use crate::{ParseError, endpoint_info::EndpointInfo};
 
 /// Default DNS query timeout.
 pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
@@ -45,6 +36,67 @@ pub const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link.";
 /// The n0 address lookup DNS origin, for testing.
 pub const N0_DNS_ENDPOINT_ORIGIN_STAGING: &str = "staging-dns.iroh.link.";
+
+/// Exposes a JVM to iroh so that we can read the system's DNS configuration.
+///
+/// This calls [`ndk_context::initialize_android_context`] to expose a
+/// `JavaVM` and Application Context to Rust code so that we can use JNI.
+/// This is required to get the configured nameservers on Android.
+///
+/// If this function is not called, fetching the configured nameservers will fail
+/// and the default [`DnsResolver`] will use fallback nameservers instead.
+///
+/// If you call [`ndk_context::initialize_android_context`] already somewhere
+/// up the stack in your app, or use a crate like `ndk-glue` or `android-activity`
+/// that do this for you, then there's no need to call this function.
+///
+/// If you don't use a glue crate, a typical way to initialize the context is
+/// via `JNI_OnLoad`:
+///
+/// *Note: `install_android_jni_context` is reexported from `iroh`, so you can substitute
+/// `iroh_dns` for `iroh` below.*
+///
+/// ```ignore
+/// #[cfg(target_os = "android")]
+/// #[no_mangle]
+/// pub extern "C" fn JNI_OnLoad(
+///     vm: jni::JavaVM,
+///     res: *mut std::os::raw::c_void,
+/// ) -> jni::sys::jint {
+///     use std::ffi::c_void;
+///
+///     let vm = vm.get_java_vm_pointer() as *mut c_void;
+///     unsafe {
+///         iroh_dns::install_android_jni_context(vm, res);
+///     }
+///     jni::JNIVersion::V6.into()
+/// }
+/// ```
+///
+/// # Safety
+///
+/// Both the `java_vm` and `context_jobject` pointers must remain valid until the process exits.
+/// See also [`ndk_context::initialize_android_context`].
+///
+/// [`ndk_context`]: https://docs.rs/ndk-context
+/// [`ndk_context::initialize_android_context`]: https://docs.rs/ndk-context/latest/ndk_context/fn.initialize_android_context.html
+//
+// Inlined rather than re-exported from `n0-dns-resolver`: a `pub use` of the
+// resolver crate's item does not resolve on a `doc`-only build (the dependency
+// is compiled without the `doc` cfg, so its item is absent), so we mirror the
+// signature and cfg here and delegate to it on Android.
+#[cfg(any(target_os = "android", doc))]
+pub unsafe fn install_android_jni_context(
+    java_vm: *mut std::ffi::c_void,
+    application_context: *mut std::ffi::c_void,
+) {
+    #[cfg(target_os = "android")]
+    unsafe {
+        n0_dns_resolver::install_android_jni_context(java_vm, application_context);
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (java_vm, application_context);
+}
 
 /// Percent of total delay to jitter. 20 means +/- 20% of delay.
 const MAX_JITTER_PERCENT: u64 = 20;
@@ -79,8 +131,25 @@ pub trait Resolver: fmt::Debug + Send + Sync + 'static {
 pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to DNS operations.
+///
+/// Distinct, matchable causes have their own variant, such as [`Self::NxDomain`]
+/// (a nameserver reported the name does not exist, unlike a transient transport
+/// or timeout failure). Any other cause is reported as [`Self::Resolve`], whose
+/// [`AnyError`] source carries the underlying error.
+///
+/// The resolver backing this crate is an implementation detail and its error
+/// types are not part of the public API. If you depend on `n0-dns-resolver`
+/// directly and need the exact reason, downcast a [`Self::Resolve`] source:
+///
+/// ```ignore
+/// if let DnsError::Resolve { source, .. } = &err {
+///     if let Some(inner) = source.downcast_ref::<n0_dns_resolver::Error>() {
+///         // match on `inner` for the specific failure
+///     }
+/// }
+/// ```
 #[allow(missing_docs)]
-#[stack_error(derive, add_meta, from_sources, std_sources)]
+#[stack_error(derive, add_meta, std_sources)]
 #[non_exhaustive]
 pub enum DnsError {
     #[error("Request timed out")]
@@ -94,14 +163,29 @@ pub enum DnsError {
     },
     #[error("Missing host")]
     MissingHost {},
+    /// A resolution failure not covered by another variant.
+    ///
+    /// Downcast the source (see the type-level docs) to recover the specific cause.
     #[error("Failed to resolve")]
-    Resolve { source: AnyError },
+    Resolve {
+        #[error(from)]
+        source: AnyError,
+    },
     #[error("Invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
+    /// The domain name does not exist (NXDOMAIN).
+    ///
+    /// A nameserver authoritatively reported that the name does not exist, as
+    /// opposed to a transient transport or timeout failure, so retrying will not
+    /// make the lookup succeed.
+    //
+    // Appended after `InvalidResponse` so the pre-existing variants keep their
+    // discriminants.
+    #[error("Domain name does not exist (NXDOMAIN)")]
+    NxDomain {},
 }
 
 /// Potential errors related to DNS endpoint address lookups.
-#[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
@@ -130,9 +214,150 @@ impl<E: StackError + 'static> StaggeredError<E> {
 #[derive(Debug, Clone, Default)]
 pub struct Builder {
     use_system_defaults: bool,
-    nameservers: Vec<(SocketAddr, DnsProtocol)>,
-    #[cfg(with_crypto_provider)]
+    nameservers: Vec<NameserverConfig>,
+    fallback_mode: FallbackMode,
+    fallback_nameservers: Vec<NameserverConfig>,
+    #[cfg(not(wasm_browser))]
     tls_client_config: Option<rustls::ClientConfig>,
+}
+
+/// How the resolver uses its fallback nameservers relative to the primary ones.
+///
+/// The *primary* nameservers come from the system DNS configuration and the
+/// nameservers added on the [`Builder`]. The *fallback* nameservers default to a
+/// set of public resolvers, which [`Builder::fallback_nameserver_configs`] can
+/// override. Select the mode with [`Builder::with_fallback_mode`].
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum FallbackMode {
+    /// Never queries the fallback nameservers.
+    Never,
+    /// Races the fallback nameservers alongside the primary ones from the start.
+    Eager,
+    /// Uses the fallback nameservers only when the system configuration is empty.
+    ///
+    /// A system configuration counts as empty when it yields no nameservers,
+    /// whether because it could not be read or because it listed none. One that
+    /// did yield nameservers is never supplemented: if those fail at query time
+    /// the lookup fails rather than escalating. Without
+    /// [`Builder::with_system_defaults`] there is no configuration at all, which
+    /// also counts as empty, so this behaves like [`Self::Eager`] then.
+    IfSystemEmpty,
+    /// Keeps the fallback nameservers as a lower-priority tier.
+    ///
+    /// They are queried only once every primary nameserver has failed or timed
+    /// out. This is the default.
+    #[default]
+    Deferred,
+}
+
+impl FallbackMode {
+    /// Converts into the resolver crate's fallback mode.
+    ///
+    /// Returns `None` for [`Self::Never`]. The resolver crate has no such mode,
+    /// because its fallback tier starts empty and querying nothing is simply
+    /// adding nothing. Here the tier defaults to public resolvers, so we keep a
+    /// way to say no.
+    fn to_resolver_mode(self) -> Option<n0_dns_resolver::FallbackMode> {
+        match self {
+            FallbackMode::Never => None,
+            FallbackMode::Eager => Some(n0_dns_resolver::FallbackMode::Eager),
+            FallbackMode::IfSystemEmpty => Some(n0_dns_resolver::FallbackMode::IfSystemEmpty),
+            FallbackMode::Deferred => Some(n0_dns_resolver::FallbackMode::Deferred),
+        }
+    }
+}
+
+/// A DNS nameserver configuration for a single server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameserverConfig {
+    addr: SocketAddr,
+    protocol: DnsProtocol,
+    server_name: Option<String>,
+}
+
+impl NameserverConfig {
+    fn new(addr: IpAddr, port: u16, protocol: DnsProtocol) -> Self {
+        Self {
+            addr: SocketAddr::new(addr, port),
+            protocol,
+            server_name: None,
+        }
+    }
+
+    /// Creates a new nameserver config for DNS over UDP (Do53).
+    ///
+    /// This nameserver will be using DNS over UDP on port 53, see
+    /// [`Self::with_port`] to further customise this nameserver.
+    pub fn udp(addr: IpAddr) -> Self {
+        Self::new(addr, 53, DnsProtocol::Udp)
+    }
+
+    /// Creates a new nameserver config for DNS over TCP (Do53).
+    ///
+    /// This nameserver will be using DNS over TCP on port 53, see
+    /// [`Self::with_port`] to further customise this nameserver.
+    pub fn tcp(addr: IpAddr) -> Self {
+        Self::new(addr, 53, DnsProtocol::Tcp)
+    }
+
+    /// Creates a new nameserver config for DNS over TLS (DoT).
+    ///
+    /// This nameserver will be using DNS over TLS on port 853, see
+    /// [`Self::with_port`] and [`Self::with_tls_server_name`] to further customise
+    /// this nameserver.
+    pub fn tls(addr: IpAddr) -> Self {
+        Self::new(addr, 853, DnsProtocol::Tls)
+    }
+
+    /// Creates a new nameserver config for DNS over HTTPS (DoH).
+    ///
+    /// This nameserver will be using DNS over HTTPS on port 443, see
+    /// [`Self::with_port`] and [`Self::with_tls_server_name`] to further customise
+    /// this nameserver.
+    pub fn https(addr: IpAddr) -> Self {
+        Self::new(addr, 443, DnsProtocol::Https)
+    }
+
+    /// Sets the port for the nameserver.
+    ///
+    /// # Returns
+    ///
+    /// A new instance is returned, this struct is essentially a builder for itself.
+    pub fn with_port(self, port: u16) -> Self {
+        Self {
+            addr: SocketAddr::new(self.addr.ip(), port),
+            ..self
+        }
+    }
+
+    /// Sets the TLS server name for the nameserver.
+    ///
+    /// Nameservers are always connected to via IP address. However for the protocols
+    /// running over TLS (DoT & DoH), the server certificate may use a server name rather
+    /// than IP address. When enabled the TLS `ClientHello` will use this server name in the
+    /// SNI.
+    ///
+    /// # Returns
+    ///
+    /// A new instance is returned, this struct is essentially a builder for itself.
+    pub fn with_tls_server_name(self, server_name: impl Into<String>) -> Self {
+        Self {
+            server_name: Some(server_name.into()),
+            ..self
+        }
+    }
+
+    fn into_resolver_nameserver(self) -> n0_dns_resolver::Nameserver {
+        if let Some(server_name) = self.server_name {
+            return n0_dns_resolver::Nameserver::with_server_name(
+                self.addr,
+                self.protocol.to_resolver_protocol(),
+                server_name,
+            );
+        }
+        n0_dns_resolver::Nameserver::new(self.addr, self.protocol.to_resolver_protocol())
+    }
 }
 
 /// Protocols over which DNS records can be resolved.
@@ -153,30 +378,23 @@ pub enum DnsProtocol {
     /// Performs DNS lookups over TLS-encrypted TCP connections, as defined in [RFC 7858].
     ///
     /// [RFC 7858]: https://www.rfc-editor.org/rfc/rfc7858.html
-    #[cfg(with_crypto_provider)]
     Tls,
     /// DNS over HTTPS
     ///
     /// Performs DNS lookups over HTTPS, as defined in [RFC 8484].
     ///
     /// [RFC 8484]: https://www.rfc-editor.org/rfc/rfc8484.html
-    #[cfg(with_crypto_provider)]
     Https,
 }
 
 impl DnsProtocol {
-    #[cfg_attr(
-        not(with_crypto_provider),
-        expect(unused_variables, reason = "unused when TLS is disabled in DNS")
-    )]
-    fn to_hickory(self, ip: IpAddr) -> ConnectionConfig {
+    /// Converts into the resolver crate's protocol type.
+    fn to_resolver_protocol(self) -> n0_dns_resolver::DnsProtocol {
         match self {
-            DnsProtocol::Udp => ConnectionConfig::udp(),
-            DnsProtocol::Tcp => ConnectionConfig::tcp(),
-            #[cfg(with_crypto_provider)]
-            DnsProtocol::Tls => ConnectionConfig::tls(Arc::from(ip.to_string())),
-            #[cfg(with_crypto_provider)]
-            DnsProtocol::Https => ConnectionConfig::https(Arc::from(ip.to_string()), None),
+            DnsProtocol::Udp => n0_dns_resolver::DnsProtocol::Udp,
+            DnsProtocol::Tcp => n0_dns_resolver::DnsProtocol::Tcp,
+            DnsProtocol::Tls => n0_dns_resolver::DnsProtocol::Tls,
+            DnsProtocol::Https => n0_dns_resolver::DnsProtocol::Https,
         }
     }
 }
@@ -184,43 +402,223 @@ impl DnsProtocol {
 impl Builder {
     /// Makes the builder respect the host system's DNS configuration.
     ///
-    /// We will try to read the system's DNS configuration in a platform-specific
-    /// way. If that fails for whatever reason, the resolver will be configured
-    /// to use Google's DNS servers instead.
+    /// The configuration is read in a platform-specific way. If that fails, or
+    /// if it lists no nameservers, the fallback tier answers instead, subject
+    /// to the [`FallbackMode`].
     pub fn with_system_defaults(mut self) -> Self {
         self.use_system_defaults = true;
         self
     }
 
-    /// Adds a single nameserver.
+    /// Adds a single nameserver config.
+    ///
+    /// For DNS-over-TLS and DNS-over-HTTPS, the server name is inferred from the
+    /// IP address. To set a different one, build a [`NameserverConfig`] with
+    /// [`NameserverConfig::with_tls_server_name`] and pass it to
+    /// [`Self::add_nameserver_config`].
     pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
-        self.nameservers.push((addr, protocol));
+        self.nameservers.push(NameserverConfig {
+            addr,
+            protocol,
+            server_name: None,
+        });
         self
     }
 
-    /// Adds a list of nameservers.
+    /// Adds a list of nameserver configs.
+    ///
+    /// For DNS-over-TLS and DNS-over-HTTPS, the server name is inferred from the
+    /// IP address. To set a different one, build a [`NameserverConfig`] with
+    /// [`NameserverConfig::with_tls_server_name`] and pass it to
+    /// [`Self::add_nameserver_configs`].
     pub fn with_nameservers(
         mut self,
         nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
+    ) -> Self {
+        self.nameservers.extend(
+            nameservers
+                .into_iter()
+                .map(|(addr, protocol)| NameserverConfig {
+                    addr,
+                    protocol,
+                    server_name: None,
+                }),
+        );
+        self
+    }
+
+    /// Adds a single nameserver config.
+    pub fn add_nameserver_config(mut self, nameserver: NameserverConfig) -> Self {
+        self.nameservers.push(nameserver);
+        self
+    }
+
+    /// Adds a list of nameserver configs.
+    pub fn add_nameserver_configs(
+        mut self,
+        nameservers: impl IntoIterator<Item = NameserverConfig>,
     ) -> Self {
         self.nameservers.extend(nameservers);
         self
     }
 
-    /// Sets a custom TLS verification config.
+    /// Sets a custom TLS client configuration.
     ///
-    /// This is only used with DNS-over-TLS and DNS-over-HTTPS, and requires
-    /// enabling either the ring or aws-lc-rs feature.
-    #[cfg(with_crypto_provider)]
+    /// This overrides the default configuration used for DNS-over-TLS and
+    /// DNS-over-HTTPS.
+    ///
+    /// When neither the `tls-ring` nor `tls-aws-lc-rs` feature is enabled,
+    /// DNS-over-TLS and DNS-over-HTTPS require a custom configuration containing
+    /// a crypto provider, supplied with [`Self::tls_client_config`].
+    #[cfg(not(wasm_browser))]
     pub fn tls_client_config(mut self, client_config: rustls::ClientConfig) -> Self {
         self.tls_client_config = Some(client_config);
         self
     }
 
+    /// Sets how the fallback nameservers are used relative to the primary ones.
+    ///
+    /// The default is [`FallbackMode::Deferred`]: the fallback nameservers are a
+    /// lower-priority tier, queried only when the primary nameservers fail or
+    /// time out. See [`FallbackMode`] for the other modes.
+    pub fn with_fallback_mode(mut self, mode: FallbackMode) -> Self {
+        self.fallback_mode = mode;
+        self
+    }
+
+    /// Disables the fallback nameservers, so only the primary ones are queried.
+    ///
+    /// Shorthand for [`Self::with_fallback_mode`] with [`FallbackMode::Never`].
+    pub fn disable_fallback(self) -> Self {
+        self.with_fallback_mode(FallbackMode::Never)
+    }
+
+    /// Adds nameservers to the fallback tier, in place of the default ones.
+    ///
+    /// Appends, so it can be called repeatedly. Adding any nameserver here
+    /// replaces the default public resolvers, which are only used when this
+    /// list is left empty. Has no effect when the fallback mode is
+    /// [`FallbackMode::Never`].
+    pub fn fallback_nameserver_configs(
+        mut self,
+        nameservers: impl IntoIterator<Item = NameserverConfig>,
+    ) -> Self {
+        self.fallback_nameservers.extend(nameservers);
+        self
+    }
+
     /// Builds the DNS resolver.
     pub fn build(self) -> DnsResolver {
-        DnsResolver::custom(HickoryResolver::new(self))
+        DnsResolver::custom(DefaultResolver(Arc::new(
+            self.into_resolver_builder().build(),
+        )))
     }
+
+    /// Maps this configuration onto the resolver crate's builder.
+    ///
+    /// Split out from [`Self::build`] so that the mapping can be asserted on
+    /// without a resolver in the way.
+    fn into_resolver_builder(self) -> n0_dns_resolver::Builder {
+        // The resolver crate's builder starts empty, so every source this
+        // builder was asked for is added explicitly.
+        let mut builder = n0_dns_resolver::DnsResolver::builder().nameservers(
+            self.nameservers
+                .into_iter()
+                .map(NameserverConfig::into_resolver_nameserver),
+        );
+        if self.use_system_defaults {
+            builder = builder.use_system_config();
+        }
+        // Unlike the resolver crate, the fallback tier is opt-out here: leaving
+        // the list empty means the default public resolvers rather than none.
+        if let Some(mode) = self.fallback_mode.to_resolver_mode() {
+            builder = builder.fallback_mode(mode);
+            builder = if self.fallback_nameservers.is_empty() {
+                builder.default_fallback_nameservers()
+            } else {
+                builder.fallback_nameservers(
+                    self.fallback_nameservers
+                        .into_iter()
+                        .map(NameserverConfig::into_resolver_nameserver),
+                )
+            };
+        }
+        #[cfg(not(wasm_browser))]
+        if let Some(tls_client_config) = self.tls_client_config {
+            builder = builder.tls_client_config(tls_client_config);
+        }
+        builder
+    }
+}
+
+/// Adapts [`n0_dns_resolver::DnsResolver`] to the [`Resolver`] trait.
+///
+/// Converts the resolver crate's types to this crate's own, so that
+/// `n0-dns-resolver` stays an internal detail rather than part of the public API.
+#[derive(Debug)]
+struct DefaultResolver(Arc<n0_dns_resolver::DnsResolver>);
+
+impl Resolver for DefaultResolver {
+    fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
+        let this = self.0.clone();
+        Box::pin(async move {
+            let list = this.lookup_ipv4(host).await.map_err(map_resolve_error)?;
+            let iter: BoxIter<_> = Box::new(list.into_iter());
+            Ok(iter)
+        })
+    }
+
+    fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
+        let this = self.0.clone();
+        Box::pin(async move {
+            let list = this.lookup_ipv6(host).await.map_err(map_resolve_error)?;
+            let iter: BoxIter<_> = Box::new(list.into_iter());
+            Ok(iter)
+        })
+    }
+
+    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
+        let this = self.0.clone();
+        Box::pin(async move {
+            let list = this.lookup_txt(host).await.map_err(map_resolve_error)?;
+            let iter: BoxIter<TxtRecordData> = Box::new(list.into_iter().map(convert_txt));
+            Ok(iter)
+        })
+    }
+
+    fn clear_cache(&self) {
+        self.0.clear_cache();
+    }
+
+    fn reset(&self) -> Box<dyn Resolver> {
+        Box::new(DefaultResolver(Arc::new(self.0.reset())))
+    }
+}
+
+/// Maps an [`n0_dns_resolver::Error`] onto this crate's [`DnsError`].
+///
+/// A private function rather than a `From` impl, so `n0_dns_resolver`'s error
+/// types stay out of this crate's public API. The distinct, matchable causes map
+/// to their own variant; every other cause becomes [`DnsError::Resolve`] carrying
+/// the original error as its [`AnyError`] source, which callers can downcast (see
+/// the [`DnsError`] docs).
+fn map_resolve_error(err: n0_dns_resolver::Error) -> DnsError {
+    use n0_dns_resolver::Error as E;
+    match err {
+        E::Timeout { .. } => e!(DnsError::Timeout),
+        E::NoResponse { .. } => e!(DnsError::NoResponse),
+        E::NxDomain { .. } => e!(DnsError::NxDomain),
+        E::InvalidResponse { .. } => e!(DnsError::InvalidResponse),
+        other => e!(DnsError::Resolve, AnyError::from_stack(other)),
+    }
+}
+
+/// Converts a resolver TXT record into this crate's [`TxtRecordData`].
+///
+/// Both types hold the character-strings as `Box<[Box<[u8]>]>`, so this hands
+/// over the resolver's owned slices directly rather than reallocating each one.
+fn convert_txt(txt: n0_dns_resolver::TxtRecordData) -> TxtRecordData {
+    TxtRecordData(txt.into_boxed_slices())
 }
 
 /// The DNS resolver used throughout `iroh`.
@@ -239,10 +637,11 @@ impl Builder {
 /// once at startup, see docs there for details.
 ///
 /// If `ndk_context` is not initialized, fetching the system config on Android will fail
-/// and the resolver will use Google's fallback DNS servers. Due to how things are
-/// implemented in `ndk_context`, detecting the failure relies on unwinding a panic.
-/// If your app uses `panic = "abort"` in its compilation profile, this doesn't work,
-/// so in that case your app will panic if no JNI context is initialized.
+/// and the resolver will use the fallback nameservers instead, subject to the configured
+/// [`FallbackMode`]. Due to how things are implemented in `ndk_context`, detecting the
+/// failure relies on unwinding a panic. If your app uses `panic = "abort"` in its
+/// compilation profile, this doesn't work, so in that case your app will panic if no
+/// JNI context is initialized.
 /// Therefore, either make sure that the JNI context is installed, or don't use
 /// `panic = "abort"`.
 ///
@@ -340,9 +739,10 @@ impl Inner {
 impl DnsResolver {
     /// Creates a new DNS resolver with sensible cross-platform defaults.
     ///
-    /// We first try to read the system's resolver from `/etc/resolv.conf`.
-    /// This does not work at least on some Androids, therefore we fallback
-    /// to the default `ResolverConfig` which uses e.g. Google's `8.8.8.8` or `8.8.4.4`.
+    /// Reads the host system's DNS configuration, with the default public
+    /// resolvers behind it as a fallback tier. Those are queried only when the
+    /// system configuration cannot be read, which happens on some Android
+    /// versions, or when its nameservers do not answer.
     pub fn new() -> Self {
         Builder::default().with_system_defaults().build()
     }
@@ -350,7 +750,9 @@ impl DnsResolver {
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         Builder::default()
-            .with_nameserver(nameserver, DnsProtocol::Udp)
+            .add_nameserver_config(
+                NameserverConfig::udp(nameserver.ip()).with_port(nameserver.port()),
+            )
             .build()
     }
 
@@ -714,147 +1116,6 @@ impl Default for DnsResolver {
     }
 }
 
-#[derive(Debug)]
-struct HickoryResolver {
-    resolver: TokioResolver,
-    builder: Builder,
-}
-
-impl HickoryResolver {
-    fn new(builder: Builder) -> Self {
-        let resolver = Self::build_resolver(&builder);
-        Self { resolver, builder }
-    }
-
-    fn build_resolver(builder: &Builder) -> TokioResolver {
-        let (mut config, mut options) = if builder.use_system_defaults {
-            match Self::system_config() {
-                Ok((config, options)) => (config, options),
-                Err(reason) => {
-                    warn!(%reason, "Failed to read the system's DNS config, using Google DNS servers as fallback.");
-                    (
-                        ResolverConfig::udp_and_tcp(&hickory_resolver::config::GOOGLE),
-                        ResolverOpts::default(),
-                    )
-                }
-            }
-        } else {
-            (ResolverConfig::default(), ResolverOpts::default())
-        };
-
-        for (addr, proto) in builder.nameservers.iter() {
-            let mut transport = proto.to_hickory(addr.ip());
-            transport.port = addr.port();
-            let nameserver =
-                hickory_resolver::config::NameServerConfig::new(addr.ip(), false, vec![transport]);
-
-            config.add_name_server(nameserver);
-        }
-
-        // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
-        options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
-        options.negative_max_ttl = Some(Duration::ZERO);
-
-        let mut hickory_builder =
-            TokioResolver::builder_with_config(config, TokioRuntimeProvider::default());
-        *hickory_builder.options_mut() = options;
-
-        #[cfg(with_crypto_provider)]
-        if let Some(client_config) = builder.tls_client_config.clone() {
-            hickory_builder = hickory_builder.with_tls_config(client_config);
-        }
-
-        hickory_builder.build().expect("config works")
-    }
-
-    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::net::NetError> {
-        #[cfg(target_os = "android")]
-        let (system_config, options) = crate::android::read_system_conf()?;
-        #[cfg(not(target_os = "android"))]
-        let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
-
-        // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
-        // there is no easy way to do this.
-        let mut config = hickory_resolver::config::ResolverConfig::default();
-        if let Some(name) = system_config.domain() {
-            config.set_domain(name.clone());
-        }
-        for name in system_config.search() {
-            config.add_search(name.clone());
-        }
-        for nameserver_cfg in system_config.name_servers() {
-            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.ip) {
-                config.add_name_server(nameserver_cfg.clone());
-            }
-        }
-        Ok((config, options))
-    }
-}
-
-impl Resolver for HickoryResolver {
-    fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
-        let resolver = self.resolver.clone();
-        Box::pin(async move {
-            let lookup = resolver.ipv4_lookup(host).await.anyerr()?;
-            let iter: BoxIter<Ipv4Addr> =
-                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match &record.data {
-                        RData::A(addr) => Some(addr.0),
-                        _ => None,
-                    }
-                }));
-            Ok(iter)
-        })
-    }
-
-    fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
-        let resolver = self.resolver.clone();
-        Box::pin(async move {
-            let lookup = resolver.ipv6_lookup(host).await.anyerr()?;
-            let iter: BoxIter<Ipv6Addr> =
-                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match &record.data {
-                        RData::AAAA(addr) => Some(addr.0),
-                        _ => None,
-                    }
-                }));
-            Ok(iter)
-        })
-    }
-
-    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
-        let resolver = self.resolver.clone();
-        Box::pin(async move {
-            let lookup = resolver.txt_lookup(host).await.anyerr()?;
-            let iter: BoxIter<TxtRecordData> =
-                Box::new(lookup.answers().to_vec().into_iter().filter_map(|record| {
-                    match &record.data {
-                        RData::TXT(txt) => {
-                            // I don't know a way of avoiding this deep copy, even if it's agonizing.
-                            // The representation of `TxtRecrodData` and `hickory_proto::rr::rdata::TXT`
-                            // is identical.
-                            Some(TxtRecordData::from(txt.txt_data.to_vec()))
-                        }
-                        _ => None,
-                    }
-                }));
-            Ok(iter)
-        })
-    }
-
-    fn clear_cache(&self) {
-        self.resolver.clear_cache()
-    }
-
-    fn reset(&self) -> Box<dyn Resolver> {
-        let resolver = Self::build_resolver(&self.builder);
-        Box::new(Self {
-            resolver,
-            builder: self.builder.clone(),
-        })
-    }
-}
-
 /// Record data for a TXT record.
 ///
 /// This contains a list of character strings, as defined in [RFC 1035 Section 3.3.14].
@@ -897,19 +1158,16 @@ impl From<Vec<Box<[u8]>>> for TxtRecordData {
     }
 }
 
-/// Deprecated IPv6 site-local anycast addresses still configured by windows.
-///
-/// Windows still configures these site-local addresses as soon even as an IPv6 loopback
-/// interface is configured.  We do not want to use these DNS servers, the chances of them
-/// being usable are almost always close to zero, while the chance of DNS configuration
-/// **only** relying on these servers and not also being configured normally are also almost
-/// zero.  The chance of the DNS resolver accidentally trying one of these and taking a
-/// bunch of timeouts to figure out they're no good are on the other hand very high.
-const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
-    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 1)),
-    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 2)),
-    IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 3)),
-];
+impl From<Vec<String>> for TxtRecordData {
+    fn from(value: Vec<String>) -> Self {
+        Self(
+            value
+                .into_iter()
+                .map(|s| s.into_bytes().into_boxed_slice())
+                .collect(),
+        )
+    }
+}
 
 /// Helper enum to give a unified type to the iterators of [`DnsResolver::lookup_ipv4_ipv6`].
 enum LookupIter<A, B> {
@@ -987,6 +1245,76 @@ pub(crate) mod tests {
     use n0_tracing_test::traced_test;
 
     use super::*;
+
+    #[test]
+    fn builder_named_nameservers_carry_server_name() {
+        let addr = SocketAddr::new(std::net::Ipv4Addr::new(1, 1, 1, 1).into(), 443);
+        let builder = Builder::default()
+            .add_nameserver_config(
+                NameserverConfig::https(addr.ip()).with_tls_server_name("cloudflare-dns.com"),
+            )
+            .add_nameserver_config(
+                NameserverConfig::tls(addr.ip())
+                    .with_port(addr.port())
+                    .with_tls_server_name("cloudflare-dns.com"),
+            )
+            .fallback_nameserver_configs([
+                NameserverConfig::https(addr.ip()).with_tls_server_name("fallback.example.com")
+            ]);
+        let ns = &builder.nameservers;
+        assert_eq!(ns[0].protocol, DnsProtocol::Https);
+        assert_eq!(ns[0].addr.port(), 443);
+        assert_eq!(ns[0].server_name.as_deref(), Some("cloudflare-dns.com"));
+        assert_eq!(ns[1].protocol, DnsProtocol::Tls);
+        assert_eq!(ns[1].addr.port(), 443);
+        assert_eq!(ns[1].server_name.as_deref(), Some("cloudflare-dns.com"));
+        assert_eq!(
+            builder.fallback_nameservers[0].server_name.as_deref(),
+            Some("fallback.example.com")
+        );
+    }
+
+    /// Collects the nameserver addresses the resolver crate ends up configured
+    /// with, for a builder that reads nothing from the host.
+    fn resolver_nameservers(builder: Builder) -> Vec<SocketAddr> {
+        builder
+            .into_resolver_builder()
+            .build()
+            .configured_nameservers()
+            .iter()
+            .map(|ns| ns.addr())
+            .collect()
+    }
+
+    /// An empty fallback list means the default public resolvers, not none.
+    ///
+    /// The resolver crate's fallback tier starts empty, so this mapping is ours
+    /// to keep: leaving the list unset here has to opt into its defaults.
+    #[test]
+    fn empty_fallback_list_uses_public_resolvers() {
+        let addrs = resolver_nameservers(Builder::default());
+        assert!(!addrs.is_empty());
+        assert!(addrs.iter().any(|addr| addr.ip() == CLOUDFLARE_IP));
+    }
+
+    /// `disable_fallback` leaves the resolver with no nameservers at all.
+    #[test]
+    fn disable_fallback_drops_the_public_resolvers() {
+        let addrs = resolver_nameservers(Builder::default().disable_fallback());
+        assert!(addrs.is_empty(), "{addrs:?}");
+    }
+
+    /// An explicit fallback list replaces the defaults rather than adding to them.
+    #[test]
+    fn explicit_fallback_list_replaces_the_defaults() {
+        let custom = SocketAddr::new(std::net::Ipv4Addr::new(192, 0, 2, 1).into(), 53);
+        let addrs = resolver_nameservers(
+            Builder::default().fallback_nameserver_configs([NameserverConfig::udp(custom.ip())]),
+        );
+        assert_eq!(addrs, vec![custom]);
+    }
+
+    const CLOUDFLARE_IP: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1));
 
     #[tokio::test]
     #[traced_test]

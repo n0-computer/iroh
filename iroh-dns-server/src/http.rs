@@ -327,20 +327,12 @@ async fn metrics_middleware(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        net::{IpAddr, Ipv4Addr},
-        sync::Arc,
-    };
+    use std::net::{IpAddr, Ipv4Addr};
 
-    use hickory_resolver::{
-        config::{NameServerConfig, ResolverConfig},
-        net::runtime::TokioRuntimeProvider,
-    };
-    use hickory_server::proto::rr::RecordType;
     use iroh::{
         RelayUrl, SecretKey,
         address_lookup::{EndpointInfo, PkarrRelayClient},
-        dns::DnsResolver,
+        dns::{DNS_TIMEOUT, DnsResolver, NameserverConfig},
         tls::{CaTlsConfig, default_provider},
     };
     use n0_error::StdResultExt;
@@ -433,34 +425,26 @@ mod tests {
         assert_eq!(res.answer[0].name, format!("_iroh.{name_z32}."));
         assert_eq!(res.answer[0].data, format!("relay={RELAY_URL}"));
 
-        // Fetch over HTTPS via hickory-resolver
-        let client = {
+        // Fetch over DNS-over-HTTPS.
+        let resolver = {
             let https_addr = server.https_addr().expect("https is bound");
-            let mut name_server =
-                NameServerConfig::https(https_addr.ip(), Arc::from("localhost"), None);
-            for connection in &mut name_server.connections {
-                connection.port = https_addr.port();
-            }
-            let config = ResolverConfig::from_parts(None, vec![], vec![name_server]);
-
-            hickory_resolver::Resolver::builder_with_config(config, TokioRuntimeProvider::default())
-                .with_tls_config(self::tls::insecure_tls_config())
+            DnsResolver::builder()
+                .add_nameserver_config(
+                    NameserverConfig::https(https_addr.ip())
+                        .with_port(https_addr.port())
+                        .with_tls_server_name("localhost"),
+                )
+                .tls_client_config(self::tls::insecure_tls_config())
+                .disable_fallback()
                 .build()
-                .anyerr()?
         };
 
-        let res = client
-            .txt_lookup(format!("_iroh.{name_z32}."))
-            .await
-            .anyerr()?;
-        let records = res.answers();
+        let records: Vec<_> = resolver
+            .lookup_txt(format!("_iroh.{name_z32}."), DNS_TIMEOUT)
+            .await?
+            .collect();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].record_type(), RecordType::TXT);
-        let txt_data = match &records[0].data {
-            hickory_server::proto::rr::RData::TXT(txt) => &txt.txt_data,
-            other => panic!("expected TXT record, got {other:?}"),
-        };
-        assert_eq!(&txt_data[0][..], format!("relay={RELAY_URL}").as_bytes());
+        assert_eq!(records[0].to_string(), format!("relay={RELAY_URL}"));
 
         server.shutdown().await?;
         Ok(())

@@ -61,7 +61,6 @@ url = "2.5.3"
 [dev-dependencies]
 criterion = "0.8.0"
 data-encoding = "2.3.3"
-hickory-resolver = { version = "0.26.0", features = ["tls-ring", "https-ring"] }
 iroh = { path = "../iroh" }
 n0-error = { version = "1.0.0", features = ["anyhow"] }
 n0-tracing-test = "0.3"
