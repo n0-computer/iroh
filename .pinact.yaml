@@ -18,3 +18,7 @@ rules:
       # n0-owned, no releases cut.
       - expr: |
           ActionName == "n0-computer/actions-upload-release-asset"
+  - min_age: 0
+    conditions:
+      - expr: |
+          ActionRepoOwner == "n0-computer"
