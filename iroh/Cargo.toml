@@ -250,3 +250,7 @@ required-features = ["tls-aws-lc-rs"]
 [[example]]
 name = "prefer-pq-key-exchange"
 required-features = ["tls-aws-lc-rs"]
+
+[[example]]
+name = "home-relay-status"
+required-features = []

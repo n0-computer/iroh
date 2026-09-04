@@ -74,8 +74,10 @@ use crate::{
     metrics::EndpointMetrics,
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig,
-        biased_rtt_path_selector::BiasedRttPathSelector, mapped_addrs::MappedAddr,
-        remote_map::PathSelector, transports::RelayConnectionState,
+        biased_rtt_path_selector::BiasedRttPathSelector,
+        mapped_addrs::MappedAddr,
+        remote_map::PathSelector,
+        transports::{RelayConnectionFailure, RelayConnectionState},
     },
     tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
@@ -1386,6 +1388,11 @@ impl Endpoint {
     /// The watcher updates whenever any home relay's connection status changes.
     /// See [`RelayStatus`] for the information available on each entry.
     ///
+    /// This may be used to observe connection failures to the home relay:
+    /// [`RelayStatus::last_error`] reports the most recent error, and
+    /// [`RelayStatus::auth_denied_reason`] singles out the case of the relay
+    /// server denying the endpoint's authentication.
+    ///
     /// The returned watcher only becomes disconnected once the last clone of
     /// the [`Endpoint`] is dropped. Closing the endpoint does not disconnect
     /// the watcher. To stop a task once the endpoint stops, combine with
@@ -1918,13 +1925,58 @@ impl RelayStatus {
         self.state.is_connected()
     }
 
-    /// Returns the most recent connection error, if the relay is currently
-    /// disconnected.
+    /// Returns the most recent connection error.
     ///
     /// Returns `None` when the relay is connected, or when the endpoint has
     /// not yet observed a failed connection attempt.
+    ///
+    /// The error is meant to be logged or displayed, not matched on: it is an
+    /// [`AnyError`] wrapping a chain of private error types, none of which are
+    /// covered by semver guarantees. Use [`Self::auth_denied_reason`] to
+    /// distinguish the one failure that usually calls for a different reaction
+    /// than retrying.
     pub fn last_error(&self) -> Option<&AnyError> {
-        self.state.last_error().map(Arc::as_ref)
+        self.state.last_failure().map(RelayConnectionFailure::error)
+    }
+
+    /// Returns the reason if the relay server denied our authentication.
+    ///
+    /// Unlike most connection failures, this one will not usually resolve
+    /// itself. The endpoint keeps retrying with a backoff, but it presents the
+    /// same credentials every time, so unless the relay's access policy
+    /// changes it will keep being denied and [`Endpoint::online`] will never
+    /// resolve. An application that configures a relay auth token should
+    /// surface this to the user rather than wait to come online.
+    ///
+    /// The returned string is the reason reported by the relay server. It is
+    /// meant to be human-readable, don't attempt to match on it.
+    ///
+    /// Returns `None` when the relay is connected, when no connection attempt
+    /// has failed yet, or when the last failure had another cause.
+    ///
+    /// ```no_run
+    /// # async fn wrapper() -> n0_error::Result<()> {
+    /// # #[cfg(with_crypto_provider)]
+    /// # {
+    /// use iroh::{Endpoint, Watcher, endpoint::presets};
+    /// use n0_future::StreamExt;
+    ///
+    /// let endpoint = Endpoint::builder(presets::Minimal).bind().await?;
+    /// let mut status = endpoint.home_relay_status().stream();
+    /// while let Some(relays) = status.next().await {
+    ///     for relay in relays {
+    ///         if let Some(reason) = relay.auth_denied_reason() {
+    ///             println!("{}: authentication denied ({reason})", relay.url());
+    ///         }
+    ///     }
+    /// }
+    /// # }
+    /// # Ok(()) }
+    /// ```
+    pub fn auth_denied_reason(&self) -> Option<&str> {
+        self.state
+            .last_failure()
+            .and_then(RelayConnectionFailure::auth_denied_reason)
     }
 }
 
@@ -4092,10 +4144,13 @@ mod tests {
     /// Verifies that an endpoint configured with [`RelayConfig::with_auth_token`]
     /// is admitted to a relay whose access control checks the token only when
     /// the token matches.
+    ///
+    /// Also verifies that [`RelayStatus::auth_denied_reason`] works correctly.
     #[tokio::test]
     #[traced_test]
     async fn test_endpoint_relay_auth_token() -> Result {
         const TOKEN: &str = "valid-token";
+        const DENIAL_REASON: &str = "this token is no good";
 
         /// Admits a connection only if it carries the expected auth token.
         #[derive(Debug)]
@@ -4106,7 +4161,9 @@ mod tests {
                 if request.auth_token().as_deref() == Some(self.0) {
                     Access::Allow
                 } else {
-                    Access::Deny { reason: None }
+                    Access::Deny {
+                        reason: Some(DENIAL_REASON.to_string()),
+                    }
                 }
             }
         }
@@ -4114,8 +4171,8 @@ mod tests {
         let access = Arc::new(TokenAccess(TOKEN));
         let (_relay_map, relay_url, _guard) = run_relay_server_with_access(false, access).await?;
 
-        // Wrong token: the connection attempt fails and last_error reports
-        // the relay-side denial.
+        // Wrong token: the connection attempt fails, and the status reports the
+        // relay-side denial both as an error and as an authentication failure.
         let bad_map: RelayMap = RelayConfig::new(relay_url.clone(), None)
             .with_auth_token("wrong-token")
             .into();
@@ -4125,10 +4182,14 @@ mod tests {
             .bind()
             .await?;
         let mut stream = bad_ep.home_relay_status().stream();
-        let auth_err: String = tokio::time::timeout(Duration::from_secs(5), async {
+        let (auth_err, auth_denied_reason) = tokio::time::timeout(Duration::from_secs(5), async {
             while let Some(status) = stream.next().await {
-                if let Some(err) = status.iter().filter_map(|s| s.last_error()).next() {
-                    return format!("{err:#}");
+                if let Some(relay) = status.iter().find(|s| s.last_error().is_some()) {
+                    let err = relay.last_error().expect("checked above");
+                    return (
+                        format!("{err:#}"),
+                        relay.auth_denied_reason().map(ToOwned::to_owned),
+                    );
                 }
             }
             panic!("home relay stream ended");
@@ -4136,8 +4197,13 @@ mod tests {
         .await
         .std_context("waiting for auth error")?;
         assert!(
-            auth_err.contains("not authorized"),
-            "expected 'not authorized' in error, got: {auth_err}"
+            auth_err.contains(DENIAL_REASON),
+            "expected {DENIAL_REASON:?} in error, got: {auth_err}"
+        );
+        assert_eq!(
+            auth_denied_reason.as_deref(),
+            Some(DENIAL_REASON),
+            "auth_denied_reason did not recognise a relay-side denial (error was: {auth_err})"
         );
 
         // Correct token: the endpoint reaches the connected state.
