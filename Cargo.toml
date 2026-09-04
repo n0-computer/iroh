@@ -9,9 +9,6 @@ members = [
 ]
 resolver = "2"
 
-[patch.crates-io]
-n0-error = { git = "https://github.com/n0-computer/n0-error" }
-
 [profile.release]
 debug = true
 
