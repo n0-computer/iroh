@@ -441,12 +441,12 @@ mod tests {
     use crate::socket::biased_rtt_path_selector::BiasedRttPathSelector;
     use crate::socket::transports::{OwnedTransmit, Transmit};
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn pending_initial_send_does_not_block_remote_actor_inbox() {
         check_initial_send_inbox(256).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn uncongested_initial_send_keeps_remote_actor_responsive() {
         check_initial_send_inbox(0).await;
     }
@@ -454,24 +454,21 @@ mod tests {
     async fn check_initial_send_inbox(queued: usize) {
         let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
         let (endpoint_id, mut receiver) = enqueue_initials(&mut remote_map, queued, 1).await;
-        let (info_tx, mut info_rx) = oneshot::channel();
+        let (info_tx, info_rx) = oneshot::channel();
         remote_map
             .send_to_actor(endpoint_id, RemoteStateMessage::RemoteInfo(info_tx))
             .await;
-        let during_send = tokio::time::timeout(Duration::from_millis(100), &mut info_rx).await;
-
-        // Freeing queue capacity should also unblock the original actor.
-        assert!(receiver.next().await.is_some());
-        if during_send.is_err() {
-            tokio::time::timeout(Duration::from_secs(1), info_rx)
-                .await
-                .expect("actor did not recover after releasing the sender")
-                .expect("actor dropped the response after releasing the sender");
-            eprintln!("RemoteInfo timed out during Pending; answered after sender release");
-        }
-        during_send
+        // The inbox must respond before the blocked send's three-second deadline.
+        tokio::time::timeout(Duration::from_secs(1), info_rx)
+            .await
             .expect("pending Initial send blocked the RemoteStateActor inbox")
             .expect("remote actor dropped the response");
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), receiver.next())
+                .await
+                .expect("Initial was not sent on an uncongested queue")
+                .is_some()
+        );
     }
 
     #[tokio::test]

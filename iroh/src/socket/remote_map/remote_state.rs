@@ -1177,6 +1177,49 @@ async fn send_datagram_to_targets(
     while sends.next().await.is_some() {}
 }
 
+#[cfg(all(test, not(wasm_browser)))]
+mod initial_send_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn blocked_relay_does_not_delay_direct_initial() {
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (mut sender, _relay_receiver) = TransportsSender::with_bounded_relay_for_test(1);
+        sender.bind_loopback_for_test();
+        let relay = transports::FourTuple::Relay {
+            url: "https://relay.example.invalid".parse().unwrap(),
+            endpoint_id: iroh_base::SecretKey::from_bytes(&[1; 32]).public(),
+        };
+        let transmit = OwnedTransmit {
+            ecn: None,
+            contents: bytes::Bytes::from_static(b"initial"),
+            segment_size: None,
+        };
+        send_datagram(&mut sender, relay.clone(), transmit.clone())
+            .await
+            .unwrap();
+        let sends = send_datagram_to_targets(
+            Box::new(sender),
+            transmit,
+            vec![
+                relay,
+                transports::FourTuple::from_remote(transports::Addr::Ip(
+                    receiver.local_addr().unwrap(),
+                )),
+            ],
+        );
+        let mut buf = [0; 64];
+        // The Relay queue stays full while the later Direct target receives its Initial.
+        tokio::select! {
+            _ = sends => panic!("blocked Relay send unexpectedly completed"),
+            received = time::timeout(Duration::from_secs(1), receiver.recv(&mut buf)) => {
+                let len = received.expect("Direct send blocked behind Relay").unwrap();
+                assert_eq!(&buf[..len], b"initial");
+            }
+        }
+    }
+}
+
 /// Messages to send to the [`RemoteStateActor`].
 #[derive(derive_more::Debug)]
 pub(crate) enum RemoteStateMessage {

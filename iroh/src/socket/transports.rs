@@ -961,6 +961,22 @@ pub(crate) struct TransportsSender {
 }
 
 impl TransportsSender {
+    #[cfg(all(test, not(wasm_browser)))]
+    pub(crate) fn bind_loopback_for_test(&mut self) {
+        self.ip = IpTransports::bind(
+            [ip::Config::V4 {
+                ip_net: "127.0.0.1/32".parse().unwrap(),
+                port: 0,
+                is_required: true,
+                is_default: true,
+            }]
+            .into_iter(),
+            &EndpointMetrics::default(),
+        )
+        .unwrap()
+        .create_sender();
+    }
+
     #[cfg(test)]
     pub(crate) fn with_bounded_relay_for_test(
         capacity: usize,
