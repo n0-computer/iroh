@@ -103,19 +103,30 @@ struct Config {
     /// if `enable_quic_addr_discovery` is enabled (TLS is required for QUIC).
     #[serde(default = "cfg_defaults::enable_relay")]
     enable_relay: bool,
-    /// The socket address to bind the Relay HTTP server on.
+    /// The ip address to bind the Relay HTTP server on.
     ///
-    /// Defaults to `[::]:80`.
+    /// Defaults to `[::]`.
+    ///
+    /// The Relay server always starts an HTTP server, this specifies the ip this will
+    /// be bound on.  If there is no `tls` configuration set all the HTTP relay services
+    /// will be bound on this ip. Otherwise most Relay HTTP services will run on the
+    /// `https_bind_addr` of the `tls` configuration section and only the captive portal
+    /// will be served from the HTTP socket.
+    http_bind_ip: Option<IpAddr>,
+
+    /// The port to bind the Relay HTTP server on
+    ///
+    /// Defaults to `80`:
     ///
     /// When running with `--dev` defaults to `[::]:3340`.  If specified overrides these
     /// defaults.
     ///
-    /// The Relay server always starts an HTTP server, this specifies the socket this will
+    /// The Relay server always starts an HTTP server, this specifies the port this will
     /// be bound on.  If there is no `tls` configuration set all the HTTP relay services
-    /// will be bound on this socket.  Otherwise most Relay HTTP services will run on the
+    /// will be bound on this port. Otherwise most Relay HTTP services will run on the
     /// `https_bind_addr` of the `tls` configuration section and only the captive portal
     /// will be served from the HTTP socket.
-    http_bind_addr: Option<SocketAddr>,
+    http_bind_port: Option<u16>,
     /// TLS specific configuration.
     ///
     /// TLS is disabled if not present and the Relay server will serve all services over
@@ -336,9 +347,12 @@ async fn http_access_check_inner(
 }
 
 impl Config {
-    fn http_bind_addr(&self) -> SocketAddr {
-        self.http_bind_addr
-            .unwrap_or((Ipv6Addr::UNSPECIFIED, DEFAULT_HTTP_PORT).into())
+    fn http_bind_ip(&self) -> SocketAddr {
+        self.http_bind_addr.unwrap_or(Ipv6Addr::UNSPECIFIED)
+    }
+
+    fn http_bind_ip(&self) -> u16 {
+        self.http_bind_port.unwrap_or(DEFAULT_HTTP_PORT)
     }
 
     fn metrics_bind_addr(&self) -> SocketAddr {
@@ -760,7 +774,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
     };
 
     let relay_config = if cfg.enable_relay {
-        let mut relay_config = relay::RelayConfig::new(cfg.http_bind_addr());
+        let mut relay_config = relay::RelayConfig::new((cfg.http_bind_ip(), cfg.http_bind_port()));
         relay_config.tls = tls_config;
         relay_config.limits = limits;
         relay_config.key_cache_capacity = cfg.key_cache_capacity;
