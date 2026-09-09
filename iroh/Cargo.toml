@@ -41,9 +41,9 @@ netwatch = "0.19.3"
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
-noq = { version = "1.2.0", default-features = false, features = ["rustls"] }
-noq-proto = { version = "1.2.0", default-features = false }
-noq-udp = { version = "1.2.0", default-features = false }
+noq = { version = "1.3.0", default-features = false, features = ["rustls"] }
+noq-proto = { version = "1.3.0", default-features = false }
+noq-udp = { version = "1.3.0", default-features = false }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustc-hash = "2"
@@ -75,7 +75,7 @@ axum = { version = "0.8", optional = true }
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 portmapper = { version = "0.19.3", optional = true, default-features = false }
-noq = { version = "1.2.0", default-features = false, features = ["runtime-tokio", "rustls"] }
+noq = { version = "1.3.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
