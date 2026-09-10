@@ -159,6 +159,10 @@ jobs:
           # RUSTC_WRAPPER: "sccache"
           RUST_BACKTRACE: full
           RUSTV: ${{ matrix.rust }}
+          # Installing a toolchain does not select it. Without this the Windows
+          # build below compiles with the runner image's rustup default, and
+          # `rustup target add` acts on that toolchain rather than this one.
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
         steps:
         - name: Checkout
           if: inputs.base_hash == ''
@@ -199,9 +203,13 @@ jobs:
 
         - name: Install Rust
           if: matrix.os == 'windows-latest'
+          env:
+            RUST_TOOLCHAIN: ${{ matrix.rust }}
           run: |
-            rustup toolchain install stable
-            rustup target add ${{ matrix.cargo_targets }}
+            rustup toolchain install $env:RUST_TOOLCHAIN --target ${{ matrix.cargo_targets }}
+            # pwsh does not fail a step on a native command's exit status.
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            rustc --version
 
         - name: build release
           if: matrix.os != 'windows-latest'

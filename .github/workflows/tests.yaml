@@ -248,6 +248,11 @@ jobs:
       # sccache backend is selected at runtime in "Configure sccache backend":
       # local disk on self-hosted, GHA-backed on Blacksmith (ephemeral).
       RUSTC_WRAPPER: "sccache"
+      # Installing a toolchain does not select it, so without this every cargo
+      # invocation below uses whatever the runner image ships as rustup default.
+      # As an env var this applies to the job only; `rustup default` would
+      # rewrite the default of the shared self-hosted runner for other jobs.
+      RUSTUP_TOOLCHAIN: "${{ matrix.rust }}"
     steps:
       - name: Configure sccache backend
         shell: bash
@@ -269,11 +274,16 @@ jobs:
         env:
           RUST_TOOLCHAIN: ${{ matrix.rust }}
           RUST_TARGET: ${{ matrix.target }}
+        # bash: pwsh steps ignore a command's exit status, so a failed rustup
+        # call here goes unnoticed.
+        shell: bash
         run: |
-          rustup toolchain install $env:RUST_TOOLCHAIN
-          rustup toolchain default $env:RUST_TOOLCHAIN
-          rustup target add $env:RUST_TARGET
-          rustup set default-host $env:RUST_TARGET
+          rustup toolchain install "$RUST_TOOLCHAIN" --target "$RUST_TARGET"
+          rustup set default-host "$RUST_TARGET"
+          # Fail here rather than building with the wrong compiler if the
+          # requested toolchain is not the active one.
+          rustup show active-toolchain | grep -q "^${RUST_TOOLCHAIN}-"
+          rustc --version
 
       # Was a bare Invoke-WebRequest from get.nexte.st with no checksum,
       # unpacked into ~/.cargo/bin on a long-lived host.
