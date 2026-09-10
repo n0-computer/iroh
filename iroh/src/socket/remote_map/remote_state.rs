@@ -72,6 +72,17 @@ const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 /// in a high frequency, and to keep data about previous path around for subsequent connections.
 const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long to wait before retrying the addresses in [`State::pending_open_paths`].
+const OPEN_PATH_RETRY_DELAY: Duration = Duration::from_millis(333);
+
+/// The most addresses [`State::pending_open_paths`] holds.
+///
+/// Opening a path can fail on every live connection to the remote, on every retry tick, so a
+/// queue that grew with each failure would grow geometrically in the number of connections
+/// until the allocator failed.  A remote is never worth retrying on this many addresses; at the
+/// bound the oldest entry is dropped, being the one least likely to still be reachable.
+const MAX_PENDING_OPEN_PATHS: usize = 64;
+
 // QUIC retransmits dropped Initials; a blocked transport must not retain them indefinitely.
 const DATAGRAM_SEND_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_DATAGRAM_SEND_TASKS: usize = 16;
@@ -162,6 +173,9 @@ struct State {
     /// Paths which we still need to open.
     ///
     /// They failed to open because we did not have enough CIDs issued by the remote.
+    ///
+    /// Each address appears at most once, and there are at most [`MAX_PENDING_OPEN_PATHS`] of
+    /// them: see [`State::queue_pending_open_path`].
     pending_open_paths: VecDeque<transports::FourTuple>,
 
     // Internal state - address lookup
@@ -418,6 +432,7 @@ impl RemoteStateActor {
                 path_state: path_state_sender,
                 paths: Default::default(),
                 has_been_direct: false,
+                max_path_id_reached: false,
             })
             .into_mut();
 
@@ -442,8 +457,12 @@ impl RemoteStateActor {
                     .map(|addr| transports::FourTuple::from_remote(addr.clone()))
                     .collect::<Vec<_>>();
                 for open_addr in relays {
-                    self.state
+                    let outcome = self
+                        .state
                         .open_path_on_conn(conn_id, conn_state, &conn, &open_addr);
+                    if outcome == OpenPathOutcome::Retry {
+                        self.state.queue_pending_open_path(&open_addr);
+                    }
                 }
             }
         }
@@ -691,14 +710,17 @@ impl RemoteStateActor {
             return;
         };
 
-        for (conn_id, conn_state) in self.connections.iter() {
+        let mut retry_selected = false;
+        for (conn_id, conn_state) in self.connections.iter_mut() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
 
             // Open path if it doesn't exist yet.
-            self.state
+            let outcome = self
+                .state
                 .open_path_on_conn(*conn_id, conn_state, &conn, &selected);
+            retry_selected |= outcome == OpenPathOutcome::Retry;
 
             for (path_id, path_fourtuple) in conn_state.paths.iter() {
                 let Some(path) = conn.path(*path_id) else {
@@ -739,15 +761,29 @@ impl RemoteStateActor {
             // Record the new selected path in the path watcher.
             conn_state.path_state.record_selected(&selected);
         }
+
+        if retry_selected {
+            self.state.queue_pending_open_path(&selected);
+        }
     }
 
+    /// Opens `open_addr` as a new path on every connection to the remote.
+    ///
+    /// However many connections fail to open it, the address is queued for retry at most once:
+    /// it is the address that is retried, not the connection.
     fn open_path_on_all_conns(&mut self, open_addr: &transports::FourTuple) {
-        for (conn_id, conn_state) in self.connections.iter() {
+        let mut retry = false;
+        for (conn_id, conn_state) in self.connections.iter_mut() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-            self.state
+            let outcome = self
+                .state
                 .open_path_on_conn(*conn_id, conn_state, &conn, open_addr);
+            retry |= outcome == OpenPathOutcome::Retry;
+        }
+        if retry {
+            self.state.queue_pending_open_path(open_addr);
         }
     }
 
@@ -1049,21 +1085,29 @@ impl State {
         }
     }
 
+    /// Opens `open_4tuple` as a new path on one connection.
+    ///
+    /// The returned [`OpenPathOutcome`] says whether the address is worth retrying later; the
+    /// caller is what queues that retry, once for the address rather than once per connection.
     fn open_path_on_conn(
         &mut self,
         conn_id: ConnId,
-        conn_state: &ConnectionState,
+        conn_state: &mut ConnectionState,
         conn: &noq::Connection,
         open_4tuple: &transports::FourTuple,
-    ) {
+    ) -> OpenPathOutcome {
         // Only the client opens paths; the server receives them via
         // QUIC frames and reacts to PathOpened events.
         if conn.side().is_server() {
-            return;
+            return OpenPathOutcome::Done;
+        }
+        // This connection can carry no further path, whatever the address.
+        if conn_state.max_path_id_reached {
+            return OpenPathOutcome::Done;
         }
         // Already open on this connection; nothing to do.
         if conn_state.paths.values().any(|a| a == open_4tuple) {
-            return;
+            return OpenPathOutcome::Done;
         }
 
         let mapped_4tuple = self.mapped_addrs.to_mapped_tuple(open_4tuple);
@@ -1073,21 +1117,50 @@ impl State {
         match fut.path_id() {
             Some(path_id) => {
                 trace!(%conn_id, %path_id, ?path_status, "opening new path");
+                OpenPathOutcome::Done
             }
             None => {
                 let ret = now_or_never(fut);
                 match ret {
-                    Some(Err(PathError::RemoteCidsExhausted))
-                    | Some(Err(PathError::MaxPathIdReached)) => {
-                        self.scheduled_open_path =
-                            Some(Instant::now() + Duration::from_millis(333));
-                        self.pending_open_paths.push_back(open_4tuple.clone());
+                    Some(Err(PathError::RemoteCidsExhausted)) => {
                         trace!(?open_4tuple, ?ret, "scheduling open_path");
+                        OpenPathOutcome::Retry
                     }
-                    _ => warn!(?ret, "Opening path failed"),
+                    Some(Err(PathError::MaxPathIdReached)) => {
+                        // Path ids only ever increase, so this connection will never open
+                        // another path.  Retrying it costs a queue slot every tick for as
+                        // long as the connection lives.
+                        trace!(
+                            %conn_id,
+                            ?open_4tuple,
+                            "max path id reached, opening no further paths on this connection"
+                        );
+                        conn_state.max_path_id_reached = true;
+                        OpenPathOutcome::Done
+                    }
+                    _ => {
+                        warn!(?ret, "Opening path failed");
+                        OpenPathOutcome::Done
+                    }
                 }
             }
         }
+    }
+
+    /// Queues `open_addr` to be opened again after [`OPEN_PATH_RETRY_DELAY`].
+    ///
+    /// The queue holds each address at most once and never more than
+    /// [`MAX_PENDING_OPEN_PATHS`] of them, so a remote that keeps refusing paths costs a
+    /// bounded amount of memory however many connections and addresses it is reached on.
+    fn queue_pending_open_path(&mut self, open_addr: &transports::FourTuple) {
+        self.scheduled_open_path = Some(Instant::now() + OPEN_PATH_RETRY_DELAY);
+        if self.pending_open_paths.contains(open_addr) {
+            return;
+        }
+        if self.pending_open_paths.len() >= MAX_PENDING_OPEN_PATHS {
+            self.pending_open_paths.pop_front();
+        }
+        self.pending_open_paths.push_back(open_addr.clone());
     }
 
     /// Returns the [`PathStatus`] for `addr`.
@@ -1318,6 +1391,20 @@ struct ConnectionState {
     ///
     /// Used for recording metrics.
     has_been_direct: bool,
+    /// Whether this connection has run out of path ids.
+    ///
+    /// Path ids only ever increase, so once the connection reports
+    /// [`PathError::MaxPathIdReached`] it can open no further path and is not tried again.
+    max_path_id_reached: bool,
+}
+
+/// The outcome of trying to open one path on one connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenPathOutcome {
+    /// Nothing further to do: the path is opening, is already open, or failed permanently.
+    Done,
+    /// The remote had no connection ids left, so this address is worth trying again later.
+    Retry,
 }
 
 impl ConnectionState {
@@ -1603,5 +1690,113 @@ async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<O
     match maybe_stream {
         None => None,
         Some(s) => Some(s.next().await),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    use iroh_base::SecretKey;
+    use n0_watcher::Watchable;
+
+    use super::*;
+    use crate::socket::biased_rtt_path_selector::BiasedRttPathSelector;
+
+    /// A [`State`] with no connections, which is all the pending-open-path queue needs.
+    ///
+    /// The returned guard keeps the direct-address watchable alive: the watcher in the state
+    /// disconnects when it drops.
+    fn test_state() -> (State, impl Sized) {
+        let metrics = Arc::new(SocketMetrics::default());
+        let watchable: Watchable<BTreeSet<DirectAddr>> = Watchable::new(BTreeSet::new());
+        let state = State {
+            endpoint_id: SecretKey::from_bytes(&[0u8; 32]).public(),
+            metrics: metrics.clone(),
+            local_direct_addrs: watchable.watch(),
+            mapped_addrs: MappedAddrs::default(),
+            address_lookup: AddressLookupServices::default(),
+            connections_close: Default::default(),
+            path_events: Default::default(),
+            addr_events: Default::default(),
+            paths: RemotePathState::new(metrics),
+            last_holepunch: None,
+            selected_path: None,
+            scheduled_holepunch: None,
+            scheduled_open_path: None,
+            pending_open_paths: VecDeque::new(),
+            address_lookup_stream: None,
+            path_selector: Arc::new(BiasedRttPathSelector::default()),
+        };
+        (state, watchable)
+    }
+
+    fn addr(port: u16) -> transports::FourTuple {
+        transports::FourTuple::Ip {
+            remote: SocketAddr::from(([127, 0, 0, 1], port)),
+            local: None,
+        }
+    }
+
+    /// One retry tick against a remote that has no connection ids left: the actor drains the
+    /// queue and tries every address it held on every connection, each of which fails.
+    fn failing_retry_tick(state: &mut State, conns: usize) {
+        let addrs = std::mem::take(&mut state.pending_open_paths);
+        for open_addr in addrs {
+            for _ in 0..conns {
+                state.queue_pending_open_path(&open_addr);
+            }
+        }
+    }
+
+    /// With several connections to one remote, a failing address must not multiply.
+    ///
+    /// Every connection failing to open the same address used to push it back onto the queue,
+    /// so each retry tick multiplied the queue by the number of connections and the backing
+    /// `VecDeque` doubled until the allocator aborted the process.
+    #[test]
+    fn pending_open_paths_stays_bounded_across_retries() {
+        let (mut state, _guard) = test_state();
+        state.queue_pending_open_path(&addr(1));
+
+        for tick in 0..8 {
+            failing_retry_tick(&mut state, 4);
+            assert!(
+                state.pending_open_paths.len() <= MAX_PENDING_OPEN_PATHS,
+                "queue grew to {} entries after {} ticks",
+                state.pending_open_paths.len(),
+                tick + 1,
+            );
+        }
+        assert_eq!(state.pending_open_paths.len(), 1);
+        assert!(state.scheduled_open_path.is_some());
+    }
+
+    /// The bound holds even when the addresses are all different.
+    #[test]
+    fn pending_open_paths_is_bounded_and_keeps_the_newest() {
+        let (mut state, _guard) = test_state();
+        for port in 0..(MAX_PENDING_OPEN_PATHS as u16 + 10) {
+            state.queue_pending_open_path(&addr(port));
+        }
+        assert_eq!(state.pending_open_paths.len(), MAX_PENDING_OPEN_PATHS);
+        assert_eq!(state.pending_open_paths.front(), Some(&addr(10)));
+        assert_eq!(
+            state.pending_open_paths.back(),
+            Some(&addr(MAX_PENDING_OPEN_PATHS as u16 + 9))
+        );
+    }
+
+    /// A queued address is not queued twice.
+    #[test]
+    fn pending_open_paths_holds_each_address_once() {
+        let (mut state, _guard) = test_state();
+        state.queue_pending_open_path(&addr(1));
+        state.queue_pending_open_path(&addr(2));
+        state.queue_pending_open_path(&addr(1));
+        assert_eq!(
+            Vec::from_iter(state.pending_open_paths.iter().cloned()),
+            vec![addr(1), addr(2)]
+        );
     }
 }
