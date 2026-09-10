@@ -530,7 +530,11 @@ mod tests {
         assert!(resolve_rx.await.expect("resolve response").is_ok());
 
         // Hold the receiver to apply backpressure without changing poll_send.
-        let (mut sender, receiver) = transports::TransportsSender::with_bounded_relay_for_test(256);
+        let (mut sender, receiver) = transports::TransportsSender::with_bounded_relay(
+            256,
+            #[cfg(not(wasm_browser))]
+            std::iter::empty(),
+        );
         let transmit = Transmit {
             ecn: None,
             contents: b"queued",

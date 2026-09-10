@@ -961,43 +961,6 @@ pub(crate) struct TransportsSender {
 }
 
 impl TransportsSender {
-    #[cfg(all(test, not(wasm_browser)))]
-    pub(crate) fn bind_loopback_for_test(&mut self) {
-        self.ip = IpTransports::bind(
-            [ip::Config::V4 {
-                ip_net: "127.0.0.1/32".parse().unwrap(),
-                port: 0,
-                is_required: true,
-                is_default: true,
-            }]
-            .into_iter(),
-            &EndpointMetrics::default(),
-        )
-        .unwrap()
-        .create_sender();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_bounded_relay_for_test(
-        capacity: usize,
-    ) -> (Self, impl futures_util::Stream<Item = ()> + Unpin) {
-        use futures_util::StreamExt;
-        let (sender, receiver) = RelaySender::bounded_for_test(capacity);
-        let sender = Self {
-            #[cfg(not(wasm_browser))]
-            ip: IpTransports::bind(std::iter::empty(), &EndpointMetrics::default())
-                .expect("empty transports must bind")
-                .create_sender(),
-            relay: vec![sender],
-            custom: Vec::new(),
-            max_transmit_segments: NonZeroUsize::new(1).unwrap(),
-        };
-        (
-            sender,
-            tokio_stream::wrappers::ReceiverStream::new(receiver).map(|_| ()),
-        )
-    }
-
     #[instrument(name = "poll_send", skip(self, cx, transmit), fields(len = transmit.contents.len()))]
     pub(crate) fn poll_send(
         mut self: Pin<&mut Self>,
@@ -1351,6 +1314,32 @@ mod tests {
     use n0_watcher::Watchable;
 
     use super::*;
+
+    impl TransportsSender {
+        pub(in crate::socket) fn with_bounded_relay(
+            capacity: usize,
+            #[cfg(not(wasm_browser))] ip_configs: impl Iterator<Item = IpConfig>,
+        ) -> (
+            TransportsSender,
+            impl futures_util::Stream<Item = ()> + Unpin,
+        ) {
+            use futures_util::StreamExt;
+            let (sender, receiver) = RelaySender::bounded_for_test(capacity);
+            let sender = TransportsSender {
+                #[cfg(not(wasm_browser))]
+                ip: IpTransports::bind(ip_configs, &EndpointMetrics::default())
+                    .expect("test transports must bind")
+                    .create_sender(),
+                relay: vec![sender],
+                custom: Vec::new(),
+                max_transmit_segments: NonZeroUsize::new(1).unwrap(),
+            };
+            (
+                sender,
+                tokio_stream::wrappers::ReceiverStream::new(receiver).map(|_| ()),
+            )
+        }
+    }
 
     const FAIRNESS_SAMPLE_POLLS: usize = 10_000;
 
