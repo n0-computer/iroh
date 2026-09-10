@@ -55,7 +55,7 @@
 <a href=#55 id=55 data-nosnippet>55</a>///
 <a href=#56 id=56 data-nosnippet>56</a>/// Takes a DNS name and expects the first label to be [`IROH_TXT_NAME`] and the second
 <a href=#57 id=57 data-nosnippet>57</a>/// label to be a z32 encoded [`EndpointId`]. Ignores subsequent labels.
-<a href=#58 id=58 data-nosnippet>58</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>endpoint_id_from_txt_name(name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;EndpointId, ParseError&gt; {
+<a href=#58 id=58 data-nosnippet>58</a></span><span class="kw">fn </span>endpoint_id_from_txt_name(name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;EndpointId, ParseError&gt; {
 <a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">let </span>num_labels = name.split(<span class="string">"."</span>).count();
 <a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">if </span>num_labels &lt; <span class="number">2 </span>{
 <a href=#61 id=61 data-nosnippet>61</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(ParseError::NumLabels { num_labels }));
@@ -113,7 +113,7 @@
 <a href=#113 id=113 data-nosnippet>113</a>    }
 <a href=#114 id=114 data-nosnippet>114</a>
 <a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Creates [`TxtAttrs`] from an endpoint id and an iterator of "{key}={value}" strings.
-<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_strings(
+<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">fn </span>from_strings(
 <a href=#117 id=117 data-nosnippet>117</a>        endpoint_id: EndpointId,
 <a href=#118 id=118 data-nosnippet>118</a>        strings: <span class="kw">impl </span>Iterator&lt;Item = String&gt;,
 <a href=#119 id=119 data-nosnippet>119</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
