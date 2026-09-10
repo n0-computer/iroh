@@ -280,6 +280,7 @@ pub mod endpoint;
 pub mod metrics;
 mod net_report;
 pub mod protocol;
+mod quic_time_source;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
