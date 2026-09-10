@@ -429,7 +429,6 @@ mod tests {
 
     use bytes::Bytes;
     use futures_util::StreamExt;
-
     use iroh_base::{SecretKey, TransportAddr};
     use n0_future::future::now_or_never;
     use n0_tracing_test::traced_test;
@@ -438,8 +437,10 @@ mod tests {
     use tracing::Span;
 
     use super::*;
-    use crate::socket::biased_rtt_path_selector::BiasedRttPathSelector;
-    use crate::socket::transports::{OwnedTransmit, Transmit};
+    use crate::socket::{
+        biased_rtt_path_selector::BiasedRttPathSelector,
+        transports::{OwnedTransmit, Transmit},
+    };
 
     #[tokio::test(start_paused = true)]
     async fn pending_initial_send_does_not_block_remote_actor_inbox() {

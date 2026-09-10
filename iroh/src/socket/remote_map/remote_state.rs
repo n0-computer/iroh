@@ -9,9 +9,9 @@ use std::{
 use iroh_base::{EndpointId, TransportAddr};
 use n0_error::StackResultExt;
 use n0_future::{
-    FuturesUnordered, MaybeFuture, MergeUnbounded, Stream, StreamExt,
+    FuturesUnordered, FuturesUnorderedBounded, MaybeFuture, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
-    future::now_or_never,
+    future::{Boxed, now_or_never},
     task::JoinSet,
     time::{self, Duration, Instant},
 };
@@ -73,8 +73,8 @@ const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 // QUIC retransmits dropped Initials; a blocked transport must not retain them indefinitely.
-const INITIAL_DATAGRAM_SEND_TIMEOUT: Duration = Duration::from_secs(3);
-const MAX_INITIAL_DATAGRAM_SEND_TASKS: usize = 16;
+const DATAGRAM_SEND_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_DATAGRAM_SEND_TASKS: usize = 16;
 
 /// A stream of events from all paths for all connections.
 ///
@@ -240,9 +240,9 @@ impl RemoteStateActor {
         shutdown_token: CancellationToken,
     ) -> (EndpointId, Vec<RemoteStateMessage>) {
         trace!("actor started");
-        let mut initial_send_tasks = JoinSet::new();
+        let mut send_tasks = FuturesUnorderedBounded::new(MAX_DATAGRAM_SEND_TASKS);
         for msg in initial_msgs {
-            self.handle_message(msg, &mut initial_send_tasks);
+            self.handle_message(msg, &mut send_tasks);
         }
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
@@ -274,14 +274,10 @@ impl RemoteStateActor {
                     trace!("actor cancelled");
                     break;
                 }
-                Some(result) = initial_send_tasks.join_next(), if !initial_send_tasks.is_empty() => {
-                    if let Err(err) = result {
-                        error!(%err, "Initial datagram send task failed");
-                    }
-                }
+                Some(()) = send_tasks.next(), if !send_tasks.is_empty() => {}
                 msg = inbox.recv() => {
                     match msg {
-                        Some(msg) => self.handle_message(msg, &mut initial_send_tasks),
+                        Some(msg) => self.handle_message(msg, &mut send_tasks),
                         None => break,
                     }
                 }
@@ -341,8 +337,7 @@ impl RemoteStateActor {
         let mut leftover_msgs = Vec::with_capacity(inbox.len());
         inbox.recv_many(&mut leftover_msgs, inbox.len()).await;
 
-        initial_send_tasks.abort_all();
-        while initial_send_tasks.join_next().await.is_some() {}
+        drop(send_tasks);
 
         trace!("actor terminating");
         (self.state.endpoint_id, leftover_msgs)
@@ -357,11 +352,15 @@ impl RemoteStateActor {
 
     /// Handles an actor message.
     #[instrument(skip(self))]
-    fn handle_message(&mut self, msg: RemoteStateMessage, initial_send_tasks: &mut JoinSet<()>) {
+    fn handle_message(
+        &mut self,
+        msg: RemoteStateMessage,
+        send_tasks: &mut FuturesUnorderedBounded<Boxed<()>>,
+    ) {
         match msg {
             RemoteStateMessage::SendDatagram(sender, transmit) => {
                 self.state
-                    .handle_msg_send_datagram(sender, transmit, initial_send_tasks);
+                    .handle_msg_send_datagram(sender, transmit, send_tasks);
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx);
@@ -796,7 +795,7 @@ impl State {
         &mut self,
         sender: Box<TransportsSender>,
         transmit: OwnedTransmit,
-        initial_send_tasks: &mut JoinSet<()>,
+        send_tasks: &mut FuturesUnorderedBounded<Boxed<()>>,
     ) {
         // Sending datagrams might fail, e.g. because we don't have the right transports set
         // up to handle sending this owned transmit to.
@@ -849,24 +848,23 @@ impl State {
         if targets.is_empty() {
             return;
         }
-        if initial_send_tasks.len() >= MAX_INITIAL_DATAGRAM_SEND_TASKS {
-            debug!("dropping Initial: send task limit reached");
-            return;
-        }
-        initial_send_tasks.spawn(
+        let send = Box::pin(
             async move {
                 if time::timeout(
-                    INITIAL_DATAGRAM_SEND_TIMEOUT,
+                    DATAGRAM_SEND_TIMEOUT,
                     send_datagram_to_targets(sender, transmit, targets),
                 )
                 .await
                 .is_err()
                 {
-                    debug!("Initial send timed out");
+                    debug!("Datagram send timed out");
                 }
             }
             .instrument(Span::current()),
         );
+        if send_tasks.try_push(send).is_err() {
+            debug!("dropping datagram: send task limit reached");
+        }
     }
 
     /// Handles [`RemoteStateMessage::ResolveRemote`].
