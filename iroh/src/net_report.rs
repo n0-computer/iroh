@@ -858,7 +858,7 @@ async fn run_probe_v4(
         latency: conn.rtt(PathId::ZERO).unwrap_or_default(),
     };
 
-    let observer = Watchable::new(None);
+    let observer = Watchable::new(Some(report.clone()));
     let endpoint = relay.url.clone();
     let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
         let conn = conn.clone();
@@ -927,7 +927,7 @@ async fn run_probe_v6(
         latency: conn.rtt(PathId::ZERO).unwrap_or_default(),
     };
 
-    let observer = Watchable::new(None);
+    let observer = Watchable::new(Some(report.clone()));
     let endpoint = relay.url.clone();
     let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
         let observer = observer.clone();

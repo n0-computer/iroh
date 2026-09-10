@@ -989,6 +989,10 @@ mod tests {
                 .unwrap();
 
         assert_eq!(report.addr, client_addr);
+        assert!(
+            conn.observer.get().is_some(),
+            "first QAD result must be cached before the address changes"
+        );
         drop(conn);
         ep.wait_idle().await;
         server.shutdown().await?;
