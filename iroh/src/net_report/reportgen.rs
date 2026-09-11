@@ -212,7 +212,7 @@ impl Actor {
                 match time::timeout(OVERALL_REPORT_TIMEOUT, self.run_inner()).await {
                     Ok(()) => trace!("reportgen actor finished"),
                     Err(time::Elapsed { .. }) => {
-                        warn!("reportgen timed out");
+                        debug!("reportgen timed out");
                     }
                 }
             })
@@ -327,12 +327,12 @@ impl Actor {
                                 {
                                     debug!("check_captive_portal failed: {source:#}");
                                 }
-                                err => warn!("check_captive_portal error: {err:#}"),
+                                err => debug!("check_captive_portal error: {err:#}"),
                             }
                             None
                         }
                         Some(Err(time::Elapsed { .. })) => {
-                            warn!("probe timed out");
+                            debug!("probe timed out");
                             None
                         }
                         None => {
@@ -405,7 +405,7 @@ impl Actor {
                         let res = match res {
                             Some(Ok(Ok(report))) => Ok(report),
                             Some(Ok(Err(err))) => {
-                                warn!("probe failed: {:#}", err);
+                                debug!("probe failed: {:#}", err);
                                 Err(e!(ProbesError::ProbeFailure, err))
                             }
                             Some(Err(time::Elapsed { .. })) => Err(e!(ProbesError::Timeout)),
