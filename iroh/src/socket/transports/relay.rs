@@ -279,17 +279,6 @@ pub(crate) struct RelaySender {
 }
 
 impl RelaySender {
-    #[cfg(test)]
-    pub(crate) fn bounded_for_test(capacity: usize) -> (Self, mpsc::Receiver<RelaySendItem>) {
-        let (sender, receiver) = mpsc::channel(capacity);
-        (
-            Self {
-                sender: PollSender::new(sender),
-            },
-            receiver,
-        )
-    }
-
     pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _endpoint_id: &EndpointId) -> bool {
         true
     }
@@ -360,6 +349,20 @@ mod tests {
 
     use super::*;
     use crate::{defaults::staging, dns::DnsResolver};
+
+    impl RelaySender {
+        pub(in crate::socket::transports) fn bounded_for_test(
+            capacity: usize,
+        ) -> (RelaySender, mpsc::Receiver<RelaySendItem>) {
+            let (sender, receiver) = mpsc::channel(capacity);
+            (
+                RelaySender {
+                    sender: PollSender::new(sender),
+                },
+                receiver,
+            )
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_relay_datagram_queue() {
