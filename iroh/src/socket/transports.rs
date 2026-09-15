@@ -33,6 +33,8 @@ use custom::{CustomEndpoint, CustomSender, CustomTransport};
 
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::Config as IpConfig;
+#[cfg(all(feature = "unstable-identity", not(wasm_browser)))]
+pub(crate) use self::ip::IpTransport;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{

@@ -183,6 +183,72 @@ impl Builder {
         Self::empty().preset(preset)
     }
 
+    /// Select pluggable credentials and transition to the typed identity API.
+    ///
+    /// The returned builder carries complete [`crate::identity::PeerId`] values.
+    /// Existing builders using [`Self::secret_key`] retain their Ed25519 API and
+    /// wire formats. Local credentials do not authorize any remote algorithm;
+    /// acceptance is controlled by the supplied registry and `remote_policy`.
+    ///
+    /// Legacy address-lookup services must be cleared or replaced with a typed
+    /// identity lookup service. Each endpoint has one authentication identity.
+    ///
+    /// Only transports, ALPNs, the transport configuration, the crypto
+    /// provider, CA trust, key logging and configured addresses carry over.
+    /// Options without a typed equivalent make the typed `bind` fail rather
+    /// than being silently ignored: [`Self::secret_key`], [`Self::address_lookup`],
+    /// [`Self::user_data_for_address_lookup`], [`Self::addr_filter`],
+    /// [`Self::dns_resolver`], [`Self::proxy_url`], [`Self::max_tls_tickets`]
+    /// and [`Self::hooks`]. The path selector, portmapper and net report
+    /// configuration do not apply to the typed endpoint and are dropped.
+    #[cfg(all(feature = "unstable-identity", not(wasm_browser)))]
+    pub fn credentials(
+        self,
+        identity: crate::identity::LocalIdentity,
+        registry: Arc<crate::identity::Registry>,
+    ) -> crate::identity::Builder {
+        let mut unsupported = Vec::new();
+        if self.secret_key.is_some() {
+            unsupported.push("secret_key is replaced by credentials; remove it");
+        }
+        if !self.address_lookup.is_empty() {
+            unsupported.push("clear legacy address lookup before selecting typed discovery");
+        }
+        if self.address_lookup_user_data.is_some() {
+            unsupported.push("user_data_for_address_lookup requires legacy address lookup");
+        }
+        if self.addr_filter.is_some() {
+            unsupported.push("addr_filter requires legacy address lookup");
+        }
+        if self.dns_resolver.is_some() {
+            unsupported.push("dns_resolver is not used by the identity relay transport");
+        }
+        if !self.hooks.is_empty() {
+            unsupported.push("legacy endpoint hooks require Ed25519 connection types");
+        }
+        if self.proxy_url.is_some() {
+            unsupported.push("HTTP proxies are not supported by the identity relay transport");
+        }
+        if self.max_tls_tickets != DEFAULT_MAX_TLS_TICKETS {
+            unsupported
+                .push("max_tls_tickets does not apply: identity endpoints disable resumption");
+        }
+        crate::identity::Builder::from_settings(
+            identity,
+            registry,
+            crate::identity::endpoint::Settings {
+                transports: self.transports,
+                alpns: self.alpn_protocols,
+                transport: self.transport_config,
+                provider: self.crypto_provider,
+                ca_tls: self.ca_tls_config.unwrap_or_default(),
+                unsupported,
+                keylog: self.keylog,
+                configured_addrs: self.configured_addrs,
+            },
+        )
+    }
+
     /// Applies the given [`Preset`].
     pub fn preset(mut self, preset: impl Preset) -> Self {
         self = preset.apply(self);

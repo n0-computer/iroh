@@ -277,6 +277,8 @@ pub(crate) mod util;
 pub mod address_lookup;
 pub mod defaults;
 pub mod endpoint;
+#[cfg(all(feature = "unstable-identity", not(wasm_browser)))]
+pub mod identity;
 pub mod metrics;
 mod net_report;
 pub mod protocol;

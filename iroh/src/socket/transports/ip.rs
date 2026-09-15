@@ -267,6 +267,63 @@ impl IpTransport {
     }
 }
 
+// A direct socket view of the same IP transport used by the legacy endpoint.
+// It preserves native addresses: no Ed25519 remote-map entries are involved.
+#[cfg(feature = "unstable-identity")]
+impl noq::AsyncUdpSocket for IpTransport {
+    fn create_sender(&self) -> Pin<Box<dyn noq::UdpSender>> {
+        Box::pin(DirectSender {
+            sender: self.socket.clone().create_sender(),
+            segments: self.socket.max_gso_segments(),
+        })
+    }
+
+    fn poll_recv(
+        &mut self,
+        cx: &mut Context<'_>,
+        bufs: &mut [io::IoSliceMut<'_>],
+        metas: &mut [noq_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        self.socket.poll_recv_noq(cx, bufs, metas)
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.socket.local_addr()
+    }
+
+    fn max_receive_segments(&self) -> NonZeroUsize {
+        self.socket.gro_segments()
+    }
+
+    fn may_fragment(&self) -> bool {
+        self.socket.may_fragment()
+    }
+}
+
+#[cfg(feature = "unstable-identity")]
+#[derive(Debug)]
+#[pin_project]
+struct DirectSender {
+    #[pin]
+    sender: UdpSender,
+    segments: NonZeroUsize,
+}
+
+#[cfg(feature = "unstable-identity")]
+impl noq::UdpSender for DirectSender {
+    fn poll_send(
+        self: Pin<&mut Self>,
+        transmit: &noq_udp::Transmit<'_>,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        self.project().sender.poll_send(transmit, cx)
+    }
+
+    fn max_transmit_segments(&self) -> NonZeroUsize {
+        self.segments
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct IpNetworkChangeSender {
     socket: Arc<UdpSocket>,

@@ -1,0 +1,22 @@
+[package]
+name = "iroh-identity"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+license = "MIT OR Apache-2.0"
+description = "Experimental shared identity credentials and verification for iroh"
+repository = "https://github.com/n0-computer/iroh"
+
+[lints]
+workspace = true
+
+[dependencies]
+aws-lc-rs = "1.18.1"
+data-encoding = "2.6"
+iroh-base = { version = "1.2.0", path = "../iroh-base", features = ["key"] }
+noq = { version = "1.3", default-features = false, features = ["rustls"] }
+rustls = { version = "0.23.44", default-features = false, features = ["std", "aws_lc_rs"] }
+sha2 = "0.11"
+thiserror = "2"
+zeroize = "1.9"
+tempfile = "3"
