@@ -33,6 +33,8 @@
 pub mod client;
 pub mod defaults;
 pub mod http;
+#[cfg(all(feature = "unstable-identity", not(wasm_browser)))]
+pub mod identity;
 mod key_cache;
 mod ping_tracker;
 pub mod protos;
