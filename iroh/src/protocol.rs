@@ -669,7 +669,7 @@ mod tests {
 
     use super::*;
     use crate::endpoint::{
-        ApplicationClose, BeforeConnectOutcome, ConnectError, ConnectWithOptsError,
+        ApplicationClose, BeforeConnectOutcome, ConnectError, ConnectOptions, ConnectWithOptsError,
         ConnectionError, EndpointHooks, presets,
     };
 
@@ -1054,6 +1054,69 @@ mod tests {
                 reason: b"shutdown".to_vec().into()
             })
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn protocol_negotiation() -> n0_error::Result<()> {
+        // We define two ALPNs.
+        const ALPN_1: &[u8] = b"myproto/1";
+        const ALPN_2: &[u8] = b"myproto/2";
+
+        #[derive(Debug, Clone)]
+        struct Handler1;
+
+        #[derive(Debug, Clone)]
+        struct Handler2;
+
+        impl ProtocolHandler for Handler1 {
+            async fn accept(&self, _connection: Connection) -> Result<(), AcceptError> {
+                Ok(())
+            }
+        }
+
+        impl ProtocolHandler for Handler2 {
+            async fn accept(&self, _connection: Connection) -> Result<(), AcceptError> {
+                Ok(())
+            }
+        }
+
+        let server = Endpoint::bind(presets::N0).await?;
+        let server_addr = server.addr();
+
+        let router = Router::builder(server)
+            // Ordering of the accept calls does not matter, because we
+            // store the ALPNs in the builder in a BTreeMap.
+            .accept(ALPN_1, Handler1)
+            .accept(ALPN_2, Handler2)
+            .spawn();
+
+        let client = Endpoint::bind(presets::N0).await?;
+
+        // We expect ALPN_2 to be negotiated.
+        let conn = client
+            .connect_with_opts(
+                server_addr.clone(),
+                ALPN_1,
+                ConnectOptions::new().with_additional_alpns(vec![ALPN_2.to_vec()]),
+            )
+            .await?
+            .await?;
+        assert_eq!(conn.alpn(), ALPN_2);
+
+        // Ordering is server-side, so this must yield ALPN_2 as well.
+        let conn = client
+            .connect_with_opts(
+                server_addr,
+                ALPN_2,
+                ConnectOptions::new().with_additional_alpns(vec![ALPN_1.to_vec()]),
+            )
+            .await?
+            .await?;
+        assert_eq!(conn.alpn(), ALPN_2);
+
+        client.close().await;
+        router.shutdown().await.unwrap();
         Ok(())
     }
 }
