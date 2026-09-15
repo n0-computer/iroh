@@ -389,7 +389,7 @@ impl ProtocolMap {
 
     /// Returns an iterator of all registered ALPN protocol identifiers.
     pub(crate) fn alpns(&self) -> impl Iterator<Item = &Vec<u8>> {
-        self.0.keys()
+        self.0.keys().rev()
     }
 
     /// Shuts down all protocol handlers.
