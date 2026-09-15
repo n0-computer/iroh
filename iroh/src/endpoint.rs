@@ -538,6 +538,10 @@ impl Builder {
     /// Not setting this will still allow creating connections, but to accept incoming
     /// connections at least one [ALPN] must be set.
     ///
+    /// Ordering matters for protocol negotiation. When an incoming connection offers multiple ALPNs,
+    /// the first matching ALPN will be chosen. This means that `alpns` should be ordered such
+    /// that the preferred protocols come first.
+    ///
     /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
     pub fn alpns(mut self, alpn_protocols: Vec<Vec<u8>>) -> Self {
         self.alpn_protocols = alpn_protocols;
@@ -967,6 +971,10 @@ impl Endpoint {
     }
 
     /// Sets the list of accepted ALPN protocols.
+    ///
+    /// Ordering matters for protocol negotiation. When an incoming connection offers multiple ALPNs,
+    /// the first matching ALPN will be chosen. This means that `alpns` should be ordered such
+    /// that the preferred protocols come first.
     ///
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.
