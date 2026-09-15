@@ -31,6 +31,7 @@ use mapped_addrs::MultipathMappedAddr;
 use n0_error::{AnyError, anyerr, bail, e, stack_error};
 use n0_future::{
     MaybeFuture,
+    future::Boxed,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -201,12 +202,18 @@ pub(crate) struct Options {
 /// Inner state for an iroh [`crate::Endpoint`].
 ///
 /// Dereferences to [`Socket`], and handles closing.
-#[derive(Debug, derive_more::Deref)]
+#[derive(derive_more::Debug, derive_more::Deref)]
 pub(crate) struct EndpointInner {
     #[deref(forward)]
     sock: Arc<Socket>,
     // empty when shutdown
     actor_task: Mutex<Option<AbortOnDropHandle<()>>>,
+    // Retain the same close operation when a caller stops polling it.
+    #[debug(skip)]
+    close_future: AsyncMutex<Option<Boxed<()>>>,
+    // Keep access to IP sockets until their explicit close has completed.
+    #[cfg(not(wasm_browser))]
+    ip_sockets: Vec<Arc<netwatch::UdpSocket>>,
     /// Channel to send to the internal actor.
     actor_sender: mpsc::Sender<ActorMessage>,
     // noq endpoint
@@ -285,13 +292,13 @@ struct ShutdownState {
     at_close_start: CancellationToken,
     /// Token that is cancelled once the [`noq::Endpoint`] is drained.
     ///
-    /// Only 100ms after this is cancelled will the [`Actor`] task be cancelled, it should
-    /// have exited already by then as it is considered an error if it was still running.
+    /// This requests that the [`Actor`] exit. A slow exit is logged after 100ms,
+    /// but closing still waits for the actual task to finish.
     at_endpoint_closed: CancellationToken,
     /// Set if the endpoint is closed and all tasks are stopped.
     ///
     /// This is only set once both [`Self::at_close_start`] and [`Self::at_endpoint_closed`]
-    /// are cancelled **and** the [`Actor`] task is no longer running.
+    /// are cancelled **and** the actor, QUIC drivers and IP socket closes have finished.
     closed: AtomicBool,
 }
 
@@ -306,14 +313,6 @@ impl Default for ShutdownState {
 }
 
 impl ShutdownState {
-    /// Whether the endpoint has started closing, or is already closed.
-    ///
-    /// This is true once [`crate::Endpoint::close`] is called, and remains true forever
-    /// after. Tasks might still be shutting down.
-    fn is_closing(&self) -> bool {
-        self.at_close_start.is_cancelled()
-    }
-
     /// Whether the endpoint is fully closed and all tasks stopped.
     ///
     /// The endpoint will be drained, all transports and sockets will be closed.
@@ -400,11 +399,6 @@ impl Socket {
     /// Whether the iroh endpoint is closed and all its actors stopped.
     pub(crate) fn is_closed(&self) -> bool {
         self.shutdown.is_closed()
-    }
-
-    /// Whether [`crate::Endpoint::close`] has been called.
-    fn is_closing(&self) -> bool {
-        self.shutdown.is_closing()
     }
 
     /// Returns a future that resolves once endpoint shutdown has started.
@@ -1016,6 +1010,8 @@ impl EndpointInner {
 
         let local_addrs_watch = transports.local_addrs_watch();
         let transports_network_change = transports.create_network_change_sender();
+        #[cfg(not(wasm_browser))]
+        let ip_sockets = transports.ip_sockets();
 
         let runtime = Arc::new(Runtime::new(secret_key.public()));
 
@@ -1107,6 +1103,9 @@ impl EndpointInner {
             sock,
             actor_sender,
             actor_task,
+            close_future: AsyncMutex::new(None),
+            #[cfg(not(wasm_browser))]
+            ip_sockets,
             endpoint,
             runtime,
             static_config,
@@ -1120,76 +1119,93 @@ impl EndpointInner {
 
     /// Closes the iroh endpoint.
     ///
-    /// Only the first close does anything. Any later closes return nil.  Polling the socket
+    /// Concurrent closes wait for the same operation. Cancelling a close call leaves
+    /// that operation available for the next caller to resume. Polling the socket
     /// ([`noq::AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`] indefinitely
     /// after this call.
     ///
     /// [`Poll::Pending`]: std::task::Poll::Pending
     #[instrument(skip_all, parent = self.sock.span.clone())]
     pub(crate) async fn close(&self) {
-        if self.sock.is_closed() || self.sock.is_closing() {
+        let mut close = self.close_future.lock().await;
+        if self.sock.is_closed() {
             return;
         }
-        trace!("socket closing...");
+        let future = close.get_or_insert_with(|| {
+            // Capture only concrete resources, never EndpointInner itself.
+            let sock = self.sock.clone();
+            let endpoint = self.endpoint.clone();
+            let runtime = self.runtime.clone();
+            let task = self.actor_task.lock().expect("poisoned").take();
+            #[cfg(not(wasm_browser))]
+            let ip_sockets = self.ip_sockets.clone();
 
-        // Cancel at_close_start token, which cancels running netreports.
-        self.sock.shutdown.at_close_start.cancel();
+            Box::pin(async move {
+                trace!("socket closing...");
 
-        // Remove address lookup services
-        self.sock.address_lookup().clear();
+                // Cancel at_close_start token, which cancels running netreports.
+                sock.shutdown.at_close_start.cancel();
 
-        // Initiate closing all connections, and refuse future connections.
-        self.noq_endpoint().close(0u16.into(), b"");
+                // Remove address lookup services
+                sock.address_lookup().clear();
 
-        // In the history of this code, this call had been
-        // - removed: https://github.com/n0-computer/iroh/pull/1753
-        // - then added back in: https://github.com/n0-computer/iroh/pull/2227/files#diff-ba27e40e2986a3919b20f6b412ad4fe63154af648610ea5d9ed0b5d5b0e2d780R573
-        // - then removed again: https://github.com/n0-computer/iroh/pull/3165
-        // and finally added back in together with this comment.
-        // So before removing this call, please consider carefully.
-        // Among other things, this call tries its best to make sure that any queued close frames
-        // (e.g. via the call to `endpoint.close(...)` above), are flushed out to the sockets
-        // *and acknowledged* (or time out with the "probe timeout" of usually 3 seconds).
-        // This allows the other endpoints for these connections to be notified to release
-        // their resources, or - depending on the protocol - that all data was received.
-        // With the current noq API, this is the only way to ensure protocol code can use
-        // connection close codes, and close the endpoint properly.
-        // If this call is skipped, then connections that protocols close just shortly before the
-        // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
-        trace!("wait_all_draining start");
-        self.noq_endpoint().wait_all_draining().await;
-        trace!("wait_all_draining done");
+                // Initiate closing all connections, and refuse future connections.
+                endpoint.close(0u16.into(), b"");
 
-        // Start cancellation of all actors.
-        self.sock.shutdown.at_endpoint_closed.cancel();
+                // In the history of this code, this call had been
+                // - removed: https://github.com/n0-computer/iroh/pull/1753
+                // - then added back in: https://github.com/n0-computer/iroh/pull/2227/files#diff-ba27e40e2986a3919b20f6b412ad4fe63154af648610ea5d9ed0b5d5b0e2d780R573
+                // - then removed again: https://github.com/n0-computer/iroh/pull/3165
+                // and finally added back in together with this comment.
+                // So before removing this call, please consider carefully.
+                // Among other things, this call tries its best to make sure that any queued close frames
+                // (e.g. via the call to `endpoint.close(...)` above), are flushed out to the sockets
+                // *and acknowledged* (or time out with the "probe timeout" of usually 3 seconds).
+                // This allows the other endpoints for these connections to be notified to release
+                // their resources, or - depending on the protocol - that all data was received.
+                // With the current noq API, this is the only way to ensure protocol code can use
+                // connection close codes, and close the endpoint properly.
+                // If this call is skipped, then connections that protocols close just shortly before the
+                // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
+                trace!("wait_all_draining start");
+                endpoint.wait_all_draining().await;
+                trace!("wait_all_draining done");
 
-        // MutexGuard is not held across await points
-        let task = self.actor_task.lock().expect("poisoned").take();
-        if let Some(task) = task {
-            // give the tasks a moment to shutdown cleanly
-            let shutdown_done = time::timeout(Duration::from_millis(100), async move {
-                if let Err(err) = task.await {
-                    warn!("unexpected error in task shutdown: {:?}", err);
+                // Start cancellation of all actors.
+                sock.shutdown.at_endpoint_closed.cancel();
+
+                if let Some(mut task) = task {
+                    // The deadline is diagnostic only. This actor is not tracked by
+                    // the noq runtime, so its actual task must still be joined.
+                    let result = match time::timeout(Duration::from_millis(100), &mut task).await {
+                        Ok(result) => result,
+                        Err(time::Elapsed { .. }) => {
+                            warn!("socket actor is still shutting down; waiting for completion");
+                            task.await
+                        }
+                    };
+                    if let Err(err) = result {
+                        warn!("unexpected error in task shutdown: {:?}", err);
+                    }
                 }
+
+                // Waits for the EndpointDriver and all ConnectionDrivers to shut down.
+                // The endpoint was closed above so the runtime can now finish.
+                runtime.shutdown().await;
+
+                // Network-change actors and noq senders can rebind IP sockets.
+                // Stop them first, then wait for each underlying OS close job.
+                #[cfg(not(wasm_browser))]
+                for socket in ip_sockets {
+                    socket.close().await;
+                }
+
+                sock.shutdown.closed.store(true, Ordering::SeqCst);
+                trace!("socket closed");
             })
-            .await;
-            match shutdown_done {
-                Ok(_) => trace!("tasks finished in time, shutdown complete"),
-                Err(time::Elapsed { .. }) => {
-                    // Dropping the task will abort it
-                    warn!("tasks didn't finish in time, aborting");
-                }
-            }
-        }
-
-        // Waits for the EndpointDriver and all ConnectionDrivers to shut down
-        // Expects that the `noq::Endpoint` has been closed before this call,
-        // otherwise, the runtime will never shutdown.
-        self.runtime.shutdown().await;
-
-        self.sock.shutdown.closed.store(true, Ordering::SeqCst);
-
-        trace!("socket closed");
+        });
+        future.await;
+        close.take();
     }
 
     /// Aborts the endpoint ungracefully:
@@ -1207,7 +1223,7 @@ impl EndpointInner {
     /// `iroh::Endpoint` is dropped without first calling `Endpoint::close`.
     #[instrument(skip_all, parent = self.sock.span.clone())]
     pub(crate) fn abort(&self) {
-        if self.sock.is_closed() || self.sock.is_closing() {
+        if self.sock.is_closed() {
             return;
         }
         trace!("socket aborting...");
@@ -2141,6 +2157,9 @@ mod tests {
     };
 
     const ALPN: &[u8] = b"n0/test/1";
+
+    #[cfg(not(wasm_browser))]
+    mod shutdown;
 
     fn default_options(rng: &mut impl CryptoRng) -> Options {
         let crypto_provider = default_provider();

@@ -427,10 +427,8 @@ impl Router {
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
     pub async fn shutdown(&self) -> Result<(), n0_future::task::JoinError> {
-        if self.is_shutdown() {
-            return Ok(());
-        }
-
+        // Cancellation requests shutdown; only awaiting the task proves it has finished.
+        // The actor also cancels this token when it exits or unwinds.
         // Trigger shutdown of the main run task by activating the cancel token.
         self.cancel_token.cancel();
 
