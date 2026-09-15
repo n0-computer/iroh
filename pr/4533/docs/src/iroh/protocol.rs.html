@@ -1112,22 +1112,21 @@
 <a href=#1112 id=1112 data-nosnippet>1112</a>            )
 <a href=#1113 id=1113 data-nosnippet>1113</a>            .<span class="kw">await</span><span class="question-mark">?
 <a href=#1114 id=1114 data-nosnippet>1114</a>            </span>.<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1115 id=1115 data-nosnippet>1115</a>        <span class="macro">println!</span>(<span class="string">"connected: {}"</span>, String::from_utf8_lossy(<span class="kw-2">&amp;</span>conn.alpn()));
-<a href=#1116 id=1116 data-nosnippet>1116</a>        <span class="macro">assert_eq!</span>(conn.alpn(), ALPN_2);
-<a href=#1117 id=1117 data-nosnippet>1117</a>
-<a href=#1118 id=1118 data-nosnippet>1118</a>        <span class="comment">// Ordering is server-side, so this must yield ALPN_2 as well.
-<a href=#1119 id=1119 data-nosnippet>1119</a>        </span><span class="kw">let </span>conn = client
-<a href=#1120 id=1120 data-nosnippet>1120</a>            .connect_with_opts(
-<a href=#1121 id=1121 data-nosnippet>1121</a>                server_addr,
-<a href=#1122 id=1122 data-nosnippet>1122</a>                ALPN_2,
-<a href=#1123 id=1123 data-nosnippet>1123</a>                ConnectOptions::new().with_additional_alpns(<span class="macro">vec!</span>[ALPN_1.to_vec()]),
-<a href=#1124 id=1124 data-nosnippet>1124</a>            )
-<a href=#1125 id=1125 data-nosnippet>1125</a>            .<span class="kw">await</span><span class="question-mark">?
-<a href=#1126 id=1126 data-nosnippet>1126</a>            </span>.<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1127 id=1127 data-nosnippet>1127</a>        <span class="macro">assert_eq!</span>(conn.alpn(), ALPN_2);
-<a href=#1128 id=1128 data-nosnippet>1128</a>
-<a href=#1129 id=1129 data-nosnippet>1129</a>        client.close().<span class="kw">await</span>;
-<a href=#1130 id=1130 data-nosnippet>1130</a>        router.shutdown().<span class="kw">await</span>.unwrap();
-<a href=#1131 id=1131 data-nosnippet>1131</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1132 id=1132 data-nosnippet>1132</a>    }
-<a href=#1133 id=1133 data-nosnippet>1133</a>}</code></pre></div></section></main></body></html>
+<a href=#1115 id=1115 data-nosnippet>1115</a>        <span class="macro">assert_eq!</span>(conn.alpn(), ALPN_2);
+<a href=#1116 id=1116 data-nosnippet>1116</a>
+<a href=#1117 id=1117 data-nosnippet>1117</a>        <span class="comment">// Ordering is server-side, so this must yield ALPN_2 as well.
+<a href=#1118 id=1118 data-nosnippet>1118</a>        </span><span class="kw">let </span>conn = client
+<a href=#1119 id=1119 data-nosnippet>1119</a>            .connect_with_opts(
+<a href=#1120 id=1120 data-nosnippet>1120</a>                server_addr,
+<a href=#1121 id=1121 data-nosnippet>1121</a>                ALPN_2,
+<a href=#1122 id=1122 data-nosnippet>1122</a>                ConnectOptions::new().with_additional_alpns(<span class="macro">vec!</span>[ALPN_1.to_vec()]),
+<a href=#1123 id=1123 data-nosnippet>1123</a>            )
+<a href=#1124 id=1124 data-nosnippet>1124</a>            .<span class="kw">await</span><span class="question-mark">?
+<a href=#1125 id=1125 data-nosnippet>1125</a>            </span>.<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1126 id=1126 data-nosnippet>1126</a>        <span class="macro">assert_eq!</span>(conn.alpn(), ALPN_2);
+<a href=#1127 id=1127 data-nosnippet>1127</a>
+<a href=#1128 id=1128 data-nosnippet>1128</a>        client.close().<span class="kw">await</span>;
+<a href=#1129 id=1129 data-nosnippet>1129</a>        router.shutdown().<span class="kw">await</span>.unwrap();
+<a href=#1130 id=1130 data-nosnippet>1130</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1131 id=1131 data-nosnippet>1131</a>    }
+<a href=#1132 id=1132 data-nosnippet>1132</a>}</code></pre></div></section></main></body></html>
