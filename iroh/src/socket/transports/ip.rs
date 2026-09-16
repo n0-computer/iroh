@@ -250,6 +250,10 @@ impl IpTransport {
         self.config.into()
     }
 
+    pub(super) fn socket(&self) -> Arc<UdpSocket> {
+        self.socket.clone()
+    }
+
     pub(super) fn create_network_change_sender(&self) -> IpNetworkChangeSender {
         IpNetworkChangeSender {
             socket: self.socket.clone(),

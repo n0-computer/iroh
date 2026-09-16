@@ -1696,7 +1696,7 @@ impl Endpoint {
     /// on the connection. Once all connections are closed or timed out, the future
     /// finishes.
     ///
-    /// The maximum time-out that this future will wait for depends on QUIC transport
+    /// The time spent draining connections depends on QUIC transport
     /// configurations of non-drained connections at the time of calling, and their current
     /// estimates of round trip time. With default parameters and a conservative estimate
     /// of round trip time, this call's future should take 3 seconds to resolve in cases of
@@ -1714,8 +1714,13 @@ impl Endpoint {
     /// while TCP sockets usually get closed and drained by the operating system in the
     /// kernel during the "Time-Wait" period of the TCP socket.
     ///
-    /// Be aware however that the underlying UDP sockets are only closed once all clones of
-    /// the respective [`Endpoint`] are dropped.
+    /// On native platforms, this also waits for the socket actor, QUIC drivers, and the
+    /// underlying UDP socket close operations to finish. These local operations may take
+    /// longer than the connection draining timeout. Endpoint clones do not keep the UDP
+    /// sockets open after this call completes.
+    ///
+    /// Concurrent calls wait for the same close operation. If a caller stops polling,
+    /// a later call resumes that operation, including any pending socket close jobs.
     pub async fn close(&self) {
         self.inner.close().await;
     }

@@ -495,6 +495,12 @@ impl Transports {
                 .collect(),
         }
     }
+
+    /// Retains the IP sockets so the endpoint owner can explicitly close them.
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn ip_sockets(&self) -> Vec<Arc<netwatch::UdpSocket>> {
+        self.ip.iter().map(|transport| transport.socket()).collect()
+    }
 }
 
 #[derive(Debug)]
