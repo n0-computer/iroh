@@ -2209,10 +2209,10 @@ dependencies = [
  "http",
  "indicatif",
  "ipnet",
- "iroh-base",
- "iroh-dns",
+ "iroh-base 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "iroh-dns 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "iroh-metrics",
- "iroh-relay",
+ "iroh-relay 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "n0-error",
  "n0-future",
  "n0-tracing-test",
@@ -2276,6 +2276,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-base"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffd1efd1aaecd68d4d1b0727a30c5811f43fb822843e48f65f6e5db3b7256cc9"
+dependencies = [
+ "curve25519-dalek",
+ "data-encoding",
+ "data-encoding-macro",
+ "derive_more",
+ "ed25519-dalek",
+ "getrandom 0.4.3",
+ "n0-error",
+ "rand 0.10.1",
+ "serde",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "iroh-bench"
 version = "1.2.0"
 dependencies = [
@@ -2301,7 +2320,7 @@ dependencies = [
  "arc-swap",
  "cfg_aliases",
  "derive_more",
- "iroh-base",
+ "iroh-base 1.2.0",
  "n0-dns-resolver",
  "n0-error",
  "n0-future",
@@ -2316,6 +2335,29 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "webpki-roots",
+]
+
+[[package]]
+name = "iroh-dns"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80276761b56e904e26ea71d0863beef0bb8d5ab6b639cbd1338e4b615209e3a1"
+dependencies = [
+ "arc-swap",
+ "cfg_aliases",
+ "derive_more",
+ "iroh-base 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "n0-dns-resolver",
+ "n0-error",
+ "n0-future",
+ "portable-atomic",
+ "rand 0.10.1",
+ "rustls",
+ "simple-dns",
+ "strum",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2339,8 +2381,8 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "iroh",
- "iroh-base",
- "iroh-dns",
+ "iroh-base 1.2.0",
+ "iroh-dns 1.3.0",
  "iroh-metrics",
  "lru",
  "n0-error",
@@ -2428,8 +2470,8 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "iroh-base",
- "iroh-dns",
+ "iroh-base 1.2.0",
+ "iroh-dns 1.3.0",
  "iroh-metrics",
  "lru",
  "n0-error",
@@ -2458,6 +2500,64 @@ dependencies = [
  "simdutf8",
  "strum",
  "test-strategy",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tokio-rustls-acme",
+ "tokio-util",
+ "tokio-websockets",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "webpki-roots",
+ "ws_stream_wasm",
+]
+
+[[package]]
+name = "iroh-relay"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beb2294a9749d6a25fd7cd8bcf0fccd932f20716d4f967d85d3f23c7135ae6a2"
+dependencies = [
+ "blake3",
+ "bytes",
+ "cfg_aliases",
+ "clap",
+ "dashmap",
+ "data-encoding",
+ "derive_more",
+ "getrandom 0.4.3",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "iroh-base 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "iroh-dns 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "iroh-metrics",
+ "lru",
+ "n0-error",
+ "n0-future",
+ "noq",
+ "noq-proto",
+ "num_enum",
+ "pin-project",
+ "postcard",
+ "rand 0.10.1",
+ "rcgen",
+ "reloadable-state",
+ "reqwest",
+ "rustls",
+ "rustls-cert-file-reader",
+ "rustls-cert-reloadable-resolver",
+ "rustls-pki-types",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha1 0.11.0",
+ "simdutf8",
+ "strum",
  "time",
  "tokio",
  "tokio-rustls",
