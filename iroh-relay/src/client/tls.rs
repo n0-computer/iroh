@@ -106,6 +106,12 @@ impl MaybeTlsStreamBuilder {
 
     fn tls_servername(&self) -> Option<rustls::pki_types::ServerName<'_>> {
         let host_str = self.url.host_str()?;
+        // Relay URLs may use absolute FQDNs with a trailing root-label dot
+        // (e.g. iroh's own default relay hostnames). Some TLS verifiers hand
+        // the server name to the platform verifier verbatim, which rejects
+        // the trailing dot, so strip it here (see n0-computer/iroh#4448).
+        // DNS resolution uses the full URL host and is unaffected.
+        let host_str = host_str.strip_suffix('.').unwrap_or(host_str);
         let servername = rustls::pki_types::ServerName::try_from(host_str).ok()?;
         Some(servername)
     }
@@ -424,6 +430,35 @@ mod tests {
             .await
             .expect("falls back to IPv4");
         assert!(stream.peer_addr().unwrap().is_ipv4());
+    }
+
+    #[test]
+    fn tls_servername_strips_trailing_root_dot() {
+        use crate::tls::make_dangerous_client_config;
+
+        // Absolute FQDNs (e.g. iroh's own default relay hostnames) carry a
+        // trailing root-label dot which some TLS verifiers reject, so it must
+        // never reach the `ServerName`. See n0-computer/iroh#4448.
+        for (url, expected) in [
+            ("https://relay.example./", "relay.example"),
+            ("https://relay.example/", "relay.example"),
+            (
+                "https://use1-1.relay.n0.iroh.link./",
+                "use1-1.relay.n0.iroh.link",
+            ),
+        ] {
+            let url: Url = url.parse().expect("valid url");
+            let builder = MaybeTlsStreamBuilder::new(
+                url,
+                static_resolver(vec![], vec![]),
+                make_dangerous_client_config(),
+            );
+            let name = builder.tls_servername().expect("valid server name");
+            let rustls::pki_types::ServerName::DnsName(dns) = name else {
+                panic!("expected DNS server name, got {name:?}");
+            };
+            assert_eq!(dns.as_ref(), expected);
+        }
     }
 
     #[tokio::test]
