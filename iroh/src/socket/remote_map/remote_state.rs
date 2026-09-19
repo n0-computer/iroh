@@ -19,6 +19,7 @@ use n0_watcher::Watcher;
 use noq::{Closed, PathStats, PathStatus, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent as NoqPathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
+use smallvec::{SmallVec, smallvec};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
@@ -336,8 +337,6 @@ impl RemoteStateActor {
         // so we pull out all messages that are left over.
         let mut leftover_msgs = Vec::with_capacity(inbox.len());
         inbox.recv_many(&mut leftover_msgs, inbox.len()).await;
-
-        drop(send_tasks);
 
         trace!("actor terminating");
         (self.state.endpoint_id, leftover_msgs)
@@ -809,7 +808,7 @@ impl State {
             // TODO(Frando): We might want to include a local IP here in the future, if we confidently
             // know that it is the correct one.
             // See https://github.com/n0-computer/iroh/issues/4280.
-            vec![transports::FourTuple::from_remote(addr.remote())]
+            smallvec![transports::FourTuple::from_remote(addr.remote())]
         } else {
             trace!(
                 paths = ?self.paths.addrs().collect::<Vec<_>>(),
@@ -819,7 +818,7 @@ impl State {
                 warn!("Cannot send datagrams: No paths to remote endpoint known");
             }
 
-            let mut targets = Vec::new();
+            let mut targets = SmallVec::new();
             for addr in self.paths.addrs() {
                 // We never want to send to our local addresses.
                 // The local address set is updated in the main loop so we can use `peek` here.
@@ -1158,7 +1157,7 @@ fn send_datagram<'a>(
 async fn send_datagram_to_targets(
     sender: Box<TransportsSender>,
     transmit: OwnedTransmit,
-    targets: Vec<transports::FourTuple>,
+    targets: SmallVec<[transports::FourTuple; 8]>,
 ) {
     let mut sends = targets
         .into_iter()
@@ -1173,49 +1172,6 @@ async fn send_datagram_to_targets(
         })
         .collect::<FuturesUnordered<_>>();
     while sends.next().await.is_some() {}
-}
-
-#[cfg(all(test, not(wasm_browser)))]
-mod initial_send_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn blocked_relay_does_not_delay_direct_initial() {
-        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let (mut sender, _relay_receiver) = TransportsSender::with_bounded_relay_for_test(1);
-        sender.bind_loopback_for_test();
-        let relay = transports::FourTuple::Relay {
-            url: "https://relay.example.invalid".parse().unwrap(),
-            endpoint_id: iroh_base::SecretKey::from_bytes(&[1; 32]).public(),
-        };
-        let transmit = OwnedTransmit {
-            ecn: None,
-            contents: bytes::Bytes::from_static(b"initial"),
-            segment_size: None,
-        };
-        send_datagram(&mut sender, relay.clone(), transmit.clone())
-            .await
-            .unwrap();
-        let sends = send_datagram_to_targets(
-            Box::new(sender),
-            transmit,
-            vec![
-                relay,
-                transports::FourTuple::from_remote(transports::Addr::Ip(
-                    receiver.local_addr().unwrap(),
-                )),
-            ],
-        );
-        let mut buf = [0; 64];
-        // The Relay queue stays full while the later Direct target receives its Initial.
-        tokio::select! {
-            _ = sends => panic!("blocked Relay send unexpectedly completed"),
-            received = time::timeout(Duration::from_secs(1), receiver.recv(&mut buf)) => {
-                let len = received.expect("Direct send blocked behind Relay").unwrap();
-                assert_eq!(&buf[..len], b"initial");
-            }
-        }
-    }
 }
 
 /// Messages to send to the [`RemoteStateActor`].
@@ -1603,5 +1559,56 @@ async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<O
     match maybe_stream {
         None => None,
         Some(s) => Some(s.next().await),
+    }
+}
+
+#[cfg(all(test, not(wasm_browser)))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn blocked_relay_does_not_delay_direct_initial() {
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (mut sender, _relay_receiver) = TransportsSender::with_bounded_relay(
+            1,
+            [transports::IpConfig::V4 {
+                ip_net: "127.0.0.1/8".parse().unwrap(),
+                port: 0,
+                is_required: true,
+                is_default: true,
+            }]
+            .into_iter(),
+        );
+        let relay = transports::FourTuple::Relay {
+            url: "https://relay.example.invalid".parse().unwrap(),
+            endpoint_id: iroh_base::SecretKey::from_bytes(&[1; 32]).public(),
+        };
+        let transmit = OwnedTransmit {
+            ecn: None,
+            contents: bytes::Bytes::from_static(b"initial"),
+            segment_size: None,
+        };
+        send_datagram(&mut sender, relay.clone(), transmit.clone())
+            .await
+            .unwrap();
+        let sends = send_datagram_to_targets(
+            Box::new(sender),
+            transmit,
+            smallvec![
+                relay,
+                transports::FourTuple::from_remote(transports::Addr::Ip(
+                    receiver.local_addr().unwrap(),
+                )),
+            ],
+        );
+        let mut buf = [0; 64];
+        // The Relay queue stays full while the later Direct target receives its Initial.
+        tokio::select! {
+            _ = sends => panic!("blocked Relay send unexpectedly completed"),
+            received = time::timeout(Duration::from_secs(1), receiver.recv(&mut buf)) => {
+                let len = received.expect("Direct send blocked behind Relay").unwrap();
+                assert_eq!(&buf[..len], b"initial");
+            }
+        }
     }
 }
