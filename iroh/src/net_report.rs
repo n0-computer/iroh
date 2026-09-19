@@ -836,12 +836,9 @@ async fn run_probe_v4(
         .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
 
     trace!(?relay_addr, "resolved relay server address");
-    let host = relay
-        .url
-        .host_str()
-        .ok_or_else(|| e!(QadProbeError::MissingHost))?;
+    let host = relay_tls_server_name(&relay).ok_or_else(|| e!(QadProbeError::MissingHost))?;
     let conn = quic_client
-        .create_conn(relay_addr.into(), host)
+        .create_conn(relay_addr.into(), &host)
         .await
         .map_err(|source| e!(QadProbeError::Quic { source }))?;
 
@@ -905,12 +902,9 @@ async fn run_probe_v6(
         .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
 
     trace!(?relay_addr, "resolved relay server address");
-    let host = relay
-        .url
-        .host_str()
-        .ok_or_else(|| e!(QadProbeError::MissingHost))?;
+    let host = relay_tls_server_name(&relay).ok_or_else(|| e!(QadProbeError::MissingHost))?;
     let conn = quic_client
-        .create_conn(relay_addr.into(), host)
+        .create_conn(relay_addr.into(), &host)
         .await
         .map_err(|source| e!(QadProbeError::Quic { source }))?;
 
@@ -958,6 +952,16 @@ async fn run_probe_v6(
             _handle: handle,
         },
     ))
+}
+
+#[cfg(not(wasm_browser))]
+fn relay_tls_server_name(relay: &RelayConfig) -> Option<String> {
+    // host_str() includes brackets around IPv6 literals.
+    match relay.url.host()? {
+        url::Host::Domain(name) => Some(name.to_owned()),
+        url::Host::Ipv4(ip) => Some(ip.to_string()),
+        url::Host::Ipv6(ip) => Some(ip.to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -1008,6 +1012,92 @@ mod tests {
 
     use super::*;
     use crate::net_report::probes::Probe;
+
+    #[test]
+    fn relay_tls_server_names() {
+        for (url, expected) in [
+            ("https://relay.example.test", "relay.example.test"),
+            ("https://192.0.2.10", "192.0.2.10"),
+            ("https://[2001:db8::10]", "2001:db8::10"),
+        ] {
+            let relay = RelayConfig::from(url.parse::<RelayUrl>().unwrap());
+            assert_eq!(relay_tls_server_name(&relay).as_deref(), Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn qad_probe_accepts_ipv6_literal_relay_url() {
+        use std::net::Ipv6Addr;
+
+        use iroh_relay::{RelayQuicConfig, server};
+
+        let (certs, server_crypto) = server::testing::self_signed_tls_certs_and_config();
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in certs {
+            roots.add(cert).unwrap();
+        }
+        let client_crypto = rustls::ClientConfig::builder_with_provider(default_provider())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let mut config = server::testing::server_config();
+        config.relay = None;
+        let quic = config.quic.as_mut().unwrap();
+        quic.bind_addr = (Ipv6Addr::LOCALHOST, 0).into();
+        quic.server_config = Some(server_crypto);
+        let server = server::Server::spawn(config).await.unwrap();
+        let server_addr = server.quic_addr().unwrap();
+        let ep = noq::Endpoint::client((Ipv6Addr::LOCALHOST, 0).into()).unwrap();
+        let client_addr = ep.local_addr().unwrap();
+        let client = QuicClient::new(ep.clone(), client_crypto);
+        let shutdown = CancellationToken::new();
+        let https_port = if server_addr.port() == 443 { 8443 } else { 443 };
+        let relay = RelayConfig::new(
+            format!("https://[::1]:{https_port}").parse().unwrap(),
+            Some(RelayQuicConfig::new(server_addr.port())),
+        );
+
+        let result = time::timeout(Duration::from_secs(5), async {
+            // Verify the same server accepts the bare IPv6 address.
+            let control = client
+                .create_conn(server_addr, "::1")
+                .await
+                .map_err(|err| format!("control connection failed: {err:#}"))?;
+            let observed = control
+                .observed_external_addr()
+                .next()
+                .await
+                .ok_or_else(|| "control connection returned no address".to_owned())?;
+            control.close(0u32.into(), b"control complete");
+
+            let (report, conn) = run_probe_v6(
+                Arc::new(relay),
+                client,
+                DnsResolver::new(),
+                shutdown.clone(),
+            )
+            .await
+            .map_err(|err| format!("IPv6 literal QAD probe failed: {err:#}"))?;
+            Ok::<_, String>((observed, report, conn))
+        })
+        .await;
+
+        shutdown.cancel();
+        ep.close(0u32.into(), b"test complete");
+        let (_, server_result) = time::timeout(Duration::from_secs(5), async {
+            tokio::join!(ep.wait_idle(), server.shutdown())
+        })
+        .await
+        .expect("QAD test cleanup timed out");
+        server_result.unwrap();
+
+        let (observed, report, _conn) = result
+            .expect("IPv6 QAD probe timed out")
+            .unwrap_or_else(|err| panic!("{err}"));
+        assert_eq!(observed, client_addr);
+        assert_eq!(report.addr, client_addr);
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
