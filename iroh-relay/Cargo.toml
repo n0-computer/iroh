@@ -35,7 +35,7 @@ hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 iroh-base = { version = "1.2.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-dns = { version = "1.3.0", path = "../iroh-dns" }
-iroh-metrics = { version = "1.0.1", default-features = false }
+iroh-metrics = { version = "1.0.2", default-features = false }
 lru = "0.18.0"
 n0-error = "1.0.0"
 n0-future = "0.3"
