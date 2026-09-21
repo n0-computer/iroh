@@ -889,8 +889,7 @@ impl EndpointInner {
             configured_addrs,
         } = opts;
 
-        let address_lookup =
-            address_lookup::AddressLookupServices::with_metrics(metrics.address_lookup.clone());
+        let address_lookup = address_lookup::AddressLookupServices::default();
         let port_mapper = portmapper::create_client(&portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs
