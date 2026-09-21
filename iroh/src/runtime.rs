@@ -8,7 +8,8 @@ use tokio_util::task::TaskTracker;
 
 #[derive(Debug)]
 pub(crate) struct Runtime {
-    id: EndpointId,
+    // Used only for tracing; runtime lifecycle does not depend on key type.
+    id: String,
     #[cfg(not(wasm_browser))]
     tasks: TaskTracker,
     #[cfg(not(wasm_browser))]
@@ -21,6 +22,10 @@ impl Runtime {
     /// Create a new [`Runtime`] that manages shutting down tasks properly,
     /// whether gracefully or un-gracefully.
     pub(crate) fn new(id: EndpointId) -> Self {
+        Self::with_label(id.fmt_short().to_string())
+    }
+
+    pub(crate) fn with_label(id: String) -> Self {
         Self {
             id,
             #[cfg(not(wasm_browser))]
@@ -78,7 +83,7 @@ impl noq::Runtime for Runtime {
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
         // Do not allow spawning more tasks if the runtime should be closed.
         if self.tasks.is_closed() {
-            tracing::debug!(me = %self.id.fmt_short(), "runtime closed, dropping spawned task");
+            tracing::debug!(me = %self.id, "runtime closed, dropping spawned task");
             return;
         }
 
@@ -86,7 +91,7 @@ impl noq::Runtime for Runtime {
 
         let task_id = self.task_counter.fetch_add(1, Ordering::Relaxed);
         let cancel = self.cancel.clone();
-        let span = trace_span!("runtime", me = %self.id.fmt_short(), task_id);
+        let span = trace_span!("runtime", me = %self.id, task_id);
         self.tasks.spawn(async move {
             // wrapping the future in a cancellation token is what allows
             // us to "abort" tasks in the event the runtime is meant to

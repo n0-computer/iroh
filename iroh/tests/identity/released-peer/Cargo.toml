@@ -1,0 +1,15 @@
+[package]
+name = "iroh-released-identity-peer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Deliberately separate: no workspace dependency or path patch may replace the release.
+[workspace]
+
+[dependencies]
+iroh = { version = "=1.1.0", default-features = false, features = ["tls-ring"] }
+iroh-base = { version = "=1.1.0" }
+iroh-relay = { version = "=1.1.0", default-features = false }
+rustls = { version = "=0.23.41", default-features = false }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

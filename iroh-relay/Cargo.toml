@@ -86,6 +86,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+iroh-identity = { version = "0.1.0", path = "../iroh-identity", optional = true }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -127,6 +128,7 @@ axum = { version = "0.8", features = ["ws"] }
 cfg_aliases = "0.2.2"
 
 [features]
+unstable-identity = ["dep:iroh-identity", "tls-aws-lc-rs"]
 default = ["metrics", "tls-ring"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["dep:rustls-platform-verifier"]

@@ -136,6 +136,10 @@ pub(crate) struct EndpointHooksList {
 }
 
 impl EndpointHooksList {
+    #[cfg(all(feature = "unstable-identity", not(wasm_browser)))]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
     pub(super) fn push(&mut self, hook: impl EndpointHooks + 'static) {
         let hook: Box<dyn DynEndpointHooks> = Box::new(hook);
         self.inner.push(hook);
