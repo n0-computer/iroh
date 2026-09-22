@@ -149,6 +149,9 @@ pub struct Builder {
     portmapper_config: PortmapperConfig,
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
+    /// Optional provider for external CA-validated HTTPS clients. If unset,
+    /// those clients use `crypto_provider` for backwards compatibility.
+    ca_crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
 }
 
@@ -217,6 +220,7 @@ impl Builder {
             portmapper_config: Default::default(),
             net_report_config: Default::default(),
             crypto_provider: None,
+            ca_crypto_provider: None,
             configured_addrs: Default::default(),
         }
     }
@@ -256,10 +260,13 @@ impl Builder {
 
         let metrics = EndpointMetrics::default();
 
+        let ca_crypto_provider = self
+            .ca_crypto_provider
+            .unwrap_or_else(|| crypto_provider.clone());
         let tls_config = self
             .ca_tls_config
             .unwrap_or_default()
-            .client_config(crypto_provider)
+            .client_config(ca_crypto_provider)
             .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
 
         #[cfg(not(wasm_browser))]
@@ -771,6 +778,18 @@ impl Builder {
     /// If none of these features are set, then calling this function in the builder is mandatory.
     pub fn crypto_provider(mut self, crypto_provider: Arc<rustls::crypto::CryptoProvider>) -> Self {
         self.crypto_provider = Some(crypto_provider);
+        self
+    }
+
+    /// Sets the crypto provider used by external CA-validated HTTPS clients.
+    ///
+    /// This does not change the provider used by the native iroh QUIC carrier.
+    /// If omitted, external clients use [`Self::crypto_provider`].
+    pub fn ca_crypto_provider(
+        mut self,
+        crypto_provider: Arc<rustls::crypto::CryptoProvider>,
+    ) -> Self {
+        self.ca_crypto_provider = Some(crypto_provider);
         self
     }
 
