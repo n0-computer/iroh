@@ -148,6 +148,7 @@ jobs:
     - name: Fetch netsim
       env:
         NETSIM_BRANCH: ${{ inputs.netsim_branch }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         cd ..
         rm -rf chuck

@@ -2,6 +2,17 @@
 
 All notable changes to iroh-dns-server will be documented in this file.
 
+## [1.2.0](https://github.com/n0-computer/iroh/compare/v1.1.0..1.2.0) - 2026-09-09
+
+### ⛰️  Features
+
+- *(iroh-dns)* Deprecate old nameserver builders ([#4506](https://github.com/n0-computer/iroh/issues/4506)) - ([2b4de03](https://github.com/n0-computer/iroh/commit/2b4de030ce5e0133f272871a76f0c685c63f552a))
+- Switch to n0-dns-resolver and make fallback nameservers configurable ([#4419](https://github.com/n0-computer/iroh/issues/4419)) - ([1a68838](https://github.com/n0-computer/iroh/commit/1a68838b34c6c4646ada9fafaf65b29f9577a446))
+
+# Changelog
+
+All notable changes to iroh-dns-server will be documented in this file.
+
 ## [1.1.0](https://github.com/n0-computer/iroh/compare/v1.0.3..1.1.0) - 2026-08-25
 
 ### 🐛 Bug Fixes

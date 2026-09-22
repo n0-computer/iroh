@@ -36,7 +36,7 @@ pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{
-    HomeRelayWatch, RelayActorConfig, RelayConnectionState, RelayTransport,
+    HomeRelayWatch, RelayActorConfig, RelayConnectionFailure, RelayConnectionState, RelayTransport,
 };
 
 /// How many times all transports may error on `poll_recv` before we give up.
@@ -1314,6 +1314,32 @@ mod tests {
     use n0_watcher::Watchable;
 
     use super::*;
+
+    impl TransportsSender {
+        pub(in crate::socket) fn with_bounded_relay(
+            capacity: usize,
+            #[cfg(not(wasm_browser))] ip_configs: impl Iterator<Item = IpConfig>,
+        ) -> (
+            TransportsSender,
+            impl futures_util::Stream<Item = ()> + Unpin,
+        ) {
+            use futures_util::StreamExt;
+            let (sender, receiver) = RelaySender::bounded_for_test(capacity);
+            let sender = TransportsSender {
+                #[cfg(not(wasm_browser))]
+                ip: IpTransports::bind(ip_configs, &EndpointMetrics::default())
+                    .expect("test transports must bind")
+                    .create_sender(),
+                relay: vec![sender],
+                custom: Vec::new(),
+                max_transmit_segments: NonZeroUsize::new(1).unwrap(),
+            };
+            (
+                sender,
+                tokio_stream::wrappers::ReceiverStream::new(receiver).map(|_| ()),
+            )
+        }
+    }
 
     const FAIRNESS_SAMPLE_POLLS: usize = 10_000;
 

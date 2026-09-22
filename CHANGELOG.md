@@ -2,6 +2,36 @@
 
 All notable changes to iroh will be documented in this file.
 
+## [1.2.0](https://github.com/n0-computer/iroh/compare/v1.1.0..1.2.0) - 2026-09-09
+
+### ⛰️  Features
+
+- *(iroh)* Add `RelayStatus::auth_denied_reason` and example ([#4501](https://github.com/n0-computer/iroh/issues/4501)) - ([8d2d9e7](https://github.com/n0-computer/iroh/commit/8d2d9e78e355bb60ad3641e6684df51d5cfc0de8))
+- *(iroh-dns)* Deprecate old nameserver builders ([#4506](https://github.com/n0-computer/iroh/issues/4506)) - ([2b4de03](https://github.com/n0-computer/iroh/commit/2b4de030ce5e0133f272871a76f0c685c63f552a))
+- Switch to n0-dns-resolver and make fallback nameservers configurable ([#4419](https://github.com/n0-computer/iroh/issues/4419)) - ([1a68838](https://github.com/n0-computer/iroh/commit/1a68838b34c6c4646ada9fafaf65b29f9577a446))
+
+### 🐛 Bug Fixes
+
+- *(ci)* Select the toolchain in the remaining hand-rolled rustup jobs ([#4515](https://github.com/n0-computer/iroh/issues/4515)) - ([f82eff5](https://github.com/n0-computer/iroh/commit/f82eff582064f758e4c22df6d3ff81ab539e755a))
+
+### 🚜 Refactor
+
+- *(iroh)* Clean up mapped addresses constructions ([#4498](https://github.com/n0-computer/iroh/issues/4498)) - ([00e016a](https://github.com/n0-computer/iroh/commit/00e016afed8aef4db05b43ef728d52eee140316f))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(*)* Upgrade to `noq`, `noq-proto`, `noq-udp` v1.3.0 ([#4518](https://github.com/n0-computer/iroh/issues/4518)) - ([cb5d12b](https://github.com/n0-computer/iroh/commit/cb5d12b5019966819f0e6eba23233885cd65cf7b))
+- *(ci)* Move minimal crates check out of tests ([#4491](https://github.com/n0-computer/iroh/issues/4491)) - ([55e1d7b](https://github.com/n0-computer/iroh/commit/55e1d7bb4101b709bf9db2112d84501a14fdd0de))
+- *(ci)* Select the toolchain the Windows test jobs request ([#4514](https://github.com/n0-computer/iroh/issues/4514)) - ([f2d8d46](https://github.com/n0-computer/iroh/commit/f2d8d4694bb36d8e56bc66323137b7a5d5716976))
+- Log line numbers in the transfer example ([#4485](https://github.com/n0-computer/iroh/issues/4485)) - ([3677ec6](https://github.com/n0-computer/iroh/commit/3677ec62105557ea4e56bc75ce4e501c22dd8058))
+- Upgrade to non-yanked chacha20 version ([#4499](https://github.com/n0-computer/iroh/issues/4499)) - ([cff1f79](https://github.com/n0-computer/iroh/commit/cff1f7934b030235c356cd449bf2a2c4a067efe0))
+- Bump n0-error version, remove patch ([#4500](https://github.com/n0-computer/iroh/issues/4500)) - ([2581169](https://github.com/n0-computer/iroh/commit/25811699c576f648c757ca1f88003507b8c4e164))
+- Update PR template for API changes ([#4507](https://github.com/n0-computer/iroh/issues/4507)) - ([7a561e6](https://github.com/n0-computer/iroh/commit/7a561e6d70590c2feab068da7afb509f529b72eb))
+
+# Changelog
+
+All notable changes to iroh will be documented in this file.
+
 ## [1.1.0](https://github.com/n0-computer/iroh/compare/v1.0.3..1.1.0) - 2026-08-25
 
 ### ⛰️  Features

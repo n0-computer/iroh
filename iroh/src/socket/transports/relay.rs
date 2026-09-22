@@ -21,7 +21,9 @@ use crate::endpoint::RelayStatus;
 
 mod actor;
 
-pub(crate) use self::actor::{Config as RelayActorConfig, HomeRelayWatch, RelayConnectionState};
+pub(crate) use self::actor::{
+    Config as RelayActorConfig, HomeRelayWatch, RelayConnectionFailure, RelayConnectionState,
+};
 use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
 
 type RelayAddrWatcher =
@@ -347,6 +349,20 @@ mod tests {
 
     use super::*;
     use crate::{defaults::staging, dns::DnsResolver};
+
+    impl RelaySender {
+        pub(in crate::socket::transports) fn bounded_for_test(
+            capacity: usize,
+        ) -> (RelaySender, mpsc::Receiver<RelaySendItem>) {
+            let (sender, receiver) = mpsc::channel(capacity);
+            (
+                RelaySender {
+                    sender: PollSender::new(sender),
+                },
+                receiver,
+            )
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_relay_datagram_queue() {

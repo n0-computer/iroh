@@ -2,6 +2,12 @@
 
 All notable changes to iroh-base will be documented in this file.
 
+## [1.2.0](https://github.com/n0-computer/iroh/compare/v1.1.0..1.2.0) - 2026-09-09
+
+# Changelog
+
+All notable changes to iroh-base will be documented in this file.
+
 ## [1.1.0](https://github.com/n0-computer/iroh/compare/v1.0.3..1.1.0) - 2026-08-25
 
 ### 🐛 Bug Fixes
