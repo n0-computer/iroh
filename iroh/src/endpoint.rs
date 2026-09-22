@@ -73,7 +73,7 @@ use crate::{
     endpoint::presets::Preset,
     metrics::EndpointMetrics,
     socket::{
-        self, EndpointInner, RemoteStateActorStoppedError, StaticConfig,
+        self, EndpointInner, IncomingLimits, RemoteStateActorStoppedError, StaticConfig,
         biased_rtt_path_selector::BiasedRttPathSelector,
         mapped_addrs::MappedAddr,
         remote_map::PathSelector,
@@ -132,6 +132,7 @@ pub struct Builder {
     secret_key: Option<SecretKey>,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: QuicTransportConfig,
+    incoming_limits: IncomingLimits,
     keylog: bool,
     address_lookup: Vec<Box<dyn DynAddressLookupBuilder>>,
     address_lookup_user_data: Option<UserData>,
@@ -202,6 +203,7 @@ impl Builder {
             secret_key: Default::default(),
             alpn_protocols: Default::default(),
             transport_config: QuicTransportConfig::default(),
+            incoming_limits: Default::default(),
             keylog: Default::default(),
             address_lookup: Default::default(),
             address_lookup_user_data: Default::default(),
@@ -249,6 +251,7 @@ impl Builder {
             client_config: tls_config.make_client_config(self.keylog)?,
             tls_config,
             transport_config: self.transport_config.clone(),
+            incoming_limits: self.incoming_limits,
             token_key,
             token_store: Arc::new(noq::TokenMemoryCache::default()),
         };
@@ -679,6 +682,38 @@ impl Builder {
     /// and maintaining direct connections.
     pub fn transport_config(mut self, transport_config: QuicTransportConfig) -> Self {
         self.transport_config = transport_config;
+        self
+    }
+
+    /// Sets the maximum number of [`Incoming`] connection attempts allowed to exist at a time.
+    ///
+    /// An [`Incoming`] exists from when a connection attempt is received until the application
+    /// accepts or otherwise disposes of it. While this limit is reached, new attempts are ignored
+    /// without a response, so peers may retry and eventually time out. Setting this to zero
+    /// disables incoming connections. The default is 65,536.
+    pub fn max_incoming(mut self, max_incoming: usize) -> Self {
+        self.incoming_limits.max_incoming = Some(max_incoming);
+        self
+    }
+
+    /// Sets the maximum number of bytes buffered for each [`Incoming`].
+    ///
+    /// This limit applies until the application accepts or otherwise disposes of the
+    /// [`Incoming`] and does not include the first packet. Excess packets are dropped, which may
+    /// cause 0-RTT or handshake data to be retransmitted. The default is 10 MiB.
+    pub fn incoming_buffer_size(mut self, incoming_buffer_size: u64) -> Self {
+        self.incoming_limits.incoming_buffer_size = Some(incoming_buffer_size);
+        self
+    }
+
+    /// Sets the maximum number of bytes buffered across all [`Incoming`] attempts.
+    ///
+    /// This limit applies until the application accepts or otherwise disposes of each
+    /// [`Incoming`] and does not include the first packet of each attempt. Excess packets are
+    /// dropped, which may cause 0-RTT or handshake data to be retransmitted. The default is
+    /// 100 MiB.
+    pub fn incoming_buffer_size_total(mut self, incoming_buffer_size_total: u64) -> Self {
+        self.incoming_limits.incoming_buffer_size_total = Some(incoming_buffer_size_total);
         self
     }
 
@@ -2142,6 +2177,89 @@ mod tests {
             }
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_incoming_limits_survive_alpn_changes() -> Result {
+        let server = Endpoint::builder(presets::Minimal)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .max_incoming(0)
+            .incoming_buffer_size(4_096)
+            .incoming_buffer_size_total(8_192)
+            .bind()
+            .await?;
+
+        let inner = server.inner()?;
+        assert_eq!(inner.static_config.incoming_limits.max_incoming, Some(0));
+        assert_eq!(
+            inner.static_config.incoming_limits.incoming_buffer_size,
+            Some(4_096)
+        );
+        assert_eq!(
+            inner
+                .static_config
+                .incoming_limits
+                .incoming_buffer_size_total,
+            Some(8_192)
+        );
+        drop(inner);
+
+        server.set_alpns(vec![TEST_ALPN.to_vec()]);
+
+        let client = Endpoint::builder(presets::Minimal).bind().await?;
+        let connecting = client
+            .connect_with_opts(server.addr(), TEST_ALPN, ConnectOptions::new())
+            .await?;
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), server.accept())
+                .await
+                .is_err()
+        );
+        drop(connecting);
+
+        tokio::join!(server.close(), client.close());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_incoming_limits_bound_pending_attempts() -> Result {
+        let server = Endpoint::builder(presets::Minimal)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .max_incoming(1)
+            .bind()
+            .await?;
+        let first_client = Endpoint::builder(presets::Minimal).bind().await?;
+        let second_client = Endpoint::builder(presets::Minimal).bind().await?;
+
+        let first_connect = first_client
+            .connect_with_opts(server.addr(), TEST_ALPN, ConnectOptions::new())
+            .await?;
+        let first_incoming = tokio::time::timeout(Duration::from_secs(5), server.accept())
+            .await
+            .expect("first connection attempt was not admitted")
+            .expect("endpoint closed before first connection attempt");
+
+        let second_connect = second_client
+            .connect_with_opts(server.addr(), TEST_ALPN, ConnectOptions::new())
+            .await?;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), server.accept())
+                .await
+                .is_err()
+        );
+
+        drop(first_connect);
+        drop(first_incoming);
+        let second_incoming = tokio::time::timeout(Duration::from_secs(5), server.accept())
+            .await
+            .expect("second connection attempt was not admitted after capacity was released")
+            .expect("endpoint closed before second connection attempt");
+        drop(second_connect);
+        drop(second_incoming);
+        tokio::join!(server.close(), first_client.close(), second_client.close());
         Ok(())
     }
 

@@ -651,15 +651,20 @@ impl ServerConfigBuilder {
     ///
     /// An [`Incoming`] comes into existence when an incoming connection attempt
     /// is received and stops existing when the application either accepts it or otherwise disposes
-    /// of it. While this limit is reached, new incoming connection attempts are immediately
-    /// refused. Larger values have greater worst-case memory consumption, but accommodate greater
+    /// of it. While this limit is reached, new incoming connection attempts are ignored without a
+    /// response. Larger values have greater worst-case memory consumption, but accommodate greater
     /// application latency in handling incoming connection attempts.
     ///
     /// The default value is set to 65536. With a typical Ethernet MTU of 1500 bytes, this limits
     /// memory consumption from this to under 100 MiB--a generous amount that still prevents memory
     /// exhaustion in most contexts.
     ///
+    /// This setting has no effect when the resulting config is passed to
+    /// [`Incoming::accept_with`], because the [`Incoming`] already exists by then. Configure the
+    /// endpoint-wide limit through [`crate::endpoint::Builder::max_incoming`] instead.
+    ///
     /// [`Incoming`]: crate::endpoint::Incoming
+    /// [`Incoming::accept_with`]: crate::endpoint::Incoming::accept_with
     pub fn set_max_incoming(mut self, max_incoming: usize) -> Self {
         self.inner.max_incoming(max_incoming);
         self
@@ -677,7 +682,12 @@ impl ServerConfigBuilder {
     /// not transmit that much 0-RTT data faster than the server handles the corresponding
     /// [`Incoming`].
     ///
+    /// This setting has no effect when the resulting config is passed to
+    /// [`Incoming::accept_with`], because the [`Incoming`] already exists by then. Configure the
+    /// endpoint-wide limit through [`crate::endpoint::Builder::incoming_buffer_size`] instead.
+    ///
     /// [`Incoming`]: crate::endpoint::Incoming
+    /// [`Incoming::accept_with`]: crate::endpoint::Incoming::accept_with
     pub fn set_incoming_buffer_size(mut self, incoming_buffer_size: u64) -> Self {
         self.inner.incoming_buffer_size(incoming_buffer_size);
         self
@@ -695,7 +705,13 @@ impl ServerConfigBuilder {
     /// The default value is set to 100 MiB--a generous amount that still prevents memory
     /// exhaustion in most contexts.
     ///
+    /// This setting has no effect when the resulting config is passed to
+    /// [`Incoming::accept_with`], because the [`Incoming`] already exists by then. Configure the
+    /// endpoint-wide limit through [`crate::endpoint::Builder::incoming_buffer_size_total`]
+    /// instead.
+    ///
     /// [`Incoming`]: crate::endpoint::Incoming
+    /// [`Incoming::accept_with`]: crate::endpoint::Incoming::accept_with
     pub fn set_incoming_buffer_size_total(mut self, incoming_buffer_size_total: u64) -> Self {
         self.inner
             .incoming_buffer_size_total(incoming_buffer_size_total);
