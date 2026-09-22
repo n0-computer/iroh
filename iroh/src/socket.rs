@@ -229,6 +229,13 @@ impl Drop for EndpointInner {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct IncomingLimits {
+    pub(crate) max_incoming: Option<usize>,
+    pub(crate) incoming_buffer_size: Option<u64>,
+    pub(crate) incoming_buffer_size_total: Option<u64>,
+}
+
 /// Configuration for a [`noq::Endpoint`] that cannot be changed at runtime.
 #[derive(derive_more::Debug)]
 pub(crate) struct StaticConfig {
@@ -242,6 +249,7 @@ pub(crate) struct StaticConfig {
     #[debug("Arc<dyn TokenStore>")]
     pub(crate) token_store: Arc<dyn TokenStore>,
     pub(crate) transport_config: QuicTransportConfig,
+    pub(crate) incoming_limits: IncomingLimits,
 }
 
 impl StaticConfig {
@@ -255,6 +263,15 @@ impl StaticConfig {
         let mut inner =
             noq::ServerConfig::new(Arc::new(quic_server_config), self.token_key.clone());
         inner.transport_config(self.transport_config.to_inner_arc());
+        if let Some(max_incoming) = self.incoming_limits.max_incoming {
+            inner.max_incoming(max_incoming);
+        }
+        if let Some(incoming_buffer_size) = self.incoming_limits.incoming_buffer_size {
+            inner.incoming_buffer_size(incoming_buffer_size);
+        }
+        if let Some(incoming_buffer_size_total) = self.incoming_limits.incoming_buffer_size_total {
+            inner.incoming_buffer_size_total(incoming_buffer_size_total);
+        }
         inner
     }
 
@@ -2125,7 +2142,7 @@ mod tests {
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
 
-    use super::Options;
+    use super::{IncomingLimits, Options};
     use crate::{
         Endpoint, SecretKey,
         address_lookup::memory::MemoryLookup,
@@ -2156,6 +2173,7 @@ mod tests {
             token_key: Arc::new(RustlsTokenKey::new(rng, &crypto_provider).unwrap()),
             token_store: Arc::new(noq::TokenMemoryCache::default()),
             transport_config: QuicTransportConfig::default(),
+            incoming_limits: Default::default(),
         };
         let server_config = static_config.create_server_config(vec![]);
         Options {
@@ -2180,6 +2198,26 @@ mod tests {
             static_config,
             configured_addrs: Default::default(),
         }
+    }
+
+    #[test]
+    fn static_config_applies_incoming_limits() {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0);
+        let mut options = default_options(&mut rng);
+        options.static_config.incoming_limits = IncomingLimits {
+            max_incoming: Some(7),
+            incoming_buffer_size: Some(4_096),
+            incoming_buffer_size_total: Some(8_192),
+        };
+
+        let server_config = options.static_config.create_server_config(vec![]);
+        let debug = format!("{server_config:?}");
+        assert!(debug.contains("max_incoming: 7"), "{debug}");
+        assert!(debug.contains("incoming_buffer_size: 4096"), "{debug}");
+        assert!(
+            debug.contains("incoming_buffer_size_total: 8192"),
+            "{debug}"
+        );
     }
 
     #[instrument(skip_all, fields(me = %ep.id().fmt_short()))]
@@ -2571,6 +2609,7 @@ mod tests {
             token_key: Arc::new(RustlsTokenKey::new(&mut rand::rng(), &crypto_provider).unwrap()),
             token_store: Arc::new(noq::TokenMemoryCache::default()),
             transport_config: QuicTransportConfig::default(),
+            incoming_limits: Default::default(),
         };
         let server_config = static_config.create_server_config(vec![ALPN.to_vec()]);
 
