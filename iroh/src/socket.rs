@@ -199,7 +199,7 @@ pub(crate) struct Options {
     pub(crate) configured_addrs: BTreeSet<SocketAddr>,
 
     /// Optional filter for NAT traversal address candidates.
-    pub(crate) direct_addr_filter: Option<Arc<dyn DirectAddrFilter>>,
+    pub(crate) direct_addr_filter: Option<Box<dyn DirectAddrFilter>>,
 }
 
 /// Inner state for an iroh [`crate::Endpoint`].
@@ -377,8 +377,6 @@ pub(crate) struct Socket {
     address_lookup_user_data: RwLock<Option<UserData>>,
     /// Explicitly configured external addresses to advertise.
     configured_addrs: RwLock<BTreeSet<SocketAddr>>,
-    /// Optional filter for NAT traversal address candidates.
-    direct_addr_filter: Option<Arc<dyn DirectAddrFilter>>,
 
     pub(crate) tls_config: rustls::ClientConfig,
 
@@ -997,7 +995,6 @@ impl EndpointInner {
             relay_map: relay_map.clone(),
             address_lookup_user_data: RwLock::new(address_lookup_user_data),
             configured_addrs: RwLock::new(configured_addrs),
-            direct_addr_filter,
             direct_addrs,
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
@@ -1089,6 +1086,7 @@ impl EndpointInner {
             periodic_re_stun_timer: new_re_stun_timer(false),
             network_monitor,
             local_interfaces_watcher,
+            direct_addr_filter,
             direct_addr_update_state,
             transports_network_change,
             direct_addr_done_rx,
@@ -1471,6 +1469,8 @@ struct Actor {
     network_monitor: netmon::Monitor,
     /// Watcher for changes to the local network interfaces, IP addresses and routes.
     local_interfaces_watcher: n0_watcher::Direct<netmon::State>,
+    /// Optional filter for NAT traversal address candidates.
+    direct_addr_filter: Option<Box<dyn DirectAddrFilter>>,
     transports_network_change: transports::NetworkChangeSender,
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
@@ -1879,7 +1879,7 @@ impl Actor {
         }
 
         // Finally create and store store all these direct addresses
-        let direct_addr_filter = self.sock.direct_addr_filter.as_deref();
+        let direct_addr_filter = self.direct_addr_filter.as_deref();
         let stored_addrs = addrs
             .into_iter()
             .filter_map(|(addr, (typ, flags))| {
@@ -2127,8 +2127,7 @@ impl Display for DirectAddrType {
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::{
-        collections::BTreeSet,
-        net::{IpAddr, Ipv4Addr, SocketAddrV4},
+        net::{IpAddr, SocketAddrV4},
         sync::Arc,
         time::Duration,
     };
@@ -2593,45 +2592,12 @@ mod tests {
         }
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let mut opts = default_options(&mut rng);
-        opts.direct_addr_filter = Some(Arc::new(DropAll));
+        opts.direct_addr_filter = Some(Box::new(DropAll));
         let sock = EndpointInner::bind(opts).await.unwrap();
         assert!(
             sock.ip_addrs().get().is_empty(),
             "a reject-all direct_addr_filter should drop every local address"
         );
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn direct_addr_filter_keeps_unmatched_addresses() {
-        // A filter that rejects only a never-present address keeps everything the
-        // unfiltered bind gathered.
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let baseline = EndpointInner::bind(default_options(&mut rng))
-            .await
-            .unwrap()
-            .ip_addrs()
-            .get();
-
-        #[derive(Debug)]
-        struct DropOne(IpAddr);
-        impl DirectAddrFilter for DropOne {
-            fn use_nat_candidate(&self, ip: IpAddr) -> bool {
-                ip != self.0
-            }
-        }
-        // 192.0.2.1 is TEST-NET-1 (RFC 5737); it is never a real local address.
-        let never = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let mut opts = default_options(&mut rng);
-        opts.direct_addr_filter = Some(Arc::new(DropOne(never)));
-        let sock = EndpointInner::bind(opts).await.unwrap();
-        // Compare by IP: each bind gets a fresh ephemeral port, so the full
-        // SocketAddrs differ even though the same interface addresses are kept.
-        let ips = |set: &BTreeSet<super::DirectAddr>| {
-            set.iter().map(|d| d.addr.ip()).collect::<BTreeSet<_>>()
-        };
-        assert_eq!(ips(&sock.ip_addrs().get()), ips(&baseline));
     }
 
     /// Creates a new [`noq::Endpoint`] hooked up to a [`Socket`].

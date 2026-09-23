@@ -13,6 +13,7 @@
 
 use std::{
     collections::BTreeSet,
+    fmt::Debug,
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -30,8 +31,6 @@ use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
 use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
 use url::Url;
-
-pub use ipnet::IpNet;
 
 #[cfg(feature = "unstable-custom-transports")]
 pub mod transports {
@@ -155,7 +154,7 @@ pub struct Builder {
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
-    direct_addr_filter: Option<Arc<dyn DirectAddrFilter>>,
+    direct_addr_filter: Option<Box<dyn DirectAddrFilter>>,
 }
 
 /// Filters the endpoint's NAT traversal address candidates.
@@ -163,21 +162,9 @@ pub struct Builder {
 /// An address for which [`Self::use_nat_candidate`] returns `false` is dropped.
 /// Set the filter with
 /// [`Builder::direct_addr_filter`].
-pub trait DirectAddrFilter: Send + Sync + std::fmt::Debug + 'static {
+pub trait DirectAddrFilter: Send + Sync + Debug + 'static {
     /// Returns whether `ip` should be used as a NAT traversal candidate.
     fn use_nat_candidate(&self, ip: IpAddr) -> bool;
-}
-
-/// The filter behind [`Builder::exclude_direct_addrs`]: an address contained in
-/// any of the networks is dropped, everything else is kept. An empty list keeps
-/// every address.
-#[derive(Debug)]
-struct ExcludeNets(Vec<IpNet>);
-
-impl DirectAddrFilter for ExcludeNets {
-    fn use_nat_candidate(&self, ip: IpAddr) -> bool {
-        !self.0.iter().any(|net| net.contains(&ip))
-    }
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -660,25 +647,11 @@ impl Builder {
         self
     }
 
-    /// Excludes addresses in the given networks from the NAT traversal candidates.
-    ///
-    /// An address contained in any of `nets` is never published to
-    /// [`AddressLookup`](crate::address_lookup::AddressLookup), or offered as a
-    /// NAT traversal candidate. This is the common case for
-    /// [`Self::direct_addr_filter`]. For example, this endpoint may provide a VPN
-    /// tunnel that is exposed as a network interface on the host. Addresses from
-    /// that interface should be excluded so peers do not try to reach the endpoint
-    /// through its own tunnel.
-    pub fn exclude_direct_addrs(self, nets: impl IntoIterator<Item = IpNet>) -> Self {
-        self.direct_addr_filter(ExcludeNets(nets.into_iter().collect()))
-    }
-
     /// Uses a filter for NAT traversal address candidates.
     ///
-    /// Use [`Self::exclude_direct_addrs`] for network-based filters. Implement
-    /// [`DirectAddrFilter`] for filters that cannot be expressed as networks.
+    /// See [`DirectAddrFilter`] for details.
     pub fn direct_addr_filter(mut self, filter: impl DirectAddrFilter) -> Self {
-        self.direct_addr_filter = Some(Arc::new(filter));
+        self.direct_addr_filter = Some(Box::new(filter));
         self
     }
 
@@ -2075,7 +2048,7 @@ mod tests {
     use tokio::sync::oneshot;
     use tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
 
-    use super::{DirectAddrFilter, Endpoint, ExcludeNets};
+    use super::Endpoint;
     use crate::{
         RelayMap, RelayMode,
         address_lookup::memory::MemoryLookup,
@@ -2090,25 +2063,6 @@ mod tests {
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
-
-    #[test]
-    fn exclude_nets_drops_contained_addresses() {
-        let nets = ExcludeNets(vec![
-            "100.64.0.0/10".parse().unwrap(),
-            "200::/7".parse().unwrap(),
-        ]);
-        // Addresses inside the excluded ranges are dropped.
-        assert!(!nets.use_nat_candidate(IpAddr::from_str("100.64.1.2").unwrap()));
-        assert!(!nets.use_nat_candidate(IpAddr::from_str("200::1").unwrap()));
-        // Everything else is kept, including addresses that only look adjacent:
-        // 100.128.0.0 is the first address past the /10.
-        assert!(nets.use_nat_candidate(IpAddr::from_str("100.63.255.255").unwrap()));
-        assert!(nets.use_nat_candidate(IpAddr::from_str("100.128.0.0").unwrap()));
-        assert!(nets.use_nat_candidate(IpAddr::from_str("192.168.1.5").unwrap()));
-        assert!(nets.use_nat_candidate(IpAddr::from_str("2001:db8::1").unwrap()));
-        // An empty list keeps every address.
-        assert!(ExcludeNets(Vec::new()).use_nat_candidate(IpAddr::from_str("100.64.1.2").unwrap()));
-    }
 
     #[tokio::test]
     #[traced_test]
