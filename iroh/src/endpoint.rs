@@ -31,6 +31,8 @@ use tokio_util::sync::WaitForCancellationFutureOwned;
 use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
 use url::Url;
 
+pub use ipnet::IpNet;
+
 #[cfg(feature = "unstable-custom-transports")]
 pub mod transports {
     //! Types for defining custom transports and path selectors.
@@ -95,9 +97,6 @@ pub(crate) mod quic;
 #[cfg(not(wasm_browser))]
 pub use bind::{BindOpts, InvalidSocketAddr, ToSocketAddr};
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
-/// Re-exported so callers of [`Builder::exclude_direct_addrs`] do not need to
-/// depend on a matching `ipnet` themselves.
-pub use ipnet::IpNet;
 
 #[cfg(feature = "qlog")]
 pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
@@ -159,14 +158,14 @@ pub struct Builder {
     direct_addr_filter: Option<Arc<dyn DirectAddrFilter>>,
 }
 
-/// Filters the endpoint's direct (underlay) address candidates.
+/// Filters the endpoint's NAT traversal address candidates.
 ///
-/// An address for which [`Self::keeps`] returns `false` is dropped: it is not
-/// stored, published, or used as a holepunch candidate. Set it with
+/// An address for which [`Self::use_nat_candidate`] returns `false` is dropped.
+/// Set the filter with
 /// [`Builder::direct_addr_filter`].
 pub trait DirectAddrFilter: Send + Sync + std::fmt::Debug + 'static {
-    /// Returns `true` to keep `ip` as a candidate, `false` to drop it.
-    fn keeps(&self, ip: IpAddr) -> bool;
+    /// Returns whether `ip` should be used as a NAT traversal candidate.
+    fn use_nat_candidate(&self, ip: IpAddr) -> bool;
 }
 
 /// The filter behind [`Builder::exclude_direct_addrs`]: an address contained in
@@ -176,7 +175,7 @@ pub trait DirectAddrFilter: Send + Sync + std::fmt::Debug + 'static {
 struct ExcludeNets(Vec<IpNet>);
 
 impl DirectAddrFilter for ExcludeNets {
-    fn keeps(&self, ip: IpAddr) -> bool {
+    fn use_nat_candidate(&self, ip: IpAddr) -> bool {
         !self.0.iter().any(|net| net.contains(&ip))
     }
 }
@@ -661,35 +660,23 @@ impl Builder {
         self
     }
 
-    /// Excludes addresses in the given networks from the endpoint's direct
-    /// address candidates.
+    /// Excludes addresses in the given networks from the NAT traversal candidates.
     ///
-    /// An address contained in any of `nets` is never stored, published, or
-    /// offered as a holepunch / NAT-traversal candidate. This is the common case
-    /// of [`Self::direct_addr_filter`]: excluding a virtual interface's addresses,
-    /// such as a VPN overlay bound on a TUN device, which peers would otherwise
-    /// discover and dial, looping the underlay back through the tunnel.
-    ///
-    /// ```no_run
-    /// # use iroh::{Endpoint, endpoint::IpNet, endpoint::presets};
-    /// # async fn wrapper() -> n0_error::Result<()> {
-    /// let overlay: IpNet = "100.64.0.0/10".parse().expect("valid prefix");
-    /// let ep = Endpoint::builder(presets::N0)
-    ///     .exclude_direct_addrs([overlay])
-    ///     .bind()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// An address contained in any of `nets` is never published to
+    /// [`AddressLookup`](crate::address_lookup::AddressLookup), or offered as a
+    /// NAT traversal candidate. This is the common case for
+    /// [`Self::direct_addr_filter`]. For example, this endpoint may provide a VPN
+    /// tunnel that is exposed as a network interface on the host. Addresses from
+    /// that interface should be excluded so peers do not try to reach the endpoint
+    /// through its own tunnel.
     pub fn exclude_direct_addrs(self, nets: impl IntoIterator<Item = IpNet>) -> Self {
         self.direct_addr_filter(ExcludeNets(nets.into_iter().collect()))
     }
 
-    /// Sets a [`DirectAddrFilter`] that drops selected addresses from the
-    /// endpoint's direct address candidates.
+    /// Uses a filter for NAT traversal address candidates.
     ///
-    /// Use [`Self::exclude_direct_addrs`] instead when the addresses to drop can
-    /// be named as networks; this is for filters that cannot.
+    /// Use [`Self::exclude_direct_addrs`] for network-based filters. Implement
+    /// [`DirectAddrFilter`] for filters that cannot be expressed as networks.
     pub fn direct_addr_filter(mut self, filter: impl DirectAddrFilter) -> Self {
         self.direct_addr_filter = Some(Arc::new(filter));
         self
@@ -2111,16 +2098,16 @@ mod tests {
             "200::/7".parse().unwrap(),
         ]);
         // Addresses inside the excluded ranges are dropped.
-        assert!(!nets.keeps(IpAddr::from_str("100.64.1.2").unwrap()));
-        assert!(!nets.keeps(IpAddr::from_str("200::1").unwrap()));
+        assert!(!nets.use_nat_candidate(IpAddr::from_str("100.64.1.2").unwrap()));
+        assert!(!nets.use_nat_candidate(IpAddr::from_str("200::1").unwrap()));
         // Everything else is kept, including addresses that only look adjacent:
         // 100.128.0.0 is the first address past the /10.
-        assert!(nets.keeps(IpAddr::from_str("100.63.255.255").unwrap()));
-        assert!(nets.keeps(IpAddr::from_str("100.128.0.0").unwrap()));
-        assert!(nets.keeps(IpAddr::from_str("192.168.1.5").unwrap()));
-        assert!(nets.keeps(IpAddr::from_str("2001:db8::1").unwrap()));
+        assert!(nets.use_nat_candidate(IpAddr::from_str("100.63.255.255").unwrap()));
+        assert!(nets.use_nat_candidate(IpAddr::from_str("100.128.0.0").unwrap()));
+        assert!(nets.use_nat_candidate(IpAddr::from_str("192.168.1.5").unwrap()));
+        assert!(nets.use_nat_candidate(IpAddr::from_str("2001:db8::1").unwrap()));
         // An empty list keeps every address.
-        assert!(ExcludeNets(Vec::new()).keeps(IpAddr::from_str("100.64.1.2").unwrap()));
+        assert!(ExcludeNets(Vec::new()).use_nat_candidate(IpAddr::from_str("100.64.1.2").unwrap()));
     }
 
     #[tokio::test]

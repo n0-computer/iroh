@@ -198,7 +198,7 @@ pub(crate) struct Options {
     /// Explicitly configured external addresses to advertise.
     pub(crate) configured_addrs: BTreeSet<SocketAddr>,
 
-    /// Optional filter dropping direct address candidates (e.g. VPN overlay IPs).
+    /// Optional filter for NAT traversal address candidates.
     pub(crate) direct_addr_filter: Option<Arc<dyn DirectAddrFilter>>,
 }
 
@@ -377,7 +377,7 @@ pub(crate) struct Socket {
     address_lookup_user_data: RwLock<Option<UserData>>,
     /// Explicitly configured external addresses to advertise.
     configured_addrs: RwLock<BTreeSet<SocketAddr>>,
-    /// Optional filter dropping direct address candidates (e.g. VPN overlay IPs).
+    /// Optional filter for NAT traversal address candidates.
     direct_addr_filter: Option<Arc<dyn DirectAddrFilter>>,
 
     pub(crate) tls_config: rustls::ClientConfig,
@@ -1888,11 +1888,8 @@ impl Actor {
                 if is_deprecated {
                     return None;
                 }
-                // Drop addresses rejected by the application filter (e.g. a VPN
-                // overlay IP bound on a TUN device), so they are never stored,
-                // published, or used as a holepunch / NAT-traversal candidate.
                 if let Some(f) = direct_addr_filter
-                    && !f.keeps(addr.ip())
+                    && !f.use_nat_candidate(addr.ip())
                 {
                     return None;
                 }
@@ -2590,7 +2587,7 @@ mod tests {
         #[derive(Debug)]
         struct DropAll;
         impl DirectAddrFilter for DropAll {
-            fn keeps(&self, _ip: IpAddr) -> bool {
+            fn use_nat_candidate(&self, _ip: IpAddr) -> bool {
                 false
             }
         }
@@ -2619,7 +2616,7 @@ mod tests {
         #[derive(Debug)]
         struct DropOne(IpAddr);
         impl DirectAddrFilter for DropOne {
-            fn keeps(&self, ip: IpAddr) -> bool {
+            fn use_nat_candidate(&self, ip: IpAddr) -> bool {
                 ip != self.0
             }
         }
