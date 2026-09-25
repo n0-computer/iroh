@@ -340,7 +340,7 @@ jobs:
         uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
         with:
           # Match the version of wasm-bindgen used in Cargo.lock
-          tool: wasm-bindgen-cli@0.2.122
+          tool: wasm-bindgen-cli@0.2.128
 
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
