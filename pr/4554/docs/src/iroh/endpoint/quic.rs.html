@@ -6,11 +6,11 @@
 <a href=#6 id=6 data-nosnippet>6</a>//! to limit or expand how those structs are used in iroh. By encapsulating them
 <a href=#7 id=7 data-nosnippet>7</a>//! we can ensure the functionality needed to make iroh work.
 <a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a></span><span class="kw">use </span>std::{path::Path, sync::Arc, time::Duration};
-<a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a><span class="attr">#[cfg(feature = <span class="string">"qlog"</span>)]
+<a href=#9 id=9 data-nosnippet>9</a></span><span class="attr">#[cfg(feature = <span class="string">"qlog"</span>)]
+<a href=#10 id=10 data-nosnippet>10</a></span><span class="kw">use </span>std::path::Path;
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>std::{sync::Arc, time::Duration};
 <a href=#12 id=12 data-nosnippet>12</a>
-<a href=#13 id=13 data-nosnippet>13</a></span><span class="doccomment">/// `noq` types that are used in the public iroh API.
+<a href=#13 id=13 data-nosnippet>13</a><span class="doccomment">/// `noq` types that are used in the public iroh API.
 <a href=#14 id=14 data-nosnippet>14</a></span><span class="comment">// Each type is notated with the iroh type or noq type that uses it.
 <a href=#15 id=15 data-nosnippet>15</a></span><span class="kw">pub use </span>noq::{
 <a href=#16 id=16 data-nosnippet>16</a>    AcceptBi,             <span class="comment">// iroh::endpoint::Connection

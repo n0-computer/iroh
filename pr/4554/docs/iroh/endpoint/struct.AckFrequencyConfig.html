@@ -11,7 +11,7 @@ because they change the way reordered packets are handled (see
 </div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-AckFrequencyConfig" class="impl"><a href="#impl-AckFrequencyConfig" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.AckFrequencyConfig.html" title="struct iroh::endpoint::AckFrequencyConfig">AckFrequencyConfig</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.ack_eliciting_threshold" class="method"><h4 class="code-header">pub fn <a href="#method.ack_eliciting_threshold" class="fn">ack_eliciting_threshold</a>(
     &amp;mut self,
     value: <a class="struct" href="struct.VarInt.html" title="struct iroh::endpoint::VarInt">VarInt</a>,
-) -&gt; &amp;mut <a class="struct" href="struct.AckFrequencyConfig.html" title="struct iroh::endpoint::AckFrequencyConfig">AckFrequencyConfig</a></h4></section><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>qlog</code></strong> only.</div></span></summary><div class="docblock"><p>The ack-eliciting threshold we will request the peer to use</p>
+) -&gt; &amp;mut <a class="struct" href="struct.AckFrequencyConfig.html" title="struct iroh::endpoint::AckFrequencyConfig">AckFrequencyConfig</a></h4></section></summary><div class="docblock"><p>The ack-eliciting threshold we will request the peer to use</p>
 <p>This threshold represents the number of ack-eliciting packets an endpoint may receive
 without immediately sending an ACK.</p>
 <p>The remote peer should send at least one ACK frame when more than this number of
@@ -21,14 +21,14 @@ acknowledging every ack-eliciting packet.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.max_ack_delay" class="method"><h4 class="code-header">pub fn <a href="#method.max_ack_delay" class="fn">max_ack_delay</a>(
     &amp;mut self,
     value: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/core/time/struct.Duration.html" title="struct core::time::Duration">Duration</a>&gt;,
-) -&gt; &amp;mut <a class="struct" href="struct.AckFrequencyConfig.html" title="struct iroh::endpoint::AckFrequencyConfig">AckFrequencyConfig</a></h4></section><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>qlog</code></strong> only.</div></span></summary><div class="docblock"><p>The <code>max_ack_delay</code> we will request the peer to use</p>
+) -&gt; &amp;mut <a class="struct" href="struct.AckFrequencyConfig.html" title="struct iroh::endpoint::AckFrequencyConfig">AckFrequencyConfig</a></h4></section></summary><div class="docblock"><p>The <code>max_ack_delay</code> we will request the peer to use</p>
 <p>This parameter represents the maximum amount of time that an endpoint waits before sending
 an ACK when the ack-eliciting threshold hasn’t been reached.</p>
 <p>The effective <code>max_ack_delay</code> will be clamped to be at least the peer’s <code>min_ack_delay</code>
 transport parameter, and at most the greater of the current path RTT or 25ms.</p>
 <p>Defaults to <code>None</code>, in which case the peer’s original <code>max_ack_delay</code> will be used, as
 obtained from its transport parameters.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.reordering_threshold" class="method"><h4 class="code-header">pub fn <a href="#method.reordering_threshold" class="fn">reordering_threshold</a>(&amp;mut self, value: <a class="struct" href="struct.VarInt.html" title="struct iroh::endpoint::VarInt">VarInt</a>) -&gt; &amp;mut <a class="struct" href="struct.AckFrequencyConfig.html" title="struct iroh::endpoint::AckFrequencyConfig">AckFrequencyConfig</a></h4></section><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>qlog</code></strong> only.</div></span></summary><div class="docblock"><p>The reordering threshold we will request the peer to use</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.reordering_threshold" class="method"><h4 class="code-header">pub fn <a href="#method.reordering_threshold" class="fn">reordering_threshold</a>(&amp;mut self, value: <a class="struct" href="struct.VarInt.html" title="struct iroh::endpoint::VarInt">VarInt</a>) -&gt; &amp;mut <a class="struct" href="struct.AckFrequencyConfig.html" title="struct iroh::endpoint::AckFrequencyConfig">AckFrequencyConfig</a></h4></section></summary><div class="docblock"><p>The reordering threshold we will request the peer to use</p>
 <p>This threshold represents the amount of out-of-order packets that will trigger an endpoint
 to send an ACK, without waiting for <code>ack_eliciting_threshold</code> to be exceeded or for
 <code>max_ack_delay</code> to be elapsed.</p>
