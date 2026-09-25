@@ -11,7 +11,13 @@
 //!
 //! [module docs]: crate
 
-use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    fmt::Debug,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+};
 
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
@@ -150,6 +156,17 @@ pub struct Builder {
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
+    direct_addr_filter: Option<Box<dyn DirectAddrFilter>>,
+}
+
+/// Filters the endpoint's NAT traversal address candidates.
+///
+/// An address for which [`Self::use_nat_candidate`] returns `false` is dropped.
+/// Set the filter with
+/// [`Builder::direct_addr_filter`].
+pub trait DirectAddrFilter: Send + Sync + Debug + 'static {
+    /// Returns whether `ip` should be used as a NAT traversal candidate.
+    fn use_nat_candidate(&self, ip: IpAddr) -> bool;
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -218,6 +235,7 @@ impl Builder {
             net_report_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
+            direct_addr_filter: None,
         }
     }
 
@@ -286,6 +304,7 @@ impl Builder {
             net_report_config: self.net_report_config,
             static_config,
             configured_addrs: self.configured_addrs,
+            direct_addr_filter: self.direct_addr_filter,
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
@@ -636,6 +655,14 @@ impl Builder {
     /// filters set by presets.
     pub fn clear_addr_filter(mut self) -> Self {
         self.addr_filter = None;
+        self
+    }
+
+    /// Uses a filter for NAT traversal address candidates.
+    ///
+    /// See [`DirectAddrFilter`] for details.
+    pub fn direct_addr_filter(mut self, filter: impl DirectAddrFilter) -> Self {
+        self.direct_addr_filter = Some(Box::new(filter));
         self
     }
 

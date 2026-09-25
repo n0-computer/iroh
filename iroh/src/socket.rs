@@ -69,7 +69,8 @@ use crate::{
     address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::{
-        LocalTransportAddr, RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig,
+        DirectAddrFilter, LocalTransportAddr, RelayStatus, hooks::EndpointHooksList,
+        quic::QuicTransportConfig,
     },
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
@@ -196,6 +197,9 @@ pub(crate) struct Options {
 
     /// Explicitly configured external addresses to advertise.
     pub(crate) configured_addrs: BTreeSet<SocketAddr>,
+
+    /// Optional filter for NAT traversal address candidates.
+    pub(crate) direct_addr_filter: Option<Box<dyn DirectAddrFilter>>,
 }
 
 /// Inner state for an iroh [`crate::Endpoint`].
@@ -887,6 +891,7 @@ impl EndpointInner {
             net_report_config,
             static_config,
             configured_addrs,
+            direct_addr_filter,
         } = opts;
 
         let address_lookup = address_lookup::AddressLookupServices::default();
@@ -1081,6 +1086,7 @@ impl EndpointInner {
             periodic_re_stun_timer: new_re_stun_timer(false),
             network_monitor,
             local_interfaces_watcher,
+            direct_addr_filter,
             direct_addr_update_state,
             transports_network_change,
             direct_addr_done_rx,
@@ -1463,6 +1469,8 @@ struct Actor {
     network_monitor: netmon::Monitor,
     /// Watcher for changes to the local network interfaces, IP addresses and routes.
     local_interfaces_watcher: n0_watcher::Direct<netmon::State>,
+    /// Optional filter for NAT traversal address candidates.
+    direct_addr_filter: Option<Box<dyn DirectAddrFilter>>,
     transports_network_change: transports::NetworkChangeSender,
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
@@ -1871,12 +1879,18 @@ impl Actor {
         }
 
         // Finally create and store store all these direct addresses
+        let direct_addr_filter = self.direct_addr_filter.as_deref();
         let stored_addrs = addrs
             .into_iter()
             .filter_map(|(addr, (typ, flags))| {
                 // Filter out deprecated IPs
                 let is_deprecated = flags.map(|f| f.deprecated).unwrap_or(false);
                 if is_deprecated {
+                    return None;
+                }
+                if let Some(f) = direct_addr_filter
+                    && !f.use_nat_candidate(addr.ip())
+                {
                     return None;
                 }
                 Some(DirectAddr { addr, typ })
@@ -2112,7 +2126,11 @@ impl Display for DirectAddrType {
 
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
-    use std::{net::SocketAddrV4, sync::Arc, time::Duration};
+    use std::{
+        net::{IpAddr, SocketAddrV4},
+        sync::Arc,
+        time::Duration,
+    };
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
@@ -2130,7 +2148,7 @@ mod tests {
         Endpoint, SecretKey,
         address_lookup::memory::MemoryLookup,
         dns::DnsResolver,
-        endpoint::{QuicTransportConfig, presets},
+        endpoint::{DirectAddrFilter, QuicTransportConfig, presets},
         socket::{
             EndpointInner, StaticConfig, TransportConfig,
             biased_rtt_path_selector::BiasedRttPathSelector,
@@ -2179,6 +2197,7 @@ mod tests {
             net_report_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
+            direct_addr_filter: None,
         }
     }
 
@@ -2549,6 +2568,38 @@ mod tests {
         assert_eq!(eps0, eps1);
     }
 
+    #[tokio::test]
+    #[traced_test]
+    async fn direct_addr_filter_drops_local_addresses() {
+        // Baseline: without a filter, local interface addresses are gathered.
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let sock = EndpointInner::bind(default_options(&mut rng))
+            .await
+            .unwrap();
+        assert!(
+            !sock.ip_addrs().get().is_empty(),
+            "expected some local addresses without a filter"
+        );
+
+        // A reject-all filter drops every gathered local interface address, so
+        // `collect_local_addresses` contributes nothing.
+        #[derive(Debug)]
+        struct DropAll;
+        impl DirectAddrFilter for DropAll {
+            fn use_nat_candidate(&self, _ip: IpAddr) -> bool {
+                false
+            }
+        }
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let mut opts = default_options(&mut rng);
+        opts.direct_addr_filter = Some(Box::new(DropAll));
+        let sock = EndpointInner::bind(opts).await.unwrap();
+        assert!(
+            sock.ip_addrs().get().is_empty(),
+            "a reject-all direct_addr_filter should drop every local address"
+        );
+    }
+
     /// Creates a new [`noq::Endpoint`] hooked up to a [`Socket`].
     ///
     /// This is without involving [`crate::endpoint::Endpoint`].  The socket will accept
@@ -2595,6 +2646,7 @@ mod tests {
             net_report_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
+            direct_addr_filter: None,
         };
         let sock = EndpointInner::bind(opts).await?;
         Ok(sock)
