@@ -113,50 +113,47 @@ jobs:
                 release-arch: aarch64
                 libc: gnu
                 cargo_targets: "aarch64-unknown-linux-gnu"
-                runner: [self-hosted, linux, ARM64]
+                runner: blacksmith-16vcpu-ubuntu-2204-arm
               - name: ubuntu-arm-musl-latest
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: aarch64
                 libc: musl
                 cargo_targets: "aarch64-unknown-linux-musl"
-                runner: [self-hosted, linux, ARM64]
+                runner: blacksmith-16vcpu-ubuntu-2204-arm
               - name: ubuntu-latest
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: amd64
                 libc: gnu
                 cargo_targets: "x86_64-unknown-linux-gnu"
-                runner: [self-hosted, linux, X64]
+                runner: blacksmith-16vcpu-ubuntu-2204
               - name: ubuntu-musl-latest
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: amd64
                 libc: musl
                 cargo_targets: "x86_64-unknown-linux-musl"
-                runner: [self-hosted, linux, X64]
+                runner: blacksmith-16vcpu-ubuntu-2204
               - name: macOS-latest
                 os: macOS-latest
                 release-os: darwin
                 release-arch: x86_64
                 cargo_targets: "x86_64-apple-darwin"
-                runner: [self-hosted, macOS, ARM64]
+                runner: blacksmith-12vcpu-macos-15
               - name: macOS-arm-latest
                 os: macOS-latest
                 release-os: darwin
                 release-arch: aarch64
                 cargo_targets: "aarch64-apple-darwin"
-                runner: [self-hosted, macOS, ARM64]
+                runner: blacksmith-12vcpu-macos-15
               - name: windows-latest
                 os: windows-latest
                 release-os: windows
                 release-arch: amd64
                 cargo_targets: "x86_64-pc-windows-msvc"
-                runner: [self-hosted, windows, X64]
+                runner: blacksmith-16vcpu-windows-2025
         env:
-          # Using self-hosted runners so use local cache for sccache and
-          # not SCCACHE_GHA_ENABLED.
-          # RUSTC_WRAPPER: "sccache"
           RUST_BACKTRACE: full
           RUSTV: ${{ matrix.rust }}
           # Installing a toolchain does not select it. Without this the Windows
@@ -192,7 +189,7 @@ jobs:
 
         - name: Ensure musl support
           if: ${{ contains(matrix.cargo_targets, '-musl') }}
-          run: sudo apt-get install musl-tools -y
+          run: sudo apt-get update && sudo apt-get install musl-tools -y
 
         - name: Install Rust
           if: matrix.os != 'windows-latest'
@@ -216,7 +213,7 @@ jobs:
           shell: bash
           run: |
             if [ "${{ contains(matrix.cargo_targets, '-musl') }}" = "true" ]; then
-              # Native build on self-hosted linux runners; use musl-gcc from musl-tools.
+              # Native build on linux runners; use musl-gcc from musl-tools.
               export CARGO_TARGET_$(echo ${{ matrix.cargo_targets }} | tr 'a-z-' 'A-Z_')_LINKER=musl-gcc
               export CC=musl-gcc
               # `relocation-model=static` is required so rustc selects the
@@ -367,4 +364,4 @@ jobs:
       with:
         release_version: ${{ needs.build_release.outputs.release_version }}
         base_hash: ${{ needs.build_release.outputs.base_hash }}
-        publish: true
+        publish: ${{ github.event_name == 'push' || github.event.inputs.upload_artifacts == 'true' }}
