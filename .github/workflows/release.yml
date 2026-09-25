@@ -364,4 +364,4 @@ jobs:
       with:
         release_version: ${{ needs.build_release.outputs.release_version }}
         base_hash: ${{ needs.build_release.outputs.base_hash }}
-        publish: true
+        publish: ${{ github.event_name == 'push' || github.event.inputs.upload_artifacts == 'true' }}
