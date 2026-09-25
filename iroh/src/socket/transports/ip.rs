@@ -1,17 +1,21 @@
 use std::{
+    future::Future,
     io,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     num::NonZeroUsize,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
+use futures_util::task::AtomicWaker;
 use ipnet::{Ipv4Net, Ipv6Net};
 use n0_watcher::Watchable;
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
-use tracing::{debug, info, trace};
+use tokio::time::{Instant, Sleep};
+use tracing::{debug, info, trace, warn};
 
 use super::{RecvInfo, Transmit};
 use crate::metrics::{EndpointMetrics, SocketMetrics};
@@ -22,6 +26,16 @@ pub(crate) struct IpTransport {
     socket: Arc<UdpSocket>,
     local_addr: Watchable<SocketAddr>,
     metrics: Arc<SocketMetrics>,
+    rebind_waker: Arc<AtomicWaker>,
+    rebind_retry: Option<RebindRetry>,
+}
+
+// Recovery is driven by receive polling, so dropping the transport also drops
+// the retry timer. Persistent failures back off rather than spin or kill Noq.
+#[derive(Debug)]
+struct RebindRetry {
+    delay: Duration,
+    sleep: Pin<Box<Sleep>>,
 }
 
 impl std::fmt::Display for IpTransport {
@@ -185,10 +199,12 @@ impl IpTransport {
             socket: Arc::new(socket),
             local_addr,
             metrics,
+            rebind_waker: Default::default(),
+            rebind_retry: None,
         })
     }
 
-    /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
+    /// Closed sockets wait for a backed-off rebind instead of terminating Noq.
     pub(super) fn poll_recv(
         &mut self,
         cx: &mut Context,
@@ -202,6 +218,26 @@ impl IpTransport {
             recv_infos.len(),
             "non matching bufs & recv_infos"
         );
+        self.rebind_waker.register(cx.waker());
+        if self.socket.is_closed() {
+            let retry = self.rebind_retry.get_or_insert_with(|| {
+                let delay = Duration::from_millis(100);
+                RebindRetry {
+                    delay,
+                    sleep: Box::pin(tokio::time::sleep(delay)),
+                }
+            });
+            std::task::ready!(retry.sleep.as_mut().poll(cx));
+            if let Err(err) = rebind_socket(&self.socket, &self.local_addr) {
+                warn!("failed to rebind IP transport: {err:?}");
+                retry.delay = (retry.delay * 2).min(Duration::from_secs(5));
+                retry.sleep.as_mut().reset(Instant::now() + retry.delay);
+                // Register the timer's wakeup before returning Pending.
+                let _ = retry.sleep.as_mut().poll(cx);
+                return Poll::Pending;
+            }
+        }
+        self.rebind_retry = None;
         match self.socket.poll_recv_noq(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(n)) => {
@@ -225,6 +261,12 @@ impl IpTransport {
                     );
                 }
                 Poll::Ready(Ok(n))
+            }
+            Poll::Ready(Err(_)) if self.socket.is_closed() => {
+                // A network-change rebind may fail between the check above and
+                // the receive poll. Enter recovery on the next poll as well.
+                cx.waker().wake_by_ref();
+                Poll::Pending
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
@@ -254,6 +296,7 @@ impl IpTransport {
         IpNetworkChangeSender {
             socket: self.socket.clone(),
             local_addr: self.local_addr.clone(),
+            rebind_waker: self.rebind_waker.clone(),
         }
     }
 
@@ -271,22 +314,30 @@ impl IpTransport {
 pub(super) struct IpNetworkChangeSender {
     socket: Arc<UdpSocket>,
     local_addr: Watchable<SocketAddr>,
+    rebind_waker: Arc<AtomicWaker>,
 }
 
 impl IpNetworkChangeSender {
     pub(super) fn rebind(&self) -> io::Result<()> {
-        let old_addr = self.local_addr.get();
-        self.socket.rebind()?;
-        let addr = self.socket.local_addr()?;
-        self.local_addr.set(addr).ok();
-        trace!("rebound from {} to {}", old_addr, addr);
-
-        Ok(())
+        let result = rebind_socket(&self.socket, &self.local_addr);
+        // netwatch wakes its receivers only on success. A failed rebind must
+        // wake the Noq driver too, so it can arm the recovery timer.
+        self.rebind_waker.wake();
+        result
     }
 
     pub(super) fn on_network_change(&self, _info: &crate::socket::Report) {
         // Nothing to do for now
     }
+}
+
+fn rebind_socket(socket: &UdpSocket, local_addr: &Watchable<SocketAddr>) -> io::Result<()> {
+    let old_addr = local_addr.get();
+    socket.rebind()?;
+    let addr = socket.local_addr()?;
+    local_addr.set(addr).ok();
+    trace!("rebound from {} to {}", old_addr, addr);
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -480,6 +531,156 @@ impl IpTransports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct WakeCount(std::sync::atomic::AtomicUsize);
+
+    impl std::task::Wake for WakeCount {
+        fn wake(self: Arc<Self>) {
+            self.wake_by_ref();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    fn recovery_transports(count: usize) -> super::super::Transports {
+        let config = Config::V4 {
+            ip_net: Ipv4Net::new(std::net::Ipv4Addr::LOCALHOST, 32).unwrap(),
+            port: 0,
+            is_required: true,
+            is_default: false,
+        };
+        super::super::Transports {
+            ip: IpTransports::bind(
+                std::iter::repeat_n(config, count),
+                &EndpointMetrics::default(),
+            )
+            .unwrap(),
+            relay: Vec::new(),
+            custom: Vec::new(),
+            poll_recv_counter: 0,
+            recv_infos: Default::default(),
+            consecutive_total_recv_failures: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_rebind_wakes_receiver_and_recovers_without_relays() {
+        let mut transports = recovery_transports(1);
+        let socket = transports.ip.v4[0].socket.clone();
+        let address = socket.local_addr().unwrap();
+        let change = transports.ip.v4[0].create_network_change_sender();
+        let wakes = Arc::new(WakeCount::default());
+        let waker = std::task::Waker::from(wakes.clone());
+        let mut cx = Context::from_waker(&waker);
+        let mut storage = [[0u8; 64]; noq_udp::BATCH_SIZE];
+        let mut bufs = storage.each_mut().map(|buf| io::IoSliceMut::new(buf));
+        let mut metas = [noq_udp::RecvMeta::default(); noq_udp::BATCH_SIZE];
+        assert!(
+            transports
+                .inner_poll_recv(&mut cx, &mut bufs, &mut metas)
+                .is_pending()
+        );
+
+        // Hold the original port after closing the socket, forcing a real
+        // EADDRINUSE. No platform interface changes or injected I/O errors.
+        socket.close().await;
+        let blocker = std::net::UdpSocket::bind(address).unwrap();
+        wakes.0.store(0, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            change.rebind().unwrap_err().kind(),
+            io::ErrorKind::AddrInUse
+        );
+        assert!(wakes.0.load(std::sync::atomic::Ordering::SeqCst) > 0);
+        // Previously these polls exhausted the aggregate receive-error budget
+        // and permanently terminated Noq, even before the port became free.
+        for _ in 0..32 {
+            assert!(
+                transports
+                    .inner_poll_recv(&mut cx, &mut bufs, &mut metas)
+                    .is_pending()
+            );
+        }
+        let peer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            drop(blocker);
+            let peer = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            loop {
+                peer.send_to(b"ping", address).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+        let received = tokio::time::timeout(
+            Duration::from_secs(3),
+            std::future::poll_fn(|cx| transports.inner_poll_recv(cx, &mut bufs, &mut metas)),
+        )
+        .await;
+        peer.abort();
+        assert_eq!(received.unwrap().unwrap(), 1);
+        assert_eq!(&storage[0][..4], b"ping");
+        assert_eq!(socket.local_addr().unwrap(), address);
+        assert_eq!(transports.ip.v4[0].local_addr.get(), address);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_rebind_retries_with_capped_backoff() {
+        use std::sync::atomic::Ordering;
+        let mut transports = recovery_transports(1);
+        let socket = transports.ip.v4[0].socket.clone();
+        let address = socket.local_addr().unwrap();
+        socket.close().await;
+        let _blocker = std::net::UdpSocket::bind(address).unwrap();
+        let wakes = Arc::new(WakeCount::default());
+        let waker = std::task::Waker::from(wakes.clone());
+        let mut cx = Context::from_waker(&waker);
+        let mut storage = [[0u8; 64]; noq_udp::BATCH_SIZE];
+        let mut bufs = storage.each_mut().map(|buf| io::IoSliceMut::new(buf));
+        let mut metas = [noq_udp::RecvMeta::default(); noq_udp::BATCH_SIZE];
+        assert!(
+            transports
+                .inner_poll_recv(&mut cx, &mut bufs, &mut metas)
+                .is_pending()
+        );
+        for millis in [100, 200, 400, 800, 1600, 3200, 5000, 5000] {
+            wakes.0.store(0, Ordering::SeqCst);
+            tokio::time::advance(Duration::from_millis(millis - 1)).await;
+            tokio::task::yield_now().await;
+            assert_eq!(wakes.0.load(Ordering::SeqCst), 0);
+            tokio::time::advance(Duration::from_millis(2)).await;
+            tokio::task::yield_now().await;
+            assert!(wakes.0.load(Ordering::SeqCst) > 0);
+            assert!(
+                transports
+                    .inner_poll_recv(&mut cx, &mut bufs, &mut metas)
+                    .is_pending()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_rebind_does_not_block_healthy_transport() {
+        let mut transports = recovery_transports(2);
+        let broken = transports.ip.v4[0].socket.clone();
+        let broken_address = broken.local_addr().unwrap();
+        broken.close().await;
+        let _blocker = std::net::UdpSocket::bind(broken_address).unwrap();
+        let healthy_address = transports.ip.v4[1].socket.local_addr().unwrap();
+        let peer = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        peer.send_to(b"healthy", healthy_address).await.unwrap();
+        let mut storage = [[0u8; 64]; noq_udp::BATCH_SIZE];
+        let mut bufs = storage.each_mut().map(|buf| io::IoSliceMut::new(buf));
+        let mut metas = [noq_udp::RecvMeta::default(); noq_udp::BATCH_SIZE];
+        let received = tokio::time::timeout(
+            Duration::from_secs(1),
+            std::future::poll_fn(|cx| transports.inner_poll_recv(cx, &mut bufs, &mut metas)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(received, 1);
+        assert_eq!(&storage[0][..7], b"healthy");
+    }
 
     #[tokio::test]
     async fn test_bind_sorting() -> n0_error::Result {
