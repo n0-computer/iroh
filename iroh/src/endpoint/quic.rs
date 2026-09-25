@@ -6,9 +6,9 @@
 //! to limit or expand how those structs are used in iroh. By encapsulating them
 //! we can ensure the functionality needed to make iroh work.
 
+use std::{path::Path, sync::Arc, time::Duration};
+
 #[cfg(feature = "qlog")]
-use std::path::Path;
-use std::{sync::Arc, time::Duration};
 
 /// `noq` types that are used in the public iroh API.
 // Each type is notated with the iroh type or noq type that uses it.
@@ -29,6 +29,7 @@ pub use noq::{
     ReadDatagram,         // iroh::endpoint::Connection
     ReadError,            // noq::RecvStream
     ReadExactError,       // noq::RecvStream
+    ReadManyDatagrams,    // iroh::endpoint::Connection
     ReadToEndError,       // noq::RecvStream
     RecvStream,           // noq::AcceptBi, noq::AcceptUni, noq::OpenBi, noq::OpenUni
     ResetError,           // noq::RecvStream
@@ -45,7 +46,7 @@ pub use noq::{
 };
 #[cfg(feature = "qlog")]
 pub use noq::{QlogConfig, QlogFactory, QlogFileFactory};
-/// `noq_proto` types that are used in the public iroh API.
+// `noq_proto` types that are used in the public iroh API.
 // Each type is notated with the iroh type or noq type that uses it.
 pub use noq_proto::{
     ApplicationClose,                 // noq::ConnectionError
