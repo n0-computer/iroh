@@ -2,11 +2,9 @@
 
 All notable changes to iroh-base will be documented in this file.
 
+## [1.3.0](https://github.com/n0-computer/iroh/compare/v1.2.0..1.3.0) - 2026-09-28
+
 ## [1.2.0](https://github.com/n0-computer/iroh/compare/v1.1.0..1.2.0) - 2026-09-09
-
-# Changelog
-
-All notable changes to iroh-base will be documented in this file.
 
 ## [1.1.0](https://github.com/n0-computer/iroh/compare/v1.0.3..1.1.0) - 2026-08-25
 
@@ -14,19 +12,11 @@ All notable changes to iroh-base will be documented in this file.
 
 - [**breaking**] Fix serialization of CustomAddr so that the data serializes the same  as a Vec<u8> ([#4465](https://github.com/n0-computer/iroh/issues/4465)) - ([4706ec9](https://github.com/n0-computer/iroh/commit/4706ec97e991eb7150b4b98de6bbecdc3534adfd))
 
-# Changelog
-
-All notable changes to iroh-base will be documented in this file.
-
 ## [1.0.3](https://github.com/n0-computer/iroh/compare/v1.0.2..1.0.3) - 2026-07-20
 
 ### ⚙️ Miscellaneous Tasks
 
 - Allow GA releases of curve25519-dalek and ed25519-dalek ([#4416](https://github.com/n0-computer/iroh/issues/4416)) - ([57fb5c2](https://github.com/n0-computer/iroh/commit/57fb5c2805d6c64b12765f8ef6efe43efbd03a2a))
-
-# Changelog
-
-All notable changes to iroh-base will be documented in this file.
 
 ## [1.0.2](https://github.com/n0-computer/iroh/compare/v1.0.1..1.0.2) - 2026-07-06
 
