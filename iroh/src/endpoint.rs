@@ -109,11 +109,11 @@ pub use self::{
         FrameStats, FrameType, HandshakeTokenKey, HeaderKey, IdleTimeout, IncomingAlpns, Keys,
         MtuDiscoveryConfig, OpenBi, OpenUni, PacketKey, PathId, PathStats, QuicConnectError,
         QuicTransportConfig, QuicTransportConfigBuilder, ReadDatagram, ReadError, ReadExactError,
-        ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagram, SendDatagramError,
-        SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError, StreamId, TimeSource,
-        TokenLog, TokenReuseError, TransportError, TransportErrorCode, TransportParameters,
-        UdpStats, UnorderedRecvStream, UnsupportedVersion, ValidationTokenConfig, VarInt,
-        VarIntBoundsExceeded, WriteError,
+        ReadManyDatagrams, ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagram,
+        SendDatagramError, SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError,
+        StreamId, TimeSource, TokenLog, TokenReuseError, TransportError, TransportErrorCode,
+        TransportParameters, UdpStats, UnorderedRecvStream, UnsupportedVersion,
+        ValidationTokenConfig, VarInt, VarIntBoundsExceeded, WriteError,
     },
 };
 #[cfg(not(wasm_browser))]
@@ -254,9 +254,6 @@ impl Builder {
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
-        #[cfg(not(wasm_browser))]
-        let dns_resolver = self.dns_resolver.unwrap_or_default();
-
         let metrics = EndpointMetrics::default();
 
         let tls_config = self
@@ -264,6 +261,14 @@ impl Builder {
             .unwrap_or_default()
             .client_config(crypto_provider)
             .map_err(|err| e!(BindError::InvalidCaRootConfig, err))?;
+
+        #[cfg(not(wasm_browser))]
+        let dns_resolver = self.dns_resolver.unwrap_or_else(|| {
+            DnsResolver::builder()
+                .with_system_defaults()
+                .tls_client_config(tls_config.clone())
+                .build()
+        });
 
         let sock_opts = socket::Options {
             transports: self.transports,
@@ -532,6 +537,10 @@ impl Builder {
     ///
     /// Not setting this will still allow creating connections, but to accept incoming
     /// connections at least one [ALPN] must be set.
+    ///
+    /// Ordering matters for protocol negotiation. When an incoming connection offers multiple ALPNs,
+    /// the first matching ALPN will be chosen. This means that `alpns` should be ordered such
+    /// that the preferred protocols come first.
     ///
     /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
     pub fn alpns(mut self, alpn_protocols: Vec<Vec<u8>>) -> Self {
@@ -886,13 +895,14 @@ pub enum EndpointError {
 /// exported as `iroh::dns::install_android_jni_context`).
 ///
 /// If no JNI context is installed, iroh relies on panic unwinding to detect
-/// the error, and will then use Google's fallback DNS servers. Note that if
-/// your compilation profile sets `panic = "abort"`, this can't work, and thus
-/// your app will panic if using a default `DnsResolver` without first initializing
-/// the JNI context.
+/// the error, and will then use the fallback nameservers instead, subject to the
+/// resolver's [`FallbackMode`]. Note that if your compilation profile sets
+/// `panic = "abort"`, this can't work, and thus your app will panic if using a
+/// default `DnsResolver` without first initializing the JNI context.
 ///
 /// [QUIC]: https://quicwg.org
 /// [`DnsResolver`]: crate::dns::DnsResolver
+/// [`FallbackMode`]: crate::dns::FallbackMode
 /// [`ndk_context`]: https://docs.rs/ndk-context
 /// [`iroh_dns::install_android_jni_context`]: https://docs.rs/iroh-dns/latest/iroh_dns/fn.install_android_jni_context.html
 // The last link can't be a normal doclink, because #[cfg(doc)] can't cross crate boundaries unfortunately.
@@ -961,6 +971,10 @@ impl Endpoint {
     }
 
     /// Sets the list of accepted ALPN protocols.
+    ///
+    /// Ordering matters for protocol negotiation. When an incoming connection offers multiple ALPNs,
+    /// the first matching ALPN will be chosen. This means that `alpns` should be ordered such
+    /// that the preferred protocols come first.
     ///
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.

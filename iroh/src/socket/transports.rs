@@ -1315,6 +1315,32 @@ mod tests {
 
     use super::*;
 
+    impl TransportsSender {
+        pub(in crate::socket) fn with_bounded_relay(
+            capacity: usize,
+            #[cfg(not(wasm_browser))] ip_configs: impl Iterator<Item = IpConfig>,
+        ) -> (
+            TransportsSender,
+            impl futures_util::Stream<Item = ()> + Unpin,
+        ) {
+            use futures_util::StreamExt;
+            let (sender, receiver) = RelaySender::bounded_for_test(capacity);
+            let sender = TransportsSender {
+                #[cfg(not(wasm_browser))]
+                ip: IpTransports::bind(ip_configs, &EndpointMetrics::default())
+                    .expect("test transports must bind")
+                    .create_sender(),
+                relay: vec![sender],
+                custom: Vec::new(),
+                max_transmit_segments: NonZeroUsize::new(1).unwrap(),
+            };
+            (
+                sender,
+                tokio_stream::wrappers::ReceiverStream::new(receiver).map(|_| ()),
+            )
+        }
+    }
+
     const FAIRNESS_SAMPLE_POLLS: usize = 10_000;
 
     #[test]

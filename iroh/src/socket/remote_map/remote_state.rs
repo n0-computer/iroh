@@ -9,9 +9,9 @@ use std::{
 use iroh_base::{EndpointId, TransportAddr};
 use n0_error::StackResultExt;
 use n0_future::{
-    FuturesUnordered, MaybeFuture, MergeUnbounded, Stream, StreamExt,
+    FuturesUnordered, FuturesUnorderedBounded, MaybeFuture, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
-    future::now_or_never,
+    future::{Boxed, now_or_never},
     task::JoinSet,
     time::{self, Duration, Instant},
 };
@@ -19,6 +19,7 @@ use n0_watcher::Watcher;
 use noq::{Closed, PathStats, PathStatus, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent as NoqPathEvent, PathId, n0_nat_traversal};
 use rustc_hash::FxHashMap;
+use smallvec::{SmallVec, smallvec};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
@@ -71,6 +72,10 @@ const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 /// is not an issue; a timeout here serves the purpose of not stopping-and-recreating actors
 /// in a high frequency, and to keep data about previous path around for subsequent connections.
 const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+// QUIC retransmits dropped Initials; a blocked transport must not retain them indefinitely.
+const DATAGRAM_SEND_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_DATAGRAM_SEND_TASKS: usize = 16;
 
 /// A stream of events from all paths for all connections.
 ///
@@ -229,10 +234,6 @@ impl RemoteStateActor {
     }
 
     /// Runs the main loop of the actor.
-    ///
-    /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
-    /// not processing items from the inbox while waiting on any async calls.  So some
-    /// discipline is needed to not turn pending for a long time.
     async fn run(
         mut self,
         initial_msgs: Vec<RemoteStateMessage>,
@@ -240,8 +241,9 @@ impl RemoteStateActor {
         shutdown_token: CancellationToken,
     ) -> (EndpointId, Vec<RemoteStateMessage>) {
         trace!("actor started");
+        let mut send_tasks = FuturesUnorderedBounded::new(MAX_DATAGRAM_SEND_TASKS);
         for msg in initial_msgs {
-            self.handle_message(msg).await;
+            self.handle_message(msg, &mut send_tasks);
         }
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
@@ -273,9 +275,10 @@ impl RemoteStateActor {
                     trace!("actor cancelled");
                     break;
                 }
+                Some(()) = send_tasks.next(), if !send_tasks.is_empty() => {}
                 msg = inbox.recv() => {
                     match msg {
-                        Some(msg) => self.handle_message(msg).await,
+                        Some(msg) => self.handle_message(msg, &mut send_tasks),
                         None => break,
                     }
                 }
@@ -347,14 +350,16 @@ impl RemoteStateActor {
     }
 
     /// Handles an actor message.
-    ///
-    /// Error returns are fatal and kill the actor.
     #[instrument(skip(self))]
-    async fn handle_message(&mut self, msg: RemoteStateMessage) {
-        // trace!("handling message");
+    fn handle_message(
+        &mut self,
+        msg: RemoteStateMessage,
+        send_tasks: &mut FuturesUnorderedBounded<Boxed<()>>,
+    ) {
         match msg {
             RemoteStateMessage::SendDatagram(sender, transmit) => {
-                self.state.handle_msg_send_datagram(sender, transmit).await;
+                self.state
+                    .handle_msg_send_datagram(sender, transmit, send_tasks);
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx);
@@ -785,10 +790,11 @@ impl RemoteStateActor {
 
 impl State {
     /// Handles [`RemoteStateMessage::SendDatagram`].
-    async fn handle_msg_send_datagram(
+    fn handle_msg_send_datagram(
         &mut self,
-        mut sender: Box<TransportsSender>,
+        sender: Box<TransportsSender>,
         transmit: OwnedTransmit,
+        send_tasks: &mut FuturesUnorderedBounded<Boxed<()>>,
     ) {
         // Sending datagrams might fail, e.g. because we don't have the right transports set
         // up to handle sending this owned transmit to.
@@ -796,16 +802,13 @@ impl State {
         // though we might not have a relay transport or ip-capable transport set up.
         // So these errors must not be fatal for this actor (or even this operation).
 
-        if let Some(addr) = self.selected_path.as_ref() {
+        let targets = if let Some(addr) = self.selected_path.as_ref() {
             trace!(?addr, "sending datagram to selected path");
 
             // TODO(Frando): We might want to include a local IP here in the future, if we confidently
             // know that it is the correct one.
             // See https://github.com/n0-computer/iroh/issues/4280.
-            let four_tuple = transports::FourTuple::from_remote(addr.remote());
-            if let Err(err) = send_datagram(&mut sender, four_tuple, transmit).await {
-                debug!(?addr, "failed to send datagram on selected_path: {err:#}");
-            }
+            smallvec![transports::FourTuple::from_remote(addr.remote())]
         } else {
             trace!(
                 paths = ?self.paths.addrs().collect::<Vec<_>>(),
@@ -815,6 +818,7 @@ impl State {
                 warn!("Cannot send datagrams: No paths to remote endpoint known");
             }
 
+            let mut targets = SmallVec::new();
             for addr in self.paths.addrs() {
                 // We never want to send to our local addresses.
                 // The local address set is updated in the main loop so we can use `peek` here.
@@ -830,19 +834,35 @@ impl State {
                 // TODO(Frando): We might want to include a local IP here in the future, if we confidently
                 // know that it is the correct one.
                 // See https://github.com/n0-computer/iroh/issues/4280.
-                } else if let Err(err) = send_datagram(
-                    &mut sender,
-                    transports::FourTuple::from_remote(addr.clone()),
-                    transmit.clone(),
-                )
-                .await
-                {
-                    debug!(?addr, "failed to send datagram: {err:#}");
+                } else {
+                    targets.push(transports::FourTuple::from_remote(addr.clone()));
                 }
             }
             // This message is received *before* a connection is added.  So we do
             // not yet have a connection to holepunch.  Instead we trigger
             // holepunching when AddConnection is received.
+            targets
+        };
+
+        if targets.is_empty() {
+            return;
+        }
+        let send = Box::pin(
+            async move {
+                if time::timeout(
+                    DATAGRAM_SEND_TIMEOUT,
+                    send_datagram_to_targets(sender, transmit, targets),
+                )
+                .await
+                .is_err()
+                {
+                    debug!("Datagram send timed out");
+                }
+            }
+            .instrument(Span::current()),
+        );
+        if send_tasks.try_push(send).is_err() {
+            debug!("dropping datagram: send task limit reached");
         }
     }
 
@@ -1132,6 +1152,26 @@ fn send_datagram<'a>(
             .poll_send(cx, &addr, &transmit)
             .map(|res| res.with_context(|_| format!("failed to send datagram to {:?}", addr)))
     })
+}
+
+async fn send_datagram_to_targets(
+    sender: Box<TransportsSender>,
+    transmit: OwnedTransmit,
+    targets: SmallVec<[transports::FourTuple; 8]>,
+) {
+    let mut sends = targets
+        .into_iter()
+        .map(|target| {
+            let mut sender = sender.clone();
+            let transmit = transmit.clone();
+            async move {
+                if let Err(err) = send_datagram(&mut sender, target.clone(), transmit).await {
+                    debug!(?target, "failed to send datagram: {err:#}");
+                }
+            }
+        })
+        .collect::<FuturesUnordered<_>>();
+    while sends.next().await.is_some() {}
 }
 
 /// Messages to send to the [`RemoteStateActor`].
@@ -1519,5 +1559,56 @@ async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<O
     match maybe_stream {
         None => None,
         Some(s) => Some(s.next().await),
+    }
+}
+
+#[cfg(all(test, not(wasm_browser)))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn blocked_relay_does_not_delay_direct_initial() {
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (mut sender, _relay_receiver) = TransportsSender::with_bounded_relay(
+            1,
+            [transports::IpConfig::V4 {
+                ip_net: "127.0.0.1/8".parse().unwrap(),
+                port: 0,
+                is_required: true,
+                is_default: true,
+            }]
+            .into_iter(),
+        );
+        let relay = transports::FourTuple::Relay {
+            url: "https://relay.example.invalid".parse().unwrap(),
+            endpoint_id: iroh_base::SecretKey::from_bytes(&[1; 32]).public(),
+        };
+        let transmit = OwnedTransmit {
+            ecn: None,
+            contents: bytes::Bytes::from_static(b"initial"),
+            segment_size: None,
+        };
+        send_datagram(&mut sender, relay.clone(), transmit.clone())
+            .await
+            .unwrap();
+        let sends = send_datagram_to_targets(
+            Box::new(sender),
+            transmit,
+            smallvec![
+                relay,
+                transports::FourTuple::from_remote(transports::Addr::Ip(
+                    receiver.local_addr().unwrap(),
+                )),
+            ],
+        );
+        let mut buf = [0; 64];
+        // The Relay queue stays full while the later Direct target receives its Initial.
+        tokio::select! {
+            _ = sends => panic!("blocked Relay send unexpectedly completed"),
+            received = time::timeout(Duration::from_secs(1), receiver.recv(&mut buf)) => {
+                let len = received.expect("Direct send blocked behind Relay").unwrap();
+                assert_eq!(&buf[..len], b"initial");
+            }
+        }
     }
 }
