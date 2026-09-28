@@ -894,7 +894,8 @@ impl EndpointInner {
             direct_addr_filter,
         } = opts;
 
-        let address_lookup = address_lookup::AddressLookupServices::default();
+        let address_lookup =
+            address_lookup::AddressLookupServices::with_metrics(metrics.address_lookup.clone());
         let port_mapper = portmapper::create_client(&portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs

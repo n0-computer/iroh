@@ -18,3 +18,9 @@ rules:
       # n0-owned, no releases cut.
       - expr: |
           ActionName == "n0-computer/actions-upload-release-asset"
+  - min_age: 0
+    conditions:
+      # v4.0.2+ stops installing the `tools` SDK package, which Google no
+      # longer serves; every older release fails. Remove after 2026-09-24.
+      - expr: |
+          ActionName == "android-actions/setup-android" && VersionComment == "v4.0.4"

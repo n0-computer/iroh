@@ -55,7 +55,7 @@ pub enum ParseError {
 ///
 /// Takes a DNS name and expects the first label to be [`IROH_TXT_NAME`] and the second
 /// label to be a z32 encoded [`EndpointId`]. Ignores subsequent labels.
-pub(crate) fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
+fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
     let num_labels = name.split(".").count();
     if num_labels < 2 {
         return Err(e!(ParseError::NumLabels { num_labels }));
@@ -113,7 +113,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Creates [`TxtAttrs`] from an endpoint id and an iterator of "{key}={value}" strings.
-    pub(crate) fn from_strings(
+    fn from_strings(
         endpoint_id: EndpointId,
         strings: impl Iterator<Item = String>,
     ) -> Result<Self, ParseError> {
