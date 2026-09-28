@@ -65,7 +65,7 @@ url = { version = "2.5", features = ["serde"] }
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 
 # metrics
-iroh-metrics = { version = "1.0.1", default-features = false }
+iroh-metrics = { version = "1.0.2", default-features = false }
 
 futures-util = "0.3"
 
