@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DNS_TIMEOUT","N0_DNS_ENDPOINT_ORIGIN_PROD","N0_DNS_ENDPOINT_ORIGIN_STAGING"],"enum":["DnsError","DnsProtocol","LookupError"],"struct":["Builder","DnsResolver","StaggeredError","TxtRecordData"],"trait":["Resolver"],"type":["BoxIter"]};

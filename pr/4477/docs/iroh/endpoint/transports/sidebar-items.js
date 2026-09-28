@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Addr","AddrKind","FourTuple"],"struct":["PathSelection","PathSelectionContext","PathSelectionData","RecvInfo","Transmit"],"trait":["CustomEndpoint","CustomSender","CustomTransport","PathSelector"]};
