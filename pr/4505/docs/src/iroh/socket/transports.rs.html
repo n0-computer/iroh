@@ -1315,146 +1315,172 @@
 <a href=#1315 id=1315 data-nosnippet>1315</a>
 <a href=#1316 id=1316 data-nosnippet>1316</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#1317 id=1317 data-nosnippet>1317</a>
-<a href=#1318 id=1318 data-nosnippet>1318</a>    <span class="kw">const </span>FAIRNESS_SAMPLE_POLLS: usize = <span class="number">10_000</span>;
-<a href=#1319 id=1319 data-nosnippet>1319</a>
-<a href=#1320 id=1320 data-nosnippet>1320</a>    <span class="attr">#[test]
-<a href=#1321 id=1321 data-nosnippet>1321</a>    </span><span class="kw">fn </span>ready_custom_transports_are_polled_fairly() {
-<a href=#1322 id=1322 data-nosnippet>1322</a>        <span class="comment">// GIVEN: two custom transport lanes that are always ready.
-<a href=#1323 id=1323 data-nosnippet>1323</a>        </span><span class="kw">let </span>first_polls = Arc::new(AtomicUsize::new(<span class="number">0</span>));
-<a href=#1324 id=1324 data-nosnippet>1324</a>        <span class="kw">let </span>second_polls = Arc::new(AtomicUsize::new(<span class="number">0</span>));
-<a href=#1325 id=1325 data-nosnippet>1325</a>        <span class="kw">let </span><span class="kw-2">mut </span>transports = custom_only_transports(<span class="macro">vec!</span>[
-<a href=#1326 id=1326 data-nosnippet>1326</a>            ready_custom_endpoint(<span class="number">1</span>, first_polls.clone()),
-<a href=#1327 id=1327 data-nosnippet>1327</a>            ready_custom_endpoint(<span class="number">2</span>, second_polls.clone()),
-<a href=#1328 id=1328 data-nosnippet>1328</a>        ]);
-<a href=#1329 id=1329 data-nosnippet>1329</a>
-<a href=#1330 id=1330 data-nosnippet>1330</a>        <span class="comment">// WHEN: receive polling runs long enough to exercise both polling orders.
-<a href=#1331 id=1331 data-nosnippet>1331</a>        </span><span class="kw">let </span>selected =
-<a href=#1332 id=1332 data-nosnippet>1332</a>            sample_ready_custom_transport_selection(<span class="kw-2">&amp;mut </span>transports, FAIRNESS_SAMPLE_POLLS);
-<a href=#1333 id=1333 data-nosnippet>1333</a>
-<a href=#1334 id=1334 data-nosnippet>1334</a>        <span class="kw">let </span>first_selected = selected.iter().filter(|&amp;&amp;id| id == <span class="number">1</span>).count();
-<a href=#1335 id=1335 data-nosnippet>1335</a>        <span class="kw">let </span>second_selected = selected.iter().filter(|&amp;&amp;id| id == <span class="number">2</span>).count();
-<a href=#1336 id=1336 data-nosnippet>1336</a>
-<a href=#1337 id=1337 data-nosnippet>1337</a>        <span class="comment">// THEN: selection and actual polling are split evenly between lanes.
-<a href=#1338 id=1338 data-nosnippet>1338</a>        </span><span class="macro">assert_eq!</span>(first_selected, FAIRNESS_SAMPLE_POLLS / <span class="number">2</span>);
-<a href=#1339 id=1339 data-nosnippet>1339</a>        <span class="macro">assert_eq!</span>(second_selected, FAIRNESS_SAMPLE_POLLS / <span class="number">2</span>);
-<a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="macro">assert_eq!</span>(
-<a href=#1341 id=1341 data-nosnippet>1341</a>            first_polls.load(Ordering::Relaxed),
-<a href=#1342 id=1342 data-nosnippet>1342</a>            FAIRNESS_SAMPLE_POLLS / <span class="number">2
-<a href=#1343 id=1343 data-nosnippet>1343</a>        </span>);
-<a href=#1344 id=1344 data-nosnippet>1344</a>        <span class="macro">assert_eq!</span>(
-<a href=#1345 id=1345 data-nosnippet>1345</a>            second_polls.load(Ordering::Relaxed),
-<a href=#1346 id=1346 data-nosnippet>1346</a>            FAIRNESS_SAMPLE_POLLS / <span class="number">2
-<a href=#1347 id=1347 data-nosnippet>1347</a>        </span>);
-<a href=#1348 id=1348 data-nosnippet>1348</a>
-<a href=#1349 id=1349 data-nosnippet>1349</a>        <span class="comment">// And the lane order alternates from the first poll.
-<a href=#1350 id=1350 data-nosnippet>1350</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#1351 id=1351 data-nosnippet>1351</a>            selected.iter().take(<span class="number">4</span>).copied().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#1352 id=1352 data-nosnippet>1352</a>            <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">1</span>],
-<a href=#1353 id=1353 data-nosnippet>1353</a>        );
-<a href=#1354 id=1354 data-nosnippet>1354</a>    }
+<a href=#1318 id=1318 data-nosnippet>1318</a>    <span class="kw">impl </span>TransportsSender {
+<a href=#1319 id=1319 data-nosnippet>1319</a>        <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::socket) <span class="kw">fn </span>with_bounded_relay(
+<a href=#1320 id=1320 data-nosnippet>1320</a>            capacity: usize,
+<a href=#1321 id=1321 data-nosnippet>1321</a>            <span class="attr">#[cfg(not(wasm_browser))] </span>ip_configs: <span class="kw">impl </span>Iterator&lt;Item = IpConfig&gt;,
+<a href=#1322 id=1322 data-nosnippet>1322</a>        ) -&gt; (
+<a href=#1323 id=1323 data-nosnippet>1323</a>            TransportsSender,
+<a href=#1324 id=1324 data-nosnippet>1324</a>            <span class="kw">impl </span>futures_util::Stream&lt;Item = ()&gt; + Unpin,
+<a href=#1325 id=1325 data-nosnippet>1325</a>        ) {
+<a href=#1326 id=1326 data-nosnippet>1326</a>            <span class="kw">use </span>futures_util::StreamExt;
+<a href=#1327 id=1327 data-nosnippet>1327</a>            <span class="kw">let </span>(sender, receiver) = RelaySender::bounded_for_test(capacity);
+<a href=#1328 id=1328 data-nosnippet>1328</a>            <span class="kw">let </span>sender = TransportsSender {
+<a href=#1329 id=1329 data-nosnippet>1329</a>                <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#1330 id=1330 data-nosnippet>1330</a>                </span>ip: IpTransports::bind(ip_configs, <span class="kw-2">&amp;</span>EndpointMetrics::default())
+<a href=#1331 id=1331 data-nosnippet>1331</a>                    .expect(<span class="string">"test transports must bind"</span>)
+<a href=#1332 id=1332 data-nosnippet>1332</a>                    .create_sender(),
+<a href=#1333 id=1333 data-nosnippet>1333</a>                relay: <span class="macro">vec!</span>[sender],
+<a href=#1334 id=1334 data-nosnippet>1334</a>                custom: Vec::new(),
+<a href=#1335 id=1335 data-nosnippet>1335</a>                max_transmit_segments: NonZeroUsize::new(<span class="number">1</span>).unwrap(),
+<a href=#1336 id=1336 data-nosnippet>1336</a>            };
+<a href=#1337 id=1337 data-nosnippet>1337</a>            (
+<a href=#1338 id=1338 data-nosnippet>1338</a>                sender,
+<a href=#1339 id=1339 data-nosnippet>1339</a>                tokio_stream::wrappers::ReceiverStream::new(receiver).map(|<span class="kw">_</span>| ()),
+<a href=#1340 id=1340 data-nosnippet>1340</a>            )
+<a href=#1341 id=1341 data-nosnippet>1341</a>        }
+<a href=#1342 id=1342 data-nosnippet>1342</a>    }
+<a href=#1343 id=1343 data-nosnippet>1343</a>
+<a href=#1344 id=1344 data-nosnippet>1344</a>    <span class="kw">const </span>FAIRNESS_SAMPLE_POLLS: usize = <span class="number">10_000</span>;
+<a href=#1345 id=1345 data-nosnippet>1345</a>
+<a href=#1346 id=1346 data-nosnippet>1346</a>    <span class="attr">#[test]
+<a href=#1347 id=1347 data-nosnippet>1347</a>    </span><span class="kw">fn </span>ready_custom_transports_are_polled_fairly() {
+<a href=#1348 id=1348 data-nosnippet>1348</a>        <span class="comment">// GIVEN: two custom transport lanes that are always ready.
+<a href=#1349 id=1349 data-nosnippet>1349</a>        </span><span class="kw">let </span>first_polls = Arc::new(AtomicUsize::new(<span class="number">0</span>));
+<a href=#1350 id=1350 data-nosnippet>1350</a>        <span class="kw">let </span>second_polls = Arc::new(AtomicUsize::new(<span class="number">0</span>));
+<a href=#1351 id=1351 data-nosnippet>1351</a>        <span class="kw">let </span><span class="kw-2">mut </span>transports = custom_only_transports(<span class="macro">vec!</span>[
+<a href=#1352 id=1352 data-nosnippet>1352</a>            ready_custom_endpoint(<span class="number">1</span>, first_polls.clone()),
+<a href=#1353 id=1353 data-nosnippet>1353</a>            ready_custom_endpoint(<span class="number">2</span>, second_polls.clone()),
+<a href=#1354 id=1354 data-nosnippet>1354</a>        ]);
 <a href=#1355 id=1355 data-nosnippet>1355</a>
-<a href=#1356 id=1356 data-nosnippet>1356</a>    <span class="kw">fn </span>custom_only_transports(custom: Vec&lt;Box&lt;<span class="kw">dyn </span>CustomEndpoint&gt;&gt;) -&gt; Transports {
-<a href=#1357 id=1357 data-nosnippet>1357</a>        <span class="kw">let </span>metrics = EndpointMetrics::default();
-<a href=#1358 id=1358 data-nosnippet>1358</a>        Transports {
-<a href=#1359 id=1359 data-nosnippet>1359</a>            <span class="attr">#[cfg(not(wasm_browser))]
-<a href=#1360 id=1360 data-nosnippet>1360</a>            </span>ip: ip::IpTransports::bind(std::iter::empty(), <span class="kw-2">&amp;</span>metrics).unwrap(),
-<a href=#1361 id=1361 data-nosnippet>1361</a>            relay: Vec::new(),
-<a href=#1362 id=1362 data-nosnippet>1362</a>            custom,
-<a href=#1363 id=1363 data-nosnippet>1363</a>            poll_recv_counter: <span class="number">0</span>,
-<a href=#1364 id=1364 data-nosnippet>1364</a>            recv_infos: Default::default(),
-<a href=#1365 id=1365 data-nosnippet>1365</a>            consecutive_total_recv_failures: <span class="number">0</span>,
-<a href=#1366 id=1366 data-nosnippet>1366</a>        }
-<a href=#1367 id=1367 data-nosnippet>1367</a>    }
-<a href=#1368 id=1368 data-nosnippet>1368</a>
-<a href=#1369 id=1369 data-nosnippet>1369</a>    <span class="kw">fn </span>ready_custom_endpoint(id: u8, polls: Arc&lt;AtomicUsize&gt;) -&gt; Box&lt;<span class="kw">dyn </span>CustomEndpoint&gt; {
-<a href=#1370 id=1370 data-nosnippet>1370</a>        Box::new(ReadyCustomEndpoint {
-<a href=#1371 id=1371 data-nosnippet>1371</a>            id,
-<a href=#1372 id=1372 data-nosnippet>1372</a>            polls,
-<a href=#1373 id=1373 data-nosnippet>1373</a>            local_addr: CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[id]),
-<a href=#1374 id=1374 data-nosnippet>1374</a>            remote_addr: CustomAddr::from_parts(<span class="number">2</span>, <span class="kw-2">&amp;</span>[id]),
-<a href=#1375 id=1375 data-nosnippet>1375</a>            local_addr_watch: Watchable::new(<span class="macro">vec!</span>[CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[id])]),
-<a href=#1376 id=1376 data-nosnippet>1376</a>        })
-<a href=#1377 id=1377 data-nosnippet>1377</a>    }
-<a href=#1378 id=1378 data-nosnippet>1378</a>
-<a href=#1379 id=1379 data-nosnippet>1379</a>    <span class="kw">fn </span>sample_ready_custom_transport_selection(
-<a href=#1380 id=1380 data-nosnippet>1380</a>        transports: <span class="kw-2">&amp;mut </span>Transports,
-<a href=#1381 id=1381 data-nosnippet>1381</a>        polls: usize,
-<a href=#1382 id=1382 data-nosnippet>1382</a>    ) -&gt; Vec&lt;u8&gt; {
-<a href=#1383 id=1383 data-nosnippet>1383</a>        <span class="kw">let </span><span class="kw-2">mut </span>selected = Vec::with_capacity(polls);
-<a href=#1384 id=1384 data-nosnippet>1384</a>        <span class="kw">let </span>waker = futures_util::task::noop_waker();
-<a href=#1385 id=1385 data-nosnippet>1385</a>        <span class="kw">let </span><span class="kw-2">mut </span>cx = Context::from_waker(<span class="kw-2">&amp;</span>waker);
-<a href=#1386 id=1386 data-nosnippet>1386</a>        <span class="kw">let </span><span class="kw-2">mut </span>storage = [<span class="number">0u8</span>; <span class="number">1</span>];
-<a href=#1387 id=1387 data-nosnippet>1387</a>        <span class="kw">let </span><span class="kw-2">mut </span>metas = [noq_udp::RecvMeta::default()];
-<a href=#1388 id=1388 data-nosnippet>1388</a>
-<a href=#1389 id=1389 data-nosnippet>1389</a>        <span class="kw">for _ in </span><span class="number">0</span>..polls {
-<a href=#1390 id=1390 data-nosnippet>1390</a>            <span class="kw">let </span><span class="kw-2">mut </span>bufs = [IoSliceMut::new(<span class="kw-2">&amp;mut </span>storage)];
-<a href=#1391 id=1391 data-nosnippet>1391</a>            <span class="kw">let </span>n = <span class="kw">match </span>transports.inner_poll_recv(<span class="kw-2">&amp;mut </span>cx, <span class="kw-2">&amp;mut </span>bufs, <span class="kw-2">&amp;mut </span>metas) {
-<a href=#1392 id=1392 data-nosnippet>1392</a>                Poll::Ready(<span class="prelude-val">Ok</span>(n)) =&gt; n,
-<a href=#1393 id=1393 data-nosnippet>1393</a>                Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="macro">panic!</span>(<span class="string">"custom transport poll failed: {err}"</span>),
-<a href=#1394 id=1394 data-nosnippet>1394</a>                Poll::Pending =&gt; <span class="macro">panic!</span>(<span class="string">"ready custom transport returned pending"</span>),
-<a href=#1395 id=1395 data-nosnippet>1395</a>            };
-<a href=#1396 id=1396 data-nosnippet>1396</a>            <span class="macro">assert_eq!</span>(n, <span class="number">1</span>);
-<a href=#1397 id=1397 data-nosnippet>1397</a>            selected.push(storage[<span class="number">0</span>]);
-<a href=#1398 id=1398 data-nosnippet>1398</a>            storage[<span class="number">0</span>] = <span class="number">0</span>;
-<a href=#1399 id=1399 data-nosnippet>1399</a>            metas[<span class="number">0</span>] = noq_udp::RecvMeta::default();
-<a href=#1400 id=1400 data-nosnippet>1400</a>        }
-<a href=#1401 id=1401 data-nosnippet>1401</a>
-<a href=#1402 id=1402 data-nosnippet>1402</a>        selected
+<a href=#1356 id=1356 data-nosnippet>1356</a>        <span class="comment">// WHEN: receive polling runs long enough to exercise both polling orders.
+<a href=#1357 id=1357 data-nosnippet>1357</a>        </span><span class="kw">let </span>selected =
+<a href=#1358 id=1358 data-nosnippet>1358</a>            sample_ready_custom_transport_selection(<span class="kw-2">&amp;mut </span>transports, FAIRNESS_SAMPLE_POLLS);
+<a href=#1359 id=1359 data-nosnippet>1359</a>
+<a href=#1360 id=1360 data-nosnippet>1360</a>        <span class="kw">let </span>first_selected = selected.iter().filter(|&amp;&amp;id| id == <span class="number">1</span>).count();
+<a href=#1361 id=1361 data-nosnippet>1361</a>        <span class="kw">let </span>second_selected = selected.iter().filter(|&amp;&amp;id| id == <span class="number">2</span>).count();
+<a href=#1362 id=1362 data-nosnippet>1362</a>
+<a href=#1363 id=1363 data-nosnippet>1363</a>        <span class="comment">// THEN: selection and actual polling are split evenly between lanes.
+<a href=#1364 id=1364 data-nosnippet>1364</a>        </span><span class="macro">assert_eq!</span>(first_selected, FAIRNESS_SAMPLE_POLLS / <span class="number">2</span>);
+<a href=#1365 id=1365 data-nosnippet>1365</a>        <span class="macro">assert_eq!</span>(second_selected, FAIRNESS_SAMPLE_POLLS / <span class="number">2</span>);
+<a href=#1366 id=1366 data-nosnippet>1366</a>        <span class="macro">assert_eq!</span>(
+<a href=#1367 id=1367 data-nosnippet>1367</a>            first_polls.load(Ordering::Relaxed),
+<a href=#1368 id=1368 data-nosnippet>1368</a>            FAIRNESS_SAMPLE_POLLS / <span class="number">2
+<a href=#1369 id=1369 data-nosnippet>1369</a>        </span>);
+<a href=#1370 id=1370 data-nosnippet>1370</a>        <span class="macro">assert_eq!</span>(
+<a href=#1371 id=1371 data-nosnippet>1371</a>            second_polls.load(Ordering::Relaxed),
+<a href=#1372 id=1372 data-nosnippet>1372</a>            FAIRNESS_SAMPLE_POLLS / <span class="number">2
+<a href=#1373 id=1373 data-nosnippet>1373</a>        </span>);
+<a href=#1374 id=1374 data-nosnippet>1374</a>
+<a href=#1375 id=1375 data-nosnippet>1375</a>        <span class="comment">// And the lane order alternates from the first poll.
+<a href=#1376 id=1376 data-nosnippet>1376</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#1377 id=1377 data-nosnippet>1377</a>            selected.iter().take(<span class="number">4</span>).copied().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#1378 id=1378 data-nosnippet>1378</a>            <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">1</span>],
+<a href=#1379 id=1379 data-nosnippet>1379</a>        );
+<a href=#1380 id=1380 data-nosnippet>1380</a>    }
+<a href=#1381 id=1381 data-nosnippet>1381</a>
+<a href=#1382 id=1382 data-nosnippet>1382</a>    <span class="kw">fn </span>custom_only_transports(custom: Vec&lt;Box&lt;<span class="kw">dyn </span>CustomEndpoint&gt;&gt;) -&gt; Transports {
+<a href=#1383 id=1383 data-nosnippet>1383</a>        <span class="kw">let </span>metrics = EndpointMetrics::default();
+<a href=#1384 id=1384 data-nosnippet>1384</a>        Transports {
+<a href=#1385 id=1385 data-nosnippet>1385</a>            <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#1386 id=1386 data-nosnippet>1386</a>            </span>ip: ip::IpTransports::bind(std::iter::empty(), <span class="kw-2">&amp;</span>metrics).unwrap(),
+<a href=#1387 id=1387 data-nosnippet>1387</a>            relay: Vec::new(),
+<a href=#1388 id=1388 data-nosnippet>1388</a>            custom,
+<a href=#1389 id=1389 data-nosnippet>1389</a>            poll_recv_counter: <span class="number">0</span>,
+<a href=#1390 id=1390 data-nosnippet>1390</a>            recv_infos: Default::default(),
+<a href=#1391 id=1391 data-nosnippet>1391</a>            consecutive_total_recv_failures: <span class="number">0</span>,
+<a href=#1392 id=1392 data-nosnippet>1392</a>        }
+<a href=#1393 id=1393 data-nosnippet>1393</a>    }
+<a href=#1394 id=1394 data-nosnippet>1394</a>
+<a href=#1395 id=1395 data-nosnippet>1395</a>    <span class="kw">fn </span>ready_custom_endpoint(id: u8, polls: Arc&lt;AtomicUsize&gt;) -&gt; Box&lt;<span class="kw">dyn </span>CustomEndpoint&gt; {
+<a href=#1396 id=1396 data-nosnippet>1396</a>        Box::new(ReadyCustomEndpoint {
+<a href=#1397 id=1397 data-nosnippet>1397</a>            id,
+<a href=#1398 id=1398 data-nosnippet>1398</a>            polls,
+<a href=#1399 id=1399 data-nosnippet>1399</a>            local_addr: CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[id]),
+<a href=#1400 id=1400 data-nosnippet>1400</a>            remote_addr: CustomAddr::from_parts(<span class="number">2</span>, <span class="kw-2">&amp;</span>[id]),
+<a href=#1401 id=1401 data-nosnippet>1401</a>            local_addr_watch: Watchable::new(<span class="macro">vec!</span>[CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[id])]),
+<a href=#1402 id=1402 data-nosnippet>1402</a>        })
 <a href=#1403 id=1403 data-nosnippet>1403</a>    }
 <a href=#1404 id=1404 data-nosnippet>1404</a>
-<a href=#1405 id=1405 data-nosnippet>1405</a>    <span class="attr">#[derive(Debug)]
-<a href=#1406 id=1406 data-nosnippet>1406</a>    </span><span class="kw">struct </span>ReadyCustomEndpoint {
-<a href=#1407 id=1407 data-nosnippet>1407</a>        id: u8,
-<a href=#1408 id=1408 data-nosnippet>1408</a>        polls: Arc&lt;AtomicUsize&gt;,
-<a href=#1409 id=1409 data-nosnippet>1409</a>        local_addr: CustomAddr,
-<a href=#1410 id=1410 data-nosnippet>1410</a>        remote_addr: CustomAddr,
-<a href=#1411 id=1411 data-nosnippet>1411</a>        local_addr_watch: Watchable&lt;Vec&lt;CustomAddr&gt;&gt;,
-<a href=#1412 id=1412 data-nosnippet>1412</a>    }
-<a href=#1413 id=1413 data-nosnippet>1413</a>
-<a href=#1414 id=1414 data-nosnippet>1414</a>    <span class="kw">impl </span>CustomEndpoint <span class="kw">for </span>ReadyCustomEndpoint {
-<a href=#1415 id=1415 data-nosnippet>1415</a>        <span class="kw">fn </span>watch_local_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; n0_watcher::Direct&lt;Vec&lt;CustomAddr&gt;&gt; {
-<a href=#1416 id=1416 data-nosnippet>1416</a>            <span class="self">self</span>.local_addr_watch.watch()
-<a href=#1417 id=1417 data-nosnippet>1417</a>        }
-<a href=#1418 id=1418 data-nosnippet>1418</a>
-<a href=#1419 id=1419 data-nosnippet>1419</a>        <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;<span class="kw">dyn </span>CustomSender&gt; {
-<a href=#1420 id=1420 data-nosnippet>1420</a>            Arc::new(NoopCustomSender)
-<a href=#1421 id=1421 data-nosnippet>1421</a>        }
-<a href=#1422 id=1422 data-nosnippet>1422</a>
-<a href=#1423 id=1423 data-nosnippet>1423</a>        <span class="kw">fn </span>poll_recv(
-<a href=#1424 id=1424 data-nosnippet>1424</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#1425 id=1425 data-nosnippet>1425</a>            _cx: <span class="kw-2">&amp;mut </span>Context,
-<a href=#1426 id=1426 data-nosnippet>1426</a>            bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#1427 id=1427 data-nosnippet>1427</a>            metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
-<a href=#1428 id=1428 data-nosnippet>1428</a>            recv_infos: <span class="kw-2">&amp;mut </span>[RecvInfo],
-<a href=#1429 id=1429 data-nosnippet>1429</a>        ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-<a href=#1430 id=1430 data-nosnippet>1430</a>            <span class="self">self</span>.polls.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
-<a href=#1431 id=1431 data-nosnippet>1431</a>            bufs[<span class="number">0</span>][<span class="number">0</span>] = <span class="self">self</span>.id;
-<a href=#1432 id=1432 data-nosnippet>1432</a>            metas[<span class="number">0</span>].len = <span class="number">1</span>;
-<a href=#1433 id=1433 data-nosnippet>1433</a>            metas[<span class="number">0</span>].stride = <span class="number">1</span>;
-<a href=#1434 id=1434 data-nosnippet>1434</a>            recv_infos[<span class="number">0</span>] = RecvInfo {
-<a href=#1435 id=1435 data-nosnippet>1435</a>                remote: Addr::Custom(<span class="self">self</span>.remote_addr.clone()),
-<a href=#1436 id=1436 data-nosnippet>1436</a>                local: <span class="prelude-val">Some</span>(<span class="self">self</span>.local_addr.clone()),
-<a href=#1437 id=1437 data-nosnippet>1437</a>            };
-<a href=#1438 id=1438 data-nosnippet>1438</a>            Poll::Ready(<span class="prelude-val">Ok</span>(<span class="number">1</span>))
-<a href=#1439 id=1439 data-nosnippet>1439</a>        }
-<a href=#1440 id=1440 data-nosnippet>1440</a>    }
-<a href=#1441 id=1441 data-nosnippet>1441</a>
-<a href=#1442 id=1442 data-nosnippet>1442</a>    <span class="attr">#[derive(Debug)]
-<a href=#1443 id=1443 data-nosnippet>1443</a>    </span><span class="kw">struct </span>NoopCustomSender;
+<a href=#1405 id=1405 data-nosnippet>1405</a>    <span class="kw">fn </span>sample_ready_custom_transport_selection(
+<a href=#1406 id=1406 data-nosnippet>1406</a>        transports: <span class="kw-2">&amp;mut </span>Transports,
+<a href=#1407 id=1407 data-nosnippet>1407</a>        polls: usize,
+<a href=#1408 id=1408 data-nosnippet>1408</a>    ) -&gt; Vec&lt;u8&gt; {
+<a href=#1409 id=1409 data-nosnippet>1409</a>        <span class="kw">let </span><span class="kw-2">mut </span>selected = Vec::with_capacity(polls);
+<a href=#1410 id=1410 data-nosnippet>1410</a>        <span class="kw">let </span>waker = futures_util::task::noop_waker();
+<a href=#1411 id=1411 data-nosnippet>1411</a>        <span class="kw">let </span><span class="kw-2">mut </span>cx = Context::from_waker(<span class="kw-2">&amp;</span>waker);
+<a href=#1412 id=1412 data-nosnippet>1412</a>        <span class="kw">let </span><span class="kw-2">mut </span>storage = [<span class="number">0u8</span>; <span class="number">1</span>];
+<a href=#1413 id=1413 data-nosnippet>1413</a>        <span class="kw">let </span><span class="kw-2">mut </span>metas = [noq_udp::RecvMeta::default()];
+<a href=#1414 id=1414 data-nosnippet>1414</a>
+<a href=#1415 id=1415 data-nosnippet>1415</a>        <span class="kw">for _ in </span><span class="number">0</span>..polls {
+<a href=#1416 id=1416 data-nosnippet>1416</a>            <span class="kw">let </span><span class="kw-2">mut </span>bufs = [IoSliceMut::new(<span class="kw-2">&amp;mut </span>storage)];
+<a href=#1417 id=1417 data-nosnippet>1417</a>            <span class="kw">let </span>n = <span class="kw">match </span>transports.inner_poll_recv(<span class="kw-2">&amp;mut </span>cx, <span class="kw-2">&amp;mut </span>bufs, <span class="kw-2">&amp;mut </span>metas) {
+<a href=#1418 id=1418 data-nosnippet>1418</a>                Poll::Ready(<span class="prelude-val">Ok</span>(n)) =&gt; n,
+<a href=#1419 id=1419 data-nosnippet>1419</a>                Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="macro">panic!</span>(<span class="string">"custom transport poll failed: {err}"</span>),
+<a href=#1420 id=1420 data-nosnippet>1420</a>                Poll::Pending =&gt; <span class="macro">panic!</span>(<span class="string">"ready custom transport returned pending"</span>),
+<a href=#1421 id=1421 data-nosnippet>1421</a>            };
+<a href=#1422 id=1422 data-nosnippet>1422</a>            <span class="macro">assert_eq!</span>(n, <span class="number">1</span>);
+<a href=#1423 id=1423 data-nosnippet>1423</a>            selected.push(storage[<span class="number">0</span>]);
+<a href=#1424 id=1424 data-nosnippet>1424</a>            storage[<span class="number">0</span>] = <span class="number">0</span>;
+<a href=#1425 id=1425 data-nosnippet>1425</a>            metas[<span class="number">0</span>] = noq_udp::RecvMeta::default();
+<a href=#1426 id=1426 data-nosnippet>1426</a>        }
+<a href=#1427 id=1427 data-nosnippet>1427</a>
+<a href=#1428 id=1428 data-nosnippet>1428</a>        selected
+<a href=#1429 id=1429 data-nosnippet>1429</a>    }
+<a href=#1430 id=1430 data-nosnippet>1430</a>
+<a href=#1431 id=1431 data-nosnippet>1431</a>    <span class="attr">#[derive(Debug)]
+<a href=#1432 id=1432 data-nosnippet>1432</a>    </span><span class="kw">struct </span>ReadyCustomEndpoint {
+<a href=#1433 id=1433 data-nosnippet>1433</a>        id: u8,
+<a href=#1434 id=1434 data-nosnippet>1434</a>        polls: Arc&lt;AtomicUsize&gt;,
+<a href=#1435 id=1435 data-nosnippet>1435</a>        local_addr: CustomAddr,
+<a href=#1436 id=1436 data-nosnippet>1436</a>        remote_addr: CustomAddr,
+<a href=#1437 id=1437 data-nosnippet>1437</a>        local_addr_watch: Watchable&lt;Vec&lt;CustomAddr&gt;&gt;,
+<a href=#1438 id=1438 data-nosnippet>1438</a>    }
+<a href=#1439 id=1439 data-nosnippet>1439</a>
+<a href=#1440 id=1440 data-nosnippet>1440</a>    <span class="kw">impl </span>CustomEndpoint <span class="kw">for </span>ReadyCustomEndpoint {
+<a href=#1441 id=1441 data-nosnippet>1441</a>        <span class="kw">fn </span>watch_local_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; n0_watcher::Direct&lt;Vec&lt;CustomAddr&gt;&gt; {
+<a href=#1442 id=1442 data-nosnippet>1442</a>            <span class="self">self</span>.local_addr_watch.watch()
+<a href=#1443 id=1443 data-nosnippet>1443</a>        }
 <a href=#1444 id=1444 data-nosnippet>1444</a>
-<a href=#1445 id=1445 data-nosnippet>1445</a>    <span class="kw">impl </span>CustomSender <span class="kw">for </span>NoopCustomSender {
-<a href=#1446 id=1446 data-nosnippet>1446</a>        <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, _addr: <span class="kw-2">&amp;</span>CustomAddr) -&gt; bool {
-<a href=#1447 id=1447 data-nosnippet>1447</a>            <span class="bool-val">false
-<a href=#1448 id=1448 data-nosnippet>1448</a>        </span>}
-<a href=#1449 id=1449 data-nosnippet>1449</a>
-<a href=#1450 id=1450 data-nosnippet>1450</a>        <span class="kw">fn </span>poll_send(
-<a href=#1451 id=1451 data-nosnippet>1451</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#1452 id=1452 data-nosnippet>1452</a>            _cx: <span class="kw-2">&amp;mut </span>Context,
-<a href=#1453 id=1453 data-nosnippet>1453</a>            _dst: <span class="kw-2">&amp;</span>CustomAddr,
-<a href=#1454 id=1454 data-nosnippet>1454</a>            _src: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>CustomAddr&gt;,
-<a href=#1455 id=1455 data-nosnippet>1455</a>            _transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1456 id=1456 data-nosnippet>1456</a>        ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-<a href=#1457 id=1457 data-nosnippet>1457</a>            Poll::Ready(<span class="prelude-val">Ok</span>(()))
-<a href=#1458 id=1458 data-nosnippet>1458</a>        }
-<a href=#1459 id=1459 data-nosnippet>1459</a>    }
-<a href=#1460 id=1460 data-nosnippet>1460</a>}</code></pre></div></section></main></body></html>
+<a href=#1445 id=1445 data-nosnippet>1445</a>        <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;<span class="kw">dyn </span>CustomSender&gt; {
+<a href=#1446 id=1446 data-nosnippet>1446</a>            Arc::new(NoopCustomSender)
+<a href=#1447 id=1447 data-nosnippet>1447</a>        }
+<a href=#1448 id=1448 data-nosnippet>1448</a>
+<a href=#1449 id=1449 data-nosnippet>1449</a>        <span class="kw">fn </span>poll_recv(
+<a href=#1450 id=1450 data-nosnippet>1450</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#1451 id=1451 data-nosnippet>1451</a>            _cx: <span class="kw-2">&amp;mut </span>Context,
+<a href=#1452 id=1452 data-nosnippet>1452</a>            bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#1453 id=1453 data-nosnippet>1453</a>            metas: <span class="kw-2">&amp;mut </span>[noq_udp::RecvMeta],
+<a href=#1454 id=1454 data-nosnippet>1454</a>            recv_infos: <span class="kw-2">&amp;mut </span>[RecvInfo],
+<a href=#1455 id=1455 data-nosnippet>1455</a>        ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
+<a href=#1456 id=1456 data-nosnippet>1456</a>            <span class="self">self</span>.polls.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
+<a href=#1457 id=1457 data-nosnippet>1457</a>            bufs[<span class="number">0</span>][<span class="number">0</span>] = <span class="self">self</span>.id;
+<a href=#1458 id=1458 data-nosnippet>1458</a>            metas[<span class="number">0</span>].len = <span class="number">1</span>;
+<a href=#1459 id=1459 data-nosnippet>1459</a>            metas[<span class="number">0</span>].stride = <span class="number">1</span>;
+<a href=#1460 id=1460 data-nosnippet>1460</a>            recv_infos[<span class="number">0</span>] = RecvInfo {
+<a href=#1461 id=1461 data-nosnippet>1461</a>                remote: Addr::Custom(<span class="self">self</span>.remote_addr.clone()),
+<a href=#1462 id=1462 data-nosnippet>1462</a>                local: <span class="prelude-val">Some</span>(<span class="self">self</span>.local_addr.clone()),
+<a href=#1463 id=1463 data-nosnippet>1463</a>            };
+<a href=#1464 id=1464 data-nosnippet>1464</a>            Poll::Ready(<span class="prelude-val">Ok</span>(<span class="number">1</span>))
+<a href=#1465 id=1465 data-nosnippet>1465</a>        }
+<a href=#1466 id=1466 data-nosnippet>1466</a>    }
+<a href=#1467 id=1467 data-nosnippet>1467</a>
+<a href=#1468 id=1468 data-nosnippet>1468</a>    <span class="attr">#[derive(Debug)]
+<a href=#1469 id=1469 data-nosnippet>1469</a>    </span><span class="kw">struct </span>NoopCustomSender;
+<a href=#1470 id=1470 data-nosnippet>1470</a>
+<a href=#1471 id=1471 data-nosnippet>1471</a>    <span class="kw">impl </span>CustomSender <span class="kw">for </span>NoopCustomSender {
+<a href=#1472 id=1472 data-nosnippet>1472</a>        <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, _addr: <span class="kw-2">&amp;</span>CustomAddr) -&gt; bool {
+<a href=#1473 id=1473 data-nosnippet>1473</a>            <span class="bool-val">false
+<a href=#1474 id=1474 data-nosnippet>1474</a>        </span>}
+<a href=#1475 id=1475 data-nosnippet>1475</a>
+<a href=#1476 id=1476 data-nosnippet>1476</a>        <span class="kw">fn </span>poll_send(
+<a href=#1477 id=1477 data-nosnippet>1477</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1478 id=1478 data-nosnippet>1478</a>            _cx: <span class="kw-2">&amp;mut </span>Context,
+<a href=#1479 id=1479 data-nosnippet>1479</a>            _dst: <span class="kw-2">&amp;</span>CustomAddr,
+<a href=#1480 id=1480 data-nosnippet>1480</a>            _src: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>CustomAddr&gt;,
+<a href=#1481 id=1481 data-nosnippet>1481</a>            _transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1482 id=1482 data-nosnippet>1482</a>        ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+<a href=#1483 id=1483 data-nosnippet>1483</a>            Poll::Ready(<span class="prelude-val">Ok</span>(()))
+<a href=#1484 id=1484 data-nosnippet>1484</a>        }
+<a href=#1485 id=1485 data-nosnippet>1485</a>    }
+<a href=#1486 id=1486 data-nosnippet>1486</a>}</code></pre></div></section></main></body></html>
