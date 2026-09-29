@@ -2195,7 +2195,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "assert_matches",
  "axum",
@@ -2263,7 +2263,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -2285,7 +2285,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bench"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "bytes",
  "clap",
@@ -2328,7 +2328,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2386,9 +2386,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "291065721ad7c477b972e581bbc528df031dc8eb5e39fe1ff3300ae5dfb157ef"
+checksum = "8ede55536349842337f7cdc63012ec33dc637945f3259c98a0763aac364cdf09"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2421,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "axum",
  "blake3",
