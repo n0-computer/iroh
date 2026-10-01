@@ -2,7 +2,7 @@
 version: 3
 
 min_age:
-  value: 7 # days, matches the dependabot cooldown
+  value: 6 # days, matches the dependabot cooldown - 1
 
 # No semver tag upstream to verify the version comment against. Forks and
 # tool-named tags; revisit rather than leave indefinitely.
