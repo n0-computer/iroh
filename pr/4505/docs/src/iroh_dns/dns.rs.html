@@ -416,7 +416,7 @@
 <a href=#416 id=416 data-nosnippet>416</a>    /// IP address. To set a different one, build a [`NameserverConfig`] with
 <a href=#417 id=417 data-nosnippet>417</a>    /// [`NameserverConfig::with_tls_server_name`] and pass it to
 <a href=#418 id=418 data-nosnippet>418</a>    /// [`Self::add_nameserver_config`].
-<a href=#419 id=419 data-nosnippet>419</a>    </span><span class="attr">#[deprecated(since = <span class="string">"1.2.0"</span>, note = <span class="string">"use add_nameserer_config()"</span>)]
+<a href=#419 id=419 data-nosnippet>419</a>    </span><span class="attr">#[deprecated(since = <span class="string">"1.2.0"</span>, note = <span class="string">"use add_nameserver_config()"</span>)]
 <a href=#420 id=420 data-nosnippet>420</a>    </span><span class="kw">pub fn </span>with_nameserver(<span class="kw-2">mut </span><span class="self">self</span>, addr: SocketAddr, protocol: DnsProtocol) -&gt; <span class="self">Self </span>{
 <a href=#421 id=421 data-nosnippet>421</a>        <span class="self">self</span>.nameservers.push(NameserverConfig {
 <a href=#422 id=422 data-nosnippet>422</a>            addr,
@@ -432,7 +432,7 @@
 <a href=#432 id=432 data-nosnippet>432</a>    /// IP address. To set a different one, build a [`NameserverConfig`] with
 <a href=#433 id=433 data-nosnippet>433</a>    /// [`NameserverConfig::with_tls_server_name`] and pass it to
 <a href=#434 id=434 data-nosnippet>434</a>    /// [`Self::add_nameserver_configs`].
-<a href=#435 id=435 data-nosnippet>435</a>    </span><span class="attr">#[deprecated(since = <span class="string">"1.2.0"</span>, note = <span class="string">"use add_nameserer_configs()"</span>)]
+<a href=#435 id=435 data-nosnippet>435</a>    </span><span class="attr">#[deprecated(since = <span class="string">"1.2.0"</span>, note = <span class="string">"use add_nameserver_configs()"</span>)]
 <a href=#436 id=436 data-nosnippet>436</a>    </span><span class="kw">pub fn </span>with_nameservers(
 <a href=#437 id=437 data-nosnippet>437</a>        <span class="kw-2">mut </span><span class="self">self</span>,
 <a href=#438 id=438 data-nosnippet>438</a>        nameservers: <span class="kw">impl </span>IntoIterator&lt;Item = (SocketAddr, DnsProtocol)&gt;,
