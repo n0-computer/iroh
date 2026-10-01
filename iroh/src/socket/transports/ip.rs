@@ -8,7 +8,7 @@ use std::{
 };
 
 use ipnet::{Ipv4Net, Ipv6Net};
-use iroh_relay::socket::{ConfigureSocket, IpFamily as HookFamily, SocketRef as HookSocketRef};
+use iroh_relay::socket::{ConfigureSocket, SocketRef as HookSocketRef, SocketTarget};
 use n0_watcher::Watchable;
 use netwatch::{BindOptions, UdpSender, UdpSocket};
 use pin_project::pin_project;
@@ -17,22 +17,17 @@ use tracing::{debug, info, trace};
 use super::{RecvInfo, Transmit};
 use crate::metrics::{EndpointMetrics, SocketMetrics};
 
-/// Translates our hook into the one netwatch takes when it binds (and rebinds)
-/// a socket.
+/// Translates our hook into the one netwatch takes when it binds a socket.
 ///
 /// The two are the same shape, but not the same types: netwatch hands out its
 /// own `SocketRef`, which we re-borrow as ours so that the caller sees one type
 /// whether the socket came from netwatch or from the relay's TCP dial.
-fn bind_opts(configure_socket: Option<ConfigureSocket>) -> BindOptions {
+fn bind_opts(addr: SocketAddr, configure_socket: Option<ConfigureSocket>) -> BindOptions {
     let Some(configure) = configure_socket else {
         return BindOptions::new();
     };
-    BindOptions::new().configure_socket(move |socket, family| {
-        let family = match family {
-            netwatch::IpFamily::V4 => HookFamily::V4,
-            netwatch::IpFamily::V6 => HookFamily::V6,
-        };
-        configure(HookSocketRef::new(&socket), family)
+    BindOptions::new().configure_socket(move |socket, _family| {
+        configure(HookSocketRef::new(&socket), SocketTarget::UdpBind(addr))
     })
 }
 
@@ -195,7 +190,7 @@ impl IpTransport {
     ) -> io::Result<Self> {
         let addr: SocketAddr = config.into();
         debug!(?addr, "binding");
-        let socket = netwatch::UdpSocket::bind_with(addr, bind_opts(configure_socket))
+        let socket = netwatch::UdpSocket::bind_with(addr, bind_opts(addr, configure_socket))
             .inspect_err(|err| {
                 debug!(%addr, "failed to bind: {err:#}");
             })?;

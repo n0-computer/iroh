@@ -28,7 +28,7 @@ use super::{
 };
 use crate::{
     defaults::timeouts::*,
-    socket::{ConfigureSocket, IpFamily, SocketRef},
+    socket::{ConfigureSocket, SocketRef, SocketTarget},
 };
 
 #[derive(derive_more::Debug, Clone)]
@@ -129,13 +129,7 @@ impl MaybeTlsStreamBuilder {
             let stream = self.dial_url_proxy(proxy.clone(), tls_connector).await?;
             Ok(ProxyStream::Proxied(stream))
         } else {
-            let stream = dial_happy_eyeballs(
-                &self.dns_resolver,
-                &self.url,
-                self.prefer_ipv6,
-                self.configure_socket.as_ref(),
-            )
-            .await?;
+            let stream = self.dialer().dial(&self.url).await?;
             Ok(ProxyStream::Raw(stream))
         }
     }
@@ -148,17 +142,14 @@ impl MaybeTlsStreamBuilder {
     {
         debug!(%self.url, %proxy_url, "dial url via proxy");
 
-        let tcp_stream = dial_happy_eyeballs(
-            &self.dns_resolver,
-            &proxy_url,
-            self.prefer_ipv6,
-            self.configure_socket.as_ref(),
-        )
-        .await
-        .map_err(|err| match err {
-            DialError::InvalidTargetPort { meta } => DialError::ProxyInvalidTargetPort { meta },
-            err => err,
-        })?;
+        let tcp_stream = self
+            .dialer()
+            .dial(&proxy_url)
+            .await
+            .map_err(|err| match err {
+                DialError::InvalidTargetPort { meta } => DialError::ProxyInvalidTargetPort { meta },
+                err => err,
+            })?;
 
         // Setup TLS if necessary
         let io = if proxy_url.scheme() == "http" {
@@ -245,6 +236,14 @@ impl MaybeTlsStreamBuilder {
 
         Ok(res)
     }
+
+    fn dialer(&self) -> Dialer<'_> {
+        Dialer {
+            dns_resolver: &self.dns_resolver,
+            prefer_ipv6: self.prefer_ipv6,
+            configure_socket: self.configure_socket.as_ref(),
+        }
+    }
 }
 
 /// Resolves `url` and races TCP connections across the resulting addresses,
@@ -264,114 +263,132 @@ impl MaybeTlsStreamBuilder {
 ///
 /// The first connection to succeed is returned; the rest are dropped, which
 /// cancels them.
-async fn dial_happy_eyeballs(
-    dns_resolver: &DnsResolver,
-    url: &Url,
+struct Dialer<'a> {
+    dns_resolver: &'a DnsResolver,
     prefer_ipv6: bool,
-    configure_socket: Option<&ConfigureSocket>,
-) -> Result<TcpStream, DialError> {
-    let port = url_port(url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
+    configure_socket: Option<&'a ConfigureSocket>,
+}
 
-    // Stream of resolved addresses.
-    let resolve_stream = dns_resolver.resolve_host_all(url, DNS_TIMEOUT);
-    tokio::pin!(resolve_stream);
-    // Set to `true` once `resolve_stream` yielded `None`, to not poll it again after completion.
-    let mut resolve_stream_finished = false;
-    // Addresses resolved but not yet tried, in arrival order.
-    let mut queue: VecDeque<IpAddr> = VecDeque::new();
-    // Family to dial next, toggled to interleave.
-    let mut next_prefer_v6 = prefer_ipv6;
-    // In-progress connection attempts.
-    let mut dials = FuturesUnordered::new();
-    // Whether the first connection attempt has been started yet.
-    let mut started = false;
-    // Last error that occurred, returned if no connection attempt succeeded.
-    let mut last_err: Option<DialError> = None;
-    // Timer after which to start the next connection attempt, or `None` for immediately.
-    let next_dial_delayed_until = MaybeFuture::None;
-    tokio::pin!(next_dial_delayed_until);
-
-    loop {
-        if resolve_stream_finished && queue.is_empty() && dials.is_empty() {
-            // Nothing left to resolve, attempt, or wait on.
-            return Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse).into()));
+impl<'a> Dialer<'a> {
+    #[cfg(test)]
+    fn new(dns_resolver: &'a DnsResolver) -> Self {
+        Self {
+            dns_resolver,
+            prefer_ipv6: false,
+            configure_socket: None,
         }
+    }
 
-        // The next dial is due and an address is waiting: dial the next address,
-        // interleaved by family, and set the timer for the next attempt.
-        if next_dial_delayed_until.is_none()
-            && let Some(ip) = pop_family(&mut queue, &mut next_prefer_v6)
-        {
-            let addr = SocketAddr::new(ip, port);
-            let configure_socket = configure_socket.cloned();
-            dials.push(
-                async move {
-                    trace!("connecting TCP stream");
-                    let stream = time::timeout(
-                        DIAL_ENDPOINT_TIMEOUT,
-                        connect_tcp(addr, configure_socket.as_ref()),
-                    )
-                    .await
-                    .map_err(DialError::from)
-                    .and_then(|res| res.map_err(DialError::from))
-                    .inspect_err(|err| debug!("failed to connect: {err:#}"))?;
-                    trace!("TCP stream connected");
-                    stream.set_nodelay(true)?;
-                    Ok(stream)
-                }
-                .instrument(info_span!("connect", %addr)),
-            );
-            started = true;
-            next_dial_delayed_until
-                .as_mut()
-                .set_future(time::sleep(CONNECTION_ATTEMPT_DELAY));
-        }
+    #[cfg(test)]
+    fn prefer_ipv6(mut self) -> Self {
+        self.prefer_ipv6 = true;
+        self
+    }
 
-        // All three arms are guarded, but it is guaranteed that at least one arm
-        // is enabled, otherwise the check at the top of the loop returns.
-        tokio::select! {
-            biased;
-            // Yields when a dial attempt completed.
-            Some(res) = dials.next(), if !dials.is_empty() => match res {
-                Ok(stream) => return Ok(stream),
-                Err(err) => {
-                    last_err = Some(err);
-                    if dials.is_empty() {
-                        // Fail fast: start the next attempt now rather than waiting it out.
-                        next_dial_delayed_until.as_mut().set_none();
+    async fn dial(&self, url: &Url) -> Result<TcpStream, DialError> {
+        let port = url_port(url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
+
+        // Stream of resolved addresses.
+        let resolve_stream = self.dns_resolver.resolve_host_all(url, DNS_TIMEOUT);
+        tokio::pin!(resolve_stream);
+        // Set to `true` once `resolve_stream` yielded `None`, to not poll it again after completion.
+        let mut resolve_stream_finished = false;
+        // Addresses resolved but not yet tried, in arrival order.
+        let mut queue: VecDeque<IpAddr> = VecDeque::new();
+        // Family to dial next, toggled to interleave.
+        let mut next_prefer_v6 = self.prefer_ipv6;
+        // In-progress connection attempts.
+        let mut dials = FuturesUnordered::new();
+        // Whether the first connection attempt has been started yet.
+        let mut started = false;
+        // Last error that occurred, returned if no connection attempt succeeded.
+        let mut last_err: Option<DialError> = None;
+        // Timer after which to start the next connection attempt, or `None` for immediately.
+        let next_dial_delayed_until = MaybeFuture::None;
+        tokio::pin!(next_dial_delayed_until);
+
+        loop {
+            if resolve_stream_finished && queue.is_empty() && dials.is_empty() {
+                // Nothing left to resolve, attempt, or wait on.
+                return Err(last_err.unwrap_or_else(|| e!(DnsError::NoResponse).into()));
+            }
+
+            // The next dial is due and an address is waiting: dial the next address,
+            // interleaved by family, and set the timer for the next attempt.
+            if next_dial_delayed_until.is_none()
+                && let Some(ip) = pop_family(&mut queue, &mut next_prefer_v6)
+            {
+                let addr = SocketAddr::new(ip, port);
+                let configure_socket = self.configure_socket.cloned();
+                dials.push(
+                    async move {
+                        trace!("connecting TCP stream");
+                        let stream = time::timeout(
+                            DIAL_ENDPOINT_TIMEOUT,
+                            connect_tcp(addr, configure_socket.as_ref()),
+                        )
+                        .await
+                        .map_err(DialError::from)
+                        .and_then(|res| res.map_err(DialError::from))
+                        .inspect_err(|err| debug!("failed to connect: {err:#}"))?;
+                        trace!("TCP stream connected");
+                        stream.set_nodelay(true)?;
+                        Ok(stream)
                     }
-                }
-            },
-            // Yields when the next address is resolved.
-            addr = resolve_stream.next(), if !resolve_stream_finished => {
-                match addr {
-                    Some(Ok(ip)) => {
-                        queue.push_back(ip);
-                        if !started {
-                            // If no connection attempt has been started, and a non-preferred
-                            // address is resolved, delay the connect by `RESOLUTION_DELAY`.
-                            // If a preferred address arrives later but before this delay expires,
-                            // it will be dialed instead.
-                            if prefer_ipv6 == ip.is_ipv6() {
-                                next_dial_delayed_until.as_mut().set_none();
-                            } else if next_dial_delayed_until.is_none() {
-                                next_dial_delayed_until.as_mut().set_future(time::sleep(RESOLUTION_DELAY));
-                            }
-                        }
-                    }
-                    Some(Err(err)) => {
-                        last_err = Some(err.into());
-                    }
-                    None => {
-                        resolve_stream_finished = true;
-                        if !started {
+                    .instrument(info_span!("connect", %addr)),
+                );
+                started = true;
+                next_dial_delayed_until
+                    .as_mut()
+                    .set_future(time::sleep(CONNECTION_ATTEMPT_DELAY));
+            }
+
+            // All three arms are guarded, but it is guaranteed that at least one arm
+            // is enabled, otherwise the check at the top of the loop returns.
+            tokio::select! {
+                biased;
+                // Yields when a dial attempt completed.
+                Some(res) = dials.next(), if !dials.is_empty() => match res {
+                    Ok(stream) => return Ok(stream),
+                    Err(err) => {
+                        last_err = Some(err);
+                        if dials.is_empty() {
+                            // Fail fast: start the next attempt now rather than waiting it out.
                             next_dial_delayed_until.as_mut().set_none();
                         }
                     }
+                },
+                // Yields when the next address is resolved.
+                addr = resolve_stream.next(), if !resolve_stream_finished => {
+                    match addr {
+                        Some(Ok(ip)) => {
+                            queue.push_back(ip);
+                            if !started {
+                                // If no connection attempt has been started, and a non-preferred
+                                // address is resolved, delay the connect by `RESOLUTION_DELAY`.
+                                // If a preferred address arrives later but before this delay expires,
+                                // it will be dialed instead.
+                                if self.prefer_ipv6 == ip.is_ipv6() {
+                                    next_dial_delayed_until.as_mut().set_none();
+                                } else if next_dial_delayed_until.is_none() {
+                                    next_dial_delayed_until.as_mut().set_future(time::sleep(RESOLUTION_DELAY));
+                                }
+                            }
+                        }
+                        Some(Err(err)) => {
+                            last_err = Some(err.into());
+                        }
+                        None => {
+                            resolve_stream_finished = true;
+                            if !started {
+                                next_dial_delayed_until.as_mut().set_none();
+                            }
+                        }
+                    }
                 }
+                // Yields when the next dial attempt is due, if the timer is set.
+                () = &mut next_dial_delayed_until, if next_dial_delayed_until.is_some() => {},
             }
-            // Yields when the next dial attempt is due, if the timer is set.
-            () = &mut next_dial_delayed_until, if next_dial_delayed_until.is_some() => {},
         }
     }
 }
@@ -400,12 +417,7 @@ fn url_port(url: &Url) -> Option<u16> {
     }
 }
 
-/// Connects a TCP stream to `addr`, running the caller's hook on the socket
-/// first.
-///
-/// The relay connection has to stay on the same egress path as the UDP
-/// transport: a VPN that points the default route at its own tunnel device
-/// would otherwise route this connection into the tunnel it is carrying.
+/// Connects a TCP stream to `addr`, running the socket hook first.
 async fn connect_tcp(
     addr: SocketAddr,
     configure_socket: Option<&ConfigureSocket>,
@@ -414,11 +426,11 @@ async fn connect_tcp(
         return TcpStream::connect(addr).await;
     };
 
-    let (socket, family) = match addr {
-        SocketAddr::V4(_) => (tokio::net::TcpSocket::new_v4()?, IpFamily::V4),
-        SocketAddr::V6(_) => (tokio::net::TcpSocket::new_v6()?, IpFamily::V6),
+    let socket = match addr {
+        SocketAddr::V4(_) => tokio::net::TcpSocket::new_v4()?,
+        SocketAddr::V6(_) => tokio::net::TcpSocket::new_v6()?,
     };
-    configure(SocketRef::new(&socket), family)?;
+    configure(SocketRef::new(&socket), SocketTarget::RelayConnect(addr))?;
     socket.connect(addr).await
 }
 
@@ -455,7 +467,8 @@ mod tests {
 
         let addrs = (1..5).map(dead_v4).chain([Ipv4Addr::LOCALHOST]).collect();
         let resolver = static_resolver(addrs, vec![]);
-        let stream = dial_happy_eyeballs(&resolver, &relay_url(port), false, None)
+        let stream = Dialer::new(&resolver)
+            .dial(&relay_url(port))
             .await
             .expect("should skip the invalid addrs and still connect");
         assert_eq!(stream.peer_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
@@ -468,7 +481,9 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let resolver = static_resolver(vec![Ipv4Addr::LOCALHOST], vec![dead_v6(1), dead_v6(2)]);
 
-        let stream = dial_happy_eyeballs(&resolver, &relay_url(port), true, None)
+        let stream = Dialer::new(&resolver)
+            .prefer_ipv6()
+            .dial(&relay_url(port))
             .await
             .expect("falls back to IPv4");
         assert!(stream.peer_addr().unwrap().is_ipv4());
@@ -477,7 +492,9 @@ mod tests {
     #[tokio::test]
     async fn errors_when_all_addresses_unreachable() {
         let resolver = static_resolver(vec![dead_v4(1), dead_v4(2)], vec![dead_v6(1)]);
-        let err = dial_happy_eyeballs(&resolver, &relay_url(80), true, None)
+        let err = Dialer::new(&resolver)
+            .prefer_ipv6()
+            .dial(&relay_url(80))
             .await
             .expect_err("nothing reachable");
         dbg!(&err);
@@ -490,7 +507,8 @@ mod tests {
     #[tokio::test]
     async fn errors_when_nothing_resolves() {
         let resolver = static_resolver(vec![], vec![]);
-        let err = dial_happy_eyeballs(&resolver, &relay_url(80), false, None)
+        let err = Dialer::new(&resolver)
+            .dial(&relay_url(80))
             .await
             .expect_err("no addresses to dial");
         assert!(matches!(err, DialError::Dns { .. }));

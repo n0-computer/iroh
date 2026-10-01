@@ -191,14 +191,12 @@ impl ClientBuilder {
         }
     }
 
-    /// Sets a hook to run on the socket used to reach the relay, before it
-    /// connects.
+    /// Sets a hook to configure the socket used for the relay connection.
     ///
-    /// Its purpose is to let the caller decide how this connection is routed. A
-    /// VPN that points the default route at its own tunnel device needs to keep
-    /// the relay connection off that route, the same as it does for the UDP
-    /// transport, otherwise the connection is routed into the tunnel it is
-    /// carrying.
+    /// Use it to set `SO_MARK` or `SO_BINDTODEVICE` on Linux, or `IP_BOUND_IF`
+    /// on Apple platforms. On Windows, `IP_UNICAST_IF` selects an outgoing IPv4
+    /// interface and `IPV6_UNICAST_IF` selects an outgoing IPv6 interface;
+    /// both take an interface index. The hook's target identifies the family.
     #[cfg(not(wasm_browser))]
     pub fn configure_socket(mut self, configure: ConfigureSocket) -> Self {
         self.configure_socket = Some(configure);

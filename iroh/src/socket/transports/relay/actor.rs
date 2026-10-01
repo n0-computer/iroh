@@ -318,9 +318,6 @@ impl ActiveRelayActor {
             builder = builder.proxy_url(proxy_url);
         }
 
-        // The relay connection has to be kept off the caller's tunnel route just
-        // like the UDP transport: it is as fatal to route it into a tunnel it is
-        // carrying.
         #[cfg(not(wasm_browser))]
         if let Some(configure) = configure_socket {
             builder = builder.configure_socket(configure);

@@ -3004,11 +3004,12 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.19.3"
-source = "git+https://github.com/rayfish/net-tools?branch=feat%2Fconfigure-socket#7f5513cd602c29e0b564e6c07d81614244d95730"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#f232afc83805c48be96805baefee9676c8fb6a83"
 dependencies = [
  "atomic-waker",
  "bytes",
  "cfg_aliases",
+ "chrono",
  "derive_more",
  "ipnet",
  "js-sys",

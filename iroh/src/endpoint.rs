@@ -17,7 +17,7 @@ use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 #[cfg(not(wasm_browser))]
-pub use iroh_relay::socket::{ConfigureSocket, IpFamily, SocketRef};
+pub use iroh_relay::socket::{ConfigureSocket, SocketRef, SocketTarget};
 use iroh_relay::{RelayConfig, RelayMap, tls::CaTlsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
@@ -522,31 +522,30 @@ impl Builder {
         self
     }
 
-    /// Sets a hook run on every socket the endpoint opens.
+    /// Sets a hook for UDP transport sockets and relay connections.
     ///
-    /// It runs on each underlay UDP socket and on each relay connection, before
-    /// the socket is bound or connected, and again whenever a socket is rebound.
-    /// A hook that reads the current network state therefore re-reads it on
-    /// every network change.
+    /// The hook runs before each bind or connect, including UDP rebinds.
+    /// [`SocketTarget`] identifies the socket's purpose and address family.
+    /// DNS lookup sockets are managed by [`DnsResolver`] and are not covered.
     ///
-    /// Its purpose is to let the caller decide how iroh's own traffic is routed,
-    /// which matters to a VPN that points the default route at its own tunnel
-    /// device: without a way to keep iroh's underlay off that route, the
-    /// transport is routed into the tunnel it is carrying. The options that do
-    /// that are platform-specific (`SO_MARK` on Linux, `IP_BOUND_IF` on Apple
-    /// platforms), so iroh does not model them itself and hands out the socket
-    /// instead.
+    /// Use it to set `SO_MARK` or `SO_BINDTODEVICE` on Linux, or `IP_BOUND_IF`
+    /// on Apple platforms. On Windows, `IP_UNICAST_IF` selects an outgoing IPv4
+    /// interface and `IPV6_UNICAST_IF` selects an outgoing IPv6 interface;
+    /// both take an interface index. The target identifies the family.
     ///
-    /// An error from the hook fails the bind or the dial, rather than leaving a
-    /// socket configured in a way the caller did not ask for.
+    /// An error from the hook fails the bind or dial.
     ///
     /// ```no_run
     /// # async fn wrapper() -> n0_error::Result<()> {
-    /// use iroh::{Endpoint, endpoint::presets};
+    /// use iroh::{Endpoint, endpoint::{presets, SocketTarget}};
     ///
     /// let ep = Endpoint::builder(presets::N0)
-    ///     .configure_socket(std::sync::Arc::new(|socket, _family| {
-    ///         socket2::SockRef::from(&socket).set_recv_buffer_size(1 << 20)
+    ///     .configure_socket(std::sync::Arc::new(|socket, target| {
+    ///         let size = match target {
+    ///             SocketTarget::UdpBind(_) => 1 << 20,
+    ///             SocketTarget::RelayConnect(_) => 1 << 16,
+    ///         };
+    ///         socket2::SockRef::from(&socket).set_recv_buffer_size(size)
     ///     }))
     ///     .bind()
     ///     .await?;
@@ -2068,7 +2067,7 @@ mod tests {
     use tokio::sync::oneshot;
     use tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
 
-    use super::Endpoint;
+    use super::{Endpoint, SocketTarget};
     use crate::{
         RelayMap, RelayMode,
         address_lookup::memory::MemoryLookup,
@@ -2126,37 +2125,27 @@ mod tests {
         Ok(())
     }
 
-    /// The `configure_socket` hook must reach *every* socket the endpoint opens:
-    /// the UDP transport sockets and the relay connection. A VPN uses it to keep
-    /// iroh's underlay off its own tunnel route, and a relay connection that
-    /// missed the hook would be routed into the tunnel it is carrying.
+    /// The hook reaches UDP transport sockets and relay connections.
     #[tokio::test]
     #[traced_test]
     async fn configure_socket_hook_reaches_udp_and_relay_sockets() -> Result {
-        use std::sync::{
-            Mutex,
-            atomic::{AtomicUsize, Ordering},
-        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
 
         let udp_calls = Arc::new(AtomicUsize::new(0));
         let tcp_calls = Arc::new(AtomicUsize::new(0));
-        let families = Arc::new(Mutex::new(Vec::new()));
-        let (udp, tcp, seen) = (udp_calls.clone(), tcp_calls.clone(), families.clone());
+        let (udp, tcp) = (udp_calls.clone(), tcp_calls.clone());
 
         let ep = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_tls_config(CaTlsConfig::insecure_skip_verify())
-            .configure_socket(Arc::new(move |socket, family| {
-                // Tell the UDP transport sockets from the relay's TCP dial by the
-                // socket's own type, not by guessing from call order.
-                match socket2::SockRef::from(&socket).r#type()? {
-                    socket2::Type::DGRAM => udp.fetch_add(1, Ordering::SeqCst),
-                    socket2::Type::STREAM => tcp.fetch_add(1, Ordering::SeqCst),
-                    other => panic!("unexpected socket type {other:?}"),
+            .configure_socket(Arc::new(move |socket, target| {
+                match target {
+                    SocketTarget::UdpBind(_) => udp.fetch_add(1, Ordering::SeqCst),
+                    SocketTarget::RelayConnect(_) => tcp.fetch_add(1, Ordering::SeqCst),
                 };
-                seen.lock().expect("poisoned").push(family);
+                socket2::SockRef::from(&socket).set_recv_buffer_size(1 << 20)?;
                 Ok(())
             }))
             .bind()
@@ -2172,13 +2161,8 @@ mod tests {
         );
         assert!(
             tcp_calls.load(Ordering::SeqCst) > 0,
-            "hook never ran on the relay's TCP socket: it would be routed into the tunnel"
+            "hook never ran on the relay's TCP socket"
         );
-        assert!(
-            !families.lock().expect("poisoned").is_empty(),
-            "hook was never told which family it was handed"
-        );
-
         ep.close().await;
         Ok(())
     }
