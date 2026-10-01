@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-bytes = "1.11"
+bytes = "1.12"
 hdrhistogram = { version = "7.2", default-features = false }
 iroh = { version = "1.3.0", path = "..", default-features = false }
 iroh-metrics = { version = "1.0.2", optional = true }
