@@ -24,3 +24,5 @@ rules:
       # longer serves; every older release fails. Remove after 2026-09-24.
       - expr: |
           ActionName == "android-actions/setup-android" && VersionComment == "v4.0.4"
+      - expr: |
+          ActionRepoOwner == "n0-computer"
