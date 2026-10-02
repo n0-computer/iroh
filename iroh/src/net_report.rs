@@ -37,7 +37,7 @@ use n0_future::{
 use n0_watcher::{Watchable, Watcher};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use self::reportgen::{ProbeFinished, ProbeReport};
 #[cfg(not(wasm_browser))]
@@ -57,6 +57,7 @@ pub(crate) use self::{
 
 mod defaults;
 mod metrics;
+pub(crate) mod nat64;
 mod options;
 mod probes;
 mod report;
@@ -144,6 +145,9 @@ pub(crate) struct Client {
     qad_conns: QadConns,
     #[cfg(not(wasm_browser))]
     tls_config: rustls::ClientConfig,
+    /// NAT64 translation state shared with the IP transports.
+    #[cfg(not(wasm_browser))]
+    nat64: nat64::Nat64State,
     /// Whether to check for captive portals.
     captive_portal_check: bool,
     /// A collection of previously generated reports.
@@ -286,6 +290,8 @@ impl Client {
             qad_conns: QadConns::default(),
             #[cfg(not(wasm_browser))]
             tls_config: opts.tls_config,
+            #[cfg(not(wasm_browser))]
+            nat64: opts.nat64,
             captive_portal_check: opts.user_config.captive_portal_check,
         }
     }
@@ -300,6 +306,13 @@ impl Client {
         shutdown_token: CancellationToken,
     ) -> Report {
         let now = Instant::now();
+
+        // A major network change may mean a different NAT64 situation (or none). Disable
+        // translation so this report measures native IPv4 connectivity again.
+        #[cfg(not(wasm_browser))]
+        if is_major {
+            self.nat64.set(None);
+        }
 
         let mut do_full = is_major
             || self.reports.next_full
@@ -333,6 +346,17 @@ impl Client {
         let if_state = IfStateDetails {
             have_v4: if_state.have_v4,
             have_v6: if_state.have_v6,
+            have_native_v4: if_state.have_native_v4,
+        };
+        // The host's own interface state, before NAT64 is taken into account.
+        let native_if_state = if_state.clone();
+        // While NAT64 translation is active, IPv4 is reachable through it even without an IPv4
+        // interface, so run the IPv4 QAD probe: its result is the NAT64 gateway's public
+        // address, which remotes can hole punch to.
+        #[cfg(not(wasm_browser))]
+        let if_state = IfStateDetails {
+            have_v4: if_state.have_v4 || self.nat64.get().is_some(),
+            ..if_state
         };
 
         let mut report = Report::default();
@@ -429,6 +453,11 @@ impl Client {
                 }
             }
         }
+        #[cfg(not(wasm_browser))]
+        self.update_nat64(&native_if_state, &mut report).await;
+        #[cfg(wasm_browser)]
+        let _ = native_if_state;
+
         self.add_report_history_and_set_preferred_relay(&mut report);
         debug!(
             ?report,
@@ -437,6 +466,74 @@ impl Client {
         );
 
         report
+    }
+
+    /// Decides whether to translate IPv4 destinations through NAT64 and records the prefix.
+    ///
+    /// Translation is enabled when IPv4 QAD failed while the host has IPv6, and either the
+    /// network's DNS64 reveals a NAT64 prefix (RFC 7050), or the host has no IPv4 address
+    /// besides a CLAT one (then the Well-Known Prefix is assumed, e.g. when the resolver in use
+    /// is not the network's). On a dual-stack host without DNS64, a failed IPv4 QAD never
+    /// diverts native IPv4.
+    ///
+    /// The host's IPv6 address is used rather than `udp_v6`, because relays may not offer
+    /// IPv6 QAD even where IPv6 works.
+    ///
+    /// Once enabled, translation stays on until the next major network change: from then on
+    /// IPv4 QAD succeeds through NAT64, so `udp_v4` no longer says whether native IPv4 works.
+    #[cfg(not(wasm_browser))]
+    async fn update_nat64(&mut self, native_if_state: &IfStateDetails, report: &mut Report) {
+        use self::nat64::Nat64Prefix;
+
+        let current = self.nat64.get();
+        let prefix = match current {
+            Some(prefix) => Some(prefix),
+            None if !report.udp_v4 && native_if_state.have_v6 => self
+                .discover_nat64_prefix()
+                .await
+                .or_else(|| (!native_if_state.have_native_v4).then_some(Nat64Prefix::WELL_KNOWN)),
+            None => None,
+        }
+        .filter(|_| native_if_state.have_v6);
+
+        if prefix != current {
+            match prefix {
+                Some(prefix) => info!(
+                    prefix = %ipnet::Ipv6Net::from(prefix),
+                    "NAT64 detected, sending to IPv4 destinations through it"
+                ),
+                None => info!("NAT64 translation disabled"),
+            }
+            self.nat64.set(prefix);
+        }
+        report.nat64_prefix = prefix.map(Into::into);
+    }
+
+    /// Looks up the NAT64 prefix via the network's DNS64 (RFC 7050).
+    #[cfg(not(wasm_browser))]
+    async fn discover_nat64_prefix(&self) -> Option<nat64::Nat64Prefix> {
+        use std::net::IpAddr;
+
+        use self::defaults::timeouts::DNS_TIMEOUT;
+
+        let answers = match self
+            .socket_state
+            .dns_resolver
+            .lookup_ipv6(nat64::IPV4ONLY_ARPA, DNS_TIMEOUT)
+            .await
+        {
+            Ok(addrs) => addrs
+                .filter_map(|addr| match addr {
+                    IpAddr::V6(addr) => Some(addr),
+                    IpAddr::V4(_) => None,
+                })
+                .collect::<Vec<_>>(),
+            Err(err) => {
+                debug!("NAT64 prefix lookup failed: {err:#}");
+                return None;
+            }
+        };
+        nat64::Nat64Prefix::from_ipv4only_arpa(&answers)
     }
 
     #[cfg(not(wasm_browser))]

@@ -939,6 +939,8 @@ impl EndpointInner {
             shutdown_token.child_token(),
         )
         .map_err(|err| e!(BindError::Sockets, err))?;
+        #[cfg(not(wasm_browser))]
+        let nat64_state = transports.nat64_state();
 
         if let Some(v4_port) = transports.local_addrs().into_iter().find_map(|t| {
             if let transports::Addr::Ip(SocketAddr::V4(addr)) = t {
@@ -1047,6 +1049,7 @@ impl EndpointInner {
             });
             net_report::Options::new(tls_config.clone())
                 .quic_config(qad_config)
+                .nat64(nat64_state)
                 .proxy_url(proxy_url.clone())
                 .net_report_config(net_report_config)
         };
