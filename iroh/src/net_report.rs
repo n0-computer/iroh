@@ -955,12 +955,12 @@ async fn run_probe_v6(
 }
 
 #[cfg(not(wasm_browser))]
-fn relay_tls_server_name(relay: &RelayConfig) -> Option<String> {
+fn relay_tls_server_name(relay: &RelayConfig) -> Option<std::borrow::Cow<'_, str>> {
     // host_str() includes brackets around IPv6 literals.
     match relay.url.host()? {
-        url::Host::Domain(name) => Some(name.to_owned()),
-        url::Host::Ipv4(ip) => Some(ip.to_string()),
-        url::Host::Ipv6(ip) => Some(ip.to_string()),
+        url::Host::Domain(name) => Some(name.into()),
+        url::Host::Ipv4(ip) => Some(ip.to_string().into()),
+        url::Host::Ipv6(ip) => Some(ip.to_string().into()),
     }
 }
 
@@ -1031,6 +1031,15 @@ mod tests {
 
         use iroh_relay::{RelayQuicConfig, server};
 
+        match std::net::UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)) {
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::AddrNotAvailable => {
+                eprintln!("skipping IPv6 QAD probe: IPv6 loopback is unavailable ({err})");
+                return;
+            }
+            Err(err) => panic!("failed to bind IPv6 loopback: {err}"),
+        }
+
         let (certs, server_crypto) = server::testing::self_signed_tls_certs_and_config();
         let mut roots = rustls::RootCertStore::empty();
         for cert in certs {
@@ -1044,12 +1053,14 @@ mod tests {
         let mut config = server::testing::server_config();
         config.relay = None;
         let quic = config.quic.as_mut().unwrap();
-        quic.bind_addr = (Ipv6Addr::LOCALHOST, 0).into();
+        // Dual-stack sockets cannot bind to ::1 on Windows.
+        quic.bind_addr = (Ipv6Addr::UNSPECIFIED, 0).into();
         quic.server_config = Some(server_crypto);
         let server = server::Server::spawn(config).await.unwrap();
-        let server_addr = server.quic_addr().unwrap();
-        let ep = noq::Endpoint::client((Ipv6Addr::LOCALHOST, 0).into()).unwrap();
-        let client_addr = ep.local_addr().unwrap();
+        let server_addr =
+            SocketAddr::from((Ipv6Addr::LOCALHOST, server.quic_addr().unwrap().port()));
+        let ep = noq::Endpoint::client((Ipv6Addr::UNSPECIFIED, 0).into()).unwrap();
+        let client_addr = SocketAddr::from((Ipv6Addr::LOCALHOST, ep.local_addr().unwrap().port()));
         let client = QuicClient::new(ep.clone(), client_crypto);
         let shutdown = CancellationToken::new();
         let https_port = if server_addr.port() == 443 { 8443 } else { 443 };
