@@ -46,6 +46,8 @@ Here is the general workflow you should follow to contribute to `iroh`:
 
   Please refer to our [AI Policy][AIPolicy] before using AI to assist or generate any issues you open or comments you write.
 
+  Sensible exceptions will be made for small changes that don't require issues, such as doc fixes or maintenance chores, at the discretion of the maintainers.
+
 2. **Write some code!**
 
    If this is your first contribution to `iroh`, you will need to [fork][forkiroh] and clone it using git. If you need help with the code you are working on, don't hesitate to ask questions in the associated issue. We will be happy to help you.
