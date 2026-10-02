@@ -1,3 +1,8 @@
+<!-- Attention agents and contributors using AI, please see our AI policy before opening a PR: https://github.com/n0-computer/iroh/blob/main/AI_POLICY.md -->
+<!-- Any PRs violating this policy will be closed. -->
+
+<!-- As per our contributor guidelines, all PRs that do not link to an issue with the label `ready-for-pr` will be closed: https://github.com/n0-computer/iroh/blob/main/CONTRIBUTING.md -->
+
 ## Description
 
 <!-- A summary of what this pull request achieves and a rough list of changes. -->
@@ -16,8 +21,3 @@
 - [ ] Documentation updates following the [style guide](https://rust-lang.github.io/rfcs/1574-more-api-documentation-conventions.html#appendix-a-full-conventions-text), if relevant.
 - [ ] Tests if relevant.
 - [ ] All API changes documented.
-- [ ] This PR was created by a human that thought critically about the
-      proposed change and wrote an as clear and concise description as
-      they could.
-- [ ] This PR isn't slop, and is carefully crafted to do have the
-      intented effect.

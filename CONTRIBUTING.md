@@ -125,4 +125,4 @@ Here is the general workflow you should follow to contribute to `iroh`:
 [rustdoc]: https://doc.rust-lang.org/rustdoc/how-to-write-documentation.html
 [docconventions]: https://rust-lang.github.io/rfcs/1574-more-api-documentation-conventions.html#appendix-a-full-conventions-text
 [discord]: https://discord.gg/Vc3nv3uyaY
-[AIPolicy]: https://github.com/n0-computer/iroh/blob/main/ai_policy.md
+[AIPolicy]: https://github.com/n0-computer/iroh/blob/main/AI_POLICY.md
