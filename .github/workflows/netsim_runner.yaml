@@ -137,7 +137,7 @@ jobs:
     - name: Install sccache
       uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       continue-on-error: true
-    - uses: ./.github/workflows/sccache-probe
+    - uses: $/.github/workflows/sccache-probe
 
     - name: Build iroh
       env:

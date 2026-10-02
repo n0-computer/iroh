@@ -416,7 +416,7 @@ impl Builder {
     /// IP address. To set a different one, build a [`NameserverConfig`] with
     /// [`NameserverConfig::with_tls_server_name`] and pass it to
     /// [`Self::add_nameserver_config`].
-    #[deprecated(since = "1.2.0", note = "use add_nameserer_config()")]
+    #[deprecated(since = "1.2.0", note = "use add_nameserver_config()")]
     pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
         self.nameservers.push(NameserverConfig {
             addr,
@@ -432,7 +432,7 @@ impl Builder {
     /// IP address. To set a different one, build a [`NameserverConfig`] with
     /// [`NameserverConfig::with_tls_server_name`] and pass it to
     /// [`Self::add_nameserver_configs`].
-    #[deprecated(since = "1.2.0", note = "use add_nameserer_configs()")]
+    #[deprecated(since = "1.2.0", note = "use add_nameserver_configs()")]
     pub fn with_nameservers(
         mut self,
         nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,

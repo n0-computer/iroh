@@ -2,7 +2,7 @@
 version: 3
 
 min_age:
-  value: 7 # days, matches the dependabot cooldown
+  value: 6 # days, matches the dependabot cooldown - 1
 
 # No semver tag upstream to verify the version comment against. Forks and
 # tool-named tags; revisit rather than leave indefinitely.
@@ -24,3 +24,5 @@ rules:
       # longer serves; every older release fails. Remove after 2026-09-24.
       - expr: |
           ActionName == "android-actions/setup-android" && VersionComment == "v4.0.4"
+      - expr: |
+          ActionRepoOwner == "n0-computer"
