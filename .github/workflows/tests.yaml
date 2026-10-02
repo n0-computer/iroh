@@ -124,12 +124,12 @@ jobs:
           ref: ${{ inputs.git-ref }}
 
       - name: Install ${{ matrix.rust }} rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: ${{ matrix.rust }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: nextest@${{ env.NEXTEST_VERSION }}
 
@@ -288,7 +288,7 @@ jobs:
       # Was a bare Invoke-WebRequest from get.nexte.st with no checksum,
       # unpacked into ~/.cargo/bin on a long-lived host.
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: nextest@${{ env.NEXTEST_VERSION }}
 
