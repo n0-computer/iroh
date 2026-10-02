@@ -1080,7 +1080,19 @@ impl State {
                     | Some(Err(PathError::MaxPathIdReached)) => {
                         self.scheduled_open_path =
                             Some(Instant::now() + Duration::from_millis(333));
-                        self.pending_open_paths.push_back(open_4tuple.clone());
+                        // Dedup. While a connection stays in `RemoteCidsExhausted` /
+                        // `MaxPathIdReached`, this branch is reached again every time
+                        // `scheduled_open_path` fires (333ms) for every candidate
+                        // 4-tuple, and each pass re-pushes the same entries. Nothing
+                        // bounds the queue, so it grows for as long as the condition
+                        // lasts.
+                        //
+                        // The number of distinct candidate 4-tuples for a remote is
+                        // small (single digits), so `contains` is a short linear scan
+                        // and bounds the queue to that set.
+                        if !self.pending_open_paths.contains(open_4tuple) {
+                            self.pending_open_paths.push_back(open_4tuple.clone());
+                        }
                         trace!(?open_4tuple, ?ret, "scheduling open_path");
                     }
                     _ => warn!(?ret, "Opening path failed"),
