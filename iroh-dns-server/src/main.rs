@@ -6,9 +6,10 @@ use n0_error::{Result, StdResultExt};
 use tracing::{debug, info};
 
 #[derive(Parser, Debug)]
+#[command(version, about)]
 struct Cli {
     /// Path to config file
-    #[clap(short, long)]
+    #[arg(short, long)]
     config: Option<PathBuf>,
 }
 
