@@ -1656,19 +1656,25 @@ mod tests {
             }
         );
 
-        tokio::time::pause();
-
         // Close the client connection.
         info!("close client conn");
         conn_client.close(0u32.into(), b"");
 
-        // Verify that the path watch streams close shortly after the connection is closed
-        tokio::time::timeout(Duration::from_nanos(1), async {
+        // QUIC close delivery crosses real UDP sockets and may be relayed; wait for both
+        // endpoints to observe it before checking the actor-owned path watcher state.
+        tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(conn_client.closed(), conn_server.closed());
+        })
+        .await
+        .expect("connections did not close within 1s");
+
+        // Verify that the path watch streams close after the connection close is observed.
+        tokio::time::timeout(Duration::from_secs(1), async {
             while paths_client.next().await.is_some() {}
         })
         .await
         .expect("client paths watcher did not close within 1s of connection close");
-        tokio::time::timeout(Duration::from_nanos(1), async {
+        tokio::time::timeout(Duration::from_secs(1), async {
             while paths_server.next().await.is_some() {}
         })
         .await
