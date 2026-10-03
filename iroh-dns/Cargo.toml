@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 arc-swap = "1.9.1"
-derive_more = { version = "2.1", features = ["debug"] }
+derive_more = { version = "2.0.1", features = ["debug"] }
 iroh-base = { version = "1.3.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 n0-error = "1.0.0"
 n0-future = "0.3"
