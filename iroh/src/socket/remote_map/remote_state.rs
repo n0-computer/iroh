@@ -1080,7 +1080,7 @@ impl State {
                     | Some(Err(PathError::MaxPathIdReached)) => {
                         self.scheduled_open_path =
                             Some(Instant::now() + Duration::from_millis(333));
-                        self.pending_open_paths.push_back(open_4tuple.clone());
+                        enqueue_pending_open_path(&mut self.pending_open_paths, open_4tuple);
                         trace!(?open_4tuple, ?ret, "scheduling open_path");
                     }
                     _ => warn!(?ret, "Opening path failed"),
@@ -1108,6 +1108,15 @@ impl State {
             .iter()
             .map(|d| d.addr)
             .collect()
+    }
+}
+
+fn enqueue_pending_open_path(
+    pending_open_paths: &mut VecDeque<transports::FourTuple>,
+    open_addr: &transports::FourTuple,
+) {
+    if !pending_open_paths.contains(open_addr) {
+        pending_open_paths.push_back(open_addr.clone());
     }
 }
 
@@ -1565,6 +1574,37 @@ async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<O
 #[cfg(all(test, not(wasm_browser)))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cid_exhaustion_fanout_keeps_one_retry_per_path() {
+        let paths = [
+            transports::FourTuple::Ip {
+                remote: "127.0.0.1:1234".parse::<SocketAddr>().unwrap(),
+                local: None,
+            },
+            transports::FourTuple::Ip {
+                remote: "127.0.0.1:5678".parse::<SocketAddr>().unwrap(),
+                local: None,
+            },
+        ];
+        let mut pending_open_paths = VecDeque::new();
+        for path in &paths {
+            enqueue_pending_open_path(&mut pending_open_paths, path);
+        }
+
+        // Each scheduled drain reopens every address on every connection. Failures must
+        // preserve one retry per address without multiplying the next batch.
+        for _ in 0..32 {
+            let mut retries = VecDeque::new();
+            std::mem::swap(&mut retries, &mut pending_open_paths);
+            while let Some(path) = retries.pop_front() {
+                for _ in 0..8 {
+                    enqueue_pending_open_path(&mut pending_open_paths, &path);
+                }
+            }
+            assert_eq!(pending_open_paths, VecDeque::from(paths.clone()));
+        }
+    }
 
     #[tokio::test]
     async fn blocked_relay_does_not_delay_direct_initial() {
