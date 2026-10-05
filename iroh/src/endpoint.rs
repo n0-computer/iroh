@@ -3808,7 +3808,8 @@ mod tests {
         Ok(())
     }
 
-    /// Tests that correct logs are emitted when connecting two endpoints with same secret keys to a relay.
+    /// Tests that correct logs are emitted when connecting two endpoints with same secret
+    /// keys to a relay.
     #[tokio::test]
     #[traced_test]
     async fn same_endpoint_id_relay() -> Result {
@@ -3874,10 +3875,14 @@ mod tests {
         // will be routed to the new endpoint and not to the old endpoint anymore.
         // We don't expose being connected to the home relay on the endpoint currently,
         // so we resort to log assertions.
+        // If you think this all wasn't sad enough already,
+        // https://github.com/tokio-rs/tracing/issues/1372 means we need to look for the
+        // repeated `id` field.
         // TODO(Frando): Replace once we add a proper API for this.
         let expected_log_line = format!(
-            "ep2:endpoint{{id={}}}:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected",
-            ep2.id().fmt_short()
+            "ep2:endpoint{{id={} id={}}}:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected",
+            ep2.id().fmt_short(),
+            ep2.id().fmt_short(),
         );
         tokio::time::timeout(Duration::from_secs(5), async {
             while !logs_contain(&expected_log_line) {
