@@ -23,7 +23,7 @@ use n0_error::{AnyError, e, ensure, stack_error};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
-use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
+use tracing::{Instrument, Span, debug, event, instrument, warn};
 use url::Url;
 
 #[cfg(feature = "unstable-custom-transports")]
@@ -224,21 +224,21 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the endpoint.
+    #[instrument(name = "endpoint", skip_all, fields(id))]
     pub async fn bind(self) -> Result<Endpoint, BindError> {
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
+        tracing::Span::current().record(
+            "id",
+            tracing::field::display(secret_key.public().fmt_short()),
+        );
 
         let crypto_provider = self
             .crypto_provider
             .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?;
-
         let token_key = Arc::new(
             RustlsTokenKey::new(&mut rand::rng(), &crypto_provider)
                 .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?,
         );
-
-        let span = info_span!("endpoint", id = %secret_key.public().fmt_short());
-        let _guard = span.enter();
-
         let tls_config = tls::TlsConfig::new(
             secret_key.clone(),
             self.max_tls_tickets,
@@ -253,9 +253,7 @@ impl Builder {
             token_store: Arc::new(noq::TokenMemoryCache::default()),
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
-
         let metrics = EndpointMetrics::default();
-
         let tls_config = self
             .ca_tls_config
             .unwrap_or_default()
