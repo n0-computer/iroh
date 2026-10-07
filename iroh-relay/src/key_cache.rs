@@ -41,7 +41,7 @@ impl KeyCache {
         match NonZeroUsize::new(capacity) {
             None => Self(Inner::Disabled),
             Some(capacity) => {
-                let cache = lru::LruCache::new(capacity);
+                let cache = lru::LruCache::sparse(capacity);
                 Self(Inner::Shared(Arc::new(Mutex::new(cache))))
             }
         }

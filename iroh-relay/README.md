@@ -98,6 +98,29 @@ access.http.bearer_token = "service-to-service-secret"
 The bearer token can also be set via the `IROH_RELAY_HTTP_BEARER_TOKEN`
 environment variable.
 
+For every connection, the relay sends a `POST` request with no body to
+`access.http.url`. The connecting endpoint's ID is sent in the
+`X-Iroh-Endpoint-Id` header. If a bearer token is configured, it is sent in an
+`Authorization: Bearer <token>` header.
+
+To allow the connection, your service must respond with status `200` and the
+response body `true`.
+
+Example request:
+
+```http
+POST /relay-auth HTTP/1.1
+x-iroh-endpoint-id: da1ee49ba54d124a2e2b0f043bac3d63ec086b0b40e7d0895914898b237e847e
+x-iroh-nodeid: da1ee49ba54d124a2e2b0f043bac3d63ec086b0b40e7d0895914898b237e847e
+authorization: Bearer service-to-service-secret
+accept: */*
+host: your-auth-service.example.com
+```
+
+> **Note:** the endpoint ID is also sent in the deprecated `X-Iroh-NodeId`
+> header for backwards compatibility. It will be removed in a future release.
+>New services should use `X-Iroh-Endpoint-Id`.
+
 ## Local testing
 
 Advice for testing your application that uses `iroh` with a locally running `iroh-relay` server

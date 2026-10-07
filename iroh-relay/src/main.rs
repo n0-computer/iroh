@@ -33,7 +33,10 @@ use webpki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
 /// The header name for setting the endpoint id in HTTP auth requests.
-const X_IROH_ENDPOINT_ID: &str = "X-Iroh-NodeId";
+const X_IROH_ENDPOINT_ID: &str = "X-Iroh-Endpoint-Id";
+/// Deprecated name for `X-Iroh-Endpoint-Id`. Sent temporarily so existing auth services keep working.
+// Removal tracked in https://github.com/n0-computer/iroh/issues/4585
+const X_IROH_NODE_ID_DEPRECATED: &str = "X-Iroh-NodeId";
 /// Environment variable to read a bearer token for HTTP auth requests from.
 const ENV_HTTP_BEARER_TOKEN: &str = "IROH_RELAY_HTTP_BEARER_TOKEN";
 /// Environment variable to verify relay access (without an external auth service)
@@ -168,7 +171,8 @@ enum AccessConfig {
     /// Performs a HTTP POST request to determine access for each endpoint that connects to the relay.
     ///
     /// The request will have a header `X-Iroh-Endpoint-Id` set to the hex-encoded endpoint id attempting
-    /// to connect to the relay.
+    /// to connect to the relay. For backwards compatibility, the same value is also sent in the
+    /// deprecated `X-Iroh-NodeId` header, which will be removed in a future release.
     ///
     /// To grant access, the HTTP endpoint must return a `200` response with `true` as the response text.
     /// In all other cases, the endpoint will be denied access.
@@ -316,7 +320,8 @@ async fn http_access_check_inner(
 ) -> Result<()> {
     let mut request = client
         .post(config.url.clone())
-        .header(X_IROH_ENDPOINT_ID, endpoint_id.to_string());
+        .header(X_IROH_ENDPOINT_ID, endpoint_id.to_string())
+        .header(X_IROH_NODE_ID_DEPRECATED, endpoint_id.to_string());
     if let Some(token) = config.bearer_token.as_ref() {
         request = request.header(http::header::AUTHORIZATION, format!("Bearer {token}"));
     }

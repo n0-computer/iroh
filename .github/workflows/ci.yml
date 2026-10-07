@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   pick-runner:
-    uses: "./.github/workflows/pick-runner.yml"
+    uses: "$/.github/workflows/pick-runner.yml"
     with:
       min_free_runners: 3
     secrets:
@@ -35,11 +35,11 @@ jobs:
   tests:
     name: CI Test Suite
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    uses: "./.github/workflows/tests.yaml"
+    uses: "$/.github/workflows/tests.yaml"
 
   min-crates:
     name: Min Crates
-    uses: "./.github/workflows/minimal-crates.yaml"
+    uses: "n0-computer/workflows/.github/workflows/minimal-crates.yaml@4e050c94c7d9679a2a0c4113a9cd6bfd3ec73194" # v1.1.1
 
   cross_build:
     name: Cross Build Only
@@ -382,7 +382,7 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
-      - uses: ./.github/workflows/sccache-probe
+      - uses: $/.github/workflows/sccache-probe
       - name: Check semver
         # uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2
         uses: n0-computer/cargo-semver-checks-action@b49de9133f8849bb51cae32c6bdeb19a5c37e61f # feat-baseline
@@ -448,7 +448,7 @@ jobs:
           components: rustfmt
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
-      - uses: ./.github/workflows/sccache-probe
+      - uses: $/.github/workflows/sccache-probe
       - uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
         with:
           tool: cargo-make
@@ -477,7 +477,7 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
-      - uses: ./.github/workflows/sccache-probe
+      - uses: $/.github/workflows/sccache-probe
 
       - name: Docs
         run: cargo doc --locked --workspace --all-features --no-deps --document-private-items
@@ -501,7 +501,7 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
-      - uses: ./.github/workflows/sccache-probe
+      - uses: $/.github/workflows/sccache-probe
 
       # TODO: We have a bunch of platform-dependent code so should
       #    probably run this job on the full platform matrix
@@ -559,7 +559,7 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
-      - uses: ./.github/workflows/sccache-probe
+      - uses: $/.github/workflows/sccache-probe
 
       - name: Check MSRV all features
         run: |
@@ -584,7 +584,7 @@ jobs:
       contents: read
       pull-requests: write   # netsim_runner posts the report comment
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    uses: "./.github/workflows/netsim_runner.yaml"
+    uses: "$/.github/workflows/netsim_runner.yaml"
     secrets:
       S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
       S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
