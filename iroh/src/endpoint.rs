@@ -23,7 +23,7 @@ use n0_error::{AnyError, e, ensure, stack_error};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
-use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
+use tracing::{Instrument, Span, debug, event, instrument, warn};
 use url::Url;
 
 #[cfg(feature = "unstable-custom-transports")]
@@ -224,21 +224,21 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the endpoint.
+    #[instrument(name = "endpoint", skip_all, fields(id))]
     pub async fn bind(self) -> Result<Endpoint, BindError> {
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
+        tracing::Span::current().record(
+            "id",
+            tracing::field::display(secret_key.public().fmt_short()),
+        );
 
         let crypto_provider = self
             .crypto_provider
             .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?;
-
         let token_key = Arc::new(
             RustlsTokenKey::new(&mut rand::rng(), &crypto_provider)
                 .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?,
         );
-
-        let span = info_span!("endpoint", id = %secret_key.public().fmt_short());
-        let _guard = span.enter();
-
         let tls_config = tls::TlsConfig::new(
             secret_key.clone(),
             self.max_tls_tickets,
@@ -253,9 +253,7 @@ impl Builder {
             token_store: Arc::new(noq::TokenMemoryCache::default()),
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
-
         let metrics = EndpointMetrics::default();
-
         let tls_config = self
             .ca_tls_config
             .unwrap_or_default()
@@ -3810,7 +3808,8 @@ mod tests {
         Ok(())
     }
 
-    /// Tests that correct logs are emitted when connecting two endpoints with same secret keys to a relay.
+    /// Tests that correct logs are emitted when connecting two endpoints with same secret
+    /// keys to a relay.
     #[tokio::test]
     #[traced_test]
     async fn same_endpoint_id_relay() -> Result {
@@ -3876,10 +3875,14 @@ mod tests {
         // will be routed to the new endpoint and not to the old endpoint anymore.
         // We don't expose being connected to the home relay on the endpoint currently,
         // so we resort to log assertions.
+        // If you think this all wasn't sad enough already,
+        // https://github.com/tokio-rs/tracing/issues/1372 means we need to look for the
+        // repeated `id` field.
         // TODO(Frando): Replace once we add a proper API for this.
         let expected_log_line = format!(
-            "ep2:endpoint{{id={}}}:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected",
-            ep2.id().fmt_short()
+            "ep2:endpoint{{id={} id={}}}:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected",
+            ep2.id().fmt_short(),
+            ep2.id().fmt_short(),
         );
         tokio::time::timeout(Duration::from_secs(5), async {
             while !logs_contain(&expected_log_line) {
