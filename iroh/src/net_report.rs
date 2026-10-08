@@ -1,65 +1,73 @@
-//! Checks the network conditions from the current host.
+//! Learns our public addresses and the best relay, and keeps both current.
 //!
-//! NetReport is responsible for finding out the network conditions of the current host, like
-//! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
-//! etc and reachability to the configured relays.
+//! Net report probes the configured relays. QUIC address discovery (QAD) tells
+//! us the public address the relays see us coming from, and the round trips
+//! tell us which relay is closest. The net report re-assesses both when the
+//! network changes and periodically.
+//!
+//! It runs on its own: it watches the network interfaces itself and needs no
+//! requests. What it learns it publishes as [`Outputs`], small watchable values
+//! the rest of iroh subscribes to. The socket watches the public addresses, and
+//! the relay transport watches the home relay. The full report is only a
+//! debug view, exposed through `Endpoint::net_report`.
 // Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
 #![cfg_attr(wasm_browser, allow(unused))]
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::Debug,
-    sync::Arc,
-};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use defaults::timeouts::PROBES_TIMEOUT;
 #[cfg(not(wasm_browser))]
 use iroh_dns::dns::DnsResolver;
-use iroh_relay::{
-    RelayMap,
-    quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON},
-};
-use n0_future::{
-    StreamExt,
-    time::{self, Duration, Instant},
-};
-use tokio::task::JoinSet;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
-
+use iroh_relay::RelayMap;
 #[cfg(not(wasm_browser))]
-use self::reportgen::SocketState;
-use self::reportgen::{ProbeFinished, ProbeReport};
+use iroh_relay::quic::QuicClient;
+use n0_future::task::{self, AbortOnDropHandle};
+#[cfg(test)]
+use n0_watcher::Watchable;
+use n0_watcher::{Direct, Watcher};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+use tracing::{Instrument, Span, info_span};
+#[cfg(not(wasm_browser))]
+use url::Url;
+
+pub(crate) use self::outputs::{Outputs, PublicAddrs, Update};
+#[cfg(any(test, feature = "unstable-net-report"))]
+#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
+pub use self::report::Report;
+#[cfg(feature = "unstable-net-report")]
+pub use self::report::{Probe, RelayLatencies};
+use self::{
+    actor::NetReportActor,
+    interfaces::{Changes, Interfaces, NetworkState},
+    timing::Timing,
+};
 #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 pub use self::{
-    // exported primarily for use in documentation
-    defaults::timeouts::TIMEOUT,
     metrics::Metrics,
-    probes::Probe,
-    report::{RelayLatencies, Report},
+    // exported primarily for use in documentation
+    timing::FIRST_REPORT_TIMEOUT_SECS,
 };
-pub(crate) use self::{options::Options, qad::QuicConfig, reportgen::IfStateDetails};
+use crate::endpoint::RelayStatus;
 
+mod actor;
 #[cfg(not(wasm_browser))]
 mod captive_portal;
-mod defaults;
 mod https;
+mod interfaces;
 mod metrics;
-mod options;
-mod probes;
+mod outputs;
 mod qad;
 mod report;
-mod reportgen;
+mod timing;
 
 /// Configuration for the net report component.
 ///
-/// Controls which probes and checks are performed when generating network reports.
-/// All options default to `true`.
+/// Controls which probes and checks the net report performs.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct NetReportConfig {
-    /// Run HTTPS latency probes against relay servers.
+    /// Whether to run HTTPS latency probes against relay servers.
     ///
     /// HTTPS latency probes perform an empty HTTPS GET request to each configured
     /// relay server and measure latency.
@@ -72,15 +80,29 @@ pub struct NetReportConfig {
     /// completely prevent finding the home relay on networks that do block QUIC.
     pub https_probes: bool,
 
-    /// Check for captive portals when generating the first report.
+    /// Whether to check for captive portals.
     ///
     /// This is done by accessing a well-known URL that is available on each relay
     /// server, `/generate_204`. If a GET request to this URL returns anything else
     /// but a 204 No Content response, we assume we are behind a captive portal.
     ///
-    /// When we have detected that we are behind a captive portal, we try to contact
-    /// the relay servers more frequently in case the captive portal status changes.
+    /// The check runs on every full probe cycle: at startup, after a major
+    /// network change, and periodically. When we have detected that we are
+    /// behind a captive portal and UDP does not work, every cycle is a full
+    /// one, in case the captive portal status changes.
     pub captive_portal_check: bool,
+
+    /// Delay inserted between successive QAD probes within a probe cycle.
+    ///
+    /// A cycle runs QUIC address discovery against several relays. By default
+    /// those probes all start at once, a brief burst of QUIC handshakes. On
+    /// resource-constrained devices (an ESP32, say) that burst is disruptive,
+    /// so a non-zero value spreads the probes out: the first still starts
+    /// immediately, and each following one is delayed by a further multiple
+    /// of this duration. Setting it does not delay the first result.
+    ///
+    /// Defaults to [`Duration::ZERO`], which keeps the all-at-once behavior.
+    pub qad_stagger: Duration,
 }
 
 impl NetReportConfig {
@@ -89,6 +111,7 @@ impl NetReportConfig {
         Self {
             https_probes: false,
             captive_portal_check: false,
+            qad_stagger: Duration::ZERO,
         }
     }
 }
@@ -98,622 +121,185 @@ impl Default for NetReportConfig {
         Self {
             https_probes: true,
             captive_portal_check: true,
+            qad_stagger: Duration::ZERO,
         }
     }
 }
 
-const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
-const ENOUGH_ENDPOINTS: usize = 3;
+/// Configuration and dependencies for the net report actor.
+#[derive(Debug, Clone)]
+pub(crate) struct Options {
+    /// Which optional probes run.
+    pub(crate) config: NetReportConfig,
+    /// Timeouts and pacing.
+    pub(crate) timing: Timing,
+    /// The relays to probe.
+    pub(crate) relay_map: RelayMap,
+    /// The relay transport's connection to the home relay.
+    pub(crate) relay_status: Direct<Option<RelayStatus>>,
+    /// The QUIC client for QAD probes, or `None` to skip QAD.
+    ///
+    /// QAD needs IP transports: the probes go out from the endpoint's own
+    /// sockets.
+    #[cfg(not(wasm_browser))]
+    pub(crate) quic_client: Option<QuicClient>,
+    /// Whether QAD probes IPv6, which needs an IPv6 socket.
+    #[cfg(not(wasm_browser))]
+    pub(crate) qad_ipv6: bool,
+    /// Resolves relay hostnames.
+    #[cfg(not(wasm_browser))]
+    pub(crate) dns_resolver: DnsResolver,
+    /// TLS config for the HTTPS and captive portal requests.
+    #[cfg(not(wasm_browser))]
+    pub(crate) tls_config: rustls::ClientConfig,
+    /// Proxy for the HTTPS and captive portal requests, if any.
+    #[cfg(not(wasm_browser))]
+    pub(crate) proxy_url: Option<Url>,
+}
 
-/// Client to run net_reports.
+/// Prepares subscriptions before the endpoint needed for QAD exists.
+///
+/// Consumed by [`Self::spawn`] once the endpoint has been constructed.
+#[derive(Debug, Default)]
+pub(crate) struct Builder {
+    outputs: Outputs,
+}
+
+impl Builder {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Read-only access for the relay transport and the report API.
+    pub(crate) fn outputs(&self) -> Outputs {
+        self.outputs.clone()
+    }
+
+    /// Starts interface monitoring and probing, returning the owning client.
+    pub(crate) async fn spawn(
+        self,
+        opts: Options,
+        metrics: Arc<Metrics>,
+        shutdown: CancellationToken,
+    ) -> Result<Client, netwatch::netmon::Error> {
+        let interfaces = Interfaces::new().await?;
+        Ok(self.spawn_with_interfaces(opts, interfaces, metrics, shutdown))
+    }
+
+    fn spawn_with_interfaces(
+        self,
+        opts: Options,
+        interfaces: Interfaces,
+        metrics: Arc<Metrics>,
+        shutdown: CancellationToken,
+    ) -> Client {
+        let network = self.outputs.network_state.watch();
+        let public_addrs = self.outputs.public_addrs.watch();
+        let (messages, receiver) = mpsc::unbounded_channel();
+        let actor =
+            NetReportActor::new(opts, interfaces, receiver, self.outputs, metrics, shutdown);
+        let handle = task::spawn(
+            actor
+                .run()
+                .instrument(info_span!(parent: Span::current(), "net_report")),
+        );
+        Client {
+            messages,
+            network,
+            public_addrs,
+            changes: Changes::default(),
+            ready: Changes::default(),
+            _actor_handle: AbortOnDropHandle::new(handle),
+        }
+    }
+}
+
+/// Owns the net report task, its commands, and the socket's output subscription.
+///
+/// Dropping the client stops the actor and its probes. Cloning the outputs
+/// does not extend the task's lifetime.
 #[derive(Debug)]
 pub(crate) struct Client {
-    #[cfg(not(wasm_browser))]
-    socket_state: SocketState,
-    metrics: Arc<Metrics>,
-    probes: BTreeSet<Probe>,
-    relay_map: RelayMap,
-    #[cfg(not(wasm_browser))]
-    qad_conns: qad::QadConns,
-    #[cfg(not(wasm_browser))]
-    tls_config: rustls::ClientConfig,
-    /// Whether to check for captive portals.
-    captive_portal_check: bool,
-    /// A collection of previously generated reports.
-    ///
-    /// Sometimes it is useful to look at past reports to decide what to do.
-    reports: Reports,
+    /// Changes the actor cannot observe itself.
+    messages: mpsc::UnboundedSender<Message>,
+    /// The addresses and network changes consumed by the socket.
+    network: Direct<NetworkState>,
+    public_addrs: Direct<PublicAddrs>,
+    /// Last consumed network changes, including any coalesced major changes.
+    changes: Changes,
+    ready: Changes,
+    /// Aborts the background actor when the client is dropped.
+    _actor_handle: AbortOnDropHandle<()>,
 }
 
 #[derive(Debug)]
-struct Reports {
-    /// Do a full relay scan, even if last is `Some`.
-    next_full: bool,
-    /// Some previous reports.
-    prev: BTreeMap<Instant, Report>,
-    /// Most recent report.
-    last: Option<Report>,
-    /// Time of last full (non-incremental) report.
-    last_full: Instant,
-}
-
-impl Default for Reports {
-    fn default() -> Self {
-        Self {
-            next_full: true,
-            prev: Default::default(),
-            last: Default::default(),
-            last_full: Instant::now(),
-        }
-    }
+enum Message {
+    RelaysChanged,
+    NetworkChange,
+    #[cfg(all(test, with_crypto_provider))]
+    ForceNetworkChange(bool),
 }
 
 impl Client {
-    /// Creates a new net_report client.
-    pub(crate) fn new(
-        #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
-        relay_map: RelayMap,
-        opts: Options,
-        metrics: Arc<Metrics>,
-    ) -> Self {
-        let probes = opts.as_protocols();
-
-        #[cfg(not(wasm_browser))]
-        let quic_client = opts
-            .quic_config
-            .map(|c| iroh_relay::quic::QuicClient::new(c.ep, c.client_config));
-
-        #[cfg(not(wasm_browser))]
-        let socket_state = SocketState {
-            quic_client,
-            dns_resolver,
-            proxy_url: opts.proxy_url,
-        };
-
-        Client {
-            #[cfg(not(wasm_browser))]
-            socket_state,
-            metrics,
-            reports: Reports::default(),
-            probes,
-            relay_map,
-            #[cfg(not(wasm_browser))]
-            qad_conns: qad::QadConns::default(),
-            #[cfg(not(wasm_browser))]
-            tls_config: opts.tls_config,
-            captive_portal_check: opts.user_config.captive_portal_check,
-        }
-    }
-
-    /// Generates a [`Report`].
-    ///
-    /// Look at [`Options`] for the different configuration options.
-    pub(crate) async fn get_report(
-        &mut self,
-        if_state: IfStateDetails,
-        is_major: bool,
-        shutdown_token: CancellationToken,
-    ) -> Report {
-        let now = Instant::now();
-
-        let mut do_full = is_major
-            || self.reports.next_full
-            || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
-
-        debug!(%do_full, "net_report starting");
-
-        // If the last report had a captive portal and reported no UDP access,
-        // it's possible that we didn't get a useful net_report due to the
-        // captive portal blocking us. If so, make this report a full (non-incremental) one.
-        if !do_full
-            && let Some(ref last) = self.reports.last
-            && !last.has_udp()
-            && last.captive_portal == Some(true)
-        {
-            do_full = true;
-        }
-        if do_full {
-            self.reports.last = None; // causes ProbePlan::new below to do a full (initial) plan
-            self.reports.next_full = false;
-            self.reports.last_full = now;
-            self.metrics.reports_full.inc();
-        }
-        self.metrics.reports.inc();
-
-        let num_relays = self.relay_map.len();
-        let enough_relays = std::cmp::min(num_relays, ENOUGH_ENDPOINTS);
-        #[cfg(wasm_browser)]
-        let if_state = IfStateDetails::default();
-        #[cfg(not(wasm_browser))]
-        let if_state = IfStateDetails {
-            have_v4: if_state.have_v4,
-            have_v6: if_state.have_v6,
-        };
-
-        let mut report = Report::default();
-
-        // Start the reportgen client to start any needed probes
-        let (actor, mut probe_rx) = reportgen::Client::new(
-            self.reports.last.clone(),
-            self.relay_map.clone(),
-            self.probes.clone(),
-            self.captive_portal_check,
-            if_state.clone(),
-            shutdown_token.child_token(),
-            #[cfg(not(wasm_browser))]
-            self.socket_state.clone(),
-            #[cfg(not(wasm_browser))]
-            self.tls_config.clone(),
-        );
-
-        #[cfg(not(wasm_browser))]
-        let reports = self
-            .spawn_qad_probes(
-                &if_state,
-                enough_relays,
-                do_full,
-                shutdown_token.child_token(),
-            )
-            .await;
-
-        #[cfg(not(wasm_browser))]
-        for r in reports {
-            report.update(&r);
-        }
-
-        if self.have_enough_reports(&if_state, do_full, num_relays, &report) {
-            // check if we already have enough probes immediately after QAD returns
-            trace!("have enough probe reports, aborting further probes");
-            // shuts down the probes
-            drop(actor);
-        } else {
-            #[cfg(not(wasm_browser))]
-            let mut qad_v4_stream = self.qad_conns.watch_v4();
-            #[cfg(wasm_browser)]
-            let mut qad_v4_stream = n0_future::stream::empty::<Option<()>>();
-            #[cfg(not(wasm_browser))]
-            let mut qad_v6_stream = self.qad_conns.watch_v6();
-            #[cfg(wasm_browser)]
-            let mut qad_v6_stream = n0_future::stream::empty::<Option<()>>();
-
-            loop {
-                tokio::select! {
-                    biased;
-
-                    Some(Some(r)) = qad_v4_stream.next() => {
-                        #[cfg(not(wasm_browser))]
-                        {
-                            trace!(?r, "new report from QAD V4");
-                            report.update(&ProbeReport::QadIpv4(r));
-                        }
-                    }
-
-                    Some(Some(r)) = qad_v6_stream.next() => {
-                        #[cfg(not(wasm_browser))]
-                        {
-                            trace!(?r, "new report from QAD V6");
-                            report.update(&ProbeReport::QadIpv6(r));
-                        }
-                    }
-
-                    maybe_probe = probe_rx.recv() => {
-                        let Some(probe_res) = maybe_probe else {
-                            break;
-                        };
-                        match probe_res {
-                            ProbeFinished::Regular(probe) => match probe {
-                                Ok(probe) => {
-                                    report.update(&probe);
-                                    if self.have_enough_reports(&if_state, do_full, num_relays, &report) {
-                                        trace!("have enough probe reports, aborting further probes");
-                                        // shuts down the probes
-                                        drop(actor);
-                                        break;
-                                    }
-                                }
-                                Err(err) => {
-                                    trace!("probe failed: {:?}", err);
-                                }
-                            },
-                            #[cfg(not(wasm_browser))]
-                            ProbeFinished::CaptivePortal(portal) => {
-                                report.captive_portal = portal;
-                            }
-                        }
-                    }
-                }
+    /// Waits for the next address or network change.
+    pub(crate) async fn updated(&mut self) -> Update {
+        loop {
+            let network = self.network.get();
+            if let Some(is_major) = network.changes.since(self.changes) {
+                self.changes = network.changes;
+                return Update::NetworkChanged { is_major };
             }
-        }
-        self.add_report_history_and_set_preferred_relay(&mut report);
-        debug!(
-            ?report,
-            duration = ?now.elapsed(),
-            "net_report generated",
-        );
-
-        report
-    }
-
-    #[cfg(not(wasm_browser))]
-    async fn spawn_qad_probes(
-        &mut self,
-        if_state: &IfStateDetails,
-        enough_relays: usize,
-        do_full: bool,
-        shutdown_token: CancellationToken,
-    ) -> Vec<ProbeReport> {
-        use tracing::{Instrument, info_span};
-
-        let Some(ref quic_client) = self.socket_state.quic_client else {
-            return Vec::new();
-        };
-
-        if do_full {
-            // clear out existing connections if we are doing a full reset
-            self.qad_conns.clear();
-        }
-
-        if let Some((url, conn)) = &self.qad_conns.v4 {
-            // verify conn is still around
-            if let Some(reason) = conn.conn.close_reason() {
-                trace!(?url, "QAD v4 conn closed: {}", reason);
-                self.qad_conns.v4.take();
-            }
-        }
-        if let Some((url, conn)) = &self.qad_conns.v6 {
-            // verify conn is still around
-            if let Some(reason) = conn.conn.close_reason() {
-                trace!(?url, "QAD v6 conn closed: {}", reason);
-                self.qad_conns.v6.take();
-            }
-        }
-
-        let v4_report = self.qad_conns.current_v4();
-        let v6_report = self.qad_conns.current_v6();
-        let needs_v4_probe = v4_report.is_none();
-        let needs_v6_probe = v6_report.is_some() != if_state.have_v6;
-
-        let mut reports = Vec::new();
-
-        if let Some(report) = v4_report {
-            reports.push(report);
-        }
-        if let Some(report) = v6_report {
-            reports.push(report);
-        }
-
-        if !needs_v4_probe && !needs_v6_probe {
-            return reports;
-        }
-
-        trace!("spawning QAD probes");
-
-        // TODO: randomize choice?
-        const MAX_RELAYS: usize = 5;
-
-        let mut v4_buf = JoinSet::new();
-        let cancel_v4 = shutdown_token.child_token();
-        let mut v6_buf = JoinSet::new();
-        let cancel_v6 = shutdown_token.child_token();
-
-        let relays = self.relay_map.relays::<Vec<_>>();
-        for relay in relays.into_iter().take(MAX_RELAYS) {
-            if if_state.have_v4 && needs_v4_probe {
-                trace!(?relay.url, "v4 QAD probe starting");
-                let relay = relay.clone();
-                let dns_resolver = self.socket_state.dns_resolver.clone();
-                let quic_client = quic_client.clone();
-                let relay_url = relay.url.clone();
-                let inner_token = cancel_v4.child_token();
-                v4_buf.spawn(
-                    cancel_v4
-                        .child_token()
-                        .run_until_cancelled_owned(time::timeout(
-                            PROBES_TIMEOUT,
-                            qad::run_probe_v4(relay, quic_client, dns_resolver, inner_token),
-                        ))
-                        .instrument(info_span!("QADv4", %relay_url)),
-                );
-            }
-            if if_state.have_v6 && needs_v6_probe {
-                trace!(?relay.url, "v6 QAD probe starting");
-                let relay = relay.clone();
-                let dns_resolver = self.socket_state.dns_resolver.clone();
-                let quic_client = quic_client.clone();
-                let relay_url = relay.url.clone();
-                let inner_token = cancel_v6.child_token();
-                v6_buf.spawn(
-                    cancel_v6
-                        .child_token()
-                        .run_until_cancelled_owned(time::timeout(
-                            PROBES_TIMEOUT,
-                            qad::run_probe_v6(relay, quic_client, dns_resolver, inner_token),
-                        ))
-                        .instrument(info_span!("QADv6", %relay_url)),
-                );
-            }
-        }
-
-        // We set _pending to true if at least one report was started for each category.
-        // If we did not start any report for either category, _pending is set to false right away
-        // (it "completed" in the sense that nothing will ever run). If we did start at least one report,
-        // _pending is set to true, and will be set to false further down once the first task
-        // completed.
-        let mut ipv4_pending = !v4_buf.is_empty();
-        let mut ipv6_pending = !v6_buf.is_empty();
-
-        while !v4_buf.is_empty() || !v6_buf.is_empty() {
-            // We early-abort the tasks once we have at least `enough_relays` reports,
-            // and at least one ipv4 and one ipv6 report completed (if they were started, see comment above).
-
-            if reports.len() >= enough_relays && !ipv4_pending && !ipv6_pending {
-                debug!("enough probes: {}", reports.len());
-                cancel_v4.cancel();
-                cancel_v6.cancel();
-                break;
-            }
-
-            tokio::select! {
-                biased;
-
-                _ = shutdown_token.cancelled() => {
-                    trace!("qad report cancelled");
-                    break;
-                }
-
-                val = v4_buf.join_next(), if !v4_buf.is_empty() => {
-                    let span = info_span!("QADv4");
-                    let _guard = span.enter();
-                    ipv4_pending = false;
-                    match val {
-                        Some(Ok(Some(Ok(res)))) => {
-                            match res {
-                                Ok((r, conn)) => {
-                                    debug!(?r, "probe report");
-                                    let url = r.relay.clone();
-                                    reports.push(ProbeReport::QadIpv4(r));
-                                    if self.qad_conns.v4.is_none() {
-                                        self.qad_conns.v4.replace((url, conn));
-                                    } else {
-                                        conn.conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-                                    }
-                                }
-                                Err(err) => {
-                                    debug!("probe failed: {err:#}");
-                                }
-                            }
-                        }
-                        Some(Err(err)) => {
-                            if err.is_panic() {
-                                panic!("probe panicked: {err:#}");
-                            }
-                            warn!("probe failed: {err:#}");
-                        }
-                        Some(Ok(None)) => {
-                            debug!("probe canceled");
-                        }
-                        Some(Ok(Some(Err(time::Elapsed { .. })))) => {
-                            debug!("probe timed out");
-                        }
-                        None => {
-                            trace!("report canceled");
-                        }
-                    }
-                }
-                val = v6_buf.join_next(), if !v6_buf.is_empty() => {
-                    let span = info_span!("QADv6");
-                    let _guard = span.enter();
-                    ipv6_pending = false;
-                    match val {
-                        Some(Ok(Some(Ok(res)))) => {
-                            match res {
-                                Ok((r, conn)) => {
-                                    debug!(?r, "probe report");
-                                    let url = r.relay.clone();
-                                    reports.push(ProbeReport::QadIpv6(r));
-                                    if self.qad_conns.v6.is_none() {
-                                        self.qad_conns.v6.replace((url, conn));
-                                    } else {
-                                        conn.conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-                                    }
-                                }
-                                Err(err) => {
-                                    debug!("probe failed: {err:#}");
-                                }
-                            }
-                        }
-                        Some(Err(err)) => {
-                            if err.is_panic() {
-                                panic!("probe panicked: {err:#}");
-                            }
-                            warn!("probe failed: {err:#}");
-                        }
-                        Some(Ok(None)) => {
-                            debug!("probe canceled");
-                        }
-                        Some(Ok(Some(Err(time::Elapsed { .. })))) => {
-                            debug!("probe timed out");
-                        }
-                        None => {
-                            trace!("report canceled");
-                        }
-                    }
-                }
-                else => {
-                    break;
-                }
-            }
-        }
-
-        // make sure to cancel all outstanding reports
-        v4_buf.abort_all();
-        v6_buf.abort_all();
-
-        reports
-    }
-
-    /// Check if we have enough information to consider the current report "good enough".
-    fn have_enough_reports(
-        &self,
-        state: &IfStateDetails,
-        do_full: bool,
-        num_relays: usize,
-        report: &Report,
-    ) -> bool {
-        #[cfg_attr(wasm_browser, allow(unused_mut))]
-        let mut num_ipv4 = 0;
-        #[cfg_attr(wasm_browser, allow(unused_mut))]
-        let mut num_ipv6 = 0;
-        let mut num_https = 0;
-        for (typ, _, _) in report.relay_latency.iter() {
-            match typ {
-                #[cfg(not(wasm_browser))]
-                Probe::QadIpv4 => {
-                    num_ipv4 += 1;
-                }
-                #[cfg(not(wasm_browser))]
-                Probe::QadIpv6 => {
-                    num_ipv6 += 1;
-                }
-                Probe::Https => {
-                    num_https += 1;
-                }
-            }
-        }
-
-        if do_full {
-            // Full report, require more probes
-            match (state.have_v4, state.have_v6) {
-                (true, true) => {
-                    // Both IPv4 and IPv6 are expected to be available
-                    if num_ipv4 >= 2 && num_ipv6 >= 1 || num_ipv6 >= 2 && num_ipv4 >= 1 {
-                        return true;
-                    }
-                }
-                (true, false) => {
-                    // Just Ipv4 is expected
-                    if num_ipv4 >= 2 {
-                        return true;
-                    }
-                }
-                (false, true) => {
-                    // Just Ipv6 is expected
-                    if num_ipv6 >= 2 {
-                        return true;
-                    }
-                }
-                (false, false) => {}
-            }
-            if num_https >= num_relays {
-                // If we have at least one https probe per relay, we are happy
-                return true;
-            }
-            false
-        } else {
-            // Incremental reports, here the requirements are reduced further
-            match (state.have_v4, state.have_v6) {
-                (true, true) => {
-                    // Both IPv4 and IPv6 are expected to be available
-                    if num_ipv4 >= 1 && num_ipv6 >= 1 {
-                        return true;
-                    }
-                }
-                (true, false) => {
-                    // Just Ipv4 is expected
-                    if num_ipv4 >= 1 {
-                        return true;
-                    }
-                }
-                (false, true) => {
-                    // Just Ipv6 is expected
-                    if num_ipv6 >= 1 {
-                        return true;
-                    }
-                }
-                (false, false) => {}
-            }
-            if num_https >= num_relays {
-                // If we have at least one https probe per relay, we are happy
-                return true;
-            }
-            false
-        }
-    }
-
-    /// Adds `r` to the set of recent Reports and mutates `r.preferred_relay` to contain the best recent one.
-    fn add_report_history_and_set_preferred_relay(&mut self, r: &mut Report) {
-        let mut prev_relay = None;
-        if let Some(ref last) = self.reports.last {
-            prev_relay.clone_from(&last.preferred_relay);
-
-            // If we don't have new information, copy this from the last report
-            if r.mapping_varies_by_dest_ipv4.is_none() {
-                r.mapping_varies_by_dest_ipv4 = last.mapping_varies_by_dest_ipv4;
-            }
-            if r.mapping_varies_by_dest_ipv6.is_none() {
-                r.mapping_varies_by_dest_ipv6 = last.mapping_varies_by_dest_ipv6;
-            }
-        }
-
-        let now = Instant::now();
-        const MAX_AGE: Duration = Duration::from_secs(5 * 60);
-
-        // relay ID => its best recent latency in last MAX_AGE
-        let mut best_recent = RelayLatencies::default();
-
-        // chain the current report as we are still mutating it
-        let prevs_iter = self
-            .reports
-            .prev
-            .iter()
-            .map(|(a, b)| -> (&Instant, &Report) { (a, b) });
-
-        let mut to_remove = Vec::new();
-        for (t, pr) in prevs_iter {
-            if now.duration_since(*t) > MAX_AGE {
-                to_remove.push(*t);
-                continue;
-            }
-            best_recent.merge(&pr.relay_latency);
-        }
-        // merge in current run
-        best_recent.merge(&r.relay_latency);
-
-        for t in to_remove {
-            self.reports.prev.remove(&t);
-        }
-
-        // Then, pick which currently-alive relay server from the
-        // current report has the best latency over the past MAX_AGE.
-        let mut best_any = Duration::default();
-        let mut old_relay_cur_latency = Duration::default();
-        {
-            for (_, url, duration) in r.relay_latency.iter() {
-                if Some(url) == prev_relay.as_ref() {
-                    old_relay_cur_latency = duration;
-                }
-                if let Some(best) = best_recent.get(url)
-                    && (r.preferred_relay.is_none() || best < best_any)
-                {
-                    best_any = best;
-                    r.preferred_relay.replace(url.clone());
-                }
-            }
-
-            // If we're changing our preferred relay but the old one's still
-            // accessible and the new one's not much better, just stick with
-            // where we are.
-            if prev_relay.is_some()
-                && r.preferred_relay != prev_relay
-                && !old_relay_cur_latency.is_zero()
-                && best_any > old_relay_cur_latency / 3 * 2
+            if let Some(ready) = network.ready
+                && let Some(is_major) = ready.since(self.ready)
             {
-                r.preferred_relay = prev_relay;
+                self.ready = ready;
+                return Update::NetworkReady {
+                    is_major,
+                    hint: network.hint(),
+                };
+            }
+            tokio::select! {
+                Ok(_) = self.network.updated() => {},
+                Ok(_) = self.public_addrs.updated() => return Update::AddressesChanged,
+                else => std::future::pending().await,
             }
         }
+    }
 
-        self.reports.prev.insert(now, r.clone());
-        self.reports.last = Some(r.clone());
+    /// The current public addresses, without consuming update notifications.
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn public_addrs(&self) -> PublicAddrs {
+        self.public_addrs.clone().get()
+    }
+
+    /// Expands bound sockets into usable local addresses.
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn local_addresses(
+        &self,
+        bound_local: &[(SocketAddr, SocketAddr)],
+        include_loopback: bool,
+    ) -> Vec<SocketAddr> {
+        self.network
+            .clone()
+            .get()
+            .local_addresses(bound_local, include_loopback)
+    }
+
+    /// Asks the interface monitor to check for a network change.
+    pub(crate) fn network_change(&self) {
+        self.messages.send(Message::NetworkChange).ok();
+    }
+
+    #[cfg(all(test, with_crypto_provider))]
+    pub(crate) fn force_network_change(&self, is_major: bool) {
+        self.messages
+            .send(Message::ForceNetworkChange(is_major))
+            .ok();
+    }
+
+    /// Tells the net report that the relay map changed, starting a full cycle.
+    pub(crate) fn relays_changed(&self) {
+        self.messages.send(Message::RelaysChanged).ok();
     }
 }
 
@@ -723,7 +309,7 @@ mod test_utils {
 
     use iroh_relay::{RelayConfig, RelayQuicConfig, server};
 
-    pub(crate) async fn relay() -> (server::Server, RelayConfig) {
+    pub(super) async fn relay() -> (server::Server, RelayConfig) {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
@@ -735,278 +321,140 @@ mod test_utils {
 
         (server, endpoint_desc)
     }
-
-    /// Create a [`crate::RelayMap`] of the given size.
-    ///
-    /// This function uses [`relay`]. Note that the returned map uses internal order that will
-    /// often _not_ match the order of the servers.
-    pub(crate) async fn relay_map(relays: usize) -> (Vec<server::Server>, crate::RelayMap) {
-        let mut servers = Vec::with_capacity(relays);
-        let mut endpoints = Vec::with_capacity(relays);
-        for _ in 0..relays {
-            let (relay_server, endpoint) = relay().await;
-            servers.push(relay_server);
-            endpoints.push(endpoint);
-        }
-        (servers, crate::RelayMap::from_iter(endpoints))
-    }
 }
 
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
-    use iroh_base::RelayUrl;
     use iroh_dns::dns::DnsResolver;
     use iroh_relay::tls::{CaTlsConfig, default_provider};
     use n0_error::{Result, StdResultExt};
+    use n0_future::time::{self, Duration};
     use n0_tracing_test::traced_test;
+    use n0_watcher::Watcher;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::net_report::probes::Probe;
 
+    /// How long a test waits for an output or a cycle.
+    const TEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// A net report probing from a local QUIC endpoint.
+    struct TestClient {
+        client: Client,
+        outputs: Outputs,
+        _interfaces: Watchable<netwatch::netmon::State>,
+        ep: noq::Endpoint,
+        cancel: CancellationToken,
+    }
+
+    impl TestClient {
+        /// Spawns a net report with the default timing.
+        fn new(relay_map: RelayMap) -> Result<Self> {
+            Self::with_timing(relay_map, timing::Timing::default())
+        }
+
+        /// Spawns a net report with `timing`.
+        fn with_timing(relay_map: RelayMap, timing: timing::Timing) -> Result<Self> {
+            let ep =
+                noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
+            let relay_status = Watchable::new(None);
+            let opts = Options {
+                config: NetReportConfig::default(),
+                timing,
+                relay_map,
+                relay_status: relay_status.watch(),
+                quic_client: Some(QuicClient::new(
+                    ep.clone(),
+                    iroh_relay::tls::make_dangerous_client_config(),
+                )),
+                qad_ipv6: true,
+                dns_resolver: DnsResolver::new(),
+                tls_config: CaTlsConfig::insecure_skip_verify()
+                    .client_config(default_provider())
+                    .expect("infallible"),
+                proxy_url: None,
+            };
+            let interfaces = Watchable::new(netwatch::netmon::State::fake());
+            let builder = Builder::new();
+            let outputs = builder.outputs();
+            let metrics = Arc::new(Metrics::default());
+            let cancel = CancellationToken::new();
+            let client = builder.spawn_with_interfaces(
+                opts,
+                Interfaces::from_watcher(interfaces.watch()),
+                metrics,
+                cancel.child_token(),
+            );
+            Ok(Self {
+                client,
+                outputs,
+                _interfaces: interfaces,
+                ep,
+                cancel,
+            })
+        }
+
+        /// Waits until `watcher` holds a value that satisfies `f`, and returns it.
+        async fn wait<W: Watcher>(
+            &self,
+            mut watcher: W,
+            f: impl Fn(&W::Value) -> bool,
+        ) -> W::Value {
+            time::timeout(TEST_TIMEOUT, async {
+                loop {
+                    let value = watcher.get();
+                    if f(&value) {
+                        return value;
+                    }
+                    watcher.updated().await.expect("watcher closed");
+                }
+            })
+            .await
+            .expect("timed out waiting for output")
+        }
+
+        /// Stops the net report and waits for its endpoint to close.
+        async fn shutdown(self) {
+            self.cancel.cancel();
+            drop(self.client);
+            self.ep.wait_idle().await;
+        }
+    }
+
+    /// Returns whether `report` has an IPv4 address and a preferred relay.
+    fn has_v4_and_relay(report: &Option<Report>) -> bool {
+        report
+            .as_ref()
+            .is_some_and(|r| r.global_v4.is_some() && r.preferred_relay.is_some())
+    }
+
+    /// The net report starts on its own and fills every output.
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
     async fn test_basic() -> Result<()> {
         let (server, relay) = test_utils::relay().await;
-        let client_config = iroh_relay::tls::make_dangerous_client_config();
-        let ep = noq::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
-        let quic_addr_disc = QuicConfig {
-            ep: ep.clone(),
-            client_config,
-            ipv4: true,
-            ipv6: true,
-        };
-        let relay_map = RelayMap::from(relay);
+        let relay_url = relay.url.clone();
+        let client = TestClient::new(RelayMap::from(relay))?;
 
-        let resolver = DnsResolver::new();
-        let tls_config = CaTlsConfig::insecure_skip_verify()
-            .client_config(default_provider())
-            .expect("infallible");
-        let opts = Options::new(tls_config).quic_config(Some(quic_addr_disc.clone()));
-        let mut client = Client::new(
-            resolver.clone(),
-            relay_map.clone(),
-            opts.clone(),
-            Default::default(),
-        );
-        let if_state = IfStateDetails::fake();
+        let addrs = client
+            .wait(client.outputs.public_addrs(), |a| a.v4.is_some())
+            .await;
+        assert!(!addrs.v4.unwrap().varies_by_dest);
+        let home_relay = client
+            .wait(client.outputs.home_relay(), Option::is_some)
+            .await;
+        assert_eq!(home_relay, Some(relay_url));
+        let report = client
+            .wait(client.outputs.report(), has_v4_and_relay)
+            .await
+            .unwrap();
+        assert!(report.has_udp(), "want UDP");
+        assert_eq!(report.global_v4, addrs.v4.map(|a| a.addr));
 
-        // Note that the ProbePlan will change with each iteration.
-        for i in 0..5 {
-            let cancel = CancellationToken::new();
-            println!("--round {i}");
-            let r = client
-                .get_report(if_state.clone(), false, cancel.child_token())
-                .await;
-
-            assert!(r.has_udp(), "want UDP");
-            dbg!(&r);
-            assert!(
-                !r.relay_latency.is_empty(),
-                "expected at least 1 key in RelayLatency; got none",
-            );
-            assert!(
-                r.relay_latency.iter().next().is_some(),
-                "expected key 1 in RelayLatency; got {:?}",
-                r.relay_latency
-            );
-            assert!(r.global_v4.is_some(), "expected globalV4 set");
-            assert!(r.preferred_relay.is_some(),);
-            cancel.cancel();
-        }
-
-        drop(client);
-        ep.wait_idle().await;
+        client.shutdown().await;
         server.shutdown().await?;
-
-        Ok(())
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_add_report_history_set_preferred_relay() -> Result {
-        fn relay_url(i: u16) -> RelayUrl {
-            format!("http://{i}.com").parse().unwrap()
-        }
-
-        // report returns a *Report from (relay host, Duration)+ pairs.
-        fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Report> {
-            let mut report = Report::default();
-            for (s, d) in a {
-                assert!(s.starts_with('d'), "invalid relay server key");
-                let id: u16 = s[1..].parse().unwrap();
-                report.relay_latency.update_relay(
-                    relay_url(id),
-                    Duration::from_secs(d),
-                    Probe::QadIpv4,
-                );
-            }
-
-            Some(report)
-        }
-        struct Step {
-            /// Delay in seconds
-            after: u64,
-            r: Option<Report>,
-        }
-        struct Test {
-            name: &'static str,
-            steps: Vec<Step>,
-            /// want PreferredRelay on final step
-            want_relay: Option<RelayUrl>,
-            // wanted len(c.prev)
-            want_prev_len: usize,
-        }
-
-        let tests = [
-            Test {
-                name: "first_reading",
-                steps: vec![Step {
-                    after: 0,
-                    r: report([("d1", 2), ("d2", 3)]),
-                }],
-                want_prev_len: 1,
-                want_relay: Some(relay_url(1)),
-            },
-            Test {
-                name: "with_two",
-                steps: vec![
-                    Step {
-                        after: 0,
-                        r: report([("d1", 2), ("d2", 3)]),
-                    },
-                    Step {
-                        after: 1,
-                        r: report([("d1", 4), ("d2", 3)]),
-                    },
-                ],
-                want_prev_len: 2,
-                want_relay: Some(relay_url(1)), // t0's d1 of 2 is still best
-            },
-            Test {
-                name: "but_now_d1_gone",
-                steps: vec![
-                    Step {
-                        after: 0,
-                        r: report([("d1", 2), ("d2", 3)]),
-                    },
-                    Step {
-                        after: 1,
-                        r: report([("d1", 4), ("d2", 3)]),
-                    },
-                    Step {
-                        after: 2,
-                        r: report([("d2", 3)]),
-                    },
-                ],
-                want_prev_len: 3,
-                want_relay: Some(relay_url(2)), // only option
-            },
-            Test {
-                name: "d1_is_back",
-                steps: vec![
-                    Step {
-                        after: 0,
-                        r: report([("d1", 2), ("d2", 3)]),
-                    },
-                    Step {
-                        after: 1,
-                        r: report([("d1", 4), ("d2", 3)]),
-                    },
-                    Step {
-                        after: 2,
-                        r: report([("d2", 3)]),
-                    },
-                    Step {
-                        after: 3,
-                        r: report([("d1", 4), ("d2", 3)]),
-                    }, // same as 2 seconds ago
-                ],
-                want_prev_len: 4,
-                want_relay: Some(relay_url(1)), // t0's d1 of 2 is still best
-            },
-            Test {
-                name: "things_clean_up",
-                steps: vec![
-                    Step {
-                        after: 0,
-                        r: report([("d1", 1), ("d2", 2)]),
-                    },
-                    Step {
-                        after: 1,
-                        r: report([("d1", 1), ("d2", 2)]),
-                    },
-                    Step {
-                        after: 2,
-                        r: report([("d1", 1), ("d2", 2)]),
-                    },
-                    Step {
-                        after: 3,
-                        r: report([("d1", 1), ("d2", 2)]),
-                    },
-                    Step {
-                        after: 10 * 60,
-                        r: report([("d3", 3)]),
-                    },
-                ],
-                want_prev_len: 1, // t=[0123]s all gone. (too old, older than 10 min)
-                want_relay: Some(relay_url(3)), // only option
-            },
-            Test {
-                name: "preferred_relay_hysteresis_no_switch",
-                steps: vec![
-                    Step {
-                        after: 0,
-                        r: report([("d1", 4), ("d2", 5)]),
-                    },
-                    Step {
-                        after: 1,
-                        r: report([("d1", 4), ("d2", 3)]),
-                    },
-                ],
-                want_prev_len: 2,
-                want_relay: Some(relay_url(1)), // 2 didn't get fast enough
-            },
-            Test {
-                name: "preferred_relay_hysteresis_do_switch",
-                steps: vec![
-                    Step {
-                        after: 0,
-                        r: report([("d1", 4), ("d2", 5)]),
-                    },
-                    Step {
-                        after: 1,
-                        r: report([("d1", 4), ("d2", 1)]),
-                    },
-                ],
-                want_prev_len: 2,
-                want_relay: Some(relay_url(2)), // 2 got fast enough
-            },
-        ];
-        let resolver = DnsResolver::new();
-        let tls_config = CaTlsConfig::insecure_skip_verify()
-            .client_config(default_provider())
-            .expect("infallible");
-        for mut tt in tests {
-            println!("test: {}", tt.name);
-            let relay_map = RelayMap::empty();
-            let opts = Options::new(tls_config.clone());
-            let mut client = Client::new(resolver.clone(), relay_map, opts, Default::default());
-            for s in &mut tt.steps {
-                // trigger the timer
-                tokio::time::advance(Duration::from_secs(s.after)).await;
-                client.add_report_history_and_set_preferred_relay(s.r.as_mut().unwrap());
-            }
-            let last_report = tt.steps.last().unwrap().r.clone().unwrap();
-            let got = client.reports.prev.len();
-            let want = tt.want_prev_len;
-            assert_eq!(got, want, "prev length");
-            let got = &last_report.preferred_relay;
-            let want = &tt.want_relay;
-            assert_eq!(got, want, "preferred_relay");
-        }
-
         Ok(())
     }
 }

@@ -1,443 +1,314 @@
-//! QUIC address discovery (QAD) probes for net_report.
+//! QUIC Address Discovery: the probe, its report, and its kept-open connection.
+//!
+//! A QAD probe opens a QUIC connection to a relay. The relay reports the
+//! public socket address it sees us coming from, which is where other peers
+//! can try to reach us directly, and the round trip gives us our latency to
+//! that relay. The connection then stays open with a keep-alive. Because the
+//! relay only sees our address from the packets we send, it reports a change
+//! on the connection's next keep-alive rather than the instant our address
+//! changes. Keeping the connection open avoids a fresh handshake each time we
+//! need the current address.
 
-#[cfg(not(wasm_browser))]
 use std::{
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    ops::{Index, IndexMut},
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
 };
 
-#[cfg(not(wasm_browser))]
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
-use iroh_dns::dns::{DnsError, DnsResolver, StaggeredError};
-#[cfg(not(wasm_browser))]
+use iroh_dns::dns::{DNS_TIMEOUT, DnsResolver};
 use iroh_relay::{
     RelayConfig,
     defaults::DEFAULT_RELAY_QUIC_PORT,
     quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON, QuicClient},
 };
 #[cfg(not(wasm_browser))]
-use n0_error::e;
-use n0_error::stack_error;
-#[cfg(not(wasm_browser))]
+use n0_error::{Result, StackResultExt, anyerr};
 use n0_future::{
-    StreamExt as _,
-    task::{self, AbortOnDropHandle},
-    time::Duration,
+    FutureExt, Stream, StreamExt,
+    boxed::BoxFuture,
+    time::{Duration, Instant},
 };
-#[cfg(not(wasm_browser))]
-use n0_watcher::{Watchable, Watcher};
-#[cfg(not(wasm_browser))]
-use tokio_util::sync::CancellationToken;
-#[cfg(not(wasm_browser))]
+use noq::ObservedExternalAddr;
+use noq_proto::PathId;
 use tracing::trace;
 
-#[cfg(not(wasm_browser))]
-use super::defaults::timeouts::DNS_TIMEOUT;
-#[cfg(not(wasm_browser))]
-use super::reportgen::ProbeReport;
+use super::report::Probe;
 #[cfg(not(wasm_browser))]
 use crate::address_lookup::DNS_STAGGERING_MS;
 
-#[cfg(not(wasm_browser))]
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub(super) enum QadProbeError {
-    #[error("Failed to resolve relay address")]
-    GetRelayAddr { source: GetRelayAddrError },
-    #[error("Missing host in relay URL")]
-    MissingHost,
-    #[error("QUIC connection failed")]
-    Quic { source: iroh_relay::quic::Error },
-    #[error("Receiver dropped")]
-    ReceiverDropped,
+/// IP address family (IPv4 or IPv6) for QAD probes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AddrFamily {
+    V4,
+    V6,
 }
 
-#[cfg(not(wasm_browser))]
+impl AddrFamily {
+    /// Both families, IPv4 first.
+    pub(super) const ALL: [Self; 2] = [Self::V4, Self::V6];
+
+    /// Returns the DNS record type queried for this family (`A` or `AAAA`).
+    fn dns_record_type(self) -> &'static str {
+        match self {
+            Self::V4 => "A",
+            Self::V6 => "AAAA",
+        }
+    }
+
+    /// Returns the [`Probe`] that latencies from this family are filed under.
+    pub(super) fn probe(self) -> Probe {
+        match self {
+            Self::V4 => Probe::QadIpv4,
+            Self::V6 => Probe::QadIpv6,
+        }
+    }
+}
+
+/// One value per address family, indexed by [`AddrFamily`].
+#[derive(Debug, Default)]
+pub(super) struct PerFamily<T> {
+    v4: T,
+    v6: T,
+}
+
+impl<T> Index<AddrFamily> for PerFamily<T> {
+    type Output = T;
+
+    fn index(&self, family: AddrFamily) -> &T {
+        match family {
+            AddrFamily::V4 => &self.v4,
+            AddrFamily::V6 => &self.v6,
+        }
+    }
+}
+
+impl<T> IndexMut<AddrFamily> for PerFamily<T> {
+    fn index_mut(&mut self, family: AddrFamily) -> &mut T {
+        match family {
+            AddrFamily::V4 => &mut self.v4,
+            AddrFamily::V6 => &mut self.v6,
+        }
+    }
+}
+
+/// The address and latency a QAD probe learned from a relay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct QadProbeReport {
-    /// The relay that was probed
-    pub(super) relay: RelayUrl,
+    /// The relay that was probed.
+    pub(super) relay_url: RelayUrl,
     /// The latency to the relay.
     pub(super) latency: Duration,
     /// The discovered public address.
     pub(super) addr: SocketAddr,
 }
 
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub(super) enum QuicError {
-    #[error("No relay available")]
-    NoRelay,
-    #[error("URL must have 'host' to use QUIC address discovery probes")]
-    InvalidUrl,
-}
-
-/// Pieces needed to do QUIC address discovery.
-#[derive(derive_more::Debug, Clone)]
-pub(crate) struct QuicConfig {
-    /// A QUIC Endpoint
-    #[debug("noq::Endpoint")]
-    pub(crate) ep: noq::Endpoint,
-    /// A client config.
-    pub(crate) client_config: rustls::ClientConfig,
-    /// Enable ipv4 QUIC address discovery probes
-    pub(crate) ipv4: bool,
-    /// Enable ipv6 QUIC address discovery probes
-    pub(crate) ipv6: bool,
-}
-
-#[cfg(not(wasm_browser))]
-#[derive(Debug, Default)]
-pub(super) struct QadConns {
-    pub(super) v4: Option<(RelayUrl, QadConn)>,
-    pub(super) v6: Option<(RelayUrl, QadConn)>,
-}
-
-#[cfg(not(wasm_browser))]
-impl QadConns {
-    pub(super) fn clear(&mut self) {
-        if let Some((_, conn)) = self.v4.take() {
-            conn.conn
-                .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        }
-        if let Some((_, conn)) = self.v6.take() {
-            conn.conn
-                .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        }
-    }
-
-    pub(super) fn current_v4(&self) -> Option<ProbeReport> {
-        if let Some((_, ref conn)) = self.v4
-            && let Some(mut r) = conn.observer.get()
-        {
-            // grab latest rtt
-
-            use noq_proto::PathId;
-            if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
-                r.latency = latency;
-            }
-            return Some(ProbeReport::QadIpv4(r));
-        }
-        None
-    }
-
-    pub(super) fn current_v6(&self) -> Option<ProbeReport> {
-        if let Some((_, ref conn)) = self.v6
-            && let Some(mut r) = conn.observer.get()
-        {
-            // grab latest rtt
-
-            use noq_proto::PathId;
-            if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
-                r.latency = latency;
-            }
-            return Some(ProbeReport::QadIpv6(r));
-        }
-        None
-    }
-
-    pub(super) fn watch_v4(
-        &self,
-    ) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + use<> {
-        let watcher = self.v4.as_ref().map(|(_url, conn)| conn.observer.watch());
-
-        if let Some(watcher) = watcher {
-            watcher.stream_updates_only().boxed()
-        } else {
-            n0_future::stream::empty().boxed()
-        }
-    }
-
-    pub(super) fn watch_v6(
-        &self,
-    ) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + use<> {
-        let watcher = self.v6.as_ref().map(|(_url, conn)| conn.observer.watch());
-        if let Some(watcher) = watcher {
-            watcher.stream_updates_only().boxed()
-        } else {
-            n0_future::stream::empty().boxed()
-        }
-    }
-}
-
-#[cfg(not(wasm_browser))]
-#[derive(Debug)]
+/// An open QAD connection, kept to learn about later address changes.
+///
+/// It is a stream of [`QadConnEvent`]s that the actor polls directly. Dropping
+/// it drops the connection, and with it any update not yet polled.
+#[derive(derive_more::Debug)]
 pub(super) struct QadConn {
-    pub(super) conn: noq::Connection,
-    observer: Watchable<Option<QadProbeReport>>,
-    _handle: AbortOnDropHandle<Option<()>>,
+    /// The relay this connection is to.
+    relay_url: RelayUrl,
+    /// The open QUIC connection to the relay.
+    conn: noq::Connection,
+    /// The addresses the relay reports, starting after the first one.
+    observed: ObservedExternalAddr,
+    /// Completes when the connection closes.
+    #[debug(skip)]
+    closed: BoxFuture<()>,
+    /// When the connection was opened.
+    opened: Instant,
+}
+
+/// An update from an open [`QadConn`].
+#[derive(Debug)]
+pub(super) enum QadConnEvent {
+    /// The relay reported a new address for us.
+    Observed(QadProbeReport),
+    /// The connection closed. The actor drops it.
+    Closed,
+}
+
+impl QadConn {
+    /// Wraps an open connection.
+    ///
+    /// The first address was already read from `observed`.
+    fn new(relay_url: RelayUrl, conn: noq::Connection, observed: ObservedExternalAddr) -> Self {
+        let closed = {
+            let conn = conn.clone();
+            Box::pin(async move {
+                conn.closed().await;
+            })
+        };
+        Self {
+            relay_url,
+            conn,
+            observed,
+            closed,
+            opened: Instant::now(),
+        }
+    }
+
+    /// Returns how long the connection has been open.
+    pub(super) fn age(&self) -> Duration {
+        self.opened.elapsed()
+    }
+
+    /// Returns `true` if the connection has closed.
+    pub(super) fn is_closed(&self) -> bool {
+        self.conn.close_reason().is_some()
+    }
+
+    /// The relay this connection is to.
+    pub(super) fn relay_url(&self) -> &RelayUrl {
+        &self.relay_url
+    }
+
+    /// Returns the connection's latest observed address and current latency.
+    ///
+    /// Returns `None` before the relay has reported an address, which cannot
+    /// happen for a connection that [`run_probe`] returned.
+    pub(super) fn current_report(&self) -> Option<QadProbeReport> {
+        let addr = self.observed.get()?;
+        Some(self.report(addr))
+    }
+
+    /// Closes the connection with the QAD close code.
+    pub(super) fn close(&self) {
+        self.conn
+            .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+    }
+
+    /// Builds a report for `addr` with the connection's current latency.
+    fn report(&self, addr: SocketAddr) -> QadProbeReport {
+        QadProbeReport {
+            relay_url: self.relay_url.clone(),
+            // If we've sent to an IPv4 address, but received an observed
+            // address that is IPv6, then the address is an [IPv4-Mapped IPv6
+            // Address](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses).
+            addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
+            latency: self.conn.rtt(PathId::ZERO).unwrap_or_default(),
+        }
+    }
+}
+
+impl Stream for QadConn {
+    type Item = QadConnEvent;
+
+    /// Yields the next update.
+    ///
+    /// After [`QadConnEvent::Closed`] the actor drops the connection, so the
+    /// stream never ends on its own.
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<QadConnEvent>> {
+        if self.closed.poll(cx).is_ready() {
+            return Poll::Ready(Some(QadConnEvent::Closed));
+        }
+        match self.observed.poll_next(cx) {
+            Poll::Ready(Some(addr)) => Poll::Ready(Some(QadConnEvent::Observed(self.report(addr)))),
+            Poll::Ready(None) => Poll::Ready(Some(QadConnEvent::Closed)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+/// Runs a QAD probe for `family` against `relay`.
+///
+/// Returns the first address the relay reports, along with the open
+/// [`QadConn`] that yields later address changes.
+#[cfg(not(wasm_browser))]
+pub(super) async fn run_probe(
+    family: AddrFamily,
+    relay: Arc<RelayConfig>,
+    quic_client: QuicClient,
+    dns_resolver: DnsResolver,
+) -> Result<(QadProbeReport, QadConn)> {
+    trace!(?family, url = %relay.url, "QAD probe starting");
+
+    let relay_addr = get_relay_addr(&dns_resolver, &relay, family)
+        .await
+        .context("Failed to resolve relay address")?;
+
+    trace!(?relay_addr, "resolved relay server address");
+    let host = relay_tls_server_name(&relay).ok_or_else(|| anyerr!("Missing host in relay URL"))?;
+    let conn = quic_client
+        .create_conn(relay_addr, &host)
+        .await
+        .context("QUIC connection failed")?;
+
+    let mut observed = conn.observed_external_addr();
+    let addr = observed
+        .next()
+        .await
+        .ok_or_else(|| anyerr!("Connection closed before the relay reported an address"))?;
+    let conn = QadConn::new(relay.url.clone(), conn, observed);
+    Ok((conn.report(addr), conn))
+}
+
+/// Resolves the relay's QUIC socket address for the given address family.
+#[cfg(not(wasm_browser))]
+async fn get_relay_addr(
+    dns_resolver: &DnsResolver,
+    relay: &RelayConfig,
+    family: AddrFamily,
+) -> Result<SocketAddr> {
+    let port = get_quic_port(relay)
+        .ok_or_else(|| anyerr!("No QUIC port configured for relay {}", relay.url))?;
+    let no_addr = || {
+        anyerr!(
+            "No suitable relay address found for {} ({})",
+            relay.url,
+            family.dns_record_type()
+        )
+    };
+
+    match (relay.url.host(), family) {
+        (Some(url::Host::Ipv4(ip)), AddrFamily::V4) => Ok(SocketAddrV4::new(ip, port).into()),
+        (Some(url::Host::Ipv6(ip)), AddrFamily::V6) => Ok(SocketAddrV6::new(ip, port, 0, 0).into()),
+        (Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)), _) => Err(no_addr()),
+        (Some(url::Host::Domain(hostname)), _) => {
+            trace!(%hostname, ?family, "Performing DNS lookup for relay addr");
+            let first = match family {
+                AddrFamily::V4 => dns_resolver
+                    .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                    .await
+                    .context("DNS lookup failed")?
+                    .next(),
+                AddrFamily::V6 => dns_resolver
+                    .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                    .await
+                    .context("DNS lookup failed")?
+                    .next(),
+            };
+            match (first.map(|ip| ip.to_canonical()), family) {
+                (Some(IpAddr::V4(ip)), AddrFamily::V4) => Ok(SocketAddrV4::new(ip, port).into()),
+                (Some(IpAddr::V6(ip)), AddrFamily::V6) => {
+                    Ok(SocketAddrV6::new(ip, port, 0, 0).into())
+                }
+                _ => Err(no_addr()),
+            }
+        }
+        (None, _) => Err(anyerr!("No valid hostname in the relay URL")),
+    }
 }
 
 /// Returns the proper port based on the protocol of the probe.
 #[cfg(not(wasm_browser))]
 fn get_quic_port(relay: &RelayConfig) -> Option<u16> {
-    if let Some(ref quic) = relay.quic {
-        if quic.port == 0 {
-            Some(DEFAULT_RELAY_QUIC_PORT)
+    relay.quic.as_ref().map(|q| {
+        if q.port == 0 {
+            DEFAULT_RELAY_QUIC_PORT
         } else {
-            Some(quic.port)
+            q.port
         }
-    } else {
-        None
-    }
+    })
 }
 
-#[cfg(not(wasm_browser))]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub(super) enum GetRelayAddrError {
-    #[error("No valid hostname in the relay URL")]
-    InvalidHostname,
-    #[error("No suitable relay address found for {url} ({addr_type})")]
-    NoAddrFound {
-        url: RelayUrl,
-        addr_type: &'static str,
-    },
-    #[error("DNS lookup failed")]
-    DnsLookup { source: StaggeredError<DnsError> },
-    #[error("Relay is not suitable")]
-    UnsupportedRelay,
-    #[error("HTTPS probes are not implemented")]
-    UnsupportedHttps,
-    #[error("No port available for this protocol")]
-    MissingPort,
-}
-
-/// Returns the IP address to use to communicate to this relay for quic.
-#[cfg(not(wasm_browser))]
-pub(super) async fn get_relay_addr_ipv4(
-    dns_resolver: &DnsResolver,
-    relay: &RelayConfig,
-) -> Result<SocketAddrV4, GetRelayAddrError> {
-    let port = get_quic_port(relay).ok_or_else(|| e!(GetRelayAddrError::MissingPort))?;
-    relay_lookup_ipv4_staggered(dns_resolver, relay, port).await
-}
-
-#[cfg(not(wasm_browser))]
-pub(super) async fn get_relay_addr_ipv6(
-    dns_resolver: &DnsResolver,
-    relay: &RelayConfig,
-) -> Result<SocketAddrV6, GetRelayAddrError> {
-    let port = get_quic_port(relay).ok_or_else(|| e!(GetRelayAddrError::MissingPort))?;
-    relay_lookup_ipv6_staggered(dns_resolver, relay, port).await
-}
-
-/// Do a staggared ipv4 DNS lookup based on [`RelayConfig`]
-///
-/// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
-#[cfg(not(wasm_browser))]
-async fn relay_lookup_ipv4_staggered(
-    dns_resolver: &DnsResolver,
-    relay: &RelayConfig,
-    port: u16,
-) -> Result<SocketAddrV4, GetRelayAddrError> {
-    match relay.url.host() {
-        Some(url::Host::Domain(hostname)) => {
-            trace!(%hostname, "Performing DNS A lookup for relay addr");
-            match dns_resolver
-                .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
-                .await
-            {
-                Ok(mut addrs) => addrs
-                    .next()
-                    .map(|ip| ip.to_canonical())
-                    .map(|addr| match addr {
-                        IpAddr::V4(ip) => SocketAddrV4::new(ip, port),
-                        IpAddr::V6(_) => unreachable!("bad DNS lookup: {:?}", addr),
-                    })
-                    .ok_or_else(|| {
-                        e!(GetRelayAddrError::NoAddrFound {
-                            url: relay.url.clone(),
-                            addr_type: "A",
-                        })
-                    }),
-                Err(err) => Err(e!(GetRelayAddrError::DnsLookup, err)),
-            }
-        }
-        Some(url::Host::Ipv4(addr)) => Ok(SocketAddrV4::new(addr, port)),
-        Some(url::Host::Ipv6(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound {
-            url: relay.url.clone(),
-            addr_type: "A",
-        })),
-        None => Err(e!(GetRelayAddrError::InvalidHostname)),
-    }
-}
-
-/// Do a staggared ipv6 DNS lookup based on [`RelayConfig`]
-///
-/// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
-#[cfg(not(wasm_browser))]
-async fn relay_lookup_ipv6_staggered(
-    dns_resolver: &DnsResolver,
-    relay: &RelayConfig,
-    port: u16,
-) -> Result<SocketAddrV6, GetRelayAddrError> {
-    match relay.url.host() {
-        Some(url::Host::Domain(hostname)) => {
-            trace!(%hostname, "Performing DNS AAAA lookup for relay addr");
-            match dns_resolver
-                .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
-                .await
-            {
-                Ok(mut addrs) => addrs
-                    .next()
-                    .map(|addr| match addr {
-                        IpAddr::V4(_) => unreachable!("bad DNS lookup: {:?}", addr),
-                        IpAddr::V6(ip) => SocketAddrV6::new(ip, port, 0, 0),
-                    })
-                    .ok_or_else(|| {
-                        e!(GetRelayAddrError::NoAddrFound {
-                            url: relay.url.clone(),
-                            addr_type: "AAAA",
-                        })
-                    }),
-                Err(err) => Err(e!(GetRelayAddrError::DnsLookup, err)),
-            }
-        }
-        Some(url::Host::Ipv4(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound {
-            url: relay.url.clone(),
-            addr_type: "AAAA",
-        })),
-        Some(url::Host::Ipv6(addr)) => Ok(SocketAddrV6::new(addr, port, 0, 0)),
-        None => Err(e!(GetRelayAddrError::InvalidHostname)),
-    }
-}
-
-#[cfg(not(wasm_browser))]
-pub(super) async fn run_probe_v4(
-    relay: Arc<RelayConfig>,
-    quic_client: QuicClient,
-    dns_resolver: DnsResolver,
-    shutdown_token: CancellationToken,
-) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-    use noq_proto::PathId;
-
-    let relay_addr = get_relay_addr_ipv4(&dns_resolver, &relay)
-        .await
-        .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
-
-    trace!(?relay_addr, "resolved relay server address");
-    let host = relay_tls_server_name(&relay).ok_or_else(|| e!(QadProbeError::MissingHost))?;
-    let conn = quic_client
-        .create_conn(relay_addr.into(), &host)
-        .await
-        .map_err(|source| e!(QadProbeError::Quic { source }))?;
-
-    let mut watcher = conn.observed_external_addr();
-
-    // wait for an addr
-    let addr = watcher
-        .next()
-        .await
-        .ok_or_else(|| e!(QadProbeError::ReceiverDropped))?;
-    let report = QadProbeReport {
-        relay: relay.url.clone(),
-        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
-        latency: conn.rtt(PathId::ZERO).unwrap_or_default(),
-    };
-
-    let observer = Watchable::new(None);
-    let endpoint = relay.url.clone();
-    let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
-        let conn = conn.clone();
-        let observer = observer.clone();
-        async move {
-            while let Some(val) = watcher.next().await {
-                // if we've sent to an ipv4 address, but received an observed address
-                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-                let val = SocketAddr::new(val.ip().to_canonical(), val.port());
-                let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
-                observer
-                    .set(Some(QadProbeReport {
-                        relay: endpoint.clone(),
-                        addr: val,
-                        latency,
-                    }))
-                    .ok();
-            }
-        }
-    }));
-    let handle = AbortOnDropHandle::new(handle);
-
-    Ok((
-        report,
-        QadConn {
-            conn,
-            observer,
-            _handle: handle,
-        },
-    ))
-}
-
-#[cfg(not(wasm_browser))]
-pub(super) async fn run_probe_v6(
-    relay: Arc<RelayConfig>,
-    quic_client: QuicClient,
-    dns_resolver: DnsResolver,
-    shutdown_token: CancellationToken,
-) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-    use noq_proto::PathId;
-
-    let relay_addr = get_relay_addr_ipv6(&dns_resolver, &relay)
-        .await
-        .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
-
-    trace!(?relay_addr, "resolved relay server address");
-    let host = relay_tls_server_name(&relay).ok_or_else(|| e!(QadProbeError::MissingHost))?;
-    let conn = quic_client
-        .create_conn(relay_addr.into(), &host)
-        .await
-        .map_err(|source| e!(QadProbeError::Quic { source }))?;
-
-    let mut watcher = conn.observed_external_addr();
-
-    // wait for an addr
-    let addr = watcher
-        .next()
-        .await
-        .ok_or_else(|| e!(QadProbeError::ReceiverDropped))?;
-    let report = QadProbeReport {
-        relay: relay.url.clone(),
-        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
-        latency: conn.rtt(PathId::ZERO).unwrap_or_default(),
-    };
-
-    let observer = Watchable::new(None);
-    let endpoint = relay.url.clone();
-    let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
-        let observer = observer.clone();
-        let conn = conn.clone();
-        async move {
-            while let Some(val) = watcher.next().await {
-                // if we've sent to an ipv4 address, but received an observed address
-                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-                let val = SocketAddr::new(val.ip().to_canonical(), val.port());
-                let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
-                observer
-                    .set(Some(QadProbeReport {
-                        relay: endpoint.clone(),
-                        addr: val,
-                        latency,
-                    }))
-                    .ok();
-            }
-        }
-    }));
-    let handle = AbortOnDropHandle::new(handle);
-
-    Ok((
-        report,
-        QadConn {
-            conn,
-            observer,
-            _handle: handle,
-        },
-    ))
-}
-
+/// Returns the TLS server name for the relay's host.
 #[cfg(not(wasm_browser))]
 fn relay_tls_server_name(relay: &RelayConfig) -> Option<std::borrow::Cow<'_, str>> {
     // host_str() includes brackets around IPv6 literals.
@@ -450,15 +321,22 @@ fn relay_tls_server_name(relay: &RelayConfig) -> Option<std::borrow::Cow<'_, str
 
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::{
+        net::{Ipv4Addr, SocketAddr},
+        sync::Arc,
+    };
 
+    use iroh_base::RelayUrl;
     use iroh_dns::dns::DnsResolver;
-    use iroh_relay::tls::default_provider;
+    use iroh_relay::{RelayConfig, quic::QuicClient, tls::default_provider};
     use n0_error::{Result, StdResultExt};
-    use n0_future::time;
+    use n0_future::{
+        StreamExt,
+        time::{self, Duration},
+    };
     use n0_tracing_test::traced_test;
 
-    use super::{super::test_utils, *};
+    use super::{super::test_utils, AddrFamily, QadConnEvent, relay_tls_server_name};
 
     #[tokio::test]
     #[traced_test]
@@ -472,12 +350,22 @@ mod tests {
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
         let dns_resolver = DnsResolver::default();
 
-        let (report, conn) =
-            run_probe_v4(relay, quic_client, dns_resolver, CancellationToken::new())
-                .await
-                .unwrap();
+        let (report, mut conn) = super::run_probe(AddrFamily::V4, relay, quic_client, dns_resolver)
+            .await
+            .unwrap();
 
         assert_eq!(report.addr, client_addr);
+        assert_eq!(conn.current_report().map(|r| r.addr), Some(client_addr));
+
+        // Closing the connection ends its updates with a `Closed` event.
+        conn.close();
+        let event = time::timeout(Duration::from_secs(5), conn.next())
+            .await
+            .anyerr()?;
+        assert!(
+            matches!(event, Some(QadConnEvent::Closed)),
+            "expected Closed, got {event:?}"
+        );
         drop(conn);
         ep.wait_idle().await;
         server.shutdown().await?;
@@ -533,7 +421,6 @@ mod tests {
         let ep = noq::Endpoint::client((Ipv6Addr::UNSPECIFIED, 0).into()).unwrap();
         let client_addr = SocketAddr::from((Ipv6Addr::LOCALHOST, ep.local_addr().unwrap().port()));
         let client = QuicClient::new(ep.clone(), client_crypto);
-        let shutdown = CancellationToken::new();
         let https_port = if server_addr.port() == 443 { 8443 } else { 443 };
         let relay = RelayConfig::new(
             format!("https://[::1]:{https_port}").parse().unwrap(),
@@ -553,19 +440,14 @@ mod tests {
                 .ok_or_else(|| "control connection returned no address".to_owned())?;
             control.close(0u32.into(), b"control complete");
 
-            let (report, conn) = run_probe_v6(
-                Arc::new(relay),
-                client,
-                DnsResolver::new(),
-                shutdown.clone(),
-            )
-            .await
-            .map_err(|err| format!("IPv6 literal QAD probe failed: {err:#}"))?;
+            let (report, conn) =
+                super::run_probe(AddrFamily::V6, Arc::new(relay), client, DnsResolver::new())
+                    .await
+                    .map_err(|err| format!("IPv6 literal QAD probe failed: {err:#}"))?;
             Ok::<_, String>((observed, report, conn))
         })
         .await;
 
-        shutdown.cancel();
         ep.close(0u32.into(), b"test complete");
         let (_, server_result) = time::timeout(Duration::from_secs(5), async {
             tokio::join!(ep.wait_idle(), server.shutdown())

@@ -20,7 +20,6 @@ use super::{Socket, mapped_addrs::MultipathMappedAddr};
 use crate::{
     endpoint::RelayStatus,
     metrics::EndpointMetrics,
-    net_report::Report,
     socket::mapped_addrs::{AddrMap, CustomMappedAddr},
 };
 
@@ -505,17 +504,6 @@ pub(crate) struct NetworkChangeSender {
 }
 
 impl NetworkChangeSender {
-    pub(crate) fn on_network_change(&self, report: &Report) {
-        #[cfg(not(wasm_browser))]
-        for ip in &self.ip {
-            ip.on_network_change(report);
-        }
-
-        for relay in &self.relay {
-            relay.on_network_change(report);
-        }
-    }
-
     /// Triggers an immediate relay connection health check after a network change.
     ///
     /// Uses RTT-based timeout for faster detection of broken connections.

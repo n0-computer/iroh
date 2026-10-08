@@ -1,82 +1,42 @@
-//! Captive portal detection for net_report.
+//! Captive portal detection.
 
 use iroh_base::RelayUrl;
-use iroh_dns::dns::{DnsError, DnsResolver, StaggeredError};
+use iroh_dns::dns::DnsResolver;
 use iroh_relay::RelayMap;
-use n0_error::{e, stack_error};
-use rand::seq::IteratorRandom;
+use n0_error::{Result, StdResultExt};
+use rand::seq::IndexedRandom;
 use tracing::trace;
 use url::Url;
 
-#[cfg(not(wasm_browser))]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub(super) enum CaptivePortalError {
-    #[error(transparent)]
-    DnsLookup {
-        #[error(from)]
-        source: StaggeredError<DnsError>,
-    },
-    #[error("Creating HTTP client failed")]
-    CreateReqwestClient {
-        #[error(std_err)]
-        source: reqwest::Error,
-    },
-    #[error("HTTP request failed")]
-    HttpRequest {
-        #[error(std_err)]
-        source: reqwest::Error,
-    },
-}
+use super::https::http_client;
 
-/// Reports whether or not we think the system is behind a
-/// captive portal, detected by making a request to a URL that we know should
-/// return a "204 No Content" response and checking if that's what we get.
+/// Checks whether the host is behind a captive portal.
 ///
-/// The boolean return is whether we think we have a captive portal.
-#[cfg(not(wasm_browser))]
-pub(super) async fn check_captive_portal(
-    dns_resolver: &DnsResolver,
-    dm: &RelayMap,
+/// Returns `true` if we appear to be behind one. The check requests a
+/// relay's `/generate_204` endpoint: a portal intercepting HTTP answers with
+/// something other than the expected empty 204.
+pub(super) async fn check(
+    dns_resolver: DnsResolver,
+    relay_map: RelayMap,
     preferred_relay: Option<RelayUrl>,
     tls_config: rustls::ClientConfig,
-    proxy_url: Option<&Url>,
-) -> Result<bool, CaptivePortalError> {
-    // If we have a preferred relay and we can use it for non-QAD requests, try that;
-    // otherwise, pick a random one suitable for non-STUN requests.
-
-    use crate::util::reqwest_client_builder;
-
-    let preferred_relay = preferred_relay.and_then(|url| dm.get(&url).map(|_| url));
-
-    let url = match preferred_relay {
+    proxy_url: Option<Url>,
+) -> Result<bool> {
+    trace!("captive portal check starting");
+    // Use the preferred relay if it is still in the map, otherwise a random one.
+    let url = match preferred_relay.filter(|url| relay_map.contains(url)) {
         Some(url) => url,
         None => {
-            let urls: Vec<_> = dm.urls();
-            if urls.is_empty() {
+            let urls: Vec<_> = relay_map.urls();
+            let Some(url) = urls.choose(&mut rand::rng()) else {
                 trace!("No suitable relay for captive portal check");
                 return Ok(false);
-            }
-
-            let i = (0..urls.len()).choose(&mut rand::rng()).unwrap_or_default();
-            urls[i].clone()
+            };
+            url.clone()
         }
     };
 
-    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone())
-        .redirect(reqwest::redirect::Policy::none());
-    if let Some(proxy_url) = proxy_url {
-        let proxy = reqwest::Proxy::all(proxy_url.clone())
-            .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?;
-        builder = builder.proxy(proxy);
-    } else {
-        // Like the relay connection, ignore any proxy the environment names.
-        builder = builder.no_proxy();
-    }
-
-    let client = builder
-        .build()
-        .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?;
+    let client = http_client(dns_resolver, tls_config, proxy_url)?;
 
     // Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/iroh-relay for more
@@ -90,7 +50,7 @@ pub(super) async fn check_captive_portal(
         .header("X-Iroh-Challenge", &challenge)
         .send()
         .await
-        .map_err(|err| e!(CaptivePortalError::HttpRequest, err))?;
+        .std_context("Captive portal HTTP request failed")?;
 
     let expected_response = format!("response {challenge}");
     let is_valid_response = res

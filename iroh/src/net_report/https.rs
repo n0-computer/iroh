@@ -1,11 +1,10 @@
-//! HTTPS latency probes for net_report.
+//! HTTPS latency probe execution.
 
-use http::StatusCode;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
-use iroh_dns::dns::{DnsError, DnsResolver, StaggeredError};
+use iroh_dns::dns::DnsResolver;
 use iroh_relay::http::RELAY_PROBE_PATH;
-use n0_error::{e, stack_error};
+use n0_error::{Result, StdResultExt, bail_any};
 use n0_future::{
     StreamExt as _,
     time::{Duration, Instant},
@@ -16,105 +15,105 @@ use url::Url;
 
 use crate::util::reqwest_client_builder;
 
+/// The delay before the first HTTPS probe to a relay.
+const OFFSET: Duration = Duration::from_millis(200);
+
+/// The delay between two HTTPS probes to the same relay.
+const RETRANSMIT: Duration = Duration::from_millis(100);
+
+/// The number of HTTPS probes a cycle starts per relay.
+const ATTEMPTS: u32 = 3;
+
+/// Returns the start delays of the HTTPS probes a cycle runs against one relay.
+///
+/// The probes do not wait for each other: the later ones are retries that
+/// overlap the earlier ones. The first answer cancels the rest.
+pub(super) fn probe_delays() -> impl Iterator<Item = Duration> {
+    (0..ATTEMPTS).map(|attempt| OFFSET + RETRANSMIT * attempt)
+}
+
+/// The latency an HTTPS probe measured to a relay.
 #[derive(Debug, Clone)]
 pub(super) struct HttpsProbeReport {
-    /// The relay that was probed
-    pub(super) relay: RelayUrl,
+    /// The relay that was probed.
+    pub(super) relay_url: RelayUrl,
     /// The latency to the relay.
     pub(super) latency: Duration,
 }
 
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub(super) enum MeasureHttpsLatencyError {
-    #[error(transparent)]
-    InvalidUrl {
-        #[error(std_err, from)]
-        source: url::ParseError,
-    },
-    #[cfg(not(wasm_browser))]
-    #[error(transparent)]
-    DnsLookup {
-        #[error(from)]
-        source: StaggeredError<DnsError>,
-    },
-    #[error("Creating HTTP client failed")]
-    CreateReqwestClient {
-        #[error(std_err)]
-        source: reqwest::Error,
-    },
-    #[error("HTTP request failed")]
-    HttpRequest {
-        #[error(std_err)]
-        source: reqwest::Error,
-    },
-    #[error("Error response from server {status}: {:?}", status.canonical_reason())]
-    InvalidResponse { status: StatusCode },
-}
-
-/// Executes an HTTPS probe.
-///
-/// If `certs` is provided they will be added to the trusted root certificates, allowing the
-/// use of self-signed certificates for servers.  Currently this is used for testing.
-#[allow(clippy::unused_async)]
-pub(super) async fn run_https_probe(
-    #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
-    relay: RelayUrl,
+/// Builds a fresh client for HTTP probes, using the endpoint's TLS, DNS, and proxy settings.
+pub(super) fn http_client(
+    #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
     #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
-    #[cfg(not(wasm_browser))] proxy_url: Option<&Url>,
-) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
-    trace!("HTTPS probe start");
-    let url = relay.join(RELAY_PROBE_PATH)?;
-
-    // This should also use same connection establishment as relay client itself, which
-    // needs to be more configurable so users can do more crazy things:
-    // https://github.com/n0-computer/iroh/issues/2901
+    #[cfg(not(wasm_browser))] proxy_url: Option<Url>,
+) -> Result<reqwest::Client> {
     #[cfg(not(wasm_browser))]
-    let mut builder = reqwest_client_builder(tls_config, dns_resolver.clone())
+    let mut builder = reqwest_client_builder(tls_config, dns_resolver)
         .redirect(reqwest::redirect::Policy::none());
     #[cfg(wasm_browser)]
     let builder = reqwest_client_builder();
-
     #[cfg(not(wasm_browser))]
     if let Some(proxy_url) = proxy_url {
-        let proxy = reqwest::Proxy::all(proxy_url.clone())
-            .map_err(|err| e!(MeasureHttpsLatencyError::CreateReqwestClient, err))?;
-        builder = builder.proxy(proxy);
+        builder = builder
+            .proxy(reqwest::Proxy::all(proxy_url).std_context("Creating HTTP proxy failed")?);
     } else {
         // Like the relay connection, ignore any proxy the environment names.
         builder = builder.no_proxy();
     }
-
-    let client = builder
+    builder
         .build()
-        .map_err(|err| e!(MeasureHttpsLatencyError::CreateReqwestClient, err))?;
+        .std_context("Creating HTTP probe client failed")
+}
+
+/// Executes an HTTPS probe.
+///
+/// Sends a GET request to the relay's probe endpoint and measures the
+/// round-trip time. DNS resolution goes through our own resolver (on
+/// native targets) so it follows the same path as relay client connections.
+pub(super) async fn run_probe(
+    #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
+    relay: RelayUrl,
+    #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
+    #[cfg(not(wasm_browser))] proxy_url: Option<Url>,
+) -> Result<HttpsProbeReport> {
+    trace!("HTTPS probe start");
+    let url = relay
+        .join(RELAY_PROBE_PATH)
+        .std_context("Invalid HTTPS probe URL")?;
+    let client = http_client(
+        #[cfg(not(wasm_browser))]
+        dns_resolver,
+        #[cfg(not(wasm_browser))]
+        tls_config,
+        #[cfg(not(wasm_browser))]
+        proxy_url,
+    )?;
 
     let start = Instant::now();
     let response = client
         .request(reqwest::Method::GET, url)
         .send()
         .await
-        .map_err(|err| e!(MeasureHttpsLatencyError::HttpRequest, err))?;
+        .std_context("HTTPS probe request failed")?;
     let latency = start.elapsed();
-    if response.status().is_success() {
-        // Drain the response body to be nice to the server, up to a limit.
-        const MAX_BODY_SIZE: usize = 8 << 10; // 8 KiB
-        let mut body_size = 0;
-        let mut stream = response.bytes_stream();
-        // ignore failing frames
-        while let Some(Ok(chunk)) = stream.next().await {
-            body_size += chunk.len();
-            if body_size >= MAX_BODY_SIZE {
-                break;
-            }
-        }
-
-        Ok(HttpsProbeReport { relay, latency })
-    } else {
-        Err(e!(MeasureHttpsLatencyError::InvalidResponse {
-            status: response.status()
-        }))
+    if !response.status().is_success() {
+        bail_any!("HTTPS probe returned {}", response.status());
     }
+    // Drain the response body to be nice to the server, up to a limit.
+    const MAX_BODY_SIZE: usize = 8 << 10; // 8 KiB
+    let mut body_size = 0;
+    let mut stream = response.bytes_stream();
+    // Ignore failing frames.
+    while let Some(Ok(chunk)) = stream.next().await {
+        body_size += chunk.len();
+        if body_size >= MAX_BODY_SIZE {
+            break;
+        }
+    }
+    Ok(HttpsProbeReport {
+        relay_url: relay,
+        latency,
+    })
 }
 
 #[cfg(all(test, with_crypto_provider))]
@@ -130,13 +129,26 @@ mod tests {
 
     use super::{super::test_utils, *};
 
+    #[test]
+    fn test_probe_delays() {
+        let delays: Vec<_> = probe_delays().collect();
+        assert_eq!(
+            delays,
+            [
+                Duration::from_millis(200),
+                Duration::from_millis(300),
+                Duration::from_millis(400)
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn test_measure_https_latency() -> Result {
         let (_server, relay) = test_utils::relay().await;
         let dns_resolver = DnsResolver::new();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
-        let report = run_https_probe(
-            &dns_resolver,
+        let report = run_probe(
+            dns_resolver,
             relay.url,
             CaTlsConfig::insecure_skip_verify()
                 .client_config(default_provider())
@@ -195,13 +207,13 @@ mod tests {
         // The probe cannot succeed: the fake proxy never completes the CONNECT tunnel.
         // What matters is that the probe was attempted via the proxy rather than
         // connecting to the relay directly.
-        let res = run_https_probe(
-            &dns_resolver,
+        let res = run_probe(
+            dns_resolver,
             relay.url,
             CaTlsConfig::insecure_skip_verify()
                 .client_config(default_provider())
                 .expect("infallible"),
-            Some(&proxy_url),
+            Some(proxy_url),
         )
         .await;
         assert!(
@@ -220,6 +232,7 @@ mod tests {
 
         Ok(())
     }
+
     /// Tests that without a configured proxy the probes ignore the proxy variables in the
     /// environment, like the relay connection does.
     ///
@@ -239,9 +252,9 @@ mod tests {
             // Nothing serves the captive portal check here, only where it connects matters.
             time::timeout(
                 Duration::from_secs(5),
-                super::super::captive_portal::check_captive_portal(
-                    &dns_resolver,
-                    &relay_map,
+                super::super::captive_portal::check(
+                    dns_resolver.clone(),
+                    relay_map,
                     None,
                     tls_config.clone(),
                     None,
@@ -251,7 +264,7 @@ mod tests {
             .ok();
             time::timeout(
                 Duration::from_secs(5),
-                run_https_probe(&dns_resolver, relay.url, tls_config, None),
+                run_probe(dns_resolver, relay.url, tls_config, None),
             )
             .await
             .anyerr()??;

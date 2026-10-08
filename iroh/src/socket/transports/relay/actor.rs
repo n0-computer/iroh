@@ -31,10 +31,7 @@ use std::{
     future::Future,
     net::IpAddr,
     pin::{Pin, pin},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
 };
 
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
@@ -53,7 +50,7 @@ use n0_future::{
     task::{JoinError, JoinSet},
     time::{self, Duration, Instant, MissedTickBehavior},
 };
-use n0_watcher::Watchable;
+use n0_watcher::{Direct, Watchable, Watcher};
 use netwatch::interfaces;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -62,7 +59,10 @@ use url::Url;
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-use crate::{endpoint::RelayStatus, net_report::Report, socket::Metrics as SocketMetrics};
+use crate::{endpoint::RelayStatus, net_report, socket::Metrics as SocketMetrics};
+
+/// Tells the relay dialer whether to try IPv6 before IPv4.
+pub(super) type PreferIpv6 = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -202,13 +202,14 @@ struct ActiveRelayActorOptions {
 }
 
 /// Configuration needed to create a connection to a relay server.
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 struct RelayConnectionOptions {
     secret_key: SecretKey,
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
-    prefer_ipv6: Arc<AtomicBool>,
+    #[debug(skip)]
+    prefer_ipv6: PreferIpv6,
     tls_config: rustls::ClientConfig,
     auth_token: Option<String>,
 }
@@ -309,7 +310,7 @@ impl ActiveRelayActor {
             dns_resolver,
         )
         .tls_client_config(tls_config)
-        .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
+        .address_family_selector(move || prefer_ipv6());
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
@@ -897,9 +898,6 @@ impl ConnectedRelayState {
 
 pub(super) enum RelayActorMessage {
     MaybeCloseRelaysOnRebind,
-    NetworkChange {
-        report: Report,
-    },
     /// Trigger an immediate health check on all relay connections.
     ///
     /// Sent after a major network change to detect broken connections faster
@@ -939,8 +937,8 @@ pub(crate) struct Config {
     pub dns_resolver: DnsResolver,
     /// Proxy
     pub proxy_url: Option<Url>,
-    /// If the last net_report report, reports IPv6 to be available.
-    pub ipv6_reported: Arc<AtomicBool>,
+    /// What the net report learned: the home relay and whether IPv6 works.
+    pub net_report: net_report::Outputs,
     pub tls_config: rustls::ClientConfig,
     pub metrics: Arc<SocketMetrics>,
     /// Per-relay configuration. Consulted when starting a connection to
@@ -1016,6 +1014,7 @@ impl Eq for RelayConnectionState {}
 #[derive(Debug)]
 pub(crate) struct RelayConnectionFailure {
     error: AnyError,
+    dial_failed: bool,
     auth_denied_reason: Option<String>,
 }
 
@@ -1023,6 +1022,7 @@ impl RelayConnectionFailure {
     fn new(error: RelayConnectionError) -> Self {
         Self {
             auth_denied_reason: auth_denied_reason(&error).map(ToOwned::to_owned),
+            dial_failed: matches!(error, RelayConnectionError::Dial { .. }),
             error: AnyError::from(error),
         }
     }
@@ -1030,6 +1030,11 @@ impl RelayConnectionFailure {
     /// Returns the type-erased error.
     pub(crate) fn error(&self) -> &AnyError {
         &self.error
+    }
+
+    /// Returns whether dialing the relay failed.
+    pub(crate) fn dial_failed(&self) -> bool {
+        self.dial_failed
     }
 
     /// Returns the reason if the relay server denied our authentication.
@@ -1063,7 +1068,7 @@ fn auth_denied_reason(error: &RelayConnectionError) -> Option<&str> {
 ///
 /// # Write discipline
 ///
-/// The [`RelayActor`] writes the URL (via [`Self::set`] and [`Self::clear`]).
+/// The [`RelayActor`] writes the URL (via [`Self::set`]).
 /// Each [`ActiveRelayActor`] updates only the status (via [`Self::set_status`]),
 /// which guards against stale writes: if another relay has become home since this actor
 /// was designated, the write is silently dropped.
@@ -1084,11 +1089,6 @@ impl HomeRelayWatch {
     /// Set the home relay URL and status. Used by [`RelayActor`] on relay changes.
     fn set(&self, url: RelayUrl, state: RelayConnectionState) {
         let _ = self.inner.set(Some(RelayStatus::new(url, state)));
-    }
-
-    /// Clear the home relay (no preferred relay). Used by [`RelayActor`].
-    fn clear(&self) {
-        let _ = self.inner.set(None);
     }
 
     /// Update the status, but only if `url` is still the current home relay.
@@ -1135,6 +1135,10 @@ impl RelayActor {
         // When this future is present, it is sending pending datagrams to an
         // ActiveRelayActor.  We can not process further datagrams during this time.
         let mut datagram_send_fut = std::pin::pin!(MaybeFuture::None);
+        let mut home_relay: Direct<Option<RelayUrl>> = self.config.net_report.home_relay();
+        if let Some(url) = home_relay.get() {
+            self.on_home_relay(url).await;
+        }
 
         loop {
             tokio::select! {
@@ -1142,6 +1146,10 @@ impl RelayActor {
                 _ = self.cancel_token.cancelled() => {
                     debug!("shutting down");
                     break;
+                }
+                Ok(Some(url)) = home_relay.updated() => {
+                    let cancel_token = self.cancel_token.child_token();
+                    cancel_token.run_until_cancelled(self.on_home_relay(url)).await;
                 }
                 Some(res) = self.active_relay_tasks.join_next() => {
                     log_active_relay_task_result(res);
@@ -1186,9 +1194,6 @@ impl RelayActor {
 
     async fn handle_msg(&mut self, msg: RelayActorMessage) {
         match msg {
-            RelayActorMessage::NetworkChange { report } => {
-                self.on_network_change(report).await;
-            }
             RelayActorMessage::MaybeCloseRelaysOnRebind => {
                 self.maybe_close_relays_on_rebind().await;
             }
@@ -1229,31 +1234,27 @@ impl RelayActor {
         }
     }
 
-    async fn on_network_change(&mut self, report: Report) {
+    /// Switches the home relay to the one the net report picked.
+    async fn on_home_relay(&mut self, relay_url: RelayUrl) {
         let prev = self.config.my_relay.get();
         let prev_url = prev.as_ref().map(RelayStatus::url);
-        if report.preferred_relay.as_ref() == prev_url {
+        if Some(&relay_url) == prev_url {
             // No change.
             return;
         }
+        self.config.metrics.relay_home_change.inc();
 
-        if let Some(relay_url) = report.preferred_relay {
-            self.config.metrics.relay_home_change.inc();
-
-            // On change, notify all currently connected relay servers and
-            // start connecting to our home relay if we are not already.
-            info!("home is now relay {}, was {:?}", relay_url, prev_url);
-            // Publish `Connecting` initially. If an `ActiveRelayActor` already
-            // exists for this URL it will republish its actual status (e.g.
-            // `Connected`) when it receives the `SetHomeRelay(true)` message
-            // sent below.
-            self.config
-                .my_relay
-                .set(relay_url.clone(), RelayConnectionState::Connecting);
-            self.set_home_relay(relay_url).await;
-        } else {
-            self.config.my_relay.clear();
-        }
+        // On change, notify all currently connected relay servers and
+        // start connecting to our home relay if we are not already.
+        info!("home is now relay {}, was {:?}", relay_url, prev_url);
+        // Publish `Connecting` initially. If an `ActiveRelayActor` already
+        // exists for this URL it will republish its actual status (e.g.
+        // `Connected`) when it receives the `SetHomeRelay(true)` message
+        // sent below.
+        self.config
+            .my_relay
+            .set(relay_url.clone(), RelayConnectionState::Connecting);
+        self.set_home_relay(relay_url).await;
     }
 
     async fn set_home_relay(&mut self, home_url: RelayUrl) {
@@ -1351,7 +1352,10 @@ impl RelayActor {
             #[cfg(not(wasm_browser))]
             dns_resolver: self.config.dns_resolver.clone(),
             proxy_url: self.config.proxy_url.clone(),
-            prefer_ipv6: self.config.ipv6_reported.clone(),
+            prefer_ipv6: {
+                let net_report = self.config.net_report.clone();
+                Arc::new(move || net_report.has_ipv6())
+            },
             tls_config: self.config.tls_config.clone(),
             auth_token,
         };
@@ -1507,10 +1511,7 @@ pub(crate) struct RelayRecvDatagram {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{Arc, atomic::AtomicBool},
-        time::Duration,
-    };
+    use std::{sync::Arc, time::Duration};
 
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use iroh_relay::{
@@ -1542,7 +1543,7 @@ mod tests {
             secret_key: SecretKey::from_bytes(&[0u8; 32]),
             dns_resolver: DnsResolver::new(),
             proxy_url: None,
-            ipv6_reported: Arc::new(AtomicBool::new(false)),
+            net_report: crate::net_report::Builder::new().outputs(),
             tls_config: CaTlsConfig::insecure_skip_verify()
                 .client_config(default_provider())
                 .expect("infallible"),
@@ -1585,7 +1586,7 @@ mod tests {
                 secret_key,
                 dns_resolver: DnsResolver::new(),
                 proxy_url: None,
-                prefer_ipv6: Arc::new(AtomicBool::new(true)),
+                prefer_ipv6: Arc::new(|| true),
                 tls_config: CaTlsConfig::insecure_skip_verify()
                     .client_config(default_provider())
                     .expect("infallible"),
@@ -1950,7 +1951,7 @@ mod tests {
                 secret_key,
                 dns_resolver: DnsResolver::new(),
                 proxy_url: None,
-                prefer_ipv6: Arc::new(AtomicBool::new(true)),
+                prefer_ipv6: Arc::new(|| true),
                 tls_config: CaTlsConfig::insecure_skip_verify()
                     .client_config(default_provider())
                     .expect("infallible"),

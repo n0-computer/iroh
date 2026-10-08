@@ -283,10 +283,6 @@ impl IpNetworkChangeSender {
 
         Ok(())
     }
-
-    pub(super) fn on_network_change(&self, _info: &crate::socket::Report) {
-        // Nothing to do for now
-    }
 }
 
 #[derive(Debug, Clone)]

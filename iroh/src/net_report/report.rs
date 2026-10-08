@@ -1,57 +1,73 @@
+//! The debug network report and per-relay latency bookkeeping.
+
+use std::{collections::BTreeMap, time::Duration};
+
+#[cfg(any(test, feature = "unstable-net-report"))]
 use std::{
-    collections::BTreeMap,
     fmt,
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
-    time::Duration,
+    net::{SocketAddrV4, SocketAddrV6},
 };
 
 use iroh_base::RelayUrl;
 use serde::{Deserialize, Serialize};
-use tracing::{trace, warn};
 
-use super::{ProbeReport, probes::Probe};
-
-/// A net_report report.
+/// Snapshot of what the net report knows about the network.
+///
+/// This is a debug view, published through `Endpoint::net_report`. The net
+/// report assembles it from its state whenever that state changes.
+#[cfg(any(test, feature = "unstable-net-report"))]
 #[derive(Default, Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 #[non_exhaustive]
 pub struct Report {
-    /// A QAD IPv4 round trip completed.
+    /// Whether a QAD IPv4 round trip succeeded.
     pub udp_v4: bool,
-    /// A QAD IPv6 round trip completed.
+    /// Whether a QAD IPv6 round trip succeeded.
     pub udp_v6: bool,
-    /// Whether the reported public address differs when probing different servers (on IPv4).
+    /// Whether the observed public IPv4 address differs across relay servers.
+    ///
+    /// `None` until at least two relays have reported.
     pub mapping_varies_by_dest_ipv4: Option<bool>,
-    /// Whether the reported public address differs when probing different servers (on IPv6).
+    /// Whether the observed public IPv6 address differs across relay servers.
+    ///
+    /// `None` until at least two relays have reported.
     pub mapping_varies_by_dest_ipv6: Option<bool>,
-    /// The relay server with the lowest latency, if any.
+    /// The relay with the lowest recent latency, chosen with hysteresis.
+    ///
+    /// `None` until at least one latency measurement exists.
     pub preferred_relay: Option<RelayUrl>,
-    /// The measured latency to each relay, keyed by relay URL.
+    /// Best observed latency to each relay, keyed by relay URL.
     pub relay_latency: RelayLatencies,
-    /// The discovered global IPv4 address and port, if any.
+    /// Public IPv4 address and port as observed by relay servers.
     pub global_v4: Option<SocketAddrV4>,
-    /// The discovered global IPv6 address and port, if any.
+    /// Public IPv6 address and port as observed by relay servers.
     pub global_v6: Option<SocketAddrV6>,
-    /// CaptivePortal is set when we think there's a captive portal that is
-    /// intercepting HTTP traffic.
+    /// Whether a captive portal was detected.
+    ///
+    /// `None` if the check was skipped, cancelled, or has not yet completed.
     pub captive_portal: Option<bool>,
 }
 
+#[cfg(any(test, feature = "unstable-net-report"))]
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
     }
 }
 
+#[cfg(any(test, feature = "unstable-net-report"))]
 impl Report {
-    /// Do we have any indication that UDP is working?
+    /// Returns `true` if any probe indicates UDP is working.
     #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
     pub fn has_udp(&self) -> bool {
         self.udp_v4 || self.udp_v6
     }
 
-    /// Whether the reported public address differs when probing different servers.
-    #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
+    /// Returns whether the reported public address differs across servers.
+    #[cfg_attr(
+        not(feature = "unstable-net-report"),
+        allow(unreachable_pub, dead_code)
+    )]
     pub fn mapping_varies_by_dest(&self) -> Option<bool> {
         match (
             self.mapping_varies_by_dest_ipv4,
@@ -64,80 +80,45 @@ impl Report {
         }
     }
 
-    /// Updates a net_report [`Report`] with a new [`ProbeReport`].
-    pub(super) fn update(&mut self, report: &ProbeReport) {
-        match report {
-            ProbeReport::Https(report) => {
-                self.relay_latency
-                    .update_relay(report.relay.clone(), report.latency, Probe::Https);
-            }
-            #[cfg(not(wasm_browser))]
-            ProbeReport::QadIpv4(report) => {
-                self.relay_latency.update_relay(
-                    report.relay.clone(),
-                    report.latency,
-                    Probe::QadIpv4,
-                );
-                let SocketAddr::V4(ipp) = report.addr else {
-                    warn!("received IPv6 address from IPv4 QAD: {}", report.addr);
-                    return;
-                };
-
-                self.udp_v4 = true;
-
-                if let Some(global) = self.global_v4 {
-                    if global == ipp {
-                        if self.mapping_varies_by_dest_ipv4.is_none() {
-                            self.mapping_varies_by_dest_ipv4 = Some(false);
-                        }
-                    } else {
-                        self.mapping_varies_by_dest_ipv4 = Some(true);
-                        warn!("IPv4 address detected by QAD varies by destination");
-                    }
-                } else {
-                    self.global_v4 = Some(ipp);
-                }
-                trace!(?self.global_v4, ?self.mapping_varies_by_dest_ipv4, %ipp, "stored report");
-            }
-            #[cfg(not(wasm_browser))]
-            ProbeReport::QadIpv6(report) => {
-                self.relay_latency.update_relay(
-                    report.relay.clone(),
-                    report.latency,
-                    Probe::QadIpv6,
-                );
-                let SocketAddr::V6(ipp) = report.addr else {
-                    warn!("received IPv4 address from IPv6 QAD: {}", report.addr);
-                    return;
-                };
-
-                self.udp_v6 = true;
-                if let Some(global) = self.global_v6 {
-                    if global == ipp {
-                        if self.mapping_varies_by_dest_ipv6.is_none() {
-                            self.mapping_varies_by_dest_ipv6 = Some(false);
-                        }
-                    } else {
-                        self.mapping_varies_by_dest_ipv6 = Some(true);
-                        warn!("IPv6 address detected by QAD varies by destination");
-                    }
-                } else {
-                    self.global_v6 = Some(ipp);
-                }
-                trace!(?self.global_v6, ?self.mapping_varies_by_dest_ipv6, %ipp, "stored report");
-            }
-        }
+    /// Returns `true` if the report carries meaningful probe data.
+    ///
+    /// Used to wait for the first observation before initializing the report.
+    pub(super) fn has_data(&self) -> bool {
+        self.global_v4.is_some()
+            || self.global_v6.is_some()
+            || self.has_udp()
+            || !self.relay_latency.is_empty()
+            || self.captive_portal.is_some()
     }
 }
 
-/// Latencies per relay endpoint.
+/// The protocol used to time a relay's latency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
+#[repr(u8)]
+#[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
+#[non_exhaustive]
+pub enum Probe {
+    /// An HTTPS latency probe.
+    Https,
+    /// A QUIC address discovery probe over IPv4.
+    QadIpv4,
+    /// A QUIC address discovery probe over IPv6.
+    QadIpv6,
+}
+
+/// Best observed latency to each relay, bucketed by probe type.
+///
+/// Keeps separate maps for QAD IPv4, QAD IPv6, and HTTPS. Latency lookups
+/// return the minimum across all three maps for a given relay, so a relay
+/// reachable by any probe type compares on its fastest path.
 #[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 pub struct RelayLatencies {
-    #[cfg(not(wasm_browser))]
+    /// Best QAD IPv4 latency per relay.
     ipv4: BTreeMap<RelayUrl, Duration>,
-    #[cfg(not(wasm_browser))]
+    /// Best QAD IPv6 latency per relay.
     ipv6: BTreeMap<RelayUrl, Duration>,
+    /// Best HTTPS latency per relay.
     https: BTreeMap<RelayUrl, Duration>,
 }
 
@@ -146,36 +127,21 @@ impl RelayLatencies {
     pub(super) fn update_relay(&mut self, url: RelayUrl, latency: Duration, probe: Probe) {
         let list = match probe {
             Probe::Https => &mut self.https,
-            #[cfg(not(wasm_browser))]
             Probe::QadIpv4 => &mut self.ipv4,
-            #[cfg(not(wasm_browser))]
             Probe::QadIpv6 => &mut self.ipv6,
         };
         let old_latency = list.entry(url).or_insert(latency);
-        if latency < *old_latency {
-            *old_latency = latency;
-        }
+        *old_latency = (*old_latency).min(latency);
     }
 
-    /// Merges another [`RelayLatencies`] into this one.
-    ///
-    /// For each relay the latency is updated using [`RelayLatencies::update_relay`].
+    /// Merges another [`RelayLatencies`] into this one, keeping the best of each.
     pub(super) fn merge(&mut self, other: &RelayLatencies) {
-        for (url, latency) in other.https.iter() {
-            self.update_relay(url.clone(), *latency, Probe::Https);
-        }
-        #[cfg(not(wasm_browser))]
-        for (url, latency) in other.ipv4.iter() {
-            self.update_relay(url.clone(), *latency, Probe::QadIpv4);
-        }
-        #[cfg(not(wasm_browser))]
-        for (url, latency) in other.ipv6.iter() {
-            self.update_relay(url.clone(), *latency, Probe::QadIpv6);
+        for (probe, url, latency) in other.iter() {
+            self.update_relay(url.clone(), latency, probe);
         }
     }
 
     /// Returns an iterator over all the relays and their latencies.
-    #[cfg(not(wasm_browser))]
     #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
     pub fn iter(&self) -> impl Iterator<Item = (Probe, &'_ RelayUrl, Duration)> + '_ {
         self.https
@@ -185,37 +151,17 @@ impl RelayLatencies {
             .chain(self.ipv6.iter().map(|(url, l)| (Probe::QadIpv6, url, *l)))
     }
 
-    /// Returns an iterator over all the relays and their latencies.
-    #[cfg(wasm_browser)]
-    #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
-    pub fn iter(&self) -> impl Iterator<Item = (Probe, &'_ RelayUrl, Duration)> + '_ {
-        self.https.iter().map(|(k, v)| (Probe::Https, k, *v))
-    }
-
-    #[cfg(not(wasm_browser))]
+    /// Returns `true` if no relay has any latency recorded.
     pub(super) fn is_empty(&self) -> bool {
-        self.https.is_empty() && self.ipv4.is_empty() && self.ipv6.is_empty()
+        self.iter().next().is_none()
     }
 
-    #[cfg(wasm_browser)]
-    pub(super) fn is_empty(&self) -> bool {
-        self.https.is_empty()
-    }
-
-    /// Returns the lowest latency across records.
+    /// Returns the lowest latency to `url` across probe types.
     pub(super) fn get(&self, url: &RelayUrl) -> Option<Duration> {
-        let mut list = Vec::with_capacity(3);
-        if let Some(val) = self.https.get(url) {
-            list.push(*val);
-        }
-        #[cfg(not(wasm_browser))]
-        if let Some(val) = self.ipv4.get(url) {
-            list.push(*val);
-        }
-        #[cfg(not(wasm_browser))]
-        if let Some(val) = self.ipv6.get(url) {
-            list.push(*val);
-        }
-        list.into_iter().min()
+        [&self.https, &self.ipv4, &self.ipv6]
+            .into_iter()
+            .filter_map(|latencies| latencies.get(url))
+            .copied()
+            .min()
     }
 }
