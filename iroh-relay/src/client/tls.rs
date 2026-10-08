@@ -18,6 +18,7 @@ use n0_future::{
     FuturesUnordered, MaybeFuture, StreamExt, task,
     time::{self},
 };
+use percent_encoding::percent_decode_str;
 use rustls::client::Resumption;
 use tokio::net::TcpStream;
 use tracing::{Instrument, error, info_span};
@@ -180,12 +181,11 @@ impl MaybeTlsStreamBuilder {
                 "setting proxy-authorization: username={}",
                 proxy_url.username()
             );
-            let to_encode = format!(
-                "{}:{}",
-                proxy_url.username(),
-                proxy_url.password().unwrap_or_default()
-            );
-            let encoded = BASE64.encode(to_encode.as_bytes());
+            // `Url` keeps the username and password percent-encoded.
+            let mut to_encode: Vec<u8> = percent_decode_str(proxy_url.username()).collect();
+            to_encode.push(b':');
+            to_encode.extend(percent_decode_str(proxy_url.password().unwrap_or_default()));
+            let encoded = BASE64.encode(&to_encode);
             req_builder = req_builder.header("Proxy-Authorization", format!("Basic {encoded}"));
         }
         let req = req_builder
@@ -504,6 +504,21 @@ mod tests {
         assert_eq!(
             proxy_authorization_for("user:s3cret~~").await,
             "Basic dXNlcjpzM2NyZXR+fg=="
+        );
+    }
+
+    /// Tests that the proxy credentials are percent-decoded before they are encoded.
+    #[cfg(with_crypto_provider)]
+    #[tokio::test]
+    async fn proxy_authorization_decodes_credentials() {
+        // `Url` keeps these passwords as "s3cret%3E%3E" and "p%40ss".
+        assert_eq!(
+            proxy_authorization_for("user:s3cret>>").await,
+            "Basic dXNlcjpzM2NyZXQ+Pg=="
+        );
+        assert_eq!(
+            proxy_authorization_for("user:p%40ss").await,
+            "Basic dXNlcjpwQHNz"
         );
     }
 }

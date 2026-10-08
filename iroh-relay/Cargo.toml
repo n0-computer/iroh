@@ -40,6 +40,7 @@ lru = "0.18.3"
 n0-error = "1.0.0"
 n0-future = "0.3"
 num_enum = "0.7"
+percent-encoding = "2.3"
 pin-project = "1"
 postcard = { version = "1", default-features = false, features = [
     "alloc",
