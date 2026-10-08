@@ -156,6 +156,7 @@ pub struct PkarrPublisherBuilder {
     filter: AddrFilter,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
+    /// Taken from the endpoint in `into_address_lookup`.
     #[cfg(not(wasm_browser))]
     proxy_url: Option<Url>,
 }
@@ -209,19 +210,6 @@ impl PkarrPublisherBuilder {
         self
     }
 
-    /// Sets a proxy to send the HTTP requests to the pkarr relay through.
-    ///
-    /// This is independent of the endpoint's [`proxy_url`]: an endpoint that
-    /// sends its traffic through a proxy needs it set here as well, or the
-    /// pkarr relay sees its IP address.
-    ///
-    /// [`proxy_url`]: crate::endpoint::Builder::proxy_url
-    #[cfg(not(wasm_browser))]
-    pub fn proxy_url(mut self, proxy_url: Url) -> Self {
-        self.proxy_url = Some(proxy_url);
-        self
-    }
-
     /// Sets the address filter to control which addresses are published to the pkarr server.
     ///
     /// By default [`AddrFilter::relay_only`] is used. This avoids leaking IP addresses to the
@@ -269,6 +257,10 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
+        }
+        #[cfg(not(wasm_browser))]
+        {
+            self.proxy_url = endpoint.proxy_url().cloned();
         }
         let tls_config = endpoint.tls_config().clone();
         Ok(self.build(endpoint.secret_key().clone(), tls_config))
@@ -463,6 +455,7 @@ pub struct PkarrResolverBuilder {
     pkarr_relay: Url,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
+    /// Taken from the endpoint in `into_address_lookup`.
     #[cfg(not(wasm_browser))]
     proxy_url: Option<Url>,
 }
@@ -472,19 +465,6 @@ impl PkarrResolverBuilder {
     #[cfg(not(wasm_browser))]
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
         self.dns_resolver = Some(dns_resolver);
-        self
-    }
-
-    /// Sets a proxy to send the HTTP requests to the pkarr relay through.
-    ///
-    /// This is independent of the endpoint's [`proxy_url`]: an endpoint that
-    /// sends its traffic through a proxy needs it set here as well, or the
-    /// pkarr relay sees its IP address.
-    ///
-    /// [`proxy_url`]: crate::endpoint::Builder::proxy_url
-    #[cfg(not(wasm_browser))]
-    pub fn proxy_url(mut self, proxy_url: Url) -> Self {
-        self.proxy_url = Some(proxy_url);
         self
     }
 
@@ -513,6 +493,10 @@ impl AddressLookupBuilder for PkarrResolverBuilder {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
+        }
+        #[cfg(not(wasm_browser))]
+        {
+            self.proxy_url = endpoint.proxy_url().cloned();
         }
         let tls_config = endpoint.tls_config().clone();
         Ok(self.build(tls_config))
@@ -777,15 +761,15 @@ mod tests {
         Ok((url, rx))
     }
 
-    /// The pkarr resolver sends its requests through its proxy.
+    /// The pkarr resolver sends its requests through the endpoint's proxy.
     #[tokio::test]
-    async fn resolver_uses_proxy() -> Result {
+    async fn resolver_uses_endpoint_proxy() -> Result {
         let (proxy_url, request_line) = capturing_proxy().await?;
         let endpoint = Endpoint::builder(presets::Minimal)
-            .address_lookup(
-                PkarrResolver::builder("https://pkarr.test/pkarr".parse().anyerr()?)
-                    .proxy_url(proxy_url),
-            )
+            .proxy_url(proxy_url)
+            .address_lookup(PkarrResolver::builder(
+                "https://pkarr.test/pkarr".parse().anyerr()?,
+            ))
             .bind()
             .await?;
 
