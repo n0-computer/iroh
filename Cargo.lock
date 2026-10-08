@@ -1073,7 +1073,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -2852,9 +2852,9 @@ dependencies = [
 
 [[package]]
 name = "n0-mainline"
-version = "0.6.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1350c6f72a2b3368ebf17779844746f246decd886d610f11b2317148fb9fd4"
+checksum = "b739fb0145326fa2287f704a5a3bceb5d21c5b6f1b09436403b504f85c2e6ded"
 dependencies = [
  "crc",
  "dyn-clone",
