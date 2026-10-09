@@ -1292,6 +1292,20 @@ impl EndpointInner {
             .ok();
     }
 
+    /// Presents `addrs` as additional reachability for `remote`: custom-transport
+    /// addrs get probed on existing connections so a path that became viable
+    /// after connecting can open mid-connection.
+    pub(crate) async fn probe_custom_addrs(
+        &self,
+        remote: EndpointId,
+        addrs: BTreeSet<TransportAddr>,
+    ) {
+        self.actor_sender
+            .send(ActorMessage::ProbeCustomAddrs(remote, addrs))
+            .await
+            .ok();
+    }
+
     #[cfg(all(test, with_crypto_provider))]
     async fn force_network_change(&self, is_major: bool) {
         self.actor_sender
@@ -1389,6 +1403,8 @@ enum ActorMessage {
         noq::Connection,
         oneshot::Sender<PathStateReceiver>,
     ),
+    /// Probes custom-transport addresses on existing connections to a remote.
+    ProbeCustomAddrs(EndpointId, BTreeSet<TransportAddr>),
     /// Re-evaluate direct addresses, e.g. after configured external addresses changed.
     DirectAddrRefresh,
     #[cfg(all(test, with_crypto_provider))]
@@ -1785,6 +1801,9 @@ impl Actor {
             }
             ActorMessage::AddConnection(remote, conn, tx) => {
                 self.remote_map.add_connection(remote, conn, tx).await;
+            }
+            ActorMessage::ProbeCustomAddrs(remote, addrs) => {
+                self.remote_map.probe_custom_addrs(remote, addrs).await;
             }
             ActorMessage::DirectAddrRefresh => {
                 #[cfg(not(wasm_browser))]
