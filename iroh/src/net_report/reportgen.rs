@@ -605,6 +605,9 @@ async fn check_captive_portal(
         let proxy = reqwest::Proxy::all(proxy_url.clone())
             .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?;
         builder = builder.proxy(proxy);
+    } else {
+        // Like the relay connection, ignore any proxy the environment names.
+        builder = builder.no_proxy();
     }
 
     let client = builder
@@ -834,6 +837,9 @@ async fn run_https_probe(
         let proxy = reqwest::Proxy::all(proxy_url.clone())
             .map_err(|err| e!(MeasureHttpsLatencyError::CreateReqwestClient, err))?;
         builder = builder.proxy(proxy);
+    } else {
+        // Like the relay connection, ignore any proxy the environment names.
+        builder = builder.no_proxy();
     }
 
     let client = builder
@@ -966,6 +972,77 @@ mod tests {
         assert!(
             request_line.starts_with(&format!("CONNECT {target} ")),
             "expected the probe to tunnel to {target}, proxy received: {request_line}"
+        );
+
+        Ok(())
+    }
+
+    /// Tests that without a configured proxy the probes ignore the proxy variables in the
+    /// environment, like the relay connection does.
+    ///
+    /// The environment is shared by the whole process, so the probes run in a child
+    /// process of this test binary that starts with the variables set.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_probes_ignore_env_proxy() -> Result {
+        const CHILD_VAR: &str = "IROH_TEST_PROBES_IGNORE_ENV_PROXY";
+        if std::env::var_os(CHILD_VAR).is_some() {
+            let (_server, relay) = test_utils::relay().await;
+            let relay_map = RelayMap::from_iter([relay.clone()]);
+            let dns_resolver = DnsResolver::new();
+            let tls_config = CaTlsConfig::insecure_skip_verify()
+                .client_config(default_provider())
+                .expect("infallible");
+            // Nothing serves the captive portal check here, only where it connects matters.
+            time::timeout(
+                Duration::from_secs(5),
+                check_captive_portal(&dns_resolver, &relay_map, None, tls_config.clone(), None),
+            )
+            .await
+            .ok();
+            time::timeout(
+                Duration::from_secs(5),
+                run_https_probe(&dns_resolver, relay.url, tls_config, None),
+            )
+            .await
+            .anyerr()??;
+            return Ok(());
+        }
+
+        // The proxy never accepts, so a connection to it stays queued for the check below.
+        let proxy = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).anyerr()?;
+        let proxy_url = format!("http://{}", proxy.local_addr().anyerr()?);
+        // The test harness names tests by their path without the crate.
+        let (_crate, module) = module_path!().split_once("::").expect("in a crate");
+        let test_name = format!("{module}::test_probes_ignore_env_proxy");
+        let mut child = std::process::Command::new(std::env::current_exe().anyerr()?);
+        child
+            .args(["--exact", &test_name])
+            .env(CHILD_VAR, "1")
+            .env("HTTP_PROXY", &proxy_url)
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("ALL_PROXY", &proxy_url)
+            // Any of these would keep reqwest from using the variables and hide a regression.
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .env_remove("REQUEST_METHOD");
+        let output = tokio::task::spawn_blocking(move || child.output())
+            .await
+            .anyerr()?
+            .anyerr()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // A filter that matches no test also exits successfully.
+        assert!(
+            output.status.success() && stdout.contains("test result: ok. 1 passed;"),
+            "the probes failed in the child process:\n{stdout}\n{stderr}"
+        );
+
+        proxy.set_nonblocking(true).anyerr()?;
+        let accepted = proxy.accept();
+        assert!(
+            matches!(&accepted, Err(err) if err.kind() == std::io::ErrorKind::WouldBlock),
+            "a probe connected to the proxy from the environment: {accepted:?}"
         );
 
         Ok(())
