@@ -1502,6 +1502,14 @@ impl Endpoint {
         &self.inner.tls_config
     }
 
+    /// Returns the proxy that HTTP(S) traffic is sent through, if any.
+    ///
+    /// The pkarr publisher and resolver send their HTTP requests through it.
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn proxy_url(&self) -> Option<&Url> {
+        self.inner.proxy_url.as_ref()
+    }
+
     /// Returns the Address Lookup service, if configured.
     ///
     /// # Errors

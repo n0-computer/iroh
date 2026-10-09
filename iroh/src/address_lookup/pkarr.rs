@@ -156,6 +156,9 @@ pub struct PkarrPublisherBuilder {
     filter: AddrFilter,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
+    /// Taken from the endpoint in `into_address_lookup`.
+    #[cfg(not(wasm_browser))]
+    proxy_url: Option<Url>,
 }
 
 impl PkarrPublisherBuilder {
@@ -168,6 +171,8 @@ impl PkarrPublisherBuilder {
             filter: AddrFilter::relay_only(),
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
+            #[cfg(not(wasm_browser))]
+            proxy_url: None,
         }
     }
 
@@ -223,14 +228,22 @@ impl PkarrPublisherBuilder {
     ///
     /// This publisher will be able to publish [pkarr](https://pkarr.org) records for [`SecretKey`].
     pub fn build(self, secret_key: SecretKey, tls_config: rustls::ClientConfig) -> PkarrPublisher {
+        #[cfg(wasm_browser)]
+        let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
+
+        #[cfg(not(wasm_browser))]
+        let pkarr_client = PkarrRelayClient::with_proxy(
+            self.pkarr_relay,
+            tls_config,
+            self.dns_resolver.unwrap_or_default(),
+            self.proxy_url,
+        );
+
         PkarrPublisher::new(
             secret_key,
-            self.pkarr_relay,
+            pkarr_client,
             self.ttl,
             self.republish_interval,
-            #[cfg(not(wasm_browser))]
-            self.dns_resolver.unwrap_or_default(),
-            tls_config,
             self.filter,
         )
     }
@@ -244,6 +257,10 @@ impl AddressLookupBuilder for PkarrPublisherBuilder {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
+        }
+        #[cfg(not(wasm_browser))]
+        {
+            self.proxy_url = endpoint.proxy_url().cloned();
         }
         let tls_config = endpoint.tls_config().clone();
         Ok(self.build(endpoint.secret_key().clone(), tls_config))
@@ -297,21 +314,16 @@ impl PkarrPublisher {
     /// [`SignedPacket`]s as well as a custom republish interval.
     fn new(
         secret_key: SecretKey,
-        pkarr_relay: Url,
+        pkarr_client: PkarrRelayClient,
         ttl: u32,
         republish_interval: Duration,
-        #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
-        tls_config: rustls::ClientConfig,
         addr_filter: AddrFilter,
     ) -> Self {
-        debug!("creating pkarr publisher that publishes to {pkarr_relay}");
+        debug!(
+            "creating pkarr publisher that publishes to {}",
+            pkarr_client.pkarr_relay_url
+        );
         let endpoint_id = secret_key.public();
-
-        #[cfg(wasm_browser)]
-        let pkarr_client = PkarrRelayClient::new(pkarr_relay);
-
-        #[cfg(not(wasm_browser))]
-        let pkarr_client = PkarrRelayClient::new(pkarr_relay, tls_config, dns_resolver);
 
         let watchable = Watchable::default();
         let service = PublisherService {
@@ -443,6 +455,9 @@ pub struct PkarrResolverBuilder {
     pkarr_relay: Url,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
+    /// Taken from the endpoint in `into_address_lookup`.
+    #[cfg(not(wasm_browser))]
+    proxy_url: Option<Url>,
 }
 
 impl PkarrResolverBuilder {
@@ -459,10 +474,11 @@ impl PkarrResolverBuilder {
         let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
 
         #[cfg(not(wasm_browser))]
-        let pkarr_client = PkarrRelayClient::new(
+        let pkarr_client = PkarrRelayClient::with_proxy(
             self.pkarr_relay,
             tls_config,
             self.dns_resolver.unwrap_or_default(),
+            self.proxy_url,
         );
 
         PkarrResolver { pkarr_client }
@@ -477,6 +493,10 @@ impl AddressLookupBuilder for PkarrResolverBuilder {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver()?.clone());
+        }
+        #[cfg(not(wasm_browser))]
+        {
+            self.proxy_url = endpoint.proxy_url().cloned();
         }
         let tls_config = endpoint.tls_config().clone();
         Ok(self.build(tls_config))
@@ -509,6 +529,8 @@ impl PkarrResolver {
             pkarr_relay,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
+            #[cfg(not(wasm_browser))]
+            proxy_url: None,
         }
     }
 
@@ -595,9 +617,27 @@ impl PkarrRelayClient {
         tls_config: rustls::ClientConfig,
         dns_resolver: DnsResolver,
     ) -> Self {
-        let http_client = reqwest_client_builder(tls_config, dns_resolver)
-            .build()
-            .expect("failed to create reqwest client");
+        Self::with_proxy(pkarr_relay_url, tls_config, dns_resolver, None)
+    }
+
+    /// Creates a [`PkarrRelayClient`] that sends its requests through `proxy_url`, if set.
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn with_proxy(
+        pkarr_relay_url: Url,
+        tls_config: rustls::ClientConfig,
+        dns_resolver: DnsResolver,
+        proxy_url: Option<Url>,
+    ) -> Self {
+        let mut builder = reqwest_client_builder(tls_config, dns_resolver);
+        if let Some(proxy_url) = proxy_url {
+            match reqwest::Proxy::all(proxy_url.clone()) {
+                Ok(proxy) => builder = builder.proxy(proxy),
+                // reqwest only rejects unsupported schemes. The relay client
+                // and net_report fail on such a proxy too, at connect time.
+                Err(err) => warn!(%proxy_url, "ignoring invalid proxy url for pkarr: {err:#}"),
+            }
+        }
+        let http_client = builder.build().expect("failed to create reqwest client");
         Self {
             http_client,
             pkarr_relay_url,
@@ -678,6 +718,76 @@ impl PkarrRelayClient {
             }));
         }
 
+        Ok(())
+    }
+}
+
+#[cfg(all(test, not(wasm_browser)))]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use n0_error::{Result, StdResultExt};
+    use n0_future::{StreamExt, task, time};
+    use tokio::{io::AsyncReadExt, sync::oneshot};
+
+    use super::*;
+    use crate::endpoint::presets;
+
+    /// Spawns a fake HTTP proxy which captures the request line of the first connection
+    /// it receives and then hangs up.
+    async fn capturing_proxy() -> Result<(Url, oneshot::Receiver<String>)> {
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .anyerr()?;
+        let url: Url = format!("http://{}", listener.local_addr().anyerr()?)
+            .parse()
+            .anyerr()?;
+        let (tx, rx) = oneshot::channel();
+        task::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut line = Vec::new();
+            let mut byte = [0u8; 1];
+            while let Ok(1) = stream.read(&mut byte).await {
+                if byte[0] == b'\n' {
+                    break;
+                }
+                line.push(byte[0]);
+            }
+            tx.send(String::from_utf8_lossy(&line).trim().to_string())
+                .ok();
+        });
+        Ok((url, rx))
+    }
+
+    /// The pkarr resolver sends its requests through the endpoint's proxy.
+    #[tokio::test]
+    async fn resolver_uses_endpoint_proxy() -> Result {
+        let (proxy_url, request_line) = capturing_proxy().await?;
+        let endpoint = Endpoint::builder(presets::Minimal)
+            .proxy_url(proxy_url)
+            .address_lookup(PkarrResolver::builder(
+                "https://pkarr.test/pkarr".parse().anyerr()?,
+            ))
+            .bind()
+            .await?;
+
+        // The fake proxy never completes the tunnel, so the lookup fails. What
+        // matters is that it was attempted through the proxy.
+        let id = SecretKey::generate().public();
+        let mut lookup = endpoint.address_lookup()?.resolve(id);
+        let _ = time::timeout(Duration::from_secs(10), lookup.next()).await;
+
+        let request_line = time::timeout(Duration::from_secs(10), request_line)
+            .await
+            .expect("proxy did not receive a request, the lookup bypassed it")
+            .anyerr()?;
+        assert!(
+            request_line.starts_with("CONNECT pkarr.test:443 "),
+            "proxy received: {request_line}"
+        );
+        endpoint.close().await;
         Ok(())
     }
 }
