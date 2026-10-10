@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use ipnet::Ipv6Net;
 use iroh_base::RelayUrl;
 use serde::{Deserialize, Serialize};
 use tracing::{trace, warn};
@@ -35,6 +36,12 @@ pub struct Report {
     /// CaptivePortal is set when we think there's a captive portal that is
     /// intercepting HTTP traffic.
     pub captive_portal: Option<bool>,
+    /// The NAT64 prefix used to reach IPv4 addresses, if this is an IPv6-only network with
+    /// NAT64 (RFC 6052, discovered per RFC 7050).
+    ///
+    /// While set, datagrams to public IPv4 addresses are sent through the network's NAT64
+    /// gateway, so `udp_v4` and `global_v4` then describe IPv4 connectivity through NAT64.
+    pub nat64_prefix: Option<Ipv6Net>,
 }
 
 impl fmt::Display for Report {

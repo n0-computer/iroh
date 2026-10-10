@@ -77,6 +77,11 @@ pub(crate) struct IfStateDetails {
     pub(crate) have_v4: bool,
     /// Do we have IPv6 capbilities
     pub(crate) have_v6: bool,
+    /// Do we have an IPv4 address other than a CLAT address (`192.0.0.0/29`, RFC 7335).
+    ///
+    /// On IPv6-only mobile networks the OS may hold a CLAT address on some interface without
+    /// offering IPv4 to applications, so `have_v4` alone does not mean native IPv4 exists.
+    pub(crate) have_native_v4: bool,
 }
 
 impl IfStateDetails {
@@ -85,15 +90,29 @@ impl IfStateDetails {
         IfStateDetails {
             have_v4: true,
             have_v6: true,
+            have_native_v4: true,
         }
     }
 }
 
 impl From<netwatch::netmon::State> for IfStateDetails {
     fn from(value: netwatch::netmon::State) -> Self {
+        let have_native_v4 = value
+            .interfaces
+            .values()
+            .filter(|iface| iface.is_up())
+            .flat_map(|iface| iface.addrs())
+            .any(|prefix| match prefix.addr() {
+                std::net::IpAddr::V4(v4) => {
+                    let [a, b, c, d] = v4.octets();
+                    !v4.is_loopback() && !(a == 192 && b == 0 && c == 0 && d < 8)
+                }
+                std::net::IpAddr::V6(_) => false,
+            });
         IfStateDetails {
             have_v4: value.have_v4,
             have_v6: value.have_v6,
+            have_native_v4,
         }
     }
 }
