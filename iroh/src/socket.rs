@@ -1766,6 +1766,8 @@ impl Actor {
     fn re_stun(&mut self, why: UpdateReason) {
         let state = self.local_interfaces_watcher.get();
 
+        // This block is a band-aid for https://github.com/n0-computer/iroh/issues/4588
+        // See patchbay test `lan_switch_advertises_new_addr_without_relay`
         #[cfg(not(wasm_browser))]
         {
             if self.sock.relay_map.is_empty() {
