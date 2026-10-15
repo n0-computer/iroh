@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   pick-runner:
-    uses: "./.github/workflows/pick-runner.yml"
+    uses: "$/.github/workflows/pick-runner.yml"
     with:
       min_free_runners: 3
     secrets:
@@ -42,7 +42,7 @@ jobs:
   # Windows overflow routing onto Blacksmith, with its own idle count and an
   # independent Blacksmith cap of 4 (see blacksmith_busy_match: windows).
   pick-runner-windows:
-    uses: "./.github/workflows/pick-runner.yml"
+    uses: "$/.github/workflows/pick-runner.yml"
     with:
       core_runner: '["self-hosted","windows","x64"]'
       overflow_runner: '["blacksmith-4vcpu-windows-2025"]'
@@ -124,19 +124,19 @@ jobs:
           ref: ${{ inputs.git-ref }}
 
       - name: Install ${{ matrix.rust }} rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: ${{ matrix.rust }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         continue-on-error: true
-      - uses: ./.github/workflows/sccache-probe
+      - uses: $/.github/workflows/sccache-probe
 
       - name: Select features
         run: |
@@ -288,7 +288,7 @@ jobs:
       # Was a bare Invoke-WebRequest from get.nexte.st with no checksum,
       # unpacked into ~/.cargo/bin on a long-lived host.
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: nextest@${{ env.NEXTEST_VERSION }}
 
@@ -316,9 +316,9 @@ jobs:
           # Pinned: sccache >= 0.17.0 expands rustc @argfiles and breaks Windows'
           # 32K command line limit: https://github.com/mozilla/sccache/issues/2397
           version: "v0.16.0"
-      - uses: ./.github/workflows/sccache-probe
+      - uses: $/.github/workflows/sccache-probe
 
-      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           # Blacksmith's Windows image ships no pre-installed MSYS2 (C:\msys64),
           # so install it there. Self-hosted keeps the pre-installed one (faster).

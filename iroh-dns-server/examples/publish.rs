@@ -20,8 +20,7 @@ const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";
 const DEV_DNS_ORIGIN_DOMAIN: &str = "irohdns.example";
 const EXAMPLE_RELAY_URL: &str = "https://relay.iroh.example";
 
-#[derive(ValueEnum, Clone, Debug, Default, Copy, strum::Display)]
-#[strum(serialize_all = "kebab-case")]
+#[derive(ValueEnum, Clone, Debug, Default, Copy)]
 pub enum Env {
     /// Use the staging pkarr relay run by number0.
     #[default]
@@ -36,24 +35,25 @@ pub enum Env {
 ///
 /// You have to set the IROH_SECRET environment variable to the endpoint secret for which to publish.
 #[derive(Parser, Debug)]
+#[command(version, about)]
 struct Cli {
     /// Environment to publish to.
-    #[clap(value_enum, short, long, default_value_t = Env::Staging)]
+    #[arg(short, long, value_enum, default_value_t = Env::Staging)]
     env: Env,
     /// Pkarr Relay URL. If set, the --env option will be ignored.
-    #[clap(long, conflicts_with = "env")]
+    #[arg(long, conflicts_with = "env")]
     pkarr_relay_url: Option<Url>,
     /// Home relay server URL to publish.
-    #[clap(short, long, conflicts_with = "no_relay_url")]
+    #[arg(short, long, conflicts_with = "no_relay_url")]
     relay_url: Option<Url>,
     /// Do not publish a home relay server URL.
-    #[clap(long)]
+    #[arg(long)]
     no_relay_url: bool,
     /// Direct addresses to publish.
-    #[clap(short, long)]
+    #[arg(short, long)]
     addr: Vec<SocketAddr>,
     /// User data to publish for this endpoint
-    #[clap(short, long)]
+    #[arg(short, long)]
     user_data: Option<UserData>,
 }
 

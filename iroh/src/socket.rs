@@ -375,6 +375,8 @@ pub(crate) struct Socket {
     configured_addrs: RwLock<BTreeSet<SocketAddr>>,
 
     pub(crate) tls_config: rustls::ClientConfig,
+    /// The proxy for HTTP(S) traffic, if any.
+    pub(crate) proxy_url: Option<Url>,
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
@@ -1001,6 +1003,7 @@ impl EndpointInner {
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
             tls_config: tls_config.clone(),
+            proxy_url: proxy_url.clone(),
             hooks,
             span: span.clone(),
         });
