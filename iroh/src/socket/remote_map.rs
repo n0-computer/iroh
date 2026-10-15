@@ -3,6 +3,7 @@ use std::{
     future::poll_fn,
     hash::Hash,
     net::SocketAddr,
+    pin::Pin,
     sync::Arc,
     task::{Context, Poll, Waker, ready},
 };
@@ -40,7 +41,7 @@ use super::{
 use crate::{
     address_lookup::{self, AddressLookupFailed},
     endpoint::LocalTransportAddr,
-    socket::concurrent_read_map::{ConcurrentReadMap, ReadOnlyMap},
+    socket::concurrent_read_map::ConcurrentReadMap,
 };
 
 mod remote_state;
@@ -82,6 +83,21 @@ pub(crate) struct MappedAddrs {
 }
 
 impl MappedAddrs {
+    /// Returns the address noq knows `addr` by.
+    ///
+    /// IP addresses are used as they are. Relay and custom addresses get their mapped
+    /// address, allocating one if needed.
+    pub(super) fn socket_addr(&self, addr: &transports::Addr) -> SocketAddr {
+        match addr {
+            transports::Addr::Ip(addr) => *addr,
+            transports::Addr::Relay(url, endpoint_id) => self
+                .relay_addrs
+                .get(&(url.clone(), *endpoint_id))
+                .private_socket_addr(),
+            transports::Addr::Custom(addr) => self.custom_addrs.get(addr).private_socket_addr(),
+        }
+    }
+
     /// Converts a possibly mapped-IP address into a [`transports::Addr`].
     pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> Option<transports::Addr> {
         to_transport_addr(addr, &self.relay_addrs, &self.custom_addrs)
@@ -172,7 +188,7 @@ fn to_transport_addr(
 /// Stores the state required for starting and cleaning up the `RemoteStateActor`s.
 ///
 /// When this is dropped, this will abort all tasks.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 struct Tasks {
     //
     // State required for spawning new actors.
@@ -195,13 +211,31 @@ struct Tasks {
     poll_cleanup_waker: Option<Waker>,
     /// The path selector used by all [`RemoteStateActor`]s spawned by this map.
     path_selector: Arc<dyn PathSelector>,
+    /// Creates the noq senders the actors send Initial packets with.
+    #[debug("SenderFactory")]
+    sender_factory: SenderFactory,
     /// The tracing span for this endpoint, to be used as parent span for `RemoteStateActor` tasks.
     span: Span,
 }
 
+/// Creates a sender over all of the endpoint's noq sockets, see [`noq::Endpoint::create_sender`].
+///
+/// The actors send QUIC Initial packets with it, so they reach a remote over every transport
+/// without the actors knowing the transports.
+pub(crate) type SenderFactory = Arc<dyn Fn() -> Pin<Box<dyn noq::UdpSender>> + Send + Sync>;
+
 impl RemoteMap {
     /// Creates a new [`RemoteMap`].
+    ///
+    /// `mapped_addrs` and `senders` are shared with the [`Socket`], which is created before
+    /// the noq endpoint that `sender_factory` sends with.
+    ///
+    /// [`Socket`]: super::Socket
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
+        mapped_addrs: MappedAddrs,
+        senders: ConcurrentReadMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
+        sender_factory: SenderFactory,
         metrics: Arc<SocketMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         address_lookup: address_lookup::AddressLookupServices,
@@ -210,8 +244,8 @@ impl RemoteMap {
         span: Span,
     ) -> Self {
         Self {
-            mapped_addrs: Default::default(),
-            senders: Default::default(),
+            mapped_addrs,
+            senders,
             tasks: Tasks {
                 metrics,
                 local_direct_addrs,
@@ -220,6 +254,7 @@ impl RemoteMap {
                 tasks: Default::default(),
                 poll_cleanup_waker: None,
                 path_selector,
+                sender_factory,
                 span,
             },
         }
@@ -357,10 +392,6 @@ impl RemoteMap {
             }
         }
     }
-
-    pub(super) fn senders(&self) -> ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>> {
-        self.senders.read_only()
-    }
 }
 
 impl Tasks {
@@ -382,6 +413,7 @@ impl Tasks {
             self.metrics.clone(),
             self.address_lookup.clone(),
             self.path_selector.clone(),
+            self.sender_factory.clone(),
         )
         .start(
             initial_msgs,
@@ -425,7 +457,7 @@ pub(crate) enum Source {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, pin::Pin, time::Duration};
+    use std::{net::SocketAddr, time::Duration};
 
     use bytes::Bytes;
     use futures_util::StreamExt;
@@ -438,8 +470,7 @@ mod tests {
 
     use super::*;
     use crate::socket::{
-        biased_rtt_path_selector::BiasedRttPathSelector,
-        transports::{OwnedTransmit, Transmit},
+        biased_rtt_path_selector::BiasedRttPathSelector, transports::OwnedTransmit,
     };
 
     #[tokio::test(start_paused = true)]
@@ -453,8 +484,9 @@ mod tests {
     }
 
     async fn check_initial_send_inbox(queued: usize) {
-        let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
-        let (endpoint_id, mut receiver) = enqueue_initials(&mut remote_map, queued, 1).await;
+        let (mut remote_map, _shutdown_token, mut receiver, _guards) =
+            make_remote_map_with_relay_queue();
+        let endpoint_id = enqueue_initials(&mut remote_map, queued, 1).await;
         let (info_tx, info_rx) = oneshot::channel();
         remote_map
             .send_to_actor(endpoint_id, RemoteStateMessage::RemoteInfo(info_tx))
@@ -474,14 +506,15 @@ mod tests {
 
     #[tokio::test]
     async fn pending_initial_sends_are_cancelled_on_shutdown() {
-        let (mut remote_map, shutdown_token, _guards) = make_remote_map();
-        let (endpoint_id, receiver) = enqueue_initials(&mut remote_map, 256, 1).await;
+        let (mut remote_map, shutdown_token, receiver, _guards) =
+            make_remote_map_with_relay_queue();
+        let endpoint_id = enqueue_initials(&mut remote_map, 256, 1).await;
         wait_for_inbox(&mut remote_map, endpoint_id).await;
         shutdown_token.cancel();
         tokio::time::timeout(Duration::from_secs(1), remote_map.cleanup())
             .await
             .expect("actor shutdown blocked by Initial send");
-        let remaining = tokio::time::timeout(Duration::from_secs(1), receiver.count())
+        let remaining = tokio::time::timeout(Duration::from_secs(1), drain(receiver))
             .await
             .expect("send task retained the RelaySender after shutdown");
         assert_eq!(remaining, 256);
@@ -489,11 +522,12 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn pending_initial_sends_expire_without_sending_late_packets() {
-        let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
-        let (endpoint_id, receiver) = enqueue_initials(&mut remote_map, 256, 1).await;
+        let (mut remote_map, _shutdown_token, receiver, _guards) =
+            make_remote_map_with_relay_queue();
+        let endpoint_id = enqueue_initials(&mut remote_map, 256, 1).await;
         wait_for_inbox(&mut remote_map, endpoint_id).await;
         tokio::time::sleep(Duration::from_secs(4)).await;
-        let remaining = tokio::time::timeout(Duration::from_secs(1), receiver.count())
+        let remaining = tokio::time::timeout(Duration::from_secs(1), drain(receiver))
             .await
             .expect("expired Initial still holds the sender");
         assert_eq!(remaining, 256);
@@ -501,23 +535,36 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn congested_initial_sends_have_bounded_pending_work() {
-        let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
-        let (endpoint_id, receiver) = enqueue_initials(&mut remote_map, 256, 32).await;
+        let (mut remote_map, _shutdown_token, receiver, _guards) =
+            make_remote_map_with_relay_queue();
+        let endpoint_id = enqueue_initials(&mut remote_map, 256, 32).await;
         wait_for_inbox(&mut remote_map, endpoint_id).await;
-        let remaining = tokio::time::timeout(Duration::from_secs(1), receiver.count())
+        let remaining = tokio::time::timeout(Duration::from_secs(1), drain(receiver))
             .await
             .expect("Initial sends did not finish after draining the queue");
         assert_eq!(remaining, 256 + 16);
     }
 
+    /// Counts the items `receiver` yields until it stays quiet for a moment.
+    ///
+    /// The remote map's sender factory keeps the channel open, so the stream never ends.
+    async fn drain(mut receiver: impl futures_util::Stream<Item = ()> + Unpin) -> usize {
+        let mut count = 0;
+        while let Ok(Some(())) =
+            tokio::time::timeout(Duration::from_millis(100), receiver.next()).await
+        {
+            count += 1;
+        }
+        count
+    }
+
+    /// Fills the actors' relay queue with `queued` sends, then sends `count` Initials.
     async fn enqueue_initials(
         remote_map: &mut RemoteMap,
         queued: usize,
         count: usize,
-    ) -> (
-        EndpointId,
-        impl futures_util::Stream<Item = ()> + Unpin + use<>,
-    ) {
+    ) -> EndpointId {
+        let mut sender = (remote_map.tasks.sender_factory)();
         let endpoint_id = SecretKey::from_bytes(&[1u8; 32]).public();
         let relay_url: RelayUrl = "https://relay.example.invalid".parse().unwrap();
         let (resolve_tx, resolve_rx) = oneshot::channel();
@@ -529,23 +576,19 @@ mod tests {
             .await;
         assert!(resolve_rx.await.expect("resolve response").is_ok());
 
-        // Hold the receiver to apply backpressure without changing poll_send.
-        let (mut sender, receiver) = transports::TransportsSender::with_bounded_relay(
-            256,
-            #[cfg(not(wasm_browser))]
-            std::iter::empty(),
-        );
-        let transmit = Transmit {
+        // The receiver is held by the caller, so these sends apply backpressure.
+        let relay_addr = remote_map
+            .mapped_addrs
+            .socket_addr(&transports::Addr::Relay(relay_url, endpoint_id));
+        let transmit = noq_udp::Transmit {
+            destination: relay_addr,
             ecn: None,
             contents: b"queued",
             segment_size: None,
-        };
-        let path = transports::FourTuple::Relay {
-            url: relay_url,
-            endpoint_id,
+            src_ip: None,
         };
         for _ in 0..queued {
-            poll_fn(|cx| Pin::new(&mut sender).poll_send(cx, &path, &transmit))
+            poll_fn(|cx| sender.as_mut().poll_send(&transmit, cx))
                 .await
                 .expect("fill relay queue");
         }
@@ -553,18 +596,15 @@ mod tests {
             remote_map
                 .send_to_actor(
                     endpoint_id,
-                    RemoteStateMessage::SendDatagram(
-                        Box::new(sender.clone()),
-                        OwnedTransmit {
-                            ecn: None,
-                            contents: Bytes::from_static(b"initial"),
-                            segment_size: None,
-                        },
-                    ),
+                    RemoteStateMessage::SendDatagram(OwnedTransmit {
+                        ecn: None,
+                        contents: Bytes::from_static(b"initial"),
+                        segment_size: None,
+                    }),
                 )
                 .await;
         }
-        (endpoint_id, receiver)
+        endpoint_id
     }
 
     async fn wait_for_inbox(remote_map: &mut RemoteMap, endpoint_id: EndpointId) {
@@ -584,11 +624,29 @@ mod tests {
     }
 
     fn make_remote_map() -> (RemoteMap, CancellationToken, impl Sized) {
+        let (remote_map, shutdown_token, _receiver, guards) = make_remote_map_with_relay_queue();
+        (remote_map, shutdown_token, guards)
+    }
+
+    /// Relay sends of the actors go into a queue of 256 items, the stream yields one per send.
+    fn make_remote_map_with_relay_queue() -> (
+        RemoteMap,
+        CancellationToken,
+        impl futures_util::Stream<Item = ()> + Unpin + use<>,
+        impl Sized,
+    ) {
+        use futures_util::StreamExt;
+        let (sender, receiver) = test_support::ChannelSender::new(256);
+        let sender_factory = sender.factory();
+        let receiver = tokio_stream::wrappers::ReceiverStream::new(receiver.relay).map(|_| ());
         let metrics = Arc::new(SocketMetrics::default());
         let watchable: Watchable<BTreeSet<DirectAddr>> = Watchable::new(BTreeSet::new());
         let local_direct_addrs = watchable.watch();
         let shutdown_token = CancellationToken::new();
         let remote_map = RemoteMap::new(
+            MappedAddrs::default(),
+            ConcurrentReadMap::default(),
+            sender_factory,
             metrics,
             local_direct_addrs,
             address_lookup::AddressLookupServices::default(),
@@ -597,7 +655,7 @@ mod tests {
             Span::none(),
         );
         let guards = (watchable, shutdown_token.clone().drop_guard());
-        (remote_map, shutdown_token, guards)
+        (remote_map, shutdown_token, receiver, guards)
     }
 
     /// Regression test: No new RemoteStateActors may be started before
@@ -657,5 +715,80 @@ mod tests {
         let outcome3 = rx3.await.expect("the resolve tx must be sent");
         assert!(outcome2.is_ok(), "expected Ok, but got {outcome2:?}");
         assert!(outcome3.is_ok(), "expected Ok, but got {outcome3:?}");
+    }
+}
+
+/// A fake noq sender for the actor tests, routing by destination kind.
+#[cfg(test)]
+pub(super) mod test_support {
+    use std::{io, pin::Pin, sync::Arc, task::Poll};
+
+    use n0_future::ready;
+    use tokio::sync::mpsc;
+    use tokio_util::sync::PollSender;
+
+    use super::SenderFactory;
+    use crate::socket::mapped_addrs::MultipathMappedAddr;
+
+    /// Sends relay destinations into a bounded channel and all others into a wide one.
+    ///
+    /// Filling the relay channel makes relay sends block, while direct sends keep going.
+    #[derive(Debug, Clone)]
+    pub(crate) struct ChannelSender {
+        relay: PollSender<()>,
+        direct: PollSender<std::net::SocketAddr>,
+    }
+
+    /// Receives what a [`ChannelSender`] and its clones sent.
+    pub(crate) struct ChannelReceiver {
+        pub(crate) relay: mpsc::Receiver<()>,
+        pub(crate) direct: mpsc::Receiver<std::net::SocketAddr>,
+    }
+
+    impl ChannelSender {
+        /// Creates a sender whose relay channel holds `relay_capacity` sends.
+        pub(crate) fn new(relay_capacity: usize) -> (Self, ChannelReceiver) {
+            let (relay_tx, relay_rx) = mpsc::channel(relay_capacity);
+            let (direct_tx, direct_rx) = mpsc::channel(1024);
+            let sender = Self {
+                relay: PollSender::new(relay_tx),
+                direct: PollSender::new(direct_tx),
+            };
+            let receiver = ChannelReceiver {
+                relay: relay_rx,
+                direct: direct_rx,
+            };
+            (sender, receiver)
+        }
+
+        /// A factory handing out clones of this sender.
+        pub(crate) fn factory(&self) -> SenderFactory {
+            let sender = self.clone();
+            Arc::new(move || Box::pin(sender.clone()))
+        }
+    }
+
+    impl noq::UdpSender for ChannelSender {
+        fn poll_send(
+            self: Pin<&mut Self>,
+            transmit: &noq_udp::Transmit,
+            cx: &mut std::task::Context,
+        ) -> Poll<io::Result<()>> {
+            let this = self.get_mut();
+            let full = || io::Error::other("channel closed");
+            match MultipathMappedAddr::from(transmit.destination) {
+                MultipathMappedAddr::Relay(_) => {
+                    ready!(this.relay.poll_reserve(cx)).map_err(|_| full())?;
+                    this.relay.send_item(()).map_err(|_| full())?;
+                }
+                _ => {
+                    ready!(this.direct.poll_reserve(cx)).map_err(|_| full())?;
+                    this.direct
+                        .send_item(transmit.destination)
+                        .map_err(|_| full())?;
+                }
+            }
+            Poll::Ready(Ok(()))
+        }
     }
 }
