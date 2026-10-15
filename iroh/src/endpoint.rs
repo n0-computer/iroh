@@ -4322,4 +4322,75 @@ mod tests {
 
         Ok(())
     }
+
+    /// Moves the selection to another IP path at every call.
+    #[cfg(feature = "unstable-custom-transports")]
+    #[derive(Debug, Default)]
+    struct Flip(std::sync::atomic::AtomicUsize);
+
+    #[cfg(feature = "unstable-custom-transports")]
+    impl crate::endpoint::transports::PathSelector for Flip {
+        fn select(
+            &self,
+            ctx: &crate::endpoint::transports::PathSelectionContext<'_>,
+        ) -> crate::endpoint::transports::PathSelection {
+            let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut selection = crate::endpoint::transports::PathSelection::none();
+            let ips: Vec<_> = ctx.paths().filter(|p| p.network_path().is_ip()).collect();
+            if !ips.is_empty() {
+                selection.set(&ips[n % ips.len()]);
+            }
+            selection
+        }
+    }
+
+    // The selected path is one per remote, and the client applies it to every connection of
+    // that remote. A connection that has closed an IP path still counts it until noq reports
+    // it abandoned. When the selector moves to that closing path, the client closes the one
+    // IP path that is still open on the connection, and noq refuses with `LastOpenPath`.
+    //
+    // Needs a host with two or more local IP addresses to open two IP paths per connection.
+    // On a host with one address the test passes without a check.
+    #[cfg(feature = "unstable-custom-transports")]
+    #[tokio::test]
+    #[traced_test]
+    async fn a_moving_selection_does_not_close_the_last_open_ip_path() -> Result {
+        let server = Endpoint::builder(presets::Minimal)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let client = Endpoint::builder(presets::Minimal)
+            .path_selector(Arc::new(Flip::default()))
+            .bind()
+            .await?;
+        let accepting = tokio::spawn({
+            let server = server.clone();
+            async move {
+                let mut kept = Vec::new();
+                while let Some(incoming) = server.accept().await {
+                    if let Ok(conn) = incoming.await {
+                        kept.push(conn);
+                    }
+                }
+            }
+        });
+
+        let mut conns = Vec::new();
+        for _ in 0..6 {
+            conns.push(client.connect(server.addr(), TEST_ALPN).await?);
+        }
+        time::sleep(Duration::from_secs(2)).await;
+        for conn in conns {
+            conn.close(0u8.into(), b"");
+        }
+
+        assert!(
+            !logs_contain("could not close last open path"),
+            "the client tried to close the last open path"
+        );
+        client.close().await;
+        server.close().await;
+        accepting.abort();
+        Ok(())
+    }
 }

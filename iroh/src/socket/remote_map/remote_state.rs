@@ -17,7 +17,7 @@ use n0_future::{
 use n0_watcher::Watcher;
 use noq::{Closed, PathStats, PathStatus, WeakConnectionHandle};
 use noq_proto::{PathError, PathEvent as NoqPathEvent, PathId, n0_nat_traversal};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
@@ -428,6 +428,7 @@ impl RemoteStateActor {
                 handle: conn.weak_handle(),
                 path_state: path_state_sender,
                 paths: Default::default(),
+                closing: Default::default(),
                 has_been_direct: false,
             })
             .into_mut();
@@ -714,7 +715,7 @@ impl RemoteStateActor {
             return;
         };
 
-        for (conn_id, conn_state) in self.connections.iter() {
+        for (conn_id, conn_state) in self.connections.iter_mut() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
@@ -724,6 +725,9 @@ impl RemoteStateActor {
                 .open_path_on_conn(*conn_id, conn_state, &conn, &selected);
 
             for (path_id, path_remote) in conn_state.paths.iter() {
+                if conn_state.closing.contains(path_id) {
+                    continue;
+                }
                 let Some(path) = conn.path(*path_id) else {
                     continue;
                 };
@@ -736,7 +740,12 @@ impl RemoteStateActor {
                 if conn.side().is_client()
                     && path_remote.is_ip()
                     && path_remote != &selected
-                    && conn_state.paths.values().filter(|a| a.is_ip()).count() > 1
+                    && conn_state
+                        .paths
+                        .iter()
+                        .filter(|(id, a)| a.is_ip() && !conn_state.closing.contains(*id))
+                        .count()
+                        > 1
                 {
                     trace!(?path_remote, %conn_id, %path_id, "closing direct path");
                     match path.close() {
@@ -748,8 +757,11 @@ impl RemoteStateActor {
                         }
                         Err(noq_proto::ClosePathError::ClosedPath) => {
                             // We already closed this.
+                            conn_state.closing.insert(*path_id);
                         }
-                        Ok(()) => {}
+                        Ok(()) => {
+                            conn_state.closing.insert(*path_id);
+                        }
                     }
                     continue;
                 }
@@ -1339,6 +1351,11 @@ struct ConnectionState {
     path_state: PathStateSender,
     /// The open paths that exist on this connection.
     paths: FxHashMap<PathId, transports::FourTuple>,
+    /// The paths in [`Self::paths`] that this endpoint has closed.
+    ///
+    /// noq reports a closed path as abandoned a short time after the close, and until then the
+    /// path stays in [`Self::paths`]. It is not open, so it does not count as a path to keep.
+    closing: FxHashSet<PathId>,
     /// Whether this connection has ever had a direct path.
     ///
     /// Used for recording metrics.
@@ -1378,6 +1395,7 @@ impl ConnectionState {
         path_id: &PathId,
         conn: &noq::Connection,
     ) -> Option<transports::FourTuple> {
+        self.closing.remove(path_id);
         let addr = self.paths.remove(path_id)?;
         self.path_state.record_abandoned(*path_id, conn);
         Some(addr)
