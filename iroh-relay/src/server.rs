@@ -26,6 +26,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use derive_more::Debug;
@@ -1134,15 +1135,16 @@ async fn run_captive_portal_service(http_listener: TcpListener) {
                         debug!(%peer_addr, "Connection opened",);
                         let handler = CaptivePortalService;
 
+                        let stream = crate::server::streams::MaybeTlsStream::Plain(stream);
+                        let stream = hyper_util::rt::TokioIo::new(stream);
+                        let connection = hyper::server::conn::http1::Builder::new()
+                            .keep_alive(false)
+                            .serve_connection(stream, handler);
                         tasks.spawn(async move {
-                            let stream = crate::server::streams::MaybeTlsStream::Plain(stream);
-                            let stream = hyper_util::rt::TokioIo::new(stream);
-                            if let Err(err) = hyper::server::conn::http1::Builder::new()
-                                .serve_connection(stream, handler)
-                                .with_upgrades()
-                                .await
-                            {
-                                error!("Failed to serve connection: {err:?}");
+                            match tokio::time::timeout(Duration::from_secs(30), connection).await {
+                                Ok(Ok(())) => {}
+                                Ok(Err(err)) => error!("Failed to serve connection: {err:?}"),
+                                Err(_) => debug!(%peer_addr, "Captive portal connection timed out"),
                             }
                         });
                     }
