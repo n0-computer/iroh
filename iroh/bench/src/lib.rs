@@ -93,6 +93,7 @@ pub struct Opt {
     pub workers_per_ep: usize,
 }
 
+#[derive(Debug)]
 pub enum EndpointSelector {
     Iroh(::iroh::Endpoint),
     #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
@@ -114,6 +115,7 @@ impl EndpointSelector {
     }
 }
 
+#[derive(Debug)]
 pub enum ConnectionSelector {
     Iroh(::iroh::endpoint::Connection),
     #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
@@ -191,7 +193,7 @@ fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
     Ok(base * multiplier)
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ClientStats {
     upload_stats: Stats,
     download_stats: Stats,

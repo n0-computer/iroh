@@ -40,7 +40,7 @@ missing_debug_implementations = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_loom)", "cfg(skip_patchbay)"] }
 
 [workspace.lints.clippy]
-unused-async = "warn"
+unused_async = "warn"
 
 [workspace.metadata.cargo-semver-checks.lints]
 enum_struct_variant_field_marked_deprecated = { required-update = "minor" }
